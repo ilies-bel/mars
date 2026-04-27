@@ -1,6 +1,6 @@
 # CONTRACTS — Mars Framework
 
-> **Status:** v0.1 — initial lock
+> **Status:** v0.2 — HumanInbox lock
 > **Date:** 2026-04-27
 > **Companion to:** [`../VISION.md`](../VISION.md)
 
@@ -22,7 +22,8 @@ From `VISION.md` (locked):
 
 Added in this document:
 
-- **Questions are bugs.** Every `Question` raised is a defect in the harness — missing context, ambiguous prompt, weak adapter. The harness's job is to drive the question rate toward zero. `approve_checkpoint` (a deliberate gate) is the one exempt kind.
+- **Questions are bugs.** Every `question`-kind inbox item raised is a defect in the harness — missing context, ambiguous prompt, weak adapter. The harness's job is to drive the defect rate toward zero. Items with `category: 'gate'` (e.g. `approve_checkpoint`) are the deliberate-gate exemption.
+- **One human inbox.** Every human-in-the-loop event (questions, actions, decisions) flows through a single `HumanInbox`. "What does mars need from me?" has one answer: `mars inbox`.
 - **Centralized orchestration.** A single `mars build` process owns the loop. Agents are blind workers — they don't know other agents exist.
 - **Parallelism by default.** Multiple agents run concurrently, gated by a configured cap.
 
@@ -52,7 +53,9 @@ type AgentIntent =
 - writes files (returns `BuildResult.edits`; FS adapter writes)
 - calls `git` (returns `BuildResult.checkpointHint`; VCS adapter commits)
 - calls `bd` (returns a `Plan` or task update; PlanStore adapter persists)
-- prompts the user (returns a `Question`; HumanQueue parks/asks)
+- prompts the user (returns a `Question` payload; HumanInbox parks/asks)
+
+The `question`-kind intent only carries `Question`-style payloads. `action` and `decision` inbox items originate from the orchestrator and `mars retro`, not from agent intents — agents ask, the system instructs.
 
 ---
 
@@ -115,8 +118,8 @@ type Task = {
   claimedHost?: string              // hostname (forward-looking; v0 = single host)
 
   // Cross-references
-  pendingQuestionId?: string        // when state = awaiting_human
-  sourceQuestionIds?: string[]      // for retro-spawned tasks
+  pendingInboxItemId?: string       // when state = awaiting_human
+  sourceInboxItemIds?: string[]     // for retro-spawned tasks (questions that motivated this task)
 
   // Audit trail
   history?: TaskHistoryEntry[]
@@ -230,19 +233,25 @@ type Review = {
 
 ---
 
-## 6. Questions & HumanQueue
+## 6. HumanInbox (questions, actions, decisions)
 
-### 6.1 Question type
+The single, prioritized stream of everything mars needs from the human. `Question` is one payload kind; `action` and `decision` are siblings. There is one inbox, one CLI namespace (`mars inbox`), one storage file.
+
+### 6.1 InboxItem type
 
 ```ts
-type QuestionKind =
-  | 'refine_plan'         // planner needs scope/strategy decision
-  | 'unblock_task'        // builder can't proceed; needs human input
-  | 'resolve_conflict'    // VCS conflict that can't auto-merge
-  | 'approve_checkpoint'  // QA gate fired; needs sign-off
+type InboxItemKind = 'question' | 'action' | 'decision'
 
-type QuestionCategory = 'defect' | 'gate'
-// defect = harness shouldn't have asked; counted in retro/audit defect rate
+type Priority = 'blocker' | 'high' | 'normal' | 'low'
+// blocker = at least one task is parked (awaiting_human) referencing this item
+// high    = unblocking soon would unblock work
+// normal  = no immediate impact, but worth your time
+// low     = informational; safe to skip
+
+type InboxItemState = 'open' | 'resolved' | 'dismissed'
+
+type InboxItemCategory = 'defect' | 'gate'
+// defect = harness shouldn't have raised this; counted in retro/audit defect rate
 // gate   = deliberate human checkpoint; informational only
 
 type RootCause =
@@ -252,32 +261,36 @@ type RootCause =
   | 'plan_underspecified'
   | 'genuine_human_judgment'
 
-type QuestionState = 'open' | 'answered' | 'dismissed'
-
-type Question = {
+type InboxItem = {
   id: string                        // <uuid8>-<slug>
-  kind: QuestionKind
-  category: QuestionCategory
-  taskIds: string[]                 // one question can block multiple tasks
-  planId?: PlanId
-  prompt: string
-  options?: string[]                // for approve_checkpoint or A/B decisions
+  kind: InboxItemKind
+  category: InboxItemCategory
+  priority: Priority                // computed; see 6.4
+  title: string                     // one-line summary for list view
+  body: string                      // full prompt / description
 
   context: {
     files?: string[]
     excerpts?: { path: string; lines: string }[]
     agentNotes?: string
+    relatedPlanIds?: PlanId[]
+    relatedTaskIds?: TaskId[]
   }
 
-  state: QuestionState
-  answer?: string
-  raisedBy: string                  // agent handle id
+  state: InboxItemState
+  raisedBy: string                  // agent handle id, "orchestrator", or "system"
   raisedAt: string
-  answeredAt?: string
+  resolvedAt?: string
+  resolution?: string               // free text or chosen option id
 
-  // Filled on answer/dismiss — feeds `mars retro`
+  payload:
+    | { kind: 'question'; question: Question }
+    | { kind: 'action';   instruction: string; verifyHint?: string }
+    | { kind: 'decision'; options: { id: string; label: string; consequence?: string }[] }
+
+  // For retro/audit — filled on resolve/dismiss
   rootCause?: RootCause
-  resolution?: {
+  resolutionNote?: {
     kind: 'harness_fix' | 'one_off_answer'
     notes: string
     commitRef?: string              // VCS ref of harness change, if any
@@ -285,21 +298,75 @@ type Question = {
 }
 ```
 
-### 6.2 Behavior
+### 6.2 Question payload
 
-- **Any role** (planner, builder, reviewer) can emit a `question` intent.
-- Orchestrator parks all matching tasks (`taskIds`) in `awaiting_human` and **continues to the next ready task**. The loop never blocks on humans.
-- Resume happens via:
-  - **push**: `mars answer <qid> "<text>"` — answers and immediately re-spawns the relevant agents.
-  - **pull**: next `mars build` invocation sweeps for `awaiting_human` tasks with answered questions.
+`Question` is the payload type for `kind: 'question'` items.
 
-### 6.3 Dismiss
+```ts
+type QuestionKind =
+  | 'refine_plan'         // planner needs scope/strategy decision
+  | 'unblock_task'        // builder can't proceed; needs human input
+  | 'resolve_conflict'    // VCS conflict that can't auto-merge
+  | 'approve_checkpoint'  // QA gate fired; needs sign-off (always category 'gate')
 
-`mars dismiss <qid> --reason "<text>"`. Reason is required. Surfaces in `mars retro` as the highest-priority signal: the agent asked, the human said "you shouldn't have."
+type Question = {
+  questionKind: QuestionKind
+  taskIds: TaskId[]                 // one question can block multiple tasks
+  planId?: PlanId
+  prompt: string
+  options?: string[]                // free-text choice list
+  answer?: string
+}
+```
 
-### 6.4 Default backend
+### 6.3 How items enter the inbox
 
-`fs-jsonl` at `.mars/questions.jsonl`. Future: a beads-backed adapter that maps each `Question` to an issue.
+| Source | Item shape |
+|---|---|
+| Agent emits `kind: 'question'` intent | `question` item; priority `blocker`; category `defect` (or `gate` for `approve_checkpoint`) |
+| QA checkpoint rule fires (orchestrator) | `question` item; questionKind `approve_checkpoint`; category `gate`; priority `blocker` |
+| VCS conflict (auto-detected) | `question` item; questionKind `resolve_conflict`; category `defect`; priority `blocker` |
+| Orchestrator hits halt-and-flag | `action` item; priority `blocker` |
+| `mars retro` finds a cluster needing a call | `decision` item; priority `normal` |
+| `mars inbox add ...` (manual) | Any kind; priority defaulted by referenced tasks |
+
+### 6.4 Priority computation
+
+`priority` is **computed**, not declared:
+
+- `blocker` — at least one task in `awaiting_human` references this item (`Task.pendingInboxItemId == item.id`).
+- `high` — referenced by at least one ready/in-progress task but no `awaiting_human` task.
+- `normal` — referenced only by `to_refine` or `done` tasks, or unreferenced but raised by orchestrator/agent.
+- `low` — manually demoted, or stale (no related task touched in N days).
+
+`HumanInbox.recomputePriorities(taskId)` is called by the orchestrator on every task state change.
+
+### 6.5 Resolve / dismiss
+
+- `mars answer <id> "<text>"` — resolves a `question` item; orchestrator sweeps referenced tasks back to `ready_for_execution`.
+- `mars resolve <id> "<note>"` — resolves an `action` item; user has done the thing.
+- `mars decide <id> <option-id>` — resolves a `decision` item; orchestrator may run a follow-up (e.g. `promote` on a retro decision creates a plan).
+- `mars dismiss <id> --reason "<text>"` — dismisses any kind. Reason required. Surfaces in `mars retro` as the strongest signal: the system asked, the human said "you shouldn't have."
+
+Tasks parked on a dismissed item return to `to_refine` with a `human_dismiss` history entry.
+
+### 6.6 Loop behavior
+
+- Orchestrator never blocks on the inbox. When an agent emits a question, the orchestrator parks the matching tasks in `awaiting_human` and **continues to the next ready task**.
+- Resume:
+  - **push**: `mars answer` / `mars resolve` / `mars decide` immediately re-spawn the relevant agents.
+  - **pull**: next `mars build` invocation sweeps `awaiting_human` tasks whose pending item is `resolved`.
+- `mars build` prints a one-line inbox footer at start and end: `inbox: N blockers, M high, K total open — mars inbox`.
+
+### 6.7 Default backend
+
+`fs-jsonl` at `.mars/inbox.jsonl`. Future: a beads-backed adapter that maps each `InboxItem` to an issue.
+
+### 6.8 Out of scope for v0
+
+- **Notifications** (desktop, file sentinel) — deferred.
+- **Auto-dismiss** of stale items — deferred; explicit triage only.
+- **Decision option callbacks in payload** — option choice is just recorded; any follow-up wiring lives in the orchestrator's resolve handler, not the data.
 
 ---
 
@@ -395,27 +462,39 @@ interface PlanStore {
 
 v0: beads-backed. Future: `fs-markdown` PlanStore.
 
-### 8.3 HumanQueue
+### 8.3 HumanInbox
 
 ```ts
-type QuestionQuery = {
-  state?: QuestionState
-  kind?: QuestionKind
-  category?: QuestionCategory
+type InboxQuery = {
+  state?: InboxItemState
+  kind?: InboxItemKind
+  category?: InboxItemCategory
+  priority?: Priority
   taskId?: TaskId
 }
 
-interface HumanQueue {
-  ask(q: Omit<Question, 'id' | 'state' | 'raisedAt'>): Promise<string>
-  list(query: QuestionQuery): Promise<Question[]>
-  get(id: string): Promise<Question>
-  answer(id: string, answer: string, rootCause?: RootCause,
-         resolution?: Question['resolution']): Promise<void>
+interface HumanInbox {
+  add(item: Omit<InboxItem, 'id' | 'state' | 'raisedAt' | 'priority'>): Promise<string>
+  list(query?: InboxQuery): Promise<InboxItem[]>
+  get(id: string): Promise<InboxItem>
+
+  // Resolution paths — one per item kind
+  answer(id: string, answer: string,
+         rootCause?: RootCause,
+         resolutionNote?: InboxItem['resolutionNote']): Promise<void>          // question
+  resolve(id: string, note: string,
+          rootCause?: RootCause): Promise<void>                                // action
+  decide(id: string, optionId: string,
+         rootCause?: RootCause): Promise<void>                                 // decision
+
   dismiss(id: string, reason: string, rootCause?: RootCause): Promise<void>
+
+  // Internal: orchestrator calls on every task state change
+  recomputePriorities(taskId: TaskId): Promise<void>
 }
 ```
 
-v0: `fs-jsonl` at `.mars/questions.jsonl`.
+v0: `fs-jsonl` at `.mars/inbox.jsonl`. Future: a beads-backed adapter.
 
 ### 8.4 VCS
 
@@ -519,7 +598,7 @@ Single centralized process owned by `mars build`. Agents are blind workers; only
 
 ```ts
 class Orchestrator {
-  constructor(private adapters: { runner; planStore; humanQueue; fs; vcs; compiler })
+  constructor(private adapters: { runner; planStore; humanInbox; fs; vcs; compiler })
 
   async run(opts: {
     planId?: PlanId
@@ -582,17 +661,23 @@ async applyIntent(intent: AgentIntent, handle: AgentHandle) {
     case 'build': {
       const matched = this.evaluateQARules(intent.result.edits, handle.taskId)
       if (matched) {
-        const qid = await this.humanQueue.ask({
-          kind: 'approve_checkpoint',
-          category: 'gate',
-          taskIds: [handle.taskId!],
-          prompt: matched.prompt,
-          options: ['approve', 'reject'],
-          context: { /* matched paths, diff hunks */ },
+        const id = await this.humanInbox.add({
+          kind: 'question', category: 'gate',
+          title: `QA: ${matched.name}`, body: matched.prompt,
+          context: { relatedTaskIds: [handle.taskId!] /* matched paths, hunks */ },
+          payload: {
+            kind: 'question',
+            question: {
+              questionKind: 'approve_checkpoint',
+              taskIds: [handle.taskId!],
+              prompt: matched.prompt,
+              options: ['approve', 'reject'],
+            },
+          },
           raisedBy: handle.id,
         })
         await this.planStore.updateTask(handle.taskId!, {
-          state: 'awaiting_human', pendingQuestionId: qid,
+          state: 'awaiting_human', pendingInboxItemId: id,
         })
         break
       }
@@ -603,15 +688,23 @@ async applyIntent(intent: AgentIntent, handle: AgentHandle) {
         taskId: handle.taskId!,
       })
       if ('conflict' in result) {
-        const qid = await this.humanQueue.ask({
-          kind: 'resolve_conflict', category: 'defect',
-          taskIds: [handle.taskId!],
-          prompt: 'Merge conflict on checkpoint',
-          context: { files: result.conflict.files, agentNotes: result.conflict.description },
+        const id = await this.humanInbox.add({
+          kind: 'question', category: 'defect',
+          title: 'Merge conflict on checkpoint',
+          body: result.conflict.description,
+          context: { files: result.conflict.files, relatedTaskIds: [handle.taskId!] },
+          payload: {
+            kind: 'question',
+            question: {
+              questionKind: 'resolve_conflict',
+              taskIds: [handle.taskId!],
+              prompt: 'Resolve this conflict and re-run mars build',
+            },
+          },
           raisedBy: handle.id,
         })
         await this.planStore.updateTask(handle.taskId!, {
-          state: 'awaiting_human', pendingQuestionId: qid,
+          state: 'awaiting_human', pendingInboxItemId: id,
         })
       } else if (intent.result.done) {
         await this.planStore.updateTask(handle.taskId!, { state: 'done' })
@@ -635,17 +728,24 @@ async applyIntent(intent: AgentIntent, handle: AgentHandle) {
       }
       break
 
-    case 'question':
-      const qid = await this.humanQueue.ask({
-        ...intent.question,
+    case 'question': {
+      const q = intent.question
+      const id = await this.humanInbox.add({
+        kind: 'question',
+        category: q.questionKind === 'approve_checkpoint' ? 'gate' : 'defect',
+        title: q.prompt.slice(0, 80),
+        body: q.prompt,
+        context: { relatedTaskIds: q.taskIds, relatedPlanIds: q.planId ? [q.planId] : [] },
+        payload: { kind: 'question', question: q },
         raisedBy: handle.id,
       })
-      for (const tid of intent.question.taskIds) {
+      for (const tid of q.taskIds) {
         await this.planStore.updateTask(tid, {
-          state: 'awaiting_human', pendingQuestionId: qid,
+          state: 'awaiting_human', pendingInboxItemId: id,
         })
       }
       break
+    }
   }
 }
 ```
@@ -662,13 +762,13 @@ Path is open: daemon-mode agents could loop on `next()` themselves, making the o
 
 ---
 
-## 10. Meta-loop: questions → retros → harness fixes
+## 10. Meta-loop: inbox → retros → harness fixes
 
 ```
-mars build (feature work)  ──raises──▶  Questions
-mars retro                 ──creates──▶ Beads plans/tasks  (Plan.origin = 'retro')
+mars build (feature work)  ──raises──▶  Inbox items (questions, actions)
+mars retro                 ──creates──▶ Inbox decisions + (with --apply) beads plans/tasks
 mars build (harness work)  ──fixes────▶ root causes
-                           ──reduces──▶ Question rate
+                           ──reduces──▶ Defect rate
 ```
 
 The harness's improvement backlog **is** a plan in PlanStore. Dogfooding by construction.
@@ -681,20 +781,20 @@ mars retro --apply      — also create plans/tasks via PlanStore (beads)
 mars retro --since 7d   — bound the analysis window
 ```
 
-It clusters answered/dismissed questions by `kind` + `rootCause`, synthesizes one suggestion per cluster, and (with `--apply`) creates a plan whose tasks land in `to_refine` with `sourceQuestionIds[]` populated.
+It clusters resolved/dismissed `question`-kind inbox items by `questionKind` + `rootCause`, synthesizes one suggestion per cluster. In dry-run it adds a `decision`-kind inbox item per cluster (priority `normal`, options: `promote` / `dismiss` / `defer`). With `--apply` it also creates a plan whose tasks land in `to_refine` with `sourceInboxItemIds[]` populated.
 
 ### 10.2 `mars audit` behavior
 
-Reports a split metric:
+Reports a split metric over inbox items:
 
 ```
-questions/run (defects):   2.3   ⚠ target: 0
+items/run (defects):   2.3   ⚠ target: 0
   refine_plan, unblock_task, resolve_conflict
-questions/run (gates):     0.5   — informational
+items/run (gates):     0.5   — informational
   approve_checkpoint
 ```
 
-Plus token spend, success rates, and impact tracking ("did fixing harness-task X reduce questions of kind Y?").
+Plus token spend, success rates, and impact tracking ("did fixing harness-task X reduce items of kind Y?").
 
 ---
 
@@ -711,10 +811,13 @@ Plus token spend, success rates, and impact tracking ("did fixing harness-task X
 | `mars plans [--origin user|retro]` | List plans. |
 | `mars next [--peek]` | Show next ready task (peek = no claim). |
 | `mars agents [attach <id>]` | List/attach to live tmux sessions. |
-| `mars ask` | List open questions. |
-| `mars ask <qid>` | Show one question with full context. |
-| `mars answer <qid> "<text>"` | Answer + auto-resume the parked task(s). |
-| `mars dismiss <qid> --reason "<text>"` | Abandon question; tasks → `to_refine`. |
+| `mars inbox [--blockers \| --all]` | List open inbox items, sorted by priority. |
+| `mars inbox <id>` | Show one inbox item with full context. |
+| `mars inbox add ...` | Manually add an inbox item (rare; mostly for testing). |
+| `mars answer <id> "<text>"` | Resolve a `question` item; auto-resume parked task(s). |
+| `mars resolve <id> "<note>"` | Resolve an `action` item (user has done the thing). |
+| `mars decide <id> <option-id>` | Resolve a `decision` item. |
+| `mars dismiss <id> --reason "<text>"` | Dismiss any item; parked tasks → `to_refine`. |
 | `mars qa list` | Show configured QA checkpoint rules. |
 | `mars qa test <task-or-build>` | Dry-run QA rules; show which would fire. |
 
@@ -733,8 +836,8 @@ export default {
   // PlanStore
   planStore: { kind: 'beads' },                  // future: 'fs-markdown'
 
-  // HumanQueue
-  humanQueue: { kind: 'fs-jsonl', path: '.mars/questions.jsonl' },
+  // HumanInbox
+  humanInbox: { kind: 'fs-jsonl', path: '.mars/inbox.jsonl' },
 
   // VCS
   vcs: { kind: 'git' },
@@ -777,7 +880,7 @@ export default {
       intent.json                         ← agent output (one per spawn)
       stdout.log
     worktrees/<handleId>/                 ← per-agent git worktrees
-    questions.jsonl                       ← HumanQueue (fs-jsonl backend)
+    inbox.jsonl                           ← HumanInbox (fs-jsonl backend)
     retros/<date>.md                      ← `mars retro` reports
   .beads/                                 ← PlanStore (beads backend)
 ```
@@ -798,6 +901,8 @@ Every decision in this document was deliberately locked in conversation. Where a
 | Per-agent isolation | git worktree | Real concurrency safety without an in-process locking protocol. |
 | Task states | 4 (no `needs_framework`, no `needs_rework`) | Harness-gap signals surface as `Question` → `mars retro`; reviewer rejection reuses `to_refine` + history. |
 | Question category | `defect \| gate` | Prevents perverse incentive to remove QA gates to look better in audit. |
+| Human-in-the-loop surface | Single `HumanInbox` (questions, actions, decisions) with computed priority | One place to look — "what does mars need from me?" has one answer. Fragmenting across "open questions / halted runs / pending retros" would erode the autonomy story. |
+| Planner output format | `mars-canonical` only | Lean (no normalizer); forces prompt quality; preserves parallelism (no accidental linear-deps collapse). |
 | QA checkpoints | Declarative rules in config, evaluated by orchestrator | Predictable, auditable, lean, token-frugal (no LLM call). |
 | `mars retro` | Creates beads plans/tasks | Harness improves itself using its own machinery. |
 | Intent transport | File at `.mars/runs/<id>/intent.json` | Stdout is for humans; intent is structured. |
