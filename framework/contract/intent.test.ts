@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { IntentSchema } from './intent.ts';
 
-const validPlanId = 'a1b2c3d4-mvp-bootstrap';
+const validFeatureId = 'a1b2c3d4-mvp-bootstrap';
 const validTaskId = '7f3a91c2-add-oauth-callback';
 const baseTimestamp = '2026-04-27T22:00:00.000Z';
 
@@ -37,12 +37,12 @@ describe('IntentSchema', () => {
     ).not.toThrow();
   });
 
-  it('accepts a plan intent', () => {
+  it('accepts a feature intent', () => {
     expect(() =>
       IntentSchema.parse({
-        kind: 'plan',
-        plan: {
-          id: validPlanId,
+        kind: 'feature',
+        feature: {
+          id: validFeatureId,
           goal: 'g',
           status: 'ready',
           origin: 'user',

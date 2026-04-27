@@ -7,7 +7,7 @@
 
 A **modular, lean, future-proof AI coding agent team** behind a **single TypeScript CLI**. Agents are **declarative**: they describe *what* they want done, never *how* it's persisted, tracked, or versioned. The CLI's adapter layer handles the "how" and is swappable.
 
-**Success:** ask Claude for a new feature → a plan is generated → implementation runs → review runs → done. Fully autonomous from a proper plan, no human in the loop after kickoff.
+**Success:** ask Claude for a new feature → the feature is planned → implementation runs → review runs → done. Fully autonomous from a properly refined feature, no human in the loop after kickoff.
 
 ## Locked Decisions
 
@@ -20,7 +20,7 @@ A **modular, lean, future-proof AI coding agent team** behind a **single TypeScr
 | State | Stateless — persistence lives in adapters, not agents |
 | Agent posture | **Declarative** — agents emit intent, never call storage/VCS directly |
 | VCS | Wrapped behind an adapter (agents don't `git commit`; they declare "checkpoint this") |
-| Plan storage | Wrapped behind an adapter (beads, filesystem, future trackers — agent doesn't care) |
+| Feature storage | Wrapped behind an adapter (beads, filesystem, future trackers — agent doesn't care) |
 | Compiler | Built-in `.md` link/reference validator |
 | Observability | Event stream (`runs/<ts>/events.jsonl`) — single source of truth |
 | Interface | Local web dashboard via `mars ui` (Hono + Vite + React + React Flow) |
@@ -38,19 +38,19 @@ A **modular, lean, future-proof AI coding agent team** behind a **single TypeScr
 ## Core Principles
 
 1. **Stable interface, swappable internals.** The CLI is the contract. Underneath, everything is an adapter.
-2. **Declarative agents.** Agents return structured intent (plan items, file edits, review verdicts). Adapters carry it out. An agent never knows whether its plan landed in beads, a markdown file, or a future system.
-3. **Plans are first-class artifacts.** Whatever the storage backend, the *plan* has a stable shape: goal, tasks, dependencies, acceptance criteria.
-4. **Markdown compiler.** `.md` links resolve, plans match a schema, references point to real files. Broken plan = build halts.
+2. **Declarative agents.** Agents return structured intent (feature definitions, file edits, review verdicts). Adapters carry it out. An agent never knows whether its feature landed in beads, a markdown file, or a future system.
+3. **Features are first-class artifacts.** Whatever the storage backend, the *feature* has a stable shape: goal, tasks, dependencies, acceptance criteria.
+4. **Markdown compiler.** `.md` links resolve, features match a schema, references point to real files. Broken feature = build halts.
 5. **Lean by default.** Add abstraction only when a second real implementation forces it. No speculative interfaces.
 6. **Token-frugal.** Watchdog on cost per run. Prompts are tight. Context is curated, not dumped.
-7. **Future-proof through boundaries.** Provider, VCS, plan-store, and tool layers are isolated. Swapping any one is mechanical.
+7. **Future-proof through boundaries.** Provider, VCS, feature-store, and tool layers are isolated. Swapping any one is mechanical.
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────────┐
 │  CLI (TypeScript)                                │  ← stable surface
-│  mars plan | build | review | check | audit      │
+│  mars feature | build | review | check | audit   │
 ├──────────────────────────────────────────────────┤
 │  Orchestrator                                    │  ← runs planner → builder → reviewer
 ├──────────────────────────────────────────────────┤
@@ -72,7 +72,7 @@ Agents return typed intent. Example:
 
 ```ts
 // Planner returns:
-type Plan = {
+type Feature = {
   goal: string
   tasks: Task[]                // each with id, title, deps, acceptance
 }
@@ -91,14 +91,16 @@ type Review = {
 }
 ```
 
-The Plan goes to whatever PlanStore is configured (beads, fs, future). The edits go through the FS adapter. The checkpoint hint goes through the VCS adapter. Agent code never imports `git` or `bd`.
+The Feature goes to whatever PlanStore is configured (beads, fs, future). The edits go through the FS adapter. The checkpoint hint goes through the VCS adapter. Agent code never imports `git` or `bd`.
 
 ## Command Surface (v0 target)
 
-- `mars plan "<goal>"` — planner agent emits a Plan; PlanStore persists it.
+- `mars feature plan "<goal>"` — register a draft feature; persists `features/<id>.md`.
+- `mars feature refine <id>` — planner agent expands a draft into tasks; emits a `Feature`; PlanStore persists it.
+- `mars feature start <id>` — kick off the build loop for a refined feature.
 - `mars build` — orchestrator picks ready tasks, builder executes, reviewer gates, loop until done.
 - `mars review` — standalone review pass.
-- `mars check` — markdown compiler: link integrity, plan schema, reference graph.
+- `mars check` — markdown compiler: link integrity, feature schema, reference graph.
 - `mars audit` — harness/cost/health audit.
 - `mars ui` — boot the local dashboard (foreground; Ctrl-C stops). Opens browser to `localhost:7777`.
 
@@ -138,7 +140,7 @@ import { defineFlow } from 'mars'
 
 export default defineFlow({
   agents: {
-    planner:  { in: 'Goal',        out: 'Plan' },
+    planner:  { in: 'Goal',        out: 'Feature' },
     builder:  { in: 'Task',        out: 'BuildResult' },
     reviewer: { in: 'BuildResult', out: 'Review' },
   },
@@ -187,7 +189,8 @@ Live runs stream via SSE; past runs render from disk. Same component, same data 
 ```
 ask Claude: "add feature X"
    ↓
-mars plan "X"            → PlanStore (beads/fs/…)
+mars feature plan "X"     → features/<id>.md (draft)
+mars feature refine <id>  → planner expands; PlanStore (beads/fs/…)
    ↓
 mars build               → loops:
                             • read next ready task
@@ -195,7 +198,7 @@ mars build               → loops:
                             • reviewer gates
                             • adapter checkpoints
                             • mark task done
-   ↓                       until plan exhausted or halt
+   ↓                       until feature exhausted or halt
 mars check               → compiler verifies artifact integrity
 ```
 
@@ -203,7 +206,7 @@ mars check               → compiler verifies artifact integrity
 
 These are smaller — they shape v0 implementation, not direction.
 
-1. **Plan shape.** Beads-native (issues + deps) or markdown-native (`PLAN.md` with task list) as the *canonical* form, with adapters translating? My recommendation: **markdown-canonical** — easiest to read, version, diff; PlanStore adapter syncs it to beads if configured.
+1. **Feature shape.** Beads-native (issues + deps) or markdown-native (`features/<id>.md` with task list) as the *canonical* form, with adapters translating? My recommendation: **markdown-canonical** — easiest to read, version, diff; PlanStore adapter syncs it to beads if configured.
 2. **Failure handling.** When a builder step fails: retry once, replan, or halt-and-flag? My recommendation: **halt-and-flag** by default; retry only on adapter-level transient errors.
 3. **Config file.** `mars.config.ts` per-repo (TS for type safety on adapter wiring). Global config deferred.
 4. **Token budget.** Per-run hard cap (e.g. `MARS_MAX_TOKENS=200000`). Exceeded = halt with summary.

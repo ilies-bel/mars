@@ -62,7 +62,7 @@ describe('validateAgentTemplate — rules 2-7 fixtures', () => {
     const errors = only('error', findings);
     const messages = errors.map((f) => f.message).join('\n');
     expect(messages).toContain("inputs 'Goal'");
-    expect(messages).toContain("outputs 'Plan'");
+    expect(messages).toContain("outputs 'Feature'");
     expect(messages).toContain('§15.3 rule 4');
   });
 
