@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Mars Framework installer.
-# Usage: curl -fsSL https://raw.githubusercontent.com/ilies-bel/mars-framework/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/ilies-bel/mars/main/install.sh | bash
 set -euo pipefail
 
-REPO_URL="https://github.com/ilies-bel/mars-framework.git"
+REPO_URL="https://github.com/ilies-bel/mars.git"
 INSTALL_DIR="${MARS_HOME:-$HOME/.mars}"
 BIN_DIR="${MARS_BIN_DIR:-$HOME/.local/bin}"
 BRANCH="${MARS_BRANCH:-main}"
