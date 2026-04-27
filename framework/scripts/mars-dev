@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Dev shim for the `mars` CLI. Runs `cli/main.ts` directly via Bun so any
+# source edit is picked up on the next invocation — no build step.
+#
+# Install once with:   framework/scripts/install-dev.sh
+# Then `mars <args>` resolves to this script.
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -- "$(dirname -- "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -- "$(dirname -- "$SOURCE")" >/dev/null 2>&1 && pwd)"
+FRAMEWORK_DIR="$(cd -- "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
+
+if ! command -v bun >/dev/null 2>&1; then
+  printf '\033[1;31m[mars]\033[0m bun is required but not on PATH\n' >&2
+  exit 1
+fi
+
+cd "$FRAMEWORK_DIR"
+exec bun cli/main.ts "$@"

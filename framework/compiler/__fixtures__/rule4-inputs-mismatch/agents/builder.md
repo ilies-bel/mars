@@ -1,7 +1,7 @@
 ---
 role: builder
 inputs: Goal
-outputs: Plan
+outputs: Feature
 tools: []
 ---
 

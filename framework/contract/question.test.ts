@@ -4,10 +4,10 @@ import { QuestionSchema } from './question.ts';
 const validTaskId = '7f3a91c2-add-oauth-callback';
 
 describe('QuestionSchema', () => {
-  it('accepts a minimal refine_plan question', () => {
+  it('accepts a minimal refine_feature question', () => {
     expect(() =>
       QuestionSchema.parse({
-        questionKind: 'refine_plan',
+        questionKind: 'refine_feature',
         taskIds: [validTaskId],
         prompt: 'Which auth provider should we use?',
       }),
@@ -38,7 +38,7 @@ describe('QuestionSchema', () => {
 
   it('rejects an empty prompt', () => {
     expect(() =>
-      QuestionSchema.parse({ questionKind: 'refine_plan', taskIds: [validTaskId], prompt: '' }),
+      QuestionSchema.parse({ questionKind: 'refine_feature', taskIds: [validTaskId], prompt: '' }),
     ).toThrow();
   });
 });

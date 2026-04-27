@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'bun:test';
-import { PlanSchema, PlanWithTasksSchema } from './plan.ts';
+import { FeatureSchema, FeatureWithTasksSchema } from './feature.ts';
 
-const validPlanId = 'a1b2c3d4-mvp-bootstrap';
+const validFeatureId = 'a1b2c3d4-mvp-bootstrap';
 const validTaskId = '7f3a91c2-add-oauth-callback';
 const baseTimestamp = '2026-04-27T22:00:00.000Z';
 
-const validPlan = {
-  id: validPlanId,
+const validFeature = {
+  id: validFeatureId,
   goal: 'Bootstrap Mars MVP',
   status: 'ready' as const,
   origin: 'user' as const,
@@ -16,29 +16,29 @@ const validPlan = {
   updatedAt: baseTimestamp,
 };
 
-describe('PlanSchema', () => {
-  it('accepts a minimal valid plan', () => {
-    expect(() => PlanSchema.parse(validPlan)).not.toThrow();
+describe('FeatureSchema', () => {
+  it('accepts a minimal valid feature', () => {
+    expect(() => FeatureSchema.parse(validFeature)).not.toThrow();
   });
 
   it('rejects a negative taskCount', () => {
-    expect(() => PlanSchema.parse({ ...validPlan, taskCount: -1 })).toThrow();
+    expect(() => FeatureSchema.parse({ ...validFeature, taskCount: -1 })).toThrow();
   });
 
   it('rejects an unknown status', () => {
-    expect(() => PlanSchema.parse({ ...validPlan, status: 'pending' })).toThrow();
+    expect(() => FeatureSchema.parse({ ...validFeature, status: 'pending' })).toThrow();
   });
 });
 
-describe('PlanWithTasksSchema', () => {
-  it('accepts a plan with one valid task', () => {
+describe('FeatureWithTasksSchema', () => {
+  it('accepts a feature with one valid task', () => {
     expect(() =>
-      PlanWithTasksSchema.parse({
-        ...validPlan,
+      FeatureWithTasksSchema.parse({
+        ...validFeature,
         tasks: [
           {
             id: validTaskId,
-            planId: validPlanId,
+            featureId: validFeatureId,
             title: 'Add OAuth callback',
             deps: [],
             acceptance: ['returns 302'],
@@ -49,9 +49,9 @@ describe('PlanWithTasksSchema', () => {
     ).not.toThrow();
   });
 
-  it('rejects a plan whose tasks array contains a non-task object', () => {
+  it('rejects a feature whose tasks array contains a non-task object', () => {
     expect(() =>
-      PlanWithTasksSchema.parse({ ...validPlan, tasks: [{ id: validTaskId }] }),
+      FeatureWithTasksSchema.parse({ ...validFeature, tasks: [{ id: validTaskId }] }),
     ).toThrow();
   });
 });

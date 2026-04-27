@@ -10,7 +10,7 @@ export type AgentRole = 'planner' | 'builder' | 'reviewer';
 export const AGENT_ROLES: readonly AgentRole[] = ['planner', 'builder', 'reviewer'] as const;
 
 export const ROLE_CONTRACT: Readonly<Record<AgentRole, { inputs: string; outputs: string }>> = {
-  planner: { inputs: 'Goal', outputs: 'Plan' },
+  planner: { inputs: 'Goal', outputs: 'Feature' },
   builder: { inputs: 'Task', outputs: 'BuildResult' },
   reviewer: { inputs: 'BuildResult', outputs: 'Review' },
 };

@@ -35,7 +35,7 @@ An **intent** is a typed, structured value an agent returns to declare what it w
 
 ```ts
 type AgentIntent =
-  | { kind: 'plan';     plan: Plan }
+  | { kind: 'feature';  feature: Feature }
   | { kind: 'build';    result: BuildResult }
   | { kind: 'review';   review: Review }
   | { kind: 'question'; question: Question }
@@ -52,7 +52,7 @@ type AgentIntent =
 **An agent never:**
 - writes files (returns `BuildResult.edits`; FS adapter writes)
 - calls `git` (returns `BuildResult.checkpointHint`; VCS adapter commits)
-- calls `bd` (returns a `Plan` or task update; PlanStore adapter persists)
+- calls `bd` (returns a `Feature` or task update; PlanStore adapter persists)
 - prompts the user (returns a `Question` payload; HumanInbox parks/asks)
 
 The `question`-kind intent only carries `Question`-style payloads. `action` and `decision` inbox items originate from the orchestrator and `mars retro`, not from agent intents — agents ask, the system instructs.
@@ -105,7 +105,7 @@ Reviewer rejections reuse `to_refine` rather than introducing a `needs_rework` s
 ```ts
 type Task = {
   id: TaskId
-  planId: PlanId
+  featureId: FeatureId
   title: string
   deps: TaskId[]                    // declared at plan time
   acceptance: string[]
@@ -195,16 +195,16 @@ Additional types are added by appending to this section — no code changes requ
 
 ---
 
-## 4. Plans
+## 4. Features
 
 ```ts
-type PlanId = string  // same scheme as TaskId
-type PlanStatus = 'draft' | 'ready' | 'in_progress' | 'done' | 'failed' | 'halted'
+type FeatureId = string  // same scheme as TaskId
+type FeatureStatus = 'draft' | 'ready' | 'in_progress' | 'done' | 'failed' | 'halted'
 
-type Plan = {
-  id: PlanId
+type Feature = {
+  id: FeatureId
   goal: string
-  status: PlanStatus
+  status: FeatureStatus
   origin: 'user' | 'retro'          // 'retro' = spawned by `mars retro`
   taskCount: number
   readyTaskCount: number            // computed: tasks ready AND deps satisfied AND unclaimed
@@ -213,7 +213,7 @@ type Plan = {
 }
 ```
 
-**Canonical form.** Markdown-canonical (`PLAN.md`-style files). PlanStore adapters sync to/from beads if configured.
+**Canonical form.** Markdown-canonical (`features/<feature-id>.md` files). PlanStore adapters sync to/from beads if configured.
 
 ---
 
@@ -286,7 +286,7 @@ type RootCause =
   | 'missing_context'
   | 'ambiguous_prompt'
   | 'weak_adapter'
-  | 'plan_underspecified'
+  | 'feature_underspecified'
   | 'genuine_human_judgment'
   | 'context_bloat'                  // PreCompact fired — orchestrator carried too much state. See §16.5.
 
@@ -302,7 +302,7 @@ type InboxItem = {
     files?: string[]
     excerpts?: { path: string; lines: string }[]
     agentNotes?: string
-    relatedPlanIds?: PlanId[]
+    relatedFeatureIds?: FeatureId[]
     relatedTaskIds?: TaskId[]
   }
 
@@ -333,7 +333,7 @@ type InboxItem = {
 
 ```ts
 type QuestionKind =
-  | 'refine_plan'         // planner needs scope/strategy decision
+  | 'refine_feature'      // planner needs scope/strategy decision
   | 'unblock_task'        // builder can't proceed; needs human input
   | 'resolve_conflict'    // VCS conflict that can't auto-merge
   | 'approve_checkpoint'  // QA gate fired; needs sign-off (always category 'gate')
@@ -341,7 +341,7 @@ type QuestionKind =
 type Question = {
   questionKind: QuestionKind
   taskIds: TaskId[]                 // one question can block multiple tasks
-  planId?: PlanId
+  featureId?: FeatureId
   prompt: string
   options?: string[]                // free-text choice list
   answer?: string
@@ -374,7 +374,7 @@ type Question = {
 
 - `mars answer <id> "<text>"` — resolves a `question` item; orchestrator sweeps referenced tasks back to `ready_for_execution`.
 - `mars resolve <id> "<note>"` — resolves an `action` item; user has done the thing.
-- `mars decide <id> <option-id>` — resolves a `decision` item; orchestrator may run a follow-up (e.g. `promote` on a retro decision creates a plan).
+- `mars decide <id> <option-id>` — resolves a `decision` item; orchestrator may run a follow-up (e.g. `promote` on a retro decision creates a feature).
 - `mars dismiss <id> --reason "<text>"` — dismisses any kind. Reason required. Surfaces in `mars retro` as the strongest signal: the system asked, the human said "you shouldn't have."
 
 Tasks parked on a dismissed item return to `to_refine` with a `human_dismiss` history entry.
@@ -411,7 +411,7 @@ type QACheckpointRule = {
   when:
     | { kind: 'paths';       patterns: string[] }            // glob match on edited paths
     | { kind: 'taskTag';     tag: string }                   // task carries this tag
-    | { kind: 'planOrigin';  origin: 'user' | 'retro' }      // e.g. always gate retro plans
+    | { kind: 'featureOrigin'; origin: 'user' | 'retro' }    // e.g. always gate retro features
     | { kind: 'always' }
   prompt: string
 }
@@ -426,7 +426,7 @@ qa: {
       when: { kind: 'paths', patterns: ['**/migrations/**', '**/*.sql'] },
       prompt: 'Schema migration in this checkpoint — review and approve?' },
     { name: 'harness-changes',
-      when: { kind: 'planOrigin', origin: 'retro' },
+      when: { kind: 'featureOrigin', origin: 'retro' },
       prompt: 'Harness change from retro — approve before checkpoint?' },
   ]
 }
@@ -480,14 +480,14 @@ v0: Claude. Boundaries are drawn for future providers; not built. If a future pr
 
 ```ts
 type ReadyQuery = {
-  planId?: PlanId
+  featureId?: FeatureId
   excludeClaimed?: boolean        // default true
 }
 
-type PlanQuery = {
-  status?: PlanStatus | PlanStatus[]
+type FeatureQuery = {
+  status?: FeatureStatus | FeatureStatus[]
   hasReadyTasks?: boolean
-  origin?: Plan['origin']
+  origin?: Feature['origin']
   goalContains?: string
   limit?: number
 }
@@ -496,12 +496,12 @@ interface PlanStore {
   // Read-side
   next(query: ReadyQuery, claimAs?: string): Promise<Task | null>  // atomic claim
   peek(query: ReadyQuery): Promise<Task | null>                    // no claim
-  searchPlans(query: PlanQuery): Promise<Plan[]>
-  getPlan(id: PlanId): Promise<Plan & { tasks: Task[] }>
+  searchFeatures(query: FeatureQuery): Promise<Feature[]>
+  getFeature(id: FeatureId): Promise<Feature & { tasks: Task[] }>
   getTask(id: TaskId): Promise<Task>
 
   // Write-side (orchestrator only)
-  savePlan(plan: Plan & { tasks: Task[] }): Promise<void>
+  saveFeature(feature: Feature & { tasks: Task[] }): Promise<void>
   updateTask(id: TaskId, patch: Partial<Task>): Promise<void>
   releaseClaim(id: TaskId): Promise<void>
 }
@@ -599,8 +599,8 @@ interface Compiler {
 ```
 
 v0 checks (errors halt `mars build`):
-- Markdown link integrity across `VISION.md`, `docs/**`, `agents/**`, `PLAN.md`-style files.
-- Plan schema validation.
+- Markdown link integrity across `VISION.md`, `docs/**`, `agents/**`, `features/**`.
+- Feature schema validation.
 - **Agent template validation** — see §15. Every `agents/<role>.md` must parse, contain all required sections, declare inputs/outputs matching the Intent contract, and reference only tools that exist in the `ToolRegistry` and sit in the role's allowlist.
 
 ### 8.7 Runner
@@ -734,7 +734,7 @@ v0 implementation: in-process registry; UDS sidecar; `rtk` shipped as an externa
 
 ```ts
 type MarsDoneInput =
-  | { kind: 'plan';     plan: Plan }
+  | { kind: 'feature';  feature: Feature }
   | { kind: 'build';    result: BuildResult }
   | { kind: 'review';   review: Review }
   | { kind: 'question'; question: Question }
@@ -744,7 +744,7 @@ type MarsDoneOutput = { ok: true; intentPath: string }
 
 `MarsDoneInput` is structurally identical to `AgentIntent` (§2). The sidecar:
 
-1. Validates the payload against the role's expected intent kind (`planner` → `plan`, `builder` → `build`, `reviewer` → `review`; any role may emit `question`).
+1. Validates the payload against the role's expected intent kind (`planner` → `feature`, `builder` → `build`, `reviewer` → `review`; any role may emit `question`).
 2. Writes `.mars/runs/<handleId>/intent.json` atomically (write to `intent.json.tmp` + `rename`).
 3. Returns `{ ok: true, intentPath }` to the agent.
 4. Closes the tool socket and signals the runtime to terminate the agent process. The agent's job ends with that return value; any further tool calls would fail with `socket_closed`.
@@ -770,7 +770,7 @@ class Orchestrator {
   constructor(private adapters: { runner; planStore; humanInbox; fs; vcs; compiler })
 
   async run(opts: {
-    planId?: PlanId
+    featureId?: FeatureId
     budget: number                  // total token cap for the run
     maxParallelAgents: number       // default 3
     maxParallelPlanners: number     // default 1
@@ -782,7 +782,7 @@ class Orchestrator {
       // 1. Spawn while there's room and ready work
       while (this.canSpawnMore(live, opts) && budget.canAffordAgent()) {
         const task = await this.adapters.planStore.next(
-          { planId: opts.planId },
+          { featureId: opts.featureId },
           claimAs(this.id),
         )
         if (!task) break
@@ -823,8 +823,8 @@ A single shared pool, decremented as agents report `tokensUsed`. New spawns are 
 ```ts
 async applyIntent(intent: AgentIntent, handle: AgentHandle) {
   switch (intent.kind) {
-    case 'plan':
-      await this.planStore.savePlan(intent.plan)
+    case 'feature':
+      await this.planStore.saveFeature(intent.feature)
       break
 
     case 'build': {
@@ -904,7 +904,7 @@ async applyIntent(intent: AgentIntent, handle: AgentHandle) {
         category: q.questionKind === 'approve_checkpoint' ? 'gate' : 'defect',
         title: q.prompt.slice(0, 80),
         body: q.prompt,
-        context: { relatedTaskIds: q.taskIds, relatedPlanIds: q.planId ? [q.planId] : [] },
+        context: { relatedTaskIds: q.taskIds, relatedFeatureIds: q.featureId ? [q.featureId] : [] },
         payload: { kind: 'question', question: q },
         raisedBy: handle.id,
       })
@@ -935,22 +935,22 @@ Path is open: daemon-mode agents could loop on `next()` themselves, making the o
 
 ```
 mars build (feature work)  ──raises──▶  Inbox items (questions, actions)
-mars retro                 ──creates──▶ Inbox decisions + (with --apply) beads plans/tasks
+mars retro                 ──creates──▶ Inbox decisions + (with --apply) beads features/tasks
 mars build (harness work)  ──fixes────▶ root causes
                            ──reduces──▶ Defect rate
 ```
 
-The harness's improvement backlog **is** a plan in PlanStore. Dogfooding by construction.
+The harness's improvement backlog **is** a feature in PlanStore. Dogfooding by construction.
 
 ### 10.1 `mars retro` behavior
 
 ```
 mars retro              — dry run; print suggestions, write .mars/retros/<date>.md
-mars retro --apply      — also create plans/tasks via PlanStore (beads)
+mars retro --apply      — also create features/tasks via PlanStore (beads)
 mars retro --since 7d   — bound the analysis window
 ```
 
-It clusters resolved/dismissed `question`-kind inbox items by `questionKind` + `rootCause`, synthesizes one suggestion per cluster. In dry-run it adds a `decision`-kind inbox item per cluster (priority `normal`, options: `promote` / `dismiss` / `defer`). With `--apply` it also creates a plan whose tasks land in `to_refine` with `sourceInboxItemIds[]` populated.
+It clusters resolved/dismissed `question`-kind inbox items by `questionKind` + `rootCause`, synthesizes one suggestion per cluster. In dry-run it adds a `decision`-kind inbox item per cluster (priority `normal`, options: `promote` / `dismiss` / `defer`). With `--apply` it also creates a feature whose tasks land in `to_refine` with `sourceInboxItemIds[]` populated.
 
 ### 10.2 `mars audit` behavior
 
@@ -958,13 +958,13 @@ Reports a split metric over inbox items, plus the dimensions defined in §11.4:
 
 ```
 items/run (defects):   2.3   ⚠ target: 0
-  by questionKind:  refine_plan 1.4  unblock_task 0.6  resolve_conflict 0.3
+  by questionKind:  refine_feature 1.4  unblock_task 0.6  resolve_conflict 0.3
   by rootCause:     ambiguous_prompt 1.1  weak_adapter 0.7  missing_context 0.5
 items/run (gates):     0.5   — informational
   approve_checkpoint
 budget:                exhausted 0/12 runs   p95 spend 142k / 200k cap
 parked-task age:       p50 4.2h   p95 38h
-defect-rate trend:     -28% vs prior 7d (refine_plan ↓0.6, unblock_task ↓0.2)
+defect-rate trend:     -28% vs prior 7d (refine_feature ↓0.6, unblock_task ↓0.2)
 ```
 
 The defect/gate split is non-negotiable: the `category` field exists precisely so the metric cannot be gamed by removing QA gates (§6.1). `mars audit` MUST report them on separate lines.
@@ -1003,7 +1003,7 @@ type Event = {
   emitter: 'orchestrator' | 'agent' | 'provider' | 'mars-internal'
   emitterId?: string      // agent handleId when emitter = 'agent'
   taskId?: TaskId         // when applicable; pulled from payload at write time
-  planId?: PlanId         // when applicable
+  featureId?: FeatureId   // when applicable
   payload: unknown        // per-event schema, validated at the tool boundary (§16.4)
   durationMs?: number     // for paired start/end events
   error?: { message: string; stack?: string }
@@ -1049,7 +1049,7 @@ type RunMetric = {
 type DimensionRollup = {
   runId: string
   dimension: 'agent' | 'role' | 'questionKind' | 'rootCause' | 'taskTag'
-  key: string                   // e.g. 'builder' or 'refine_plan'
+  key: string                   // e.g. 'builder' or 'refine_feature'
   tokensUsed: number
   count: number                 // events / items / tasks (kind-specific)
   successRate?: number          // tasks done / tasks attempted, where applicable
@@ -1161,14 +1161,15 @@ Everything else in overstory's observability surface is either out-of-scope (§1
 
 | Command | Purpose |
 |---|---|
-| `mars plan new <goal...>` | Register an idea as a `draft` plan. **Does not run the planner.** Persists `plans/<plan-id>.md` with front-matter. |
-| `mars plan refine <plan-id>` | Run the planner on a draft plan; emits tasks; status → `ready`. |
+| `mars feature plan <goal...>` | Register an idea as a `draft` feature. **Does not run the planner.** Persists `features/<feature-id>.md` with front-matter. |
+| `mars feature refine <feature-id>` | Run the planner on a draft feature; emits tasks; status → `ready`. |
+| `mars feature start <feature-id>` | Kick off the build loop for a refined feature. |
 | `mars build` | Orchestrator loop. |
 | `mars review` | Standalone review pass over uncommitted edits. |
-| `mars check` | Markdown compiler: link integrity, plan schema, reference graph. |
+| `mars check` | Markdown compiler: link integrity, feature schema, reference graph. |
 | `mars audit` | Harness/cost/health + question rates (defect/gate split). |
-| `mars retro [--apply] [--since 7d]` | Cluster questions; create harness-fix plans. |
-| `mars plans [--origin user|retro]` | List plans. |
+| `mars retro [--apply] [--since 7d]` | Cluster questions; create harness-fix features. |
+| `mars features [--origin user|retro]` | List features. |
 | `mars next [--peek]` | Show next ready task (peek = no claim). |
 | `mars agents [attach <id>]` | List/attach to live tmux sessions. |
 | `mars inbox [--blockers \| --all]` | List open inbox items, sorted by priority. |
@@ -1222,7 +1223,7 @@ export default {
     subscribers: [
       { name: 'sqlite-mirror',
         command: './scripts/mirror.sh',
-        events: ['task.done', 'review.*', 'plan.completed'] },
+        events: ['task.done', 'review.*', 'feature.completed'] },
       { name: 'slack-notify',
         command: 'node ./scripts/slack.js',
         events: ['budget.exhausted', 'session.pre_compact', 'inbox.item_added'] },
@@ -1243,7 +1244,7 @@ export default {
         when: { kind: 'paths', patterns: ['**/migrations/**', '**/*.sql'] },
         prompt: 'Schema migration in this checkpoint — review and approve?' },
       { name: 'harness-changes',
-        when: { kind: 'planOrigin', origin: 'retro' },
+        when: { kind: 'featureOrigin', origin: 'retro' },
         prompt: 'Harness change from retro — approve before checkpoint?' },
     ],
   },
@@ -1307,7 +1308,7 @@ There is no per-instance code per role. Adding or modifying an agent = editing m
 ---
 role: planner | builder | reviewer       # required, must be unique across agents/
 inputs: Goal | Task | BuildResult        # required, must match the Intent contract for role
-outputs: Plan | BuildResult | Review     # required, must match the Intent contract for role
+outputs: Feature | BuildResult | Review  # required, must match the Intent contract for role
 tools: [<toolName>, ...]                 # required (may be empty); names resolved against ToolRegistry
 ---
 
@@ -1330,7 +1331,7 @@ tools: [<toolName>, ...]                 # required (may be empty); names resolv
 
 | role       | inputs        | outputs        |
 |------------|---------------|----------------|
-| `planner`  | `Goal`        | `Plan`         |
+| `planner`  | `Goal`        | `Feature`      |
 | `builder`  | `Task`        | `BuildResult`  |
 | `reviewer` | `BuildResult` | `Review`       |
 
@@ -1366,7 +1367,7 @@ The loader never branches on role. Role-specific behavior lives entirely in the 
 ### 15.5 Editing surface
 
 - **Human edits.** Direct file edits to `agents/<role>.md`. `mars check` validates.
-- **`mars retro` edits.** When a retro produces a harness-improvement plan, builder tasks may emit `BuildResult.edits` against `agents/*.md`. The QA gate `harness-changes` (§7.2) fires by default for retro-origin plans, so a human approves before checkpoint.
+- **`mars retro` edits.** When a retro produces a harness-improvement feature, builder tasks may emit `BuildResult.edits` against `agents/*.md`. The QA gate `harness-changes` (§7.2) fires by default for retro-origin features, so a human approves before checkpoint.
 
 ### 15.6 Out of scope for v0
 
@@ -1449,8 +1450,8 @@ type HookEvent =
   // task.* — emitted by orchestrator on PlanStore mutations
   | 'task.created' | 'task.claimed' | 'task.released'
   | 'task.state_changed' | 'task.refined' | 'task.done'
-  // plan.*
-  | 'plan.created' | 'plan.completed'
+  // feature.*
+  | 'feature.created' | 'feature.completed'
   // intent.*
   | 'intent.applied'
   // review.*
@@ -1473,7 +1474,7 @@ type HookEvent =
 | `session.*` | Provider native-hook forwarders only |
 | `run.*` | Orchestrator only |
 | `agent.*` | Agents only (the agent that fires must own the `handleId` in the payload) |
-| `intent.*`, `task.*`, `plan.*`, `review.*`, `qa.*`, `vcs.*`, `budget.*`, `inbox.*`, `retro.*`, `harness.*` | Orchestrator only |
+| `intent.*`, `task.*`, `feature.*`, `review.*`, `qa.*`, `vcs.*`, `budget.*`, `inbox.*`, `retro.*`, `harness.*` | Orchestrator only |
 | `subscriber.*` | Mars internal (the bus itself) |
 
 Out-of-class emissions are rejected. This keeps the contract honest — subscribers know that `task.done` always came from the orchestrator and reflects authoritative state, not an agent's wish.
@@ -1487,7 +1488,7 @@ type HookPayload = {
   'session.start':         { runId: string; sessionId: string; ts: string }
   'session.pre_compact':   { runId: string; tokensAtFire: number; ts: string }
   'session.end':           { runId: string; ts: string }
-  'run.start':             { runId: string; planId?: PlanId; budget: number }
+  'run.start':             { runId: string; featureId?: FeatureId; budget: number }
   'run.end':               { runId: string; status: 'completed' | 'halted' | 'budget_exhausted' }
   'run.halted':            { runId: string; reason: string }
   'agent.spawned':         { handleId: string; role: AgentRole; taskId?: TaskId }
@@ -1495,7 +1496,7 @@ type HookPayload = {
   'agent.blocked':         { handleId: string; reason: string }
   'agent.intent_emitted':  { handleId: string; intentKind: AgentIntent['kind'] }
   'agent.exited':          { handleId: string; exitCode: number }
-  'task.done':             { taskId: TaskId; planId: PlanId; tokensUsed: number; durationMs: number }
+  'task.done':             { taskId: TaskId; featureId: FeatureId; tokensUsed: number; durationMs: number }
   'task.state_changed':    { taskId: TaskId; from: TaskState; to: TaskState; by: string }
   'review.failed':         { taskId: TaskId; verdict: Verdict; findings: Finding[] }
   'budget.charged':        { handleId: string; tokens: number; remaining: number }
@@ -1527,7 +1528,7 @@ Three ways to attach:
 hooks: {
   subscribers: [
     { name: 'sqlite-mirror', command: './scripts/mirror.sh',
-      events: ['task.done', 'review.*', 'plan.completed'] },
+      events: ['task.done', 'review.*', 'feature.completed'] },
     { name: 'slack-notify',  command: 'node ./scripts/slack.js',
       events: ['budget.exhausted', 'session.pre_compact', 'inbox.item_added'] },
   ],
@@ -1641,14 +1642,14 @@ Every decision in this document was deliberately locked in conversation. Where a
 | Agent pattern | One-shot subprocess per task in tmux session | Stateless ✓, lean ✓, observable ✓, token-frugal ✓. |
 | Liveness | PID check, no wall-clock timeout | No false positives on slow agents; instant recovery on crashes; no reaper infrastructure. |
 | Claim | Atomic claim-on-fetch | Race-proof by construction; `next()` is one call. |
-| Parallelism | Default on; cap 3 / planners 1 | Solo dev + Claude rate limits + edit-conflict surface; planning rarely benefits from concurrency. |
+| Parallelism | Default on; cap 3 / planners 1 | Solo dev + Claude rate limits + edit-conflict surface; refining a feature rarely benefits from concurrency. |
 | Per-agent isolation | git worktree | Real concurrency safety without an in-process locking protocol. |
 | Task states | 4 (no `needs_framework`, no `needs_rework`) | Harness-gap signals surface as `Question` → `mars retro`; reviewer rejection reuses `to_refine` + history. |
 | Question category | `defect \| gate` | Prevents perverse incentive to remove QA gates to look better in audit. |
 | Human-in-the-loop surface | Single `HumanInbox` (questions, actions, decisions) with computed priority | One place to look — "what does mars need from me?" has one answer. Fragmenting across "open questions / halted runs / pending retros" would erode the autonomy story. |
-| Planner output format | `mars-canonical` only | Lean (no normalizer); forces prompt quality; preserves parallelism (no accidental linear-deps collapse). |
+| Planner output format | `mars-canonical` only | Lean (no normalizer); forces prompt quality; preserves parallelism (no accidental linear-deps collapse). Output is a `Feature`. |
 | QA checkpoints | Declarative rules in config, evaluated by orchestrator | Predictable, auditable, lean, token-frugal (no LLM call). |
-| `mars retro` | Creates beads plans/tasks | Harness improves itself using its own machinery. |
+| `mars retro` | Creates beads features/tasks | Harness improves itself using its own machinery. |
 | Intent transport | File at `.mars/runs/<id>/intent.json` | Stdout is for humans; intent is structured. |
 | Tool injection | Sixth adapter (`ToolRegistry`); allow-only allowlist; sidecar UDS during spawn; tools don't charge token budget | Same declarative posture as every other adapter. Allow-only keeps semantics trivial. Sidecar preserves §2's one-spawn-one-intent invariant. No token charging because tool cost is wall-time, not LLM calls. |
 | Observability stores | Two SQLite WAL DBs: `events.db` (append-only) + `metrics.db` (rollups) | Different access patterns; conflating forces one schema to serve both badly. Pattern lifted from overstory's `src/events/` + `src/metrics/`. |
@@ -1660,7 +1661,7 @@ Every decision in this document was deliberately locked in conversation. Where a
 | tmux env hygiene | Unset `CLAUDECODE`, `CLAUDE_CODE_SSE_PORT`, `CLAUDE_CODE_ENTRYPOINT` before spawn | Without this the child Claude Code agent inherits the orchestrator's session identity and misbehaves silently. The gotcha you only discover by debugging — pin it. |
 | Exit detection | Poll `intent.json` mtime + `has-session` going false; do not parse capture-pane | TUI output is for humans and `mars logs`. The intent file is the source of truth (§2). Two unrelated failure modes (no intent / dead session) cover all cases. |
 | Headless runner | Out of v0 default; interface stub only | Claude Code is a TUI; tmux is the right shape. Headless mode is reserved for non-TUI providers / CI hosts and ships when needed. |
-| Agent definitions | Markdown at `agents/<role>.md`, validated by the compiler; one generic runtime loader | Same posture as plan-canonical and the rest of the harness. Editable without recompiling. Single source of truth for prompt + contract. `mars retro` can write to it (closes the meta-loop). One loader avoids drift across roles. |
+| Agent definitions | Markdown at `agents/<role>.md`, validated by the compiler; one generic runtime loader | Same posture as feature-canonical and the rest of the harness. Editable without recompiling. Single source of truth for prompt + contract. `mars retro` can write to it (closes the meta-loop). One loader avoids drift across roles. |
 | Hooks as pure emission bus | Mars ingests + broadcasts; subscribers react. Mars never runs user commands per event. | Inverts the typical "framework hooks = framework reactions" pattern. Removes blocking/timeout/failure semantics from the bus. Subscribers crash, Mars doesn't notice; subscribers fall behind, Mars doesn't slow down. Load-bearing decision: emitters are never blocked by subscribers. |
 | `hook` is a global tool | Every agent role gets it via the ToolRegistry | Universal because emission is a universal capability. Same code path used by orchestrator, agents, and provider native-hook forwarders. One emission API, three sources. |
 | Closed event taxonomy + typed payloads | Same discipline as `AgentIntent` (§2). Free-form names rejected at the tool boundary. | Without it, subscribers can't reliably wire against events — every emitter rename breaks every subscriber. Closed taxonomy makes the bus a contract, not a free-for-all. |
