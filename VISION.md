@@ -29,6 +29,7 @@ A **modular, lean, future-proof AI coding agent team** behind a **single TypeScr
 ## Anti-goals (locked)
 
 - **Token cost ceiling.** If a typical autonomous run burns absurd tokens, the design is wrong. Lean prompts, no chatty multi-agent loops for their own sake, no re-reading the world every step.
+- **Compaction is failure.** If a Mars session ever hits Claude Code's context-compaction threshold, we failed as a framework. Compaction is not a problem to recover from — it is a signal that the orchestrator carried too much state, the loop ran too long, or the prompts were too fat. The fix is upstream: shorter loops, leaner prompts, more aggressive intent-and-exit, smaller curated context bundles. **No `PreCompact` recovery hook.** No checkpoint files, no transcript replay, no "rehydrate from summary." If compaction happens, halt the run and treat it as a `mars retro` defect with `rootCause: 'context_bloat'` — fix the harness so it can't happen again. The contract is: a run completes well below the compaction threshold, or it doesn't deserve to complete.
 - Not a chat UI.
 - Not multi-domain (no research, writing, ops).
 - Not stateful — no agent memory.
@@ -117,6 +118,8 @@ type MarsEvent =
   | { kind: 'adapter.call'; adapter: 'planstore' | 'vcs' | 'fs' | 'provider'; op: string; ts: number }
   | { kind: 'adapter.result'; adapter: string; ok: boolean; durationMs: number; ts: number }
   | { kind: 'review.verdict'; taskId: string; verdict: 'pass' | 'fail' | 'needs-changes'; ts: number }
+  | { kind: 'tool.call'; handleId: string; role: 'planner' | 'builder' | 'reviewer'; name: string; callId: string; ts: number }
+  | { kind: 'tool.result'; callId: string; ok: boolean; durationMs: number; ts: number }
   | { kind: 'run.end'; runId: string; status: 'done' | 'halted' | 'failed'; tokensTotal: number; ts: number }
 ```
 
