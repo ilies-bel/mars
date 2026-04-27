@@ -1,6 +1,6 @@
 # VISION — Mars Framework
 
-> **Status:** v1.0 — locked
+> **Status:** v1.1 — locked
 > **Date:** 2026-04-27
 
 ## North Star
@@ -22,6 +22,9 @@ A **modular, lean, future-proof AI coding agent team** behind a **single TypeScr
 | VCS | Wrapped behind an adapter (agents don't `git commit`; they declare "checkpoint this") |
 | Plan storage | Wrapped behind an adapter (beads, filesystem, future trackers — agent doesn't care) |
 | Compiler | Built-in `.md` link/reference validator |
+| Observability | Event stream (`runs/<ts>/events.jsonl`) — single source of truth |
+| Interface | Local web dashboard via `mars ui` (Hono + Vite + React + React Flow) |
+| UI posture | **Read-only viewer.** CLI is the only control surface, ever. |
 
 ## Anti-goals (locked)
 
@@ -96,6 +99,85 @@ The Plan goes to whatever PlanStore is configured (beads, fs, future). The edits
 - `mars review` — standalone review pass.
 - `mars check` — markdown compiler: link integrity, plan schema, reference graph.
 - `mars audit` — harness/cost/health audit.
+- `mars ui` — boot the local dashboard (foreground; Ctrl-C stops). Opens browser to `localhost:7777`.
+
+## Observability & Interface
+
+The system is observable through **one event stream** that everything else reads from. This is the contract that decouples *recording* from *viewing* and lets us add new viewers (TUI, VS Code extension, future export) without touching the orchestrator.
+
+### The event stream
+
+Every run writes append-only newline-delimited JSON to `runs/<timestamp>/events.jsonl`. The CLI, the orchestrator, and every adapter emit events through a single sink.
+
+```ts
+type MarsEvent =
+  | { kind: 'run.start'; runId: string; goal: string; ts: number }
+  | { kind: 'agent.start'; agent: 'planner' | 'builder' | 'reviewer'; taskId?: string; ts: number }
+  | { kind: 'agent.intent'; agent: string; intent: unknown; tokensIn: number; tokensOut: number; ts: number }
+  | { kind: 'adapter.call'; adapter: 'planstore' | 'vcs' | 'fs' | 'provider'; op: string; ts: number }
+  | { kind: 'adapter.result'; adapter: string; ok: boolean; durationMs: number; ts: number }
+  | { kind: 'review.verdict'; taskId: string; verdict: 'pass' | 'fail' | 'needs-changes'; ts: number }
+  | { kind: 'run.end'; runId: string; status: 'done' | 'halted' | 'failed'; tokensTotal: number; ts: number }
+```
+
+Schema is versioned (`schemaVersion` in run start) so old traces remain readable as the shape evolves.
+
+### Topology — config-as-documentation
+
+`mars.flow.ts` declares the static agent graph. Same file:
+- the orchestrator imports it to wire agents together at runtime,
+- the UI imports it to render the topology view,
+- `mars check` validates it against the adapter contracts.
+
+```ts
+// mars.flow.ts
+import { defineFlow } from 'mars'
+
+export default defineFlow({
+  agents: {
+    planner:  { in: 'Goal',        out: 'Plan' },
+    builder:  { in: 'Task',        out: 'BuildResult' },
+    reviewer: { in: 'BuildResult', out: 'Review' },
+  },
+  edges: [
+    { from: 'planner',  to: 'builder',  via: 'PlanStore' },
+    { from: 'builder',  to: 'reviewer', via: 'FS' },
+    { from: 'reviewer', to: 'builder',  when: 'needs-changes' },
+  ],
+})
+```
+
+One source of truth. Type-safe wiring AND the diagram on the UI's topology page render from the same export.
+
+### The `mars ui` dashboard
+
+Local web app. Runs only when you boot it. No daemon, no auth, no telemetry.
+
+**Stack:**
+- **Server:** Hono (serves static bundle + `/api/events` SSE endpoint).
+- **UI:** Vite + React + React Flow (topology graph) + Tailwind for layout.
+- **Boot:** `mars ui` runs in the foreground. Ctrl-C stops it. Default port `7777`.
+
+**Three views:**
+
+1. **Topology** — the static graph from `mars.flow.ts`. Nodes are agents, edges are typed intent flow, hover shows the contract.
+2. **Runs** — list of past runs from `runs/`. Click one to open the timeline.
+3. **Run timeline + inspector** — agent calls in order with durations, token meters, status chips. Click any agent invocation to see its input intent, output intent, reviewer verdict, raw prompt (collapsed by default).
+
+Live runs stream via SSE; past runs render from disk. Same component, same data shape.
+
+### Storage policy
+
+- `runs/` is gitignored by default.
+- Rotation: keep the last 50 runs. Older ones are deleted on `mars build` start.
+- Opt-in to keep a milestone run: `mars build --keep` flags that run as non-rotatable.
+
+### Why this shape
+
+- **Lean:** no DB, no daemon, no service. Just files + a viewer that reads them.
+- **Token-frugal:** the trace itself is how you find waste. Every event has token counts, so the UI can highlight the chatty agents and the redundant adapter calls.
+- **Future-proof:** `events.jsonl` is the stable contract. Anyone — TUI, VS Code, an export script — can consume it without touching Mars internals.
+- **CLI sovereignty:** the UI never writes back to the system. You can never *control* Mars from the browser. The CLI stays the only command surface.
 
 ## The Autonomous Loop
 
@@ -128,9 +210,11 @@ If you agree with the recommendations, we proceed. If you want to push back, now
 ## Next Steps
 
 1. Resolve round-3 questions (or accept recommendations).
-2. **Harness audit** (requested) — separate document.
-3. Define adapter interfaces (`Provider`, `PlanStore`, `VCS`, `FS`).
-4. Build the markdown compiler first — smallest standalone piece, immediately useful.
-5. Build planner → builder → reviewer loop with stub adapters.
-6. Wire real adapters: Claude provider, beads PlanStore, git VCS.
-7. Demo: one autonomous coding project end-to-end.
+2. **Harness audit** — done; apply P0/P1 fixes to project `.claude/settings.json`.
+3. Define adapter interfaces (`Provider`, `PlanStore`, `VCS`, `FS`) and the `MarsEvent` schema.
+4. Build the event sink + JSONL writer (smallest standalone piece, unblocks the UI later).
+5. Build the markdown compiler.
+6. Build planner → builder → reviewer loop with stub adapters; emit events.
+7. Wire real adapters: Claude provider, beads PlanStore, git VCS.
+8. Build `mars ui` (Hono server + Vite/React viewer reading the event stream).
+9. Demo: one autonomous coding project end-to-end with the dashboard streaming live.
