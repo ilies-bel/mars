@@ -41,13 +41,13 @@ type AgentIntent =
   | { kind: 'question'; question: Question }
 ```
 
-**Transport.** Each spawned agent writes one intent to:
+**Transport.** Each spawned agent emits its intent by calling the built-in `mars.done` tool exactly once (see §8.8.1). The sidecar writes:
 
 ```
 .mars/runs/<handleId>/intent.json
 ```
 
-…and exits. The orchestrator reads the file, then routes through adapters.
+…and signals the agent to exit. The orchestrator reads the file, then routes through adapters. Agents do not write `intent.json` directly and do not self-terminate — `mars.done` is the only sanctioned exit path.
 
 **An agent never:**
 - writes files (returns `BuildResult.edits`; FS adapter writes)
@@ -165,6 +165,34 @@ runaway: {
 }
 ```
 
+### 3.6 Task type checklists
+
+Every task carries a **type** that selects a fixed checklist. The checklist is materialized into the beads issue's `--design` field at creation time and ticked off by agents as they work. Closing a task requires every box checked; an unchecked box at close = halt-and-flag (§9).
+
+The mars feature facade injects the right checklist on `bd create` based on `--type`; agents update via `bd update <id> --design ...`. No hooks, no formulas — the facade is the single point of enforcement.
+
+**Type: `frontend-change`**
+
+```
+- [ ] pencil design updated
+- [ ] design change accepted
+- [ ] implemented
+- [ ] tsc build passes
+- [ ] tests green
+- [ ] ticket merged
+```
+
+**Type: `quick-fix`**
+
+```
+- [ ] bead traced
+- [ ] worktree created
+- [ ] implemented
+- [ ] merged
+```
+
+Additional types are added by appending to this section — no code changes required, since the facade reads the checklist set from CONTRACTS.md.
+
 ---
 
 ## 4. Plans
@@ -260,6 +288,7 @@ type RootCause =
   | 'weak_adapter'
   | 'plan_underspecified'
   | 'genuine_human_judgment'
+  | 'context_bloat'                  // PreCompact fired — orchestrator carried too much state. See §16.5.
 
 type InboxItem = {
   id: string                        // <uuid8>-<slug>
@@ -424,10 +453,28 @@ interface Provider {
     context: ContextBundle
     tokenBudget: number
   }): Promise<{ output: string; tokensUsed: number }>
+
+  hooks: ProviderHooks                       // see §16
+}
+
+interface ProviderHooks {
+  configPath(): string                       // e.g. '.claude/settings.local.json'
+  installNativeForwarders(): Promise<void>   // writes provider config so its native hooks call `mars hook fire session.*`
+  uninstall(): Promise<void>
+  status(): Promise<ProviderHookStatus>
+}
+
+type ProviderHookStatus = {
+  installed: boolean
+  configPath: string
+  forwardersWired: ('session.start' | 'session.prompt_submit' | 'session.pre_compact' | 'session.end')[]
+  lastFireTimes?: Record<string, string>
 }
 ```
 
-v0: Claude. Boundaries are drawn for future providers; not built.
+The Provider adapter knows nothing about events beyond the four `session.*` it forwards. It writes its native hook config so the provider's lifecycle events become emissions on the Mars hook bus (§16). All other event handling lives at the bus level — the Provider has no opinion on what subscribers do with `session.*` events.
+
+v0: Claude. Boundaries are drawn for future providers; not built. If a future provider exposes no hook surface, `installNativeForwarders()` is a no-op and Mars runs without provider-emitted events (correctness preserved; subscribers wired only to non-`session.*` events still work).
 
 ### 8.2 PlanStore
 
@@ -551,7 +598,10 @@ interface Compiler {
 }
 ```
 
-v0: markdown link-check + plan schema validation. Errors halt `mars build`.
+v0 checks (errors halt `mars build`):
+- Markdown link integrity across `VISION.md`, `docs/**`, `agents/**`, `PLAN.md`-style files.
+- Plan schema validation.
+- **Agent template validation** — see §15. Every `agents/<role>.md` must parse, contain all required sections, declare inputs/outputs matching the Intent contract, and reference only tools that exist in the `ToolRegistry` and sit in the role's allowlist.
 
 ### 8.7 Runner
 
@@ -587,6 +637,125 @@ interface Runner {
 ```
 
 v0 implementation: **Pattern 3** — one tmux session per spawned agent, agent is a one-shot subprocess. Session naming: `mars-<role>-<handleId>`.
+
+#### 8.7.1 Why tmux
+
+Three operational reasons, in order of weight:
+
+1. **The agent is an interactive TUI, not a unix process.** Claude Code expects a real PTY and renders escape sequences. `child_process.spawn` either yields no output or forces a `node-pty` dependency. tmux supplies the PTY for free.
+2. **Detached survival.** `-d` on `new-session` keeps the agent alive across orchestrator restarts. The orchestrator can crash, reattach, and resume liveness checks against the same PID.
+3. **Free attach UX.** `mars agents attach <id>` is a thin wrapper over `tmux attach`; no extra plumbing.
+
+These three benefits are what justify the tmux dependency. If they ever stop applying (e.g. Claude Code ships a non-TUI mode), revisit.
+
+#### 8.7.2 tmux mechanics (locked)
+
+These are operational invariants of the v0 Runner. They are easy to forget and painful to discover by debugging; lock here.
+
+| Decision | Value | Rationale |
+|---|---|---|
+| Socket isolation | All commands use `-L mars` | Don't share state with the user's personal tmux. Their session list, their config, their key bindings stay untouched. Non-negotiable. |
+| Session name | `mars-<role>-<handleId>`; sanitize `.` and `:` to `_` | tmux names reject dots/colons; matches §8.7 `AgentHandle.tmuxSession`. |
+| Spawn flag | `tmux -L mars new-session -d -s <name> -c <worktreePath> /bin/bash -c '<wrapped>'` | `-d` for detach (survives orchestrator), `-c` for cwd (no shell `cd`), bash wrapper for env hygiene. |
+| Env to unset before launch | `CLAUDECODE`, `CLAUDE_CODE_SSE_PORT`, `CLAUDE_CODE_ENTRYPOINT` | Otherwise the child agent inherits the orchestrator's Claude Code session identity and the runtime misbehaves silently. **This is the gotcha.** |
+| PATH | Prepend `<repo>/.mars/bin` | Lets the sidecar tools (§8.8) shadow user PATH without polluting it. |
+| Working directory | `-c <worktreePath>` from `VCS.createWorktree()` | Agent is born in its worktree. No `cd`, no path-relative tool calls. |
+| Scrollback | `set-option -g history-limit 50000` immediately after `new-session` | tmux default of 2000 lines is too short for any non-trivial run. |
+| Liveness | `tmux -L mars has-session -t <name>` then `display-message -p -t <name> "#{pane_pid}"` then `process.kill(pid, 0)` | Three-step probe. Feeds §3.5 `isClaimAlive`. |
+| Output capture | `tmux -L mars capture-pane -t <name> -p -S -<N>` for snapshots | For `mars logs` / `mars trace` UX **only**. Never parse capture-pane to extract intent — `intent.json` is the source of truth. |
+| Send input | `tmux -L mars send-keys -t <name> <keys> Enter` | Used by `mars agents nudge <id>` (debug only); orchestrator does not steer agents this way. |
+| Exit detection | Poll `intent.json` mtime AND `has-session` returning false | More reliable than parsing TUI output for a "done" marker. |
+| Cleanup order | SIGTERM pane PID → 5s grace → SIGKILL → `tmux kill-session -t <name>` | Tree teardown; avoids orphan subprocesses. |
+| TUI readiness | `waitForTuiReady(name, detectReady, timeoutMs)` polls `capture-pane` for a startup marker before any input is sent | Claude Code's TUI takes seconds to initialize; sending too early loses keystrokes. |
+
+#### 8.7.3 Headless fallback
+
+The Runner adapter MAY expose a `headless: true` option that spawns the agent as a bare subprocess with stdout piped to `.mars/runs/<id>/stdout.log`. Used when:
+
+- the runtime is not a TUI (future providers), or
+- tmux is unavailable in the environment (CI, restricted hosts).
+
+In headless mode, exit detection switches from `has-session` polling to standard `child.on('exit')`. All other contract surface (intent transport, claim semantics, budget) is identical. v0 ships tmux mode only; headless is a hook for later.
+
+### 8.8 ToolRegistry
+
+Per-agent and global tool injection. Tools are declarative, like every other adapter: agents call them through a sidecar channel; the registry decides whether the call is permitted, runs it, returns the result. Agents never import a tool module directly.
+
+```ts
+type ToolName = string                 // 'mars.done', 'rtk', 'ripgrep', 'fs-read', ...
+
+interface Tool<I = unknown, O = unknown> {
+  name: ToolName
+  description: string                  // injected into prompt for callable tools only
+  inputSchema: unknown                 // JSON Schema; validated before invoke
+  invoke(input: I, ctx: ToolCtx): Promise<O>
+}
+
+type ToolCtx = {
+  worktreePath: string                 // agent's sandbox (from VCS.createWorktree)
+  taskId?: TaskId
+  exec: Exec                           // reuse existing Exec adapter for shelling out
+  role: AgentRole                      // for audit trail
+  handleId: string
+}
+
+type ToolCall   = { callId: string; name: ToolName; input: unknown }
+type ToolResult = { callId: string; ok: true; output: unknown }
+                | { callId: string; ok: false; error: string }
+
+interface ToolRegistry {
+  // Resolution — orchestrator calls these to build the per-spawn registry
+  callableFor(role: AgentRole): Tool[]            // global ∪ perRole[role].allow
+  describe(role: AgentRole): { name: string; description: string; inputSchema: unknown }[]
+
+  // Invocation — sidecar handler calls this for every tool call from an agent
+  invoke(role: AgentRole, call: ToolCall, ctx: ToolCtx): Promise<ToolResult>
+}
+```
+
+**Allowlist semantics.** Allow-only. No `deny`, no wildcards beyond the literal `'*'` meaning "every registered tool." A role's effective set is `union(global, perRole[role].allow)`. A call to a tool not in the effective set returns `{ ok: false, error: 'not_allowed' }` and is logged.
+
+**Budget.** Tools do not charge the per-run token budget. They may be bounded by wall-time/quota inside the tool itself (e.g. an `exec` timeout) but the orchestrator's `BudgetPool` is unaffected.
+
+**Invocation transport (Model B — sidecar).** Each spawned agent gets a Unix-domain socket at `.mars/runs/<handleId>/tools.sock`. The Runner injects `MARS_TOOLS_SOCK=<path>` into the agent's env before spawn. The agent process speaks newline-delimited JSON: one `ToolCall` per line in, one `ToolResult` per line out. The orchestrator owns the sidecar handler; it calls `ToolRegistry.invoke` for each line and writes the result. The agent's last call on this socket is `mars.done` (§8.8.1), which writes `intent.json` and ends the spawn — §2's invariant is preserved.
+
+**Tool tiers.**
+- **Built-in.** Ship in-tree with Mars. v0: `fs-read`, `ripgrep`, `mars.done`. Implemented as `Tool` instances.
+- **External CLI wrapper.** A thin `Tool` whose `invoke` shells out via `Exec`. v0: `rtk` (~20 lines: name + schema + `exec.run('rtk', [...args], { cwd: ctx.worktreePath })`).
+- **User-defined.** Declared inline in `mars.config.ts` using the same `Tool` shape. No plugin loader in v0.
+
+**Prompt injection.** Only descriptions for tools in `callableFor(role)` are injected into the agent's prompt. A planner that can't call `rtk` never sees `rtk` in its tool menu — keeps prompts tight and prevents off-allowlist hallucination.
+
+v0 implementation: in-process registry; UDS sidecar; `rtk` shipped as an external CLI wrapper.
+
+#### 8.8.1 The `mars.done` tool — how an agent declares completion
+
+`mars.done` is the single, mandatory tool every agent uses to signal "I'm finished with my work." It is the agent-facing surface of §2's intent transport: the agent does not write `intent.json` itself, and does not exit on its own — it calls `mars.done` exactly once with its typed intent payload, and the sidecar handler does both.
+
+```ts
+type MarsDoneInput =
+  | { kind: 'plan';     plan: Plan }
+  | { kind: 'build';    result: BuildResult }
+  | { kind: 'review';   review: Review }
+  | { kind: 'question'; question: Question }
+
+type MarsDoneOutput = { ok: true; intentPath: string }
+```
+
+`MarsDoneInput` is structurally identical to `AgentIntent` (§2). The sidecar:
+
+1. Validates the payload against the role's expected intent kind (`planner` → `plan`, `builder` → `build`, `reviewer` → `review`; any role may emit `question`).
+2. Writes `.mars/runs/<handleId>/intent.json` atomically (write to `intent.json.tmp` + `rename`).
+3. Returns `{ ok: true, intentPath }` to the agent.
+4. Closes the tool socket and signals the runtime to terminate the agent process. The agent's job ends with that return value; any further tool calls would fail with `socket_closed`.
+
+**Invariants.**
+- **Exactly one call per spawn.** A second `mars.done` call returns `{ ok: false, error: 'already_done' }`. The first write wins; §2's "exactly one `intent.json`" stays true.
+- **Allowlist.** `mars.done` is global by default — every role can call it, because every spawned agent must terminate through it. It cannot be removed from a role's effective set.
+- **Kind/role match.** Wrong `kind` for the spawned role returns `{ ok: false, error: 'kind_role_mismatch' }`; the agent may retry with the correct payload.
+- **No edits, no git, no bd.** Same boundaries as §2 — `mars.done` carries the declarative payload; FS/VCS/PlanStore adapters apply it after the agent exits.
+
+**Why a tool, not a stdout convention.** The sidecar already mediates every other tool call; routing completion through it gives uniform validation, audit logging (`tools.log`), and a clean exit signal that doesn't depend on parsing the TUI. It also lets the orchestrator distinguish a clean finish (`mars.done` returned) from a crash or budget kill (process exited without a `mars.done` call ever arriving).
 
 ---
 
@@ -785,24 +954,215 @@ It clusters resolved/dismissed `question`-kind inbox items by `questionKind` + `
 
 ### 10.2 `mars audit` behavior
 
-Reports a split metric over inbox items:
+Reports a split metric over inbox items, plus the dimensions defined in §11.4:
 
 ```
 items/run (defects):   2.3   ⚠ target: 0
-  refine_plan, unblock_task, resolve_conflict
+  by questionKind:  refine_plan 1.4  unblock_task 0.6  resolve_conflict 0.3
+  by rootCause:     ambiguous_prompt 1.1  weak_adapter 0.7  missing_context 0.5
 items/run (gates):     0.5   — informational
   approve_checkpoint
+budget:                exhausted 0/12 runs   p95 spend 142k / 200k cap
+parked-task age:       p50 4.2h   p95 38h
+defect-rate trend:     -28% vs prior 7d (refine_plan ↓0.6, unblock_task ↓0.2)
 ```
 
-Plus token spend, success rates, and impact tracking ("did fixing harness-task X reduce items of kind Y?").
+The defect/gate split is non-negotiable: the `category` field exists precisely so the metric cannot be gamed by removing QA gates (§6.1). `mars audit` MUST report them on separate lines.
+
+Trend tracking ("did fixing harness-task X reduce items of kind Y?") relies on a small derived table written at end-of-run; see §11.5.
 
 ---
 
-## 11. CLI surface
+## 11. Observability
+
+Mars's observability surface is deliberately small: two stores, two log lenses, one preflight, and the audit/retro loop already specified in §10. We do **not** ship a TUI dashboard, an AI triage tier, or a long-running monitor agent in v0 — see §11.7 for what is intentionally out of scope and why.
+
+The principle: every observability primitive must serve the meta-loop (§10). Pure dashboards that don't feed `mars retro` or `mars audit` are out.
+
+### 11.1 Two-store split
+
+Two SQLite databases, both WAL mode, kept separate by purpose:
+
+```
+.mars/db/events.db    — append-only event log; queried by time/agent/type
+.mars/db/metrics.db   — aggregations and trends; queried by dimension
+```
+
+**Rationale:** events are write-heavy and time-indexed; metrics are derived rollups recomputed at end-of-run. Conflating them forces a single schema to serve two access patterns badly. Keeping them separate keeps each schema tight.
+
+### 11.2 Event store (`events.db`)
+
+Every row is a hook fire (§16). The previous `EventKind` enum collapsed into the hook taxonomy — one schema, one writer, one query surface.
+
+```ts
+type Event = {
+  id: number              // autoincrement; serves as the subscriber cursor (§16.6)
+  ts: string              // ISO 8601
+  runId: string           // one mars build invocation
+  event: HookEvent        // see §16.3
+  emitter: 'orchestrator' | 'agent' | 'provider' | 'mars-internal'
+  emitterId?: string      // agent handleId when emitter = 'agent'
+  taskId?: TaskId         // when applicable; pulled from payload at write time
+  planId?: PlanId         // when applicable
+  payload: unknown        // per-event schema, validated at the tool boundary (§16.4)
+  durationMs?: number     // for paired start/end events
+  error?: { message: string; stack?: string }
+}
+```
+
+The `events.id` is the subscriber cursor. Subscribers persist the last `id` they processed; on (re)connect with `fromCursor`, the broadcaster replays from that row forward. See §16.6.
+
+**Sanitization is mandatory before write.** A `sanitize(payload)` step redacts API keys, env vars matching common secret patterns (`*_TOKEN`, `*_KEY`, `*_SECRET`, `BEARER *`), and `.env`-style file contents. Cheap to add now; painful later.
+
+**Retention.** Default 30 days; configurable. `mars logs --vacuum` prunes.
+
+### 11.3 Metrics store (`metrics.db`)
+
+Recomputed at end-of-run from `events.db`. Dimension-keyed rollups, never raw events.
+
+```ts
+type RunMetric = {
+  runId: string
+  startedAt: string
+  endedAt: string
+  status: 'completed' | 'halted' | 'budget_exhausted'
+
+  // Cost (tokens only — see §16; the framework never tracks USD)
+  tokensUsed: number
+  tokensBudget: number
+  tokensRemaining: number
+
+  // Throughput
+  tasksCompleted: number
+  tasksRefined: number          // entered to_refine via reviewer_reject
+  tasksParked: number           // ended run in awaiting_human
+
+  // Inbox
+  defectItems: number           // category='defect' raised this run
+  gateItems: number             // category='gate' raised this run
+
+  // Latency
+  taskWallTimeMsP50: number
+  taskWallTimeMsP95: number
+}
+
+type DimensionRollup = {
+  runId: string
+  dimension: 'agent' | 'role' | 'questionKind' | 'rootCause' | 'taskTag'
+  key: string                   // e.g. 'builder' or 'refine_plan'
+  tokensUsed: number
+  count: number                 // events / items / tasks (kind-specific)
+  successRate?: number          // tasks done / tasks attempted, where applicable
+}
+
+type DefectTrendPoint = {
+  bucketStart: string           // day or run boundary
+  questionKind: QuestionKind
+  rootCause: RootCause
+  perRun: number                // moving average
+}
+```
+
+`DefectTrendPoint` is the table that answers "is mars getting better?" Every `mars audit --trend` reads it; every end-of-run writer appends to it.
+
+### 11.4 Token accounting via transcript parsing
+
+`tokensUsed` is captured from the provider's session transcript, not from agent self-reports. For Claude Code: parse the per-session JSONL written by the runtime; sum `usage.input_tokens + usage.output_tokens` per turn.
+
+```ts
+interface TranscriptParser {
+  parse(transcriptPath: string): {
+    inputTokens: number
+    outputTokens: number
+    turns: { ts: string; inputTokens: number; outputTokens: number }[]
+  }
+}
+```
+
+This feeds `BudgetPool.charge()` (§9.4). Self-reported `tokensUsed` in `BuildResult` / `Review` is a fallback used only when the transcript is unavailable.
+
+### 11.5 Doctor & preflight
+
+`mars audit` includes a preflight battery, modeled on overstory's `ov doctor` but scoped to Mars's contract.
+
+```ts
+type DoctorCheck = () => Promise<DoctorResult>
+
+type DoctorResult = {
+  name: string
+  ok: boolean
+  severity: 'info' | 'warn' | 'error'
+  message: string
+  fix?: string                  // suggested CLI command, if any
+}
+```
+
+v0 ships these checks:
+
+| Name | Verifies |
+|---|---|
+| `provider-creds` | `ANTHROPIC_API_KEY` set; basic auth probe |
+| `planstore-reachable` | `bd` binary present, beads DB readable |
+| `vcs-clean` | repo on a branch, no detached HEAD, worktree dir creatable |
+| `db-migrations` | `events.db` + `metrics.db` schema versions current |
+| `inbox-readable` | `.mars/inbox.jsonl` parseable |
+| `budget-config` | `tokenBudgetPerRun` set; under hard ceiling |
+| `parked-task-age` | no `awaiting_human` task older than configured threshold (default 7d) |
+| `worktree-orphans` | no `.mars/worktrees/<id>` without a live agent |
+| `compiler-clean` | `Compiler.check(rootDir)` returns no errors |
+
+`mars audit` runs all checks, prints a summary, and exits non-zero on any `error`. `--fix` runs registered fixers where present; otherwise the suggestion is printed.
+
+### 11.6 Log surface
+
+Two commands. No more.
+
+```
+mars logs   [--run <id>] [--agent <id>] [--task <id>]
+            [--kind <event-kind>...] [--errors-only]
+            [--since <ts>] [--limit <n>] [--follow]
+
+mars trace  <run-id>
+            — chronological multi-agent interleaving for one run
+```
+
+`mars logs` is the general-purpose tail. `mars trace` is the post-mortem replay. Together they cover the use cases overstory fragments across `trace` / `replay` / `inspect` / `errors` / `feed`. We do not ship the other three.
+
+`mars status` (already in §11 CLI surface) prints a snapshot — live agents, budget remaining, inbox blockers — for the running orchestrator. No live TUI.
+
+### 11.7 Out of scope for v0 (with rationale)
+
+| Deferred | Why |
+|---|---|
+| AI triage tier (overstory T1) | Mars's halt-and-flag + inbox `RootCause` capture covers diagnosis without spending tokens on a triage agent. |
+| Long-running monitor agent (overstory T2) | A billed Claude session "watching the fleet" violates the token-cost anti-goal. Centralized orchestrator already sees every intent. |
+| Watchdog daemon | PID liveness check (§3.5) + orchestrator `waitAny` covers it. No daemon process to manage. |
+| Live TUI dashboard | `mars status` snapshot is sufficient for solo dev. Defer until a real second user asks. |
+| Five-lens observation surface (`trace`/`replay`/`inspect`/`errors`/`feed`) | Two lenses (`mars logs` + `mars trace`) cover 95%. Fragmenting the surface is a tax on the user. |
+| USD / dollar accounting of any kind | Framework is token-only (§16). Dollars are the provider's business; pricing tables, USD caps, and cost estimates are explicitly out of scope and out of the contract surface. |
+
+### 11.8 Where overstory's source is worth reading
+
+For implementers, these files in `jayminwest/overstory` are reference-quality and shape-aligned with §11. Read as documentation; do not vendor.
+
+| Overstory file | Lifts to |
+|---|---|
+| `src/events/store.ts` | `events.db` schema layout |
+| `src/metrics/store.ts` | `metrics.db` rollup pattern |
+| `src/metrics/transcript.ts` | Claude Code JSONL parser → `TranscriptParser` (§11.4) |
+| `src/logging/sanitizer.ts` | Secret-redaction patterns (§11.2) |
+| `src/doctor/*` | Per-check module shape (§11.5) |
+
+Everything else in overstory's observability surface is either out-of-scope (§11.7) or contradicts the contract (§§2, 3.5, 9 — see decision provenance).
+
+---
+
+## 12. CLI surface
 
 | Command | Purpose |
 |---|---|
-| `mars plan "<goal>"` | Planner emits a `Plan`; PlanStore persists. |
+| `mars plan new <goal...>` | Register an idea as a `draft` plan. **Does not run the planner.** Persists `plans/<plan-id>.md` with front-matter. |
+| `mars plan refine <plan-id>` | Run the planner on a draft plan; emits tasks; status → `ready`. |
 | `mars build` | Orchestrator loop. |
 | `mars review` | Standalone review pass over uncommitted edits. |
 | `mars check` | Markdown compiler: link integrity, plan schema, reference graph. |
@@ -820,10 +1180,15 @@ Plus token spend, success rates, and impact tracking ("did fixing harness-task X
 | `mars dismiss <id> --reason "<text>"` | Dismiss any item; parked tasks → `to_refine`. |
 | `mars qa list` | Show configured QA checkpoint rules. |
 | `mars qa test <task-or-build>` | Dry-run QA rules; show which would fire. |
+| `mars tools list [--role <role>]` | Show registered tools and which roles can call each. |
+| `mars tools test <name> '<json-input>'` | Invoke a tool out-of-band against the current worktree. |
+| `mars status` | Snapshot: live agents, budget remaining, inbox blockers (§11.6). |
+| `mars logs [filters] [--follow]` | Tail/query event log; see §11.6 for filters. |
+| `mars trace <run-id>` | Chronological multi-agent timeline for one run (§11.6). |
 
 ---
 
-## 12. Configuration
+## 13. Configuration
 
 ```ts
 // mars.config.ts
@@ -852,6 +1217,25 @@ export default {
   // Optional safety valve (off by default)
   runaway: { enabled: false, perAgentTokensCap: 50_000 },
 
+  // Hooks (§16) — emission bus subscribers
+  hooks: {
+    subscribers: [
+      { name: 'sqlite-mirror',
+        command: './scripts/mirror.sh',
+        events: ['task.done', 'review.*', 'plan.completed'] },
+      { name: 'slack-notify',
+        command: 'node ./scripts/slack.js',
+        events: ['budget.exhausted', 'session.pre_compact', 'inbox.item_added'] },
+    ],
+  },
+
+  // Observability (§11)
+  observability: {
+    eventRetentionDays: 30,                // events.db prune window
+    parkedTaskMaxAgeDays: 7,               // doctor warns above this
+    trendWindowDays: 7,                    // mars audit --trend default
+  },
+
   // QA gates
   qa: {
     checkpoints: [
@@ -863,31 +1247,391 @@ export default {
         prompt: 'Harness change from retro — approve before checkpoint?' },
     ],
   },
+
+  // Tools (allow-only; no token charging)
+  tools: {
+    global: ['fs-read', 'ripgrep', 'mars.done'], // mars.done is mandatory for every role (§8.8.1)
+    perRole: {
+      planner:  { allow: [] },               // only globals
+      builder:  { allow: ['rtk', 'exec'] },  // builder gets rtk + exec on top of globals
+      reviewer: { allow: ['ts-morph'] },
+    },
+    config: {
+      rtk: { binary: 'rtk', defaultArgs: ['--no-color'] },
+    },
+  },
 } satisfies MarsConfig
 ```
 
 ---
 
-## 13. Filesystem layout
+## 14. Filesystem layout
 
 ```
 <repo>/
   mars.config.ts                          ← user config
   VISION.md
   docs/CONTRACTS.md                       ← this file
+  agents/
+    planner.md                            ← agent template (compiler-validated, §15)
+    builder.md
+    reviewer.md
   .mars/
     runs/<handleId>/
       intent.json                         ← agent output (one per spawn)
       stdout.log
+      tools.sock                          ← UDS for ToolRegistry sidecar (Model B)
+      tools.log                           ← NDJSON log of tool calls + results
     worktrees/<handleId>/                 ← per-agent git worktrees
     inbox.jsonl                           ← HumanInbox (fs-jsonl backend)
     retros/<date>.md                      ← `mars retro` reports
+    db/
+      events.db                           ← append-only event log; every row is a hook fire (§11.2, §16)
+      metrics.db                          ← run + dimension rollups (§11.3)
+    hooks.sock                            ← UDS pub/sub for live subscribers (§16.1)
+    subscribers/<name>.log                ← stdout/stderr of config-spawned subscribers (§16.5)
   .beads/                                 ← PlanStore (beads backend)
 ```
 
 ---
 
-## 14. Decision provenance
+## 15. Agent templates
+
+Each agent role has a markdown definition at `agents/<role>.md`. The file is the **editable source of truth** for the agent's prompt and contract. The runtime (single generic loader) reads it on spawn to build the system prompt; the compiler (§8.6) validates its structure on every `mars check` and on `mars build` startup.
+
+There is no per-instance code per role. Adding or modifying an agent = editing markdown.
+
+### 15.1 Required structure
+
+```markdown
+---
+role: planner | builder | reviewer       # required, must be unique across agents/
+inputs: Goal | Task | BuildResult        # required, must match the Intent contract for role
+outputs: Plan | BuildResult | Review     # required, must match the Intent contract for role
+tools: [<toolName>, ...]                 # required (may be empty); names resolved against ToolRegistry
+---
+
+# <Role title>
+
+## Goal
+<one-sentence purpose; non-empty>
+
+## Definition of Done
+- <objectively checkable bullet>
+- <objectively checkable bullet>
+...
+
+## Non-Goals          (optional but recommended)
+- <scope drift fence>
+...
+```
+
+### 15.2 Contract binding (compiler-enforced)
+
+| role       | inputs        | outputs        |
+|------------|---------------|----------------|
+| `planner`  | `Goal`        | `Plan`         |
+| `builder`  | `Task`        | `BuildResult`  |
+| `reviewer` | `BuildResult` | `Review`       |
+
+These three rows are the entire allowed matrix. Any other combination is a compiler error.
+
+### 15.3 Compiler checks
+
+The Compiler (§8.6) emits an `error` finding for any of:
+
+1. Missing file: `agents/planner.md`, `agents/builder.md`, or `agents/reviewer.md` not present.
+2. Frontmatter missing required keys (`role`, `inputs`, `outputs`, `tools`).
+3. `role` value duplicated across files, or doesn't match filename.
+4. `inputs`/`outputs` don't match the §15.2 row for the declared role.
+5. `## Goal` section missing or empty.
+6. `## Definition of Done` section missing or contains zero bullets.
+7. A bullet under Definition of Done is empty or only whitespace.
+8. Any name in `tools[]` is not registered in the `ToolRegistry`.
+9. Any name in `tools[]` is not in the role's effective allowlist (`global ∪ perRole[role].allow` — see §8.8).
+
+Warnings (non-halting): missing `## Non-Goals` section.
+
+### 15.4 Runtime use
+
+The agent runtime is a single generic loader (one TS module). On spawn:
+
+1. Read `agents/<role>.md`.
+2. Compose the system prompt from `Goal` + `Definition of Done` + (`Non-Goals` if present) + Intent schema for the declared `outputs`.
+3. Inject only the descriptions of tools listed in frontmatter `tools[]` (cross-checked against the registry's `callableFor(role)`).
+4. Call Provider; parse output into the Intent kind matching `outputs`; emit it via the `mars.done` tool (§8.8.1); the sidecar writes `intent.json` and ends the spawn.
+
+The loader never branches on role. Role-specific behavior lives entirely in the markdown + the Intent contract.
+
+### 15.5 Editing surface
+
+- **Human edits.** Direct file edits to `agents/<role>.md`. `mars check` validates.
+- **`mars retro` edits.** When a retro produces a harness-improvement plan, builder tasks may emit `BuildResult.edits` against `agents/*.md`. The QA gate `harness-changes` (§7.2) fires by default for retro-origin plans, so a human approves before checkpoint.
+
+### 15.6 Out of scope for v0
+
+- Versioning agent templates. The git history of `agents/*.md` is the version log.
+- Per-task agent overrides. One template per role, period.
+- Multiple agents per role (e.g. "fast builder" vs "careful builder"). Adding role variants is post-v0; until then, the dial is the prompt content, not the count.
+
+---
+
+## 16. Hooks: the emission bus
+
+Mars exposes one tool — `hook` — that every emitter calls. Agents emit, the orchestrator emits, the provider emits (via native-hook forwarders). Each emission becomes a row in `events.db` and is broadcast to any subscriber currently listening for that event. Subscribers are independent processes that decide for themselves what to do — write to a database, send a notification, no-op, anything. **Mars ingests and broadcasts; it never runs user commands per event.** The handler-execution model from earlier drafts is gone.
+
+This makes hooks the universal observation + extension point. Anyone can emit; anyone can listen; Mars never blocks emitters on subscribers.
+
+### 16.1 Architecture
+
+Three layers:
+
+```
+emitters (agents / orchestrator / provider)
+       │  call `mars hook fire <event>` (CLI) or the `hook` tool (agent)
+       ▼
+┌────────────────────────────────────────────────┐
+│ ingest path                                    │
+│  1. validate event name (closed taxonomy)      │
+│  2. validate payload (per-event schema)        │
+│  3. APPEND to events.db (durable)              │
+│  4. PUBLISH on .mars/hooks.sock (best-effort)  │
+└────────────────────────────────────────────────┘
+       │
+       ├──▶ events.db    (durable log; subscribers replay by cursor)
+       │
+       └──▶ hooks.sock   (live UDS pub/sub; subscribers connect with a filter)
+                ▼
+            subscribers (config-spawned, CLI, or programmatic)
+            — each receives only events matching its filter
+            — each persists its own cursor for replay on reconnect
+```
+
+Steps 1–3 are synchronous and durable. Step 4 is best-effort. The emitter never blocks on subscriber state.
+
+Two transport layers because:
+- `events.db` alone forces subscribers to poll — laggy, expensive.
+- `hooks.sock` alone is fragile — restarts lose events, slow subscribers drop messages.
+- Together: durable + live. Subscribers get pushed events while attached; on (re)connect they replay from the DB using a stored cursor.
+
+### 16.2 The `hook` tool
+
+Single emission API, two forms.
+
+**CLI form:**
+
+```
+mars hook fire <event> [--payload <json>]
+mars hook fire <event> < payload.json          # stdin alternative
+```
+
+**Tool form (agents):** `hook` is a built-in global tool in the ToolRegistry (§8.8), available to every role. Sidecar dispatches to the same internal function `mars hook fire` uses.
+
+```json
+{ "tool": "hook", "input": { "event": "agent.blocked", "payload": { ... } } }
+```
+
+The tool's input schema is generated at `mars build` start from the recognized event taxonomy (§16.3) plus per-event payload schemas (§16.4). Invalid event names or malformed payloads are rejected at the tool boundary — agents cannot invent event names.
+
+### 16.3 Recognized event taxonomy
+
+Closed enum. Adding an event is a one-line change here plus a payload schema entry; the tool's input schema regenerates on next `mars build`. Free-form names would break subscriber portability; the discipline is non-negotiable.
+
+```ts
+type HookEvent =
+  // session.* — provider lifecycle (forwarded by Provider native hooks)
+  | 'session.start' | 'session.prompt_submit' | 'session.pre_compact' | 'session.end'
+  // run.* — orchestrator-level
+  | 'run.start' | 'run.end' | 'run.halted'
+  // agent.* — emitted by agents themselves
+  | 'agent.spawned' | 'agent.phase_started' | 'agent.blocked'
+  | 'agent.intent_emitted' | 'agent.exited'
+  // task.* — emitted by orchestrator on PlanStore mutations
+  | 'task.created' | 'task.claimed' | 'task.released'
+  | 'task.state_changed' | 'task.refined' | 'task.done'
+  // plan.*
+  | 'plan.created' | 'plan.completed'
+  // intent.*
+  | 'intent.applied'
+  // review.*
+  | 'review.passed' | 'review.failed'
+  // qa.* / vcs.* / budget.*
+  | 'qa.gate_matched'
+  | 'vcs.checkpoint' | 'vcs.conflict'
+  | 'budget.charged' | 'budget.exhausted'
+  // inbox.* / retro.* / harness.*
+  | 'inbox.item_added' | 'inbox.item_resolved' | 'inbox.item_dismissed'
+  | 'retro.completed' | 'harness.fixed'
+  // subscriber.* — Mars-emitted observability of the bus itself
+  | 'subscriber.connected' | 'subscriber.exited' | 'subscriber.dropped'
+```
+
+**Emitter-class permissions** (enforced at the tool boundary):
+
+| Event prefix | Permitted emitters |
+|---|---|
+| `session.*` | Provider native-hook forwarders only |
+| `run.*` | Orchestrator only |
+| `agent.*` | Agents only (the agent that fires must own the `handleId` in the payload) |
+| `intent.*`, `task.*`, `plan.*`, `review.*`, `qa.*`, `vcs.*`, `budget.*`, `inbox.*`, `retro.*`, `harness.*` | Orchestrator only |
+| `subscriber.*` | Mars internal (the bus itself) |
+
+Out-of-class emissions are rejected. This keeps the contract honest — subscribers know that `task.done` always came from the orchestrator and reflects authoritative state, not an agent's wish.
+
+### 16.4 Per-event payload contracts
+
+Every event has a typed payload, validated at the tool boundary against the schema for the named event. Same discipline as `AgentIntent` (§2). Excerpt:
+
+```ts
+type HookPayload = {
+  'session.start':         { runId: string; sessionId: string; ts: string }
+  'session.pre_compact':   { runId: string; tokensAtFire: number; ts: string }
+  'session.end':           { runId: string; ts: string }
+  'run.start':             { runId: string; planId?: PlanId; budget: number }
+  'run.end':               { runId: string; status: 'completed' | 'halted' | 'budget_exhausted' }
+  'run.halted':            { runId: string; reason: string }
+  'agent.spawned':         { handleId: string; role: AgentRole; taskId?: TaskId }
+  'agent.phase_started':   { handleId: string; phase: string; note?: string }
+  'agent.blocked':         { handleId: string; reason: string }
+  'agent.intent_emitted':  { handleId: string; intentKind: AgentIntent['kind'] }
+  'agent.exited':          { handleId: string; exitCode: number }
+  'task.done':             { taskId: TaskId; planId: PlanId; tokensUsed: number; durationMs: number }
+  'task.state_changed':    { taskId: TaskId; from: TaskState; to: TaskState; by: string }
+  'review.failed':         { taskId: TaskId; verdict: Verdict; findings: Finding[] }
+  'budget.charged':        { handleId: string; tokens: number; remaining: number }
+  'budget.exhausted':      { runId: string; budget: number }
+  'qa.gate_matched':       { taskId: TaskId; ruleName: string }
+  'vcs.checkpoint':        { taskId: TaskId; ref: string }
+  'vcs.conflict':          { taskId: TaskId; files: string[] }
+  'inbox.item_added':      { itemId: string; kind: InboxItemKind; category: InboxItemCategory; priority: Priority; title: string }
+  'inbox.item_resolved':   { itemId: string; rootCause?: RootCause }
+  'retro.completed':       { reportPath: string; defectsClustered: number; trend: number }
+  'harness.fixed':         { itemId: string; commitRef?: string }
+  'subscriber.connected':  { name: string; events: string[]; fromCursor?: string }
+  'subscriber.exited':     { name: string; reason: 'clean' | 'crashed' | 'killed' }
+  'subscriber.dropped':    { name: string; count: number }
+  // ...
+}
+```
+
+Full schema lives in source as `hook-events.ts`. The tool refuses payloads that don't match.
+
+### 16.5 Subscribers
+
+Three ways to attach:
+
+**1. Configured (production surface).** `mars build` reads `hooks.subscribers[]` from `mars.config.ts`, spawns each as a child process, and connects each to the socket. Subscriber stdout/stderr is piped to `.mars/subscribers/<name>.log`. If a subscriber dies, Mars emits `subscriber.exited` and does **not** restart — restart policy is the user's call (their script can wrap itself in a supervisor).
+
+```ts
+// mars.config.ts
+hooks: {
+  subscribers: [
+    { name: 'sqlite-mirror', command: './scripts/mirror.sh',
+      events: ['task.done', 'review.*', 'plan.completed'] },
+    { name: 'slack-notify',  command: 'node ./scripts/slack.js',
+      events: ['budget.exhausted', 'session.pre_compact', 'inbox.item_added'] },
+  ],
+}
+```
+
+**2. CLI (interactive).** `mars hook listen` for live debugging:
+
+```
+mars hook listen [--events <pattern>...] [--from <cursor>] [--follow]
+```
+
+**3. Programmatic.** Any process opens `.mars/hooks.sock` (UDS) and sends a JSON filter on connect:
+
+```json
+{ "events": ["task.done", "review.failed", "agent.*"], "fromCursor": "events:1492" }
+```
+
+The broadcaster fans out matching events as JSON lines, one per emission. Filters use `*` as a trailing-segment wildcard (`agent.*` matches `agent.blocked`, `agent.spawned`, etc.).
+
+### 16.6 Cursors and replay
+
+Each subscriber receives a cursor (the `events.id` of the last delivered row) on every push. Subscribers persist the cursor however they like.
+
+On (re)connect with `fromCursor`, the broadcaster reads `events.db` from that cursor forward, streams the backlog, then transitions to live. Without `fromCursor`, the subscriber receives only events from connect time onward.
+
+This gives subscribers two delivery modes:
+- **at-most-once** (live only, no cursor) — for ephemeral observers.
+- **exactly-once** (cursor + replay) — for systems that must not lose events (DB mirrors, billing, audit).
+
+### 16.7 Failure model
+
+Mars's contract with subscribers is one-way and best-effort:
+
+| Subscriber state | Mars behavior |
+|---|---|
+| Dies | Emit `subscriber.exited`. Do not restart. User-managed supervisor restarts; subscriber reconnects with stored cursor. |
+| Slow consumer (queue overflow, default 1000 events) | Drop oldest queued events. Emit `subscriber.dropped { name, count }`. Subscriber detects gap by cursor jump and replays from `events.db` if it cares. |
+| Clean disconnect | Emit `subscriber.exited { reason: 'clean' }`. No event loss; cursor preserved. |
+
+The bus **never blocks emitters on subscribers**. This is the load-bearing decision: a flaky user subscriber cannot stall the orchestrator. Subscribers must be tolerant of drops; if they need exactly-once, they replay.
+
+### 16.8 The orchestrator is also a subscriber
+
+Reactive orchestrator behavior is modeled as the orchestrator subscribing to its own events, not as inline reactive code. Same shape, same bus.
+
+Examples:
+- `inbox.item_resolved` → sweep parked tasks back to `ready_for_execution`.
+- `agent.exited` → drive the main loop's "wait for next agent" (replaces polling `Runner.waitAny` in §9).
+- `vcs.conflict` → add an `inbox.item_added { questionKind: 'resolve_conflict' }`.
+
+This dogfoods the bus — Mars's own behavior is just another subscriber. Same wiring shape user subscribers use. New orchestrator reactions are added by registering new internal subscribers, not by editing the loop.
+
+### 16.9 `session.pre_compact` handling
+
+Per VISION anti-goal: compaction is failure. `session.pre_compact` is a normal event with no special infrastructure — but Mars ships **one default subscriber** for it, named `mars-internal-compaction-halter`, which:
+
+1. Calls `mars hook fire inbox.item_added` with payload describing the run state at fire time, `category: 'defect'`, `rootCause: 'context_bloat'`.
+2. Calls `mars hook fire run.halted { reason: 'context_bloat' }`.
+3. Prints to its log: `MARS COMPACTION DETECTED — run halted. See: mars inbox <id>.`
+
+The orchestrator's own subscription to `run.halted` (§16.8) stops further agent spawns and drives a clean exit.
+
+Users may wire additional subscribers to `session.pre_compact` (Slack page, dashboard alert, etc.). The halt logic is a Mars-shipped subscriber, not special-cased — same shape as everything else. **Recovery (bundle injection, checkpoint replay, summary handoff) is forbidden** per VISION; no subscriber may attempt it.
+
+### 16.10 CLI
+
+```
+# Provider wiring (writes provider native config to forward session.* to mars hook fire)
+mars hooks install [--provider <name>]
+mars hooks status
+mars hooks uninstall
+
+# Bus
+mars hook fire <event> [--payload <json>]            # emission (also the agent tool)
+mars hook listen [--events <pat>...] [--from <c>] [--follow]   # subscribe interactively
+mars hook events                                     # list recognized event names + payload schemas
+mars hook subscribers                                # list configured subscribers + connection state
+```
+
+Plural `mars hooks` = provider wiring. Singular `mars hook` = bus operations. Different concerns, different namespaces.
+
+### 16.11 Doctor checks (§11.5 additions)
+
+| Name | Verifies |
+|---|---|
+| `hooks-installed` | All four `session.*` forwarders present in active provider's config. Missing `session.pre_compact` is an `error` — without it, compaction failures are silent. |
+| `context-headroom` | Orchestrator session below configurable safety threshold (default 70% of provider's compaction limit). Warns at threshold, errors above. Pre-emptive — fires before `session.pre_compact` would. |
+| `subscribers-healthy` | All configured subscribers connected; none have emitted `subscriber.dropped` in the last hour. |
+| `event-schema-valid` | Every event in the taxonomy has a payload schema; every payload schema is reachable from the taxonomy. No drift. |
+
+### 16.12 Out of scope for v0
+
+| Deferred | Why |
+|---|---|
+| Subscriber retry / restart policy | User-managed. Mars logs `subscriber.exited`; supervisors are not Mars's job. |
+| Cross-host bus | Single-host UDS only in v0. Multi-host requires real broker — out of scope until §3.4 `claimedHost` is exercised. |
+| Free-form event names | Closed taxonomy is non-negotiable for subscriber portability (§16.3 rationale). |
+| `PreCompact` recovery handlers | Forbidden by VISION anti-goal. Compaction is a defect; the only recognized response is halt + retro defect. |
+| Bundle templating in user config | Bundle shape is part of the contract. Users extend by adding subscribers, not by editing core emissions. |
+
+---
+
+## 17. Decision provenance
 
 Every decision in this document was deliberately locked in conversation. Where a non-default was chosen, the rationale is preserved:
 
@@ -906,3 +1650,25 @@ Every decision in this document was deliberately locked in conversation. Where a
 | QA checkpoints | Declarative rules in config, evaluated by orchestrator | Predictable, auditable, lean, token-frugal (no LLM call). |
 | `mars retro` | Creates beads plans/tasks | Harness improves itself using its own machinery. |
 | Intent transport | File at `.mars/runs/<id>/intent.json` | Stdout is for humans; intent is structured. |
+| Tool injection | Sixth adapter (`ToolRegistry`); allow-only allowlist; sidecar UDS during spawn; tools don't charge token budget | Same declarative posture as every other adapter. Allow-only keeps semantics trivial. Sidecar preserves §2's one-spawn-one-intent invariant. No token charging because tool cost is wall-time, not LLM calls. |
+| Observability stores | Two SQLite WAL DBs: `events.db` (append-only) + `metrics.db` (rollups) | Different access patterns; conflating forces one schema to serve both badly. Pattern lifted from overstory's `src/events/` + `src/metrics/`. |
+| Token accounting | Provider transcript parsing, not agent self-report | Self-reports are unreliable and game-able. Transcripts are ground truth. Self-report is fallback only. |
+| Triage / monitor agents | Out of scope for v0 | Halt-and-flag + `RootCause` capture in inbox covers diagnosis without a billed Claude session "watching the fleet." Violates token-cost anti-goal. |
+| Observation lenses | Two: `mars logs` + `mars trace` (no live TUI in v0) | Solo-dev surface; fragmenting into trace/replay/inspect/errors/feed (overstory) is a tax on the user. |
+| Defect-rate trend | Tracked in `metrics.db`, surfaced by `mars audit --trend` | Single number that answers "is mars getting better." Without it, the meta-loop is anecdotal. |
+| tmux socket isolation | All commands use `-L mars` | Mars's agent sessions never touch the user's personal tmux server, config, or session list. Operationally critical; locked here so it isn't lost in implementation. |
+| tmux env hygiene | Unset `CLAUDECODE`, `CLAUDE_CODE_SSE_PORT`, `CLAUDE_CODE_ENTRYPOINT` before spawn | Without this the child Claude Code agent inherits the orchestrator's session identity and misbehaves silently. The gotcha you only discover by debugging — pin it. |
+| Exit detection | Poll `intent.json` mtime + `has-session` going false; do not parse capture-pane | TUI output is for humans and `mars logs`. The intent file is the source of truth (§2). Two unrelated failure modes (no intent / dead session) cover all cases. |
+| Headless runner | Out of v0 default; interface stub only | Claude Code is a TUI; tmux is the right shape. Headless mode is reserved for non-TUI providers / CI hosts and ships when needed. |
+| Agent definitions | Markdown at `agents/<role>.md`, validated by the compiler; one generic runtime loader | Same posture as plan-canonical and the rest of the harness. Editable without recompiling. Single source of truth for prompt + contract. `mars retro` can write to it (closes the meta-loop). One loader avoids drift across roles. |
+| Hooks as pure emission bus | Mars ingests + broadcasts; subscribers react. Mars never runs user commands per event. | Inverts the typical "framework hooks = framework reactions" pattern. Removes blocking/timeout/failure semantics from the bus. Subscribers crash, Mars doesn't notice; subscribers fall behind, Mars doesn't slow down. Load-bearing decision: emitters are never blocked by subscribers. |
+| `hook` is a global tool | Every agent role gets it via the ToolRegistry | Universal because emission is a universal capability. Same code path used by orchestrator, agents, and provider native-hook forwarders. One emission API, three sources. |
+| Closed event taxonomy + typed payloads | Same discipline as `AgentIntent` (§2). Free-form names rejected at the tool boundary. | Without it, subscribers can't reliably wire against events — every emitter rename breaks every subscriber. Closed taxonomy makes the bus a contract, not a free-for-all. |
+| Two-layer transport: `events.db` + `hooks.sock` | Durable log + live pub/sub | events.db alone forces polling (laggy). Sockets alone lose events on restart. Together: subscribers get pushed events live, replay from DB on (re)connect via cursor. |
+| At-most-once live, exactly-once via replay | Slow subscribers drop messages; cursor-based replay from `events.db` for systems that need every event | The standard pub/sub trade-off, made explicit. Choosing "never block emitters on subscribers" is the load-bearing constraint; subscribers needing exactly-once persist a cursor and replay. |
+| `session.pre_compact` halt is a Mars-shipped subscriber | Same shape user subscribers use; not a special-cased handler | Dogfoods the bus. The halt logic is just a subscriber Mars ships by default. New orchestrator reactions are added by registering subscribers, not by editing the loop. |
+| Orchestrator is also a subscriber | Reactive orchestrator behavior modeled as subscriptions to its own events | Replaces inline reactive code in `applyIntent` and `Runner.waitAny` polling. Same shape, same bus. New reactions = new internal subscribers, not loop edits. |
+| `events.db` rows are hook fires | Every row is `kind: 'hook_fired'`, with `event` and `payload` | Collapses the previous `EventKind` enum into the hook taxonomy. One schema, one writer, one query surface. |
+| `mars hooks` vs `mars hook` | Plural for provider wiring; singular for bus operations | Different concerns, different namespaces. `hooks install` writes `.claude/settings.local.json`; `hook fire` emits to the bus. |
+| `context-headroom` doctor check | Early-warning sibling of the `session.pre_compact` detector | Gives the loop a chance to halt cleanly *before* the threshold instead of at it. Cheaper to catch than `context_bloat` defects after the fact. |
+| Cost unit | Tokens only; no USD anywhere in the framework | Decouples Mars from any provider's pricing model. Tokens are what providers report; the framework adds, caps, and halts. Dollars are the provider's business — surface them in the provider's own tooling, not in `mars audit` / `RunMetric` / config. Avoids speculative pricing-table abstraction; matches VISION principle 5 (no abstraction without a second real implementation). |
