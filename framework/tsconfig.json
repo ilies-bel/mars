@@ -24,6 +24,6 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["cli/**/*", "runtime/**/*", "adapters/**/*", "compiler/**/*", "contract/**/*"],
+  "include": ["cli/**/*", "runtime/**/*", "adapters/**/*", "compiler/**/*", "contract/**/*", "store/**/*"],
   "exclude": ["node_modules", "dist", "spikes"]
 }

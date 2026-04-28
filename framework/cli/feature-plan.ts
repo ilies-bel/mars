@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import matter from 'gray-matter';
 import { type Feature, FeatureSchema } from '../contract/feature.ts';
+import type { FeatureStore } from '../store/feature-store.ts';
 
 const SLUG_MAX = 40;
 
@@ -24,6 +25,10 @@ function newFeatureId(goal: string): string {
   return `${hex}-${slugify(goal)}`;
 }
 
+export interface FeaturePlanOptions {
+  store?: FeatureStore;
+}
+
 export interface FeaturePlanResult {
   feature: Feature;
   path: string;
@@ -32,6 +37,7 @@ export interface FeaturePlanResult {
 export async function featurePlan(
   goal: string,
   cwd: string = process.cwd(),
+  options: FeaturePlanOptions = {},
 ): Promise<FeaturePlanResult> {
   const trimmed = goal.trim();
   if (trimmed === '') {
@@ -39,7 +45,7 @@ export async function featurePlan(
   }
 
   const now = new Date().toISOString();
-  const feature: Feature = FeatureSchema.parse({
+  let feature: Feature = FeatureSchema.parse({
     id: newFeatureId(trimmed),
     goal: trimmed,
     status: 'draft',
@@ -49,6 +55,11 @@ export async function featurePlan(
     createdAt: now,
     updatedAt: now,
   });
+
+  if (options.store !== undefined) {
+    const { storeId } = await options.store.create(feature);
+    feature = FeatureSchema.parse({ ...feature, storeId });
+  }
 
   const featuresDir = resolve(cwd, 'features');
   await mkdir(featuresDir, { recursive: true });

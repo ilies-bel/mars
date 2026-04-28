@@ -28,6 +28,20 @@ describe('FeatureSchema', () => {
   it('rejects an unknown status', () => {
     expect(() => FeatureSchema.parse({ ...validFeature, status: 'pending' })).toThrow();
   });
+
+  // storeId field — mars-framework-leo
+  it('accepts a feature with a non-empty storeId', () => {
+    expect(() => FeatureSchema.parse({ ...validFeature, storeId: 'bd-42' })).not.toThrow();
+  });
+
+  it('rejects a feature with an empty storeId', () => {
+    expect(() => FeatureSchema.parse({ ...validFeature, storeId: '' })).toThrow();
+  });
+
+  it('accepts a feature without storeId (file-only flow)', () => {
+    const { storeId: _omitted, ...featureWithoutStoreId } = { ...validFeature, storeId: undefined };
+    expect(() => FeatureSchema.parse(featureWithoutStoreId)).not.toThrow();
+  });
 });
 
 describe('FeatureWithTasksSchema', () => {
