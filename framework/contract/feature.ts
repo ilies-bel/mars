@@ -20,6 +20,7 @@ export const FeatureSchema = z.object({
   readyTaskCount: z.number().int().nonnegative(),
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true }),
+  storeId: z.string().min(1).optional(),
 });
 export type Feature = z.infer<typeof FeatureSchema>;
 

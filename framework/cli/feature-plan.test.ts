@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import matter from 'gray-matter';
 import { FeatureSchema } from '../contract/feature.ts';
+import { MemoryStore } from '../store/memory-store.ts';
 import { featurePlan } from './feature-plan.ts';
 
 describe('mars feature plan', () => {
@@ -47,5 +48,28 @@ describe('mars feature plan', () => {
   it('falls back to "idea" slug when goal has no alphanumerics', async () => {
     const { feature } = await featurePlan('!!!', dir);
     expect(feature.id.endsWith('-idea')).toBe(true);
+  });
+
+  describe('with FeatureStore', () => {
+    it('registers the feature in the store and persists storeId in frontmatter', async () => {
+      const store = new MemoryStore();
+      const { feature, path } = await featurePlan('Add OAuth login', dir, { store });
+
+      // returned feature must have storeId set
+      expect(feature.storeId).toBeDefined();
+      expect(typeof feature.storeId).toBe('string');
+      expect((feature.storeId as string).length).toBeGreaterThan(0);
+
+      // storeId must be written to frontmatter on disk
+      const raw = await readFile(path, 'utf-8');
+      const parsed = matter(raw);
+      expect(parsed.data['storeId']).toBe(feature.storeId);
+
+      // store must contain the feature under that storeId
+      const fromStore = await store.get(feature.storeId as string);
+      expect(fromStore).not.toBeNull();
+      expect(fromStore?.id).toBe(feature.id);
+      expect(fromStore?.storeId).toBe(feature.storeId);
+    });
   });
 });
