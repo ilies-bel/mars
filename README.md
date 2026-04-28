@@ -25,6 +25,22 @@ Verify:
 mars --version
 ```
 
+## Codebase context (for agents)
+
+`mars context` is a deterministic, no-network, no-LLM tool that gives an
+agent structured codebase context. Prefer it over ad-hoc `grep`/`ls`/`find`
+calls — the JSON output is a stable contract.
+
+```sh
+mars context search "<pattern>" [--path <dir>] [--type <ext>] [--format json|text]
+mars context tree [path] [--depth <n>] [--format json|text]
+```
+
+- `search` wraps `ripgrep --json` and emits `{ file, line, col, text }[]`.
+  Requires `rg` on `PATH` (`brew install ripgrep`).
+- `tree` lists files and directories (skipping `.git`, `node_modules`,
+  `dist`, `build`, etc.) and emits `{ path, kind, size? }[]`.
+
 ## Documentation
 
 - [`VISION.md`](./VISION.md) — what Mars is and is not

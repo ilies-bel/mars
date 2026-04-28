@@ -54,6 +54,26 @@ const { feature } = await featurePlan(goal, cwd, { store });
 `storeId` is opaque to Mars: never parsed, never used as the primary
 display handle. If you need a feature, look it up by Mars `id`.
 
+## Codebase context
+
+When an agent needs to find code or list files, prefer `mars context` over
+ad-hoc shell tools. JSON output is a stable Mars-owned contract; `rg`/`ls`/
+`find` outputs are not.
+
+```bash
+mars context search "<pattern>" [--path <dir>] [--type <ext>] [--format json|text]
+mars context tree [path] [--depth <n>] [--format json|text]
+```
+
+- `search` shells out to `ripgrep --json`, returns `{ file, line, col, text }[]`
+- `tree` walks the filesystem, skipping `.git`, `node_modules`, `dist`,
+  `build`, etc., returns `{ path, kind, size? }[]`
+- Implementation: `framework/cli/context.ts`; contract:
+  `framework/contract/context.ts`
+
+Pure functions (`runSearch`, `runTree`) are testable via injected `SpawnFn`
+(see `framework/runtime/process.ts`). The CLI is the only layer that prints.
+
 ## Common commands
 
 ```bash
@@ -61,6 +81,8 @@ bun test                              # full suite
 bun test framework/store              # store adapters only
 bunx tsc --noEmit                     # typecheck (run from framework/)
 mars feature plan "<goal>"            # register a draft feature
+mars context search "<pattern>"       # structured codebase grep
+mars context tree <path>              # structured ls/find
 ```
 
 ## Conventions

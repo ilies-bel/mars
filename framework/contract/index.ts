@@ -1,4 +1,5 @@
 export * from './build-result.ts';
+export * from './context.ts';
 export * from './file-edit.ts';
 export * from './intent.ts';
 export * from './feature.ts';
