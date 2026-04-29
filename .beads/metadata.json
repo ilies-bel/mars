@@ -1,7 +1,0 @@
-{
-  "database": "dolt",
-  "backend": "dolt",
-  "dolt_mode": "embedded",
-  "dolt_database": "mars_framework",
-  "project_id": "1fdaa193-9c28-4b93-b5c3-e12ff9e445c8"
-}

@@ -25,6 +25,25 @@ Verify:
 mars --version
 ```
 
+## Dev mode (live source)
+
+While hacking on the CLI, point `mars` at the TypeScript entry directly so edits to `framework/cli/**` are picked up on the next call — no rebuild.
+
+```sh
+framework/scripts/install-dev.sh
+```
+
+This symlinks `~/.local/bin/mars` to `framework/scripts/mars-dev`, a shim that runs `bun cli/main.ts "$@"` from the framework dir. Honors `MARS_BIN_DIR` like `install.sh`.
+
+After it runs, just use `mars` as normal:
+
+```sh
+mars --help
+mars feature --help
+```
+
+To switch back to the built binary, re-run `install.sh` — it overwrites the same symlink.
+
 ## Codebase context (for agents)
 
 `mars context` is a deterministic, no-network, no-LLM tool that gives an

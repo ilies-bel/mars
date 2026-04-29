@@ -6,3 +6,9 @@
 
 # macOS
 .DS_Store
+/.mars/
+/.worktrees/
+
+# DuckDB
+*.duckdb
+*.duckdb.wal
