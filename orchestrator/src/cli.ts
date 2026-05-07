@@ -98,7 +98,7 @@ Plan flags for 'add':
 
 Repo resolution (in priority order):
   1. --repo <path>
-  2. \$MARS_ORCH_REPO env var
+  2. \$MARS_REPO env var
   3. \`git rev-parse --show-toplevel\` from cwd
 
 Other env:

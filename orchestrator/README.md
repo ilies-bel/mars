@@ -1,4 +1,4 @@
-# mars-orch
+# mars
 
 Mastra-driven orchestrator that runs Claude Code in parallel git worktrees. Installable globally; works against any git repo.
 
@@ -16,21 +16,21 @@ Each task in the queue runs through a 4-step Mastra workflow:
 ```bash
 cd orchestrator
 npm install
-npm link            # exposes `mars-orch` globally
+npm link            # exposes `mars` globally
 ```
 
 ## Usage
 
 ```bash
 # inside any git repo
-mars-orch add "implement X in src/foo.ts"
-mars-orch list queued
-mars-orch run                    # dispatch all queued tasks in parallel
-mars-orch where                  # show resolved repo + state paths
+mars add "implement X in src/foo.ts"
+mars list queued
+mars run                    # dispatch all queued tasks in parallel
+mars where                  # show resolved repo + state paths
 
 # from anywhere — explicit target
-mars-orch --repo /path/to/repo add "fix bug Y"
-mars-orch --repo /path/to/repo run
+mars --repo /path/to/repo add "fix bug Y"
+mars --repo /path/to/repo run
 
 # Mastra Studio (workflow traces, time-travel, logs)
 cd orchestrator && npm run dev   # http://localhost:4111
@@ -40,7 +40,7 @@ cd orchestrator && npm run dev   # http://localhost:4111
 
 Target repo is resolved in this order:
 1. `--repo <path>` flag
-2. `MARS_ORCH_REPO` env var
+2. `MARS_REPO` env var
 3. `git rev-parse --show-toplevel` from the current directory
 
 State lives at `<target-repo>/.mars/`:
@@ -76,7 +76,7 @@ Add `/.mars/` to the target repo's `.gitignore`.
 ## Env
 
 - `INTEGRATION_BRANCH` — target branch for merges (default `integration`).
-- `MARS_ORCH_REPO` — target repo path (overrides cwd-based detection).
+- `MARS_REPO` — target repo path (overrides cwd-based detection).
 
 ## Failure handling
 
