@@ -3,7 +3,7 @@ name: {{NAME}}
 description: {{DESCRIPTION}}
 model: sonnet
 tools: *
----
+{{SOURCE_FRONTMATTER}}---
 
 # {{ROLE}}: "{{PERSONA}}"
 
@@ -11,7 +11,6 @@ tools: *
 
 - **Name:** {{PERSONA}}
 - **Role:** {{ROLE}}
-- **Specialty:** {{SPECIALTY}}
 
 ---
 
@@ -21,25 +20,9 @@ tools: *
 
 ---
 
-## Tech Stack
+## Specialist Knowledge
 
-{{TECH_STACK}}
-
----
-
-## Scope
-
-**You handle:**
-{{SCOPE_HANDLES}}
-
-**You escalate:**
-{{SCOPE_ESCALATES}}
-
----
-
-## Standards
-
-{{STANDARDS}}
+{{SPECIALIST_BODY}}
 
 ---
 

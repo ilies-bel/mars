@@ -3,13 +3,21 @@ import { resolve } from 'node:path'
 import { resolveContext } from '../mastra/context'
 import type { SupervisorKind } from './detect-stack'
 
+export type SupervisorOutcome = 'hit' | 'miss' | 'error'
+
+export interface SupervisorExternalSource {
+  slug: string
+  path: string
+}
+
 export interface SupervisorManifestEntry {
   name: string
   persona: string
   kind: SupervisorKind
   path: string
-  externalSource: string | null
-  filteredFromLines: number | null
+  outcome: SupervisorOutcome
+  triedSlugs: string[]
+  externalSource: SupervisorExternalSource | null
   lines: number
 }
 

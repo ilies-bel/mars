@@ -7,7 +7,7 @@
     "mars": "./bin/mars.mjs"
   },
   "scripts": {
-    "test": "echo \"no tests yet\" && exit 0",
+    "test": "vitest run",
     "dev": "mastra dev",
     "build": "mastra build",
     "start": "mastra start",
@@ -36,6 +36,7 @@
   "devDependencies": {
     "@types/node": "^25.6.0",
     "mastra": "^1.7.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^2.1.9"
   }
 }
