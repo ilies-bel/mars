@@ -94,6 +94,8 @@ Commands:
                                 set the technical plan on a queued task
   show <id>                     print full task incl. plan sections
   list [status]                 list tasks (queued|running|verifying|merging|done|failed)
+  retry <id>                    re-queue a failed/done task (cleans worktree+branch)
+  purge <id>                    delete a failed/done task entirely (worktree+branch+row)
   run                           dispatch all queued tasks (unlimited parallel)
   feature list [status]         list features from .mars/state.db (read-only)
   feature show <id>             show a single feature from .mars/state.db (read-only)
@@ -293,6 +295,58 @@ const main = async (): Promise<void> => {
     if (task.error) {
       console.log(`error:`)
       console.log(task.error)
+    }
+    return
+  }
+
+  if (cmd === 'retry' || cmd === 'purge') {
+    const id = rest[0]
+    if (!id) {
+      console.error(`usage: mars ${cmd} <id>`)
+      process.exit(1)
+    }
+    const { getTask, updateTask, deleteTask } = await import('./mastra/queue')
+    const task = await getTask(id)
+    if (!task) {
+      console.error(`task ${id} not found`)
+      process.exit(1)
+    }
+    if (task.status !== 'failed' && task.status !== 'done') {
+      const reason =
+        cmd === 'retry'
+          ? `only failed/done tasks can be retried`
+          : `refuse to purge in-flight tasks`
+      console.error(`task ${id} is ${task.status}; ${reason}`)
+      process.exit(1)
+    }
+
+    const { existsSync } = await import('node:fs')
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const exec = promisify(execFile)
+    const { removeWorktree } = await import('./mastra/lib/git')
+    const { getRepoRoot } = await import('./mastra/context')
+
+    const branch = task.branch ?? `task/${task.id}`
+    if (task.worktreePath && existsSync(task.worktreePath)) {
+      await removeWorktree({ path: task.worktreePath, branch }, true).catch(() => {})
+    }
+    await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(
+      () => {},
+    )
+
+    if (cmd === 'retry') {
+      await updateTask(id, {
+        status: 'queued',
+        branch: null,
+        worktreePath: null,
+        claudeSessionId: null,
+        error: null,
+      })
+      console.log(`queued ${id} for retry`)
+    } else {
+      await deleteTask(id)
+      console.log(`purged ${id}`)
     }
     return
   }
