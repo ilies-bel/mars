@@ -223,6 +223,14 @@ export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
   return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
 }
 
+export const deleteTask = async (id: string): Promise<void> => {
+  await initQueue()
+  await getClient().execute({
+    sql: `DELETE FROM tasks WHERE id = ?`,
+    args: [id],
+  })
+}
+
 export const claimReadyTask = async (id: string): Promise<Task | null> => {
   await initQueue()
   const now = new Date().toISOString()
