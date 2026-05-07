@@ -1,10 +1,10 @@
 {
-  "name": "mars-orch",
+  "name": "mars",
   "version": "0.1.0",
   "description": "Mastra-driven orchestrator that runs Claude Code in parallel git worktrees.",
   "main": "src/cli.ts",
   "bin": {
-    "mars-orch": "./bin/mars-orch.mjs"
+    "mars": "./bin/mars.mjs"
   },
   "scripts": {
     "test": "echo \"no tests yet\" && exit 0",

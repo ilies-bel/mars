@@ -14,7 +14,7 @@ standalone `mars` binary with Bun, symlinks `~/.local/bin/mars`.
 
 | Path | Purpose |
 | --- | --- |
-| `orchestrator/` | **mars-orch** — Mastra-driven orchestrator. Runs Claude Code headless in parallel git worktrees, verifies (typecheck/test/lint), then fast-forwards into `integration`. Conflicts dispatched to bundled `vcs-supervisor` ("Vega") agent. State per-target-repo at `.mars/`. Node `>=22.13.0`. See `orchestrator/README.md` and `orchestrator/AGENTS.md`. |
+| `orchestrator/` | **mars** — Mastra-driven orchestrator. Runs Claude Code headless in parallel git worktrees, verifies (typecheck/test/lint), then fast-forwards into `integration`. Conflicts dispatched to bundled `vcs-supervisor` ("Vega") agent. State per-target-repo at `.mars/`. Node `>=22.13.0`. See `orchestrator/README.md` and `orchestrator/AGENTS.md`. |
 | `design/` | UI design drafts (v0) for `mars ui` — a read-only local viewer for Mars runs. Three views (Topology / Runs / Run timeline), single shell, SSE event stream. Foreground only, port 7777. CLI is the only control surface. |
 | `.mars/` | Unified per-repo state for both the Mars CLI and the orchestrator: `state.db` (CLI), `queue.db` (LibSQL task queue), `mastra.db` (Mastra workflow runs/traces), `worktrees/<task-id>/`, `.merge.lock`. Gitignored. |
 | `.worktrees/` | Git worktrees created by the orchestrator for parallel task execution. |
@@ -37,18 +37,18 @@ standalone `mars` binary with Bun, symlinks `~/.local/bin/mars`.
 
 ## Creating a new orchestrator task
 
-Use the `mars-orch` CLI (exposed via `npm link` from `orchestrator/`):
+Use the `mars` CLI (installed by `install.sh`, or via `npm link` from `orchestrator/`):
 
 ```bash
 # from inside the target repo
-mars-orch add "implement X in src/foo.ts"   # enqueue a task
-mars-orch list queued                        # inspect the queue
-mars-orch run                                # dispatch all queued tasks in parallel
-mars-orch where                              # show resolved repo + state paths
+mars add "implement X in src/foo.ts"   # enqueue a task
+mars list queued                        # inspect the queue
+mars run                                # dispatch all queued tasks in parallel
+mars where                              # show resolved repo + state paths
 
 # from anywhere — explicit target repo
-mars-orch --repo /path/to/repo add "fix bug Y"
-mars-orch --repo /path/to/repo run
+mars --repo /path/to/repo add "fix bug Y"
+mars --repo /path/to/repo run
 ```
 
 The task prompt should be a single self-contained instruction; the orchestrator

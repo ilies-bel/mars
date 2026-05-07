@@ -83,10 +83,10 @@ Single task, ~1 file + tests.
 - `orchestrator/src/mastra/lib/__tests__/git.test.ts` (new or extended)
 - `orchestrator/README.md`
 
-## One-liner for `mars-orch add`
+## One-liner for `mars add`
 
 ```bash
-mars-orch add "$(cat <<'EOF'
+mars add "$(cat <<'EOF'
 Surface vcs-supervisor (Vega) runs in Mastra Studio without leaving claude -p.
 
 1. Add runSubprocessStreaming in orchestrator/src/mastra/lib/git.ts with an onChunk callback; refactor runSubprocess to delegate.

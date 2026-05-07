@@ -29,7 +29,7 @@ let cached: OrchestratorContext | null = null
 export const resolveContext = (override?: string): OrchestratorContext => {
   if (cached && !override) return cached
 
-  const explicit = override ?? process.env.MARS_ORCH_REPO
+  const explicit = override ?? process.env.MARS_REPO
   const repoRoot = explicit ? resolve(explicit) : detectRepoRoot(process.cwd())
   const stateDir = resolve(repoRoot, '.mars')
   mkdirSync(stateDir, { recursive: true })
