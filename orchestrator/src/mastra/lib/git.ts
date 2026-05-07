@@ -202,6 +202,15 @@ export interface MergeResult {
 
 let cachedSupervisorSpec: string | null = null
 
+export const stripFrontmatter = (text: string): string => {
+  if (!text.startsWith('---\n') && !text.startsWith('---\r\n')) return text
+  const afterOpening = text.indexOf('\n') + 1
+  const closingMatch = text.slice(afterOpening).match(/^---(\r?\n|$)/m)
+  if (!closingMatch || closingMatch.index === undefined) return text
+  const closingEnd = afterOpening + closingMatch.index + closingMatch[0].length
+  return text.slice(closingEnd).replace(/^\r?\n+/, '')
+}
+
 const loadSupervisorSpec = async (): Promise<string> => {
   if (cachedSupervisorSpec) return cachedSupervisorSpec
   const promptPath = resolve(moduleDir(), '../../prompts/vcs-supervisor.md')
@@ -213,7 +222,7 @@ const buildSupervisorPrompt = async (
   branch: string,
   integrationBranch: string,
 ): Promise<string> => {
-  const spec = await loadSupervisorSpec()
+  const spec = stripFrontmatter(await loadSupervisorSpec())
   return `${spec}
 
 ---
