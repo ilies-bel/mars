@@ -95,6 +95,8 @@ Commands:
   show <id>                     print full task incl. plan sections
   list [status]                 list tasks (queued|running|verifying|merging|done|failed)
   run                           dispatch all queued tasks (unlimited parallel)
+  feature list [status]         list features from .mars/state.db (read-only)
+  feature show <id>             show a single feature from .mars/state.db (read-only)
   where                         print resolved repo + state directory
   help                          show this message
 
@@ -335,6 +337,45 @@ const main = async (): Promise<void> => {
       }
     }
     return
+  }
+
+  if (cmd === 'feature') {
+    const sub = rest[0]
+    if (sub === 'list') {
+      const status = rest[1] as never
+      const { listFeatures } = await import('./mastra/features')
+      const features = await listFeatures(status)
+      for (const f of features) {
+        console.log(`${f.id}\t${f.status}\t${f.goal}`)
+      }
+      return
+    }
+    if (sub === 'show') {
+      const id = rest[1]
+      if (!id) {
+        console.error('usage: mars feature show <id>')
+        process.exit(1)
+      }
+      const { getFeature } = await import('./mastra/features')
+      const f = await getFeature(id)
+      if (!f) {
+        console.error(`feature ${id} not found`)
+        process.exit(1)
+      }
+      console.log(`id:         ${f.id}`)
+      console.log(`status:     ${f.status}`)
+      console.log(`origin:     ${f.origin}`)
+      console.log(`parentId:   ${f.parentId ?? '-'}`)
+      console.log(`taskCount:  ${f.taskCount} (ready: ${f.readyTaskCount})`)
+      console.log(`storeId:    ${f.storeId ?? '-'}`)
+      console.log(`createdAt:  ${f.createdAt}`)
+      console.log(`updatedAt:  ${f.updatedAt}`)
+      console.log(`goal:`)
+      console.log(f.goal)
+      return
+    }
+    console.error('usage: mars feature <list [status]|show <id>>')
+    process.exit(1)
   }
 
   console.error(`unknown command: ${cmd}`)
