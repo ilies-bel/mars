@@ -7,6 +7,8 @@ export interface OrchestratorContext {
   stateDir: string
   queueDbPath: string
   mastraDbPath: string
+  supervisorsDir: string
+  supervisorsManifest: string
 }
 
 const detectRepoRoot = (start: string): string => {
@@ -32,11 +34,15 @@ export const resolveContext = (override?: string): OrchestratorContext => {
   const stateDir = resolve(repoRoot, '.mars')
   mkdirSync(stateDir, { recursive: true })
 
+  const supervisorsDir = resolve(stateDir, 'supervisors')
+
   cached = {
     repoRoot,
     stateDir,
     queueDbPath: resolve(stateDir, 'queue.db'),
     mastraDbPath: resolve(stateDir, 'mastra.db'),
+    supervisorsDir,
+    supervisorsManifest: resolve(supervisorsDir, 'manifest.json'),
   }
   return cached
 }
