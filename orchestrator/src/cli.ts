@@ -74,6 +74,9 @@ Usage:
   mars [--repo <path>] <command> [args]
 
 Commands:
+  init [--force] [--no-fetch] [--dry-run]
+                                detect tech stack and generate specialized supervisors
+                                in .mars/supervisors/ (skeleton + workflow contract).
   add "<prompt>" [plan flags]   enqueue a task (via enqueue-task tool)
   set-functional <id> <text|@file>
                                 set the functional plan on a queued task
@@ -115,10 +118,48 @@ const main = async (): Promise<void> => {
   const ctx = resolveContext(repo)
 
   if (cmd === 'where') {
-    console.log(`repo:       ${ctx.repoRoot}`)
-    console.log(`stateDir:   ${ctx.stateDir}`)
-    console.log(`queueDb:    ${ctx.queueDbPath}`)
-    console.log(`mastraDb:   ${ctx.mastraDbPath}`)
+    console.log(`repo:           ${ctx.repoRoot}`)
+    console.log(`stateDir:       ${ctx.stateDir}`)
+    console.log(`queueDb:        ${ctx.queueDbPath}`)
+    console.log(`mastraDb:       ${ctx.mastraDbPath}`)
+    console.log(`supervisorsDir: ${ctx.supervisorsDir}`)
+    return
+  }
+
+  if (cmd === 'init') {
+    const boolFlags = new Set(rest.filter((a) => a.startsWith('--')))
+    const force = boolFlags.has('--force')
+    const fetch = !boolFlags.has('--no-fetch')
+    const dryRun = boolFlags.has('--dry-run')
+    const { runInit } = await import('./mastra/workflows/init-workflow')
+    const result = await runInit({ force, fetch, dryRun })
+
+    if (result.detected) {
+      const d = result.detected
+      console.log('detected stack:')
+      console.log(`  languages:   ${d.languages.join(', ') || '(none)'}`)
+      console.log(`  frameworks:  ${d.frameworks.join(', ') || '(none)'}`)
+      console.log(`  infra:       ${d.infra.join(', ') || '(none)'}`)
+      console.log(`  mobile:      ${d.mobile.join(', ') || '(none)'}`)
+      console.log(`  specialized: ${d.specialized.join(', ') || '(none)'}`)
+      console.log('proposed supervisors:')
+      for (const s of d.supervisors) {
+        console.log(`  - ${s.name} (${s.persona}) — ${s.kind} — ${s.detectedFrom.join(', ')}`)
+      }
+      if (d.supervisors.length === 0) console.log('  (none)')
+    }
+
+    if (result.status === 'dry-run') {
+      console.log('\ndry run: no files written')
+      return
+    }
+    if (result.status === 'aborted-existing') {
+      console.error(`\n${result.message}`)
+      process.exit(1)
+    }
+
+    console.log('\nwrote:')
+    for (const w of result.written ?? []) console.log(`  ${w}`)
     return
   }
 
