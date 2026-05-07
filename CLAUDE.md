@@ -64,6 +64,34 @@ Mastra Studio (`cd orchestrator && npm run dev` → http://localhost:4111).
   `orchestrator/src/mastra/index.ts`.
 - Never commit `.env`, `.mars/`, or `node_modules`.
 
+## Loose ends
+
+Track loose ends as you work — latent bugs spotted but not fixed, deferred
+refactors, missing features, orphan rows in `.mars/queue.db` or `state.db`,
+anything outside the current task's scope. The queue is the source of truth;
+do not park them in chat prose, a markdown TODO, or a MEMORY.md.
+
+At the end of a session — or as soon as the user signals a stopping point
+("looks good", "ship it", "done", "let's move on") — enumerate every loose
+end you accumulated and enqueue **one `mars add` task per item**. No batching,
+no speculative entries ("maybe consider X someday"); only concrete, actionable
+work the user has seen or that blocks real follow-up. If the user says "skip"
+or "not now" for a specific item, drop it.
+
+Each task prompt must stand on its own — a colleague reading it cold should
+be able to do the work without this session's context. Include:
+
+- the file path(s) and the symptom,
+- the suggested fix (or alternatives, with the trade-off),
+- the explicit verification command(s) to run,
+- a closing **"Save your work"** line reminding the agent to stage and commit
+  the change — the orchestrator does not commit on their behalf.
+
+Avoid bare regex-trigger phrases in the outer shell (the `block-tracked-writes`
+hook denies standalone `git commit`, `git add`, `rm `, etc.). Inside a
+heredoc'd `mars add "..."` prompt body those strings are fine, because the
+outer command itself is `mars add`.
+
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
