@@ -44,6 +44,26 @@ mars feature --help
 
 To switch back to the built binary, re-run `install.sh` — it overwrites the same symlink.
 
+## `mars init`
+
+Detects the tech stack across a monorepo and generates a single supervisor
+set under `.mars/supervisors/`.
+
+```sh
+mars init                # walks the repo, writes supervisors
+mars init --verbose      # also prints each manifest + techs on stderr
+mars init --dry-run      # print without writing
+mars init --force        # overwrite existing supervisors
+```
+
+Recursion is the default. The walker stops at depth 6 and skips
+`.git`, `node_modules`, `.mars`, `.worktrees`, `dist`, `build`, `.next`,
+`target`, `out`, plus anything ignored by a `.gitignore` or registered as
+a git submodule. Tech-bearing manifests must be siblings, not nested —
+`mars init` errors out if it sees `frontend/package.json` AND
+`frontend/admin/package.json`. Empty repos still get a baseline supervisor
+plus an empty-stack `manifest.json`.
+
 ## Codebase context (for agents)
 
 `mars context` is a deterministic, no-network, no-LLM tool that gives an
