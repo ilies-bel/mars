@@ -74,9 +74,12 @@ Usage:
   mars [--repo <path>] <command> [args]
 
 Commands:
-  init [--force] [--no-fetch] [--dry-run]
+  init [--force] [--no-fetch] [--dry-run] [--refresh]
                                 detect tech stack and generate specialized supervisors
                                 in .mars/supervisors/ (skeleton + workflow contract).
+                                Pulls specialist knowledge from
+                                ayush-that/sub-agents.directory over HTTPS, cached
+                                under .mars/cache/sub-agents/ (7-day TTL).
   add "<prompt>" [plan flags]   enqueue a task (via enqueue-task tool)
   set-functional <id> <text|@file>
                                 set the functional plan on a queued task
@@ -123,6 +126,7 @@ const main = async (): Promise<void> => {
     console.log(`queueDb:        ${ctx.queueDbPath}`)
     console.log(`mastraDb:       ${ctx.mastraDbPath}`)
     console.log(`supervisorsDir: ${ctx.supervisorsDir}`)
+    console.log(`cacheDir:       ${ctx.cacheDir}`)
     return
   }
 
@@ -131,8 +135,9 @@ const main = async (): Promise<void> => {
     const force = boolFlags.has('--force')
     const fetch = !boolFlags.has('--no-fetch')
     const dryRun = boolFlags.has('--dry-run')
+    const refresh = boolFlags.has('--refresh')
     const { runInit } = await import('./mastra/workflows/init-workflow')
-    const result = await runInit({ force, fetch, dryRun })
+    const result = await runInit({ force, fetch, dryRun, refresh })
 
     if (result.detected) {
       const d = result.detected
@@ -156,6 +161,19 @@ const main = async (): Promise<void> => {
     if (result.status === 'aborted-existing') {
       console.error(`\n${result.message}`)
       process.exit(1)
+    }
+
+    if (result.outcomes && result.outcomes.length > 0) {
+      console.log('\nspecialist enrichment:')
+      for (const o of result.outcomes) {
+        if (o.outcome === 'hit' && o.externalSource) {
+          console.log(`  - ${o.name}: hit (${o.externalSource.slug}.md)`)
+        } else if (o.outcome === 'miss') {
+          console.log(`  - ${o.name}: miss (tried: ${o.triedSlugs.join(', ') || '-'})`)
+        } else {
+          console.log(`  - ${o.name}: error`)
+        }
+      }
     }
 
     console.log('\nwrote:')

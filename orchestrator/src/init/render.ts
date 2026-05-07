@@ -31,38 +31,51 @@ const roleFromKind: Record<SupervisorSpec['kind'], string> = {
   specialized: 'Specialist Supervisor',
 }
 
+export interface SpecialistSource {
+  slug: string
+  path: string
+}
+
 export interface RenderInput {
   spec: SupervisorSpec
-  specialty: string
-  techStack: string
-  scopeHandles: string
-  scopeEscalates: string
-  standards: string
+  specialistBody: string | null
+  source?: SpecialistSource | null
+}
+
+const fallbackSpecialistBody = (spec: SupervisorSpec): string => {
+  const detected = spec.detectedFrom.length > 0
+    ? spec.detectedFrom.map((d) => `\`${d}\``).join(', ')
+    : 'project context'
+  return `_(no upstream specialist matched; using minimal template)_
+
+This supervisor handles work in the **${spec.kind}** domain, detected via ${detected}.
+
+- Implement only what the task prompt asks for and follow the project's existing conventions.
+- Maintain or improve test coverage; do not weaken assertions to make verification pass.
+- Escalate cross-domain refactors, architecture changes, and infrastructure or security decisions to the orchestrator.`
 }
 
 export const renderSupervisor = (input: RenderInput): string => {
-  const { spec, specialty, techStack, scopeHandles, scopeEscalates, standards } = input
-  const description = `${roleFromKind[spec.kind]} for ${spec.externalQuery}.`
+  const { spec, specialistBody, source } = input
+  const description = `${roleFromKind[spec.kind]} (${spec.kind}) for this project.`
+  const body = (specialistBody ?? '').trim() || fallbackSpecialistBody(spec)
+  const sourceFm = source
+    ? `source: ayush-that/sub-agents.directory:${source.path}\n`
+    : ''
   return getSupervisorSkeleton()
     .replaceAll('{{NAME}}', spec.name)
     .replaceAll('{{DESCRIPTION}}', description)
     .replaceAll('{{ROLE}}', roleFromKind[spec.kind])
     .replaceAll('{{PERSONA}}', spec.persona)
-    .replaceAll('{{SPECIALTY}}', specialty.trim() || spec.externalQuery)
+    .replaceAll('{{SOURCE_FRONTMATTER}}', sourceFm)
     .replaceAll('{{WORKFLOW_CONTRACT}}', getWorkflowContract().trim())
-    .replaceAll('{{TECH_STACK}}', techStack.trim() || '_(no external specialist details available)_')
-    .replaceAll('{{SCOPE_HANDLES}}', scopeHandles.trim() || `Tasks within the ${spec.kind} domain for this project.`)
-    .replaceAll('{{SCOPE_ESCALATES}}', scopeEscalates.trim() || 'Cross-domain decisions, architecture changes, schema migrations, infra/security reviews.')
-    .replaceAll('{{STANDARDS}}', standards.trim() || 'Follow the project\'s established conventions, lint rules, and test coverage expectations.')
+    .replaceAll('{{SPECIALIST_BODY}}', body)
 }
 
 export const minimalRenderInput = (spec: SupervisorSpec): RenderInput => ({
   spec,
-  specialty: spec.externalQuery,
-  techStack: spec.detectedFrom.map((d) => `- detected via \`${d}\``).join('\n'),
-  scopeHandles: `- Implementation work in the ${spec.kind} domain (${spec.externalQuery}).`,
-  scopeEscalates: '- Cross-domain refactors, architecture changes, infrastructure or security decisions.',
-  standards: '- Match existing codebase patterns; do not introduce new dependencies without justification.\n- Maintain or improve test coverage.\n- Keep changes scoped to the task prompt.',
+  specialistBody: null,
+  source: null,
 })
 
 export interface ValidationIssue {
@@ -92,76 +105,8 @@ export const validateSupervisor = (
     return { reason: 'missing workflow contract sentinel' }
   }
   const lines = content.split('\n').length
-  if (lines > 250) {
-    return { reason: `supervisor too long (${lines} lines, max 250)` }
+  if (lines > 500) {
+    return { reason: `supervisor too long (${lines} lines, max 500)` }
   }
   return null
-}
-
-const stripCodeBlocksOver = (text: string, maxLines: number): string => {
-  const lines = text.split('\n')
-  const out: string[] = []
-  let inFence = false
-  let fenceBuf: string[] = []
-  for (const line of lines) {
-    if (line.trimStart().startsWith('```')) {
-      if (inFence) {
-        if (fenceBuf.length <= maxLines) {
-          out.push('```' + (fenceBuf[0] ?? ''))
-          for (let i = 1; i < fenceBuf.length; i++) out.push(fenceBuf[i])
-          out.push(line)
-        }
-        fenceBuf = []
-        inFence = false
-      } else {
-        inFence = true
-        fenceBuf = [line.trim().slice(3)]
-      }
-      continue
-    }
-    if (inFence) {
-      fenceBuf.push(line)
-    } else {
-      out.push(line)
-    }
-  }
-  return out.join('\n')
-}
-
-export const filterExternalMarkdown = (text: string): string => {
-  let cleaned = stripCodeBlocksOver(text, 3)
-  const sectionTitles = [
-    'example',
-    'examples',
-    'pattern',
-    'patterns',
-    'how to',
-    'how-to',
-    'usage',
-    'common mistakes',
-  ]
-  const lines = cleaned.split('\n')
-  const out: string[] = []
-  let skipping = false
-  let skipLevel = 0
-  for (const line of lines) {
-    const heading = line.match(/^(#{1,6})\s+(.+)$/)
-    if (heading) {
-      const level = heading[1].length
-      const title = heading[2].toLowerCase().trim()
-      if (skipping && level <= skipLevel) {
-        skipping = false
-      }
-      if (!skipping && sectionTitles.some((t) => title.startsWith(t) || title === t)) {
-        skipping = true
-        skipLevel = level
-        continue
-      }
-    }
-    if (skipping) continue
-    out.push(line)
-  }
-  cleaned = out.join('\n')
-  cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
-  return cleaned.trim()
 }

@@ -9,6 +9,7 @@ export interface OrchestratorContext {
   mastraDbPath: string
   supervisorsDir: string
   supervisorsManifest: string
+  cacheDir: string
 }
 
 const detectRepoRoot = (start: string): string => {
@@ -35,6 +36,7 @@ export const resolveContext = (override?: string): OrchestratorContext => {
   mkdirSync(stateDir, { recursive: true })
 
   const supervisorsDir = resolve(stateDir, 'supervisors')
+  const cacheDir = resolve(stateDir, 'cache', 'sub-agents')
 
   cached = {
     repoRoot,
@@ -43,6 +45,7 @@ export const resolveContext = (override?: string): OrchestratorContext => {
     mastraDbPath: resolve(stateDir, 'mastra.db'),
     supervisorsDir,
     supervisorsManifest: resolve(supervisorsDir, 'manifest.json'),
+    cacheDir,
   }
   return cached
 }
