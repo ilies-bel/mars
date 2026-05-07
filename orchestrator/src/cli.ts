@@ -74,12 +74,19 @@ Usage:
   mars [--repo <path>] <command> [args]
 
 Commands:
-  init [--force] [--no-fetch] [--dry-run] [--refresh]
+  init [--force] [--no-fetch] [--dry-run] [--refresh] [--verbose]
                                 detect tech stack and generate specialized supervisors
                                 in .mars/supervisors/ (skeleton + workflow contract).
+                                Recurses into subdirectories (depth cap 6) to merge
+                                manifests from monorepo layouts; honors .gitignore
+                                and skips .git, node_modules, .mars, .worktrees,
+                                dist, build, .next, target, out, plus git submodules.
+                                Nested tech-bearing manifests (e.g. frontend/ AND
+                                frontend/admin/ both with package.json) are rejected.
                                 Pulls specialist knowledge from
                                 ayush-that/sub-agents.directory over HTTPS, cached
                                 under .mars/cache/sub-agents/ (7-day TTL).
+                                --verbose lists each discovered manifest on stderr.
   add "<prompt>" [plan flags]   enqueue a task (via enqueue-task tool)
   set-functional <id> <text|@file>
                                 set the functional plan on a queued task
@@ -136,8 +143,28 @@ const main = async (): Promise<void> => {
     const fetch = !boolFlags.has('--no-fetch')
     const dryRun = boolFlags.has('--dry-run')
     const refresh = boolFlags.has('--refresh')
+    const verbose = boolFlags.has('--verbose')
     const { runInit } = await import('./mastra/workflows/init-workflow')
-    const result = await runInit({ force, fetch, dryRun, refresh })
+    const { NestedTechError, WalkAccessError } = await import(
+      './init/walk-manifests'
+    )
+    let result
+    try {
+      result = await runInit({ force, fetch, dryRun, refresh, verbose })
+    } catch (err: unknown) {
+      if (err instanceof NestedTechError) {
+        console.error(`error: ${err.message}`)
+        console.error(`  outer: ${err.outerPath}`)
+        console.error(`  inner: ${err.innerPath}`)
+        process.exit(1)
+      }
+      if (err instanceof WalkAccessError) {
+        console.error(`error: ${err.message}`)
+        console.error(`  path:  ${err.path}`)
+        process.exit(1)
+      }
+      throw err
+    }
 
     if (result.detected) {
       const d = result.detected

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { relative, resolve } from 'node:path'
+import { walkManifests, type DepthCapWarning } from './walk-manifests'
 
 export type SupervisorKind = 'frontend' | 'backend' | 'infra' | 'mobile' | 'specialized'
 
@@ -11,6 +12,11 @@ export interface SupervisorSpec {
   externalSlugs: string[]
 }
 
+export interface ManifestFinding {
+  dir: string
+  techs: string[]
+}
+
 export interface StackDetection {
   languages: string[]
   frameworks: string[]
@@ -18,6 +24,8 @@ export interface StackDetection {
   mobile: string[]
   specialized: string[]
   supervisors: SupervisorSpec[]
+  manifests: ManifestFinding[]
+  warnings: DepthCapWarning[]
 }
 
 const PERSONAS: Record<string, string> = {
@@ -35,6 +43,7 @@ const PERSONAS: Record<string, string> = {
   'android-supervisor': 'Ava',
   'blockchain-supervisor': 'Nova',
   'ml-supervisor': 'Iris',
+  'baseline-supervisor': 'Echo',
 }
 
 const readJson = (path: string): Record<string, unknown> | null => {
@@ -88,203 +97,245 @@ const buildSpec = (
   externalSlugs,
 })
 
-export const detectStack = (repoRoot: string): StackDetection => {
-  const languages = new Set<string>()
-  const frameworks = new Set<string>()
-  const infra = new Set<string>()
-  const mobile = new Set<string>()
-  const specialized = new Set<string>()
-  const supervisors: SupervisorSpec[] = []
-  const seen = new Set<string>()
+interface DirAccumulator {
+  languages: Set<string>
+  frameworks: Set<string>
+  infra: Set<string>
+  mobile: Set<string>
+  specialized: Set<string>
+  supervisors: SupervisorSpec[]
+  techs: Set<string>
+}
 
+const newAcc = (): DirAccumulator => ({
+  languages: new Set(),
+  frameworks: new Set(),
+  infra: new Set(),
+  mobile: new Set(),
+  specialized: new Set(),
+  supervisors: [],
+  techs: new Set(),
+})
+
+const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
+  const acc = newAcc()
+  const seen = new Set<string>()
   const addSupervisor = (spec: SupervisorSpec): void => {
     if (seen.has(spec.name)) return
     seen.add(spec.name)
-    supervisors.push(spec)
+    acc.supervisors.push(spec)
   }
 
-  const pkgPath = resolve(repoRoot, 'package.json')
-  const pkg = readJson(pkgPath)
+  const pkg = readJson(resolve(dir, 'package.json'))
   const npmDeps = collectDeps(pkg)
 
   if (pkg) {
-    languages.add('javascript')
+    acc.languages.add('javascript')
+    acc.techs.add('javascript')
+    acc.techs.add('node')
     if (
-      existsSync(resolve(repoRoot, 'tsconfig.json')) ||
+      existsSync(resolve(dir, 'tsconfig.json')) ||
       hasAny(npmDeps, ['typescript'])
     ) {
-      languages.add('typescript')
+      acc.languages.add('typescript')
+      acc.techs.add('typescript')
+    }
+    if (hasAny(npmDeps, ['@mastra/core', 'mastra'])) acc.techs.add('mastra')
+    if (hasAny(npmDeps, ['vite'])) acc.techs.add('vite')
+    if (hasAny(npmDeps, ['tailwindcss'])) acc.techs.add('tailwind')
+    const bunPlatform = pkg['bun'] !== undefined ||
+      hasAny(npmDeps, ['bun-types', '@types/bun'])
+    if (bunPlatform || existsSync(resolve(dir, 'bun.lockb')) || existsSync(resolve(dir, 'bun.lock'))) {
+      acc.techs.add('bun')
     }
 
     if (hasAny(npmDeps, ['next'])) {
-      frameworks.add('nextjs')
+      acc.frameworks.add('nextjs')
+      acc.techs.add('nextjs')
       addSupervisor(
         buildSpec(
           'react-supervisor',
           'frontend',
-          ['package.json:next'],
+          [`${prefix}package.json:next`],
           ['nextjs-developer', 'react-specialist', 'frontend-developer'],
         ),
       )
     } else if (hasAny(npmDeps, ['react', 'react-dom'])) {
-      frameworks.add('react')
+      acc.frameworks.add('react')
+      acc.techs.add('react')
       addSupervisor(
         buildSpec(
           'react-supervisor',
           'frontend',
-          ['package.json:react'],
+          [`${prefix}package.json:react`],
           ['react-specialist', 'frontend-developer'],
         ),
       )
     }
 
     if (hasAny(npmDeps, ['nuxt'])) {
-      frameworks.add('nuxt')
+      acc.frameworks.add('nuxt')
+      acc.techs.add('nuxt')
       addSupervisor(
         buildSpec(
           'vue-supervisor',
           'frontend',
-          ['package.json:nuxt'],
+          [`${prefix}package.json:nuxt`],
           ['nuxt-developer', 'vue-specialist', 'frontend-developer'],
         ),
       )
     } else if (hasAny(npmDeps, ['vue'])) {
-      frameworks.add('vue')
+      acc.frameworks.add('vue')
+      acc.techs.add('vue')
       addSupervisor(
         buildSpec(
           'vue-supervisor',
           'frontend',
-          ['package.json:vue'],
+          [`${prefix}package.json:vue`],
           ['vue-specialist', 'frontend-developer'],
         ),
       )
     }
 
     if (hasAny(npmDeps, ['svelte', '@sveltejs/kit'])) {
-      frameworks.add('svelte')
+      acc.frameworks.add('svelte')
+      acc.techs.add('svelte')
       addSupervisor(
         buildSpec(
           'svelte-supervisor',
           'frontend',
-          ['package.json:svelte'],
+          [`${prefix}package.json:svelte`],
           ['svelte-developer', 'frontend-developer'],
         ),
       )
     }
 
     if (hasAny(npmDeps, ['@angular/core'])) {
-      frameworks.add('angular')
+      acc.frameworks.add('angular')
+      acc.techs.add('angular')
       addSupervisor(
         buildSpec(
           'angular-supervisor',
           'frontend',
-          ['package.json:@angular/core'],
+          [`${prefix}package.json:@angular/core`],
           ['angular-architect', 'angular-developer', 'frontend-developer'],
         ),
       )
     }
 
     if (hasAny(npmDeps, ['express', 'fastify', '@nestjs/core', 'koa', 'hono'])) {
-      frameworks.add('node-backend')
+      acc.frameworks.add('node-backend')
+      acc.techs.add('node-backend')
       addSupervisor(
         buildSpec(
           'node-backend-supervisor',
           'backend',
-          ['package.json:node-backend-framework'],
+          [`${prefix}package.json:node-backend-framework`],
           ['nodejs-developer', 'backend-developer'],
         ),
       )
     }
 
     if (hasAny(npmDeps, ['ethers', 'web3', 'viem', 'wagmi'])) {
-      specialized.add('web3')
+      acc.specialized.add('web3')
+      acc.techs.add('web3')
       addSupervisor(
         buildSpec(
           'blockchain-supervisor',
           'specialized',
-          ['package.json:web3'],
+          [`${prefix}package.json:web3`],
           ['blockchain-developer', 'web3-developer'],
         ),
       )
     }
   }
 
-  const requirements = readText(resolve(repoRoot, 'requirements.txt'))
-  const pyproject = readText(resolve(repoRoot, 'pyproject.toml'))
-  const setupPy = readText(resolve(repoRoot, 'setup.py'))
+  const requirements = readText(resolve(dir, 'requirements.txt'))
+  const pyproject = readText(resolve(dir, 'pyproject.toml'))
+  const setupPy = readText(resolve(dir, 'setup.py'))
   const pythonText = [requirements, pyproject, setupPy].filter(Boolean).join('\n')
 
   if (pythonText) {
-    languages.add('python')
+    acc.languages.add('python')
+    acc.techs.add('python')
     if (matchesPython(pythonText, ['fastapi', 'django', 'flask', 'starlette'])) {
-      frameworks.add('python-backend')
+      acc.frameworks.add('python-backend')
+      acc.techs.add('python-backend')
       addSupervisor(
         buildSpec(
           'python-backend-supervisor',
           'backend',
-          ['requirements/pyproject:python-backend-framework'],
+          [`${prefix}requirements/pyproject:python-backend-framework`],
           ['python-developer', 'fastapi-developer', 'django-developer', 'backend-developer'],
         ),
       )
     }
     if (matchesPython(pythonText, ['torch', 'tensorflow', 'transformers', 'scikit-learn'])) {
-      specialized.add('ml')
+      acc.specialized.add('ml')
+      acc.techs.add('ml')
       addSupervisor(
         buildSpec(
           'ml-supervisor',
           'specialized',
-          ['python:ml-frameworks'],
+          [`${prefix}python:ml-frameworks`],
           ['machine-learning-engineer', 'ai-engineer', 'data-engineer'],
         ),
       )
     }
   }
 
-  if (existsSync(resolve(repoRoot, 'go.mod'))) {
-    languages.add('go')
+  if (existsSync(resolve(dir, 'go.mod'))) {
+    acc.languages.add('go')
+    acc.techs.add('go')
     addSupervisor(
       buildSpec(
         'go-supervisor',
         'backend',
-        ['go.mod'],
+        [`${prefix}go.mod`],
         ['golang-pro', 'go-developer', 'backend-developer'],
       ),
     )
   }
 
-  if (existsSync(resolve(repoRoot, 'Cargo.toml'))) {
-    languages.add('rust')
+  if (existsSync(resolve(dir, 'Cargo.toml'))) {
+    acc.languages.add('rust')
+    acc.techs.add('rust')
     addSupervisor(
       buildSpec(
         'rust-supervisor',
         'backend',
-        ['Cargo.toml'],
+        [`${prefix}Cargo.toml`],
         ['rust-engineer', 'rust-developer', 'backend-developer'],
       ),
     )
   }
 
   let infraDetected = false
-  if (existsSync(resolve(repoRoot, 'Dockerfile'))) {
-    infra.add('docker')
+  if (existsSync(resolve(dir, 'Dockerfile'))) {
+    acc.infra.add('docker')
+    acc.techs.add('docker')
     infraDetected = true
   }
-  if (existsSync(resolve(repoRoot, 'docker-compose.yml')) || existsSync(resolve(repoRoot, 'compose.yaml'))) {
-    infra.add('docker-compose')
+  if (existsSync(resolve(dir, 'docker-compose.yml')) || existsSync(resolve(dir, 'compose.yaml'))) {
+    acc.infra.add('docker-compose')
+    acc.techs.add('docker-compose')
     infraDetected = true
   }
-  if (existsSync(resolve(repoRoot, '.github/workflows'))) {
-    infra.add('github-actions')
+  if (existsSync(resolve(dir, '.github/workflows'))) {
+    acc.infra.add('github-actions')
+    acc.techs.add('github-actions')
     infraDetected = true
   }
-  if (existsSync(resolve(repoRoot, 'terraform'))) {
-    infra.add('terraform')
+  if (existsSync(resolve(dir, 'terraform'))) {
+    acc.infra.add('terraform')
+    acc.techs.add('terraform')
     infraDetected = true
   } else {
     try {
-      const entries = readdirSync(repoRoot)
+      const entries = readdirSync(dir)
       if (entries.some((e) => e.endsWith('.tf'))) {
-        infra.add('terraform')
+        acc.infra.add('terraform')
+        acc.techs.add('terraform')
         infraDetected = true
       }
     } catch {
@@ -297,43 +348,46 @@ export const detectStack = (repoRoot: string): StackDetection => {
       buildSpec(
         'infra-supervisor',
         'infra',
-        Array.from(infra).map((i) => `infra:${i}`),
+        Array.from(acc.infra).map((i) => `${prefix}infra:${i}`),
         ['devops-engineer', 'platform-engineer', 'sre-engineer'],
       ),
     )
   }
 
-  if (existsSync(resolve(repoRoot, 'pubspec.yaml'))) {
-    mobile.add('flutter')
+  if (existsSync(resolve(dir, 'pubspec.yaml'))) {
+    acc.mobile.add('flutter')
+    acc.techs.add('flutter')
     addSupervisor(
       buildSpec(
         'flutter-supervisor',
         'mobile',
-        ['pubspec.yaml'],
+        [`${prefix}pubspec.yaml`],
         ['flutter-expert', 'mobile-developer'],
       ),
     )
   }
-  if (existsSync(resolve(repoRoot, 'Podfile'))) {
-    mobile.add('ios')
+  if (existsSync(resolve(dir, 'Podfile'))) {
+    acc.mobile.add('ios')
+    acc.techs.add('ios')
     addSupervisor(
       buildSpec(
         'ios-supervisor',
         'mobile',
-        ['Podfile'],
+        [`${prefix}Podfile`],
         ['ios-developer', 'mobile-developer'],
       ),
     )
   }
   try {
-    const entries = readdirSync(repoRoot)
+    const entries = readdirSync(dir)
     if (entries.some((e) => e.endsWith('.xcodeproj'))) {
-      mobile.add('ios')
+      acc.mobile.add('ios')
+      acc.techs.add('ios')
       addSupervisor(
         buildSpec(
           'ios-supervisor',
           'mobile',
-          ['.xcodeproj'],
+          [`${prefix}.xcodeproj`],
           ['ios-developer', 'mobile-developer'],
         ),
       )
@@ -341,17 +395,92 @@ export const detectStack = (repoRoot: string): StackDetection => {
   } catch {
     // ignore
   }
-  const buildGradle = readText(resolve(repoRoot, 'build.gradle')) ?? readText(resolve(repoRoot, 'build.gradle.kts'))
+  const buildGradle =
+    readText(resolve(dir, 'build.gradle')) ?? readText(resolve(dir, 'build.gradle.kts'))
   if (buildGradle && /android/i.test(buildGradle)) {
-    mobile.add('android')
+    acc.mobile.add('android')
+    acc.techs.add('android')
     addSupervisor(
       buildSpec(
         'android-supervisor',
         'mobile',
-        ['build.gradle:android'],
+        [`${prefix}build.gradle:android`],
         ['android-developer', 'mobile-developer'],
       ),
     )
+  }
+
+  return acc
+}
+
+export interface DetectStackOptions {
+  verbose?: boolean
+  onManifest?: (finding: ManifestFinding) => void
+}
+
+export const detectStack = (
+  repoRoot: string,
+  options: DetectStackOptions = {},
+): StackDetection => {
+  const root = resolve(repoRoot)
+  const { manifests: discovered, warnings } = walkManifests(root)
+
+  const languages = new Set<string>()
+  const frameworks = new Set<string>()
+  const infra = new Set<string>()
+  const mobile = new Set<string>()
+  const specialized = new Set<string>()
+  const supervisors: SupervisorSpec[] = []
+  const seen = new Set<string>()
+  const findings: ManifestFinding[] = []
+
+  // Always run root-level infra/CI detection (workflows/Dockerfile may sit at the
+  // top of a monorepo even when no manifest is present at the root).
+  const rootDirs: { dir: string; prefix: string }[] = []
+
+  if (discovered.length === 0) {
+    rootDirs.push({ dir: root, prefix: '' })
+  } else {
+    // If the root itself doesn't have a manifest, still scan it for infra signals.
+    const rootHasManifest = discovered.some((m) => m.dir === root)
+    if (!rootHasManifest) {
+      rootDirs.push({ dir: root, prefix: '' })
+    }
+    for (const m of discovered) {
+      const rel = relative(root, m.dir)
+      const prefix = rel === '' ? '' : `${rel}/`
+      rootDirs.push({ dir: m.dir, prefix })
+    }
+  }
+
+  for (const { dir, prefix } of rootDirs) {
+    const acc = detectInDirectory(dir, prefix)
+    for (const v of acc.languages) languages.add(v)
+    for (const v of acc.frameworks) frameworks.add(v)
+    for (const v of acc.infra) infra.add(v)
+    for (const v of acc.mobile) mobile.add(v)
+    for (const v of acc.specialized) specialized.add(v)
+    for (const spec of acc.supervisors) {
+      if (seen.has(spec.name)) {
+        const existing = supervisors.find((s) => s.name === spec.name)
+        if (existing) {
+          for (const d of spec.detectedFrom) {
+            if (!existing.detectedFrom.includes(d)) existing.detectedFrom.push(d)
+          }
+        }
+        continue
+      }
+      seen.add(spec.name)
+      supervisors.push(spec)
+    }
+    if (acc.techs.size > 0 && discovered.some((m) => m.dir === dir)) {
+      const finding: ManifestFinding = {
+        dir: relative(root, dir) || '.',
+        techs: Array.from(acc.techs).sort(),
+      }
+      findings.push(finding)
+      if (options.onManifest) options.onManifest(finding)
+    }
   }
 
   return {
@@ -361,5 +490,7 @@ export const detectStack = (repoRoot: string): StackDetection => {
     mobile: Array.from(mobile).sort(),
     specialized: Array.from(specialized).sort(),
     supervisors,
+    manifests: findings,
+    warnings,
   }
 }

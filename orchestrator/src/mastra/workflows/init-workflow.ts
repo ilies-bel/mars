@@ -3,7 +3,11 @@ import { resolve, relative } from 'node:path'
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
 import { resolveContext } from '../context'
-import { detectStack, type SupervisorSpec } from '../../init/detect-stack'
+import {
+  detectStack,
+  type ManifestFinding,
+  type SupervisorSpec,
+} from '../../init/detect-stack'
 import {
   fetchTreesIndex,
   resolveSpecialist,
@@ -46,6 +50,21 @@ const renderedSupervisorSchema = z.object({
   externalSource: externalSourceSchema,
 })
 
+const BASELINE_SUPERVISOR: SupervisorSpec = {
+  name: 'baseline-supervisor',
+  persona: 'Echo',
+  kind: 'specialized',
+  detectedFrom: ['baseline'],
+  externalSlugs: ['code-reviewer', 'fullstack-developer'],
+}
+
+const ensureBaseline = (stack: {
+  supervisors: SupervisorSpec[]
+}): SupervisorSpec[] => {
+  if (stack.supervisors.length > 0) return stack.supervisors
+  return [BASELINE_SUPERVISOR]
+}
+
 const detectStep = createStep({
   id: 'detect-stack',
   inputSchema: z.object({
@@ -59,7 +78,15 @@ const detectStep = createStep({
   }),
   execute: async ({ inputData }) => {
     const ctx = resolveContext()
-    const stack = detectStack(ctx.repoRoot)
+    const detected = detectStack(ctx.repoRoot)
+    const stack = {
+      languages: detected.languages,
+      frameworks: detected.frameworks,
+      infra: detected.infra,
+      mobile: detected.mobile,
+      specialized: detected.specialized,
+      supervisors: ensureBaseline(detected),
+    }
     return { fetch: inputData.fetch, refresh: inputData.refresh, stack }
   },
 })
@@ -265,6 +292,7 @@ export interface RunInitOptions {
   fetch: boolean
   dryRun: boolean
   refresh: boolean
+  verbose?: boolean
 }
 
 export interface RunInitOutcome {
@@ -285,7 +313,21 @@ export interface RunInitResult {
 
 export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
   const ctx = resolveContext()
-  const detected = detectStack(ctx.repoRoot)
+  const detected = detectStack(ctx.repoRoot, {
+    onManifest: opts.verbose
+      ? (m: ManifestFinding) => {
+          process.stderr.write(`[mars init] ${m.dir}: ${m.techs.join(', ')}\n`)
+        }
+      : undefined,
+  })
+
+  for (const w of detected.warnings) {
+    if (w.kind === 'depth-cap') {
+      process.stderr.write(
+        `[mars init] warning: walk depth cap reached; not descended into ${w.paths.length} dir(s) (e.g. ${w.paths[0]})\n`,
+      )
+    }
+  }
 
   if (opts.dryRun) {
     return {
