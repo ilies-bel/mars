@@ -5,10 +5,10 @@ import { z } from 'zod'
 import { resolveContext } from '../context'
 import { detectStack, type SupervisorSpec } from '../../init/detect-stack'
 import {
-  fetchExternalSpecialist,
-  extractFields,
-  type ExtractedFields,
-} from '../../init/extract'
+  fetchTreesIndex,
+  resolveSpecialist,
+  type ResolvedSpecialist,
+} from '../../init/fetch-specialist'
 import {
   renderSupervisor,
   minimalRenderInput,
@@ -20,7 +20,7 @@ const supervisorSpecSchema = z.object({
   persona: z.string(),
   kind: z.enum(['frontend', 'backend', 'infra', 'mobile', 'specialized']),
   detectedFrom: z.array(z.string()),
-  externalQuery: z.string(),
+  externalSlugs: z.array(z.string()),
 })
 
 const stackSchema = z.object({
@@ -32,26 +32,35 @@ const stackSchema = z.object({
   supervisors: z.array(supervisorSpecSchema),
 })
 
+const externalSourceSchema = z
+  .object({ slug: z.string(), path: z.string() })
+  .nullable()
+
+const outcomeSchema = z.enum(['hit', 'miss', 'error'])
+
 const renderedSupervisorSchema = z.object({
   spec: supervisorSpecSchema,
   content: z.string(),
-  rawLines: z.number(),
-  externalSource: z.string().nullable(),
+  outcome: outcomeSchema,
+  triedSlugs: z.array(z.string()),
+  externalSource: externalSourceSchema,
 })
 
 const detectStep = createStep({
   id: 'detect-stack',
   inputSchema: z.object({
     fetch: z.boolean().default(true),
+    refresh: z.boolean().default(false),
   }),
   outputSchema: z.object({
     fetch: z.boolean(),
+    refresh: z.boolean(),
     stack: stackSchema,
   }),
   execute: async ({ inputData }) => {
     const ctx = resolveContext()
     const stack = detectStack(ctx.repoRoot)
-    return { fetch: inputData.fetch, stack }
+    return { fetch: inputData.fetch, refresh: inputData.refresh, stack }
   },
 })
 
@@ -59,6 +68,7 @@ const renderStep = createStep({
   id: 'render-supervisors',
   inputSchema: z.object({
     fetch: z.boolean(),
+    refresh: z.boolean(),
     stack: stackSchema,
   }),
   outputSchema: z.object({
@@ -67,32 +77,38 @@ const renderStep = createStep({
   }),
   execute: async ({ inputData }) => {
     const ctx = resolveContext()
-    const { fetch: doFetch, stack } = inputData
+    const { fetch: doFetch, refresh, stack } = inputData
+
+    const fetchOpts = { refresh, cacheDir: ctx.cacheDir }
+    const index = doFetch
+      ? await fetchTreesIndex(fetchOpts).catch(
+          (): Map<string, string> => new Map(),
+        )
+      : new Map<string, string>()
 
     const renderOne = async (
       spec: SupervisorSpec,
     ): Promise<z.infer<typeof renderedSupervisorSchema>> => {
-      let extracted: ExtractedFields | null = null
-      let rawLines = 0
-      let externalSource: string | null = null
+      let resolved: ResolvedSpecialist | null = null
+      let tried: string[] = Array.from(spec.externalSlugs)
+      let outcome: 'hit' | 'miss' | 'error' = 'miss'
 
       if (doFetch) {
-        const fetched = await fetchExternalSpecialist(spec, ctx.repoRoot)
-        if (fetched.rawMarkdown) {
-          rawLines = fetched.rawLines
-          externalSource = `ayush-that/sub-agents.directory#${spec.externalQuery}`
-          extracted = await extractFields(spec, fetched.rawMarkdown, ctx.repoRoot)
+        try {
+          const result = await resolveSpecialist(spec.externalSlugs, index, fetchOpts)
+          resolved = result.resolved
+          tried = result.tried
+          outcome = resolved ? 'hit' : 'miss'
+        } catch {
+          outcome = 'error'
         }
       }
 
-      const renderInput = extracted
+      const renderInput = resolved
         ? {
             spec,
-            specialty: extracted.specialty,
-            techStack: extracted.techStack,
-            scopeHandles: extracted.scopeHandles,
-            scopeEscalates: extracted.scopeEscalates,
-            standards: extracted.standards,
+            specialistBody: resolved.body,
+            source: { slug: resolved.slug, path: resolved.path },
           }
         : minimalRenderInput(spec)
 
@@ -106,10 +122,22 @@ const renderStep = createStep({
             `supervisor ${spec.name} failed validation even from minimal template: ${fallbackIssue.reason}`,
           )
         }
-        return { spec, content: fallback, rawLines, externalSource: null }
+        return {
+          spec,
+          content: fallback,
+          outcome: 'error',
+          triedSlugs: tried,
+          externalSource: null,
+        }
       }
 
-      return { spec, content, rawLines, externalSource }
+      return {
+        spec,
+        content,
+        outcome,
+        triedSlugs: tried,
+        externalSource: resolved ? { slug: resolved.slug, path: resolved.path } : null,
+      }
     }
 
     const rendered = await Promise.all(stack.supervisors.map(renderOne))
@@ -126,6 +154,14 @@ const writeStep = createStep({
   outputSchema: z.object({
     supervisorsDir: z.string(),
     written: z.array(z.string()),
+    outcomes: z.array(
+      z.object({
+        name: z.string(),
+        outcome: outcomeSchema,
+        triedSlugs: z.array(z.string()),
+        externalSource: externalSourceSchema,
+      }),
+    ),
   }),
   execute: async ({ inputData }) => {
     const ctx = resolveContext()
@@ -141,8 +177,9 @@ const writeStep = createStep({
         persona: r.spec.persona,
         kind: r.spec.kind,
         path: relative(ctx.repoRoot, filePath),
+        outcome: r.outcome,
+        triedSlugs: r.triedSlugs,
         externalSource: r.externalSource,
-        filteredFromLines: r.rawLines > 0 ? r.rawLines : null,
         lines: r.content.split('\n').length,
       }
     })
@@ -180,13 +217,22 @@ Generated: ${manifest.generatedAt}
 
 ## Supervisors
 
-${entries.map((e) => `- **${e.name}** (${e.persona}) — ${e.kind} — ${e.lines} lines`).join('\n') || '_(none)_'}
+${entries.map((e) => `- **${e.name}** (${e.persona}) — ${e.kind} — ${e.lines} lines — ${e.outcome}${e.externalSource ? ` (${e.externalSource.slug})` : ''}`).join('\n') || '_(none)_'}
 `
     const indexPath = resolve(ctx.supervisorsDir, 'README.md')
     writeFileSync(indexPath, indexMd, 'utf8')
     written.push(relative(ctx.repoRoot, indexPath))
 
-    return { supervisorsDir: ctx.supervisorsDir, written }
+    return {
+      supervisorsDir: ctx.supervisorsDir,
+      written,
+      outcomes: entries.map((e) => ({
+        name: e.name,
+        outcome: e.outcome,
+        triedSlugs: e.triedSlugs,
+        externalSource: e.externalSource,
+      })),
+    }
   },
 })
 
@@ -194,10 +240,19 @@ export const initWorkflow = createWorkflow({
   id: 'init',
   inputSchema: z.object({
     fetch: z.boolean().default(true),
+    refresh: z.boolean().default(false),
   }),
   outputSchema: z.object({
     supervisorsDir: z.string(),
     written: z.array(z.string()),
+    outcomes: z.array(
+      z.object({
+        name: z.string(),
+        outcome: outcomeSchema,
+        triedSlugs: z.array(z.string()),
+        externalSource: externalSourceSchema,
+      }),
+    ),
   }),
 })
   .then(detectStep)
@@ -209,6 +264,14 @@ export interface RunInitOptions {
   force: boolean
   fetch: boolean
   dryRun: boolean
+  refresh: boolean
+}
+
+export interface RunInitOutcome {
+  name: string
+  outcome: 'hit' | 'miss' | 'error'
+  triedSlugs: string[]
+  externalSource: { slug: string; path: string } | null
 }
 
 export interface RunInitResult {
@@ -216,6 +279,7 @@ export interface RunInitResult {
   message: string
   supervisorsDir?: string
   written?: string[]
+  outcomes?: RunInitOutcome[]
   detected?: ReturnType<typeof detectStack>
 }
 
@@ -242,7 +306,9 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
   const { mastra } = await import('../index')
   const wf = mastra.getWorkflow('initWorkflow')
   const run = await wf.createRun()
-  const result = await run.start({ inputData: { fetch: opts.fetch } })
+  const result = await run.start({
+    inputData: { fetch: opts.fetch, refresh: opts.refresh },
+  })
 
   if (result.status !== 'success') {
     throw new Error(`init workflow ${result.status}`)
@@ -252,6 +318,7 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
     message: 'supervisors generated',
     supervisorsDir: result.result.supervisorsDir,
     written: result.result.written,
+    outcomes: result.result.outcomes,
     detected,
   }
 }
