@@ -8,7 +8,7 @@ export interface SupervisorSpec {
   persona: string
   kind: SupervisorKind
   detectedFrom: string[]
-  externalQuery: string
+  externalSlugs: string[]
 }
 
 export interface StackDetection {
@@ -79,13 +79,13 @@ const buildSpec = (
   name: string,
   kind: SupervisorKind,
   detectedFrom: string[],
-  externalQuery: string,
+  externalSlugs: string[],
 ): SupervisorSpec => ({
   name,
   persona: PERSONAS[name] ?? 'Echo',
   kind,
   detectedFrom,
-  externalQuery,
+  externalSlugs,
 })
 
 export const detectStack = (repoRoot: string): StackDetection => {
@@ -123,7 +123,7 @@ export const detectStack = (repoRoot: string): StackDetection => {
           'react-supervisor',
           'frontend',
           ['package.json:next'],
-          'Next.js React frontend developer',
+          ['nextjs-developer', 'react-specialist', 'frontend-developer'],
         ),
       )
     } else if (hasAny(npmDeps, ['react', 'react-dom'])) {
@@ -133,7 +133,7 @@ export const detectStack = (repoRoot: string): StackDetection => {
           'react-supervisor',
           'frontend',
           ['package.json:react'],
-          'React frontend developer',
+          ['react-specialist', 'frontend-developer'],
         ),
       )
     }
@@ -145,7 +145,7 @@ export const detectStack = (repoRoot: string): StackDetection => {
           'vue-supervisor',
           'frontend',
           ['package.json:nuxt'],
-          'Nuxt Vue frontend developer',
+          ['nuxt-developer', 'vue-specialist', 'frontend-developer'],
         ),
       )
     } else if (hasAny(npmDeps, ['vue'])) {
@@ -155,7 +155,7 @@ export const detectStack = (repoRoot: string): StackDetection => {
           'vue-supervisor',
           'frontend',
           ['package.json:vue'],
-          'Vue frontend developer',
+          ['vue-specialist', 'frontend-developer'],
         ),
       )
     }
@@ -167,7 +167,7 @@ export const detectStack = (repoRoot: string): StackDetection => {
           'svelte-supervisor',
           'frontend',
           ['package.json:svelte'],
-          'Svelte frontend developer',
+          ['svelte-developer', 'frontend-developer'],
         ),
       )
     }
@@ -179,7 +179,7 @@ export const detectStack = (repoRoot: string): StackDetection => {
           'angular-supervisor',
           'frontend',
           ['package.json:@angular/core'],
-          'Angular frontend developer',
+          ['angular-architect', 'angular-developer', 'frontend-developer'],
         ),
       )
     }
@@ -191,7 +191,7 @@ export const detectStack = (repoRoot: string): StackDetection => {
           'node-backend-supervisor',
           'backend',
           ['package.json:node-backend-framework'],
-          'Node.js backend developer (Express/Fastify/Nest/Koa/Hono)',
+          ['nodejs-developer', 'backend-developer'],
         ),
       )
     }
@@ -203,7 +203,7 @@ export const detectStack = (repoRoot: string): StackDetection => {
           'blockchain-supervisor',
           'specialized',
           ['package.json:web3'],
-          'Blockchain / Web3 developer',
+          ['blockchain-developer', 'web3-developer'],
         ),
       )
     }
@@ -223,7 +223,7 @@ export const detectStack = (repoRoot: string): StackDetection => {
           'python-backend-supervisor',
           'backend',
           ['requirements/pyproject:python-backend-framework'],
-          'Python backend developer (FastAPI/Django/Flask)',
+          ['python-developer', 'fastapi-developer', 'django-developer', 'backend-developer'],
         ),
       )
     }
@@ -234,7 +234,7 @@ export const detectStack = (repoRoot: string): StackDetection => {
           'ml-supervisor',
           'specialized',
           ['python:ml-frameworks'],
-          'Python ML/AI developer',
+          ['machine-learning-engineer', 'ai-engineer', 'data-engineer'],
         ),
       )
     }
@@ -243,14 +243,24 @@ export const detectStack = (repoRoot: string): StackDetection => {
   if (existsSync(resolve(repoRoot, 'go.mod'))) {
     languages.add('go')
     addSupervisor(
-      buildSpec('go-supervisor', 'backend', ['go.mod'], 'Go backend developer'),
+      buildSpec(
+        'go-supervisor',
+        'backend',
+        ['go.mod'],
+        ['golang-pro', 'go-developer', 'backend-developer'],
+      ),
     )
   }
 
   if (existsSync(resolve(repoRoot, 'Cargo.toml'))) {
     languages.add('rust')
     addSupervisor(
-      buildSpec('rust-supervisor', 'backend', ['Cargo.toml'], 'Rust backend developer'),
+      buildSpec(
+        'rust-supervisor',
+        'backend',
+        ['Cargo.toml'],
+        ['rust-engineer', 'rust-developer', 'backend-developer'],
+      ),
     )
   }
 
@@ -288,7 +298,7 @@ export const detectStack = (repoRoot: string): StackDetection => {
         'infra-supervisor',
         'infra',
         Array.from(infra).map((i) => `infra:${i}`),
-        `DevOps infrastructure (${Array.from(infra).join(', ')})`,
+        ['devops-engineer', 'platform-engineer', 'sre-engineer'],
       ),
     )
   }
@@ -296,13 +306,23 @@ export const detectStack = (repoRoot: string): StackDetection => {
   if (existsSync(resolve(repoRoot, 'pubspec.yaml'))) {
     mobile.add('flutter')
     addSupervisor(
-      buildSpec('flutter-supervisor', 'mobile', ['pubspec.yaml'], 'Flutter mobile developer'),
+      buildSpec(
+        'flutter-supervisor',
+        'mobile',
+        ['pubspec.yaml'],
+        ['flutter-expert', 'mobile-developer'],
+      ),
     )
   }
   if (existsSync(resolve(repoRoot, 'Podfile'))) {
     mobile.add('ios')
     addSupervisor(
-      buildSpec('ios-supervisor', 'mobile', ['Podfile'], 'iOS Swift developer'),
+      buildSpec(
+        'ios-supervisor',
+        'mobile',
+        ['Podfile'],
+        ['ios-developer', 'mobile-developer'],
+      ),
     )
   }
   try {
@@ -310,7 +330,12 @@ export const detectStack = (repoRoot: string): StackDetection => {
     if (entries.some((e) => e.endsWith('.xcodeproj'))) {
       mobile.add('ios')
       addSupervisor(
-        buildSpec('ios-supervisor', 'mobile', ['.xcodeproj'], 'iOS Swift developer'),
+        buildSpec(
+          'ios-supervisor',
+          'mobile',
+          ['.xcodeproj'],
+          ['ios-developer', 'mobile-developer'],
+        ),
       )
     }
   } catch {
@@ -320,7 +345,12 @@ export const detectStack = (repoRoot: string): StackDetection => {
   if (buildGradle && /android/i.test(buildGradle)) {
     mobile.add('android')
     addSupervisor(
-      buildSpec('android-supervisor', 'mobile', ['build.gradle:android'], 'Android Kotlin developer'),
+      buildSpec(
+        'android-supervisor',
+        'mobile',
+        ['build.gradle:android'],
+        ['android-developer', 'mobile-developer'],
+      ),
     )
   }
 
