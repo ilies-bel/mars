@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
 import {
@@ -8,6 +10,13 @@ import {
   mergeBranch,
 } from '../lib/git'
 import { updateTask } from '../queue'
+
+const resolveVerifyCwd = (worktreeRoot: string): string => {
+  if (existsSync(resolve(worktreeRoot, 'package.json'))) return worktreeRoot
+  const orchestrator = resolve(worktreeRoot, 'orchestrator')
+  if (existsSync(resolve(orchestrator, 'package.json'))) return orchestrator
+  return worktreeRoot
+}
 
 const setupStep = createStep({
   id: 'setup-worktree',
@@ -86,8 +95,9 @@ const verifyStep = createStep({
   }),
   execute: async ({ inputData }) => {
     await updateTask(inputData.taskId, { status: 'verifying' })
+    const verifyCwd = resolveVerifyCwd(inputData.path)
     const r = await verifyChanges({
-      cwd: inputData.path,
+      cwd: verifyCwd,
       typecheckCmd: ['npx', ['tsc', '--noEmit']],
       testCmd: ['npm', ['test', '--silent']],
       lintCmd: ['npx', ['biome', 'check', '.']],
