@@ -272,7 +272,12 @@ const main = async (): Promise<void> => {
     const runs = queued.map(async (task) => {
       const run = await wf.createRun()
       const result = await run.start({
-        inputData: { taskId: task.id, prompt: task.prompt, integrationBranch: branch },
+        inputData: {
+          taskId: task.id,
+          prompt: task.prompt,
+          plan: task.plan,
+          integrationBranch: branch,
+        },
       })
       return { task, result }
     })

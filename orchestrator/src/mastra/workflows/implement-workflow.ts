@@ -18,16 +18,39 @@ const resolveVerifyCwd = (worktreeRoot: string): string => {
   return worktreeRoot
 }
 
+const planSchema = z
+  .object({
+    functional: z.string(),
+    technical: z.string(),
+  })
+  .nullable()
+
+const composePrompt = (
+  prompt: string,
+  plan: z.infer<typeof planSchema>,
+): string => {
+  const sections: string[] = [prompt.trim()]
+  if (plan?.functional?.trim()) {
+    sections.push(`## Functional plan\n\n${plan.functional.trim()}`)
+  }
+  if (plan?.technical?.trim()) {
+    sections.push(`## Technical plan\n\n${plan.technical.trim()}`)
+  }
+  return sections.join('\n\n')
+}
+
 const setupStep = createStep({
   id: 'setup-worktree',
   inputSchema: z.object({
     taskId: z.string(),
     prompt: z.string(),
+    plan: planSchema.default(null),
     integrationBranch: z.string().default('integration'),
   }),
   outputSchema: z.object({
     taskId: z.string(),
     prompt: z.string(),
+    plan: planSchema,
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
@@ -51,28 +74,35 @@ const codeStep = createStep({
   inputSchema: z.object({
     taskId: z.string(),
     prompt: z.string(),
+    plan: planSchema,
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
   }),
   outputSchema: z.object({
     taskId: z.string(),
-    prompt: z.string(),
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
     claudeExitCode: z.number(),
   }),
   execute: async ({ inputData }) => {
+    const fullPrompt = composePrompt(inputData.prompt, inputData.plan)
     const r = await runClaudeCode({
       cwd: inputData.path,
-      prompt: inputData.prompt,
+      prompt: fullPrompt,
       timeoutMs: 20 * 60 * 1000,
     })
     if (r.sessionId) {
       await updateTask(inputData.taskId, { claudeSessionId: r.sessionId })
     }
-    return { ...inputData, claudeExitCode: r.exitCode }
+    return {
+      taskId: inputData.taskId,
+      integrationBranch: inputData.integrationBranch,
+      path: inputData.path,
+      branch: inputData.branch,
+      claudeExitCode: r.exitCode,
+    }
   },
 })
 
@@ -80,7 +110,6 @@ const verifyStep = createStep({
   id: 'verify',
   inputSchema: z.object({
     taskId: z.string(),
-    prompt: z.string(),
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
@@ -181,6 +210,7 @@ export const implementWorkflow = createWorkflow({
   inputSchema: z.object({
     taskId: z.string(),
     prompt: z.string(),
+    plan: planSchema.default(null),
     integrationBranch: z.string().default('integration'),
   }),
   outputSchema: z.object({
