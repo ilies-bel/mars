@@ -50,6 +50,20 @@ Top-level files define how your Mastra project is configured, built, and connect
 - Use schemas for tool inputs and outputs
 - Run `npm run build` to verify changes compile
 
+### `mars init` recursion
+
+The `init` command walks the target repo and merges every manifest into a
+single supervisor set:
+
+- Recurses by default; depth cap of 6 below the repo root.
+- Hardcoded skip set: `.git`, `node_modules`, `.mars`, `.worktrees`, `dist`,
+  `build`, `.next`, `target`, `out`.
+- Respects `.gitignore` at every level. Skips git submodules and other git
+  worktrees.
+- Layout contract: tech-bearing folders must be siblings, not nested. A
+  manifest under a subtree another manifest already claims is a hard error.
+- `--verbose` lists discovered manifests on stderr.
+
 ### Never do
 
 - Never commit `.env` files or secrets

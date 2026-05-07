@@ -83,3 +83,36 @@ Add `/.mars/` to the target repo's `.gitignore`.
 - Verify gate fails → task marked `failed`, worktree retained at `.mars/worktrees/<taskId>`.
 - Merge conflicts vcs-supervisor cannot reconcile → `git merge --abort`, task `failed`, worktree retained.
 - Clean merge (or supervised resolution) → worktree removed, task `done`.
+
+## `mars init` and monorepo recursion
+
+`mars init` walks the target repo from its root and merges every manifest it
+finds into a single supervisor set under `.mars/supervisors/`.
+
+- Recurses by default; no flag needed.
+- Depth cap: 6 directories below the repo root. Anything deeper is skipped
+  with a stderr warning.
+- Hardcoded skip list: `.git`, `node_modules`, `.mars`, `.worktrees`, `dist`,
+  `build`, `.next`, `target`, `out`.
+- Honors `.gitignore` at every level (root and nested).
+- Skips git submodule paths (parsed from `.gitmodules`) and other git worktrees
+  (`git worktree list --porcelain`).
+- **Layout contract**: tech-bearing folders must be siblings, not nested.
+  If a manifest is found inside a subtree where another manifest already
+  claimed the tech (e.g. `frontend/package.json` and
+  `frontend/admin/package.json` both exist), `mars init` exits non-zero
+  and prints both offending paths. Restructure so each tech is a sibling.
+- Empty repo (no manifests anywhere): `mars init` still emits a baseline
+  supervisor and a `manifest.json` with an empty stack.
+
+Flags:
+
+- `--force` — overwrite an existing `.mars/supervisors/manifest.json`.
+- `--no-fetch` — skip the upstream specialist fetch from
+  `ayush-that/sub-agents.directory`; render minimal templates.
+- `--refresh` — force re-fetch of the specialist cache (filesystem walk
+  is always fresh regardless).
+- `--dry-run` — print the detected stack and proposed supervisors without
+  writing.
+- `--verbose` — print each discovered manifest and the techs derived from
+  it on stderr.
