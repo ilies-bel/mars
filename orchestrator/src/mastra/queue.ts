@@ -4,11 +4,28 @@ import { resolveContext } from './context'
 
 export type TaskStatus =
   | 'queued'
+  | 'ready'
   | 'running'
   | 'verifying'
   | 'merging'
   | 'done'
   | 'failed'
+
+export type QuestionCategory = 'scope' | 'tech' | 'ux' | 'risk'
+
+export interface QuestionInput {
+  taskId: string
+  question: string
+  rationale: string | null
+  category: QuestionCategory | null
+}
+
+export interface SuggestionInput {
+  sourceTaskId: string
+  title: string
+  prompt: string
+  rationale: string | null
+}
 
 export interface TaskPlan {
   functional: string
@@ -67,6 +84,38 @@ export const initQueue = async (): Promise<void> => {
   if (!names.has('claude_session_id')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN claude_session_id TEXT`)
   }
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS questions (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      question TEXT NOT NULL,
+      rationale TEXT,
+      category TEXT,
+      answer TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (task_id) REFERENCES tasks(id)
+    )
+  `)
+  await c.execute(`
+    CREATE INDEX IF NOT EXISTS idx_questions_task_id ON questions(task_id)
+  `)
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS task_suggestions (
+      id TEXT PRIMARY KEY,
+      source_task_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      rationale TEXT,
+      status TEXT NOT NULL DEFAULT 'proposed',
+      created_task_id TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (source_task_id) REFERENCES tasks(id)
+    )
+  `)
+  await c.execute(`
+    CREATE INDEX IF NOT EXISTS idx_task_suggestions_source_task_id ON task_suggestions(source_task_id)
+  `)
 }
 
 const rowToTask = (row: Record<string, unknown>): Task => {
@@ -172,4 +221,56 @@ export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
       })
     : await getClient().execute(`SELECT * FROM tasks ORDER BY created_at`)
   return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
+}
+
+export const claimReadyTask = async (id: string): Promise<Task | null> => {
+  await initQueue()
+  const now = new Date().toISOString()
+  const upd = await getClient().execute({
+    sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ? AND status = 'ready'`,
+    args: [now, id],
+  })
+  if (upd.rowsAffected === 0) return null
+  const r = await getClient().execute({
+    sql: `SELECT * FROM tasks WHERE id = ?`,
+    args: [id],
+  })
+  if (r.rows.length === 0) return null
+  return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+}
+
+export const insertQuestion = async (input: QuestionInput): Promise<void> => {
+  await initQueue()
+  const id = randomUUID().slice(0, 8)
+  const now = new Date().toISOString()
+  await getClient().execute({
+    sql: `INSERT INTO questions (id, task_id, question, rationale, category, status, created_at) VALUES (?, ?, ?, ?, ?, 'open', ?)`,
+    args: [id, input.taskId, input.question, input.rationale, input.category, now],
+  })
+}
+
+export const insertSuggestion = async (input: SuggestionInput): Promise<void> => {
+  await initQueue()
+  const id = randomUUID().slice(0, 8)
+  const now = new Date().toISOString()
+  await getClient().execute({
+    sql: `INSERT INTO task_suggestions (id, source_task_id, title, prompt, rationale, status, created_at) VALUES (?, ?, ?, ?, ?, 'proposed', ?)`,
+    args: [id, input.sourceTaskId, input.title, input.prompt, input.rationale, now],
+  })
+}
+
+export const clearQuestions = async (taskId: string): Promise<void> => {
+  await initQueue()
+  await getClient().execute({
+    sql: `DELETE FROM questions WHERE task_id = ?`,
+    args: [taskId],
+  })
+}
+
+export const clearSuggestions = async (taskId: string): Promise<void> => {
+  await initQueue()
+  await getClient().execute({
+    sql: `DELETE FROM task_suggestions WHERE source_task_id = ?`,
+    args: [taskId],
+  })
 }
