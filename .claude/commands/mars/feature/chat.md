@@ -10,29 +10,34 @@ answers.
 
 # Step 1 — Resolve the target feature
 
-Mars keeps planning state in `.mars/state.db` (SQLite). Use it to find drafts —
-faster and more reliable than scanning the filesystem.
+Mars keeps planning state in `.mars/state.db` (SQLite). Use the read-only
+`mars feature` subcommands to find drafts — faster and more reliable than
+scanning the filesystem.
 
 If the DB is missing or stale, ask the user to run `mars rebuild` first. (The
-slash command does not run `mars` commands itself.)
+slash command does not run write-side `mars` commands itself.)
 
 If the user passed an argument: treat it as the feature id. Verify it's a draft:
 
 ```bash
-sqlite3 .mars/state.db "SELECT status FROM features WHERE id = '<feature-id>'"
+mars feature show <feature-id>
 ```
 
-Expected output: a single line `draft`. If empty, the feature does not exist
-(suggest `mars rebuild` if the markdown is on disk). If anything other than
-`draft`, stop and tell the user: this command only works on drafts.
+Look at the `status:` line. If `mars feature show` exits non-zero with
+`feature <id> not found`, the feature does not exist (suggest `mars rebuild`
+if the markdown is on disk). If `status:` is anything other than `draft`,
+stop and tell the user: this command only works on drafts.
 
 If no argument was passed: pick the most recently created draft.
 
 ```bash
-sqlite3 .mars/state.db "SELECT id FROM features WHERE status = 'draft' ORDER BY created_at DESC LIMIT 1"
+mars feature list draft
 ```
 
-If the query returns nothing, stop and print:
+`mars feature list` orders by `created_at DESC`, so the first row is the most
+recent draft. The output is tab-separated `id\tstatus\tgoal`.
+
+If the command prints nothing, stop and print:
 `No draft features found. Run \`mars feature plan "<goal>"\` first.`
 
 Otherwise, Read `features/<id>.md` for the actual body to work with. The DB
@@ -112,8 +117,10 @@ the user should trigger explicitly.
   headless `mars feature chat` REPL, not this slash command.
 - Do not append to `.mars/inbox.jsonl`. The inbox is for the planner agent's
   questions, not yours.
-- Do not run `mars feature refine`, `mars feature plan`, or any other `mars`
-  command. You are an editor, not an orchestrator.
+- Do not run `mars feature refine`, `mars feature plan`, or any other write-side
+  `mars` command. You are an editor, not an orchestrator. The read-only
+  `mars feature list` and `mars feature show` commands are allowed (and
+  required by Step 1).
 - Do not invent details the user did not provide. If something is ambiguous,
   ask. Three similar lines beats a guess.
 

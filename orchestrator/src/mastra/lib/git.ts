@@ -280,6 +280,19 @@ export const mergeBranch = async ({
   try {
     let output = ''
     await exec('git', ['checkout', integrationBranch], { cwd: repoRoot() })
+    const ahead = await exec(
+      'git',
+      ['rev-list', '--count', `${integrationBranch}..${branch}`],
+      { cwd: repoRoot() },
+    )
+    if (ahead.stdout.trim() === '0') {
+      return {
+        merged: false,
+        conflictResolved: false,
+        aborted: true,
+        output: `task branch ${branch} has 0 commits ahead of ${integrationBranch}; nothing to merge`,
+      }
+    }
     try {
       const r = await exec(
         'git',
