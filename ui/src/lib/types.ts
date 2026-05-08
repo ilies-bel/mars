@@ -7,6 +7,7 @@ export type TaskStatus =
   | 'done'
   | 'failed'
   | 'dropped'
+  | 'blocked'
 
 export interface DraftFeature {
   id: string
@@ -41,11 +42,20 @@ export interface Task {
   branch: string | null
   worktreePath: string | null
   error: string | null
+  dropReason: string | null
+  retryCount: number
+  blockerSuggestionId: string | null
   createdAt: string
   updatedAt: string
 }
 
-export type ColumnKey = 'backlog' | 'planned' | 'in_progress' | 'done'
+export type ColumnKey =
+  | 'backlog'
+  | 'planned'
+  | 'in_progress'
+  | 'blocked'
+  | 'done'
+  | 'dropped'
 export type Role = 'planner' | 'builder' | 'reviewer' | 'orchestrator'
 
 export interface UITask {
@@ -55,6 +65,9 @@ export interface UITask {
   status: TaskStatus
   role: Role
   failed: boolean
+  dropReason: string | null
+  retryCount: number
+  blockerSuggestionId: string | null
   createdAt: string
 }
 

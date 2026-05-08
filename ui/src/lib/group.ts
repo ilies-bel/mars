@@ -18,6 +18,7 @@ const roleFromTask = (t: Task): Role => {
     case 'draft':
     case 'queued':
       return 'planner'
+    case 'blocked':
     case 'done':
     case 'failed':
     case 'dropped':
@@ -35,9 +36,12 @@ const columnFor = (t: Task): ColumnKey | null => {
     case 'verifying':
     case 'merging':
       return 'in_progress'
+    case 'blocked':
+      return 'blocked'
+    case 'dropped':
+      return 'dropped'
     case 'done':
     case 'failed':
-    case 'dropped':
       return 'done'
   }
 }
@@ -49,6 +53,9 @@ const toUI = (t: Task): UITask => ({
   status: t.status,
   role: roleFromTask(t),
   failed: t.status === 'failed',
+  dropReason: t.dropReason ?? null,
+  retryCount: t.retryCount ?? 0,
+  blockerSuggestionId: t.blockerSuggestionId ?? null,
   createdAt: t.createdAt,
 })
 
@@ -57,7 +64,9 @@ export const groupTasks = (tasks: Task[]): Snapshot => {
     backlog: [],
     planned: [],
     in_progress: [],
+    blocked: [],
     done: [],
+    dropped: [],
   }
   let inProgress = 0
   let todo = 0
@@ -68,7 +77,8 @@ export const groupTasks = (tasks: Task[]): Snapshot => {
     const ui = toUI(t)
     columns[key].push(ui)
     if (key === 'in_progress') inProgress++
-    else if (key === 'done') done++
+    else if (key === 'done' || key === 'dropped') done++
+    else if (key === 'blocked') todo++
     else todo++
   }
   return { columns, counts: { inProgress, todo, done } }

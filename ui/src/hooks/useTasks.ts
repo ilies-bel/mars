@@ -10,7 +10,14 @@ interface State {
 }
 
 const empty: Snapshot = {
-  columns: { backlog: [], planned: [], in_progress: [], done: [] },
+  columns: {
+    backlog: [],
+    planned: [],
+    in_progress: [],
+    blocked: [],
+    done: [],
+    dropped: [],
+  },
   counts: { inProgress: 0, todo: 0, done: 0 },
 }
 
