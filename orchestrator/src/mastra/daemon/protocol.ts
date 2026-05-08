@@ -26,6 +26,14 @@ export type DaemonRequest =
   | { op: 'purge'; id: string }
   | { op: 'promote'; suggestionId: string }
   | { op: 'refine'; id: string; refresh?: boolean }
+  | {
+      op: 'glossary-write'
+      kind: 'set' | 'remove'
+      term: string
+      definition?: string
+      aliases?: readonly string[]
+    }
+  | { op: 'adr-add'; title: string; body: string }
   | { op: 'status' }
   | { op: 'shutdown'; force?: boolean }
   | { op: 'ping' }
@@ -37,7 +45,10 @@ export type DaemonResponse =
 export interface DaemonStatusPayload {
   pid: number
   startedAt: string
-  inFlight: ReadonlyArray<{ taskId: string; kind: 'triage' | 'implement' | 'refine' }>
+  inFlight: ReadonlyArray<{
+    taskId: string
+    kind: 'triage' | 'implement' | 'refine' | 'glossary-write' | 'adr-add'
+  }>
   counts: { draft: number; queued: number; running: number; verifying: number; merging: number }
 }
 
