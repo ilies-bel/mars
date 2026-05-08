@@ -22,6 +22,10 @@ import {
   type Task,
 } from '../queue'
 import { promoteSuggestion } from '../queue-suggestions'
+import {
+  onChildTaskCompleted,
+  recoverBlockedTasks,
+} from '../blocker-resolution'
 import { daemonPaths } from './paths'
 import {
   readLines,
@@ -250,6 +254,25 @@ export const startDaemon = async (
         bus.emit('task.queued', { taskId: id })
       }
       if (after.status === 'done') {
+        try {
+          const resolved = await onChildTaskCompleted(id)
+          if (resolved) {
+            for (const o of resolved.outcomes) {
+              if (o.outcome === 'queued') {
+                log(
+                  `[unblock] task ${o.taskId} re-queued after suggestion ${resolved.suggestionId} accepted`,
+                )
+                bus.emit('task.queued', { taskId: o.taskId })
+              } else if (o.outcome === 'dropped') {
+                log(
+                  `[unblock] task ${o.taskId} dropped at unblock (retry budget exhausted)`,
+                )
+              }
+            }
+          }
+        } catch (err) {
+          log(`[unblock] error resolving blockers for ${id}: ${(err as Error).message}`)
+        }
         // updateTask already promoted any unblocked dependents; surface them.
         const queued = await listTasks('queued')
         for (const t of queued) {
@@ -346,6 +369,25 @@ export const startDaemon = async (
   // ── Reconcile on startup ──────────────────────────────────────────────────
 
   const reconcile = async (): Promise<void> => {
+    try {
+      const recovered = await recoverBlockedTasks()
+      for (const r of recovered) {
+        for (const o of r.outcomes) {
+          if (o.outcome === 'queued') {
+            log(
+              `[reconcile-unblock] task ${o.taskId} re-queued (suggestion ${r.suggestionId} resolved while daemon was down)`,
+            )
+          } else if (o.outcome === 'dropped') {
+            log(
+              `[reconcile-unblock] task ${o.taskId} dropped (retry budget exhausted)`,
+            )
+          }
+        }
+      }
+    } catch (err) {
+      log(`[reconcile-unblock] failed: ${(err as Error).message}`)
+    }
+
     const drafts = await listTasks('draft')
     for (const t of drafts) bus.emit('task.added', { taskId: t.id })
 

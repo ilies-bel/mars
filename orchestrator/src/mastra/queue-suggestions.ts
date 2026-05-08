@@ -53,11 +53,16 @@ export const promoteSuggestion = async (id: string): Promise<PromoteResult | nul
   await initQueue()
   const suggestion = await getSuggestion(id)
   if (!suggestion) return null
-  if (suggestion.status === 'accepted' && suggestion.createdTaskId) return null
+  if (
+    (suggestion.status === 'accepted' || suggestion.status === 'promoted') &&
+    suggestion.createdTaskId
+  ) {
+    return null
+  }
 
   const task = await enqueueTask(suggestion.prompt)
   await getClient().execute({
-    sql: `UPDATE task_suggestions SET status = 'accepted', created_task_id = ? WHERE id = ?`,
+    sql: `UPDATE task_suggestions SET status = 'promoted', created_task_id = ? WHERE id = ?`,
     args: [task.id, id],
   })
   return { taskId: task.id }
