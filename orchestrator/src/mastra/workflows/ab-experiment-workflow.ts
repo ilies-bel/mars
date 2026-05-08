@@ -101,7 +101,7 @@ const reportSchema = z.object({
 const inputSchema = z.object({
   instruction: z.string().min(1),
   variants: z.array(variantConfigSchema).length(2),
-  integrationBranch: z.string().default('integration'),
+  integrationBranch: z.string().default('main'),
   experimentId: z.string().default(() => randomUUID().slice(0, 8)),
 })
 

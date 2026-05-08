@@ -80,7 +80,7 @@ export const startDaemon = async (
   opts: DaemonOptions = {},
 ): Promise<DaemonHandle> => {
   const integrationBranch =
-    opts.integrationBranch ?? process.env.INTEGRATION_BRANCH ?? 'integration'
+    opts.integrationBranch ?? process.env.INTEGRATION_BRANCH ?? 'main'
   const { socket: socketPath, pidFile, logFile } = daemonPaths()
   const log = (line: string): void => {
     writeLog(logFile, line)

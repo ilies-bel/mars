@@ -110,7 +110,9 @@ Commands:
                                 set the functional plan on a draft/queued task
   set-technical <id> <text|@file>
                                 set the technical plan on a draft/queued task
-  show <id>                     print full task incl. plan sections
+  show <id>                     print full detail for an id; tries tasks
+                                (.mars/queue.db), then ideas (.mars/state.db),
+                                then features/<id>.md
   list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed|dropped)
   retry <id>                    re-queue a failed/done task (cleans worktree+branch)
   purge <id>                    delete a failed/done task entirely (worktree+branch+row)
@@ -215,7 +217,7 @@ Repo resolution (in priority order):
   3. \`git rev-parse --show-toplevel\` from cwd
 
 Other env:
-  INTEGRATION_BRANCH       target branch for merges (default: integration)
+  INTEGRATION_BRANCH       target branch for merges (default: main)
   MARS_REFLECT_DISABLED=1  skip per-task token/cost capture and short-circuit
                            'mars reflect'. Scorers stay attached either way.
 `
@@ -276,7 +278,8 @@ Set the technical plan on a draft/queued task. Use @path to read from a
 file.`,
   show: `mars show <id>
 
-Print full task incl. plan sections.`,
+Print full detail for an id. Looks up tasks first (.mars/queue.db),
+then ideas (.mars/state.db), then features/<id>.md markdown.`,
   list: `mars list [status]
 
 List tasks. Status one of: draft, queued, running, verifying, merging,
@@ -650,40 +653,91 @@ const main = async (): Promise<void> => {
       console.error('usage: mars show <id>')
       process.exit(1)
     }
+    const { formatAuthor } = await import('./mastra/author')
     const { getTask } = await import('./mastra/queue')
     const task = await getTask(id)
-    if (!task) {
-      console.error(`task ${id} not found`)
-      process.exit(1)
+    if (task) {
+      console.log(`kind:       task`)
+      console.log(`id:         ${task.id}`)
+      console.log(`status:     ${task.status}`)
+      console.log(`author:     ${formatAuthor(task.author)}`)
+      console.log(`branch:     ${task.branch ?? '-'}`)
+      console.log(`worktree:   ${task.worktreePath ?? '-'}`)
+      console.log(`createdAt:  ${task.createdAt}`)
+      console.log(`updatedAt:  ${task.updatedAt}`)
+      console.log(`prompt:`)
+      console.log(task.prompt)
+      console.log(`functional:`)
+      console.log(task.plan?.functional ?? '(empty)')
+      console.log(`technical:`)
+      console.log(task.plan?.technical ?? '(empty)')
+      if (task.error) {
+        console.log(`error:`)
+        console.log(task.error)
+      }
+      if (task.dropReason) {
+        console.log(`dropReason: ${task.dropReason}`)
+      }
+      if (task.retryCount > 0) {
+        console.log(`retryCount: ${task.retryCount}`)
+      }
+      if (task.blockerId) {
+        console.log(`blockerId:  ${task.blockerId}`)
+      }
+      return
     }
-    const { formatAuthor } = await import('./mastra/author')
-    console.log(`id:         ${task.id}`)
-    console.log(`status:     ${task.status}`)
-    console.log(`author:     ${formatAuthor(task.author)}`)
-    console.log(`branch:     ${task.branch ?? '-'}`)
-    console.log(`worktree:   ${task.worktreePath ?? '-'}`)
-    console.log(`createdAt:  ${task.createdAt}`)
-    console.log(`updatedAt:  ${task.updatedAt}`)
-    console.log(`prompt:`)
-    console.log(task.prompt)
-    console.log(`functional:`)
-    console.log(task.plan?.functional ?? '(empty)')
-    console.log(`technical:`)
-    console.log(task.plan?.technical ?? '(empty)')
-    if (task.error) {
-      console.log(`error:`)
-      console.log(task.error)
+    const { getIdea } = await import('./mastra/ideas')
+    const idea = await getIdea(id)
+    if (idea) {
+      console.log(`kind:       idea`)
+      console.log(`id:         ${idea.id}`)
+      console.log(`status:     ${idea.status}`)
+      console.log(`origin:     ${idea.origin}`)
+      console.log(`author:     ${formatAuthor(idea.author)}`)
+      console.log(`createdAt:  ${new Date(idea.createdAt).toISOString()}`)
+      console.log(`updatedAt:  ${new Date(idea.updatedAt).toISOString()}`)
+      console.log(`goal:`)
+      console.log(idea.goal)
+      if (idea.story.trim().length > 0) {
+        console.log(`story:`)
+        console.log(idea.story)
+      }
+      if (idea.acceptance.length > 0) {
+        console.log(`acceptance:`)
+        idea.acceptance.forEach((b, i) => console.log(`  [${i}] ${b}`))
+      }
+      if (idea.technical.trim().length > 0) {
+        console.log(`technical:`)
+        console.log(idea.technical)
+      }
+      return
     }
-    if (task.dropReason) {
-      console.log(`dropReason: ${task.dropReason}`)
+    const { readFeatureMarkdown } = await import('./mastra/feature-md')
+    const md = readFeatureMarkdown(id)
+    if (md) {
+      console.log(`kind:       idea`)
+      console.log(`id:         ${md.id}`)
+      console.log(`status:     ${md.status}`)
+      console.log(`origin:     ${md.origin}`)
+      console.log(`source:     features/${md.id}.md`)
+      console.log(`goal:`)
+      console.log(md.goal)
+      if (md.story.trim().length > 0) {
+        console.log(`story:`)
+        console.log(md.story)
+      }
+      if (md.acceptance.length > 0) {
+        console.log(`acceptance:`)
+        md.acceptance.forEach((b, i) => console.log(`  [${i}] ${b}`))
+      }
+      if (md.technical.trim().length > 0) {
+        console.log(`technical:`)
+        console.log(md.technical)
+      }
+      return
     }
-    if (task.retryCount > 0) {
-      console.log(`retryCount: ${task.retryCount}`)
-    }
-    if (task.blockerId) {
-      console.log(`blockerId:  ${task.blockerId}`)
-    }
-    return
+    console.error(`no task or idea matching ${id}`)
+    process.exit(1)
   }
 
   if (cmd === 'retry' || cmd === 'purge') {
@@ -792,7 +846,7 @@ const main = async (): Promise<void> => {
       console.error('--variants JSON must be an array of exactly 2 entries')
       process.exit(1)
     }
-    const branch = process.env.INTEGRATION_BRANCH ?? 'integration'
+    const branch = process.env.INTEGRATION_BRANCH ?? 'main'
     const { mastra } = await import('./mastra/index')
     const wf = mastra.getWorkflow('abExperimentWorkflow')
     const run = await wf.createRun()

@@ -16,14 +16,14 @@ standalone `mars` binary with Bun, symlinks `~/.local/bin/mars`.
 TodoWrite/TaskCreate tooling, ad-hoc markdown TODO files, or chat prose to
 track work. All actionable work — current tasks, loose ends, follow-ups,
 deferred refactors — must live in the `mars` queue (`.mars/queue.db`),
-created via `mars add "..."` and inspected via `mars list`. The queue is
-the single source of truth for outstanding work in this repo.
+created via `mars task add "..."` and inspected via `mars list`. The queue
+is the single source of truth for outstanding work in this repo.
 
 ## Repositories / top-level directories
 
 | Path | Purpose |
 | --- | --- |
-| `orchestrator/` | **mars** — Mastra-driven orchestrator. Runs Claude Code headless in parallel git worktrees, verifies (typecheck/test/lint), then fast-forwards into `integration`. Conflicts dispatched to bundled `vcs-supervisor` ("Vega") agent. State per-target-repo at `.mars/`. Node `>=22.13.0`. See `orchestrator/README.md` and `orchestrator/AGENTS.md`. |
+| `orchestrator/` | **mars** — Mastra-driven orchestrator. Runs Claude Code headless in parallel git worktrees, verifies (typecheck/test/lint), then fast-forwards into `main`. Conflicts dispatched to bundled `vcs-supervisor` ("Vega") agent. State per-target-repo at `.mars/`. Node `>=22.13.0`. See `orchestrator/README.md` and `orchestrator/AGENTS.md`. |
 | `ui/` | Local read-only frontend for Mars runs. Three views (Topology / Runs / Run timeline), single shell, SSE event stream. Foreground only, port 7777. CLI is the only control surface — the UI never mutates state. |
 | `design/` | Design drafts (v0) that `ui/` is built from. Source-of-truth for layout/IA decisions; not shipped at runtime. |
 | `.mars/` | Unified per-repo state for both the Mars CLI and the orchestrator: `state.db` (CLI), `queue.db` (LibSQL task queue), `mastra.db` (Mastra workflow runs/traces), `worktrees/<task-id>/`, `.merge.lock`. Gitignored. |
@@ -40,19 +40,19 @@ the single source of truth for outstanding work in this repo.
   codebase context (`rg --json` for search, filtered tree). Prefer it over
   ad-hoc grep/find.
 - **Orchestrator workflow** — 4 steps per task: `setup` (worktree on
-  `task/<id>` off `integration`) → `code` (`claude -p`) → `verify` →
+  `task/<id>` off `main`) → `code` (`claude -p`) → `verify` →
   `merge` (serialized via file lock; coding parallel).
-- **Integration branch** — `integration` is the merge target; `main` is the
-  PR target.
+- **Merge target** — `main` is both the merge target and the PR target.
+  Override per-invocation with `INTEGRATION_BRANCH=<branch>`.
 
 ## Glossary and ADRs
 
 Two tracked files at the repo root encode the project's domain language and
 its irreversible decisions. Both are written through a daemon-routed
-**structured-write** path — a fresh worktree off `integration`, a
-deterministic file edit, a commit, and a merge back via the existing merge
-lock. No LLM is involved in the edit itself, so the content is exactly what
-the verb produced.
+**structured-write** path — a fresh worktree off `main`, a deterministic
+file edit, a commit, and a merge back via the existing merge lock. No LLM
+is involved in the edit itself, so the content is exactly what the verb
+produced.
 
 - **`CONTEXT.md`** (repo root) — project glossary of canonical domain terms.
   Edit only via `mars glossary set <term> "<definition>"` and
@@ -66,7 +66,7 @@ Direct edits to `CONTEXT.md` or `docs/adr/**` from inside coding worktrees
 `block-tracked-writes` hook enforces this. Always go through the verbs.
 
 Coding agents in dispatched worktrees can **read** `CONTEXT.md` freely; it
-is a normal tracked file on `integration` and reflects the latest agreed
+is a normal tracked file on `main` and reflects the latest agreed
 vocabulary.
 
 The `/mars:chat` slash command (alias `/mars:next`) grills the user's plan
@@ -81,18 +81,18 @@ Use the `mars` CLI (installed by `install.sh`, or via `npm link` from `orchestra
 
 ```bash
 # from inside the target repo
-mars add "implement X in src/foo.ts"   # enqueue a task
-mars list queued                        # inspect the queue
-mars run                                # dispatch all queued tasks in parallel
-mars where                              # show resolved repo + state paths
+mars task add "implement X in src/foo.ts"   # enqueue a runnable task
+mars list queued                             # inspect the queue
+mars run                                     # dispatch all queued tasks in parallel
+mars where                                   # show resolved repo + state paths
 
 # from anywhere — explicit target repo
-mars --repo /path/to/repo add "fix bug Y"
+mars --repo /path/to/repo task add "fix bug Y"
 mars --repo /path/to/repo run
 ```
 
 The task prompt should be a single self-contained instruction; the orchestrator
-spawns it in a fresh `task/<id>` worktree off `integration`. Inspect runs in
+spawns it in a fresh `task/<id>` worktree off `main`. Inspect runs in
 Mastra Studio (`cd orchestrator && npm run dev` → http://localhost:4111).
 
 ## Conventions
@@ -111,12 +111,14 @@ refactors, missing features, orphan rows in `.mars/queue.db` or `state.db`,
 anything outside the current task's scope. The queue is the source of truth;
 do not park them in chat prose, a markdown TODO, or a MEMORY.md.
 
-At the end of a session — or as soon as the user signals a stopping point
-("looks good", "ship it", "done", "let's move on") — enumerate every loose
-end you accumulated and enqueue **one `mars add` task per item**. No batching,
-no speculative entries ("maybe consider X someday"); only concrete, actionable
-work the user has seen or that blocks real follow-up. If the user says "skip"
-or "not now" for a specific item, drop it.
+**Enqueue immediately, on the go.** The moment you spot a loose end, file it
+as **one `mars task add` per item** before moving on. Do not batch, do not
+defer to "end of session". No speculative entries ("maybe consider X
+someday"); only concrete, actionable work the user has seen or that blocks
+real follow-up. If the user says "skip" or "not now" for a specific item,
+drop it. When the user signals a stopping point ("looks good", "ship it",
+"done", "let's move on"), do a final sweep for anything that slipped through
+— but that sweep is a safety net, not the primary trigger.
 
 Each task prompt must stand on its own — a colleague reading it cold should
 be able to do the work without this session's context. Include:
@@ -129,5 +131,5 @@ be able to do the work without this session's context. Include:
 
 Avoid bare regex-trigger phrases in the outer shell (the `block-tracked-writes`
 hook denies standalone `git commit`, `git add`, `rm `, etc.). Inside a
-heredoc'd `mars add "..."` prompt body those strings are fine, because the
-outer command itself is `mars add`.
+heredoc'd `mars task add "..."` prompt body those strings are fine, because
+the outer command itself is `mars task add`.
