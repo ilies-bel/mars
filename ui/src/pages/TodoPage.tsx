@@ -33,7 +33,7 @@ export const TodoPage = () => {
           <div className="font-mono text-[12px] text-iron">
             Nothing to refine. Create a draft with{' '}
             <code className="rounded bg-iron/20 px-1">
-              mars feature new "&lt;goal&gt;"
+              mars idea add "&lt;goal&gt;"
             </code>{' '}
             or run{' '}
             <code className="rounded bg-iron/20 px-1">/mars:next</code> to
