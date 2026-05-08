@@ -48,12 +48,15 @@ export const resolveSha = async (ref: string): Promise<string> => {
 export const removeWorktree = async (
   ref: WorktreeRef,
   force = true,
+  keepBranch = false,
 ): Promise<void> => {
   const args = ['worktree', 'remove']
   if (force) args.push('--force')
   args.push(ref.path)
   await exec('git', args, { cwd: repoRoot() })
-  await exec('git', ['branch', '-D', ref.branch], { cwd: repoRoot() }).catch(() => {})
+  if (!keepBranch) {
+    await exec('git', ['branch', '-D', ref.branch], { cwd: repoRoot() }).catch(() => {})
+  }
 }
 
 export interface RunSubprocessResult {
