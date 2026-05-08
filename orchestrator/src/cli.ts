@@ -177,6 +177,8 @@ Commands:
                                 to all; common values: proposed, accepted)
   promote <suggestion-id>       enqueue a suggestion as a task; marks the
                                 suggestion accepted and links the new task id
+  reject <suggestion-id>        mark a proposed suggestion as rejected; errors
+                                if id is unknown or already accepted/rejected
   next [--json]                 list the next things to refine — draft
                                 features (status=draft) plus proposed
                                 reflection suggestions. Default output is
@@ -386,6 +388,10 @@ proposed, accepted.`,
 
 Enqueue a suggestion as a task; marks the suggestion accepted and links
 the new task id.`,
+  reject: `mars reject <suggestion-id>
+
+Mark a proposed reflection suggestion as rejected. Errors if the id is
+unknown, or if the suggestion is already accepted or rejected.`,
   next: `mars next [--json]
 
 List the next things to refine. Sources:
@@ -1480,6 +1486,18 @@ const main = async (): Promise<void> => {
       taskId: string
     }
     console.log(`drafted ${r.taskId} (from suggestion ${id})`)
+    return
+  }
+
+  if (cmd === 'reject') {
+    const id = rest[0]
+    if (!id) {
+      console.error('usage: mars reject <suggestion-id>')
+      process.exit(1)
+    }
+    const { rejectSuggestion } = await import('./mastra/queue')
+    await rejectSuggestion(id)
+    console.log(`rejected ${id}`)
     return
   }
 
