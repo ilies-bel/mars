@@ -308,6 +308,18 @@ export const insertQuestion = async (input: QuestionInput): Promise<void> => {
   })
 }
 
+export const insertReflectionTask = async (corpusSize: number): Promise<string> => {
+  await initQueue()
+  const id = `reflect-${randomUUID().slice(0, 8)}`
+  const now = new Date().toISOString()
+  const prompt = `mars reflect run over ${corpusSize} task(s) at ${now}`
+  await getClient().execute({
+    sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at) VALUES (?, ?, 'done', ?, ?)`,
+    args: [id, prompt, now, now],
+  })
+  return id
+}
+
 export const insertSuggestion = async (input: SuggestionInput): Promise<void> => {
   await initQueue()
   const id = randomUUID().slice(0, 8)
