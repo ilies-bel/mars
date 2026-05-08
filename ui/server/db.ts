@@ -9,6 +9,7 @@ export type TaskStatus =
   | 'done'
   | 'failed'
   | 'dropped'
+  | 'blocked'
 
 export interface DraftFeature {
   id: string
@@ -45,6 +46,10 @@ export interface TaskRow {
   worktree_path: string | null
   claude_session_id: string | null
   error: string | null
+  drop_reason: string | null
+  retry_count: number | null
+  blocker_id: string | null
+  blocker_suggestion_id: string | null
   created_at: string
   updated_at: string
 }
@@ -57,6 +62,9 @@ export interface Task {
   branch: string | null
   worktreePath: string | null
   error: string | null
+  dropReason: string | null
+  retryCount: number
+  blockerSuggestionId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -72,6 +80,9 @@ const rowToTask = (row: TaskRow): Task => {
     branch: row.branch,
     worktreePath: row.worktree_path,
     error: row.error,
+    dropReason: row.drop_reason ?? null,
+    retryCount: Number(row.retry_count ?? 0),
+    blockerSuggestionId: row.blocker_suggestion_id ?? row.blocker_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -89,9 +100,46 @@ export class TaskDb {
   }
 
   async listTasks(): Promise<Task[]> {
-    const r = await this.client.execute(
-      `SELECT id, prompt, status, plan_functional, plan_technical, branch, worktree_path, claude_session_id, error, created_at, updated_at FROM tasks ORDER BY created_at`,
+    const cols = await this.client.execute(`PRAGMA table_info(tasks)`)
+    const colNames = new Set(
+      cols.rows.map((r) => (r as unknown as { name: string }).name),
     )
+    const hasDropReason = colNames.has('drop_reason')
+    const hasRetryCount = colNames.has('retry_count')
+    const hasBlockerId = colNames.has('blocker_id')
+
+    const select: string[] = [
+      't.id',
+      't.prompt',
+      't.status',
+      't.plan_functional',
+      't.plan_technical',
+      't.branch',
+      't.worktree_path',
+      't.claude_session_id',
+      't.error',
+      hasDropReason ? 't.drop_reason' : `NULL AS drop_reason`,
+      hasRetryCount ? 't.retry_count' : `0 AS retry_count`,
+      hasBlockerId ? 't.blocker_id' : `NULL AS blocker_id`,
+      't.created_at',
+      't.updated_at',
+    ]
+
+    const sugTableExists = await this.suggestionsTableExists()
+    const join =
+      hasBlockerId && sugTableExists
+        ? `LEFT JOIN task_suggestions s
+             ON s.id = t.blocker_id
+            AND s.status = 'proposed'`
+        : ''
+    const blockerCol =
+      hasBlockerId && sugTableExists
+        ? `s.id AS blocker_suggestion_id`
+        : `NULL AS blocker_suggestion_id`
+    select.push(blockerCol)
+
+    const sql = `SELECT ${select.join(', ')} FROM tasks t ${join} ORDER BY t.created_at`
+    const r = await this.client.execute(sql)
     return r.rows.map((row) => rowToTask(row as unknown as TaskRow))
   }
 
