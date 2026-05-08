@@ -10,6 +10,15 @@ UI.
 Installed globally via `install.sh`: clones into `~/.mars`, builds a
 standalone `mars` binary with Bun, symlinks `~/.local/bin/mars`.
 
+## Task management
+
+**This repo uses `mars` as its main task manager.** Do not use the built-in
+TodoWrite/TaskCreate tooling, ad-hoc markdown TODO files, or chat prose to
+track work. All actionable work — current tasks, loose ends, follow-ups,
+deferred refactors — must live in the `mars` queue (`.mars/queue.db`),
+created via `mars add "..."` and inspected via `mars list`. The queue is
+the single source of truth for outstanding work in this repo.
+
 ## Repositories / top-level directories
 
 | Path | Purpose |
