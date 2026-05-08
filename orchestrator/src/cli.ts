@@ -21,6 +21,8 @@ const FLAGS_WITH_VALUES = new Set([
   '--variants',
   '--out',
   '--author',
+  '--note',
+  '--root-cause',
 ])
 
 const parseArgs = (argv: readonly string[]): ParsedArgs => {
@@ -163,6 +165,17 @@ Commands:
                                 reflection suggestions. Default output is
                                 human-readable; --json prints a structured
                                 payload for the /mars:next skill to consume.
+  inbox                         alias for 'inbox list open'
+  inbox list [state]            list inbox items. state one of:
+                                open|acknowledged|resolved|dismissed|all
+                                (default: open)
+  inbox show <id>               full detail for an inbox item (accepts a
+                                full id or a unique 8-char prefix)
+  inbox ack <id>                mark an inbox item acknowledged
+  inbox resolve <id> [--note <text>] [--root-cause <text>]
+                                mark an inbox item resolved
+  inbox dismiss <id> [--note <text>]
+                                mark an inbox item dismissed
   where                         print resolved repo + state directory
   help                          show this message
 
@@ -327,6 +340,19 @@ List the next things to refine. Sources:
 Default output is two grouped sections, designed to be read by both
 humans and the /mars:next slash command. Pass --json to get a
 machine-readable payload of the same data.`,
+  inbox: `mars inbox <subcommand> ...
+
+Subcommands:
+  (no args)                          alias for 'inbox list open'
+  list [state]                       list items by state
+                                     (open|acknowledged|resolved|dismissed|all,
+                                     default: open)
+  show <id>                          full detail (accepts full id or unique
+                                     8-char prefix)
+  ack <id>                           mark item acknowledged
+  resolve <id> [--note <text>] [--root-cause <text>]
+                                     mark item resolved
+  dismiss <id> [--note <text>]       mark item dismissed`,
   where: `mars where
 
 Print resolved repo + state directory.`,
@@ -1167,6 +1193,156 @@ const main = async (): Promise<void> => {
       }
     }
     return
+  }
+
+  if (cmd === 'inbox') {
+    const sub = rest[0]
+    const inbox = await import('./mastra/lib/inbox')
+    type InboxItem = Awaited<ReturnType<typeof inbox.listInboxItems>>[number]
+
+    const printList = (rows: InboxItem[]): void => {
+      if (rows.length === 0) {
+        console.log('inbox empty')
+        return
+      }
+      for (const row of rows) {
+        const idShort = row.id.slice(0, 8)
+        const sig = row.signature ? `(${row.signature})` : '()'
+        console.log(
+          `${idShort}\t${row.state}\t${row.priority}\t×${row.seenCount}\t${row.kind}${sig}\t${row.title}`,
+        )
+      }
+    }
+
+    const printShow = (item: InboxItem): void => {
+      const sig = item.signature ?? '-'
+      console.log(`id:           ${item.id}`)
+      console.log(`kind:         ${item.kind} (${sig})`)
+      console.log(`category:     ${item.category}`)
+      console.log(`state:        ${item.state}`)
+      console.log(`priority:     ${item.priority}`)
+      console.log(`seen_count:   ${item.seenCount}`)
+      console.log(`raised_by:    ${item.raisedBy}`)
+      console.log(`raised_at:    ${item.raisedAt}`)
+      console.log(`last_seen_at: ${item.lastSeenAt}`)
+      console.log('')
+      console.log(item.body)
+      console.log('')
+      console.log('payload:')
+      const payloadJson = JSON.stringify(item.payload, null, 2)
+      for (const line of payloadJson.split('\n')) console.log(`  ${line}`)
+      console.log('context:')
+      const contextJson = JSON.stringify(item.context, null, 2)
+      for (const line of contextJson.split('\n')) console.log(`  ${line}`)
+      console.log('')
+      if (item.resolutionDetails) {
+        console.log('resolution:')
+        console.log(`  state:       ${item.resolutionDetails.state}`)
+        console.log(`  resolved_by: ${item.resolutionDetails.resolvedBy ?? '-'}`)
+        console.log(`  resolved_at: ${item.resolutionDetails.resolvedAt}`)
+        if (item.resolutionDetails.note) {
+          console.log(`  note:        ${item.resolutionDetails.note}`)
+        }
+        if (item.resolutionDetails.rootCause) {
+          console.log(`  root_cause:  ${item.resolutionDetails.rootCause}`)
+        }
+      }
+      if (item.history.length > 0) {
+        console.log('history:')
+        for (const h of item.history) {
+          const from = h.fromState ?? '-'
+          const by = h.by ?? '-'
+          const note = h.note ? ` note=${JSON.stringify(h.note)}` : ''
+          console.log(`  ${h.at}\t${from} -> ${h.toState}\tby=${by}${note}`)
+        }
+      }
+    }
+
+    if (sub === undefined || sub === 'list') {
+      const stateRaw = sub === 'list' ? rest[1] : 'open'
+      const state = stateRaw ?? 'open'
+      const allowed = new Set([
+        'open',
+        'acknowledged',
+        'resolved',
+        'dismissed',
+        'all',
+      ])
+      if (!allowed.has(state)) {
+        console.error(
+          `usage: mars inbox list [open|acknowledged|resolved|dismissed|all]`,
+        )
+        process.exit(1)
+      }
+      const rows = await inbox.listInboxItems(state as never)
+      printList(rows)
+      return
+    }
+
+    if (sub === 'show') {
+      const id = rest[1]
+      if (!id) {
+        console.error('usage: mars inbox show <id>')
+        process.exit(1)
+      }
+      const item = await inbox.getInboxItem(id)
+      if (!item) {
+        console.error(`no inbox item matching ${id}`)
+        process.exit(1)
+      }
+      printShow(item)
+      return
+    }
+
+    if (sub === 'ack' || sub === 'resolve' || sub === 'dismiss') {
+      const id = rest[1]
+      if (!id) {
+        console.error(`usage: mars inbox ${sub} <id>`)
+        process.exit(1)
+      }
+      const targetState =
+        sub === 'ack' ? 'acknowledged' : sub === 'resolve' ? 'resolved' : 'dismissed'
+      const note = flags['--note']
+      const rootCause = flags['--root-cause']
+      if (sub !== 'resolve' && rootCause !== undefined) {
+        console.error('--root-cause is only valid with `mars inbox resolve`')
+        process.exit(1)
+      }
+      const before = await inbox.getInboxItem(id)
+      if (!before) {
+        console.error(`no inbox item matching ${id}`)
+        process.exit(1)
+      }
+      const isAlreadyTerminal =
+        before.state === 'resolved' || before.state === 'dismissed'
+      if (isAlreadyTerminal) {
+        console.error(
+          `inbox item ${before.id.slice(0, 8)} is already ${before.state}; no change`,
+        )
+        return
+      }
+      const { resolveAuthor, formatAuthor } = await import('./mastra/author')
+      const author = resolveAuthor(flags['--author'])
+      const opts: {
+        by?: string
+        note?: string
+        rootCause?: string
+        resolution?: string
+      } = { by: formatAuthor(author) }
+      if (note !== undefined) opts.note = note
+      if (rootCause !== undefined) opts.rootCause = rootCause
+      if (sub === 'resolve' || sub === 'dismiss') {
+        opts.resolution = targetState
+      }
+      await inbox.setInboxState(before.id, targetState, opts)
+      console.log(`${sub} ${before.id.slice(0, 8)} (${targetState})`)
+      return
+    }
+
+    console.error(
+      'usage: mars inbox [list [state] | show <id> | ack <id> | resolve <id> [--note <text>] [--root-cause <text>] | dismiss <id> [--note <text>]]',
+    )
+    process.exit(1)
   }
 
   if (cmd === 'triage') {
