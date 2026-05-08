@@ -119,7 +119,7 @@ export const upsertFixSuggestion = async (
            WHERE source_task_id = ?
              AND kind = 'fix'
              AND failure_signature = ?
-             AND status IN ('proposed','accepted')
+             AND status IN ('proposed','promoted','accepted')
            ORDER BY created_at DESC
            LIMIT 1`,
     args: [input.sourceTaskId, input.failureSignature],
