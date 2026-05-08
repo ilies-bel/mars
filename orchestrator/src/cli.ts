@@ -103,6 +103,8 @@ Commands:
                                 detected from env/git when omitted: human if
                                 running interactively, agent if MARS_AGENT_NAME
                                 or CLAUDE_CODE/CLAUDECODE is set.
+  idea show <id>                show an idea from .mars/state.db (DB-only; does
+                                not fall back to features/<id>.md)
   add "<prompt>" [plan flags]   (deprecated) draft a task; lands in 'draft' state
                                 so triage can promote to 'queued'. Prefer
                                 'mars task add' or 'mars idea add'.
@@ -267,7 +269,10 @@ Subcommands:
       Create a plan/idea in .mars/state.db. Author is detected from env
       and git when omitted (agent if MARS_AGENT_NAME/CLAUDE_CODE is set,
       otherwise human with git user.email). Use --author to override,
-      e.g. --author agent:vega.`,
+      e.g. --author agent:vega.
+  show <id>
+      Show an idea from .mars/state.db (DB-only; does not fall back to
+      features/<id>.md). <id> must be the full idea slug.`,
   'set-functional': `mars set-functional <id> <text|@file>
 
 Set the functional plan on a draft/queued task. Use @path to read from a
@@ -612,7 +617,42 @@ const main = async (): Promise<void> => {
       console.log(idea.id)
       return
     }
-    console.error('usage: mars idea <add|new> ...')
+    if (sub === 'show') {
+      const id = rest[1]
+      if (!id) {
+        console.error('usage: mars idea show <id>')
+        process.exit(1)
+      }
+      const { getIdea } = await import('./mastra/ideas')
+      const { formatAuthor } = await import('./mastra/author')
+      const idea = await getIdea(id)
+      if (!idea) {
+        console.error(`idea ${id} not found`)
+        process.exit(1)
+      }
+      console.log(`id:         ${idea.id}`)
+      console.log(`status:     ${idea.status}`)
+      console.log(`origin:     ${idea.origin}`)
+      console.log(`author:     ${formatAuthor(idea.author)}`)
+      console.log(`createdAt:  ${new Date(idea.createdAt).toISOString()}`)
+      console.log(`updatedAt:  ${new Date(idea.updatedAt).toISOString()}`)
+      console.log(`goal:`)
+      console.log(idea.goal)
+      if (idea.story.trim().length > 0) {
+        console.log(`story:`)
+        console.log(idea.story)
+      }
+      if (idea.acceptance.length > 0) {
+        console.log(`acceptance:`)
+        idea.acceptance.forEach((b, i) => console.log(`  [${i}] ${b}`))
+      }
+      if (idea.technical.trim().length > 0) {
+        console.log(`technical:`)
+        console.log(idea.technical)
+      }
+      return
+    }
+    console.error('usage: mars idea <add|new|show> ...')
     process.exit(1)
   }
 
