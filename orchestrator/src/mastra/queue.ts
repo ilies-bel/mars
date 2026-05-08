@@ -424,6 +424,19 @@ export const insertSuggestion = async (input: SuggestionInput): Promise<void> =>
   })
 }
 
+export const rejectSuggestion = async (id: string): Promise<void> => {
+  await initQueue()
+  const result = await getClient().execute({
+    sql: `UPDATE task_suggestions SET status = 'rejected' WHERE id = ? AND status = 'proposed'`,
+    args: [id],
+  })
+  if (result.rowsAffected === 0) {
+    throw new Error(
+      `no proposed suggestion with id=${id} (already accepted/rejected, or unknown id)`,
+    )
+  }
+}
+
 export const clearQuestions = async (taskId: string): Promise<void> => {
   await initQueue()
   await getClient().execute({
