@@ -19,6 +19,13 @@ deferred refactors — must live in the `mars` queue (`.mars/queue.db`),
 created via `mars task add "..."` and inspected via `mars list`. The queue
 is the single source of truth for outstanding work in this repo.
 
+**Tasks are picked up automatically.** Once a task is enqueued via
+`mars task add`, the orchestrator dispatches it on its own — you do not need
+to run `mars run`, ask the user to run it, or otherwise hand-trigger
+execution. Your job ends at enqueueing a well-specified prompt. The user
+inspects progress via `mars list` / Mastra Studio; the worktree, code step,
+verify, and merge all happen without further prompting.
+
 ## Repositories / top-level directories
 
 | Path | Purpose |
@@ -81,19 +88,18 @@ Use the `mars` CLI (installed by `install.sh`, or via `npm link` from `orchestra
 
 ```bash
 # from inside the target repo
-mars task add "implement X in src/foo.ts"   # enqueue a runnable task
+mars task add "implement X in src/foo.ts"   # enqueue — orchestrator picks it up automatically
 mars list queued                             # inspect the queue
-mars run                                     # dispatch all queued tasks in parallel
 mars where                                   # show resolved repo + state paths
 
 # from anywhere — explicit target repo
 mars --repo /path/to/repo task add "fix bug Y"
-mars --repo /path/to/repo run
 ```
 
 The task prompt should be a single self-contained instruction; the orchestrator
-spawns it in a fresh `task/<id>` worktree off `main`. Inspect runs in
-Mastra Studio (`cd orchestrator && npm run dev` → http://localhost:4111).
+spawns it in a fresh `task/<id>` worktree off `main` automatically — you do
+not need to invoke `mars run` yourself. Inspect runs in Mastra Studio
+(`cd orchestrator && npm run dev` → http://localhost:4111).
 
 ## Conventions
 
