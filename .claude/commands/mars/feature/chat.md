@@ -1,6 +1,6 @@
 ---
-description: Guided chat to fill in a Mars feature's Story and Technical sections (creates a new draft if no existing match)
-argument-hint: "[feature-id | new-goal-text]"
+description: Guided chat to fill in a Mars feature's Story and Technical sections (resolves to existing draft, suggestion, or a new draft)
+argument-hint: "[feature-id | suggestion-id | new-goal-text | (empty)]"
 ---
 
 You are running as the Mars feature planner inside the user's Claude Code session.
@@ -11,65 +11,115 @@ answers.
 # Step 1 — Resolve the target feature
 
 Mars keeps planning state in `.mars/state.db` (SQLite). Use the read-only
-`mars feature` subcommands to find drafts — faster and more reliable than
-scanning the filesystem.
+`mars feature` and `mars suggestions` subcommands to find candidates — faster
+and more reliable than scanning the filesystem.
 
 If the DB is missing or stale, ask the user to run `mars rebuild` first.
 
-The command supports two modes:
+There are three resolution modes, driven entirely by the argument shape.
 
-- **Refine an existing draft** — when the argument resolves to a known draft id.
-- **Create a new draft, then refine it** — when no argument is passed, or the
-  argument is free-text that doesn't resolve to an id. In this mode (and only
-  this mode) you may run `mars feature plan "<goal>"` once to create the
-  draft. All other write-side `mars` commands remain off-limits.
+## 1a — Argument looks like an id (8-hex prefix or full slug)
 
-## 1a — Argument passed: try id first, fall back to goal
-
-Run:
+Try, in order:
 
 ```bash
 mars feature show <argument>
+mars suggestions | grep -F <argument>
 ```
 
-- If it succeeds and `status:` is `draft` → use this feature; skip to Step 2.
-- If it succeeds but `status:` is anything else → stop and tell the user this
-  command only works on drafts.
-- If it exits non-zero with `feature <id> not found` → the argument is **not**
-  an id. Treat the entire argument as the goal text for a new feature and go
-  to Step 1c.
+- **Feature draft hit** (`mars feature show` succeeds, `status: draft`) → use
+  this feature; skip to Step 2.
+- **Feature non-draft hit** (`status:` anything else) → stop and tell the user
+  this command only works on drafts.
+- **Suggestion hit** (`mars suggestions` row matches the id) → tell the user:
+  "That id resolves to a reflection suggestion, not a feature draft. Discuss
+  it with me here, then I can help shape it into a draft feature." Treat the
+  suggestion's text as the goal and continue to **Step 1d** (new draft path),
+  using the suggestion text verbatim as the goal.
+- **No hit anywhere** → fall through to Step 1b (treat as free text).
 
-## 1b — No argument: create a new feature
+## 1b — Argument is free text (not an id)
 
-Ask the user one question: **"What's the goal of the new feature? (one
-sentence)"** Use their answer as the goal text and go to Step 1c.
+Treat the entire argument as the goal text for a brand-new draft. **Do not
+prompt for confirmation** — the user already typed the goal. Skip to Step 1d.
 
-## 1c — Create the draft
+## 1c — No argument: suggest next refinement target
 
-With the goal text in hand, run:
+Print a short menu of candidates the user might want to refine, drawn from
+two read-only sources:
 
 ```bash
-mars feature plan "<goal>"
+mars feature list draft       # existing drafts that need refinement
+mars suggestions proposed     # reflection suggestions that could become features
 ```
 
-Parse the new feature id from the output (the command prints the created id;
-if needed, run `mars feature list draft` and take the most recent row — its
-`created_at` will be newer than every other draft). Tell the user:
+Show them in a single grouped list, e.g.:
 
 ```
-Created draft: <id>
-  Goal: <goal>
+Pick something to refine, or type a new goal:
+
+Existing drafts:
+  1. e4415799  inbox alert for stale unmerged worktrees
+  2. 49b0c476  worktree for dispatched agent
+
+Reflection suggestions (would become new drafts):
+  3. ccb5f896  Add `mars promote-draft <task-id>` lifecycle command
+  4. aa4974b6  Extract a typed `questions` repository module
+
+Or describe a new feature in one sentence.
 ```
 
-Then proceed to Step 2 with that id. (`mars feature plan` writes the
-scaffolded `features/<id>.md` for you, so the body will be the empty
-template — both `## Story` and `## Technical` will be empty in Step 2.)
+Ask **"Which one?"** as a single question. Once the user answers, route their
+reply through Step 1a (if they gave an id) or Step 1b (if they gave free text).
 
-## 1d — Read the body
+## 1d — Bootstrap a new draft from goal text
+
+When you reach this step you have a goal sentence and need a `features/<id>.md`
+to refine. The current `mars` CLI does **not** expose a write-side
+`mars feature plan` command, so you create the scaffold directly:
+
+1. Generate an id of the form `<8-hex>-<kebab-slug>`. Use the first 8 chars of
+   `openssl rand -hex 4` for the prefix and a kebab-cased slug derived from
+   the goal (lowercase, alphanumerics and hyphens, max ~40 chars).
+2. Write `features/<id>.md` with the standard scaffold:
+
+   ```markdown
+   ---
+   id: <id>
+   status: draft
+   origin: user
+   ---
+
+   # <goal sentence>
+
+   ## Story
+
+   <!-- As a <role>, I want <capability>, so that <outcome>. Add **Acceptance** bullets. -->
+
+   ## Technical
+
+   <!-- Files to touch, contracts, sequencing notes. -->
+   ```
+
+3. Tell the user:
+
+   ```
+   Created draft: <id>
+     Goal: <goal>
+   ```
+
+Then proceed to Step 2 with that id.
+
+> Note: this scaffold lives only on disk; `.mars/state.db` won't know about
+> it until the orchestrator picks it up (typically on the next
+> `mars rebuild` or refine run). That's fine — this slash command only edits
+> the markdown body.
+
+## 1e — Read the body
 
 Once you have an id (existing or freshly created), Read `features/<id>.md`
-for the actual body to work with. The DB gives you the *which*; the markdown
-is still the *what*.
+for the body to work with. The DB gives you the *which*; the markdown is the
+*what*.
 
 # Step 2 — Read the feature file
 
@@ -145,11 +195,11 @@ the user should trigger explicitly.
   headless `mars feature chat` REPL, not this slash command.
 - Do not append to `.mars/inbox.jsonl`. The inbox is for the planner agent's
   questions, not yours.
-- Do not run `mars feature refine` or any other write-side `mars` command.
-  You are an editor, not an orchestrator. The read-only `mars feature list`
-  and `mars feature show` commands are always allowed. `mars feature plan`
-  is allowed **only once**, **only in Step 1c**, and **only** when no
-  existing draft matched — to bootstrap the new draft you'll then refine.
+- Do not run `mars feature refine`, `mars promote`, or any other write-side
+  `mars` command. You are an editor, not an orchestrator. The read-only
+  `mars feature list`, `mars feature show`, and `mars suggestions` commands
+  are always allowed. The only filesystem write you may perform during
+  resolution is creating `features/<id>.md` in Step 1d.
 - Do not invent details the user did not provide. If something is ambiguous,
   ask. Three similar lines beats a guess.
 

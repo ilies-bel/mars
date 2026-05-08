@@ -76,7 +76,9 @@ export const startServer = async (args: CliArgs): Promise<void> => {
   const distDir = args.distDir ? resolve(args.distDir) : undefined
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    const url = req.url ?? '/'
+    const rawUrl = req.url ?? '/'
+    const qIdx = rawUrl.indexOf('?')
+    const url = qIdx === -1 ? rawUrl : rawUrl.slice(0, qIdx)
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
@@ -135,6 +137,11 @@ export const startServer = async (args: CliArgs): Promise<void> => {
       })
       res.write(`event: hello\ndata: {}\n\n`)
       hub.add(res)
+      return
+    }
+
+    if (url.startsWith('/api/') || url === '/events') {
+      sendJson(res, 404, { error: `no route for ${url}` })
       return
     }
 

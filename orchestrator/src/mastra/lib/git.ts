@@ -355,9 +355,21 @@ export const stripFrontmatter = (text: string): string => {
 
 const loadSupervisorSpec = async (): Promise<string> => {
   if (cachedSupervisorSpec) return cachedSupervisorSpec
-  const promptPath = resolve(moduleDir(), '../../prompts/vcs-supervisor.md')
-  cachedSupervisorSpec = await readFile(promptPath, 'utf8')
-  return cachedSupervisorSpec
+  const candidates = [
+    resolve(moduleDir(), '../public/prompts/vcs-supervisor.md'),
+    resolve(moduleDir(), './prompts/vcs-supervisor.md'),
+  ]
+  for (const candidate of candidates) {
+    try {
+      cachedSupervisorSpec = await readFile(candidate, 'utf8')
+      return cachedSupervisorSpec
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
+  throw new Error(
+    `vcs-supervisor.md not found; checked: ${candidates.join(', ')}`,
+  )
 }
 
 const buildSupervisorPrompt = async (
