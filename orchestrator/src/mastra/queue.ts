@@ -383,6 +383,19 @@ export const listBlockers = async (taskId: string): Promise<string[]> => {
   return r.rows.map((row) => (row as unknown as { id: string }).id)
 }
 
+export const hasIncompleteBlockers = async (taskId: string): Promise<boolean> => {
+  await initQueue()
+  const r = await getClient().execute({
+    sql: `SELECT 1
+            FROM task_blockers b
+            JOIN tasks t ON t.id = b.blocker_task_id
+           WHERE b.task_id = ? AND t.status != 'done'
+           LIMIT 1`,
+    args: [taskId],
+  })
+  return r.rows.length > 0
+}
+
 export const promoteDraftToQueued = async (
   taskId: string,
 ): Promise<Task | null> => {

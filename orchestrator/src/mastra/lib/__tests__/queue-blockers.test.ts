@@ -12,6 +12,7 @@ interface Queue {
   addBlockers: typeof import('../../queue').addBlockers
   clearBlockers: typeof import('../../queue').clearBlockers
   listBlockers: typeof import('../../queue').listBlockers
+  hasIncompleteBlockers: typeof import('../../queue').hasIncompleteBlockers
   promoteDraftToQueued: typeof import('../../queue').promoteDraftToQueued
   initQueue: typeof import('../../queue').initQueue
 }
@@ -110,6 +111,31 @@ describe('queue blockers + draft promotion', () => {
     expect((await q.getTask(a.id))?.status).toBe('draft')
     await q.updateTask(b.id, { status: 'done' })
     expect((await q.getTask(a.id))?.status).toBe('queued')
+  })
+
+  it('hasIncompleteBlockers returns true for a task with a not-done blocker', async () => {
+    const q = await loadQueue(repo)
+    const a = await q.enqueueTask('a')
+    const b = await q.enqueueTask('b')
+    await q.addBlockers(a.id, [b.id])
+    expect(await q.hasIncompleteBlockers(a.id)).toBe(true)
+  })
+
+  it('hasIncompleteBlockers returns false for a task with all blockers done', async () => {
+    const q = await loadQueue(repo)
+    const a = await q.enqueueTask('a')
+    const b = await q.enqueueTask('b')
+    const c = await q.enqueueTask('c')
+    await q.addBlockers(a.id, [b.id, c.id])
+    await q.updateTask(b.id, { status: 'done' })
+    await q.updateTask(c.id, { status: 'done' })
+    expect(await q.hasIncompleteBlockers(a.id)).toBe(false)
+  })
+
+  it('hasIncompleteBlockers returns false for a task with no blockers', async () => {
+    const q = await loadQueue(repo)
+    const a = await q.enqueueTask('a')
+    expect(await q.hasIncompleteBlockers(a.id)).toBe(false)
   })
 
   it('clearBlockers removes all blocker rows for a task', async () => {

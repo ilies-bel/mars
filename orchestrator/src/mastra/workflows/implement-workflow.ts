@@ -10,7 +10,15 @@ import {
   mergeBranch,
 } from '../lib/git'
 import type { ClaudeEvent } from '../lib/claude-stream'
-import { updateTask } from '../queue'
+import { hasIncompleteBlockers, updateTask } from '../queue'
+
+export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
+  `task ${taskId} has incomplete blockers; aborting dispatch (task remains queued)`
+
+export const isBlockersAbortError = (err: unknown): boolean => {
+  const msg = err instanceof Error ? err.message : String(err)
+  return msg.includes('has incomplete blockers; aborting dispatch')
+}
 import { verifyPassedScorer } from '../scorers/verify-passed'
 import { mergeCleanScorer } from '../scorers/merge-clean'
 import { summarizeUsage } from '../lib/claude-usage'
@@ -64,6 +72,9 @@ const setupStep = createStep({
     branch: z.string(),
   }),
   execute: async ({ inputData }) => {
+    if (await hasIncompleteBlockers(inputData.taskId)) {
+      throw new Error(BLOCKERS_ABORT_MESSAGE(inputData.taskId))
+    }
     await updateTask(inputData.taskId, { status: 'running' })
     const ref = await createWorktree({
       taskId: inputData.taskId,
