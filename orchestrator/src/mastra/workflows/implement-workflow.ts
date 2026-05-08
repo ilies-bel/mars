@@ -9,6 +9,7 @@ import {
   verifyChanges,
   mergeBranch,
 } from '../lib/git'
+import type { ClaudeEvent } from '../lib/claude-stream'
 import { updateTask } from '../queue'
 
 const resolveVerifyCwd = (worktreeRoot: string): string => {
@@ -86,12 +87,24 @@ const codeStep = createStep({
     branch: z.string(),
     claudeExitCode: z.number(),
   }),
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData, writer, tracingContext }) => {
     const fullPrompt = composePrompt(inputData.prompt, inputData.plan)
+    const conversation: ClaudeEvent[] = []
     const r = await runClaudeCode({
       cwd: inputData.path,
       prompt: fullPrompt,
       timeoutMs: 20 * 60 * 1000,
+      onEvent: async (event) => {
+        conversation.push(event)
+        await writer?.write({ type: 'claude-event', event })
+      },
+    })
+    tracingContext?.currentSpan?.update({
+      metadata: {
+        claudeSessionId: r.sessionId,
+        conversation,
+        conversationBytes: JSON.stringify(conversation).length,
+      },
     })
     if (r.sessionId) {
       await updateTask(inputData.taskId, { claudeSessionId: r.sessionId })
@@ -164,7 +177,7 @@ const mergeStep = createStep({
     success: z.boolean(),
     message: z.string(),
   }),
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData, writer, tracingContext }) => {
     if (!inputData.verified) {
       return {
         taskId: inputData.taskId,
@@ -174,11 +187,25 @@ const mergeStep = createStep({
     }
 
     await updateTask(inputData.taskId, { status: 'merging' })
+    const supervisorConversation: ClaudeEvent[] = []
     const m = await mergeBranch({
       branch: inputData.branch,
       integrationBranch: inputData.integrationBranch,
       lockTimeoutMs: 5 * 60 * 1000,
+      onSupervisorEvent: async (event) => {
+        supervisorConversation.push(event)
+        await writer?.write({ type: 'vcs-supervisor-event', event })
+      },
     })
+
+    if (supervisorConversation.length > 0) {
+      tracingContext?.currentSpan?.update({
+        metadata: {
+          supervisorConversation,
+          supervisorConversationBytes: JSON.stringify(supervisorConversation).length,
+        },
+      })
+    }
 
     if (m.aborted) {
       await updateTask(inputData.taskId, {
