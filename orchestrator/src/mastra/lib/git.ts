@@ -326,6 +326,30 @@ export const acquireLock = async (
   throw new Error(`Failed to acquire merge lock after ${timeoutMs}ms`)
 }
 
+export type MergeTargetStatus =
+  | { kind: 'clean' }
+  | { kind: 'dirty'; targetPath: string; statusOutput: string }
+  | { kind: 'error'; error: Error }
+
+export const checkMergeTargetStatus = async (): Promise<MergeTargetStatus> => {
+  const targetPath = repoRoot()
+  try {
+    const { stdout } = await exec('git', ['status', '--porcelain'], {
+      cwd: targetPath,
+    })
+    if (stdout.length === 0) return { kind: 'clean' }
+    return { kind: 'dirty', targetPath, statusOutput: stdout }
+    // TODO(merge_target_missing): also surface a 'missing' kind when the
+    // merge target branch has been deleted/renamed; for now any unexpected
+    // git failure is reported as 'error'.
+  } catch (error: unknown) {
+    return {
+      kind: 'error',
+      error: error instanceof Error ? error : new Error(String(error)),
+    }
+  }
+}
+
 export interface MergeArgs {
   branch: string
   worktreePath: string
