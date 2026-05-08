@@ -104,6 +104,12 @@ Commands:
                                 running interactively, agent if MARS_AGENT_NAME
                                 or CLAUDE_CODE/CLAUDECODE is set.
   idea show <id>                show an idea from .mars/state.db
+  idea set <id> <goal|story|technical|status> "<text>"
+                                update a single field on an idea row
+  idea add-acceptance <id> "<bullet>"
+                                append a bullet to the idea's acceptance list
+  idea remove-acceptance <id> <index>
+                                remove the 0-based bullet; positions repack
   add "<prompt>" [plan flags]   (deprecated) draft a task; lands in 'draft' state
                                 so triage can promote to 'queued'. Prefer
                                 'mars task add' or 'mars idea add'.
@@ -262,7 +268,14 @@ Subcommands:
       otherwise human with git user.email). Use --author to override,
       e.g. --author agent:vega.
   show <id>
-      Show an idea from .mars/state.db. <id> must be the full idea slug.`,
+      Show an idea from .mars/state.db. <id> must be the full idea slug.
+  set <id> <goal|story|technical|status> "<text>"
+      Update a single field on an existing idea. Replaces the field; does
+      not append.
+  add-acceptance <id> "<bullet>"
+      Append a bullet to the idea's acceptance list (positions auto-assigned).
+  remove-acceptance <id> <index>
+      Remove the 0-based acceptance bullet; remaining positions repack.`,
   'set-functional': `mars set-functional <id> <text|@file>
 
 Set the functional plan on a draft/queued task. Use @path to read from a
@@ -659,7 +672,79 @@ const main = async (): Promise<void> => {
       }
       return
     }
-    console.error('usage: mars idea <add|new|show> ...')
+    if (sub === 'set') {
+      const id = rest[1]
+      const field = rest[2]
+      const value = rest.slice(3).join(' ')
+      if (!id || !field || value.length === 0) {
+        console.error(
+          'usage: mars idea set <id> <goal|story|technical|status> "<text>"',
+        )
+        process.exit(1)
+      }
+      if (
+        field !== 'goal' &&
+        field !== 'story' &&
+        field !== 'technical' &&
+        field !== 'status'
+      ) {
+        console.error(
+          `unknown field '${field}'; expected one of goal|story|technical|status`,
+        )
+        process.exit(1)
+      }
+      const { setIdeaField } = await import('./mastra/ideas')
+      try {
+        await setIdeaField(id, field, value)
+        console.log(`updated ${id}`)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
+    if (sub === 'add-acceptance') {
+      const id = rest[1]
+      const bullet = rest.slice(2).join(' ')
+      if (!id || bullet.length === 0) {
+        console.error('usage: mars idea add-acceptance <id> "<bullet>"')
+        process.exit(1)
+      }
+      const { addIdeaAcceptance } = await import('./mastra/ideas')
+      try {
+        const idea = await addIdeaAcceptance(id, bullet)
+        console.log(`added bullet [${idea.acceptance.length - 1}] to ${id}`)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
+    if (sub === 'remove-acceptance') {
+      const id = rest[1]
+      const idxRaw = rest[2]
+      if (!id || idxRaw === undefined) {
+        console.error('usage: mars idea remove-acceptance <id> <index>')
+        process.exit(1)
+      }
+      const idx = Number(idxRaw)
+      if (!Number.isInteger(idx) || idx < 0) {
+        console.error(`index must be a non-negative integer; got '${idxRaw}'`)
+        process.exit(1)
+      }
+      const { removeIdeaAcceptance } = await import('./mastra/ideas')
+      try {
+        await removeIdeaAcceptance(id, idx)
+        console.log(`removed bullet [${idx}] from ${id}`)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
+    console.error(
+      'usage: mars idea <add|new|show|set|add-acceptance|remove-acceptance> ...',
+    )
     process.exit(1)
   }
 

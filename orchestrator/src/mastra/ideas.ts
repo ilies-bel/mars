@@ -219,3 +219,131 @@ export const listIdeas = async (): Promise<Idea[]> => {
   return ideas
 }
 
+export type IdeaField = 'goal' | 'story' | 'technical' | 'status'
+
+const fieldColumn: Record<IdeaField, string> = {
+  goal: 'goal',
+  story: 'story',
+  technical: 'technical',
+  status: 'status',
+}
+
+export const setIdeaField = async (
+  id: string,
+  field: IdeaField,
+  value: string,
+): Promise<Idea> => {
+  await initIdeas()
+  const c = getClient()
+  const existing = await c.execute({
+    sql: `SELECT id FROM ideas WHERE id = ?`,
+    args: [id],
+  })
+  if (existing.rows.length === 0) {
+    throw new Error(`idea ${id} not found`)
+  }
+  const now = Date.now()
+  await c.execute({
+    sql: `UPDATE ideas SET ${fieldColumn[field]} = ?, updated_at = ? WHERE id = ?`,
+    args: [value, now, id],
+  })
+  const updated = await getIdea(id)
+  if (!updated) {
+    throw new Error(`idea ${id} disappeared after update`)
+  }
+  return updated
+}
+
+export const addIdeaAcceptance = async (
+  id: string,
+  bullet: string,
+): Promise<Idea> => {
+  await initIdeas()
+  const c = getClient()
+  const existing = await c.execute({
+    sql: `SELECT id FROM ideas WHERE id = ?`,
+    args: [id],
+  })
+  if (existing.rows.length === 0) {
+    throw new Error(`idea ${id} not found`)
+  }
+  const positionRow = await c.execute({
+    sql: `SELECT COALESCE(MAX(position), -1) AS max_pos FROM idea_acceptance WHERE idea_id = ?`,
+    args: [id],
+  })
+  const maxPos = Number(
+    (positionRow.rows[0] as unknown as { max_pos: number | string }).max_pos ??
+      -1,
+  )
+  const next = Number.isFinite(maxPos) ? maxPos + 1 : 0
+  const now = Date.now()
+  await c.execute({
+    sql: `INSERT INTO idea_acceptance (idea_id, position, text) VALUES (?, ?, ?)`,
+    args: [id, next, bullet],
+  })
+  await c.execute({
+    sql: `UPDATE ideas SET updated_at = ? WHERE id = ?`,
+    args: [now, id],
+  })
+  const updated = await getIdea(id)
+  if (!updated) {
+    throw new Error(`idea ${id} disappeared after update`)
+  }
+  return updated
+}
+
+export const removeIdeaAcceptance = async (
+  id: string,
+  index: number,
+): Promise<Idea> => {
+  await initIdeas()
+  const c = getClient()
+  const existing = await c.execute({
+    sql: `SELECT id FROM ideas WHERE id = ?`,
+    args: [id],
+  })
+  if (existing.rows.length === 0) {
+    throw new Error(`idea ${id} not found`)
+  }
+  if (!Number.isInteger(index) || index < 0) {
+    throw new Error(`acceptance index must be a non-negative integer`)
+  }
+  const tx = await c.transaction('write')
+  try {
+    const target = await tx.execute({
+      sql: `SELECT position FROM idea_acceptance WHERE idea_id = ? AND position = ?`,
+      args: [id, index],
+    })
+    if (target.rows.length === 0) {
+      tx.close()
+      throw new Error(
+        `idea ${id} has no acceptance bullet at index ${index}`,
+      )
+    }
+    await tx.execute({
+      sql: `DELETE FROM idea_acceptance WHERE idea_id = ? AND position = ?`,
+      args: [id, index],
+    })
+    await tx.execute({
+      sql: `UPDATE idea_acceptance
+            SET position = position - 1
+            WHERE idea_id = ? AND position > ?`,
+      args: [id, index],
+    })
+    const now = Date.now()
+    await tx.execute({
+      sql: `UPDATE ideas SET updated_at = ? WHERE id = ?`,
+      args: [now, id],
+    })
+    await tx.commit()
+  } catch (error: unknown) {
+    tx.close()
+    throw error
+  }
+  const updated = await getIdea(id)
+  if (!updated) {
+    throw new Error(`idea ${id} disappeared after update`)
+  }
+  return updated
+}
+
