@@ -133,6 +133,10 @@ Commands:
                                 Story + Acceptance + Technical) to stdout or file
   feature delete <id>           remove an idea from .mars/state.db (does not
                                 touch features/*.md)
+  feature refine <id> [--refresh]
+                                dispatch the planning workflow on a draft idea
+                                through the daemon (fire-and-forget). --refresh
+                                clears existing questions/suggestions first.
   reflect [--since <iso>] [--limit <n>]
                                 synthesize draft task suggestions from recent
                                 completed tasks. Reads token + scorer signals
@@ -251,7 +255,10 @@ Subcommands:
   add-acceptance <id> "<bullet>"      append an acceptance bullet
   remove-acceptance <id> <index>      remove the bullet at 0-based index
   export <id> [--out <path>]          render an idea as markdown
-  delete <id>                         remove an idea from .mars/state.db`,
+  delete <id>                         remove an idea from .mars/state.db
+  refine <id> [--refresh]             dispatch planning workflow via the daemon
+                                      (fire-and-forget); --refresh clears prior
+                                      questions/suggestions first`,
   reflect: `mars reflect [--since <iso>] [--limit <n>]
 
 Synthesize draft task suggestions from recent completed tasks. Reads
@@ -892,8 +899,28 @@ const main = async (): Promise<void> => {
       return
     }
 
+    if (sub === 'refine') {
+      const id = rest[1]
+      if (!id) {
+        console.error('usage: mars feature refine <id> [--refresh]')
+        process.exit(1)
+      }
+      const refresh = positional.includes('--refresh')
+      const { sendRequest } = await import('./mastra/daemon/client')
+      await sendRequest(
+        { op: 'refine', id, refresh },
+        {
+          onSpawnNotice: (pid, logFile) => {
+            console.error(`spawned mars daemon (pid ${pid}, log ${logFile})`)
+          },
+        },
+      )
+      console.log(`refine dispatched: ${id}`)
+      return
+    }
+
     console.error(
-      'usage: mars feature <new|list|show|set|add-acceptance|remove-acceptance|export|delete> ...',
+      'usage: mars feature <new|list|show|set|add-acceptance|remove-acceptance|export|delete|refine> ...',
     )
     process.exit(1)
   }
