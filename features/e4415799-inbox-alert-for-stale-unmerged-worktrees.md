@@ -63,12 +63,29 @@ fully scripted.
   worktree). Implementation: read existing inbox, replace entry with same
   `taskId`, otherwise append.
 
-**Inbox path**
+**Inbox path and entry shape**
 
 - Honor the path referenced in `CLAUDE.md`: `.mars/inbox.jsonl`. Add a small
-  helper `upsertInboxEntry({ taskId, ... })` in a new
+  helper `upsertInboxEntry(entry)` in a new
   `orchestrator/src/mastra/inbox.ts` (no existing module yet) that reads,
-  rewrites, and atomically replaces the file.
+  rewrites, and atomically replaces the file (keyed by `taskId`).
+- Each unmerged-worktree entry has the shape:
+
+  ```ts
+  {
+    taskId: string;          // task/<id> branch suffix
+    branch: string;          // "task/<id>"
+    worktreePath: string;    // absolute path under .worktrees/
+    lastSweptAt: string;     // ISO-8601 timestamp of latest sweep
+    ageHours: number;        // hours since worktree directory mtime
+    criticality: 'low' | 'medium' | 'high'; // derived from ageHours
+  }
+  ```
+
+- Criticality thresholds (scripted, no LLM):
+  - `ageHours < 24` → `low`
+  - `24 <= ageHours < 72` → `medium`
+  - `ageHours >= 72` → `high`
 
 **Wiring into init and implement**
 
