@@ -37,8 +37,39 @@ const dirtyMergeTargetRecipe: FixRecipe = {
   },
 }
 
+const worktreeInstallFailedRecipe: FixRecipe = {
+  signature: 'worktree_install_failed',
+  title: () => `Resolve dependency install failure in worktree setup`,
+  buildPrompt: (ctx) => {
+    const status = ctx.statusOutput.length > 0 ? ctx.statusOutput : '(empty)'
+    return [
+      `The orchestrator's worktree setup ran the package manager install (pnpm/npm/yarn/bun) and it failed before any code step ran. Without node_modules the verify step cannot resolve types — that is exactly the TS2688 class of error this recipe addresses.`,
+      '',
+      `Diagnose and fix the underlying drift. Common causes, in order of likelihood:`,
+      ` (a) lockfile drift: \`package.json\` was edited without regenerating the lockfile — regenerate it (e.g. \`pnpm install\` without --frozen-lockfile, or \`npm install\`) and commit both \`package.json\` and the lockfile;`,
+      ` (b) missing peer dep declared by a recently bumped package — add the missing peer to \`package.json\` and regenerate the lockfile;`,
+      ` (c) registry / network blip: re-run the failing install once before assuming it's a code issue.`,
+      '',
+      `Do NOT edit \`node_modules\` directly. Do NOT bypass the failure with \`--no-frozen-lockfile\` permanently — the orchestrator runs frozen by design so concurrent worktrees stay reproducible.`,
+      '',
+      `Failing install directory: ${ctx.targetPath}`,
+      `Branch: ${ctx.targetBranch}`,
+      '',
+      'Install error (truncated):',
+      '```',
+      status,
+      '```',
+      '',
+      `After fixing, verify locally by deleting \`node_modules\` in that directory and re-running the same install command (\`pnpm install --frozen-lockfile\`, \`npm ci\`, \`yarn install --frozen-lockfile\`, or \`bun install --frozen-lockfile\`) — it must succeed cleanly.`,
+      '',
+      `Save your work: stage \`package.json\` and the lockfile, then commit with a message describing the dependency change.`,
+    ].join('\n')
+  },
+}
+
 export const recipes: Record<string, FixRecipe> = {
   [dirtyMergeTargetRecipe.signature]: dirtyMergeTargetRecipe,
+  [worktreeInstallFailedRecipe.signature]: worktreeInstallFailedRecipe,
 }
 
 export const getRecipe = (signature: string): FixRecipe => {
