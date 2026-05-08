@@ -147,6 +147,45 @@ writes and (b) the synthesis CLI.
 **Cost.** The reflector uses Haiku at roughly $0.005–$0.02 per call. It is
 deliberately on-demand, not auto-run per task.
 
+**Deep, single-session post-mortem.** `mars deep-reflect [<task-id>]`
+runs a transcript-aware analysis on one task instead of an aggregate
+window. The implement workflow persists the full trimmed
+`ClaudeEvent[]` conversation (and the concatenated typecheck/test/lint
+output) into a `task_transcripts` row in `.mars/queue.db` after each
+run. `deep-reflect` walks that transcript event-by-event and surfaces:
+
+- **Dissonant tool calls** — successful tool calls that did not achieve
+  the assistant's stated intent (e.g. an `Edit` whose new content
+  contradicts the surrounding plan, a `Bash` `git commit` that printed
+  "nothing to commit, working tree clean", a verify command that
+  reported pass with `0 passed, 0 failed`).
+- **Verify-claim mismatches** — assistant said "all tests pass" but the
+  recorded verify output shows a typecheck/test failure.
+- **Thrashing** — same file Read 5+ times, Edit-then-revert pairs, etc.
+
+```
+mars deep-reflect            # auto-pick (failed > expensive done > recent)
+mars deep-reflect <task-id>  # explicit
+```
+
+Auto-pick rules, in priority order:
+
+1. Most recent `failed` task with a stored transcript.
+2. Highest-cost `done` task in the last 7 days whose total cost ≥ 2×
+   the median.
+3. Most recent `done` task with a transcript.
+4. Otherwise prints `no eligible session found` and exits 0.
+
+Suggestions are filtered through `save|absorb|drop` verdicts and only
+"save" verdicts land in `task_suggestions` (review with
+`mars suggestions`). The full structured report is persisted to
+`.mars/deep-reflections/<task-id>-<iso>.json` (gitignored).
+
+Model defaults to `opus`; override with `MARS_DEEP_REFLECT_MODEL`. The
+timeout is 10 minutes — these analyses can be large. Setting
+`MARS_REFLECT_DISABLED=1` disables transcript capture and short-circuits
+`mars deep-reflect` along with `mars reflect`.
+
 ## Failure handling
 
 - Verify gate fails → task marked `failed`, worktree retained at `.mars/worktrees/<taskId>`.

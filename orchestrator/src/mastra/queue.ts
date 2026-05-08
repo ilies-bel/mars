@@ -206,7 +206,104 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_blockers_blocker ON task_blockers(blocker_task_id)
   `)
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS task_transcripts (
+      task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+      conversation_json TEXT NOT NULL,
+      verify_output TEXT,
+      bytes INTEGER NOT NULL,
+      recorded_at TEXT NOT NULL
+    )
+  `)
+  await c.execute(`
+    CREATE INDEX IF NOT EXISTS idx_task_transcripts_recorded_at ON task_transcripts(recorded_at)
+  `)
   await healBlobPrompts(c)
+}
+
+const MAX_CONVERSATION_BYTES = 2 * 1024 * 1024
+const HALF_WINDOW_BYTES = 1 * 1024 * 1024
+
+export const capConversationJson = (json: string): string => {
+  if (json.length <= MAX_CONVERSATION_BYTES) return json
+  const head = json.slice(0, HALF_WINDOW_BYTES)
+  const tail = json.slice(json.length - HALF_WINDOW_BYTES)
+  const skipped = json.length - head.length - tail.length
+  const marker = JSON.stringify({ truncated: true, skippedBytes: skipped })
+  return `${head}\n${marker}\n${tail}`
+}
+
+export interface UpsertTranscriptInput {
+  taskId: string
+  conversationJson?: string
+  verifyOutput?: string | null
+}
+
+export const upsertTranscript = async (
+  input: UpsertTranscriptInput,
+): Promise<void> => {
+  await initQueue()
+  const c = getClient()
+  const now = new Date().toISOString()
+
+  if (input.conversationJson !== undefined) {
+    const capped = capConversationJson(input.conversationJson)
+    await c.execute({
+      sql: `INSERT INTO task_transcripts
+              (task_id, conversation_json, verify_output, bytes, recorded_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(task_id) DO UPDATE SET
+              conversation_json = excluded.conversation_json,
+              bytes             = excluded.bytes,
+              recorded_at       = excluded.recorded_at`,
+      args: [input.taskId, capped, input.verifyOutput ?? null, capped.length, now],
+    })
+    return
+  }
+
+  if (input.verifyOutput !== undefined) {
+    const cappedVerify =
+      input.verifyOutput === null
+        ? null
+        : input.verifyOutput.length > 64 * 1024
+          ? input.verifyOutput.slice(0, 64 * 1024)
+          : input.verifyOutput
+    await c.execute({
+      sql: `UPDATE task_transcripts
+              SET verify_output = ?, recorded_at = ?
+            WHERE task_id = ?`,
+      args: [cappedVerify, now, input.taskId],
+    })
+  }
+}
+
+export interface TaskTranscriptRow {
+  taskId: string
+  conversationJson: string
+  verifyOutput: string | null
+  bytes: number
+  recordedAt: string
+}
+
+export const getTranscript = async (
+  taskId: string,
+): Promise<TaskTranscriptRow | null> => {
+  await initQueue()
+  const r = await getClient().execute({
+    sql: `SELECT task_id, conversation_json, verify_output, bytes, recorded_at
+            FROM task_transcripts
+           WHERE task_id = ?`,
+    args: [taskId],
+  })
+  if (r.rows.length === 0) return null
+  const row = r.rows[0] as unknown as Record<string, unknown>
+  return {
+    taskId: row.task_id as string,
+    conversationJson: row.conversation_json as string,
+    verifyOutput: (row.verify_output as string | null) ?? null,
+    bytes: Number(row.bytes ?? 0),
+    recordedAt: row.recorded_at as string,
+  }
 }
 
 const healBlobPrompts = async (c: Client): Promise<void> => {

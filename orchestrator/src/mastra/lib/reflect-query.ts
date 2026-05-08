@@ -98,11 +98,55 @@ const tryParseTaskIdFromInput = (input: string | null): string | null => {
   return null
 }
 
-const median = (values: readonly number[]): number => {
+export const median = (values: readonly number[]): number => {
   if (values.length === 0) return 0
   const sorted = [...values].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+}
+
+export interface TaskScoreEntry {
+  score: number
+  reason: string | null
+}
+
+export const loadScoresForTasks = async (
+  taskIds: readonly string[],
+): Promise<Map<string, Record<string, TaskScoreEntry>>> => {
+  const scoresByTask = new Map<string, Record<string, TaskScoreEntry>>()
+  if (taskIds.length === 0) return scoresByTask
+  const { mastraDbPath } = resolveContext()
+  const mastraClient = createClient({ url: `file:${mastraDbPath}` })
+  let scorerRows: MastraScorerRow[] = []
+  try {
+    const r = await mastraClient.execute({
+      sql: `SELECT scorerId, score, reason, input
+              FROM mastra_scorers
+             WHERE scorerId IN ('verify-passed', 'merge-clean')`,
+      args: [],
+    })
+    scorerRows = r.rows.map((row) => {
+      const r0 = row as unknown as Record<string, unknown>
+      return {
+        scorerId: (r0.scorerId as string) ?? '',
+        score: r0.score === null || r0.score === undefined ? null : Number(r0.score),
+        reason: (r0.reason as string | null) ?? null,
+        input: (r0.input as string | null) ?? null,
+      }
+    })
+  } catch {
+    return scoresByTask
+  }
+  const idSet = new Set(taskIds)
+  for (const row of scorerRows) {
+    const taskId = tryParseTaskIdFromInput(row.input)
+    if (!taskId || !idSet.has(taskId)) continue
+    const score = row.score ?? 0
+    const existing = scoresByTask.get(taskId) ?? {}
+    existing[row.scorerId] = { score, reason: row.reason }
+    scoresByTask.set(taskId, existing)
+  }
+  return scoresByTask
 }
 
 const stdDev = (values: readonly number[]): number => {
@@ -277,43 +321,7 @@ export const loadRecentTaskCorpus = async (
     signalsByTask.set(taskId, list)
   }
 
-  const { mastraDbPath } = resolveContext()
-  const mastraClient = createClient({ url: `file:${mastraDbPath}` })
-  let scorerRows: MastraScorerRow[] = []
-  try {
-    const r = await mastraClient.execute({
-      sql: `SELECT scorerId, score, reason, input
-              FROM mastra_scorers
-             WHERE scorerId IN ('verify-passed', 'merge-clean')`,
-      args: [],
-    })
-    scorerRows = r.rows.map((row) => {
-      const r0 = row as unknown as Record<string, unknown>
-      return {
-        scorerId: (r0.scorerId as string) ?? '',
-        score: r0.score === null || r0.score === undefined ? null : Number(r0.score),
-        reason: (r0.reason as string | null) ?? null,
-        input: (r0.input as string | null) ?? null,
-      }
-    })
-  } catch {
-    // mastra_scorers table may not exist on a brand-new install
-    scorerRows = []
-  }
-
-  const scoresByTask = new Map<
-    string,
-    Record<string, { score: number; reason: string | null }>
-  >()
-  for (const row of scorerRows) {
-    const taskId = tryParseTaskIdFromInput(row.input)
-    if (!taskId) continue
-    if (!taskIds.includes(taskId)) continue
-    const score = row.score ?? 0
-    const existing = scoresByTask.get(taskId) ?? {}
-    existing[row.scorerId] = { score, reason: row.reason }
-    scoresByTask.set(taskId, existing)
-  }
+  const scoresByTask = await loadScoresForTasks(taskIds)
 
   const entries: ReflectCorpusEntry[] = taskRows.rows.map((row) => {
     const r = row as unknown as Record<string, unknown>
