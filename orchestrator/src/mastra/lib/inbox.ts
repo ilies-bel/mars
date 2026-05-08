@@ -3,12 +3,12 @@ import { createHash, randomUUID } from 'node:crypto'
 import { resolveContext } from '../context'
 
 export type InboxCategory = 'orchestrator' | 'reflector' | 'daemon' | 'user'
-export type InboxPriority = 'urgent' | 'normal' | 'low'
+export type InboxPriority = 'urgent' | 'high' | 'normal' | 'low'
 export type InboxState = 'open' | 'acknowledged' | 'resolved' | 'dismissed'
 
 export interface RaiseInboxItem {
   kind: string
-  category: InboxCategory
+  category: InboxCategory | string
   priority: InboxPriority
   title: string
   body: string
@@ -19,10 +19,26 @@ export interface RaiseInboxItem {
   occurrence?: Record<string, unknown>
 }
 
+export interface InboxResolution {
+  state: 'resolved' | 'dismissed'
+  note: string | null
+  rootCause: string | null
+  resolvedBy: string | null
+  resolvedAt: string
+}
+
+export interface InboxHistoryEntry {
+  at: string
+  fromState: InboxState | null
+  toState: InboxState
+  by: string | null
+  note: string | null
+}
+
 export interface InboxItem {
   id: string
   kind: string
-  category: InboxCategory
+  category: string
   priority: InboxPriority
   state: InboxState
   title: string
@@ -34,16 +50,20 @@ export interface InboxItem {
   lastSeenAt: string
   seenCount: number
   fingerprint: string
+  signature: string | null
   resolvedAt: string | null
   resolution: string | null
+  resolutionDetails: InboxResolution | null
   resolutionNote: string | null
   rootCause: string | null
+  history: InboxHistoryEntry[]
 }
 
 export interface SetInboxStateOptions {
   resolution?: string
   note?: string
   rootCause?: string
+  by?: string
 }
 
 let clientSingleton: Client | null = null
@@ -86,12 +106,27 @@ const initInbox = async (): Promise<void> => {
       root_cause TEXT
     )
   `)
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS inbox_history (
+      id TEXT PRIMARY KEY,
+      item_id TEXT NOT NULL,
+      at TEXT NOT NULL,
+      from_state TEXT,
+      to_state TEXT NOT NULL,
+      by TEXT,
+      note TEXT,
+      FOREIGN KEY (item_id) REFERENCES inbox_items(id)
+    )
+  `)
   const cols = await c.execute(`PRAGMA table_info(inbox_items)`)
   const colNames = new Set(
     cols.rows.map((r) => (r as unknown as { name: string }).name),
   )
   if (!colNames.has('fingerprint')) {
     await c.execute(`ALTER TABLE inbox_items ADD COLUMN fingerprint TEXT`)
+  }
+  if (!colNames.has('signature')) {
+    await c.execute(`ALTER TABLE inbox_items ADD COLUMN signature TEXT`)
   }
   if (!colNames.has('seen_count')) {
     await c.execute(
@@ -101,12 +136,18 @@ const initInbox = async (): Promise<void> => {
   if (!colNames.has('last_seen_at')) {
     await c.execute(`ALTER TABLE inbox_items ADD COLUMN last_seen_at TEXT`)
   }
+  if (!colNames.has('resolved_by')) {
+    await c.execute(`ALTER TABLE inbox_items ADD COLUMN resolved_by TEXT`)
+  }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_inbox_fingerprint_state
        ON inbox_items(fingerprint, state)`,
   )
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_inbox_state ON inbox_items(state)`,
+  )
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_inbox_history_item ON inbox_history(item_id, at)`,
   )
   initialised = true
 }
@@ -126,27 +167,124 @@ const parseJsonObject = (
   }
 }
 
-const rowToInboxItem = (row: Record<string, unknown>): InboxItem => ({
-  id: row.id as string,
-  kind: row.kind as string,
-  category: row.category as InboxCategory,
-  priority: row.priority as InboxPriority,
-  state: row.state as InboxState,
-  title: (row.title as string | null) ?? '',
-  body: (row.body as string | null) ?? '',
-  payload: parseJsonObject(row.payload as string | null),
-  context: parseJsonObject(row.context as string | null),
-  raisedBy: row.raised_by as string,
-  raisedAt: row.raised_at as string,
-  lastSeenAt:
-    (row.last_seen_at as string | null) ?? (row.raised_at as string),
-  seenCount: Number(row.seen_count ?? 1),
-  fingerprint: (row.fingerprint as string | null) ?? '',
-  resolvedAt: (row.resolved_at as string | null) ?? null,
-  resolution: (row.resolution as string | null) ?? null,
-  resolutionNote: (row.resolution_note as string | null) ?? null,
-  rootCause: (row.root_cause as string | null) ?? null,
-})
+const toPriority = (raw: unknown): InboxPriority => {
+  if (raw === 'urgent' || raw === 'high' || raw === 'normal' || raw === 'low') {
+    return raw
+  }
+  return 'normal'
+}
+
+const toState = (raw: unknown): InboxState => {
+  if (
+    raw === 'open' ||
+    raw === 'acknowledged' ||
+    raw === 'resolved' ||
+    raw === 'dismissed'
+  ) {
+    return raw
+  }
+  return 'open'
+}
+
+const loadHistory = async (
+  c: Client,
+  itemId: string,
+): Promise<InboxHistoryEntry[]> => {
+  const r = await c.execute({
+    sql: `SELECT at, from_state, to_state, by, note
+            FROM inbox_history
+           WHERE item_id = ?
+           ORDER BY at ASC`,
+    args: [itemId],
+  })
+  return r.rows.map((row) => {
+    const r2 = row as unknown as Record<string, unknown>
+    const fromRaw = (r2.from_state as string | null) ?? null
+    const fromState =
+      fromRaw === 'open' ||
+      fromRaw === 'acknowledged' ||
+      fromRaw === 'resolved' ||
+      fromRaw === 'dismissed'
+        ? (fromRaw as InboxState)
+        : null
+    return {
+      at: (r2.at as string | null) ?? '',
+      fromState,
+      toState: toState(r2.to_state),
+      by: (r2.by as string | null) ?? null,
+      note: (r2.note as string | null) ?? null,
+    }
+  })
+}
+
+const insertHistory = async (
+  c: Client,
+  itemId: string,
+  fromState: InboxState | null,
+  toStateValue: InboxState,
+  by: string | null,
+  note: string | null,
+): Promise<void> => {
+  await c.execute({
+    sql: `INSERT INTO inbox_history (id, item_id, at, from_state, to_state, by, note)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      randomUUID(),
+      itemId,
+      new Date().toISOString(),
+      fromState,
+      toStateValue,
+      by,
+      note,
+    ],
+  })
+}
+
+const rowToInboxItem = (
+  row: Record<string, unknown>,
+  history: InboxHistoryEntry[],
+): InboxItem => {
+  const state = toState(row.state)
+  const resolvedAt = (row.resolved_at as string | null) ?? null
+  const resolution = (row.resolution as string | null) ?? null
+  const resolutionNote = (row.resolution_note as string | null) ?? null
+  const rootCause = (row.root_cause as string | null) ?? null
+  const resolvedBy = (row.resolved_by as string | null) ?? null
+  const resolutionDetails: InboxResolution | null =
+    state === 'resolved' || state === 'dismissed'
+      ? {
+          state,
+          note: resolutionNote,
+          rootCause,
+          resolvedBy,
+          resolvedAt: resolvedAt ?? '',
+        }
+      : null
+  return {
+    id: row.id as string,
+    kind: row.kind as string,
+    category: (row.category as string | null) ?? '',
+    priority: toPriority(row.priority),
+    state,
+    title: (row.title as string | null) ?? '',
+    body: (row.body as string | null) ?? '',
+    payload: parseJsonObject(row.payload as string | null),
+    context: parseJsonObject(row.context as string | null),
+    raisedBy: row.raised_by as string,
+    raisedAt: row.raised_at as string,
+    lastSeenAt:
+      (row.last_seen_at as string | null) ?? (row.raised_at as string),
+    seenCount: Number(row.seen_count ?? 1),
+    fingerprint: (row.fingerprint as string | null) ?? '',
+    signature: (row.signature as string | null) ?? null,
+    resolvedAt,
+    resolution,
+    resolutionDetails,
+    resolutionNote,
+    rootCause,
+    history,
+  }
+}
 
 export const raiseInboxItem = async (
   item: RaiseInboxItem,
@@ -199,8 +337,8 @@ export const raiseInboxItem = async (
     sql: `INSERT INTO inbox_items (
              id, kind, category, priority, state, title, body,
              payload, context, raised_by, raised_at, last_seen_at,
-             seen_count, fingerprint
-           ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+             seen_count, fingerprint, signature
+           ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
     args: [
       id,
       item.kind,
@@ -214,20 +352,43 @@ export const raiseInboxItem = async (
       now,
       now,
       fingerprint,
+      item.signature,
     ],
   })
+  await insertHistory(c, id, null, 'open', item.raisedBy, null)
   return id
 }
 
-export const getInboxItem = async (id: string): Promise<InboxItem | null> => {
-  await initInbox()
-  const c = getClient()
+const fetchById = async (
+  c: Client,
+  id: string,
+): Promise<InboxItem | null> => {
   const r = await c.execute({
     sql: `SELECT * FROM inbox_items WHERE id = ?`,
     args: [id],
   })
   if (r.rows.length === 0) return null
-  return rowToInboxItem(r.rows[0] as unknown as Record<string, unknown>)
+  const row = r.rows[0] as unknown as Record<string, unknown>
+  const history = await loadHistory(c, row.id as string)
+  return rowToInboxItem(row, history)
+}
+
+export const getInboxItem = async (
+  idOrPrefix: string,
+): Promise<InboxItem | null> => {
+  await initInbox()
+  const c = getClient()
+  const exact = await fetchById(c, idOrPrefix)
+  if (exact) return exact
+  if (idOrPrefix.length < 4) return null
+  const prefixMatch = await c.execute({
+    sql: `SELECT * FROM inbox_items WHERE id LIKE ? || '%' LIMIT 2`,
+    args: [idOrPrefix],
+  })
+  if (prefixMatch.rows.length !== 1) return null
+  const row = prefixMatch.rows[0] as unknown as Record<string, unknown>
+  const history = await loadHistory(c, row.id as string)
+  return rowToInboxItem(row, history)
 }
 
 export const listInboxItems = async (
@@ -244,28 +405,50 @@ export const listInboxItems = async (
           sql: `SELECT * FROM inbox_items WHERE state = ? ORDER BY raised_at DESC`,
           args: [state],
         })
-  return r.rows.map((row) =>
-    rowToInboxItem(row as unknown as Record<string, unknown>),
-  )
+  const items: InboxItem[] = []
+  for (const row of r.rows) {
+    const r2 = row as unknown as Record<string, unknown>
+    const history = await loadHistory(c, r2.id as string)
+    items.push(rowToInboxItem(r2, history))
+  }
+  return items
 }
 
 const isTerminal = (state: InboxState): boolean =>
   state === 'resolved' || state === 'dismissed'
 
 export const setInboxState = async (
-  id: string,
+  idOrPrefix: string,
   state: InboxState,
   opts?: SetInboxStateOptions,
 ): Promise<void> => {
   await initInbox()
   const c = getClient()
-  const existing = await c.execute({
-    sql: `SELECT state FROM inbox_items WHERE id = ?`,
-    args: [id],
+
+  let resolvedId: string | null = null
+  const exact = await c.execute({
+    sql: `SELECT id FROM inbox_items WHERE id = ?`,
+    args: [idOrPrefix],
   })
-  if (existing.rows.length === 0) return
+  if (exact.rows.length === 1) {
+    resolvedId = (exact.rows[0] as unknown as { id: string }).id
+  } else if (idOrPrefix.length >= 4) {
+    const pref = await c.execute({
+      sql: `SELECT id FROM inbox_items WHERE id LIKE ? || '%' LIMIT 2`,
+      args: [idOrPrefix],
+    })
+    if (pref.rows.length === 1) {
+      resolvedId = (pref.rows[0] as unknown as { id: string }).id
+    }
+  }
+  if (!resolvedId) return
+
+  const cur = await c.execute({
+    sql: `SELECT state FROM inbox_items WHERE id = ?`,
+    args: [resolvedId],
+  })
   const currentState = (
-    existing.rows[0] as unknown as { state: InboxState }
+    cur.rows[0] as unknown as { state: InboxState }
   ).state
   const now = new Date().toISOString()
 
@@ -275,14 +458,32 @@ export const setInboxState = async (
   if (isTerminal(state)) {
     sets.push('resolved_at = ?')
     args.push(now)
+    if (opts?.by !== undefined) {
+      sets.push('resolved_by = ?')
+      args.push(opts.by)
+    }
   } else if (currentState !== state) {
     sets.push('resolved_at = ?')
+    args.push(null)
+    sets.push('resolved_by = ?')
     args.push(null)
   }
 
   if (opts?.resolution !== undefined) {
     sets.push('resolution = ?')
     args.push(opts.resolution)
+  } else if (isTerminal(state)) {
+    const cur2 = await c.execute({
+      sql: `SELECT resolution FROM inbox_items WHERE id = ?`,
+      args: [resolvedId],
+    })
+    const existingResolution = (
+      cur2.rows[0] as unknown as { resolution: string | null }
+    ).resolution
+    if (!existingResolution) {
+      sets.push('resolution = ?')
+      args.push(state)
+    }
   }
   if (opts?.note !== undefined) {
     sets.push('resolution_note = ?')
@@ -293,9 +494,18 @@ export const setInboxState = async (
     args.push(opts.rootCause)
   }
 
-  args.push(id)
+  args.push(resolvedId)
   await c.execute({
     sql: `UPDATE inbox_items SET ${sets.join(', ')} WHERE id = ?`,
     args,
   })
+
+  await insertHistory(
+    c,
+    resolvedId,
+    currentState,
+    state,
+    opts?.by ?? null,
+    opts?.note ?? null,
+  )
 }
