@@ -4,6 +4,7 @@ import { createConnection } from 'node:net'
 import { daemonPaths, isProcessAlive, resolveLaunchCommand } from './paths'
 import { readLines, writeLine, type DaemonRequest, type DaemonResponse } from './protocol'
 import { resolveContext } from '../context'
+import { ensureSweeperRunning } from '../sweeper/client'
 
 const CONNECT_RETRY_INTERVAL_MS = 50
 const CONNECT_TIMEOUT_MS = 5_000
@@ -86,13 +87,22 @@ const spawnDaemon = async (
 const ensureRunning = async (opts: ClientOptions): Promise<void> => {
   const { socket } = daemonPaths()
   reclaimStale()
-  if (existsSync(socket) && (await tryConnect(socket))) return
-  if (opts.autoSpawn === false) {
-    throw new Error(
-      `mars daemon not running and auto-spawn disabled. Start it with: mars watch`,
-    )
+  const alreadyUp = existsSync(socket) && (await tryConnect(socket))
+  if (!alreadyUp) {
+    if (opts.autoSpawn === false) {
+      throw new Error(
+        `mars daemon not running and auto-spawn disabled. Start it with: mars watch`,
+      )
+    }
+    await spawnDaemon(opts.onSpawnNotice)
   }
-  await spawnDaemon(opts.onSpawnNotice)
+  // Heal the sweeper alongside the main daemon. Fire-and-forget — a missing
+  // sweeper must never block CLI write ops.
+  try {
+    ensureSweeperRunning()
+  } catch {
+    // best-effort
+  }
 }
 
 export const sendRequest = async (
