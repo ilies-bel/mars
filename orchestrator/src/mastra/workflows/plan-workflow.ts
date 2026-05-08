@@ -1,0 +1,187 @@
+import { createWorkflow, createStep } from '@mastra/core/workflows'
+import { z } from 'zod'
+import {
+  clearQuestions,
+  clearSuggestions,
+  getTask,
+  insertQuestion,
+  insertSuggestion,
+} from '../queue'
+import { runClaudeCode } from '../lib/git'
+import { getRepoRoot } from '../context'
+
+const planInputSchema = z.object({
+  taskId: z.string(),
+  refresh: z.boolean().default(false),
+})
+
+const planOutputSchema = z.object({
+  taskId: z.string(),
+  questionCount: z.number(),
+  suggestionCount: z.number(),
+})
+
+const plannerOutputSchema = z.object({
+  questions: z
+    .array(
+      z.object({
+        question: z.string(),
+        rationale: z.string().optional(),
+        category: z.enum(['scope', 'tech', 'ux', 'risk']).optional(),
+      }),
+    )
+    .max(15),
+  suggestions: z
+    .array(
+      z.object({
+        title: z.string(),
+        prompt: z.string(),
+        rationale: z.string().optional(),
+      }),
+    )
+    .max(10),
+})
+
+const buildPrompt = (spec: string): string =>
+  `You analyze a draft software task spec and surface what needs to be resolved before it becomes actionable.
+
+Produce TWO outputs:
+
+1. KEY-DECISION QUESTIONS — open questions that block the spec.
+   - concrete and single-issue
+   - genuinely answerable by a human reviewer
+   - tag each with one category: scope (what's in/out), tech (architecture/dependencies), ux (user-facing behaviour), risk (failure modes, rollout)
+   - aim for 5–10 questions, no filler, no restating the spec
+
+2. TASK SUGGESTIONS — discrete follow-up tasks the spec implies but does not state. Each is a separate runnable task (title + prompt). 0–5 max.
+
+Return ONLY a single JSON object matching exactly this shape, with no surrounding prose, no code fences, and no commentary:
+
+{
+  "questions": [
+    { "question": "...", "rationale": "...", "category": "scope|tech|ux|risk" }
+  ],
+  "suggestions": [
+    { "title": "...", "prompt": "...", "rationale": "..." }
+  ]
+}
+
+Spec to analyze:
+
+${spec}`
+
+interface ClaudeJsonEnvelope {
+  result?: unknown
+  is_error?: unknown
+}
+
+const extractJsonObject = (raw: string): string | null => {
+  const start = raw.indexOf('{')
+  const end = raw.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) return null
+  return raw.slice(start, end + 1)
+}
+
+const parsePlannerOutput = (claudeStdout: string): z.infer<typeof plannerOutputSchema> => {
+  const trimmed = claudeStdout.trim()
+  if (!trimmed) throw new Error('claude returned empty output')
+
+  let modelText: string
+  try {
+    const env = JSON.parse(trimmed) as ClaudeJsonEnvelope
+    if (env.is_error) {
+      throw new Error(`claude reported error: ${String(env.result ?? 'unknown')}`)
+    }
+    modelText = typeof env.result === 'string' ? env.result : trimmed
+  } catch {
+    modelText = trimmed
+  }
+
+  const objectText = extractJsonObject(modelText) ?? modelText
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(objectText)
+  } catch (err) {
+    throw new Error(
+      `failed to parse planner JSON: ${(err as Error).message}\nraw: ${modelText.slice(0, 400)}`,
+    )
+  }
+  return plannerOutputSchema.parse(parsed)
+}
+
+const generateStep = createStep({
+  id: 'generate-plan',
+  inputSchema: planInputSchema,
+  outputSchema: planOutputSchema,
+  execute: async ({ inputData }) => {
+    const task = await getTask(inputData.taskId)
+    if (!task) throw new Error(`task ${inputData.taskId} not found`)
+
+    if (inputData.refresh) {
+      await clearQuestions(task.id)
+      await clearSuggestions(task.id)
+    }
+
+    const r = await runClaudeCode({
+      cwd: getRepoRoot(),
+      prompt: buildPrompt(task.prompt),
+      timeoutMs: 5 * 60 * 1000,
+    })
+    if (r.exitCode !== 0) {
+      throw new Error(
+        `claude -p exited ${r.exitCode}: ${(r.stderr || r.stdout).slice(0, 500)}`,
+      )
+    }
+
+    const parsed = parsePlannerOutput(r.stdout)
+
+    for (const q of parsed.questions) {
+      await insertQuestion({
+        taskId: task.id,
+        question: q.question,
+        rationale: q.rationale ?? null,
+        category: q.category ?? null,
+      })
+    }
+    for (const s of parsed.suggestions) {
+      await insertSuggestion({
+        sourceTaskId: task.id,
+        title: s.title,
+        prompt: s.prompt,
+        rationale: s.rationale ?? null,
+      })
+    }
+
+    return {
+      taskId: task.id,
+      questionCount: parsed.questions.length,
+      suggestionCount: parsed.suggestions.length,
+    }
+  },
+})
+
+export const planWorkflow = createWorkflow({
+  id: 'plan',
+  inputSchema: planInputSchema,
+  outputSchema: planOutputSchema,
+})
+  .then(generateStep)
+  .commit()
+
+export interface RunPlanResult {
+  taskId: string
+  questionCount: number
+  suggestionCount: number
+}
+
+export const runPlan = async (
+  taskId: string,
+  refresh = false,
+): Promise<RunPlanResult> => {
+  const run = await planWorkflow.createRun()
+  const result = await run.start({ inputData: { taskId, refresh } })
+  if (result.status !== 'success') {
+    throw new Error(`plan workflow ${result.status}`)
+  }
+  return result.result
+}

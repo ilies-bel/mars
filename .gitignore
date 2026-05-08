@@ -12,3 +12,12 @@
 # DuckDB
 *.duckdb
 *.duckdb.wal
+
+# Node / build artifacts
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+
+# Claude Code runtime
+.claude/scheduled_tasks.lock
