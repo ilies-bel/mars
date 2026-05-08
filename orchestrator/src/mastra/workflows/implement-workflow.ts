@@ -11,6 +11,8 @@ import {
 } from '../lib/git'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import { updateTask } from '../queue'
+import { verifyPassedScorer } from '../scorers/verify-passed'
+import { mergeCleanScorer } from '../scorers/merge-clean'
 
 const resolveVerifyCwd = (worktreeRoot: string): string => {
   if (existsSync(resolve(worktreeRoot, 'package.json'))) return worktreeRoot
@@ -135,6 +137,12 @@ const verifyStep = createStep({
     branch: z.string(),
     verified: z.boolean(),
   }),
+  scorers: {
+    verifyPassed: {
+      scorer: verifyPassedScorer,
+      sampling: { type: 'ratio', rate: 1 },
+    },
+  },
   execute: async ({ inputData }) => {
     await updateTask(inputData.taskId, { status: 'verifying' })
     const verifyCwd = resolveVerifyCwd(inputData.path)
@@ -177,6 +185,12 @@ const mergeStep = createStep({
     success: z.boolean(),
     message: z.string(),
   }),
+  scorers: {
+    mergeClean: {
+      scorer: mergeCleanScorer,
+      sampling: { type: 'ratio', rate: 1 },
+    },
+  },
   execute: async ({ inputData, writer, tracingContext }) => {
     if (!inputData.verified) {
       return {
