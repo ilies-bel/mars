@@ -8,6 +8,7 @@ export type TaskStatus =
   | 'merging'
   | 'done'
   | 'failed'
+  | 'dropped'
 
 export interface DraftFeature {
   id: string

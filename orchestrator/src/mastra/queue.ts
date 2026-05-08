@@ -12,6 +12,7 @@ export type TaskStatus =
   | 'merging'
   | 'done'
   | 'failed'
+  | 'dropped'
 
 export type QuestionCategory = 'scope' | 'tech' | 'ux' | 'risk'
 
@@ -44,6 +45,8 @@ export interface Task {
   claudeSessionId: string | null
   error: string | null
   author: Author | null
+  dropReason: string | null
+  retryCount: number
   createdAt: string
   updatedAt: string
 }
@@ -71,6 +74,8 @@ export const initQueue = async (): Promise<void> => {
       worktree_path TEXT,
       claude_session_id TEXT,
       error TEXT,
+      drop_reason TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
@@ -92,6 +97,12 @@ export const initQueue = async (): Promise<void> => {
   }
   if (!names.has('author_name')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN author_name TEXT`)
+  }
+  if (!names.has('drop_reason')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN drop_reason TEXT`)
+  }
+  if (!names.has('retry_count')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`)
   }
   await c.execute(`
     CREATE TABLE IF NOT EXISTS questions (
@@ -117,11 +128,24 @@ export const initQueue = async (): Promise<void> => {
       prompt TEXT NOT NULL,
       rationale TEXT,
       status TEXT NOT NULL DEFAULT 'proposed',
+      kind TEXT NOT NULL DEFAULT 'reflection',
       created_task_id TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (source_task_id) REFERENCES tasks(id)
     )
   `)
+  const sugCols = await c.execute(`PRAGMA table_info(task_suggestions)`)
+  const sugNames = new Set(
+    sugCols.rows.map((r) => (r as unknown as { name: string }).name),
+  )
+  if (!sugNames.has('kind')) {
+    await c.execute(
+      `ALTER TABLE task_suggestions ADD COLUMN kind TEXT NOT NULL DEFAULT 'reflection'`,
+    )
+    await c.execute(
+      `UPDATE task_suggestions SET kind = 'reflection' WHERE kind IS NULL`,
+    )
+  }
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_suggestions_source_task_id ON task_suggestions(source_task_id)
   `)
@@ -183,6 +207,8 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     claudeSessionId: (row.claude_session_id as string | null) ?? null,
     error: (row.error as string | null) ?? null,
     author,
+    dropReason: (row.drop_reason as string | null) ?? null,
+    retryCount: Number(row.retry_count ?? 0),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
