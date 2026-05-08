@@ -9,14 +9,14 @@ const linkClass = (active: boolean): string =>
   ].join(' ')
 
 export const NavBar = ({ hash }: NavBarProps) => {
-  const onQuestions = hash.startsWith('#/questions')
+  const onTodo = hash.startsWith('#/todo')
   return (
     <nav className="flex items-center gap-2 border-b border-iron/30 bg-bg px-4 py-1.5">
-      <a className={linkClass(!onQuestions)} href="#/">
+      <a className={linkClass(!onTodo)} href="#/">
         Kanban
       </a>
-      <a className={linkClass(onQuestions)} href="#/questions">
-        Questions
+      <a className={linkClass(onTodo)} href="#/todo">
+        Todo
       </a>
     </nav>
   )

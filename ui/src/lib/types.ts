@@ -7,19 +7,16 @@ export type TaskStatus =
   | 'done'
   | 'failed'
 
-export type QuestionCategory = 'scope' | 'tech' | 'ux' | 'risk'
-export type QuestionStatus = 'open' | 'answered' | 'dismissed'
-
-export interface Question {
+export interface DraftFeature {
   id: string
-  taskId: string
-  taskPrompt: string
-  question: string
-  rationale: string | null
-  category: QuestionCategory | null
-  answer: string | null
-  status: QuestionStatus
-  createdAt: string
+  goal: string
+  story: string
+  technical: string
+  status: string
+  origin: string
+  createdAt: number
+  updatedAt: number
+  acceptanceCount: number
 }
 
 export type SuggestionStatus = 'proposed' | 'accepted' | 'dismissed'

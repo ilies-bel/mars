@@ -1,26 +1,31 @@
-import type { Question, Task, TaskSuggestion } from './types'
+import type { DraftFeature, Task, TaskSuggestion } from './types'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
+const fetchJson = async <T>(path: string): Promise<T> => {
+  const r = await fetch(`${BASE}${path}`)
+  if (!r.ok) throw new Error(`GET ${path} → ${r.status}`)
+  const ct = r.headers.get('content-type') ?? ''
+  if (!ct.includes('application/json')) {
+    throw new Error(
+      `GET ${path} → expected JSON but got ${ct || 'unknown'} (is the mars-ui API server running on :7777?)`,
+    )
+  }
+  return (await r.json()) as T
+}
+
 export const fetchTasks = async (): Promise<Task[]> => {
-  const r = await fetch(`${BASE}/api/tasks`)
-  if (!r.ok) throw new Error(`GET /api/tasks → ${r.status}`)
-  const json = (await r.json()) as { tasks: Task[] }
+  const json = await fetchJson<{ tasks: Task[] }>('/api/tasks')
   return json.tasks
 }
 
-export const fetchQuestions = async (): Promise<Question[]> => {
-  const r = await fetch(`${BASE}/api/questions`)
-  if (!r.ok) throw new Error(`GET /api/questions → ${r.status}`)
-  const json = (await r.json()) as { questions: Question[] }
-  return json.questions
+export interface TodoPayload {
+  drafts: DraftFeature[]
+  suggestions: TaskSuggestion[]
 }
 
-export const fetchSuggestions = async (): Promise<TaskSuggestion[]> => {
-  const r = await fetch(`${BASE}/api/suggestions`)
-  if (!r.ok) throw new Error(`GET /api/suggestions → ${r.status}`)
-  const json = (await r.json()) as { suggestions: TaskSuggestion[] }
-  return json.suggestions
+export const fetchTodo = async (): Promise<TodoPayload> => {
+  return fetchJson<TodoPayload>('/api/todo')
 }
 
 export const eventsUrl = (): string => `${BASE}/events`
