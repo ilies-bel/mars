@@ -183,7 +183,7 @@ const parseCostAnalysis = (raw: unknown): CostAnalysis | null => {
   }
 }
 
-const extractFirstJsonDocument = (text: string): unknown | null => {
+export const extractFirstJsonDocument = (text: string): unknown | null => {
   const trimmed = text.trim()
   if (!trimmed) return null
   const start = trimmed.indexOf('{')
@@ -222,7 +222,7 @@ const extractFirstJsonDocument = (text: string): unknown | null => {
   return null
 }
 
-const collectAssistantText = (
+export const collectAssistantText = (
   conversation: ReadonlyArray<{ type: string; [k: string]: unknown }>,
 ): string => {
   const parts: string[] = []
@@ -309,4 +309,58 @@ export const persistSuggestions = async (
       rationale: s.rationale,
     })
   }
+}
+
+export type SuggestionVerdict = 'save' | 'absorb' | 'drop'
+
+export interface VerdictedSuggestion {
+  title: string
+  prompt: string
+  rationale: string | null
+  verdict: SuggestionVerdict
+  targetId?: string | null
+  dupOf?: string | null
+}
+
+export interface ApplyVerdictsResult {
+  saved: number
+  absorbed: number
+  dropped: number
+  savedSuggestions: VerdictedSuggestion[]
+}
+
+export const parseVerdict = (raw: unknown): SuggestionVerdict => {
+  if (raw === 'absorb' || raw === 'drop' || raw === 'save') return raw
+  return 'save'
+}
+
+export const applyVerdicts = async (
+  suggestions: readonly VerdictedSuggestion[],
+  sourceTaskId: string,
+): Promise<ApplyVerdictsResult> => {
+  let saved = 0
+  let absorbed = 0
+  let dropped = 0
+  const savedSuggestions: VerdictedSuggestion[] = []
+  for (const s of suggestions) {
+    if (s.verdict === 'drop') {
+      dropped += 1
+      continue
+    }
+    if (s.verdict === 'absorb') {
+      // 'absorb' means the finding was folded into an existing suggestion or
+      // task and does not warrant a new row. Counted but not persisted.
+      absorbed += 1
+      continue
+    }
+    await insertSuggestion({
+      sourceTaskId,
+      title: s.title,
+      prompt: s.prompt,
+      rationale: s.rationale,
+    })
+    saved += 1
+    savedSuggestions.push(s)
+  }
+  return { saved, absorbed, dropped, savedSuggestions }
 }

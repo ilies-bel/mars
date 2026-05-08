@@ -15,7 +15,7 @@ import {
   WorktreeInstallError,
 } from '../lib/worktree-install'
 import type { ClaudeEvent } from '../lib/claude-stream'
-import { hasIncompleteBlockers, updateTask } from '../queue'
+import { hasIncompleteBlockers, updateTask, upsertTranscript } from '../queue'
 import { handleTaskFailureWithFixTask } from '../queue-fix-tasks'
 
 export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
@@ -28,7 +28,7 @@ export const isBlockersAbortError = (err: unknown): boolean => {
 import { verifyPassedScorer } from '../scorers/verify-passed'
 import { mergeCleanScorer } from '../scorers/merge-clean'
 import { summarizeUsage } from '../lib/claude-usage'
-import { recordSignals } from '../lib/reflect-signals'
+import { recordSignals, isReflectDisabled } from '../lib/reflect-signals'
 
 const resolveVerifyCwd = (worktreeRoot: string): string => {
   const hasProject = (dir: string): boolean =>
@@ -179,6 +179,14 @@ const codeStep = createStep({
     await recordSignals(inputData.taskId, 'run-claude-code', usage).catch(() => {
       // signal capture must never fail the task
     })
+    if (!isReflectDisabled()) {
+      await upsertTranscript({
+        taskId: inputData.taskId,
+        conversationJson: JSON.stringify(conversation),
+      }).catch(() => {
+        // transcript capture must never fail the task
+      })
+    }
     return {
       taskId: inputData.taskId,
       integrationBranch: inputData.integrationBranch,
@@ -220,6 +228,18 @@ const verifyStep = createStep({
       testCmd: ['npm', ['test', '--silent']],
       lintCmd: ['npx', ['biome', 'check', '.']],
     })
+
+    if (!isReflectDisabled()) {
+      const verifyOutput = r.steps
+        .map((s) => `=== ${s.name} (${s.passed ? 'pass' : 'fail'}) ===\n${s.output}`)
+        .join('\n\n')
+      await upsertTranscript({
+        taskId: inputData.taskId,
+        verifyOutput,
+      }).catch(() => {
+        // transcript capture must never fail the task
+      })
+    }
 
     if (!r.passed) {
       const failed = r.steps.filter((s) => !s.passed)

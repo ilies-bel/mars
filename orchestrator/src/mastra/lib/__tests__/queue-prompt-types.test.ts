@@ -107,6 +107,26 @@ describe('queue prompt type guards', () => {
     expect((again.rows[0] as unknown as { t: string }).t).toBe('text')
   })
 
+  it('initQueue creates the task_transcripts table', async () => {
+    const q = await loadQueue(repo)
+    await q.initQueue()
+    const dbPath = resolve(repo, '.mars/queue.db')
+    const direct = createClient({ url: `file:${dbPath}` })
+    const tables = await direct.execute(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_transcripts'`,
+    )
+    expect(tables.rows.length).toBe(1)
+    const cols = await direct.execute(`PRAGMA table_info(task_transcripts)`)
+    const names = new Set(
+      cols.rows.map((r) => (r as unknown as { name: string }).name),
+    )
+    expect(names.has('task_id')).toBe(true)
+    expect(names.has('conversation_json')).toBe(true)
+    expect(names.has('verify_output')).toBe(true)
+    expect(names.has('bytes')).toBe(true)
+    expect(names.has('recorded_at')).toBe(true)
+  })
+
   it('reading a row whose prompt was forced to a Uint8Array decodes via rowToTask', async () => {
     const q = await loadQueue(repo)
     const dbPath = resolve(repo, '.mars/queue.db')

@@ -152,6 +152,13 @@ Commands:
                                 are inserted as proposals — never auto-run.
                                 Disable signal capture entirely with the env
                                 var MARS_REFLECT_DISABLED=1.
+  deep-reflect [<task-id>]      deep, single-session post-mortem on one task.
+                                Walks the stored claude -p transcript event-by
+                                -event to surface dissonant tool calls (success
+                                ful tool calls that did not achieve their stated
+                                intent), verify-claim mismatches, and thrashing
+                                patterns. Auto-picks a candidate when no id is
+                                given. Requires a stored transcript.
   suggestions [status]          list reflection suggestions (status defaults
                                 to all; common values: proposed, accepted)
   promote <suggestion-id>       enqueue a suggestion as a task; marks the
@@ -344,6 +351,33 @@ MARS_REFLECT_DISABLED=1.
 Flags:
   --since <iso>   only reflect on tasks completed after this ISO timestamp
   --limit <n>     max number of tasks to include (default: 10)`,
+  'deep-reflect': `mars deep-reflect [<task-id>]
+
+Deep, single-session post-mortem on one Mars task. Walks the stored
+claude -p transcript event-by-event to surface things 'mars reflect'
+cannot see — in particular, tool calls that succeeded at the call site
+but did not achieve the assistant's stated intent (e.g. an Edit that
+landed on the wrong line, a Bash 'git commit' that printed "nothing to
+commit", a verify step that reported pass with "0 passed, 0 failed").
+
+Cross-references end-of-turn assistant claims against the recorded
+verify output. Identifies thrashing patterns (same file Read 5+ times,
+Edit-and-revert pairs, repeated identical Bash invocations).
+
+Output: structured findings printed to stdout, full JSON report
+persisted to .mars/deep-reflections/<task-id>-<iso>.json (gitignored).
+Suggestions are filtered through save|absorb|drop verdicts and only
+"save" verdicts land as proposals in task_suggestions.
+
+When no <task-id> is given, the candidate is auto-picked:
+  1. most recent failed task with a stored transcript;
+  2. else, highest-cost done task in last 7 days (cost ≥ 2× median);
+  3. else, most recent done task with a transcript;
+  4. else, prints "no eligible session found" and exits 0.
+
+Requires a stored transcript (captured automatically by the implement
+workflow unless MARS_REFLECT_DISABLED=1 is set). The model defaults to
+opus; override with MARS_DEEP_REFLECT_MODEL.`,
   suggestions: `mars suggestions [status]
 
 List reflection suggestions. Status defaults to all; common values:
@@ -1200,6 +1234,108 @@ const main = async (): Promise<void> => {
     console.log(
       `\n${result.suggestions.length} suggestion(s) saved. Review with 'mars suggestions' and enqueue with 'mars promote <id>'.`,
     )
+    return
+  }
+
+  if (cmd === 'deep-reflect') {
+    if (process.env.MARS_REFLECT_DISABLED === '1') {
+      console.log('reflection disabled via MARS_REFLECT_DISABLED=1')
+      return
+    }
+    const explicitId = rest[0] && !rest[0].startsWith('--') ? rest[0] : null
+    const {
+      pickDeepReflectCandidate,
+      loadDeepReflectSession,
+    } = await import('./mastra/lib/deep-reflect-query')
+    const { runDeepReflector } = await import('./mastra/lib/deep-reflector')
+    const { applyVerdicts } = await import('./mastra/lib/reflector')
+    const { insertReflectionTask } = await import('./mastra/queue')
+
+    let chosenId: string
+    let pickLine: string
+    if (explicitId) {
+      chosenId = explicitId
+      pickLine = `task ${explicitId} (explicit selection)`
+    } else {
+      const pick = await pickDeepReflectCandidate()
+      if (!pick) {
+        console.log(
+          'no eligible session found (need at least one done/failed task with a stored transcript)',
+        )
+        return
+      }
+      chosenId = pick.taskId
+      pickLine = `task ${pick.reason.taskId} (status=${pick.reason.status}, cost=$${pick.reason.costUsd.toFixed(4)}, picked: ${pick.reason.reason})`
+    }
+
+    const session = await loadDeepReflectSession(chosenId)
+    if (!session) {
+      console.error(`no transcript found for task ${chosenId}`)
+      process.exit(1)
+    }
+
+    console.log(pickLine)
+    console.log(
+      `loading transcript: ${session.conversation.length} event(s), verifyOutput=${session.verifyOutput ? `${session.verifyOutput.length} chars` : 'none'}`,
+    )
+
+    const result = await runDeepReflector(session)
+    const report = result.report
+
+    const sourceTaskId = await insertReflectionTask(1)
+    const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
+
+    const { mkdir, writeFile } = await import('node:fs/promises')
+    const { resolve: resolvePath } = await import('node:path')
+    const { getStateDir } = await import('./mastra/context')
+    const outDir = resolvePath(getStateDir(), 'deep-reflections')
+    await mkdir(outDir, { recursive: true })
+    const isoStamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const outPath = resolvePath(outDir, `${chosenId}-${isoStamp}.json`)
+    const fullDoc = {
+      taskId: chosenId,
+      recordedAt: new Date().toISOString(),
+      report,
+      sourceTaskId,
+      verdictResult: {
+        saved: verdictResult.saved,
+        absorbed: verdictResult.absorbed,
+        dropped: verdictResult.dropped,
+      },
+      rawOutput: result.rawOutput,
+    }
+    await writeFile(outPath, JSON.stringify(fullDoc, null, 2), 'utf8')
+
+    console.log('')
+    if (report.summary) console.log(`Summary: ${report.summary}`)
+    console.log(
+      `Tool calls: ${report.toolCallStats.total} total — ${
+        Object.entries(report.toolCallStats.byName)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(', ') || 'none'
+      }`,
+    )
+    console.log(
+      `Dissonant calls: ${report.dissonantCalls.length}${
+        report.verifyMismatch ? ` | verify mismatch: ${report.verifyMismatch.severity}` : ''
+      }`,
+    )
+    if (report.dissonantCalls.length > 0) {
+      console.log('Top dissonant calls:')
+      for (const d of report.dissonantCalls.slice(0, 3)) {
+        console.log(
+          `  [${d.severity}] event ${d.eventIndex} ${d.tool}: ${d.statedIntent} → ${d.actualOutcome}`,
+        )
+      }
+    }
+    if (report.rootCause) console.log(`Root cause: ${report.rootCause}`)
+    console.log(
+      `Suggestions: ${verdictResult.saved} saved, ${verdictResult.absorbed} absorbed, ${verdictResult.dropped} dropped`,
+    )
+    console.log(`Full report: ${outPath}`)
+    if (result.exitCode !== 0) {
+      console.error(`deep-reflector exit code ${result.exitCode}`)
+    }
     return
   }
 
