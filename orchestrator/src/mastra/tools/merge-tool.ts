@@ -8,6 +8,7 @@ export const mergeTool = createTool({
     'Merge a task branch into the integration branch. Last-writer-wins on conflict.',
   inputSchema: z.object({
     branch: z.string(),
+    worktreePath: z.string(),
     integrationBranch: z.string().optional(),
     lockTimeoutMs: z.number().optional(),
   }),
@@ -20,6 +21,7 @@ export const mergeTool = createTool({
   execute: async (inputData) =>
     mergeBranch({
       branch: inputData.branch,
+      worktreePath: inputData.worktreePath,
       integrationBranch: inputData.integrationBranch ?? 'integration',
       lockTimeoutMs: inputData.lockTimeoutMs ?? 5 * 60 * 1000,
     }),

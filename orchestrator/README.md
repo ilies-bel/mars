@@ -77,6 +77,8 @@ Add `/.mars/` to the target repo's `.gitignore`.
 
 - `INTEGRATION_BRANCH` — target branch for merges (default `integration`).
 - `MARS_REPO` — target repo path (overrides cwd-based detection).
+- `MARS_REFLECT_DISABLED=1` — skip per-task token/cost capture and
+  short-circuit `mars reflect`. Scorers stay attached either way.
 
 ## Observing Claude runs in Studio
 
@@ -100,6 +102,51 @@ input larger than 2 KB and tool results larger than 4 KB are replaced with
 `{ truncated: true, originalBytes, head }` (first 2 KB of the JSON payload)
 to keep `.mars/mastra.db` small. Operators can monitor the
 `conversationBytes` field on the step span to spot pathological growth.
+
+## Reflection
+
+Mars captures cheap deterministic signals during every workflow run, then
+lets you synthesize them into draft task suggestions on demand.
+
+**Per-task signals (automatic).** After the `code` and `vcs-supervisor`
+steps, token and cost totals are summed from the captured Claude
+conversation and persisted to the `task_signals` table in `.mars/queue.db`:
+
+```
+sqlite3 .mars/queue.db "select * from task_signals where task_id = '<id>'"
+```
+
+Columns: `step_id`, `input_tokens`, `output_tokens`, `cache_create_tokens`,
+`cache_read_tokens`, `total_cost_usd`, `message_count`. Cache-creation and
+cache-read tokens are kept separate from `input_tokens` because they're
+priced differently — conflating them would mislead any reflection pass.
+
+The two existing scorers (`verify-passed`, `merge-clean`) are also wired
+to their respective steps and persist to `mastra_scorers` in
+`.mars/mastra.db` regardless of the disable flag.
+
+**Cross-task synthesis (manual).** `mars reflect` reads the signal corpus,
+calls Claude Haiku once with the joined task records, and inserts the
+returned suggestions into `task_suggestions` with `status='proposed'`.
+Suggestions never auto-dispatch — `mars run` only picks up rows from
+`tasks` with `status='queued'`.
+
+```
+mars reflect                        # last 10 completed tasks
+mars reflect --since 2026-05-01     # ISO timestamp window
+mars reflect --limit 25
+mars suggestions                    # list all suggestions
+mars suggestions proposed           # filter by status
+mars promote <suggestion-id>        # enqueue as a real task
+```
+
+**Disable.** Set `MARS_REFLECT_DISABLED=1` to skip signal capture and
+short-circuit `mars reflect`. The scorers stay attached because they're
+deterministic and cheap; the disable flag only kills (a) `task_signals`
+writes and (b) the synthesis CLI.
+
+**Cost.** The reflector uses Haiku at roughly $0.005–$0.02 per call. It is
+deliberately on-demand, not auto-run per task.
 
 ## Failure handling
 

@@ -16,6 +16,8 @@ const FLAGS_WITH_VALUES = new Set([
   '--tech',
   '--functional-file',
   '--technical-file',
+  '--since',
+  '--limit',
 ])
 
 const parseArgs = (argv: readonly string[]): ParsedArgs => {
@@ -87,18 +89,35 @@ Commands:
                                 ayush-that/sub-agents.directory over HTTPS, cached
                                 under .mars/cache/sub-agents/ (7-day TTL).
                                 --verbose lists each discovered manifest on stderr.
-  add "<prompt>" [plan flags]   enqueue a task (via enqueue-task tool)
+  add "<prompt>" [plan flags]   draft a task (lands in 'draft' state; triage
+                                promotes it to 'queued' once actionable)
   set-functional <id> <text|@file>
-                                set the functional plan on a queued task
+                                set the functional plan on a draft/queued task
   set-technical <id> <text|@file>
-                                set the technical plan on a queued task
+                                set the technical plan on a draft/queued task
   show <id>                     print full task incl. plan sections
-  list [status]                 list tasks (queued|running|verifying|merging|done|failed)
+  list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed)
   retry <id>                    re-queue a failed/done task (cleans worktree+branch)
   purge <id>                    delete a failed/done task entirely (worktree+branch+row)
-  run                           dispatch all queued tasks (unlimited parallel)
+  run                           dispatch all queued tasks (unlimited parallel);
+                                also runs the triage watcher for drafts
+  triage [<task-id>]            run triage once on one draft, or all drafts in
+                                parallel (Haiku assesses actionability + blockers)
+  blockers <task-id>            list incomplete blockers on a task
   feature list [status]         list features from .mars/state.db (read-only)
   feature show <id>             show a single feature from .mars/state.db (read-only)
+  reflect [--since <iso>] [--limit <n>]
+                                synthesize draft task suggestions from recent
+                                completed tasks. Reads token + scorer signals
+                                from .mars/queue.db and .mars/mastra.db.
+                                Default: last 10 completed tasks. Suggestions
+                                are inserted as proposals — never auto-run.
+                                Disable signal capture entirely with the env
+                                var MARS_REFLECT_DISABLED=1.
+  suggestions [status]          list reflection suggestions (status defaults
+                                to all; common values: proposed, accepted)
+  promote <suggestion-id>       enqueue a suggestion as a task; marks the
+                                suggestion accepted and links the new task id
   where                         print resolved repo + state directory
   help                          show this message
 
@@ -116,7 +135,9 @@ Repo resolution (in priority order):
   3. \`git rev-parse --show-toplevel\` from cwd
 
 Other env:
-  INTEGRATION_BRANCH    target branch for merges (default: integration)
+  INTEGRATION_BRANCH       target branch for merges (default: integration)
+  MARS_REFLECT_DISABLED=1  skip per-task token/cost capture and short-circuit
+                           'mars reflect'. Scorers stay attached either way.
 `
 
 const main = async (): Promise<void> => {
@@ -234,7 +255,7 @@ const main = async (): Promise<void> => {
         ? { functional: functional ?? '', technical: technical ?? '' }
         : undefined
     const task = await enqueueTask(prompt, plan)
-    console.log(`queued ${task.id}`)
+    console.log(`drafted ${task.id}`)
     return
   }
 
@@ -251,9 +272,9 @@ const main = async (): Promise<void> => {
       console.error(`task ${id} not found`)
       process.exit(1)
     }
-    if (task.status !== 'queued') {
+    if (task.status !== 'queued' && task.status !== 'draft') {
       console.error(
-        `task ${id} is ${task.status}; plan can only be modified while queued`,
+        `task ${id} is ${task.status}; plan can only be modified while draft or queued`,
       )
       process.exit(1)
     }
@@ -364,10 +385,22 @@ const main = async (): Promise<void> => {
   if (cmd === 'run') {
     const { mastra } = await import('./mastra/index')
     const { getTask } = await import('./mastra/queue')
+    const { startTriageWatcher } = await import('./mastra/watcher-triage')
     const branch = process.env.INTEGRATION_BRANCH ?? 'integration'
+
+    const triageWatcher = startTriageWatcher()
+
     const queued = await listTasks('queued')
     if (queued.length === 0) {
-      console.log('no queued tasks')
+      const drafts = await listTasks('draft')
+      if (drafts.length > 0) {
+        console.log(
+          `no queued tasks (${drafts.length} draft(s) — triage running; check 'mars list draft')`,
+        )
+      } else {
+        console.log('no queued tasks')
+      }
+      await triageWatcher.stop()
       return
     }
     const wf = mastra.getWorkflow('implementWorkflow')
@@ -408,6 +441,7 @@ const main = async (): Promise<void> => {
         console.error('run rejected:', r.reason)
       }
     }
+    await triageWatcher.stop()
     return
   }
 
@@ -448,6 +482,141 @@ const main = async (): Promise<void> => {
     }
     console.error('usage: mars feature <list [status]|show <id>>')
     process.exit(1)
+  }
+
+  if (cmd === 'reflect') {
+    if (process.env.MARS_REFLECT_DISABLED === '1') {
+      console.log('reflection disabled via MARS_REFLECT_DISABLED=1')
+      return
+    }
+    const limit = flags['--limit'] ? Number(flags['--limit']) : 10
+    if (!Number.isFinite(limit) || limit <= 0) {
+      console.error('--limit must be a positive integer')
+      process.exit(1)
+    }
+    const sinceIso = flags['--since']
+    const { loadRecentTaskCorpus } = await import('./mastra/lib/reflect-query')
+    const { runReflector, persistSuggestions } = await import('./mastra/lib/reflector')
+    const corpus = await loadRecentTaskCorpus({ sinceIso, limit })
+    if (corpus.length === 0) {
+      console.log('no completed tasks in window — nothing to reflect on')
+      return
+    }
+    console.log(`reflecting over ${corpus.length} task(s)…`)
+    const result = await runReflector(corpus)
+    if (result.suggestions.length === 0) {
+      console.log('no suggestions produced')
+      if (result.exitCode !== 0) {
+        console.error(`reflector exit code ${result.exitCode}`)
+      }
+      return
+    }
+    const sourceTaskId = `reflect-${new Date().toISOString()}`
+    await persistSuggestions(result.suggestions, sourceTaskId)
+    for (const s of result.suggestions) {
+      console.log(`- ${s.title}`)
+      if (s.rationale) console.log(`    ${s.rationale}`)
+    }
+    console.log(
+      `\n${result.suggestions.length} suggestion(s) saved. Review with 'mars suggestions' and enqueue with 'mars promote <id>'.`,
+    )
+    return
+  }
+
+  if (cmd === 'suggestions') {
+    const { listSuggestions } = await import('./mastra/queue-suggestions')
+    const status = rest[0]
+    const rows = await listSuggestions(status)
+    if (rows.length === 0) {
+      console.log(status ? `no suggestions with status=${status}` : 'no suggestions')
+      return
+    }
+    for (const s of rows) {
+      const link = s.createdTaskId ? ` -> task ${s.createdTaskId}` : ''
+      console.log(`${s.id}\t${s.status}${link}\t${s.title}`)
+    }
+    return
+  }
+
+  if (cmd === 'promote') {
+    const id = rest[0]
+    if (!id) {
+      console.error('usage: mars promote <suggestion-id>')
+      process.exit(1)
+    }
+    const { promoteSuggestion } = await import('./mastra/queue-suggestions')
+    const r = await promoteSuggestion(id)
+    if (!r) {
+      console.error(`suggestion ${id} not found or already promoted`)
+      process.exit(1)
+    }
+    console.log(`drafted ${r.taskId} (from suggestion ${id})`)
+    return
+  }
+
+  if (cmd === 'triage') {
+    const id = rest[0]
+    const { runTriage } = await import('./mastra/workflows/triage-workflow')
+    if (id) {
+      const result = await runTriage(id)
+      console.log(
+        `[${result.taskId}] actionable=${result.actionable} blockers=${result.blockerCount} suggestions=${result.suggestionCount}`,
+      )
+      if (result.reason) console.log(`  reason: ${result.reason}`)
+      return
+    }
+    const drafts = await listTasks('draft')
+    if (drafts.length === 0) {
+      console.log('no draft tasks')
+      return
+    }
+    const runs = drafts.map(async (t) => {
+      try {
+        const result = await runTriage(t.id)
+        return { taskId: t.id, ok: true as const, result }
+      } catch (err) {
+        return { taskId: t.id, ok: false as const, error: (err as Error).message }
+      }
+    })
+    const settled = await Promise.allSettled(runs)
+    for (const s of settled) {
+      if (s.status !== 'fulfilled') {
+        console.error('triage rejected:', s.reason)
+        continue
+      }
+      const v = s.value
+      if (v.ok) {
+        console.log(
+          `[${v.taskId}] actionable=${v.result.actionable} blockers=${v.result.blockerCount} suggestions=${v.result.suggestionCount}`,
+        )
+      } else {
+        console.log(`[${v.taskId}] error: ${v.error}`)
+      }
+    }
+    return
+  }
+
+  if (cmd === 'blockers') {
+    const id = rest[0]
+    if (!id) {
+      console.error('usage: mars blockers <task-id>')
+      process.exit(1)
+    }
+    const { listBlockers, getTask } = await import('./mastra/queue')
+    const blockerIds = await listBlockers(id)
+    if (blockerIds.length === 0) {
+      console.log(`task ${id} has no incomplete blockers`)
+      return
+    }
+    for (const bid of blockerIds) {
+      const t = await getTask(bid)
+      if (!t) {
+        console.log(`${bid}\t(missing)`)
+        continue
+      }
+      console.log(`${t.id}\t${t.status}\t${t.prompt.slice(0, 60)}`)
+    }
+    return
   }
 
   console.error(`unknown command: ${cmd}`)

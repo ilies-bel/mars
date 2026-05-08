@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { resolveContext } from './context'
 
 export type TaskStatus =
+  | 'draft'
   | 'queued'
   | 'ready'
   | 'running'
@@ -116,6 +117,39 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_suggestions_source_task_id ON task_suggestions(source_task_id)
   `)
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS task_signals (
+      task_id TEXT NOT NULL,
+      step_id TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      total_cost_usd REAL NOT NULL DEFAULT 0,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      recorded_at TEXT NOT NULL,
+      PRIMARY KEY (task_id, step_id)
+    )
+  `)
+  await c.execute(`
+    CREATE INDEX IF NOT EXISTS idx_task_signals_task_id ON task_signals(task_id)
+  `)
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS task_blockers (
+      task_id TEXT NOT NULL,
+      blocker_task_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (task_id, blocker_task_id),
+      FOREIGN KEY (task_id) REFERENCES tasks(id),
+      FOREIGN KEY (blocker_task_id) REFERENCES tasks(id)
+    )
+  `)
+  await c.execute(`
+    CREATE INDEX IF NOT EXISTS idx_task_blockers_task ON task_blockers(task_id)
+  `)
+  await c.execute(`
+    CREATE INDEX IF NOT EXISTS idx_task_blockers_blocker ON task_blockers(blocker_task_id)
+  `)
 }
 
 const rowToTask = (row: Record<string, unknown>): Task => {
@@ -139,16 +173,22 @@ const rowToTask = (row: Record<string, unknown>): Task => {
   }
 }
 
+export interface EnqueueTaskOptions {
+  skipTriage?: boolean
+}
+
 export const enqueueTask = async (
   prompt: string,
   plan?: TaskPlan,
+  opts?: EnqueueTaskOptions,
 ): Promise<Task> => {
   await initQueue()
   const id = randomUUID().slice(0, 8)
   const now = new Date().toISOString()
+  const status: TaskStatus = opts?.skipTriage ? 'queued' : 'draft'
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, created_at, updated_at) VALUES (?, ?, 'queued', ?, ?, ?, ?)`,
-    args: [id, prompt, plan?.functional ?? null, plan?.technical ?? null, now, now],
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: [id, prompt, status, plan?.functional ?? null, plan?.technical ?? null, now, now],
   })
   const r = await getClient().execute({
     sql: `SELECT * FROM tasks WHERE id = ?`,
@@ -200,6 +240,17 @@ export const updateTask = async (
     sql: `UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`,
     args: args as never,
   })
+
+  if (patch.status === 'done') {
+    const dependents = await getClient().execute({
+      sql: `SELECT DISTINCT task_id FROM task_blockers WHERE blocker_task_id = ?`,
+      args: [id],
+    })
+    for (const row of dependents.rows) {
+      const dependentId = (row as unknown as { task_id: string }).task_id
+      await promoteDraftToQueued(dependentId)
+    }
+  }
 }
 
 export const getTask = async (id: string): Promise<Task | null> => {
@@ -281,4 +332,67 @@ export const clearSuggestions = async (taskId: string): Promise<void> => {
     sql: `DELETE FROM task_suggestions WHERE source_task_id = ?`,
     args: [taskId],
   })
+}
+
+export const addBlockers = async (
+  taskId: string,
+  blockerIds: readonly string[],
+): Promise<void> => {
+  if (blockerIds.length === 0) return
+  await initQueue()
+  const now = new Date().toISOString()
+  const c = getClient()
+  for (const blockerId of blockerIds) {
+    if (blockerId === taskId) continue
+    await c.execute({
+      sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
+      args: [taskId, blockerId, now],
+    })
+  }
+}
+
+export const clearBlockers = async (taskId: string): Promise<void> => {
+  await initQueue()
+  await getClient().execute({
+    sql: `DELETE FROM task_blockers WHERE task_id = ?`,
+    args: [taskId],
+  })
+}
+
+export const listBlockers = async (taskId: string): Promise<string[]> => {
+  await initQueue()
+  const r = await getClient().execute({
+    sql: `SELECT b.blocker_task_id AS id
+            FROM task_blockers b
+            JOIN tasks t ON t.id = b.blocker_task_id
+           WHERE b.task_id = ? AND t.status != 'done'`,
+    args: [taskId],
+  })
+  return r.rows.map((row) => (row as unknown as { id: string }).id)
+}
+
+export const promoteDraftToQueued = async (
+  taskId: string,
+): Promise<Task | null> => {
+  await initQueue()
+  const now = new Date().toISOString()
+  const upd = await getClient().execute({
+    sql: `UPDATE tasks
+             SET status = 'queued', updated_at = ?
+           WHERE id = ?
+             AND status = 'draft'
+             AND NOT EXISTS (
+               SELECT 1 FROM task_blockers b
+               JOIN tasks t ON t.id = b.blocker_task_id
+               WHERE b.task_id = ? AND t.status != 'done'
+             )`,
+    args: [now, taskId, taskId],
+  })
+  if (upd.rowsAffected === 0) return null
+  const r = await getClient().execute({
+    sql: `SELECT * FROM tasks WHERE id = ?`,
+    args: [taskId],
+  })
+  if (r.rows.length === 0) return null
+  return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
 }
