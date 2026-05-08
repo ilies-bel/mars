@@ -1,4 +1,5 @@
 import type { Socket } from 'node:net'
+import type { Author } from '../author'
 import type { Task, TaskPlan } from '../queue'
 
 export type DaemonRequest =
@@ -7,6 +8,7 @@ export type DaemonRequest =
       prompt: string
       plan?: TaskPlan
       skipTriage?: boolean
+      author?: Author
     }
   | {
       op: 'update'

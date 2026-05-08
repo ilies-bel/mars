@@ -20,6 +20,7 @@ const FLAGS_WITH_VALUES = new Set([
   '--limit',
   '--variants',
   '--out',
+  '--author',
 ])
 
 const parseArgs = (argv: readonly string[]): ParsedArgs => {
@@ -91,8 +92,17 @@ Commands:
                                 ayush-that/sub-agents.directory over HTTPS, cached
                                 under .mars/cache/sub-agents/ (7-day TTL).
                                 --verbose lists each discovered manifest on stderr.
-  add "<prompt>" [plan flags]   draft a task (lands in 'draft' state; triage
-                                promotes it to 'queued' once actionable)
+  task add "<prompt>" [--author kind:name] [plan flags]
+                                enqueue a runnable task directly (status='queued',
+                                skips triage; can be picked up by agent runners)
+  idea add "<goal>" [--author kind:name]
+                                create an idea/plan in .mars/state.db. Author is
+                                detected from env/git when omitted: human if
+                                running interactively, agent if MARS_AGENT_NAME
+                                or CLAUDE_CODE/CLAUDECODE is set.
+  add "<prompt>" [plan flags]   (deprecated) draft a task; lands in 'draft' state
+                                so triage can promote to 'queued'. Prefer
+                                'mars task add' or 'mars idea add'.
   set-functional <id> <text|@file>
                                 set the functional plan on a draft/queued task
   set-technical <id> <text|@file>
@@ -156,13 +166,21 @@ Commands:
   where                         print resolved repo + state directory
   help                          show this message
 
-Plan flags for 'add':
+Plan flags for 'task add' / 'add':
   --functional <text|@file>     functional plan text (or @path to read a file)
   --func <text|@file>           alias for --functional
   --technical <text|@file>      technical plan text (or @path to read a file)
   --tech <text|@file>           alias for --technical
   --functional-file <path>      read functional plan from a file
   --technical-file <path>       read technical plan from a file
+
+Author flag for 'task add' / 'idea add' / 'add':
+  --author <kind:name>          override detected author. kind is human|agent
+                                (e.g. --author agent:vega, --author human:alice).
+                                When omitted, detected from env: agent if any of
+                                MARS_AGENT_NAME, CLAUDE_CODE, CLAUDECODE,
+                                CLAUDE_AGENT, ANTHROPIC_AGENT is set; otherwise
+                                human (name from git user.email).
 
 Repo resolution (in priority order):
   1. --repo <path>
@@ -192,10 +210,11 @@ Flags:
   --dry-run     show detected stack and proposed supervisors only
   --refresh     bypass the 7-day specialist cache
   --verbose     list discovered manifests on stderr`,
-  add: `mars add "<prompt>" [plan flags]
+  add: `mars add "<prompt>" [plan flags] [--author kind:name]
 
-Draft a task. Lands in 'draft' state; triage promotes it to 'queued' once
-actionable.
+(deprecated) Draft a task. Lands in 'draft' state; triage promotes it to
+'queued' once actionable. Prefer 'mars task add' (skip refinement) or
+'mars idea add' (plan only).
 
 Plan flags:
   --functional <text|@file>   functional plan text (or @path to read a file)
@@ -203,7 +222,23 @@ Plan flags:
   --technical <text|@file>    technical plan text (or @path to read a file)
   --tech <text|@file>         alias for --technical
   --functional-file <path>    read functional plan from a file
-  --technical-file <path>     read technical plan from a file`,
+  --technical-file <path>     read technical plan from a file
+  --author <kind:name>        override detected author (human|agent)`,
+  task: `mars task <subcommand> ...
+
+Subcommands:
+  add "<prompt>" [plan flags] [--author kind:name]
+      Enqueue a runnable task directly (status='queued'; skips triage).
+      Agent runners can pick it up immediately via 'mars run' / the
+      orchestrator. Plan flags and --author behave like 'mars add'.`,
+  idea: `mars idea <subcommand> ...
+
+Subcommands:
+  add "<goal>" [--author kind:name]
+      Create a plan/idea in .mars/state.db. Author is detected from env
+      and git when omitted (agent if MARS_AGENT_NAME/CLAUDE_CODE is set,
+      otherwise human with git user.email). Use --author to override,
+      e.g. --author agent:vega.`,
   'set-functional': `mars set-functional <id> <text|@file>
 
 Set the functional plan on a draft/queued task. Use @path to read from a
@@ -410,12 +445,10 @@ const main = async (): Promise<void> => {
     return
   }
 
-  if (cmd === 'add') {
-    const prompt = rest.join(' ')
-    if (!prompt) {
-      console.error('prompt required')
-      process.exit(1)
-    }
+  const enqueueViaDaemon = async (
+    prompt: string,
+    skipTriage: boolean,
+  ): Promise<void> => {
     const functional = resolvePlanText(
       flags,
       ['--functional', '--func'],
@@ -430,16 +463,65 @@ const main = async (): Promise<void> => {
       functional !== undefined || technical !== undefined
         ? { functional: functional ?? '', technical: technical ?? '' }
         : undefined
+    const { resolveAuthor, formatAuthor } = await import('./mastra/author')
+    const author = resolveAuthor(flags['--author'])
     const { sendRequest } = await import('./mastra/daemon/client')
     const task = (await sendRequest(
-      { op: 'add', prompt, plan },
+      { op: 'add', prompt, plan, skipTriage, author },
       {
         onSpawnNotice: (pid, log) =>
           console.log(`[mars] started daemon (pid ${pid}, log: ${log})`),
       },
     )) as { id: string; status: string }
-    console.log(`${task.status === 'queued' ? 'queued' : 'drafted'} ${task.id}`)
+    const verb = task.status === 'queued' ? 'queued' : 'drafted'
+    console.log(`${verb} ${task.id} (author: ${formatAuthor(author)})`)
+  }
+
+  if (cmd === 'add') {
+    console.error(
+      `[mars] 'mars add' is deprecated; use 'mars task add' (skip refinement) or 'mars idea add' (plan with author).`,
+    )
+    const prompt = rest.join(' ')
+    if (!prompt) {
+      console.error('prompt required')
+      process.exit(1)
+    }
+    await enqueueViaDaemon(prompt, false)
     return
+  }
+
+  if (cmd === 'task') {
+    const sub = rest[0]
+    if (sub === 'add') {
+      const prompt = rest.slice(1).join(' ')
+      if (!prompt) {
+        console.error('usage: mars task add "<prompt>" [--author kind:name] [plan flags]')
+        process.exit(1)
+      }
+      await enqueueViaDaemon(prompt, true)
+      return
+    }
+    console.error('usage: mars task <add> ...')
+    process.exit(1)
+  }
+
+  if (cmd === 'idea') {
+    const sub = rest[0]
+    if (sub === 'add') {
+      const goal = rest.slice(1).join(' ')
+      if (!goal) {
+        console.error('usage: mars idea add "<goal>" [--author kind:name]')
+        process.exit(1)
+      }
+      const { resolveAuthor, formatAuthor } = await import('./mastra/author')
+      const author = resolveAuthor(flags['--author'])
+      const { createIdea } = await import('./mastra/ideas')
+      const idea = await createIdea(goal, { author })
+      console.log(`${idea.id} (author: ${formatAuthor(author)})`)
+      return
+    }
+    console.error('usage: mars idea <add> ...')
+    process.exit(1)
   }
 
   if (cmd === 'set-functional' || cmd === 'set-technical') {
@@ -485,8 +567,10 @@ const main = async (): Promise<void> => {
       console.error(`task ${id} not found`)
       process.exit(1)
     }
+    const { formatAuthor } = await import('./mastra/author')
     console.log(`id:         ${task.id}`)
     console.log(`status:     ${task.status}`)
+    console.log(`author:     ${formatAuthor(task.author)}`)
     console.log(`branch:     ${task.branch ?? '-'}`)
     console.log(`worktree:   ${task.worktreePath ?? '-'}`)
     console.log(`createdAt:  ${task.createdAt}`)
@@ -743,11 +827,13 @@ const main = async (): Promise<void> => {
         process.exit(1)
       }
       const { getIdea } = await import('./mastra/ideas')
+      const { formatAuthor } = await import('./mastra/author')
       const idea = await getIdea(id)
       if (idea) {
         console.log(`id:         ${idea.id}`)
         console.log(`status:     ${idea.status}`)
         console.log(`origin:     ${idea.origin}`)
+        console.log(`author:     ${formatAuthor(idea.author)}`)
         console.log(`createdAt:  ${new Date(idea.createdAt).toISOString()}`)
         console.log(`updatedAt:  ${new Date(idea.updatedAt).toISOString()}`)
         console.log(`goal:`)

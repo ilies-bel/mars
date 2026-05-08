@@ -219,9 +219,16 @@ export const startDaemon = async (
     prompt: string,
     plan?: Task['plan'],
     skipTriage?: boolean,
+    author?: Task['author'],
   ): Promise<Task> => {
-    const opts = skipTriage ? { skipTriage: true } : undefined
-    const task = await enqueueTask(prompt, plan ?? undefined, opts)
+    const opts: Parameters<typeof enqueueTask>[2] = {}
+    if (skipTriage) opts.skipTriage = true
+    if (author) opts.author = author
+    const task = await enqueueTask(
+      prompt,
+      plan ?? undefined,
+      Object.keys(opts).length > 0 ? opts : undefined,
+    )
     if (task.status === 'queued') {
       bus.emit('task.queued', { taskId: task.id })
     } else if (task.status === 'draft') {
@@ -365,7 +372,12 @@ export const startDaemon = async (
     try {
       switch (req.op) {
         case 'add': {
-          const task = await handleAdd(req.prompt, req.plan, req.skipTriage)
+          const task = await handleAdd(
+            req.prompt,
+            req.plan,
+            req.skipTriage,
+            req.author,
+          )
           return { ok: true, data: task }
         }
         case 'update': {
