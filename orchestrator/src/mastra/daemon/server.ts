@@ -503,6 +503,12 @@ export const startDaemon = async (
     try {
       switch (req.op) {
         case 'add': {
+          if (typeof req.prompt !== 'string') {
+            return {
+              ok: false,
+              error: `add: prompt must be a string; got ${typeof req.prompt}`,
+            }
+          }
           const task = await handleAdd(
             req.prompt,
             req.plan,
