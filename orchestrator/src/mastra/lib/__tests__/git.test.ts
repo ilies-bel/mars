@@ -1,4 +1,13 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest'
 import {
   mkdtempSync,
   mkdirSync,
@@ -8,6 +17,7 @@ import {
   chmodSync,
   rmSync,
 } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
@@ -164,5 +174,46 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
       'result',
     ])
     expect(seen).toEqual(['system', 'assistant', 'user', 'result'])
+  })
+})
+
+describe('checkMergeTargetStatus', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-merge-target-'))
+    execFileSync('git', ['init', '-q'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+    writeFileSync(resolve(repo, 'README'), 'hello\n')
+    execFileSync('git', ['add', 'README'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('reports clean for an unmodified working tree', async () => {
+    const { checkMergeTargetStatus } = await import('../git')
+    const status = await checkMergeTargetStatus()
+    expect(status.kind).toBe('clean')
+  })
+
+  it('reports dirty with porcelain output when files are modified or untracked', async () => {
+    writeFileSync(resolve(repo, 'README'), 'hello mutated\n')
+    writeFileSync(resolve(repo, 'leftover.tmp'), 'x\n')
+    const { checkMergeTargetStatus } = await import('../git')
+    const status = await checkMergeTargetStatus()
+    expect(status.kind).toBe('dirty')
+    if (status.kind === 'dirty') {
+      expect(status.targetPath).toBe(repo)
+      expect(status.statusOutput).toContain('README')
+      expect(status.statusOutput).toContain('leftover.tmp')
+    }
   })
 })
