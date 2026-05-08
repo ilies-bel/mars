@@ -23,6 +23,7 @@ const FLAGS_WITH_VALUES = new Set([
   '--author',
   '--note',
   '--root-cause',
+  '--avoid',
 ])
 
 const parseArgs = (argv: readonly string[]): ParsedArgs => {
@@ -148,6 +149,18 @@ Commands:
                                 dispatch the planning workflow on a draft idea
                                 through the daemon (fire-and-forget). --refresh
                                 clears existing questions/suggestions first.
+  glossary set "<term>" "<definition>" [--avoid alias1,alias2]
+                                add or update a term in <repo>/CONTEXT.md via a
+                                daemon-routed structured write (fresh worktree
+                                off integration; merged back via the merge lock).
+  glossary remove "<term>"      remove a term via the same structured-write path
+  glossary list                 list terms in CONTEXT.md (local read; no daemon)
+  glossary show "<term>"        print one term's definition + aliases
+  adr add "<title>" "<body>"    append an ADR under docs/adr/ via a daemon-routed
+                                structured write (sequential numbering, slug from
+                                title). Body may be @path to read from a file.
+  adr list                      list ADRs in docs/adr/ (local read)
+  adr show <NNNN|filename>      print one ADR (number prefix is zero-padded)
   reflect [--since <iso>] [--limit <n>]
                                 synthesize draft task suggestions from recent
                                 completed tasks. Reads token + scorer signals
@@ -311,6 +324,40 @@ Subcommands:
   refine <id> [--refresh]             dispatch planning workflow via the daemon
                                       (fire-and-forget); --refresh clears prior
                                       questions/suggestions first`,
+  glossary: `mars glossary <subcommand> ...
+
+Edit the project glossary at <repo>/CONTEXT.md via deterministic, no-LLM
+structured writes. Write subcommands route through the daemon: a fresh
+worktree is spawned off the integration branch, CONTEXT.md is mutated,
+committed, and merged back via the existing merge lock. The CLI returns
+as soon as the daemon accepts the request — the merge lands in the
+background.
+
+Subcommands:
+  set "<term>" "<definition>" [--avoid alias1,alias2]
+      Add or update a glossary term. Aliases in --avoid become the
+      "_Avoid_" line under the term.
+  remove "<term>"
+      Remove a term from the glossary.
+  list
+      List all terms currently in CONTEXT.md (local read; no daemon).
+  show "<term>"
+      Print a single term's definition and aliases.`,
+  adr: `mars adr <subcommand> ...
+
+Manage ADRs (Architecture Decision Records) under <repo>/docs/adr/. Add
+goes through the daemon as a structured write (worktree → commit → merge);
+list/show are local reads.
+
+Subcommands:
+  add "<title>" "<body>"
+      Append a new ADR. Numbering is sequential (scan of docs/adr/);
+      filename slug derived from the title. Body may be @path to read
+      from a file.
+  list
+      List all ADRs in docs/adr/.
+  show <NNNN|filename>
+      Print one ADR's contents. Number prefix is matched after zero-padding.`,
   reflect: `mars reflect [--since <iso>] [--limit <n>]
 
 Synthesize draft task suggestions from recent completed tasks. Reads
@@ -1035,6 +1082,194 @@ const main = async (): Promise<void> => {
     console.error(
       'usage: mars feature <new|list|show|set|add-acceptance|remove-acceptance|export|delete|refine> ...',
     )
+    process.exit(1)
+  }
+
+  if (cmd === 'glossary') {
+    const sub = rest[0]
+    const { resolve: resolvePath } = await import('node:path')
+    const contextPath = resolvePath(ctx.repoRoot, 'CONTEXT.md')
+
+    if (sub === 'set') {
+      const term = rest[1]
+      const definition = rest[2]
+      if (!term || !definition) {
+        console.error(
+          'usage: mars glossary set "<term>" "<definition>" [--avoid alias1,alias2]',
+        )
+        process.exit(1)
+      }
+      const aliasFlag = flags['--avoid']
+      const aliases = aliasFlag
+        ? aliasFlag
+            .split(',')
+            .map((a) => a.trim())
+            .filter((a) => a.length > 0)
+        : []
+      const { sendRequest } = await import('./mastra/daemon/client')
+      await sendRequest(
+        {
+          op: 'glossary-write',
+          kind: 'set',
+          term,
+          definition,
+          aliases,
+        },
+        {
+          onSpawnNotice: (pid, logFile) => {
+            console.error(`spawned mars daemon (pid ${pid}, log ${logFile})`)
+          },
+        },
+      )
+      console.log(`glossary set dispatched: "${term}"`)
+      return
+    }
+
+    if (sub === 'remove') {
+      const term = rest[1]
+      if (!term) {
+        console.error('usage: mars glossary remove "<term>"')
+        process.exit(1)
+      }
+      const { sendRequest } = await import('./mastra/daemon/client')
+      await sendRequest(
+        { op: 'glossary-write', kind: 'remove', term },
+        {
+          onSpawnNotice: (pid, logFile) => {
+            console.error(`spawned mars daemon (pid ${pid}, log ${logFile})`)
+          },
+        },
+      )
+      console.log(`glossary remove dispatched: "${term}"`)
+      return
+    }
+
+    if (sub === 'list') {
+      const { readGlossaryFile } = await import('./mastra/lib/glossary')
+      const doc = await readGlossaryFile(contextPath)
+      if (doc.terms.length === 0) {
+        console.log('(no glossary terms; CONTEXT.md is empty or missing)')
+        return
+      }
+      for (const t of doc.terms) {
+        const aliases = t.aliases.length > 0 ? `  (avoid: ${t.aliases.join(', ')})` : ''
+        console.log(`${t.term}${aliases}`)
+      }
+      return
+    }
+
+    if (sub === 'show') {
+      const term = rest[1]
+      if (!term) {
+        console.error('usage: mars glossary show "<term>"')
+        process.exit(1)
+      }
+      const { readGlossaryFile } = await import('./mastra/lib/glossary')
+      const doc = await readGlossaryFile(contextPath)
+      const lower = term.toLowerCase()
+      const found = doc.terms.find((t) => t.term.toLowerCase() === lower)
+      if (!found) {
+        console.error(`term "${term}" not found in CONTEXT.md`)
+        process.exit(1)
+      }
+      console.log(`term:        ${found.term}`)
+      console.log(`definition:  ${found.definition}`)
+      if (found.aliases.length > 0) {
+        console.log(`avoid:       ${found.aliases.join(', ')}`)
+      }
+      return
+    }
+
+    console.error('usage: mars glossary <set|remove|list|show> ...')
+    process.exit(1)
+  }
+
+  if (cmd === 'adr') {
+    const sub = rest[0]
+    const { resolve: resolvePath } = await import('node:path')
+    const adrDir = resolvePath(ctx.repoRoot, 'docs/adr')
+
+    if (sub === 'add') {
+      const title = rest[1]
+      const bodyArg = rest.slice(2).join(' ')
+      if (!title || !bodyArg) {
+        console.error(
+          'usage: mars adr add "<title>" "<body>" (body may be @path to read a file)',
+        )
+        process.exit(1)
+      }
+      const body = readMaybeFile(bodyArg)
+      const { sendRequest } = await import('./mastra/daemon/client')
+      await sendRequest(
+        { op: 'adr-add', title, body },
+        {
+          onSpawnNotice: (pid, logFile) => {
+            console.error(`spawned mars daemon (pid ${pid}, log ${logFile})`)
+          },
+        },
+      )
+      console.log(`adr add dispatched: "${title}"`)
+      return
+    }
+
+    if (sub === 'list') {
+      const { readdir, readFile } = await import('node:fs/promises')
+      let entries: string[]
+      try {
+        entries = await readdir(adrDir)
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          console.log('(no ADRs; docs/adr/ does not exist yet)')
+          return
+        }
+        throw err
+      }
+      const adrs = entries
+        .filter((n) => /^\d{4}-[a-z0-9-]+\.md$/.test(n))
+        .sort()
+      if (adrs.length === 0) {
+        console.log('(no ADRs in docs/adr/)')
+        return
+      }
+      for (const name of adrs) {
+        const text = await readFile(resolvePath(adrDir, name), 'utf8')
+        const firstLine = text.split('\n', 1)[0] ?? ''
+        const title = firstLine.replace(/^#\s*/, '').trim()
+        console.log(`${name}\t${title}`)
+      }
+      return
+    }
+
+    if (sub === 'show') {
+      const arg = rest[1]
+      if (!arg) {
+        console.error('usage: mars adr show <NNNN|filename>')
+        process.exit(1)
+      }
+      const { readdir, readFile } = await import('node:fs/promises')
+      let entries: string[]
+      try {
+        entries = await readdir(adrDir)
+      } catch {
+        console.error(`no ADR matching "${arg}" (docs/adr/ does not exist)`)
+        process.exit(1)
+      }
+      const padded = /^\d+$/.test(arg) ? arg.padStart(4, '0') : null
+      const match = entries.find((name) => {
+        if (name === arg) return true
+        if (padded && name.startsWith(`${padded}-`)) return true
+        return false
+      })
+      if (!match) {
+        console.error(`no ADR matching "${arg}" in docs/adr/`)
+        process.exit(1)
+      }
+      const text = await readFile(resolvePath(adrDir, match), 'utf8')
+      process.stdout.write(text)
+      return
+    }
+
+    console.error('usage: mars adr <add|list|show> ...')
     process.exit(1)
   }
 

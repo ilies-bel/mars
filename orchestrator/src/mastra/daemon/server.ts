@@ -37,7 +37,12 @@ import {
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
-type DispatchKind = 'triage' | 'implement' | 'refine'
+type DispatchKind =
+  | 'triage'
+  | 'implement'
+  | 'refine'
+  | 'glossary-write'
+  | 'adr-add'
 
 interface InFlightEntry {
   taskId: string
@@ -171,6 +176,90 @@ export const startDaemon = async (
         }
         bus.emit('task.failed', { taskId: task.id, error: message })
       }
+    } finally {
+      release()
+    }
+  }
+
+  const dispatchGlossaryWrite = async (req: {
+    kind: 'set' | 'remove'
+    term: string
+    definition?: string
+    aliases?: readonly string[]
+  }): Promise<void> => {
+    const synthetic = `glossary-write:${req.kind}:${req.term}:${Date.now()}`
+    const release = trackInFlight(synthetic, 'glossary-write')
+    log(`[glossary-write] ${req.kind} "${req.term}" dispatching`)
+    try {
+      const { runStructuredWrite } = await import('../lib/structured-write')
+      const {
+        readGlossaryFile,
+        writeGlossaryFile,
+        upsertTerm,
+        removeTermByName,
+      } = await import('../lib/glossary')
+      const { resolve: resolvePath } = await import('node:path')
+
+      const outcome = await runStructuredWrite({
+        kind: 'glossary',
+        commitMessage:
+          req.kind === 'set'
+            ? `glossary: set "${req.term}"`
+            : `glossary: remove "${req.term}"`,
+        integrationBranch,
+        mutate: async (worktreePath) => {
+          const path = resolvePath(worktreePath, 'CONTEXT.md')
+          const doc = await readGlossaryFile(path)
+          if (req.kind === 'set') {
+            const next = upsertTerm(doc, {
+              term: req.term,
+              definition: req.definition ?? '',
+              aliases: req.aliases ?? [],
+            })
+            await writeGlossaryFile(path, next)
+            return
+          }
+          const { doc: nextDoc, removed } = removeTermByName(doc, req.term)
+          if (!removed) return false
+          await writeGlossaryFile(path, nextDoc)
+        },
+      })
+      log(`[glossary-write] ${req.kind} "${req.term}" -> ${outcome.kind}`)
+    } catch (err) {
+      log(
+        `[glossary-write] ${req.kind} "${req.term}" failed: ${(err as Error).message}`,
+      )
+    } finally {
+      release()
+    }
+  }
+
+  const dispatchAdrAdd = async (req: {
+    title: string
+    body: string
+  }): Promise<void> => {
+    const synthetic = `adr-add:${req.title}:${Date.now()}`
+    const release = trackInFlight(synthetic, 'adr-add')
+    log(`[adr-add] "${req.title}" dispatching`)
+    try {
+      const { runStructuredWrite } = await import('../lib/structured-write')
+      const { writeAdrInWorktree } = await import('../lib/adr')
+
+      const outcome = await runStructuredWrite({
+        kind: 'adr',
+        commitMessage: `adr: add "${req.title}"`,
+        integrationBranch,
+        mutate: async (worktreePath) => {
+          await writeAdrInWorktree({
+            worktreePath,
+            title: req.title,
+            body: req.body,
+          })
+        },
+      })
+      log(`[adr-add] "${req.title}" -> ${outcome.kind}`)
+    } catch (err) {
+      log(`[adr-add] "${req.title}" failed: ${(err as Error).message}`)
     } finally {
       release()
     }
@@ -441,6 +530,34 @@ export const startDaemon = async (
         case 'refine': {
           await handleRefine(req.id, req.refresh ?? false)
           return { ok: true }
+        }
+        case 'glossary-write': {
+          if (req.kind !== 'set' && req.kind !== 'remove') {
+            return { ok: false, error: `unknown glossary-write kind: ${req.kind}` }
+          }
+          if (!req.term || req.term.trim().length === 0) {
+            return { ok: false, error: 'glossary-write requires a non-empty term' }
+          }
+          if (req.kind === 'set' && (!req.definition || req.definition.trim().length === 0)) {
+            return { ok: false, error: 'glossary-write set requires a definition' }
+          }
+          void dispatchGlossaryWrite({
+            kind: req.kind,
+            term: req.term,
+            definition: req.definition,
+            aliases: req.aliases,
+          })
+          return { ok: true, data: { enqueued: true } }
+        }
+        case 'adr-add': {
+          if (!req.title || req.title.trim().length === 0) {
+            return { ok: false, error: 'adr-add requires a non-empty title' }
+          }
+          if (!req.body || req.body.trim().length === 0) {
+            return { ok: false, error: 'adr-add requires a non-empty body' }
+          }
+          void dispatchAdrAdd({ title: req.title.trim(), body: req.body })
+          return { ok: true, data: { enqueued: true } }
         }
         case 'status': {
           return { ok: true, data: await handleStatus() }
