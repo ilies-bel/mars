@@ -23,8 +23,10 @@ import {
 } from '../queue'
 import { promoteSuggestion } from '../queue-suggestions'
 import {
+  onBlockerTaskCompleted,
   onChildTaskCompleted,
   recoverBlockedTasks,
+  recoverBlockedTasksByBlockerTable,
 } from '../blocker-resolution'
 import { daemonPaths } from './paths'
 import {
@@ -362,6 +364,25 @@ export const startDaemon = async (
         } catch (err) {
           log(`[unblock] error resolving blockers for ${id}: ${(err as Error).message}`)
         }
+        try {
+          const blockerResolved = await onBlockerTaskCompleted(id)
+          for (const o of blockerResolved.outcomes) {
+            if (o.outcome === 'queued') {
+              log(
+                `[unblock] task ${o.taskId} re-queued after blocker task ${id} completed`,
+              )
+              bus.emit('task.queued', { taskId: o.taskId })
+            } else if (o.outcome === 'dropped') {
+              log(
+                `[unblock] task ${o.taskId} dropped at unblock (retry budget exhausted)`,
+              )
+            }
+          }
+        } catch (err) {
+          log(
+            `[unblock] error resolving task_blockers for ${id}: ${(err as Error).message}`,
+          )
+        }
         // updateTask already promoted any unblocked dependents; surface them.
         const queued = await listTasks('queued')
         for (const t of queued) {
@@ -475,6 +496,27 @@ export const startDaemon = async (
       }
     } catch (err) {
       log(`[reconcile-unblock] failed: ${(err as Error).message}`)
+    }
+
+    try {
+      const recoveredByTable = await recoverBlockedTasksByBlockerTable()
+      for (const r of recoveredByTable) {
+        for (const o of r.outcomes) {
+          if (o.outcome === 'queued') {
+            log(
+              `[reconcile-unblock] task ${o.taskId} re-queued (blocker task already done while daemon was down)`,
+            )
+          } else if (o.outcome === 'dropped') {
+            log(
+              `[reconcile-unblock] task ${o.taskId} dropped (retry budget exhausted)`,
+            )
+          }
+        }
+      }
+    } catch (err) {
+      log(
+        `[reconcile-unblock] task_blockers recovery failed: ${(err as Error).message}`,
+      )
     }
 
     const drafts = await listTasks('draft')

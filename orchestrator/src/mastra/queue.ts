@@ -49,6 +49,8 @@ export interface Task {
   dropReason: string | null
   retryCount: number
   blockerId: string | null
+  fixForTaskId: string | null
+  failureSignature: string | null
   createdAt: string
   updatedAt: string
 }
@@ -109,6 +111,15 @@ export const initQueue = async (): Promise<void> => {
   if (!names.has('blocker_id')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN blocker_id TEXT`)
   }
+  if (!names.has('fix_for_task_id')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN fix_for_task_id TEXT`)
+  }
+  if (!names.has('failure_signature')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN failure_signature TEXT`)
+  }
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
+  )
   await c.execute(`
     CREATE TABLE IF NOT EXISTS questions (
       id TEXT PRIMARY KEY,
@@ -248,6 +259,8 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     dropReason: (row.drop_reason as string | null) ?? null,
     retryCount: Number(row.retry_count ?? 0),
     blockerId: (row.blocker_id as string | null) ?? null,
+    fixForTaskId: (row.fix_for_task_id as string | null) ?? null,
+    failureSignature: (row.failure_signature as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }

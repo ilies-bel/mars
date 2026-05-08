@@ -16,7 +16,7 @@ import {
 } from '../lib/worktree-install'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import { hasIncompleteBlockers, updateTask } from '../queue'
-import { handleTaskFailure } from '../queue-fix-suggestions'
+import { handleTaskFailureWithFixTask } from '../queue-fix-tasks'
 
 export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} has incomplete blockers; aborting dispatch (task remains queued)`
@@ -111,7 +111,7 @@ const setupStep = createStep({
         status: 'failed',
         error: summary,
       })
-      await handleTaskFailure({
+      await handleTaskFailureWithFixTask({
         taskId: inputData.taskId,
         failingStep: 'setup:install',
         errorOutput,
@@ -229,7 +229,7 @@ const verifyStep = createStep({
       const firstFailedName = failed[0]?.name ?? 'verify'
       const firstFailedOutput = failed[0]?.output ?? summary
       await updateTask(inputData.taskId, { status: 'failed', error: summary })
-      await handleTaskFailure({
+      await handleTaskFailureWithFixTask({
         taskId: inputData.taskId,
         failingStep: `verify:${firstFailedName}`,
         errorOutput: firstFailedOutput,
@@ -294,7 +294,7 @@ const mergeStep = createStep({
           status: 'failed',
           error: errorMsg,
         })
-        await handleTaskFailure({
+        await handleTaskFailureWithFixTask({
           taskId: inputData.taskId,
           failingStep: 'merge:preflight',
           errorOutput: targetStatus.statusOutput,
@@ -360,7 +360,7 @@ const mergeStep = createStep({
           status: 'failed',
           error: errorMsg,
         })
-        await handleTaskFailure({
+        await handleTaskFailureWithFixTask({
           taskId: inputData.taskId,
           failingStep: 'merge:vcs-supervisor-aborted',
           errorOutput: m.output,
@@ -395,7 +395,7 @@ const mergeStep = createStep({
         status: 'failed',
         error: `merge step crashed: ${message}`.slice(0, 1000),
       })
-      await handleTaskFailure({
+      await handleTaskFailureWithFixTask({
         taskId: inputData.taskId,
         failingStep: 'merge:crashed',
         errorOutput: message,
