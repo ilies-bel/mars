@@ -19,6 +19,7 @@ const FLAGS_WITH_VALUES = new Set([
   '--since',
   '--limit',
   '--variants',
+  '--out',
 ])
 
 const parseArgs = (argv: readonly string[]): ParsedArgs => {
@@ -116,8 +117,22 @@ Commands:
   triage [<task-id>]            run triage once on one draft, or all drafts in
                                 parallel (Haiku assesses actionability + blockers)
   blockers <task-id>            list incomplete blockers on a task
-  feature list [status]         list features from .mars/state.db (read-only)
-  feature show <id>             show a single feature from .mars/state.db (read-only)
+  feature list [status]         list ideas from .mars/state.db merged with on-disk
+                                features/*.md drafts (de-duped by id)
+  feature show <id>             show an idea from .mars/state.db; falls back to
+                                features/<id>.md if not in DB
+  feature new "<goal>"          create a new idea row in .mars/state.db; prints id
+  feature set <id> <field> <value>
+                                update an idea field (goal|story|technical|status)
+  feature add-acceptance <id> "<bullet>"
+                                append a bullet to the idea's acceptance list
+  feature remove-acceptance <id> <index>
+                                remove the bullet at 0-based index, repacks positions
+  feature export <id> [--out <path>]
+                                render an idea as markdown (frontmatter + Goal +
+                                Story + Acceptance + Technical) to stdout or file
+  feature delete <id>           remove an idea from .mars/state.db (does not
+                                touch features/*.md)
   reflect [--since <iso>] [--limit <n>]
                                 synthesize draft task suggestions from recent
                                 completed tasks. Reads token + scorer signals
@@ -530,40 +545,227 @@ const main = async (): Promise<void> => {
 
   if (cmd === 'feature') {
     const sub = rest[0]
+
+    if (sub === 'new') {
+      const goal = rest[1]
+      if (!goal) {
+        console.error('usage: mars feature new "<goal>"')
+        process.exit(1)
+      }
+      const { createIdea } = await import('./mastra/ideas')
+      const idea = await createIdea(goal)
+      console.log(idea.id)
+      return
+    }
+
     if (sub === 'list') {
-      const status = rest[1] as never
+      const status = rest[1]
       const { listFeatures } = await import('./mastra/features')
-      const features = await listFeatures(status)
+      const { listIdeas } = await import('./mastra/ideas')
+      const { listFeatureMarkdownIds, readFeatureMarkdown } = await import(
+        './mastra/feature-md'
+      )
+      const ideas = await listIdeas()
+      const features = await listFeatures(status as never)
+      const seen = new Set<string>()
+      const rows: Array<{ id: string; status: string; goal: string }> = []
+      for (const i of ideas) {
+        if (status && i.status !== status) continue
+        seen.add(i.id)
+        rows.push({ id: i.id, status: i.status, goal: i.goal })
+      }
       for (const f of features) {
-        console.log(`${f.id}\t${f.status}\t${f.goal}`)
+        if (seen.has(f.id)) continue
+        seen.add(f.id)
+        rows.push({ id: f.id, status: f.status, goal: f.goal })
+      }
+      for (const id of listFeatureMarkdownIds()) {
+        if (seen.has(id)) continue
+        const md = readFeatureMarkdown(id)
+        if (!md) continue
+        if (status && md.status !== status) continue
+        seen.add(id)
+        rows.push({ id: md.id, status: md.status, goal: md.goal })
+      }
+      for (const r of rows) {
+        console.log(`${r.id}\t${r.status}\t${r.goal}`)
       }
       return
     }
+
     if (sub === 'show') {
       const id = rest[1]
       if (!id) {
         console.error('usage: mars feature show <id>')
         process.exit(1)
       }
+      const { getIdea } = await import('./mastra/ideas')
+      const idea = await getIdea(id)
+      if (idea) {
+        console.log(`id:         ${idea.id}`)
+        console.log(`status:     ${idea.status}`)
+        console.log(`origin:     ${idea.origin}`)
+        console.log(`createdAt:  ${new Date(idea.createdAt).toISOString()}`)
+        console.log(`updatedAt:  ${new Date(idea.updatedAt).toISOString()}`)
+        console.log(`goal:`)
+        console.log(idea.goal)
+        if (idea.story.trim().length > 0) {
+          console.log(`story:`)
+          console.log(idea.story)
+        }
+        if (idea.acceptance.length > 0) {
+          console.log(`acceptance:`)
+          idea.acceptance.forEach((b, i) => console.log(`  [${i}] ${b}`))
+        }
+        if (idea.technical.trim().length > 0) {
+          console.log(`technical:`)
+          console.log(idea.technical)
+        }
+        return
+      }
       const { getFeature } = await import('./mastra/features')
       const f = await getFeature(id)
-      if (!f) {
-        console.error(`feature ${id} not found`)
+      if (f) {
+        console.log(`id:         ${f.id}`)
+        console.log(`status:     ${f.status}`)
+        console.log(`origin:     ${f.origin}`)
+        console.log(`parentId:   ${f.parentId ?? '-'}`)
+        console.log(`taskCount:  ${f.taskCount} (ready: ${f.readyTaskCount})`)
+        console.log(`storeId:    ${f.storeId ?? '-'}`)
+        console.log(`createdAt:  ${f.createdAt}`)
+        console.log(`updatedAt:  ${f.updatedAt}`)
+        console.log(`goal:`)
+        console.log(f.goal)
+        return
+      }
+      const { readFeatureMarkdown } = await import('./mastra/feature-md')
+      const md = readFeatureMarkdown(id)
+      if (md) {
+        console.log(`id:         ${md.id}`)
+        console.log(`status:     ${md.status}`)
+        console.log(`origin:     ${md.origin}`)
+        console.log(`source:     features/${md.id}.md`)
+        console.log(`goal:`)
+        console.log(md.goal)
+        if (md.story.trim().length > 0) {
+          console.log(`story:`)
+          console.log(md.story)
+        }
+        if (md.acceptance.length > 0) {
+          console.log(`acceptance:`)
+          md.acceptance.forEach((b, i) => console.log(`  [${i}] ${b}`))
+        }
+        if (md.technical.trim().length > 0) {
+          console.log(`technical:`)
+          console.log(md.technical)
+        }
+        return
+      }
+      console.error(`feature ${id} not found`)
+      process.exit(1)
+    }
+
+    if (sub === 'set') {
+      const id = rest[1]
+      const field = rest[2]
+      const value = rest[3]
+      const allowed = new Set(['goal', 'story', 'technical', 'status'])
+      if (!id || !field || value === undefined || !allowed.has(field)) {
+        console.error(
+          'usage: mars feature set <id> <goal|story|technical|status> <value>',
+        )
         process.exit(1)
       }
-      console.log(`id:         ${f.id}`)
-      console.log(`status:     ${f.status}`)
-      console.log(`origin:     ${f.origin}`)
-      console.log(`parentId:   ${f.parentId ?? '-'}`)
-      console.log(`taskCount:  ${f.taskCount} (ready: ${f.readyTaskCount})`)
-      console.log(`storeId:    ${f.storeId ?? '-'}`)
-      console.log(`createdAt:  ${f.createdAt}`)
-      console.log(`updatedAt:  ${f.updatedAt}`)
-      console.log(`goal:`)
-      console.log(f.goal)
+      const { setIdeaField } = await import('./mastra/ideas')
+      const ok = await setIdeaField(id, field as never, value)
+      if (!ok) {
+        console.error(`idea ${id} not found`)
+        process.exit(1)
+      }
+      console.log(`updated ${id} ${field}`)
       return
     }
-    console.error('usage: mars feature <list [status]|show <id>>')
+
+    if (sub === 'add-acceptance') {
+      const id = rest[1]
+      const text = rest[2]
+      if (!id || !text) {
+        console.error('usage: mars feature add-acceptance <id> "<bullet>"')
+        process.exit(1)
+      }
+      const { addAcceptance } = await import('./mastra/ideas')
+      const ok = await addAcceptance(id, text)
+      if (!ok) {
+        console.error(`idea ${id} not found`)
+        process.exit(1)
+      }
+      console.log(`added acceptance to ${id}`)
+      return
+    }
+
+    if (sub === 'remove-acceptance') {
+      const id = rest[1]
+      const idxRaw = rest[2]
+      const idx = Number(idxRaw)
+      if (!id || idxRaw === undefined || !Number.isInteger(idx) || idx < 0) {
+        console.error(
+          'usage: mars feature remove-acceptance <id> <index> (0-based)',
+        )
+        process.exit(1)
+      }
+      const { removeAcceptance } = await import('./mastra/ideas')
+      const ok = await removeAcceptance(id, idx)
+      if (!ok) {
+        console.error(`idea ${id} not found, or index out of range`)
+        process.exit(1)
+      }
+      console.log(`removed acceptance[${idx}] from ${id}`)
+      return
+    }
+
+    if (sub === 'export') {
+      const id = rest[1]
+      if (!id) {
+        console.error('usage: mars feature export <id> [--out <path>]')
+        process.exit(1)
+      }
+      const { getIdea, renderIdeaMarkdown } = await import('./mastra/ideas')
+      const idea = await getIdea(id)
+      if (!idea) {
+        console.error(`idea ${id} not found`)
+        process.exit(1)
+      }
+      const md = renderIdeaMarkdown(idea)
+      const out = flags['--out']
+      if (out) {
+        const { writeFileSync } = await import('node:fs')
+        writeFileSync(out, md, 'utf8')
+        console.log(`wrote ${out}`)
+      } else {
+        process.stdout.write(md)
+      }
+      return
+    }
+
+    if (sub === 'delete') {
+      const id = rest[1]
+      if (!id) {
+        console.error('usage: mars feature delete <id>')
+        process.exit(1)
+      }
+      const { deleteIdea } = await import('./mastra/ideas')
+      const ok = await deleteIdea(id)
+      if (!ok) {
+        console.error(`idea ${id} not found`)
+        process.exit(1)
+      }
+      console.log(`deleted ${id}`)
+      return
+    }
+
+    console.error(
+      'usage: mars feature <new|list|show|set|add-acceptance|remove-acceptance|export|delete> ...',
+    )
     process.exit(1)
   }
 
