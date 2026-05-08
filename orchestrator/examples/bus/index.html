@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bus browser client</title>
+    <style>
+      body { font: 14px/1.4 system-ui, sans-serif; margin: 1.5rem; }
+      #status { color: #666; margin-bottom: 1rem; }
+      ul { padding-left: 1rem; }
+      li { font-family: ui-monospace, monospace; margin-bottom: 0.25rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Bus events</h1>
+    <div id="status">…</div>
+    <ul id="events"></ul>
+    <script type="module" src="./dist/browser-client.js"></script>
+  </body>
+</html>

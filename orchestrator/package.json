@@ -30,13 +30,22 @@
     "@mastra/loggers": "^1.1.1",
     "@mastra/memory": "^1.17.2",
     "@mastra/observability": "^1.10.1",
+    "better-sqlite3": "^12.9.0",
     "tsx": "^4.21.0",
+    "ws": "^8.20.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
+    "@types/ws": "^8.5.13",
     "mastra": "^1.7.0",
     "typescript": "^6.0.3",
     "vitest": "^2.1.9"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }
