@@ -1,8 +1,21 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  chmodSync,
+  rmSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { runSubprocessStreaming, runClaudeCode, stripFrontmatter } from '../git'
+import {
+  acquireLock,
+  runSubprocessStreaming,
+  runClaudeCode,
+  stripFrontmatter,
+} from '../git'
 
 describe('stripFrontmatter', () => {
   it('strips a leading YAML frontmatter block', () => {
@@ -62,6 +75,44 @@ describe('runSubprocessStreaming', () => {
     )
     expect(result.exitCode).toBe(0)
     expect(lines).toEqual(['no-newline'])
+  })
+})
+
+describe('acquireLock', () => {
+  let workDir: string
+
+  beforeAll(() => {
+    workDir = mkdtempSync(resolve(tmpdir(), 'mars-lock-'))
+  })
+
+  afterAll(() => {
+    rmSync(workDir, { recursive: true, force: true })
+  })
+
+  it('reclaims a stale lock whose owner pid is dead', async () => {
+    const lockPath = resolve(workDir, 'stale-dead.lock')
+    // Pid 999999 is well above the typical PID_MAX on Linux/macOS, so
+    // process.kill(pid, 0) reliably reports ESRCH.
+    writeFileSync(lockPath, '999999', 'utf8')
+
+    const start = Date.now()
+    const release = await acquireLock(lockPath, 5_000)
+    const elapsed = Date.now() - start
+
+    expect(elapsed).toBeLessThan(2_000)
+    expect(readFileSync(lockPath, 'utf8')).toBe(String(process.pid))
+
+    await release()
+    expect(existsSync(lockPath)).toBe(false)
+  })
+
+  it('reclaims a lock file that is empty or corrupt', async () => {
+    const lockPath = resolve(workDir, 'stale-empty.lock')
+    writeFileSync(lockPath, '   \n', 'utf8')
+
+    const release = await acquireLock(lockPath, 5_000)
+    expect(readFileSync(lockPath, 'utf8')).toBe(String(process.pid))
+    await release()
   })
 })
 
