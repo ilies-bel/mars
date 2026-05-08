@@ -1,6 +1,6 @@
 ---
-description: Alias for /mars:next — pick the next thing to refine and shape it into a well-specified Mars feature
-argument-hint: "[feature-id | suggestion-id | new-goal-text | (empty)]"
+description: Alias for /mars:next — pick the next thing to refine, shape it into a well-specified Mars idea, and curate the project glossary + ADRs as decisions crystallise.
+argument-hint: "[idea-id | suggestion-id | new-goal-text | (empty)]"
 ---
 
 This command is an alias for `/mars:next`. Follow the instructions in
