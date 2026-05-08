@@ -33,7 +33,7 @@ import {
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
-type DispatchKind = 'triage' | 'implement'
+type DispatchKind = 'triage' | 'implement' | 'refine'
 
 interface InFlightEntry {
   taskId: string
@@ -172,8 +172,32 @@ export const startDaemon = async (
     }
   }
 
+  const dispatchRefine = async (
+    taskId: string,
+    refresh: boolean,
+  ): Promise<void> => {
+    if (inFlight.has(taskId)) return
+    const release = trackInFlight(taskId, 'refine')
+    log(`[refine] ${taskId} dispatching (refresh=${refresh})`)
+    try {
+      const { runPlan } = await import('../workflows/plan-workflow')
+      const result = await runPlan(taskId, refresh)
+      log(
+        `[refine] ${taskId} -> questions=${result.questionCount} suggestions=${result.suggestionCount}`,
+      )
+    } catch (err) {
+      log(`[refine] ${taskId} failed: ${(err as Error).message}`)
+    } finally {
+      release()
+    }
+  }
+
   bus.on('task.added', (e: { taskId: string }) => {
     void dispatchTriage(e.taskId)
+  })
+
+  bus.on('task.refine', (e: { taskId: string; refresh: boolean }) => {
+    void dispatchRefine(e.taskId, e.refresh)
   })
 
   bus.on('task.queued', (e: { taskId: string }) => {
@@ -280,6 +304,15 @@ export const startDaemon = async (
     await deleteTask(id)
   }
 
+  const handleRefine = async (id: string, refresh: boolean): Promise<void> => {
+    const task = await getTask(id)
+    if (!task) throw new Error(`task ${id} not found`)
+    if (inFlight.has(id)) {
+      throw new Error(`task ${id} already has a ${inFlight.get(id)?.kind} job in flight`)
+    }
+    bus.emit('task.refine', { taskId: id, refresh })
+  }
+
   const handlePromote = async (suggestionId: string): Promise<{ taskId: string }> => {
     const r = await promoteSuggestion(suggestionId)
     if (!r) throw new Error(`suggestion ${suggestionId} not found or already promoted`)
@@ -350,6 +383,10 @@ export const startDaemon = async (
         case 'promote': {
           const r = await handlePromote(req.suggestionId)
           return { ok: true, data: r }
+        }
+        case 'refine': {
+          await handleRefine(req.id, req.refresh ?? false)
+          return { ok: true }
         }
         case 'status': {
           return { ok: true, data: await handleStatus() }

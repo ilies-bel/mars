@@ -23,6 +23,7 @@ export type DaemonRequest =
   | { op: 'retry'; id: string }
   | { op: 'purge'; id: string }
   | { op: 'promote'; suggestionId: string }
+  | { op: 'refine'; id: string; refresh?: boolean }
   | { op: 'status' }
   | { op: 'shutdown'; force?: boolean }
   | { op: 'ping' }
@@ -34,7 +35,7 @@ export type DaemonResponse =
 export interface DaemonStatusPayload {
   pid: number
   startedAt: string
-  inFlight: ReadonlyArray<{ taskId: string; kind: 'triage' | 'implement' }>
+  inFlight: ReadonlyArray<{ taskId: string; kind: 'triage' | 'implement' | 'refine' }>
   counts: { draft: number; queued: number; running: number; verifying: number; merging: number }
 }
 
