@@ -194,15 +194,57 @@ export const createIdea = async (
   }
 }
 
-export const getIdea = async (id: string): Promise<Idea | null> => {
+export type IdeaIdResolution =
+  | { kind: 'unique'; id: string }
+  | { kind: 'ambiguous'; count: number }
+  | { kind: 'none' }
+
+const MIN_PREFIX_LENGTH = 4
+
+export const resolveIdeaId = async (
+  idOrPrefix: string,
+): Promise<IdeaIdResolution> => {
   await initIdeas()
+  const c = getClient()
+  const exact = await c.execute({
+    sql: `SELECT id FROM ideas WHERE id = ?`,
+    args: [idOrPrefix],
+  })
+  if (exact.rows.length === 1) {
+    return { kind: 'unique', id: (exact.rows[0] as unknown as { id: string }).id }
+  }
+  if (idOrPrefix.length < MIN_PREFIX_LENGTH) return { kind: 'none' }
+  const prefixMatch = await c.execute({
+    sql: `SELECT id FROM ideas WHERE id LIKE ? || '%' LIMIT 2`,
+    args: [idOrPrefix],
+  })
+  if (prefixMatch.rows.length === 0) return { kind: 'none' }
+  if (prefixMatch.rows.length === 1) {
+    return {
+      kind: 'unique',
+      id: (prefixMatch.rows[0] as unknown as { id: string }).id,
+    }
+  }
+  const total = await c.execute({
+    sql: `SELECT COUNT(*) AS n FROM ideas WHERE id LIKE ? || '%'`,
+    args: [idOrPrefix],
+  })
+  const count = Number(
+    (total.rows[0] as unknown as { n: number | bigint }).n ?? 2,
+  )
+  return { kind: 'ambiguous', count }
+}
+
+export const getIdea = async (idOrPrefix: string): Promise<Idea | null> => {
+  const resolved = await resolveIdeaId(idOrPrefix)
+  if (resolved.kind !== 'unique') return null
   const c = getClient()
   const r = await c.execute({
     sql: `SELECT * FROM ideas WHERE id = ?`,
-    args: [id],
+    args: [resolved.id],
   })
   if (r.rows.length === 0) return null
-  const acceptance = await loadAcceptance(c, id)
+  const acceptance = await loadAcceptance(c, resolved.id)
   return rowToIdea(r.rows[0] as unknown as Record<string, unknown>, acceptance)
 }
 

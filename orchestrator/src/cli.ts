@@ -643,9 +643,16 @@ const main = async (): Promise<void> => {
         console.error('usage: mars idea show <id>')
         process.exit(1)
       }
-      const { getIdea } = await import('./mastra/ideas')
+      const { getIdea, resolveIdeaId } = await import('./mastra/ideas')
       const { formatAuthor } = await import('./mastra/author')
-      const idea = await getIdea(id)
+      const resolved = await resolveIdeaId(id)
+      if (resolved.kind === 'ambiguous') {
+        console.error(
+          `ambiguous prefix '${id}' matches ${resolved.count} ideas`,
+        )
+        process.exit(1)
+      }
+      const idea = resolved.kind === 'unique' ? await getIdea(resolved.id) : null
       if (!idea) {
         console.error(`idea ${id} not found`)
         process.exit(1)
@@ -829,8 +836,16 @@ const main = async (): Promise<void> => {
       }
       return
     }
-    const { getIdea } = await import('./mastra/ideas')
-    const idea = await getIdea(id)
+    const { getIdea, resolveIdeaId } = await import('./mastra/ideas')
+    const ideaResolved = await resolveIdeaId(id)
+    if (ideaResolved.kind === 'ambiguous') {
+      console.error(
+        `ambiguous prefix '${id}' matches ${ideaResolved.count} ideas`,
+      )
+      process.exit(1)
+    }
+    const idea =
+      ideaResolved.kind === 'unique' ? await getIdea(ideaResolved.id) : null
     if (idea) {
       console.log(`kind:       idea`)
       console.log(`id:         ${idea.id}`)
