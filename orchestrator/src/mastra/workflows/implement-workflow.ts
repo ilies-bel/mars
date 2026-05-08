@@ -210,54 +210,71 @@ const mergeStep = createStep({
       }
     }
 
-    await updateTask(inputData.taskId, { status: 'merging' })
-    const supervisorConversation: ClaudeEvent[] = []
-    const m = await mergeBranch({
-      branch: inputData.branch,
-      worktreePath: inputData.path,
-      integrationBranch: inputData.integrationBranch,
-      lockTimeoutMs: 5 * 60 * 1000,
-      onSupervisorEvent: async (event) => {
-        supervisorConversation.push(event)
-        await writer?.write({ type: 'vcs-supervisor-event', event })
-      },
-    })
-
-    if (supervisorConversation.length > 0) {
-      const supervisorUsage = summarizeUsage(supervisorConversation)
-      tracingContext?.currentSpan?.update({
-        metadata: {
-          supervisorConversation,
-          supervisorConversationBytes: JSON.stringify(supervisorConversation).length,
-          supervisorUsage,
+    // Any unhandled throw from mergeBranch (e.g. an unexpected git failure)
+    // must transition the task to a terminal status. Otherwise the queue row
+    // stays at 'merging' forever and `mars list` hides the failure.
+    try {
+      await updateTask(inputData.taskId, { status: 'merging' })
+      const supervisorConversation: ClaudeEvent[] = []
+      const m = await mergeBranch({
+        branch: inputData.branch,
+        worktreePath: inputData.path,
+        integrationBranch: inputData.integrationBranch,
+        lockTimeoutMs: 5 * 60 * 1000,
+        onSupervisorEvent: async (event) => {
+          supervisorConversation.push(event)
+          await writer?.write({ type: 'vcs-supervisor-event', event })
         },
       })
-      await recordSignals(inputData.taskId, 'vcs-supervisor', supervisorUsage).catch(() => {
-        // signal capture must never fail the task
-      })
-    }
 
-    if (m.aborted) {
+      if (supervisorConversation.length > 0) {
+        const supervisorUsage = summarizeUsage(supervisorConversation)
+        tracingContext?.currentSpan?.update({
+          metadata: {
+            supervisorConversation,
+            supervisorConversationBytes: JSON.stringify(supervisorConversation).length,
+            supervisorUsage,
+          },
+        })
+        await recordSignals(inputData.taskId, 'vcs-supervisor', supervisorUsage).catch(() => {
+          // signal capture must never fail the task
+        })
+      }
+
+      if (m.aborted) {
+        await updateTask(inputData.taskId, {
+          status: 'failed',
+          error: `merge aborted by vcs-supervisor; worktree retained at ${inputData.path}\n${m.output.slice(0, 1000)}`,
+        })
+        return {
+          taskId: inputData.taskId,
+          success: false,
+          message: 'merge aborted; vcs-supervisor could not reconcile, worktree retained',
+        }
+      }
+
+      await removeWorktree({ path: inputData.path, branch: inputData.branch }, true)
+      await updateTask(inputData.taskId, { status: 'done' })
+
+      return {
+        taskId: inputData.taskId,
+        success: true,
+        message: m.conflictResolved
+          ? 'merged with vcs-supervisor conflict resolution'
+          : 'merged cleanly',
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[merge] task ${inputData.taskId} crashed:`, error)
       await updateTask(inputData.taskId, {
         status: 'failed',
-        error: `merge aborted by vcs-supervisor; worktree retained at ${inputData.path}\n${m.output.slice(0, 1000)}`,
+        error: `merge step crashed: ${message}`.slice(0, 1000),
       })
       return {
         taskId: inputData.taskId,
         success: false,
-        message: 'merge aborted; vcs-supervisor could not reconcile, worktree retained',
+        message: 'merge step crashed; worktree retained',
       }
-    }
-
-    await removeWorktree({ path: inputData.path, branch: inputData.branch }, true)
-    await updateTask(inputData.taskId, { status: 'done' })
-
-    return {
-      taskId: inputData.taskId,
-      success: true,
-      message: m.conflictResolved
-        ? 'merged with vcs-supervisor conflict resolution'
-        : 'merged cleanly',
     }
   },
 })
