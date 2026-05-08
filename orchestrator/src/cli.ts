@@ -103,8 +103,7 @@ Commands:
                                 detected from env/git when omitted: human if
                                 running interactively, agent if MARS_AGENT_NAME
                                 or CLAUDE_CODE/CLAUDECODE is set.
-  idea show <id>                show an idea from .mars/state.db (DB-only; does
-                                not fall back to features/<id>.md)
+  idea show <id>                show an idea from .mars/state.db
   add "<prompt>" [plan flags]   (deprecated) draft a task; lands in 'draft' state
                                 so triage can promote to 'queued'. Prefer
                                 'mars task add' or 'mars idea add'.
@@ -113,8 +112,7 @@ Commands:
   set-technical <id> <text|@file>
                                 set the technical plan on a draft/queued task
   show <id>                     print full detail for an id; tries tasks
-                                (.mars/queue.db), then ideas (.mars/state.db),
-                                then features/<id>.md
+                                (.mars/queue.db), then ideas (.mars/state.db)
   list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed|dropped)
   retry <id>                    re-queue a failed/done task (cleans worktree+branch)
   purge <id>                    delete a failed/done task entirely (worktree+branch+row)
@@ -134,25 +132,6 @@ Commands:
   triage [<task-id>]            run triage once on one draft, or all drafts in
                                 parallel (Haiku assesses actionability + blockers)
   blockers <task-id>            list incomplete blockers on a task
-  feature list [status]         list ideas from .mars/state.db
-  feature show <id>             show an idea from .mars/state.db; falls back to
-                                features/<id>.md if not in DB
-  feature new "<goal>"          create a new idea row in .mars/state.db; prints id
-  feature set <id> <field> <value>
-                                update an idea field (goal|story|technical|status)
-  feature add-acceptance <id> "<bullet>"
-                                append a bullet to the idea's acceptance list
-  feature remove-acceptance <id> <index>
-                                remove the bullet at 0-based index, repacks positions
-  feature export <id> [--out <path>]
-                                render an idea as markdown (frontmatter + Goal +
-                                Story + Acceptance + Technical) to stdout or file
-  feature delete <id>           remove an idea from .mars/state.db (does not
-                                touch features/*.md)
-  feature refine <id> [--refresh]
-                                dispatch the planning workflow on a draft idea
-                                through the daemon (fire-and-forget). --refresh
-                                clears existing questions/suggestions first.
   glossary set "<term>" "<definition>" [--avoid alias1,alias2]
                                 add or update a term in <repo>/CONTEXT.md via a
                                 daemon-routed structured write (fresh worktree
@@ -180,7 +159,7 @@ Commands:
   reject <suggestion-id>        mark a proposed suggestion as rejected; errors
                                 if id is unknown or already accepted/rejected
   next [--json]                 list the next things to refine — draft
-                                features (status=draft) plus proposed
+                                ideas (status=draft) plus proposed
                                 reflection suggestions. Default output is
                                 human-readable; --json prints a structured
                                 payload for the /mars:next skill to consume.
@@ -273,8 +252,7 @@ Subcommands:
       otherwise human with git user.email). Use --author to override,
       e.g. --author agent:vega.
   show <id>
-      Show an idea from .mars/state.db (DB-only; does not fall back to
-      features/<id>.md). <id> must be the full idea slug.`,
+      Show an idea from .mars/state.db. <id> must be the full idea slug.`,
   'set-functional': `mars set-functional <id> <text|@file>
 
 Set the functional plan on a draft/queued task. Use @path to read from a
@@ -286,7 +264,7 @@ file.`,
   show: `mars show <id>
 
 Print full detail for an id. Looks up tasks first (.mars/queue.db),
-then ideas (.mars/state.db), then features/<id>.md markdown.`,
+then ideas (.mars/state.db).`,
   list: `mars list [status]
 
 List tasks. Status one of: draft, queued, running, verifying, merging,
@@ -321,20 +299,6 @@ actionability + blockers.`,
   blockers: `mars blockers <task-id>
 
 List incomplete blockers on a task.`,
-  feature: `mars feature <subcommand> ...
-
-Subcommands:
-  list [status]                       list ideas
-  show <id>                           show an idea (falls back to features/<id>.md)
-  new "<goal>"                        create a new idea row; prints id
-  set <id> <field> <value>            update goal|story|technical|status
-  add-acceptance <id> "<bullet>"      append an acceptance bullet
-  remove-acceptance <id> <index>      remove the bullet at 0-based index
-  export <id> [--out <path>]          render an idea as markdown
-  delete <id>                         remove an idea from .mars/state.db
-  refine <id> [--refresh]             dispatch planning workflow via the daemon
-                                      (fire-and-forget); --refresh clears prior
-                                      questions/suggestions first`,
   glossary: `mars glossary <subcommand> ...
 
 Edit the project glossary at <repo>/CONTEXT.md via deterministic, no-LLM
@@ -395,7 +359,7 @@ unknown, or if the suggestion is already accepted or rejected.`,
   next: `mars next [--json]
 
 List the next things to refine. Sources:
-  - draft features in .mars/state.db (ideas where status='draft')
+  - draft ideas in .mars/state.db (ideas where status='draft')
   - proposed reflection suggestions in .mars/queue.db
     (task_suggestions where status='proposed')
 
@@ -769,30 +733,6 @@ const main = async (): Promise<void> => {
       }
       return
     }
-    const { readFeatureMarkdown } = await import('./mastra/feature-md')
-    const md = readFeatureMarkdown(id)
-    if (md) {
-      console.log(`kind:       idea`)
-      console.log(`id:         ${md.id}`)
-      console.log(`status:     ${md.status}`)
-      console.log(`origin:     ${md.origin}`)
-      console.log(`source:     features/${md.id}.md`)
-      console.log(`goal:`)
-      console.log(md.goal)
-      if (md.story.trim().length > 0) {
-        console.log(`story:`)
-        console.log(md.story)
-      }
-      if (md.acceptance.length > 0) {
-        console.log(`acceptance:`)
-        md.acceptance.forEach((b, i) => console.log(`  [${i}] ${b}`))
-      }
-      if (md.technical.trim().length > 0) {
-        console.log(`technical:`)
-        console.log(md.technical)
-      }
-      return
-    }
     console.error(`no task or idea matching ${id}`)
     process.exit(1)
   }
@@ -984,232 +924,6 @@ const main = async (): Promise<void> => {
       `\nBoth worktrees retained for inspection. cd into either to inspect or run further commands.`,
     )
     return
-  }
-
-  if (cmd === 'feature') {
-    const sub = rest[0]
-
-    if (sub === 'new') {
-      const goal = rest[1]
-      if (!goal) {
-        console.error('usage: mars feature new "<goal>"')
-        process.exit(1)
-      }
-      const { createIdea } = await import('./mastra/ideas')
-      const idea = await createIdea(goal)
-      console.log(idea.id)
-      return
-    }
-
-    if (sub === 'list') {
-      const status = rest[1]
-      const { listIdeas } = await import('./mastra/ideas')
-      const { listFeatureMarkdownIds, readFeatureMarkdown } = await import(
-        './mastra/feature-md'
-      )
-      const ideas = await listIdeas()
-      const seen = new Set<string>()
-      const rows: Array<{ id: string; status: string; goal: string }> = []
-      for (const i of ideas) {
-        if (status && i.status !== status) continue
-        seen.add(i.id)
-        rows.push({ id: i.id, status: i.status, goal: i.goal })
-      }
-      for (const id of listFeatureMarkdownIds()) {
-        if (seen.has(id)) continue
-        const md = readFeatureMarkdown(id)
-        if (!md) continue
-        if (status && md.status !== status) continue
-        seen.add(id)
-        rows.push({ id: md.id, status: md.status, goal: md.goal })
-      }
-      for (const r of rows) {
-        console.log(`${r.id}\t${r.status}\t${r.goal}`)
-      }
-      return
-    }
-
-    if (sub === 'show') {
-      const id = rest[1]
-      if (!id) {
-        console.error('usage: mars feature show <id>')
-        process.exit(1)
-      }
-      const { getIdea } = await import('./mastra/ideas')
-      const { formatAuthor } = await import('./mastra/author')
-      const idea = await getIdea(id)
-      if (idea) {
-        console.log(`id:         ${idea.id}`)
-        console.log(`status:     ${idea.status}`)
-        console.log(`origin:     ${idea.origin}`)
-        console.log(`author:     ${formatAuthor(idea.author)}`)
-        console.log(`createdAt:  ${new Date(idea.createdAt).toISOString()}`)
-        console.log(`updatedAt:  ${new Date(idea.updatedAt).toISOString()}`)
-        console.log(`goal:`)
-        console.log(idea.goal)
-        if (idea.story.trim().length > 0) {
-          console.log(`story:`)
-          console.log(idea.story)
-        }
-        if (idea.acceptance.length > 0) {
-          console.log(`acceptance:`)
-          idea.acceptance.forEach((b, i) => console.log(`  [${i}] ${b}`))
-        }
-        if (idea.technical.trim().length > 0) {
-          console.log(`technical:`)
-          console.log(idea.technical)
-        }
-        return
-      }
-      const { readFeatureMarkdown } = await import('./mastra/feature-md')
-      const md = readFeatureMarkdown(id)
-      if (md) {
-        console.log(`id:         ${md.id}`)
-        console.log(`status:     ${md.status}`)
-        console.log(`origin:     ${md.origin}`)
-        console.log(`source:     features/${md.id}.md`)
-        console.log(`goal:`)
-        console.log(md.goal)
-        if (md.story.trim().length > 0) {
-          console.log(`story:`)
-          console.log(md.story)
-        }
-        if (md.acceptance.length > 0) {
-          console.log(`acceptance:`)
-          md.acceptance.forEach((b, i) => console.log(`  [${i}] ${b}`))
-        }
-        if (md.technical.trim().length > 0) {
-          console.log(`technical:`)
-          console.log(md.technical)
-        }
-        return
-      }
-      console.error(`feature ${id} not found`)
-      process.exit(1)
-    }
-
-    if (sub === 'set') {
-      const id = rest[1]
-      const field = rest[2]
-      const value = rest[3]
-      const allowed = new Set(['goal', 'story', 'technical', 'status'])
-      if (!id || !field || value === undefined || !allowed.has(field)) {
-        console.error(
-          'usage: mars feature set <id> <goal|story|technical|status> <value>',
-        )
-        process.exit(1)
-      }
-      const { setIdeaField } = await import('./mastra/ideas')
-      const ok = await setIdeaField(id, field as never, value)
-      if (!ok) {
-        console.error(`idea ${id} not found`)
-        process.exit(1)
-      }
-      console.log(`updated ${id} ${field}`)
-      return
-    }
-
-    if (sub === 'add-acceptance') {
-      const id = rest[1]
-      const text = rest[2]
-      if (!id || !text) {
-        console.error('usage: mars feature add-acceptance <id> "<bullet>"')
-        process.exit(1)
-      }
-      const { addAcceptance } = await import('./mastra/ideas')
-      const ok = await addAcceptance(id, text)
-      if (!ok) {
-        console.error(`idea ${id} not found`)
-        process.exit(1)
-      }
-      console.log(`added acceptance to ${id}`)
-      return
-    }
-
-    if (sub === 'remove-acceptance') {
-      const id = rest[1]
-      const idxRaw = rest[2]
-      const idx = Number(idxRaw)
-      if (!id || idxRaw === undefined || !Number.isInteger(idx) || idx < 0) {
-        console.error(
-          'usage: mars feature remove-acceptance <id> <index> (0-based)',
-        )
-        process.exit(1)
-      }
-      const { removeAcceptance } = await import('./mastra/ideas')
-      const ok = await removeAcceptance(id, idx)
-      if (!ok) {
-        console.error(`idea ${id} not found, or index out of range`)
-        process.exit(1)
-      }
-      console.log(`removed acceptance[${idx}] from ${id}`)
-      return
-    }
-
-    if (sub === 'export') {
-      const id = rest[1]
-      if (!id) {
-        console.error('usage: mars feature export <id> [--out <path>]')
-        process.exit(1)
-      }
-      const { getIdea, renderIdeaMarkdown } = await import('./mastra/ideas')
-      const idea = await getIdea(id)
-      if (!idea) {
-        console.error(`idea ${id} not found`)
-        process.exit(1)
-      }
-      const md = renderIdeaMarkdown(idea)
-      const out = flags['--out']
-      if (out) {
-        const { writeFileSync } = await import('node:fs')
-        writeFileSync(out, md, 'utf8')
-        console.log(`wrote ${out}`)
-      } else {
-        process.stdout.write(md)
-      }
-      return
-    }
-
-    if (sub === 'delete') {
-      const id = rest[1]
-      if (!id) {
-        console.error('usage: mars feature delete <id>')
-        process.exit(1)
-      }
-      const { deleteIdea } = await import('./mastra/ideas')
-      const ok = await deleteIdea(id)
-      if (!ok) {
-        console.error(`idea ${id} not found`)
-        process.exit(1)
-      }
-      console.log(`deleted ${id}`)
-      return
-    }
-
-    if (sub === 'refine') {
-      const id = rest[1]
-      if (!id) {
-        console.error('usage: mars feature refine <id> [--refresh]')
-        process.exit(1)
-      }
-      const refresh = positional.includes('--refresh')
-      const { sendRequest } = await import('./mastra/daemon/client')
-      await sendRequest(
-        { op: 'refine', id, refresh },
-        {
-          onSpawnNotice: (pid, logFile) => {
-            console.error(`spawned mars daemon (pid ${pid}, log ${logFile})`)
-          },
-        },
-      )
-      console.log(`refine dispatched: ${id}`)
-      return
-    }
-
-    console.error(
-      'usage: mars feature <new|list|show|set|add-acceptance|remove-acceptance|export|delete|refine> ...',
-    )
-    process.exit(1)
   }
 
   if (cmd === 'glossary') {
@@ -1539,7 +1253,7 @@ const main = async (): Promise<void> => {
     }
 
     if (drafts.length === 0 && proposed.length === 0) {
-      console.log('Nothing to refine. Create a draft with: mars feature new "<goal>"')
+      console.log('Nothing to refine. Create a draft with: mars idea add "<goal>"')
       return
     }
 
