@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { computeFailureSignature } from './lib/failure-signature'
+import { getRecipe, type FixRecipeContext } from './lib/fix-recipes'
 import { getClient, getTask, initQueue } from './queue'
 
 const MAX_OCCURRENCES = 5
@@ -99,6 +100,8 @@ export interface UpsertFixSuggestionInput {
   failingStep: string
   truncatedError: string
   branch: string | null
+  recipeSignature?: string
+  recipeContext?: FixRecipeContext
 }
 
 export interface UpsertFixSuggestionResult {
@@ -137,15 +140,28 @@ export const upsertFixSuggestion = async (
 
   const id = randomUUID().slice(0, 8)
   const truncatedError = truncate(input.truncatedError, 2000)
-  const title = `Fix: ${truncate(input.failingStep, 40)} (${input.failureSignature})`
-  const prompt = buildFixPromptBody({
-    sourceTaskId: input.sourceTaskId,
-    failingStep: input.failingStep,
-    failureSignature: input.failureSignature,
-    truncatedError,
-    branch: input.branch,
-    occurrence,
-  })
+  let title: string
+  let prompt: string
+  if (input.recipeSignature) {
+    if (!input.recipeContext) {
+      throw new Error(
+        `recipeContext is required when recipeSignature is set (signature=${input.recipeSignature})`,
+      )
+    }
+    const recipe = getRecipe(input.recipeSignature)
+    title = recipe.title(input.recipeContext)
+    prompt = recipe.buildPrompt(input.recipeContext)
+  } else {
+    title = `Fix: ${truncate(input.failingStep, 40)} (${input.failureSignature})`
+    prompt = buildFixPromptBody({
+      sourceTaskId: input.sourceTaskId,
+      failingStep: input.failingStep,
+      failureSignature: input.failureSignature,
+      truncatedError,
+      branch: input.branch,
+      occurrence,
+    })
+  }
   const rationale = `Auto-created by failure-handler for task ${input.sourceTaskId}.`
   await c.execute({
     sql: `INSERT INTO task_suggestions (id, source_task_id, title, prompt, rationale, status, kind, failure_signature, created_at)
@@ -191,6 +207,8 @@ export interface HandleTaskFailureInput {
   failingStep: string
   errorOutput: string
   branch?: string | null
+  recipeSignature?: string
+  recipeContext?: FixRecipeContext
 }
 
 export interface HandleTaskFailureResult {
@@ -207,10 +225,9 @@ export const handleTaskFailure = async (
   const task = await getTask(input.taskId)
   if (!task) return { outcome: 'noop' }
 
-  const failureSignature = computeFailureSignature(
-    input.failingStep,
-    input.errorOutput,
-  )
+  const failureSignature = input.recipeSignature
+    ? input.recipeSignature
+    : computeFailureSignature(input.failingStep, input.errorOutput)
   const budget = getRetryBudget()
 
   if (task.retryCount >= budget) {
@@ -233,6 +250,8 @@ export const handleTaskFailure = async (
     failingStep: input.failingStep,
     truncatedError,
     branch,
+    recipeSignature: input.recipeSignature,
+    recipeContext: input.recipeContext,
   })
 
   const nextRetryCount = task.retryCount + 1

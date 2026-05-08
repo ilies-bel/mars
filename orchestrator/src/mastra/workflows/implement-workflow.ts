@@ -8,6 +8,7 @@ import {
   runClaudeCode,
   verifyChanges,
   mergeBranch,
+  checkMergeTargetStatus,
 } from '../lib/git'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import { hasIncompleteBlockers, updateTask } from '../queue'
@@ -240,6 +241,48 @@ const mergeStep = createStep({
     // stays at 'merging' forever and `mars list` hides the failure.
     try {
       await updateTask(inputData.taskId, { status: 'merging' })
+
+      const targetStatus = await checkMergeTargetStatus()
+      if (targetStatus.kind === 'dirty') {
+        const errorMsg = `merge target has uncommitted changes; cannot fast-forward into ${inputData.integrationBranch}`
+        await updateTask(inputData.taskId, {
+          status: 'failed',
+          error: errorMsg,
+        })
+        await handleTaskFailure({
+          taskId: inputData.taskId,
+          failingStep: 'merge:preflight',
+          errorOutput: targetStatus.statusOutput,
+          branch: inputData.branch,
+          recipeSignature: 'dirty_merge_target',
+          recipeContext: {
+            targetPath: targetStatus.targetPath,
+            statusOutput: targetStatus.statusOutput,
+            targetBranch: inputData.integrationBranch,
+          },
+        }).catch((err) => {
+          console.error(
+            `[failure-handler] task ${inputData.taskId} dirty-merge-target handling errored:`,
+            err,
+          )
+        })
+        return {
+          taskId: inputData.taskId,
+          success: false,
+          message: `merge pre-flight detected dirty target ${inputData.integrationBranch}; worktree retained`,
+        }
+      }
+      if (targetStatus.kind === 'error') {
+        await updateTask(inputData.taskId, {
+          status: 'failed',
+          error: `merge pre-flight git status failed: ${targetStatus.error.message}`.slice(0, 1000),
+        })
+        return {
+          taskId: inputData.taskId,
+          success: false,
+          message: `merge pre-flight failed: ${targetStatus.error.message}`,
+        }
+      }
       const supervisorConversation: ClaudeEvent[] = []
       const m = await mergeBranch({
         branch: inputData.branch,
