@@ -1,5 +1,5 @@
 ---
-name: mars-reflect
+name: mars:reflect
 description: Run `mars reflect` to synthesize draft task suggestions from recent completed Mars tasks, then surface the resulting proposals via `mars suggestions`. Use when the user says "reflect on past sessions", "reflect on recent tasks", "what should we do next based on history", or invokes `/mars:reflect`.
 ---
 
