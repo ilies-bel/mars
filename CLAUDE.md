@@ -4,8 +4,8 @@
 
 A modular, lean, future-proof AI coding agent team behind a single TypeScript
 CLI (`mars`). The repo bundles the framework, the orchestrator that runs
-Claude Code in parallel git worktrees, and design drafts for a local read-only
-UI.
+Claude Code in parallel git worktrees, the local read-only frontend (`ui/`),
+and its design drafts (`design/`).
 
 Installed globally via `install.sh`: clones into `~/.mars`, builds a
 standalone `mars` binary with Bun, symlinks `~/.local/bin/mars`.
@@ -24,7 +24,8 @@ the single source of truth for outstanding work in this repo.
 | Path | Purpose |
 | --- | --- |
 | `orchestrator/` | **mars** — Mastra-driven orchestrator. Runs Claude Code headless in parallel git worktrees, verifies (typecheck/test/lint), then fast-forwards into `integration`. Conflicts dispatched to bundled `vcs-supervisor` ("Vega") agent. State per-target-repo at `.mars/`. Node `>=22.13.0`. See `orchestrator/README.md` and `orchestrator/AGENTS.md`. |
-| `design/` | UI design drafts (v0) for `mars ui` — a read-only local viewer for Mars runs. Three views (Topology / Runs / Run timeline), single shell, SSE event stream. Foreground only, port 7777. CLI is the only control surface. |
+| `ui/` | Local read-only frontend for Mars runs. Three views (Topology / Runs / Run timeline), single shell, SSE event stream. Foreground only, port 7777. CLI is the only control surface — the UI never mutates state. |
+| `design/` | Design drafts (v0) that `ui/` is built from. Source-of-truth for layout/IA decisions; not shipped at runtime. |
 | `.mars/` | Unified per-repo state for both the Mars CLI and the orchestrator: `state.db` (CLI), `queue.db` (LibSQL task queue), `mastra.db` (Mastra workflow runs/traces), `worktrees/<task-id>/`, `.merge.lock`. Gitignored. |
 | `.worktrees/` | Git worktrees created by the orchestrator for parallel task execution. |
 | `.agents/` | Agent skill definitions consumed by the framework. |
