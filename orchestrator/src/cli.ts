@@ -18,6 +18,7 @@ const FLAGS_WITH_VALUES = new Set([
   '--technical-file',
   '--since',
   '--limit',
+  '--variants',
 ])
 
 const parseArgs = (argv: readonly string[]): ParsedArgs => {
@@ -101,6 +102,13 @@ Commands:
   purge <id>                    delete a failed/done task entirely (worktree+branch+row)
   run                           dispatch all queued tasks (unlimited parallel);
                                 also runs the triage watcher for drafts
+  ab "<instruction>" --variants <path>
+                                run an A/B experiment: same instruction, two
+                                configurable variants from the JSON file (must
+                                contain exactly 2 entries: { prompt, model?,
+                                systemPrompt? }), pinned to the same base SHA,
+                                judged by an LLM rubric. No merge — both
+                                worktrees are retained.
   triage [<task-id>]            run triage once on one draft, or all drafts in
                                 parallel (Haiku assesses actionability + blockers)
   blockers <task-id>            list incomplete blockers on a task
@@ -442,6 +450,111 @@ const main = async (): Promise<void> => {
       }
     }
     await triageWatcher.stop()
+    return
+  }
+
+  if (cmd === 'ab') {
+    const instruction = rest.join(' ')
+    if (!instruction) {
+      console.error('usage: mars ab "<instruction>" --variants <path-to-json>')
+      process.exit(1)
+    }
+    const variantsPath = flags['--variants']
+    if (!variantsPath) {
+      console.error('mars ab requires --variants <path-to-json>')
+      process.exit(1)
+    }
+    let variantsJson: unknown
+    try {
+      variantsJson = JSON.parse(readFileSync(variantsPath, 'utf8'))
+    } catch (err) {
+      console.error(`failed to read/parse ${variantsPath}: ${(err as Error).message}`)
+      process.exit(1)
+    }
+    if (!Array.isArray(variantsJson) || variantsJson.length !== 2) {
+      console.error('--variants JSON must be an array of exactly 2 entries')
+      process.exit(1)
+    }
+    const branch = process.env.INTEGRATION_BRANCH ?? 'integration'
+    const { mastra } = await import('./mastra/index')
+    const wf = mastra.getWorkflow('abExperimentWorkflow')
+    const run = await wf.createRun()
+    const result = await run.start({
+      inputData: {
+        instruction,
+        variants: variantsJson,
+        integrationBranch: branch,
+      },
+    })
+    if (result.status !== 'success') {
+      const err = 'error' in result && result.error instanceof Error
+        ? result.error.message
+        : '(no error message)'
+      console.error(`ab experiment ${result.status}: ${err}`)
+      process.exit(1)
+    }
+    const report = result.result as {
+      experimentId: string
+      baseSha: string
+      instruction: string
+      variants: ReadonlyArray<{
+        label: 'A' | 'B'
+        worktreePath: string
+        branch: string
+        usage: {
+          inputTokens: number
+          outputTokens: number
+          cacheCreateTokens: number
+          cacheReadTokens: number
+          totalCostUsd: number
+          messageCount: number
+        }
+        verifyResult: { passed: boolean; steps: ReadonlyArray<{ name: string; passed: boolean }> }
+        wallClockMs: number
+        diff: { changedFiles: string[]; additions: number; deletions: number; patchTruncated: boolean }
+        rubric: {
+          correctness: number
+          completeness: number
+          unnecessaryChanges: number
+          mistakes: string[]
+          rationale: string
+        }
+      }>
+      judgeRationale: string
+      tokensWinner: 'A' | 'B' | 'tie'
+    }
+    console.log(`\n=== A/B experiment ${report.experimentId} ===`)
+    console.log(`base SHA: ${report.baseSha}`)
+    console.log(`instruction: ${report.instruction}`)
+    for (const v of report.variants) {
+      console.log(`\n--- Variant ${v.label} ---`)
+      console.log(`  worktree:       ${v.worktreePath}`)
+      console.log(`  branch:         ${v.branch}`)
+      console.log(`  wallClock:      ${(v.wallClockMs / 1000).toFixed(1)}s`)
+      console.log(`  tokens (in):    ${v.usage.inputTokens}`)
+      console.log(`  tokens (out):   ${v.usage.outputTokens}`)
+      console.log(`  cache create:   ${v.usage.cacheCreateTokens}`)
+      console.log(`  cache read:     ${v.usage.cacheReadTokens}`)
+      console.log(`  cost (USD):     ${v.usage.totalCostUsd.toFixed(4)}`)
+      console.log(`  verify passed:  ${v.verifyResult.passed}`)
+      console.log(
+        `  diff:           ${v.diff.changedFiles.length} files, +${v.diff.additions}/-${v.diff.deletions}${v.diff.patchTruncated ? ' (truncated)' : ''}`,
+      )
+      console.log(`  rubric:`)
+      console.log(`    correctness:        ${v.rubric.correctness}/10`)
+      console.log(`    completeness:       ${v.rubric.completeness}/10`)
+      console.log(`    unnecessaryChanges: ${v.rubric.unnecessaryChanges}/10`)
+      if (v.rubric.mistakes.length > 0) {
+        console.log(`    mistakes:`)
+        for (const m of v.rubric.mistakes) console.log(`      - ${m}`)
+      }
+      console.log(`    rationale: ${v.rubric.rationale}`)
+    }
+    console.log(`\nJudge: ${report.judgeRationale}`)
+    console.log(`Token-efficiency winner: ${report.tokensWinner}`)
+    console.log(
+      `\nBoth worktrees retained for inspection. cd into either to inspect or run further commands.`,
+    )
     return
   }
 
