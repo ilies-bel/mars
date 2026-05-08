@@ -15,6 +15,7 @@ import {
   deleteTask,
   enqueueTask,
   getTask,
+  hasIncompleteBlockers,
   initQueue,
   listTasks,
   updateTask,
@@ -114,7 +115,11 @@ export const startDaemon = async (
       if (result.actionable) {
         const t = await getTask(taskId)
         if (t?.status === 'queued') {
-          bus.emit('task.queued', { taskId })
+          if (await hasIncompleteBlockers(taskId)) {
+            log(`[triage] ${taskId} actionable but has incomplete blockers; not dispatching`)
+          } else {
+            bus.emit('task.queued', { taskId })
+          }
         }
       }
     } catch (err) {
@@ -140,17 +145,28 @@ export const startDaemon = async (
           integrationBranch,
         },
       })
+      const { isBlockersAbortError } = await import('../workflows/implement-workflow')
+      const resultError = 'error' in result && result.error instanceof Error ? result.error : null
+      if (result.status === 'failed' && resultError && isBlockersAbortError(resultError)) {
+        log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
+        return
+      }
       log(`[implement] ${task.id} -> ${result.status}`)
       bus.emit('task.completed', { taskId: task.id, status: result.status })
     } catch (err) {
       const message = (err as Error).message
-      log(`[implement] ${task.id} failed: ${message}`)
-      try {
-        await updateTask(task.id, { status: 'failed', error: message })
-      } catch {
-        // best-effort
+      const { isBlockersAbortError } = await import('../workflows/implement-workflow')
+      if (isBlockersAbortError(err)) {
+        log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
+      } else {
+        log(`[implement] ${task.id} failed: ${message}`)
+        try {
+          await updateTask(task.id, { status: 'failed', error: message })
+        } catch {
+          // best-effort
+        }
+        bus.emit('task.failed', { taskId: task.id, error: message })
       }
-      bus.emit('task.failed', { taskId: task.id, error: message })
     } finally {
       release()
     }
@@ -164,6 +180,10 @@ export const startDaemon = async (
     void (async () => {
       const task = await getTask(e.taskId)
       if (task && task.status === 'queued') {
+        if (await hasIncompleteBlockers(task.id)) {
+          log(`[dispatch] ${task.id} blocked; deferring until blockers complete`)
+          return
+        }
         void dispatchImplement(task)
       }
     })()
