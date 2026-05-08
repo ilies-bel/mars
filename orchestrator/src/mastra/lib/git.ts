@@ -4,6 +4,7 @@ import { resolve, dirname } from 'node:path'
 import { open, mkdir, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { getRepoRoot, getStateDir } from '../context'
+import { parseClaudeStreamLine, type ClaudeEvent } from './claude-stream'
 
 const exec = promisify(execFile)
 
@@ -49,58 +50,124 @@ export interface RunSubprocessResult {
   stderr: string
 }
 
-export const runSubprocess = (
+export interface SubprocessLine {
+  stream: 'stdout' | 'stderr'
+  line: string
+}
+
+export const runSubprocessStreaming = (
   cmd: string,
   args: readonly string[],
   cwd: string,
+  onLine?: (event: SubprocessLine) => void | Promise<void>,
 ): Promise<RunSubprocessResult> =>
   new Promise((resolveFn) => {
     const child = spawn(cmd, args, { cwd, env: process.env })
     let stdout = ''
     let stderr = ''
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString()
-    })
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString()
-    })
+    const buffers: Record<'stdout' | 'stderr', string> = { stdout: '', stderr: '' }
+
+    const handleChunk = (stream: 'stdout' | 'stderr', chunk: Buffer | string) => {
+      const text = chunk.toString()
+      if (stream === 'stdout') stdout += text
+      else stderr += text
+      if (!onLine) return
+      buffers[stream] += text
+      let newlineIndex = buffers[stream].indexOf('\n')
+      while (newlineIndex !== -1) {
+        const line = buffers[stream].slice(0, newlineIndex).replace(/\r$/, '')
+        buffers[stream] = buffers[stream].slice(newlineIndex + 1)
+        try {
+          void onLine({ stream, line })
+        } catch {
+          // Swallow handler errors — they must not abort the subprocess capture.
+        }
+        newlineIndex = buffers[stream].indexOf('\n')
+      }
+    }
+
+    child.stdout.on('data', (chunk) => handleChunk('stdout', chunk))
+    child.stderr.on('data', (chunk) => handleChunk('stderr', chunk))
     child.on('close', (code) => {
+      if (onLine) {
+        for (const stream of ['stdout', 'stderr'] as const) {
+          if (buffers[stream].length > 0) {
+            const line = buffers[stream].replace(/\r$/, '')
+            buffers[stream] = ''
+            try {
+              void onLine({ stream, line })
+            } catch {
+              // Swallow handler errors — final flush must not throw.
+            }
+          }
+        }
+      }
       resolveFn({ exitCode: code ?? 1, stdout, stderr })
     })
   })
+
+export const runSubprocess = (
+  cmd: string,
+  args: readonly string[],
+  cwd: string,
+): Promise<RunSubprocessResult> => runSubprocessStreaming(cmd, args, cwd)
 
 export interface RunClaudeArgs {
   cwd: string
   prompt: string
   timeoutMs: number
+  onEvent?: (event: ClaudeEvent) => void | Promise<void>
 }
 
 export interface RunClaudeResult extends RunSubprocessResult {
   sessionId: string | null
+  conversation: ClaudeEvent[]
+}
+
+const extractSessionIdFromConversation = (
+  conversation: ClaudeEvent[],
+): string | null => {
+  for (const event of conversation) {
+    const sid = (event as { session_id?: unknown }).session_id
+    if (typeof sid === 'string' && sid.length > 0) return sid
+  }
+  return null
 }
 
 const extractSessionId = (stdout: string): string | null => {
   const trimmed = stdout.trim()
   if (!trimmed) return null
-  try {
-    const parsed = JSON.parse(trimmed) as { session_id?: unknown }
-    if (typeof parsed.session_id === 'string') return parsed.session_id
-  } catch {
-    // Fall through to regex scan in case stdout isn't a single JSON document.
-  }
   const match = trimmed.match(/"session_id"\s*:\s*"([^"]+)"/)
   return match?.[1] ?? null
 }
+
+const claudeStreamArgs = (prompt: string): readonly string[] => [
+  '-p',
+  prompt,
+  '--output-format',
+  'stream-json',
+  '--verbose',
+  '--dangerously-skip-permissions',
+]
 
 export const runClaudeCode = async ({
   cwd,
   prompt,
   timeoutMs,
+  onEvent,
 }: RunClaudeArgs): Promise<RunClaudeResult> => {
-  const work = runSubprocess(
+  const conversation: ClaudeEvent[] = []
+  const work = runSubprocessStreaming(
     'claude',
-    ['-p', prompt, '--output-format', 'json', '--dangerously-skip-permissions'],
+    claudeStreamArgs(prompt),
     cwd,
+    async ({ stream, line }) => {
+      if (stream !== 'stdout') return
+      const event = parseClaudeStreamLine(line)
+      if (!event) return
+      conversation.push(event)
+      if (onEvent) await onEvent(event)
+    },
   )
   const timeout = new Promise<RunSubprocessResult>((resolveFn) =>
     setTimeout(
@@ -114,7 +181,9 @@ export const runClaudeCode = async ({
     ),
   )
   const result = await Promise.race([work, timeout])
-  return { ...result, sessionId: extractSessionId(result.stdout) }
+  const sessionId =
+    extractSessionIdFromConversation(conversation) ?? extractSessionId(result.stdout)
+  return { ...result, sessionId, conversation }
 }
 
 export interface VerifyStep {
@@ -191,6 +260,7 @@ export interface MergeArgs {
   branch: string
   integrationBranch: string
   lockTimeoutMs: number
+  onSupervisorEvent?: (event: ClaudeEvent) => void | Promise<void>
 }
 
 export interface MergeResult {
@@ -198,6 +268,7 @@ export interface MergeResult {
   conflictResolved: boolean
   aborted: boolean
   output: string
+  supervisorConversation: ClaudeEvent[]
 }
 
 let cachedSupervisorSpec: string | null = null
@@ -243,16 +314,29 @@ Verification commands for this repo:
 End with the Completion Report block exactly as specified above.`
 }
 
+interface InvokeSupervisorResult extends RunSubprocessResult {
+  conversation: ClaudeEvent[]
+}
+
 const invokeVcsSupervisor = async (
   branch: string,
   integrationBranch: string,
   timeoutMs: number,
-): Promise<RunSubprocessResult> => {
+  onEvent?: (event: ClaudeEvent) => void | Promise<void>,
+): Promise<InvokeSupervisorResult> => {
   const prompt = await buildSupervisorPrompt(branch, integrationBranch)
-  const work = runSubprocess(
+  const conversation: ClaudeEvent[] = []
+  const work = runSubprocessStreaming(
     'claude',
-    ['-p', prompt, '--dangerously-skip-permissions'],
+    claudeStreamArgs(prompt),
     repoRoot(),
+    async ({ stream, line }) => {
+      if (stream !== 'stdout') return
+      const event = parseClaudeStreamLine(line)
+      if (!event) return
+      conversation.push(event)
+      if (onEvent) await onEvent(event)
+    },
   )
   const timeout = new Promise<RunSubprocessResult>((resolveFn) =>
     setTimeout(
@@ -265,7 +349,8 @@ const invokeVcsSupervisor = async (
       timeoutMs,
     ),
   )
-  return Promise.race([work, timeout])
+  const result = await Promise.race([work, timeout])
+  return { ...result, conversation }
 }
 
 const isMergeInProgress = async (): Promise<boolean> => {
@@ -281,6 +366,7 @@ export const mergeBranch = async ({
   branch,
   integrationBranch,
   lockTimeoutMs,
+  onSupervisorEvent,
 }: MergeArgs): Promise<MergeResult> => {
   const release = await acquireLock(
     resolve(getStateDir(), '.merge.lock'),
@@ -296,10 +382,21 @@ export const mergeBranch = async ({
         { cwd: repoRoot() },
       )
       output = r.stdout + r.stderr
-      return { merged: true, conflictResolved: false, aborted: false, output }
+      return {
+        merged: true,
+        conflictResolved: false,
+        aborted: false,
+        output,
+        supervisorConversation: [],
+      }
     } catch (mergeError: unknown) {
       const supervisorTimeoutMs = 30 * 60 * 1000
-      const sup = await invokeVcsSupervisor(branch, integrationBranch, supervisorTimeoutMs)
+      const sup = await invokeVcsSupervisor(
+        branch,
+        integrationBranch,
+        supervisorTimeoutMs,
+        onSupervisorEvent,
+      )
       output = sup.stdout + sup.stderr
 
       const stillInProgress = await isMergeInProgress()
@@ -310,10 +407,17 @@ export const mergeBranch = async ({
           conflictResolved: false,
           aborted: true,
           output: `vcs-supervisor failed (exit ${sup.exitCode}); merge aborted.\n${output}`,
+          supervisorConversation: sup.conversation,
         }
       }
 
-      return { merged: true, conflictResolved: true, aborted: false, output }
+      return {
+        merged: true,
+        conflictResolved: true,
+        aborted: false,
+        output,
+        supervisorConversation: sup.conversation,
+      }
     }
   } finally {
     await release()

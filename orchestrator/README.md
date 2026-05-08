@@ -78,6 +78,29 @@ Add `/.mars/` to the target repo's `.gitignore`.
 - `INTEGRATION_BRANCH` — target branch for merges (default `integration`).
 - `MARS_REPO` — target repo path (overrides cwd-based detection).
 
+## Observing Claude runs in Studio
+
+Both Claude dispatches (the `code` step and the `vcs-supervisor` invocation in
+`merge`) capture the full Claude Code conversation in two places:
+
+- **Live stream** — each parsed event from `claude -p --output-format stream-json --verbose`
+  is forwarded to the workflow's `writer.write(...)`. In Studio, while the run
+  is in flight, watch the step's run-stream view to see `claude-event` /
+  `vcs-supervisor-event` items arrive in real time.
+- **Persisted span metadata** — at step end the conversation is attached to
+  the step span via `tracingContext.currentSpan.update({ metadata: { ... } })`.
+  After a run completes, open Studio → Run history → click the step →
+  **Metadata** tab. The `code` step exposes `conversation`, `claudeSessionId`,
+  and `conversationBytes`. The `merge` step exposes `supervisorConversation`
+  and `supervisorConversationBytes` (only populated when a conflict triggered
+  the supervisor).
+
+Trim policy: assistant text and reasoning are kept in full. Tool calls with
+input larger than 2 KB and tool results larger than 4 KB are replaced with
+`{ truncated: true, originalBytes, head }` (first 2 KB of the JSON payload)
+to keep `.mars/mastra.db` small. Operators can monitor the
+`conversationBytes` field on the step span to spot pathological growth.
+
 ## Failure handling
 
 - Verify gate fails → task marked `failed`, worktree retained at `.mars/worktrees/<taskId>`.
