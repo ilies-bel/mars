@@ -1,6 +1,7 @@
 import { createClient, type Client } from '@libsql/client'
 import { randomBytes } from 'node:crypto'
 import { resolveContext } from './context'
+import type { Author, AuthorKind } from './author'
 
 export type IdeaStatus = 'draft' | 'queued' | 'planning' | 'done' | 'failed'
 export type IdeaField = 'goal' | 'story' | 'technical' | 'status'
@@ -12,6 +13,7 @@ export interface Idea {
   technical: string
   status: string
   origin: string
+  author: Author | null
   createdAt: number
   updatedAt: number
   acceptance: string[]
@@ -52,6 +54,16 @@ export const initIdeas = async (): Promise<void> => {
       FOREIGN KEY(idea_id) REFERENCES ideas(id) ON DELETE CASCADE
     )
   `)
+  const cols = await c.execute(`PRAGMA table_info(ideas)`)
+  const colNames = new Set(
+    cols.rows.map((r) => (r as unknown as { name: string }).name),
+  )
+  if (!colNames.has('author_kind')) {
+    await c.execute(`ALTER TABLE ideas ADD COLUMN author_kind TEXT`)
+  }
+  if (!colNames.has('author_name')) {
+    await c.execute(`ALTER TABLE ideas ADD COLUMN author_name TEXT`)
+  }
   await migrateLegacyFeatures(c)
   initialised = true
 }
@@ -119,17 +131,26 @@ export const generateIdeaId = (goal: string): string => {
 const rowToIdea = (
   row: Record<string, unknown>,
   acceptance: string[],
-): Idea => ({
-  id: row.id as string,
-  goal: (row.goal as string | null) ?? '',
-  story: (row.story as string | null) ?? '',
-  technical: (row.technical as string | null) ?? '',
-  status: (row.status as string | null) ?? 'draft',
-  origin: (row.origin as string | null) ?? 'user',
-  createdAt: Number(row.created_at ?? 0),
-  updatedAt: Number(row.updated_at ?? 0),
-  acceptance,
-})
+): Idea => {
+  const authorKindRaw = (row.author_kind as string | null) ?? null
+  const authorName = (row.author_name as string | null) ?? null
+  const author: Author | null =
+    authorKindRaw === 'human' || authorKindRaw === 'agent'
+      ? { kind: authorKindRaw as AuthorKind, name: authorName ?? 'unknown' }
+      : null
+  return {
+    id: row.id as string,
+    goal: (row.goal as string | null) ?? '',
+    story: (row.story as string | null) ?? '',
+    technical: (row.technical as string | null) ?? '',
+    status: (row.status as string | null) ?? 'draft',
+    origin: (row.origin as string | null) ?? 'user',
+    author,
+    createdAt: Number(row.created_at ?? 0),
+    updatedAt: Number(row.updated_at ?? 0),
+    acceptance,
+  }
+}
 
 const loadAcceptance = async (
   c: Client,
@@ -142,15 +163,25 @@ const loadAcceptance = async (
   return r.rows.map((row) => (row as unknown as { text: string }).text)
 }
 
-export const createIdea = async (goal: string): Promise<Idea> => {
+export interface CreateIdeaOptions {
+  author?: Author
+}
+
+export const createIdea = async (
+  goal: string,
+  opts?: CreateIdeaOptions,
+): Promise<Idea> => {
   await initIdeas()
   const c = getClient()
   const id = generateIdeaId(goal)
   const now = Date.now()
+  const origin = opts?.author?.kind === 'agent' ? 'agent' : 'user'
+  const authorKind = opts?.author?.kind ?? null
+  const authorName = opts?.author?.name ?? null
   await c.execute({
-    sql: `INSERT INTO ideas (id, goal, story, technical, status, origin, created_at, updated_at)
-          VALUES (?, ?, '', '', 'draft', 'user', ?, ?)`,
-    args: [id, goal, now, now],
+    sql: `INSERT INTO ideas (id, goal, story, technical, status, origin, author_kind, author_name, created_at, updated_at)
+          VALUES (?, ?, '', '', 'draft', ?, ?, ?, ?, ?)`,
+    args: [id, goal, origin, authorKind, authorName, now, now],
   })
   return {
     id,
@@ -158,7 +189,8 @@ export const createIdea = async (goal: string): Promise<Idea> => {
     story: '',
     technical: '',
     status: 'draft',
-    origin: 'user',
+    origin,
+    author: opts?.author ?? null,
     createdAt: now,
     updatedAt: now,
     acceptance: [],

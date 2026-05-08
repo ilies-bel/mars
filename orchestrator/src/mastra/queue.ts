@@ -1,6 +1,7 @@
 import { createClient, type Client } from '@libsql/client'
 import { randomUUID } from 'node:crypto'
 import { resolveContext } from './context'
+import type { Author, AuthorKind } from './author'
 
 export type TaskStatus =
   | 'draft'
@@ -42,6 +43,7 @@ export interface Task {
   worktreePath: string | null
   claudeSessionId: string | null
   error: string | null
+  author: Author | null
   createdAt: string
   updatedAt: string
 }
@@ -84,6 +86,12 @@ export const initQueue = async (): Promise<void> => {
   }
   if (!names.has('claude_session_id')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN claude_session_id TEXT`)
+  }
+  if (!names.has('author_kind')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN author_kind TEXT`)
+  }
+  if (!names.has('author_name')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN author_name TEXT`)
   }
   await c.execute(`
     CREATE TABLE IF NOT EXISTS questions (
@@ -159,6 +167,12 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     functional !== null || technical !== null
       ? { functional: functional ?? '', technical: technical ?? '' }
       : null
+  const authorKindRaw = (row.author_kind as string | null) ?? null
+  const authorName = (row.author_name as string | null) ?? null
+  const author: Author | null =
+    authorKindRaw === 'human' || authorKindRaw === 'agent'
+      ? { kind: authorKindRaw as AuthorKind, name: authorName ?? 'unknown' }
+      : null
   return {
     id: row.id as string,
     prompt: row.prompt as string,
@@ -168,6 +182,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     worktreePath: (row.worktree_path as string | null) ?? null,
     claudeSessionId: (row.claude_session_id as string | null) ?? null,
     error: (row.error as string | null) ?? null,
+    author,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -175,6 +190,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
 
 export interface EnqueueTaskOptions {
   skipTriage?: boolean
+  author?: Author
 }
 
 export const enqueueTask = async (
@@ -186,9 +202,21 @@ export const enqueueTask = async (
   const id = randomUUID().slice(0, 8)
   const now = new Date().toISOString()
   const status: TaskStatus = opts?.skipTriage ? 'queued' : 'draft'
+  const authorKind = opts?.author?.kind ?? null
+  const authorName = opts?.author?.name ?? null
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    args: [id, prompt, status, plan?.functional ?? null, plan?.technical ?? null, now, now],
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      id,
+      prompt,
+      status,
+      plan?.functional ?? null,
+      plan?.technical ?? null,
+      authorKind,
+      authorName,
+      now,
+      now,
+    ],
   })
   const r = await getClient().execute({
     sql: `SELECT * FROM tasks WHERE id = ?`,
