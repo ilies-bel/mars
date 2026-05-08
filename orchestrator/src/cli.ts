@@ -116,6 +116,9 @@ Commands:
   list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed|dropped)
   retry <id>                    re-queue a failed/done task (cleans worktree+branch)
   purge <id>                    delete a failed/done task entirely (worktree+branch+row)
+  unblock <id>                  flip a 'blocked' task to 'failed' (clears phantom
+                                blocker_id and any task_blockers rows). Use when a
+                                task is stuck on a blocker that no longer exists.
   watch [--detach|--stop|--status|--force]
                                 run the orchestration daemon (foreground by default);
                                 CLI write ops auto-spawn it. --detach forks to
@@ -780,6 +783,26 @@ const main = async (): Promise<void> => {
     const { sendRequest } = await import('./mastra/daemon/client')
     await sendRequest({ op: cmd, id })
     console.log(cmd === 'retry' ? `queued ${id} for retry` : `purged ${id}`)
+    return
+  }
+
+  if (cmd === 'unblock') {
+    const id = rest[0]
+    if (!id) {
+      console.error(`usage: mars unblock <id>`)
+      process.exit(1)
+    }
+    const { sendRequest } = await import('./mastra/daemon/client')
+    const data = (await sendRequest({ op: 'unblock', id })) as {
+      taskId: string
+      outcome: 'unblocked' | 'noop'
+      previousStatus: string
+    }
+    if (data.outcome === 'unblocked') {
+      console.log(`unblocked ${data.taskId} (was ${data.previousStatus}; now failed). Use 'mars retry ${data.taskId}' to re-queue.`)
+    } else {
+      console.log(`task ${data.taskId} is ${data.previousStatus}; nothing to unblock`)
+    }
     return
   }
 

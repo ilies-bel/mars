@@ -18,8 +18,10 @@ import {
   hasIncompleteBlockers,
   initQueue,
   listTasks,
+  unblockTask,
   updateTask,
   type Task,
+  type UnblockTaskResult,
 } from '../queue'
 import { promoteSuggestion } from '../queue-suggestions'
 import {
@@ -444,6 +446,10 @@ export const startDaemon = async (
     await deleteTask(id)
   }
 
+  const handleUnblock = async (id: string): Promise<UnblockTaskResult> => {
+    return unblockTask(id)
+  }
+
   const handleRefine = async (id: string, refresh: boolean): Promise<void> => {
     const task = await getTask(id)
     if (!task) throw new Error(`task ${id} not found`)
@@ -570,6 +576,10 @@ export const startDaemon = async (
         case 'purge': {
           await handlePurge(req.id)
           return { ok: true }
+        }
+        case 'unblock': {
+          const result = await handleUnblock(req.id)
+          return { ok: true, data: result }
         }
         case 'promote': {
           const r = await handlePromote(req.suggestionId)
