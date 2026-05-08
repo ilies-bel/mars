@@ -195,6 +195,31 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_blockers_blocker ON task_blockers(blocker_task_id)
   `)
+  await healBlobPrompts(c)
+}
+
+const healBlobPrompts = async (c: Client): Promise<void> => {
+  const r = await c.execute(
+    `SELECT count(*) AS n FROM tasks WHERE typeof(prompt) = 'blob'`,
+  )
+  const n = Number((r.rows[0] as unknown as { n: number | bigint }).n)
+  if (n > 0) {
+    await c.execute(
+      `UPDATE tasks SET prompt = CAST(prompt AS TEXT) WHERE typeof(prompt) = 'blob'`,
+    )
+  }
+}
+
+const coerceToString = (value: unknown, label: string): string => {
+  if (typeof value === 'string') return value
+  if (value instanceof Uint8Array) return new TextDecoder('utf-8').decode(value)
+  if (value instanceof ArrayBuffer) {
+    return new TextDecoder('utf-8').decode(new Uint8Array(value))
+  }
+  if (Buffer.isBuffer(value)) return value.toString('utf8')
+  throw new TypeError(
+    `${label} must be a string; got ${value === null ? 'null' : typeof value}`,
+  )
 }
 
 const rowToTask = (row: Record<string, unknown>): Task => {
@@ -212,7 +237,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
       : null
   return {
     id: row.id as string,
-    prompt: row.prompt as string,
+    prompt: coerceToString(row.prompt, 'rowToTask: prompt'),
     status: row.status as TaskStatus,
     plan,
     branch: (row.branch as string | null) ?? null,
@@ -238,6 +263,7 @@ export const enqueueTask = async (
   plan?: TaskPlan,
   opts?: EnqueueTaskOptions,
 ): Promise<Task> => {
+  const promptText = coerceToString(prompt, 'enqueueTask: prompt')
   await initQueue()
   const id = randomUUID().slice(0, 8)
   const now = new Date().toISOString()
@@ -248,7 +274,7 @@ export const enqueueTask = async (
     sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
-      prompt,
+      promptText,
       status,
       plan?.functional ?? null,
       plan?.technical ?? null,

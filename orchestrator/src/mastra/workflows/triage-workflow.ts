@@ -53,7 +53,7 @@ const buildTaskGraph = (tasks: readonly Task[], excludeId: string): string => {
     .filter((t) => t.id !== excludeId && t.status !== 'done')
     .slice(-TASK_GRAPH_LIMIT)
     .map((t) => {
-      const preview = t.prompt.replace(/\s+/g, ' ').slice(0, PROMPT_PREVIEW_CHARS)
+      const preview = String(t.prompt).replace(/\s+/g, ' ').slice(0, PROMPT_PREVIEW_CHARS)
       return `${t.id} | ${t.status} | ${preview}`
     })
   return rows.length === 0 ? '(no other tasks)' : rows.join('\n')
