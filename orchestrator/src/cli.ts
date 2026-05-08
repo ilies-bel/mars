@@ -167,12 +167,141 @@ Other env:
                            'mars reflect'. Scorers stay attached either way.
 `
 
+const HELP_FLAGS = new Set(['--help', '-h', 'help'])
+
+const COMMAND_HELP: Record<string, string> = {
+  init: `mars init [--force] [--no-fetch] [--dry-run] [--refresh] [--verbose]
+
+Detect tech stack and generate specialized supervisors in
+.mars/supervisors/ (skeleton + workflow contract). Recurses into
+subdirectories (depth cap 6) to merge manifests from monorepo layouts;
+honors .gitignore and skips .git, node_modules, .mars, .worktrees, dist,
+build, .next, target, out, plus git submodules.
+
+Flags:
+  --force       overwrite existing supervisors
+  --no-fetch    skip pulling specialist knowledge from the network
+  --dry-run     show detected stack and proposed supervisors only
+  --refresh     bypass the 7-day specialist cache
+  --verbose     list discovered manifests on stderr`,
+  add: `mars add "<prompt>" [plan flags]
+
+Draft a task. Lands in 'draft' state; triage promotes it to 'queued' once
+actionable.
+
+Plan flags:
+  --functional <text|@file>   functional plan text (or @path to read a file)
+  --func <text|@file>         alias for --functional
+  --technical <text|@file>    technical plan text (or @path to read a file)
+  --tech <text|@file>         alias for --technical
+  --functional-file <path>    read functional plan from a file
+  --technical-file <path>     read technical plan from a file`,
+  'set-functional': `mars set-functional <id> <text|@file>
+
+Set the functional plan on a draft/queued task. Use @path to read from a
+file.`,
+  'set-technical': `mars set-technical <id> <text|@file>
+
+Set the technical plan on a draft/queued task. Use @path to read from a
+file.`,
+  show: `mars show <id>
+
+Print full task incl. plan sections.`,
+  list: `mars list [status]
+
+List tasks. Status one of: draft, queued, running, verifying, merging,
+done, failed. Defaults to all when omitted.`,
+  retry: `mars retry <id>
+
+Re-queue a failed/done task. Cleans the worktree and branch first.`,
+  purge: `mars purge <id>
+
+Delete a failed/done task entirely (worktree + branch + row). Refuses
+in-flight tasks.`,
+  watch: `mars watch [--detach|--stop|--status|--force]
+
+Run the orchestration daemon (foreground by default). CLI write ops
+auto-spawn it.
+
+Flags:
+  --detach   fork to background
+  --stop     ask the daemon to exit (refuses if tasks are in flight)
+  --status   print inFlight + queue counts
+  --force    with --stop, exit even if tasks are in flight`,
+  ab: `mars ab "<instruction>" --variants <path>
+
+Run an A/B experiment: same instruction, two configurable variants from
+the JSON file (must contain exactly 2 entries: { prompt, model?,
+systemPrompt? }), pinned to the same base SHA, judged by an LLM rubric.
+No merge — both worktrees are retained.`,
+  triage: `mars triage [<task-id>]
+
+Run triage once on one draft, or all drafts in parallel. Haiku assesses
+actionability + blockers.`,
+  blockers: `mars blockers <task-id>
+
+List incomplete blockers on a task.`,
+  feature: `mars feature <subcommand> ...
+
+Subcommands:
+  list [status]                       list ideas merged with on-disk drafts
+  show <id>                           show an idea (falls back to features/<id>.md)
+  new "<goal>"                        create a new idea row; prints id
+  set <id> <field> <value>            update goal|story|technical|status
+  add-acceptance <id> "<bullet>"      append an acceptance bullet
+  remove-acceptance <id> <index>      remove the bullet at 0-based index
+  export <id> [--out <path>]          render an idea as markdown
+  delete <id>                         remove an idea from .mars/state.db`,
+  reflect: `mars reflect [--since <iso>] [--limit <n>]
+
+Synthesize draft task suggestions from recent completed tasks. Reads
+token + scorer signals from .mars/queue.db and .mars/mastra.db. Default:
+last 10 completed tasks. Suggestions are inserted as proposals — never
+auto-run. Disable signal capture entirely with the env var
+MARS_REFLECT_DISABLED=1.
+
+Flags:
+  --since <iso>   only reflect on tasks completed after this ISO timestamp
+  --limit <n>     max number of tasks to include (default: 10)`,
+  suggestions: `mars suggestions [status]
+
+List reflection suggestions. Status defaults to all; common values:
+proposed, accepted.`,
+  promote: `mars promote <suggestion-id>
+
+Enqueue a suggestion as a task; marks the suggestion accepted and links
+the new task id.`,
+  where: `mars where
+
+Print resolved repo + state directory.`,
+  help: `mars help [command]
+
+Show top-level help, or detailed help for a single command. Equivalent
+to 'mars <command> --help'.`,
+}
+
+const printCommandHelp = (cmd: string): boolean => {
+  const text = COMMAND_HELP[cmd]
+  if (!text) return false
+  console.log(text)
+  return true
+}
+
 const main = async (): Promise<void> => {
   const { repo, flags, positional } = parseArgs(process.argv.slice(2))
   const cmd = positional[0]
   const rest = positional.slice(1)
 
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
+    // 'mars help <cmd>' or 'mars --help <cmd>' prints per-command help.
+    const target = rest[0]
+    if (target && printCommandHelp(target)) return
+    console.log(usage)
+    return
+  }
+
+  if (rest.some((a) => HELP_FLAGS.has(a))) {
+    if (printCommandHelp(cmd)) return
     console.log(usage)
     return
   }
