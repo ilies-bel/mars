@@ -19,7 +19,8 @@ const outputSchema = z.object({
 
 export const verifyPassedScorer = createScorer({
   id: 'verify-passed',
-  description: '1 if typecheck/test/lint all passed in the verify step, 0 otherwise',
+  description:
+    '1 if typecheck/test/lint all passed in the verify step, 0 otherwise',
   type: { input: inputSchema, output: outputSchema },
 })
   .generateScore(({ run }) => (run.output.verified ? 1 : 0))
