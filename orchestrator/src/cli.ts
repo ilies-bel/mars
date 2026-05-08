@@ -581,21 +581,53 @@ const main = async (): Promise<void> => {
     const { loadRecentTaskCorpus } = await import('./mastra/lib/reflect-query')
     const { runReflector, persistSuggestions } = await import('./mastra/lib/reflector')
     const corpus = await loadRecentTaskCorpus({ sinceIso, limit })
-    if (corpus.length === 0) {
+    if (corpus.entries.length === 0) {
       console.log('no completed tasks in window — nothing to reflect on')
       return
     }
-    console.log(`reflecting over ${corpus.length} task(s)…`)
+    const cs = corpus.costSummary
+    console.log(
+      `reflecting over ${corpus.entries.length} task(s) — total spend $${cs.totalCostUsd.toFixed(4)} (${cs.successCount} done / ${cs.failureCount} failed)…`,
+    )
     const result = await runReflector(corpus)
+    if (result.costAnalysis) {
+      const ca = result.costAnalysis
+      console.log('\nCost analysis')
+      if (ca.headline) console.log(`  ${ca.headline}`)
+      if (ca.cacheHealth) {
+        console.log(
+          `  cache: ratio=${ca.cacheHealth.ratio.toFixed(2)} (${ca.cacheHealth.verdict}) — ${ca.cacheHealth.evidence}`,
+        )
+      }
+      if (ca.successVsFailureSpend) {
+        const s = ca.successVsFailureSpend
+        console.log(
+          `  success vs failure spend: $${s.successUsd.toFixed(4)} vs $${s.failureUsd.toFixed(4)} — ${s.verdict}`,
+        )
+      }
+      for (const t of ca.expensiveTasks) {
+        console.log(
+          `  expensive task ${t.taskId}: $${t.costUsd.toFixed(4)} (${t.multipleOfMedian.toFixed(1)}× median) — ${t.rootCause}`,
+        )
+      }
+      for (const s of ca.expensiveSteps) {
+        console.log(
+          `  expensive step ${s.stepId}: $${s.totalCostUsd.toFixed(4)} (${s.verdict}) — ${s.evidence}`,
+        )
+      }
+      if (ca.notes) console.log(`  notes: ${ca.notes}`)
+    }
     if (result.suggestions.length === 0) {
-      console.log('no suggestions produced')
+      console.log('\nno suggestions produced')
       if (result.exitCode !== 0) {
         console.error(`reflector exit code ${result.exitCode}`)
       }
       return
     }
-    const sourceTaskId = `reflect-${new Date().toISOString()}`
+    const { insertReflectionTask } = await import('./mastra/queue')
+    const sourceTaskId = await insertReflectionTask(corpus.entries.length)
     await persistSuggestions(result.suggestions, sourceTaskId)
+    console.log('\nSuggestions')
     for (const s of result.suggestions) {
       console.log(`- ${s.title}`)
       if (s.rationale) console.log(`    ${s.rationale}`)
