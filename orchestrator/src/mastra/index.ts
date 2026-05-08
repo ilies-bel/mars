@@ -10,12 +10,18 @@ import {
 } from '@mastra/observability'
 import { implementWorkflow } from './workflows/implement-workflow'
 import { initWorkflow } from './workflows/init-workflow'
+import { verifyPassedScorer } from './scorers/verify-passed'
+import { mergeCleanScorer } from './scorers/merge-clean'
 import { resolveContext } from './context'
 
 const { mastraDbPath } = resolveContext()
 
 export const mastra = new Mastra({
   workflows: { implementWorkflow, initWorkflow },
+  scorers: {
+    verifyPassed: verifyPassedScorer,
+    mergeClean: mergeCleanScorer,
+  },
   storage: new MastraCompositeStore({
     id: 'composite-storage',
     default: new LibSQLStore({
