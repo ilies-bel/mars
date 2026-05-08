@@ -7,9 +7,11 @@ import {
   removeWorktree,
   runClaudeCode,
   verifyChanges,
+  loadVerifySteps,
   mergeBranch,
   checkMergeTargetStatus,
 } from '../lib/git'
+import { resolveContext } from '../context'
 import {
   installWorktreeDeps,
   WorktreeInstallError,
@@ -222,11 +224,13 @@ const verifyStep = createStep({
   execute: async ({ inputData }) => {
     await updateTask(inputData.taskId, { status: 'verifying' })
     const verifyCwd = resolveVerifyCwd(inputData.path)
+    const ctx = resolveContext()
+    const steps = await loadVerifySteps(ctx.supervisorsManifest)
     const r = await verifyChanges({
       cwd: verifyCwd,
-      typecheckCmd: ['npx', ['tsc', '--noEmit']],
-      testCmd: ['npm', ['test', '--silent']],
-      lintCmd: ['npx', ['biome', 'check', '.']],
+      steps,
+      branch: inputData.branch,
+      integrationBranch: inputData.integrationBranch,
     })
 
     if (!isReflectDisabled()) {

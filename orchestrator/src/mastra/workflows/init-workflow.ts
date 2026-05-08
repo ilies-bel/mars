@@ -19,13 +19,75 @@ import {
   validateSupervisor,
 } from '../../init/render'
 
+const verifyStepSchema = z.object({
+  name: z.string(),
+  cmd: z.string(),
+  args: z.array(z.string()),
+  required: z.boolean(),
+})
+
 const supervisorSpecSchema = z.object({
   name: z.string(),
   persona: z.string(),
   kind: z.enum(['frontend', 'backend', 'infra', 'mobile', 'specialized']),
   detectedFrom: z.array(z.string()),
   externalSlugs: z.array(z.string()),
+  verify: z.array(verifyStepSchema).optional(),
 })
+
+interface VerifyStepEntry {
+  name: string
+  cmd: string
+  args: string[]
+  required: boolean
+}
+
+const VERIFY_DEFAULTS_BY_SUPERVISOR: Record<string, VerifyStepEntry[]> = {
+  'node-backend-supervisor': [
+    { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
+    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+    { name: 'lint', cmd: 'npx', args: ['biome', 'check', '.'], required: false },
+  ],
+  'react-supervisor': [
+    { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
+    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+    { name: 'lint', cmd: 'npx', args: ['biome', 'check', '.'], required: false },
+  ],
+  'vue-supervisor': [
+    { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
+    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+  ],
+  'svelte-supervisor': [
+    { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
+    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+  ],
+  'angular-supervisor': [
+    { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
+    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+  ],
+  'go-supervisor': [
+    { name: 'test', cmd: 'go', args: ['test', './...'], required: true },
+    { name: 'vet', cmd: 'go', args: ['vet', './...'], required: false },
+  ],
+  'rust-supervisor': [
+    { name: 'test', cmd: 'cargo', args: ['test'], required: true },
+    { name: 'clippy', cmd: 'cargo', args: ['clippy', '--', '-D', 'warnings'], required: false },
+  ],
+  'python-backend-supervisor': [
+    { name: 'test', cmd: 'pytest', args: ['-q'], required: true },
+  ],
+  'flutter-supervisor': [
+    { name: 'analyze', cmd: 'flutter', args: ['analyze'], required: true },
+    { name: 'test', cmd: 'flutter', args: ['test'], required: true },
+  ],
+  'ios-supervisor': [],
+  'android-supervisor': [
+    { name: 'build', cmd: './gradlew', args: ['assembleDebug'], required: true },
+  ],
+}
+
+const verifyDefaultsFor = (supervisorName: string): VerifyStepEntry[] | undefined =>
+  VERIFY_DEFAULTS_BY_SUPERVISOR[supervisorName]
 
 const stackSchema = z.object({
   languages: z.array(z.string()),
@@ -199,6 +261,7 @@ const writeStep = createStep({
       const filePath = resolve(ctx.supervisorsDir, `${r.spec.name}.md`)
       writeFileSync(filePath, r.content, 'utf8')
       written.push(relative(ctx.repoRoot, filePath))
+      const verify = verifyDefaultsFor(r.spec.name)
       return {
         name: r.spec.name,
         persona: r.spec.persona,
@@ -208,6 +271,7 @@ const writeStep = createStep({
         triedSlugs: r.triedSlugs,
         externalSource: r.externalSource,
         lines: r.content.split('\n').length,
+        ...(verify ? { verify } : {}),
       }
     })
 

@@ -228,11 +228,18 @@ export interface VerifyStep {
   output: string
 }
 
+export interface VerifyStepSpec {
+  name: string
+  cmd: string
+  args: readonly string[]
+  required: boolean
+}
+
 export interface VerifyArgs {
   cwd: string
-  typecheckCmd: readonly [string, readonly string[]]
-  testCmd: readonly [string, readonly string[]]
-  lintCmd: readonly [string, readonly string[]]
+  steps: ReadonlyArray<VerifyStepSpec>
+  branch?: string
+  integrationBranch?: string
 }
 
 const runVerifyStep = async (
@@ -257,19 +264,133 @@ const runVerifyStep = async (
   }
 }
 
+export const checkBranchHasDiff = async (
+  cwd: string,
+  branch: string,
+  integrationBranch: string,
+): Promise<VerifyStep> => {
+  try {
+    const { stdout } = await exec(
+      'git',
+      ['rev-list', '--count', `${integrationBranch}..${branch}`],
+      { cwd },
+    )
+    const count = Number.parseInt(stdout.trim(), 10)
+    if (!Number.isInteger(count) || count <= 0) {
+      return {
+        name: 'has-diff',
+        passed: false,
+        output: 'no commits ahead of integration branch — task did not produce any changes',
+      }
+    }
+    return { name: 'has-diff', passed: true, output: `${count} commit(s) ahead of ${integrationBranch}` }
+  } catch (error: unknown) {
+    const e = error as { stdout?: string; stderr?: string; message?: string }
+    return {
+      name: 'has-diff',
+      passed: false,
+      output: `git rev-list failed: ${(e.stderr ?? '') + (e.message ?? '')}`,
+    }
+  }
+}
+
 export const verifyChanges = async (
   args: VerifyArgs,
 ): Promise<{ passed: boolean; steps: VerifyStep[] }> => {
-  const steps: VerifyStep[] = []
-  steps.push(await runVerifyStep('typecheck', args.typecheckCmd[0], args.typecheckCmd[1], args.cwd))
-  if (steps[0].passed) {
-    steps.push(await runVerifyStep('test', args.testCmd[0], args.testCmd[1], args.cwd))
+  if (args.branch && args.integrationBranch) {
+    const diffStep = await checkBranchHasDiff(args.cwd, args.branch, args.integrationBranch)
+    if (!diffStep.passed) {
+      return { passed: false, steps: [diffStep] }
+    }
   }
-  if (steps[1]?.passed) {
-    steps.push(await runVerifyStep('lint', args.lintCmd[0], args.lintCmd[1], args.cwd))
+
+  const results: VerifyStep[] = []
+  let stoppedOnRequired = false
+  for (const spec of args.steps) {
+    if (stoppedOnRequired && spec.required) continue
+    const result = await runVerifyStep(spec.name, spec.cmd, spec.args, args.cwd)
+    results.push(result)
+    if (!result.passed && spec.required) {
+      stoppedOnRequired = true
+    }
   }
-  return { passed: steps.every((s) => s.passed), steps }
+
+  const requiredFailed = args.steps.some((spec, i) => {
+    const r = results[i]
+    return spec.required && r && !r.passed
+  })
+  return { passed: !requiredFailed && !stoppedOnRequired, steps: results }
 }
+
+const DEFAULT_VERIFY_STEPS: VerifyStepSpec[] = [
+  { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
+  { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+  { name: 'lint', cmd: 'npx', args: ['biome', 'check', '.'], required: true },
+]
+
+interface ManifestSupervisorEntry {
+  name?: string
+  scope?: string
+  verify?: ReadonlyArray<{
+    name: string
+    cmd: string
+    args: readonly string[]
+    required?: boolean
+  }>
+}
+
+interface SupervisorsManifest {
+  supervisors?: ReadonlyArray<ManifestSupervisorEntry>
+}
+
+const scopeDepth = (scope: string | undefined): number => {
+  if (!scope || scope === '.' || scope === '') return 0
+  return scope.split('/').filter(Boolean).length
+}
+
+export const loadVerifySteps = async (
+  manifestPath: string,
+): Promise<VerifyStepSpec[]> => {
+  let raw: string
+  try {
+    raw = await readFile(manifestPath, 'utf8')
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [...DEFAULT_VERIFY_STEPS]
+    }
+    throw error
+  }
+  let parsed: SupervisorsManifest
+  try {
+    parsed = JSON.parse(raw) as SupervisorsManifest
+  } catch {
+    return [...DEFAULT_VERIFY_STEPS]
+  }
+  const supervisors = parsed.supervisors ?? []
+  const byName = new Map<string, { spec: VerifyStepSpec; depth: number }>()
+  for (const sup of supervisors) {
+    const verify = sup.verify
+    if (!verify || verify.length === 0) continue
+    const depth = scopeDepth(sup.scope)
+    for (const v of verify) {
+      const spec: VerifyStepSpec = {
+        name: v.name,
+        cmd: v.cmd,
+        args: [...v.args],
+        required: v.required ?? true,
+      }
+      const existing = byName.get(v.name)
+      if (!existing || depth < existing.depth) {
+        byName.set(v.name, { spec, depth })
+      }
+    }
+  }
+  if (byName.size === 0) return [...DEFAULT_VERIFY_STEPS]
+  return Array.from(byName.values()).map((e) => e.spec)
+}
+
+export const DEFAULT_VERIFY_STEPS_FALLBACK: ReadonlyArray<VerifyStepSpec> =
+  DEFAULT_VERIFY_STEPS
 
 const isPidAlive = (pid: number): boolean => {
   try {
