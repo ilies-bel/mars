@@ -730,6 +730,17 @@ const main = async (): Promise<void> => {
       if (task.blockerId) {
         console.log(`blockerId:  ${task.blockerId}`)
       }
+      if (task.fixForTaskId) {
+        console.log(`fixForTask: ${task.fixForTaskId}`)
+      }
+      if (task.failureSignature) {
+        console.log(`failureSig: ${task.failureSignature}`)
+      }
+      const { listBlockers } = await import('./mastra/queue')
+      const blockerTaskIds = await listBlockers(task.id)
+      if (blockerTaskIds.length > 0) {
+        console.log(`blockedBy:  ${blockerTaskIds.join(', ')}`)
+      }
       return
     }
     const { getIdea } = await import('./mastra/ideas')
