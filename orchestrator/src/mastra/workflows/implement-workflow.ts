@@ -17,9 +17,12 @@ import { summarizeUsage } from '../lib/claude-usage'
 import { recordSignals } from '../lib/reflect-signals'
 
 const resolveVerifyCwd = (worktreeRoot: string): string => {
-  if (existsSync(resolve(worktreeRoot, 'package.json'))) return worktreeRoot
+  const hasProject = (dir: string): boolean =>
+    existsSync(resolve(dir, 'package.json')) &&
+    existsSync(resolve(dir, 'tsconfig.json'))
+  if (hasProject(worktreeRoot)) return worktreeRoot
   const orchestrator = resolve(worktreeRoot, 'orchestrator')
-  if (existsSync(resolve(orchestrator, 'package.json'))) return orchestrator
+  if (hasProject(orchestrator)) return orchestrator
   return worktreeRoot
 }
 
