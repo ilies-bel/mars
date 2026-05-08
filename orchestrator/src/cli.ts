@@ -598,7 +598,18 @@ const main = async (): Promise<void> => {
       console.log(`${idea.id} (author: ${formatAuthor(author)})`)
       return
     }
-    console.error('usage: mars idea <add> ...')
+    if (sub === 'new') {
+      const goal = rest.slice(1).join(' ')
+      if (!goal) {
+        console.error('usage: mars idea new "<goal>"')
+        process.exit(1)
+      }
+      const { createIdea } = await import('./mastra/ideas')
+      const idea = await createIdea(goal)
+      console.log(idea.id)
+      return
+    }
+    console.error('usage: mars idea <add|new> ...')
     process.exit(1)
   }
 
