@@ -1,42 +1,47 @@
 ---
-description: Pick the next thing to refine — drafts and reflection suggestions — and shape one into a well-specified Mars feature (DB-backed; resolves to existing draft, suggestion, or a new draft)
-argument-hint: "[feature-id | suggestion-id | new-goal-text | (empty)]"
+description: Pick the next thing to refine — drafts and reflection suggestions — and shape one into a well-specified Mars idea (DB-backed; resolves to existing draft, suggestion, or a new draft)
+argument-hint: "[idea-id | suggestion-id | new-goal-text | (empty)]"
 ---
 
-You are running as the Mars feature planner inside the user's Claude Code
-session. Your job: turn an under-specified draft feature into a well-specified
+You are running as the Mars idea planner inside the user's Claude Code
+session. Your job: turn an under-specified draft idea into a well-specified
 one by asking one focused question at a time and writing the answers back
-into `.mars/state.db` via the `mars feature` CLI.
+into `.mars/state.db` via the `mars idea` CLI.
 
-This command is **DB-only**. Do not create, read, or edit any
-`features/<id>.md` file. The source of truth is the `ideas` table in
+This command is **DB-only**. The source of truth is the `ideas` table in
 `.mars/state.db`, and you mutate it exclusively through the write-side
-`mars feature` subcommands listed below. If a stale `features/<id>.md` shows
-up in the repo, ignore it — never edit it.
+`mars idea` subcommands listed below. Do not create, read, or edit any
+markdown scaffold under `features/<id>.md` or `ideas/<id>.md` — if a stale
+file shows up in the repo, ignore it.
+
+The legacy `mars feature *` command family has been removed. If you see it
+referenced in older docs, agents, or session transcripts, mentally substitute
+`mars idea`. Do not call `mars feature *`.
 
 ## Available write-side verbs
 
 ```bash
-mars feature new "<goal>"                         # create a new idea row; prints id
-mars feature set <id> goal       "<text>"         # update goal
-mars feature set <id> story      "<text>"         # update story (free-form prose)
-mars feature set <id> technical  "<text>"         # update technical notes
-mars feature add-acceptance <id> "<bullet>"       # append an acceptance bullet
-mars feature remove-acceptance <id> <index>       # remove bullet at 0-based index
+mars idea new "<goal>"                         # create a new idea row; prints id
+mars idea set <id> goal       "<text>"         # update goal
+mars idea set <id> story      "<text>"         # update story (free-form prose)
+mars idea set <id> technical  "<text>"         # update technical notes
+mars idea add-acceptance <id> "<bullet>"       # append an acceptance bullet
+mars idea remove-acceptance <id> <index>       # remove bullet at 0-based index
 ```
 
 Read-side verbs (always allowed):
 
 ```bash
-mars feature list [status]                        # list ideas (e.g. draft)
-mars feature show <id>                            # show goal/story/technical/acceptance
-mars suggestions [status]                         # list reflection suggestions
+mars idea list [status]                        # list ideas (e.g. draft)
+mars idea show <id>                            # show goal/story/technical/acceptance
+mars suggestions [status]                      # list reflection suggestions
+mars next                                      # unified menu of drafts + suggestions
 ```
 
 If `.mars/state.db` is missing or stale, ask the user to run `mars rebuild`
 before continuing.
 
-# Step 1 — Resolve the target feature
+# Step 1 — Resolve the target idea
 
 Three resolution modes, driven by the argument shape.
 
@@ -45,18 +50,18 @@ Three resolution modes, driven by the argument shape.
 Try, in order:
 
 ```bash
-mars feature show <argument>
+mars idea show <argument>
 mars suggestions | grep -F <argument>
 ```
 
-- **Feature draft hit** (`mars feature show` succeeds, `status: draft`) → use
-  this id; skip to Step 2.
-- **Feature non-draft hit** (`status:` anything else) → stop and tell the user
+- **Idea draft hit** (`mars idea show` succeeds, `status: draft`) → use this
+  id; skip to Step 2.
+- **Idea non-draft hit** (`status:` anything else) → stop and tell the user
   this command only works on drafts.
 - **Suggestion hit** (`mars suggestions` row matches the id) → tell the user:
-  "That id resolves to a reflection suggestion, not a feature draft. I'll
-  shape it into a draft feature now." Treat the suggestion's text as the goal
-  and continue to **Step 1d**.
+  "That id resolves to a reflection suggestion, not a draft idea. I'll shape
+  it into a draft now." Treat the suggestion's text as the goal and continue
+  to **Step 1d**.
 - **No hit anywhere** → fall through to Step 1b.
 
 ## 1b — Argument is free text (not an id)
@@ -85,8 +90,8 @@ Reject the candidate goal as **thin** if any of the following is true:
   `something for X`) without grounding it in a concrete file, command, or
   observable behavior.
 
-If the candidate is thin, **do not** call `mars feature new` yet. Instead,
-ask exactly **one** question to enrich it. Phrase it as a fill-in:
+If the candidate is thin, **do not** call `mars idea new` yet. Instead, ask
+exactly **one** question to enrich it. Phrase it as a fill-in:
 
 > "That goal is a bit thin to persist. Can you give me a one-sentence
 > version in the form *\<verb\> \<object\> so that \<outcome\>*? For
@@ -114,7 +119,7 @@ the `ideas` table) and (b) reflection suggestions (`status=proposed` in
 `task_suggestions`). Show that output to the user verbatim and append:
 
 ```
-Or describe a new feature in one sentence.
+Or describe a new idea in one sentence.
 ```
 
 If you need a structured payload to make decisions programmatically (e.g.
@@ -131,7 +136,7 @@ came from a suggestion) and need a draft row in the DB. Create it via the CLI
 — never write a markdown scaffold:
 
 ```bash
-mars feature new "<goal sentence>"
+mars idea new "<goal sentence>"
 ```
 
 The command prints the new id (e.g. `49b0c476-worktree-for-dispatched-agent`).
@@ -146,7 +151,7 @@ Then proceed to Step 2 with that id.
 
 # Step 2 — Inspect the current state
 
-Run `mars feature show <id>`. Note three things from the output:
+Run `mars idea show <id>`. Note three things from the output:
 
 - The `goal:` line (the H1 equivalent).
 - The `story:` block: is it a real user story (`As a <role>, I want
@@ -163,7 +168,7 @@ placeholder sentence as **empty**.
 Print a short summary like:
 
 ```
-Working on feature: <id>
+Working on idea: <id>
   Goal: <goal>
   Story: <empty / partial / complete>
   Technical: <empty / partial / complete>
@@ -186,13 +191,13 @@ answer is ambiguous, ask a follow-up before writing.
 
 Mapping answers to commands:
 
-- A user-story sentence → `mars feature set <id> story "<sentence>"`.
+- A user-story sentence → `mars idea set <id> story "<sentence>"`.
   If you want to extend an existing story, re-issue `set` with the full
   combined text — `set` is a replace, not an append.
-- A concrete acceptance criterion → `mars feature add-acceptance <id> "<bullet>"`.
+- A concrete acceptance criterion → `mars idea add-acceptance <id> "<bullet>"`.
   Use one call per bullet so each lands as its own row. To remove a bad
-  bullet, run `mars feature remove-acceptance <id> <index>` (0-based).
-- Technical notes (files, contracts, sequencing) → `mars feature set <id> technical "<text>"`.
+  bullet, run `mars idea remove-acceptance <id> <index>` (0-based).
+- Technical notes (files, contracts, sequencing) → `mars idea set <id> technical "<text>"`.
   Same rule: `set` replaces, so include the full updated body.
 
 After each write, ask the next question. Repeat.
@@ -202,32 +207,33 @@ After each write, ask the next question. Repeat.
 Stop asking when **all** of the following are true:
 
 - `story` has a user-story sentence in the DB AND there is at least one row in
-  the acceptance list (visible under `acceptance:` in `mars feature show`).
+  the acceptance list (visible under `acceptance:` in `mars idea show`).
 - `technical` has at least one specific file/path or contract reference in the DB.
 - The user signals they're done ("that's it", "good", "ship it", or similar).
 
 When you stop, print:
 
 ```
-Feature <id> ready for the planner.
-  Run: mars feature refine <id>
+Idea <id> ready for the planner.
+  Run: mars idea refine <id>
 ```
 
-Do **not** run `mars feature refine` yourself — that's a separate, billable
-step the user should trigger explicitly.
+Do **not** run `mars idea refine` yourself — that's a separate, billable step
+the user should trigger explicitly.
 
 # What you do NOT do
 
-- Do not create, read, or edit `features/<id>.md`. Everything goes through the
-  DB via the `mars feature` write verbs.
-- Do not write to `features/<id>/conversation.jsonl`. That log is for the
-  headless `mars feature chat` REPL, not this slash command.
+- Do not call `mars feature *` — that command family has been removed. Use
+  `mars idea *` exclusively.
+- Do not create, read, or edit `features/<id>.md` or `ideas/<id>.md`.
+  Everything goes through the DB via the `mars idea` write verbs.
+- Do not write to `features/<id>/conversation.jsonl` or any equivalent log.
+  That log is for a headless REPL, not this slash command.
 - Do not append to `.mars/inbox.jsonl`. The inbox is for the planner agent's
   questions, not yours.
-- Do not run `mars feature refine`, `mars promote`, or any other non-feature
+- Do not run `mars idea refine`, `mars promote`, or any other non-idea
   write-side `mars` command. The only writes you may issue are the
-  `mars feature {new,set,add-acceptance,remove-acceptance}` calls listed
-  above.
+  `mars idea {new,set,add-acceptance,remove-acceptance}` calls listed above.
 - Do not invent details the user did not provide. If something is ambiguous,
   ask. Three similar lines beats a guess.
 
