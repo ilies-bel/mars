@@ -11,6 +11,7 @@ import {
 } from '../lib/git'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import { hasIncompleteBlockers, updateTask } from '../queue'
+import { handleTaskFailure } from '../queue-fix-suggestions'
 
 export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} has incomplete blockers; aborting dispatch (task remains queued)`
@@ -175,11 +176,24 @@ const verifyStep = createStep({
     })
 
     if (!r.passed) {
-      const summary = r.steps
-        .filter((s) => !s.passed)
+      const failed = r.steps.filter((s) => !s.passed)
+      const summary = failed
         .map((s) => `${s.name}: ${s.output.slice(0, 500)}`)
         .join('\n')
+      const firstFailedName = failed[0]?.name ?? 'verify'
+      const firstFailedOutput = failed[0]?.output ?? summary
       await updateTask(inputData.taskId, { status: 'failed', error: summary })
+      await handleTaskFailure({
+        taskId: inputData.taskId,
+        failingStep: `verify:${firstFailedName}`,
+        errorOutput: firstFailedOutput,
+        branch: inputData.branch,
+      }).catch((err) => {
+        console.error(
+          `[failure-handler] task ${inputData.taskId} verify failure handling errored:`,
+          err,
+        )
+      })
     }
 
     return {
@@ -253,9 +267,21 @@ const mergeStep = createStep({
       }
 
       if (m.aborted) {
+        const errorMsg = `merge aborted by vcs-supervisor; worktree retained at ${inputData.path}\n${m.output.slice(0, 1000)}`
         await updateTask(inputData.taskId, {
           status: 'failed',
-          error: `merge aborted by vcs-supervisor; worktree retained at ${inputData.path}\n${m.output.slice(0, 1000)}`,
+          error: errorMsg,
+        })
+        await handleTaskFailure({
+          taskId: inputData.taskId,
+          failingStep: 'merge:vcs-supervisor-aborted',
+          errorOutput: m.output,
+          branch: inputData.branch,
+        }).catch((err) => {
+          console.error(
+            `[failure-handler] task ${inputData.taskId} merge abort handling errored:`,
+            err,
+          )
         })
         return {
           taskId: inputData.taskId,
@@ -280,6 +306,17 @@ const mergeStep = createStep({
       await updateTask(inputData.taskId, {
         status: 'failed',
         error: `merge step crashed: ${message}`.slice(0, 1000),
+      })
+      await handleTaskFailure({
+        taskId: inputData.taskId,
+        failingStep: 'merge:crashed',
+        errorOutput: message,
+        branch: inputData.branch,
+      }).catch((err) => {
+        console.error(
+          `[failure-handler] task ${inputData.taskId} merge crash handling errored:`,
+          err,
+        )
       })
       return {
         taskId: inputData.taskId,

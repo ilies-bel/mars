@@ -13,6 +13,7 @@ export type TaskStatus =
   | 'done'
   | 'failed'
   | 'dropped'
+  | 'blocked'
 
 export type QuestionCategory = 'scope' | 'tech' | 'ux' | 'risk'
 
@@ -47,6 +48,7 @@ export interface Task {
   author: Author | null
   dropReason: string | null
   retryCount: number
+  blockerId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -104,6 +106,9 @@ export const initQueue = async (): Promise<void> => {
   if (!names.has('retry_count')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`)
   }
+  if (!names.has('blocker_id')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN blocker_id TEXT`)
+  }
   await c.execute(`
     CREATE TABLE IF NOT EXISTS questions (
       id TEXT PRIMARY KEY,
@@ -146,8 +151,16 @@ export const initQueue = async (): Promise<void> => {
       `UPDATE task_suggestions SET kind = 'reflection' WHERE kind IS NULL`,
     )
   }
+  if (!sugNames.has('failure_signature')) {
+    await c.execute(
+      `ALTER TABLE task_suggestions ADD COLUMN failure_signature TEXT`,
+    )
+  }
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_suggestions_source_task_id ON task_suggestions(source_task_id)
+  `)
+  await c.execute(`
+    CREATE INDEX IF NOT EXISTS idx_task_suggestions_failure_signature ON task_suggestions(failure_signature)
   `)
   await c.execute(`
     CREATE TABLE IF NOT EXISTS task_signals (
@@ -209,6 +222,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     author,
     dropReason: (row.drop_reason as string | null) ?? null,
     retryCount: Number(row.retry_count ?? 0),
+    blockerId: (row.blocker_id as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }

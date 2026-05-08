@@ -591,6 +591,9 @@ const main = async (): Promise<void> => {
     if (task.retryCount > 0) {
       console.log(`retryCount: ${task.retryCount}`)
     }
+    if (task.blockerId) {
+      console.log(`blockerId:  ${task.blockerId}`)
+    }
     return
   }
 
