@@ -148,6 +148,11 @@ Commands:
                                 to all; common values: proposed, accepted)
   promote <suggestion-id>       enqueue a suggestion as a task; marks the
                                 suggestion accepted and links the new task id
+  next [--json]                 list the next things to refine — draft
+                                features (status=draft) plus proposed
+                                reflection suggestions. Default output is
+                                human-readable; --json prints a structured
+                                payload for the /mars:next skill to consume.
   where                         print resolved repo + state directory
   help                          show this message
 
@@ -277,6 +282,16 @@ proposed, accepted.`,
 
 Enqueue a suggestion as a task; marks the suggestion accepted and links
 the new task id.`,
+  next: `mars next [--json]
+
+List the next things to refine. Sources:
+  - draft features in .mars/state.db (ideas where status='draft')
+  - proposed reflection suggestions in .mars/queue.db
+    (task_suggestions where status='proposed')
+
+Default output is two grouped sections, designed to be read by both
+humans and the /mars:next slash command. Pass --json to get a
+machine-readable payload of the same data.`,
   where: `mars where
 
 Print resolved repo + state directory.`,
@@ -999,6 +1014,63 @@ const main = async (): Promise<void> => {
       taskId: string
     }
     console.log(`drafted ${r.taskId} (from suggestion ${id})`)
+    return
+  }
+
+  if (cmd === 'next') {
+    const json = rest.includes('--json')
+    const { listIdeas } = await import('./mastra/ideas')
+    const { listSuggestions } = await import('./mastra/queue-suggestions')
+    const ideas = await listIdeas()
+    const drafts = ideas
+      .filter((i) => i.status === 'draft')
+      .map((i) => ({
+        id: i.id,
+        goal: i.goal,
+        storySet: i.story.trim().length > 0,
+        technicalSet: i.technical.trim().length > 0,
+        acceptanceCount: i.acceptance.length,
+      }))
+    const proposed = (await listSuggestions('proposed')).map((s) => ({
+      id: s.id,
+      title: s.title,
+      rationale: s.rationale,
+      sourceTaskId: s.sourceTaskId,
+    }))
+
+    if (json) {
+      console.log(JSON.stringify({ drafts, suggestions: proposed }, null, 2))
+      return
+    }
+
+    if (drafts.length === 0 && proposed.length === 0) {
+      console.log('Nothing to refine. Create a draft with: mars feature new "<goal>"')
+      return
+    }
+
+    console.log('Pick something to refine, or describe a new feature:\n')
+
+    if (drafts.length > 0) {
+      console.log('Existing drafts:')
+      for (const d of drafts) {
+        const goal = d.goal.trim() || '(no goal)'
+        const flags: string[] = []
+        if (!d.storySet) flags.push('story:empty')
+        if (!d.technicalSet) flags.push('technical:empty')
+        if (d.acceptanceCount === 0) flags.push('acceptance:0')
+        const tail = flags.length > 0 ? `  [${flags.join(' ')}]` : ''
+        console.log(`  ${d.id.slice(0, 8)}  ${goal}${tail}`)
+      }
+    }
+
+    if (proposed.length > 0) {
+      if (drafts.length > 0) console.log('')
+      console.log('Reflection suggestions (would become new drafts):')
+      for (const s of proposed) {
+        const title = s.title.trim() || '(untitled)'
+        console.log(`  ${s.id.slice(0, 8)}  ${title}`)
+      }
+    }
     return
   }
 
