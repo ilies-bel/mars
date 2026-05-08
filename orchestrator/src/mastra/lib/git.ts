@@ -116,6 +116,7 @@ export interface RunClaudeArgs {
   cwd: string
   prompt: string
   timeoutMs: number
+  model?: string
   onEvent?: (event: ClaudeEvent) => void | Promise<void>
 }
 
@@ -141,25 +142,27 @@ const extractSessionId = (stdout: string): string | null => {
   return match?.[1] ?? null
 }
 
-const claudeStreamArgs = (prompt: string): readonly string[] => [
+const claudeStreamArgs = (prompt: string, model?: string): readonly string[] => [
   '-p',
   prompt,
   '--output-format',
   'stream-json',
   '--verbose',
   '--dangerously-skip-permissions',
+  ...(model ? ['--model', model] : []),
 ]
 
 export const runClaudeCode = async ({
   cwd,
   prompt,
   timeoutMs,
+  model,
   onEvent,
 }: RunClaudeArgs): Promise<RunClaudeResult> => {
   const conversation: ClaudeEvent[] = []
   const work = runSubprocessStreaming(
     'claude',
-    claudeStreamArgs(prompt),
+    claudeStreamArgs(prompt, model),
     cwd,
     async ({ stream, line }) => {
       if (stream !== 'stdout') return
@@ -258,6 +261,7 @@ const acquireLock = async (
 
 export interface MergeArgs {
   branch: string
+  worktreePath: string
   integrationBranch: string
   lockTimeoutMs: number
   onSupervisorEvent?: (event: ClaudeEvent) => void | Promise<void>
@@ -296,20 +300,20 @@ const buildSupervisorPrompt = async (
   const spec = stripFrontmatter(await loadSupervisorSpec())
   return `${spec}
 
----
+# Dispatch
 
-# This dispatch
-
-Mode: merge
+Mode: rebase
 Source: ${branch}
 Target: ${integrationBranch}
 
-A \`git merge --no-ff ${branch}\` into ${integrationBranch} has just conflicted in this repo. The merge is in progress (\`.git/MERGE_HEAD\` exists). Resolve every conflict per your protocol — read both sides, reconcile intent, never blindly pick ours/theirs — then run verification, and commit.
+A \`git rebase ${integrationBranch}\` of ${branch} just conflicted in this worktree. The rebase is in progress (\`.git/rebase-merge/\` or \`.git/rebase-apply/\` exists). Your cwd IS the worktree — do not \`cd\` elsewhere.
 
-Verification commands for this repo:
+Resolve every conflict per your protocol — read both sides, reconcile intent, never blindly pick ours/theirs. After staging each step, use \`git rebase --continue\` (NOT \`git commit\`). Repeat until the rebase finishes. Then run verification.
+
+Verification commands:
 - typecheck: \`npx tsc --noEmit\`
-- tests:     \`npm test --silent\`
-- lint:      \`npx biome check .\`
+- tests: \`npm test --silent\`
+- lint: \`npx biome check .\`
 
 End with the Completion Report block exactly as specified above.`
 }
@@ -321,6 +325,7 @@ interface InvokeSupervisorResult extends RunSubprocessResult {
 const invokeVcsSupervisor = async (
   branch: string,
   integrationBranch: string,
+  cwd: string,
   timeoutMs: number,
   onEvent?: (event: ClaudeEvent) => void | Promise<void>,
 ): Promise<InvokeSupervisorResult> => {
@@ -329,7 +334,7 @@ const invokeVcsSupervisor = async (
   const work = runSubprocessStreaming(
     'claude',
     claudeStreamArgs(prompt),
-    repoRoot(),
+    cwd,
     async ({ stream, line }) => {
       if (stream !== 'stdout') return
       const event = parseClaudeStreamLine(line)
@@ -353,10 +358,17 @@ const invokeVcsSupervisor = async (
   return { ...result, conversation }
 }
 
-const isMergeInProgress = async (): Promise<boolean> => {
+const isRebaseInProgress = async (cwd: string): Promise<boolean> => {
   try {
-    await exec('test', ['-f', resolve(repoRoot(), '.git/MERGE_HEAD')])
-    return true
+    const { stdout } = await exec('git', ['rev-parse', '--git-path', 'rebase-merge'], { cwd })
+    const mergePath = stdout.trim()
+    const { stdout: applyStdout } = await exec('git', ['rev-parse', '--git-path', 'rebase-apply'], { cwd })
+    const applyPath = applyStdout.trim()
+    const checks = await Promise.all([
+      exec('test', ['-d', mergePath]).then(() => true).catch(() => false),
+      exec('test', ['-d', applyPath]).then(() => true).catch(() => false),
+    ])
+    return checks.some(Boolean)
   } catch {
     return false
   }
@@ -364,6 +376,7 @@ const isMergeInProgress = async (): Promise<boolean> => {
 
 export const mergeBranch = async ({
   branch,
+  worktreePath,
   integrationBranch,
   lockTimeoutMs,
   onSupervisorEvent,
@@ -374,49 +387,68 @@ export const mergeBranch = async ({
   )
   try {
     let output = ''
-    await exec('git', ['checkout', integrationBranch], { cwd: repoRoot() })
+    let conflictResolved = false
+    const supervisorConversation: ClaudeEvent[] = []
+
+    // Step 1: ensure the task branch is up-to-date with integration via rebase
+    // inside the worktree. After this, integration can fast-forward to it.
     try {
-      const r = await exec(
-        'git',
-        ['merge', '--no-ff', '-m', `merge ${branch}`, branch],
-        { cwd: repoRoot() },
-      )
-      output = r.stdout + r.stderr
-      return {
-        merged: true,
-        conflictResolved: false,
-        aborted: false,
-        output,
-        supervisorConversation: [],
-      }
-    } catch (mergeError: unknown) {
+      const r = await exec('git', ['rebase', integrationBranch], { cwd: worktreePath })
+      output += r.stdout + r.stderr
+    } catch (rebaseError: unknown) {
+      const e = rebaseError as { stdout?: string; stderr?: string }
+      output += (e.stdout ?? '') + (e.stderr ?? '')
+
       const supervisorTimeoutMs = 30 * 60 * 1000
       const sup = await invokeVcsSupervisor(
         branch,
         integrationBranch,
+        worktreePath,
         supervisorTimeoutMs,
         onSupervisorEvent,
       )
-      output = sup.stdout + sup.stderr
+      supervisorConversation.push(...sup.conversation)
+      output += sup.stdout + sup.stderr
 
-      const stillInProgress = await isMergeInProgress()
+      const stillInProgress = await isRebaseInProgress(worktreePath)
       if (stillInProgress || sup.exitCode !== 0) {
-        await exec('git', ['merge', '--abort'], { cwd: repoRoot() }).catch(() => {})
+        await exec('git', ['rebase', '--abort'], { cwd: worktreePath }).catch(() => {})
         return {
           merged: false,
           conflictResolved: false,
           aborted: true,
-          output: `vcs-supervisor failed (exit ${sup.exitCode}); merge aborted.\n${output}`,
-          supervisorConversation: sup.conversation,
+          output: `vcs-supervisor failed (exit ${sup.exitCode}); rebase aborted.\n${output}`,
+          supervisorConversation,
         }
       }
+      conflictResolved = true
+    }
 
+    // Step 2: fast-forward integration to the (now-rebased) task branch.
+    await exec('git', ['checkout', integrationBranch], { cwd: repoRoot() })
+    try {
+      const r = await exec(
+        'git',
+        ['merge', '--ff-only', branch],
+        { cwd: repoRoot() },
+      )
+      output += r.stdout + r.stderr
       return {
         merged: true,
-        conflictResolved: true,
+        conflictResolved,
         aborted: false,
         output,
-        supervisorConversation: sup.conversation,
+        supervisorConversation,
+      }
+    } catch (ffError: unknown) {
+      const e = ffError as { stdout?: string; stderr?: string; message?: string }
+      output += (e.stdout ?? '') + (e.stderr ?? '') + (e.message ?? '')
+      return {
+        merged: false,
+        conflictResolved,
+        aborted: true,
+        output: `fast-forward into ${integrationBranch} failed unexpectedly after rebase.\n${output}`,
+        supervisorConversation,
       }
     }
   } finally {
