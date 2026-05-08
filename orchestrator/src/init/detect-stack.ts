@@ -8,6 +8,7 @@ export interface SupervisorSpec {
   name: string
   persona: string
   kind: SupervisorKind
+  scope: string
   detectedFrom: string[]
   externalSlugs: string[]
 }
@@ -84,15 +85,20 @@ const matchesPython = (text: string, names: readonly string[]): boolean => {
   return names.some((n) => lc.includes(n.toLowerCase()))
 }
 
+const scopeFromPrefix = (prefix: string): string =>
+  prefix === '' ? '.' : prefix
+
 const buildSpec = (
   name: string,
   kind: SupervisorKind,
+  scope: string,
   detectedFrom: string[],
   externalSlugs: string[],
 ): SupervisorSpec => ({
   name,
   persona: PERSONAS[name] ?? 'Echo',
   kind,
+  scope,
   detectedFrom,
   externalSlugs,
 })
@@ -120,6 +126,7 @@ const newAcc = (): DirAccumulator => ({
 const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
   const acc = newAcc()
   const seen = new Set<string>()
+  const scope = scopeFromPrefix(prefix)
   const addSupervisor = (spec: SupervisorSpec): void => {
     if (seen.has(spec.name)) return
     seen.add(spec.name)
@@ -156,6 +163,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
         buildSpec(
           'react-supervisor',
           'frontend',
+          scope,
           [`${prefix}package.json:next`],
           ['nextjs-developer', 'react-specialist', 'frontend-developer'],
         ),
@@ -167,6 +175,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
         buildSpec(
           'react-supervisor',
           'frontend',
+          scope,
           [`${prefix}package.json:react`],
           ['react-specialist', 'frontend-developer'],
         ),
@@ -180,6 +189,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
         buildSpec(
           'vue-supervisor',
           'frontend',
+          scope,
           [`${prefix}package.json:nuxt`],
           ['nuxt-developer', 'vue-specialist', 'frontend-developer'],
         ),
@@ -191,6 +201,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
         buildSpec(
           'vue-supervisor',
           'frontend',
+          scope,
           [`${prefix}package.json:vue`],
           ['vue-specialist', 'frontend-developer'],
         ),
@@ -204,6 +215,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
         buildSpec(
           'svelte-supervisor',
           'frontend',
+          scope,
           [`${prefix}package.json:svelte`],
           ['svelte-developer', 'frontend-developer'],
         ),
@@ -217,6 +229,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
         buildSpec(
           'angular-supervisor',
           'frontend',
+          scope,
           [`${prefix}package.json:@angular/core`],
           ['angular-architect', 'angular-developer', 'frontend-developer'],
         ),
@@ -230,6 +243,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
         buildSpec(
           'node-backend-supervisor',
           'backend',
+          scope,
           [`${prefix}package.json:node-backend-framework`],
           ['nodejs-developer', 'backend-developer'],
         ),
@@ -243,6 +257,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
         buildSpec(
           'blockchain-supervisor',
           'specialized',
+          scope,
           [`${prefix}package.json:web3`],
           ['blockchain-developer', 'web3-developer'],
         ),
@@ -265,6 +280,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
         buildSpec(
           'python-backend-supervisor',
           'backend',
+          scope,
           [`${prefix}requirements/pyproject:python-backend-framework`],
           ['python-developer', 'fastapi-developer', 'django-developer', 'backend-developer'],
         ),
@@ -277,6 +293,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
         buildSpec(
           'ml-supervisor',
           'specialized',
+          scope,
           [`${prefix}python:ml-frameworks`],
           ['machine-learning-engineer', 'ai-engineer', 'data-engineer'],
         ),
@@ -291,6 +308,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
       buildSpec(
         'go-supervisor',
         'backend',
+        scope,
         [`${prefix}go.mod`],
         ['golang-pro', 'go-developer', 'backend-developer'],
       ),
@@ -304,6 +322,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
       buildSpec(
         'rust-supervisor',
         'backend',
+        scope,
         [`${prefix}Cargo.toml`],
         ['rust-engineer', 'rust-developer', 'backend-developer'],
       ),
@@ -348,6 +367,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
       buildSpec(
         'infra-supervisor',
         'infra',
+        '.',
         Array.from(acc.infra).map((i) => `${prefix}infra:${i}`),
         ['devops-engineer', 'platform-engineer', 'sre-engineer'],
       ),
@@ -361,6 +381,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
       buildSpec(
         'flutter-supervisor',
         'mobile',
+        scope,
         [`${prefix}pubspec.yaml`],
         ['flutter-expert', 'mobile-developer'],
       ),
@@ -373,6 +394,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
       buildSpec(
         'ios-supervisor',
         'mobile',
+        scope,
         [`${prefix}Podfile`],
         ['ios-developer', 'mobile-developer'],
       ),
@@ -387,6 +409,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
         buildSpec(
           'ios-supervisor',
           'mobile',
+          scope,
           [`${prefix}.xcodeproj`],
           ['ios-developer', 'mobile-developer'],
         ),
@@ -404,6 +427,7 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
       buildSpec(
         'android-supervisor',
         'mobile',
+        scope,
         [`${prefix}build.gradle:android`],
         ['android-developer', 'mobile-developer'],
       ),

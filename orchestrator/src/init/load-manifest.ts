@@ -14,6 +14,7 @@ export interface SupervisorManifestEntry {
   name: string
   persona: string
   kind: SupervisorKind
+  scope: string
   path: string
   outcome: SupervisorOutcome
   triedSlugs: string[]
