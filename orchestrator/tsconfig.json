@@ -9,6 +9,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "outDir": "dist",
+    "jsx": "react-jsx",
     "types": ["node"]
   },
   "include": [
