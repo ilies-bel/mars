@@ -189,6 +189,7 @@ Commands:
                                 mark an inbox item resolved
   inbox dismiss <id> [--note <text>]
                                 mark an inbox item dismissed
+  inbox watch                   live terminal UI for the inbox (ink TUI)
   where                         print resolved repo + state directory
   help                          show this message
 
@@ -399,7 +400,11 @@ Subcommands:
   ack <id>                           mark item acknowledged
   resolve <id> [--note <text>] [--root-cause <text>]
                                      mark item resolved
-  dismiss <id> [--note <text>]       mark item dismissed`,
+  dismiss <id> [--note <text>]       mark item dismissed
+  watch                              live terminal UI for the inbox (ink TUI;
+                                     j/k move, enter detail, a ack,
+                                     r resolve, d dismiss, R toggle resolved,
+                                     q quit)`,
   where: `mars where
 
 Print resolved repo + state directory.`,
@@ -1493,6 +1498,12 @@ const main = async (): Promise<void> => {
       }
     }
 
+    if (sub === 'watch') {
+      const { runInboxWatch } = await import('./cli/inbox-watch')
+      runInboxWatch()
+      return
+    }
+
     if (sub === undefined || sub === 'list') {
       const stateRaw = sub === 'list' ? rest[1] : 'open'
       const state = stateRaw ?? 'open'
@@ -1575,7 +1586,7 @@ const main = async (): Promise<void> => {
     }
 
     console.error(
-      'usage: mars inbox [list [state] | show <id> | ack <id> | resolve <id> [--note <text>] [--root-cause <text>] | dismiss <id> [--note <text>]]',
+      'usage: mars inbox [list [state] | show <id> | ack <id> | resolve <id> [--note <text>] [--root-cause <text>] | dismiss <id> [--note <text>] | watch]',
     )
     process.exit(1)
   }
