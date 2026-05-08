@@ -14,6 +14,8 @@ const moduleDir = (): string => dirname(fileURLToPath(import.meta.url))
 export interface CreateWorktreeArgs {
   taskId: string
   integrationBranch: string
+  baseSha?: string
+  branchSuffix?: string
 }
 
 export interface WorktreeRef {
@@ -24,13 +26,23 @@ export interface WorktreeRef {
 export const createWorktree = async ({
   taskId,
   integrationBranch,
+  baseSha,
+  branchSuffix,
 }: CreateWorktreeArgs): Promise<WorktreeRef> => {
-  const branch = `task/${taskId}`
-  const path = resolve(getStateDir(), `worktrees/${taskId}`)
-  await exec('git', ['worktree', 'add', '-b', branch, path, integrationBranch], {
+  const suffix = branchSuffix ? `-${branchSuffix}` : ''
+  const branch = `task/${taskId}${suffix}`
+  const dirName = `${taskId}${suffix}`
+  const path = resolve(getStateDir(), `worktrees/${dirName}`)
+  const startPoint = baseSha ?? integrationBranch
+  await exec('git', ['worktree', 'add', '-b', branch, path, startPoint], {
     cwd: repoRoot(),
   })
   return { path, branch }
+}
+
+export const resolveSha = async (ref: string): Promise<string> => {
+  const { stdout } = await exec('git', ['rev-parse', ref], { cwd: repoRoot() })
+  return stdout.trim()
 }
 
 export const removeWorktree = async (
@@ -117,6 +129,8 @@ export interface RunClaudeArgs {
   prompt: string
   timeoutMs: number
   model?: string
+  systemPrompt?: string
+  sessionId?: string
   onEvent?: (event: ClaudeEvent) => void | Promise<void>
 }
 
@@ -142,14 +156,25 @@ const extractSessionId = (stdout: string): string | null => {
   return match?.[1] ?? null
 }
 
-const claudeStreamArgs = (prompt: string, model?: string): readonly string[] => [
+interface ClaudeStreamArgsOptions {
+  model?: string
+  systemPrompt?: string
+  sessionId?: string
+}
+
+const claudeStreamArgs = (
+  prompt: string,
+  options: ClaudeStreamArgsOptions = {},
+): readonly string[] => [
   '-p',
   prompt,
   '--output-format',
   'stream-json',
   '--verbose',
   '--dangerously-skip-permissions',
-  ...(model ? ['--model', model] : []),
+  ...(options.model ? ['--model', options.model] : []),
+  ...(options.systemPrompt ? ['--system-prompt', options.systemPrompt] : []),
+  ...(options.sessionId ? ['--session-id', options.sessionId] : []),
 ]
 
 export const runClaudeCode = async ({
@@ -157,12 +182,14 @@ export const runClaudeCode = async ({
   prompt,
   timeoutMs,
   model,
+  systemPrompt,
+  sessionId,
   onEvent,
 }: RunClaudeArgs): Promise<RunClaudeResult> => {
   const conversation: ClaudeEvent[] = []
   const work = runSubprocessStreaming(
     'claude',
-    claudeStreamArgs(prompt, model),
+    claudeStreamArgs(prompt, { model, systemPrompt, sessionId }),
     cwd,
     async ({ stream, line }) => {
       if (stream !== 'stdout') return
@@ -184,9 +211,12 @@ export const runClaudeCode = async ({
     ),
   )
   const result = await Promise.race([work, timeout])
-  const sessionId =
-    extractSessionIdFromConversation(conversation) ?? extractSessionId(result.stdout)
-  return { ...result, sessionId, conversation }
+  const detectedSessionId =
+    extractSessionIdFromConversation(conversation) ??
+    extractSessionId(result.stdout) ??
+    sessionId ??
+    null
+  return { ...result, sessionId: detectedSessionId, conversation }
 }
 
 export interface VerifyStep {
