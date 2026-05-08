@@ -166,9 +166,11 @@ const runSingleVariant = async ({
   const verifyCwd = resolveVerifyCwd(ref.path)
   const verifyResult = await verifyChanges({
     cwd: verifyCwd,
-    typecheckCmd: ['npx', ['tsc', '--noEmit']],
-    testCmd: ['npm', ['test', '--silent']],
-    lintCmd: ['npx', ['biome', 'check', '.']],
+    steps: [
+      { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
+      { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+      { name: 'lint', cmd: 'npx', args: ['biome', 'check', '.'], required: true },
+    ],
   })
   const wallClockMs = Date.now() - startedAt
   return {
