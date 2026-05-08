@@ -67,15 +67,27 @@ Task to triage: ${task.id} — ${task.prompt}
 Existing tasks (id | status | prompt):
 ${taskGraph}
 
-Mark \`actionable: true\` ONLY when ALL of these hold:
-- The task can be implemented end-to-end without further user clarification.
-- Scope is tight and bounded to a small surface in the current codebase.
+Mark \`actionable: true\` when ALL of these hold:
+- The task can be implemented end-to-end without further input from the user.
+- Scope is bounded to the current codebase (any size is fine — small fix or large feature).
 - It does not collide with the surface of another in-flight (queued/draft/running) task.
-- All prerequisites already exist as completed, queued, or draft tasks.
+- All EXTERNAL prerequisites already exist as completed, queued, or draft tasks.
 
-If prerequisites are missing, propose them in \`newSuggestions\` (title + prompt + rationale).
-If prerequisites already exist as other tasks, list their ids in \`blockerTaskIds\`.
-Default to \`actionable: false\` when uncertain. Never list the task being triaged as its own blocker.
+What is NOT a blocker (these are normal parts of implementation, not prerequisites):
+- The implementing agent needing to read existing code, types, or function signatures before changing them.
+- The implementing agent needing to load a skill, consult documentation, or verify an API version.
+- The task prompt instructing the agent to "read X first", "load skill Y", or "inspect Z before modifying".
+- Investigation, exploration, or research that the agent will perform itself inside its worktree.
+- Large scope, many files touched, or multi-step implementation — size alone is not a blocker.
+
+A real blocker is EXTERNAL: a missing user decision, an undefined requirement only the user can resolve,
+a dependency on another task that hasn't been written yet, or a reference to a file/system that doesn't exist.
+
+If real EXTERNAL prerequisites are missing, propose them in \`newSuggestions\` (title + prompt + rationale).
+If real prerequisites already exist as other tasks, list their ids in \`blockerTaskIds\`.
+Default to \`actionable: true\` for any task that a competent engineer could pick up and implement
+given access to the codebase. Only mark \`actionable: false\` when external input or another task
+is genuinely required first. Never list the task being triaged as its own blocker.
 
 Return ONLY this JSON, no prose, no fences:
 {"actionable": bool, "reason": string, "blockerTaskIds": string[], "newSuggestions": [{"title": string, "prompt": string, "rationale": string}]}`

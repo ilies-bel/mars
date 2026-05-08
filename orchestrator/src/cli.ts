@@ -100,8 +100,12 @@ Commands:
   list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed)
   retry <id>                    re-queue a failed/done task (cleans worktree+branch)
   purge <id>                    delete a failed/done task entirely (worktree+branch+row)
-  run                           dispatch all queued tasks (unlimited parallel);
-                                also runs the triage watcher for drafts
+  watch [--detach|--stop|--status|--force]
+                                run the orchestration daemon (foreground by default);
+                                CLI write ops auto-spawn it. --detach forks to
+                                background; --stop asks daemon to exit (refuses
+                                if tasks are in flight unless --force); --status
+                                prints inFlight + queue counts.
   ab "<instruction>" --variants <path>
                                 run an A/B experiment: same instruction, two
                                 configurable variants from the JSON file (must
@@ -257,13 +261,19 @@ const main = async (): Promise<void> => {
       ['--technical', '--tech'],
       '--technical-file',
     )
-    const { enqueueTask } = await import('./mastra/queue')
     const plan =
       functional !== undefined || technical !== undefined
         ? { functional: functional ?? '', technical: technical ?? '' }
         : undefined
-    const task = await enqueueTask(prompt, plan)
-    console.log(`drafted ${task.id}`)
+    const { sendRequest } = await import('./mastra/daemon/client')
+    const task = (await sendRequest(
+      { op: 'add', prompt, plan },
+      {
+        onSpawnNotice: (pid, log) =>
+          console.log(`[mars] started daemon (pid ${pid}, log: ${log})`),
+      },
+    )) as { id: string; status: string }
+    console.log(`${task.status === 'queued' ? 'queued' : 'drafted'} ${task.id}`)
     return
   }
 
@@ -274,7 +284,7 @@ const main = async (): Promise<void> => {
       console.error(`usage: mars ${cmd} <id> <text|@file>`)
       process.exit(1)
     }
-    const { getTask, updateTask } = await import('./mastra/queue')
+    const { getTask } = await import('./mastra/queue')
     const task = await getTask(id)
     if (!task) {
       console.error(`task ${id} not found`)
@@ -292,7 +302,8 @@ const main = async (): Promise<void> => {
       cmd === 'set-functional'
         ? { ...current, functional: text }
         : { ...current, technical: text }
-    await updateTask(id, { plan: next })
+    const { sendRequest } = await import('./mastra/daemon/client')
+    await sendRequest({ op: 'update', id, patch: { plan: next } })
     console.log(`updated ${id}`)
     return
   }
@@ -334,49 +345,9 @@ const main = async (): Promise<void> => {
       console.error(`usage: mars ${cmd} <id>`)
       process.exit(1)
     }
-    const { getTask, updateTask, deleteTask } = await import('./mastra/queue')
-    const task = await getTask(id)
-    if (!task) {
-      console.error(`task ${id} not found`)
-      process.exit(1)
-    }
-    if (task.status !== 'failed' && task.status !== 'done') {
-      const reason =
-        cmd === 'retry'
-          ? `only failed/done tasks can be retried`
-          : `refuse to purge in-flight tasks`
-      console.error(`task ${id} is ${task.status}; ${reason}`)
-      process.exit(1)
-    }
-
-    const { existsSync } = await import('node:fs')
-    const { execFile } = await import('node:child_process')
-    const { promisify } = await import('node:util')
-    const exec = promisify(execFile)
-    const { removeWorktree } = await import('./mastra/lib/git')
-    const { getRepoRoot } = await import('./mastra/context')
-
-    const branch = task.branch ?? `task/${task.id}`
-    if (task.worktreePath && existsSync(task.worktreePath)) {
-      await removeWorktree({ path: task.worktreePath, branch }, true).catch(() => {})
-    }
-    await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(
-      () => {},
-    )
-
-    if (cmd === 'retry') {
-      await updateTask(id, {
-        status: 'queued',
-        branch: null,
-        worktreePath: null,
-        claudeSessionId: null,
-        error: null,
-      })
-      console.log(`queued ${id} for retry`)
-    } else {
-      await deleteTask(id)
-      console.log(`purged ${id}`)
-    }
+    const { sendRequest } = await import('./mastra/daemon/client')
+    await sendRequest({ op: cmd, id })
+    console.log(cmd === 'retry' ? `queued ${id} for retry` : `purged ${id}`)
     return
   }
 
@@ -390,66 +361,65 @@ const main = async (): Promise<void> => {
     return
   }
 
-  if (cmd === 'run') {
-    const { mastra } = await import('./mastra/index')
-    const { getTask } = await import('./mastra/queue')
-    const { startTriageWatcher } = await import('./mastra/watcher-triage')
-    const branch = process.env.INTEGRATION_BRANCH ?? 'integration'
+  if (cmd === 'watch') {
+    const watchFlags = new Set(rest.filter((a) => a.startsWith('--')))
+    const detach = watchFlags.has('--detach')
+    const stop = watchFlags.has('--stop')
+    const status = watchFlags.has('--status')
+    const force = watchFlags.has('--force')
 
-    const triageWatcher = startTriageWatcher()
-
-    const queued = await listTasks('queued')
-    if (queued.length === 0) {
-      const drafts = await listTasks('draft')
-      if (drafts.length > 0) {
-        console.log(
-          `no queued tasks (${drafts.length} draft(s) — triage running; check 'mars list draft')`,
-        )
-      } else {
-        console.log('no queued tasks')
-      }
-      await triageWatcher.stop()
+    if (stop) {
+      const { sendRequest } = await import('./mastra/daemon/client')
+      await sendRequest({ op: 'shutdown', force }, { autoSpawn: false })
+      console.log('daemon stopping')
       return
     }
-    const wf = mastra.getWorkflow('implementWorkflow')
-    const runs = queued.map(async (task) => {
-      const run = await wf.createRun()
-      const result = await run.start({
-        inputData: {
-          taskId: task.id,
-          prompt: task.prompt,
-          plan: task.plan,
-          integrationBranch: branch,
-        },
-      })
-      return { task, result }
-    })
-    const results = await Promise.allSettled(runs)
-    for (const r of results) {
-      if (r.status === 'fulfilled') {
-        const { task, result } = r.value
-        const persisted = await getTask(task.id)
-        const queueSuffix = persisted ? ` (queue: ${persisted.status})` : ''
-        if (result.status === 'success') {
-          const merge = result.result as
-            | { success?: boolean; message?: string }
-            | undefined
-          const outcome = merge?.success ? 'ok' : 'aborted'
-          const message = merge?.message ?? '(no message)'
-          console.log(`[${task.id}] ${outcome}: ${message}${queueSuffix}`)
-        } else {
-          const errMessage =
-            'error' in result && result.error instanceof Error
-              ? result.error.message
-              : undefined
-          const tail = errMessage ? `: ${errMessage}` : ''
-          console.log(`[${task.id}] ${result.status}${tail}${queueSuffix}`)
-        }
-      } else {
-        console.error('run rejected:', r.reason)
+    if (status) {
+      const { sendRequest } = await import('./mastra/daemon/client')
+      const data = (await sendRequest({ op: 'status' }, { autoSpawn: false })) as {
+        pid: number
+        startedAt: string
+        inFlight: ReadonlyArray<{ taskId: string; kind: string }>
+        counts: Record<string, number>
       }
+      console.log(`pid:        ${data.pid}`)
+      console.log(`startedAt:  ${data.startedAt}`)
+      console.log(
+        `counts:     draft=${data.counts.draft} queued=${data.counts.queued} running=${data.counts.running} verifying=${data.counts.verifying} merging=${data.counts.merging}`,
+      )
+      console.log(`inFlight:   ${data.inFlight.length}`)
+      for (const f of data.inFlight) console.log(`  ${f.kind} ${f.taskId}`)
+      return
     }
-    await triageWatcher.stop()
+
+    if (detach) {
+      const { spawn } = await import('node:child_process')
+      const { existsSync } = await import('node:fs')
+      const { daemonPaths, resolveLaunchCommand } = await import(
+        './mastra/daemon/paths'
+      )
+      const { socket } = daemonPaths()
+      if (existsSync(socket)) {
+        console.log('daemon already running')
+        return
+      }
+      const { command, baseArgs } = resolveLaunchCommand()
+      const child = spawn(command, [...baseArgs, '--repo', ctx.repoRoot, 'watch'], {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env, MARS_REPO: ctx.repoRoot },
+      })
+      child.unref()
+      const { logFile } = daemonPaths()
+      console.log(`[mars] daemon detached (pid ${child.pid}, log: ${logFile})`)
+      return
+    }
+
+    // Foreground.
+    const { startDaemon } = await import('./mastra/daemon/server')
+    await startDaemon({ log: (line) => console.log(line) })
+    // Block forever until SIGINT/SIGTERM (the daemon handles shutdown).
+    await new Promise(() => {})
     return
   }
 
@@ -657,11 +627,9 @@ const main = async (): Promise<void> => {
       console.error('usage: mars promote <suggestion-id>')
       process.exit(1)
     }
-    const { promoteSuggestion } = await import('./mastra/queue-suggestions')
-    const r = await promoteSuggestion(id)
-    if (!r) {
-      console.error(`suggestion ${id} not found or already promoted`)
-      process.exit(1)
+    const { sendRequest } = await import('./mastra/daemon/client')
+    const r = (await sendRequest({ op: 'promote', suggestionId: id })) as {
+      taskId: string
     }
     console.log(`drafted ${r.taskId} (from suggestion ${id})`)
     return
