@@ -117,8 +117,7 @@ Commands:
   triage [<task-id>]            run triage once on one draft, or all drafts in
                                 parallel (Haiku assesses actionability + blockers)
   blockers <task-id>            list incomplete blockers on a task
-  feature list [status]         list ideas from .mars/state.db merged with on-disk
-                                features/*.md drafts (de-duped by id)
+  feature list [status]         list ideas from .mars/state.db
   feature show <id>             show an idea from .mars/state.db; falls back to
                                 features/<id>.md if not in DB
   feature new "<goal>"          create a new idea row in .mars/state.db; prints id
@@ -248,7 +247,7 @@ List incomplete blockers on a task.`,
   feature: `mars feature <subcommand> ...
 
 Subcommands:
-  list [status]                       list ideas merged with on-disk drafts
+  list [status]                       list ideas
   show <id>                           show an idea (falls back to features/<id>.md)
   new "<goal>"                        create a new idea row; prints id
   set <id> <field> <value>            update goal|story|technical|status
@@ -696,24 +695,17 @@ const main = async (): Promise<void> => {
 
     if (sub === 'list') {
       const status = rest[1]
-      const { listFeatures } = await import('./mastra/features')
       const { listIdeas } = await import('./mastra/ideas')
       const { listFeatureMarkdownIds, readFeatureMarkdown } = await import(
         './mastra/feature-md'
       )
       const ideas = await listIdeas()
-      const features = await listFeatures(status as never)
       const seen = new Set<string>()
       const rows: Array<{ id: string; status: string; goal: string }> = []
       for (const i of ideas) {
         if (status && i.status !== status) continue
         seen.add(i.id)
         rows.push({ id: i.id, status: i.status, goal: i.goal })
-      }
-      for (const f of features) {
-        if (seen.has(f.id)) continue
-        seen.add(f.id)
-        rows.push({ id: f.id, status: f.status, goal: f.goal })
       }
       for (const id of listFeatureMarkdownIds()) {
         if (seen.has(id)) continue
@@ -757,21 +749,6 @@ const main = async (): Promise<void> => {
           console.log(`technical:`)
           console.log(idea.technical)
         }
-        return
-      }
-      const { getFeature } = await import('./mastra/features')
-      const f = await getFeature(id)
-      if (f) {
-        console.log(`id:         ${f.id}`)
-        console.log(`status:     ${f.status}`)
-        console.log(`origin:     ${f.origin}`)
-        console.log(`parentId:   ${f.parentId ?? '-'}`)
-        console.log(`taskCount:  ${f.taskCount} (ready: ${f.readyTaskCount})`)
-        console.log(`storeId:    ${f.storeId ?? '-'}`)
-        console.log(`createdAt:  ${f.createdAt}`)
-        console.log(`updatedAt:  ${f.updatedAt}`)
-        console.log(`goal:`)
-        console.log(f.goal)
         return
       }
       const { readFeatureMarkdown } = await import('./mastra/feature-md')
