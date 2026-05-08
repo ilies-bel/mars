@@ -363,6 +363,7 @@ const main = async (): Promise<void> => {
 
   if (cmd === 'run') {
     const { mastra } = await import('./mastra/index')
+    const { getTask } = await import('./mastra/queue')
     const branch = process.env.INTEGRATION_BRANCH ?? 'integration'
     const queued = await listTasks('queued')
     if (queued.length === 0) {
@@ -385,7 +386,24 @@ const main = async (): Promise<void> => {
     const results = await Promise.allSettled(runs)
     for (const r of results) {
       if (r.status === 'fulfilled') {
-        console.log(`[${r.value.task.id}] ${r.value.result.status}`)
+        const { task, result } = r.value
+        const persisted = await getTask(task.id)
+        const queueSuffix = persisted ? ` (queue: ${persisted.status})` : ''
+        if (result.status === 'success') {
+          const merge = result.result as
+            | { success?: boolean; message?: string }
+            | undefined
+          const outcome = merge?.success ? 'ok' : 'aborted'
+          const message = merge?.message ?? '(no message)'
+          console.log(`[${task.id}] ${outcome}: ${message}${queueSuffix}`)
+        } else {
+          const errMessage =
+            'error' in result && result.error instanceof Error
+              ? result.error.message
+              : undefined
+          const tail = errMessage ? `: ${errMessage}` : ''
+          console.log(`[${task.id}] ${result.status}${tail}${queueSuffix}`)
+        }
       } else {
         console.error('run rejected:', r.reason)
       }
