@@ -61,6 +61,32 @@ If you need to file an inbox notification, create a row in .mars/queue.db inbox_
     })
   })
 
+  describe('worktree_install_failed recipe', () => {
+    const ctx = {
+      targetPath: '/tmp/worktree/orchestrator',
+      statusOutput: 'ERR_PNPM_OUTDATED_LOCKFILE: Cannot install with frozen lockfile\n',
+      targetBranch: 'task/abc123',
+    }
+
+    it('produces a stable title', () => {
+      const recipe = getRecipe('worktree_install_failed')
+      expect(recipe.title(ctx)).toBe(
+        'Resolve dependency install failure in worktree setup',
+      )
+    })
+
+    it('embeds the failing path, branch, and install error into the prompt', () => {
+      const recipe = getRecipe('worktree_install_failed')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(ctx.targetPath)
+      expect(prompt).toContain(ctx.targetBranch)
+      expect(prompt).toContain(ctx.statusOutput.trim())
+      expect(prompt).toContain('TS2688')
+      expect(prompt).toContain('lockfile drift')
+      expect(prompt).toContain('Save your work')
+    })
+  })
+
   describe('getRecipe', () => {
     it('throws on unknown signature', () => {
       expect(() => getRecipe('does_not_exist')).toThrow(

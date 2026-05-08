@@ -10,6 +10,10 @@ import {
   mergeBranch,
   checkMergeTargetStatus,
 } from '../lib/git'
+import {
+  installWorktreeDeps,
+  WorktreeInstallError,
+} from '../lib/worktree-install'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import { hasIncompleteBlockers, updateTask } from '../queue'
 import { handleTaskFailure } from '../queue-fix-suggestions'
@@ -86,6 +90,47 @@ const setupStep = createStep({
       branch: ref.branch,
       worktreePath: ref.path,
     })
+
+    try {
+      const summary = await installWorktreeDeps({
+        worktreeRoot: ref.path,
+        log: (line) => console.log(line),
+      })
+      if (summary.sites.length > 0) {
+        console.log(
+          `[setup] task ${inputData.taskId} install completed in ${(
+            summary.totalDurationMs / 1000
+          ).toFixed(1)}s (${summary.sites.length} manifest${summary.sites.length === 1 ? '' : 's'})`,
+        )
+      }
+    } catch (error: unknown) {
+      const isInstallErr = error instanceof WorktreeInstallError
+      const errorOutput = isInstallErr ? error.message : String(error)
+      const summary = errorOutput.slice(0, 1000)
+      await updateTask(inputData.taskId, {
+        status: 'failed',
+        error: summary,
+      })
+      await handleTaskFailure({
+        taskId: inputData.taskId,
+        failingStep: 'setup:install',
+        errorOutput,
+        branch: ref.branch,
+        recipeSignature: 'worktree_install_failed',
+        recipeContext: {
+          targetPath: isInstallErr ? error.site.dir : ref.path,
+          statusOutput: errorOutput,
+          targetBranch: ref.branch,
+        },
+      }).catch((err) => {
+        console.error(
+          `[failure-handler] task ${inputData.taskId} setup:install handling errored:`,
+          err,
+        )
+      })
+      throw error instanceof Error ? error : new Error(errorOutput)
+    }
+
     return { ...inputData, ...ref }
   },
 })
