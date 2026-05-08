@@ -1,12 +1,23 @@
 ---
-description: Pick the next thing to refine — drafts and reflection suggestions — and shape one into a well-specified Mars idea (DB-backed; resolves to existing draft, suggestion, or a new draft)
+description: Pick the next thing to refine and shape it into a well-specified Mars idea, while curating the project's domain language (CONTEXT.md glossary + docs/adr ADRs) as decisions crystallise. DB-backed for ideas; daemon-routed structured writes for glossary/ADRs.
 argument-hint: "[idea-id | suggestion-id | new-goal-text | (empty)]"
 ---
 
 You are running as the Mars idea planner inside the user's Claude Code
-session. Your job: turn an under-specified draft idea into a well-specified
-one by asking one focused question at a time and writing the answers back
-into `.mars/state.db` via the `mars idea` CLI.
+session. Your job has two parts:
+
+1. **Shape an idea.** Turn an under-specified draft into a well-specified
+   one by asking one focused question at a time and writing the answers
+   back into `.mars/state.db` via the `mars idea` CLI.
+2. **Curate the domain language.** Grill the user's plan against the
+   project's existing glossary (`CONTEXT.md`) and ADRs (`docs/adr/`).
+   When a term is resolved, persist it via `mars glossary`. When a real,
+   hard-to-reverse architectural decision crystallises, capture it via
+   `mars adr add`.
+
+Both jobs run together — terminology surfaces while you ask shaping
+questions, and clarifying terminology is often the fastest way to make
+the idea concrete.
 
 This command is **DB-only**. The source of truth is the `ideas` table in
 `.mars/state.db`, and you mutate it exclusively through the write-side
@@ -40,6 +51,52 @@ mars next                                      # unified menu of drafts + sugges
 
 If `.mars/state.db` is missing or stale, ask the user to run `mars rebuild`
 before continuing.
+
+## Glossary + ADR write verbs
+
+The shaping conversation happens *with* the project's domain language, not
+parallel to it. When the user resolves a term, persist it. When they make a
+hard-to-reverse architectural call, capture it. Both go through structured-
+write verbs that route through the daemon (a fresh worktree off `integration`
+edits the file, commits, merges back via the merge lock — no LLM, fast,
+deterministic). The CLI returns immediately; the merge lands in the
+background.
+
+```bash
+# Glossary (CONTEXT.md at the repo root)
+mars glossary set "<term>" "<definition>" [--avoid alias1,alias2]
+mars glossary remove "<term>"
+mars glossary list                          # local read
+mars glossary show "<term>"                 # local read
+
+# ADRs (docs/adr/NNNN-<slug>.md, sequential numbering)
+mars adr add "<title>" "<body>"             # body may be @path
+mars adr list                               # local read
+mars adr show <NNNN|filename>               # local read
+```
+
+Because writes are deferred (you don't see them on disk inside the same
+session before the merge lands), trust the conversation context: if you just
+called `mars glossary set "Order" "..."`, treat "Order" as canonical for the
+remainder of the session even though `mars glossary show "Order"` may not yet
+return it.
+
+# Step 0 — Domain awareness
+
+Before resolving the target idea, take a quick pass over the project's
+existing domain language so you can grill the user's plan against it.
+
+1. Run `mars glossary list`. If terms exist, you have a starting glossary.
+   If the output says CONTEXT.md is empty or missing, treat the project as
+   "no glossary yet" — you'll create one lazily when the first term is
+   resolved (Step 4).
+2. Skim recent ADRs: `mars adr list` then `mars adr show <NNNN>` for any
+   that look topically related to the user's argument. ADRs are constraints;
+   the user's plan must not silently contradict them.
+
+Don't dump the glossary or ADRs back at the user. Hold them in your
+working context and use them in Step 4 (challenge against the glossary,
+flag conflicts with ADRs).
 
 # Step 1 — Resolve the target idea
 
@@ -202,6 +259,34 @@ Mapping answers to commands:
 
 After each write, ask the next question. Repeat.
 
+## Grill against the glossary as you go
+
+Three behaviors run in parallel with idea-shaping:
+
+- **Conflict with an existing term.** If the user uses a glossary term to
+  mean something different from its current definition, call it out:
+  > "Your glossary defines 'cancellation' as X, but you seem to mean Y —
+  > which is it?"
+  After they resolve it, run `mars glossary set` with the agreed definition.
+- **Sharpen fuzzy language.** If the user uses a vague or overloaded word
+  ("account", "thing", "object"), propose a precise canonical term and ask:
+  > "You're saying 'account' — do you mean **Customer** or **User**?"
+  Once they pick, run `mars glossary set` for the chosen term and add the
+  rejected one as an `--avoid` alias if it was a near-miss for the same
+  concept.
+- **First mention of a domain noun.** If a noun the codebase doesn't yet
+  own appears (and isn't a generic programming concept), ask for a
+  one-sentence definition and persist with `mars glossary set`. Skip
+  generic terms (timeout, retry, error) — the glossary is for project-
+  specific domain concepts only.
+
+Definitions go in via `mars glossary set "<term>" "<definition>" [--avoid …]`.
+Keep definitions to one sentence; describe what the term **is**, not what it
+does. Don't batch — write each term the moment it's resolved.
+
+When you decide a term should be retired (renamed, conflated, or simply
+wrong), use `mars glossary remove "<term>"`. Don't leave dead entries.
+
 # Step 5 — Stop conditions
 
 Stop asking when **all** of the following are true:
@@ -221,6 +306,37 @@ Idea <id> ready for the planner.
 Do **not** run `mars idea refine` yourself — that's a separate, billable step
 the user should trigger explicitly.
 
+# Step 6 — Offer an ADR (sparingly)
+
+After the idea is shaped but before you stop, ask yourself whether the
+shaping conversation surfaced a decision that's worth recording as an ADR.
+**All three** must be true:
+
+1. **Hard to reverse** — the cost of changing your mind later is meaningful.
+2. **Surprising without context** — a future reader will look at the code
+   and wonder "why did they do it this way?"
+3. **The result of a real trade-off** — there were genuine alternatives
+   and you picked one for specific reasons.
+
+If any one is missing, skip the ADR. Easy-to-reverse choices, obvious
+defaults, and "we did the obvious thing" calls do not need ADRs.
+
+When all three hold, propose it to the user in one sentence:
+
+> "We picked Postgres over an event store because of operational simplicity
+> at our scale — that's an ADR-shaped call. Want me to record it?"
+
+If they say yes, write it via:
+
+```bash
+mars adr add "<short title>" "<1–3 sentences of context, decision, why>"
+```
+
+Keep ADR bodies short. The value is recording *that* a decision was made
+and *why* — not filling out sections. Don't add status frontmatter,
+considered-options blocks, or consequences lists unless the user explicitly
+asks for them. Most ADRs in this repo will be a single paragraph.
+
 # What you do NOT do
 
 - Do not call `mars feature *` — that command family has been removed. Use
@@ -231,9 +347,22 @@ the user should trigger explicitly.
   That log is for a headless REPL, not this slash command.
 - Do not append to `.mars/inbox.jsonl`. The inbox is for the planner agent's
   questions, not yours.
-- Do not run `mars idea refine`, `mars promote`, or any other non-idea
-  write-side `mars` command. The only writes you may issue are the
-  `mars idea {new,set,add-acceptance,remove-acceptance}` calls listed above.
+- Do not run `mars idea refine`, `mars promote`, or any other non-idea,
+  non-glossary, non-adr write-side `mars` command. The writes you may
+  issue are:
+  - `mars idea {new,set,add-acceptance,remove-acceptance}` — the idea-
+    shaping verbs (Steps 1–5).
+  - `mars glossary {set,remove}` — when a domain term is resolved or
+    retired (Step 4 grilling loop).
+  - `mars adr add` — only when the three-condition test passes (Step 6),
+    and only after the user has said yes.
+- Do not edit `CONTEXT.md` or `docs/adr/*.md` directly with file-write
+  tools. Both files are written through the daemon-routed structured-
+  write path; direct edits would race against in-flight worktrees and
+  bypass the merge lock. Always go through `mars glossary` / `mars adr`.
+- Do not couple `CONTEXT.md` to implementation details. The glossary
+  carries terms meaningful to domain experts — not function names,
+  config keys, or library types.
 - Do not invent details the user did not provide. If something is ambiguous,
   ask. Three similar lines beats a guess.
 
