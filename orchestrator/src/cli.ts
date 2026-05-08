@@ -821,6 +821,24 @@ const main = async (): Promise<void> => {
     return
   }
 
+  if (cmd === 'sweeper') {
+    const sweeperFlags = new Set(rest.filter((a) => a.startsWith('--')))
+    const intervalArg = flags['--interval-ms']
+    const intervalMs = intervalArg ? Number.parseInt(intervalArg, 10) : undefined
+    const oneShot = sweeperFlags.has('--once')
+    const { startSweeper, runSweep } = await import('./mastra/sweeper/server')
+    if (oneShot) {
+      await runSweep((line) => console.log(line))
+      return
+    }
+    await startSweeper({
+      log: (line) => console.log(line),
+      ...(Number.isInteger(intervalMs) && intervalMs! > 0 ? { intervalMs } : {}),
+    })
+    await new Promise(() => {})
+    return
+  }
+
   if (cmd === 'ab') {
     const instruction = rest.join(' ')
     if (!instruction) {
