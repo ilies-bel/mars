@@ -588,6 +588,50 @@ export const clearBlockers = async (taskId: string): Promise<void> => {
   })
 }
 
+export interface UnblockTaskResult {
+  taskId: string
+  outcome: 'unblocked' | 'noop'
+  previousStatus: string
+}
+
+/**
+ * Manual escape hatch: flip a `blocked` task to `failed`, clearing the
+ * `blocker_id` column and any `task_blockers` rows pointing from it. Used by
+ * `mars unblock <id>` so users do not need to reach for sqlite when the row
+ * has slipped into an inconsistent state (phantom blocker_id, stale rows).
+ */
+export const unblockTask = async (
+  taskId: string,
+): Promise<UnblockTaskResult> => {
+  await initQueue()
+  const c = getClient()
+  const before = await c.execute({
+    sql: `SELECT status FROM tasks WHERE id = ?`,
+    args: [taskId],
+  })
+  if (before.rows.length === 0) {
+    throw new Error(`task ${taskId} not found`)
+  }
+  const previousStatus = (before.rows[0] as unknown as { status: string }).status
+  if (previousStatus !== 'blocked') {
+    return { taskId, outcome: 'noop', previousStatus }
+  }
+  const now = new Date().toISOString()
+  await c.execute({
+    sql: `UPDATE tasks
+             SET status = 'failed',
+                 blocker_id = NULL,
+                 updated_at = ?
+           WHERE id = ? AND status = 'blocked'`,
+    args: [now, taskId],
+  })
+  await c.execute({
+    sql: `DELETE FROM task_blockers WHERE task_id = ?`,
+    args: [taskId],
+  })
+  return { taskId, outcome: 'unblocked', previousStatus }
+}
+
 export const listBlockers = async (taskId: string): Promise<string[]> => {
   await initQueue()
   const r = await getClient().execute({

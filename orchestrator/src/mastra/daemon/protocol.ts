@@ -24,6 +24,7 @@ export type DaemonRequest =
     }
   | { op: 'retry'; id: string }
   | { op: 'purge'; id: string }
+  | { op: 'unblock'; id: string }
   | { op: 'promote'; suggestionId: string }
   | { op: 'refine'; id: string; refresh?: boolean }
   | {

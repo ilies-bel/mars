@@ -159,6 +159,7 @@ export const upsertFixTask = async (
     await tx.execute({
       sql: `UPDATE tasks
                SET status = 'blocked',
+                   blocker_id = NULL,
                    retry_count = ?,
                    error = ?,
                    updated_at = ?

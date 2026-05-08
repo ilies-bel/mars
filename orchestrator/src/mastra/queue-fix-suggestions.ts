@@ -177,9 +177,16 @@ export const markTaskDropped = async (
 ): Promise<void> => {
   await initQueue()
   const now = new Date().toISOString()
+  // Clearing blocker_id and task_blockers rows on drop avoids leaving a phantom
+  // link to a suggestion/fix-task that may be deleted later — the source of the
+  // "blocked but mars blockers reports nothing" inconsistency.
   await getClient().execute({
-    sql: `UPDATE tasks SET status = 'dropped', drop_reason = ?, updated_at = ? WHERE id = ?`,
+    sql: `UPDATE tasks SET status = 'dropped', drop_reason = ?, blocker_id = NULL, updated_at = ? WHERE id = ?`,
     args: [reason, now, taskId],
+  })
+  await getClient().execute({
+    sql: `DELETE FROM task_blockers WHERE task_id = ?`,
+    args: [taskId],
   })
 }
 
