@@ -108,7 +108,7 @@ Commands:
   set-technical <id> <text|@file>
                                 set the technical plan on a draft/queued task
   show <id>                     print full task incl. plan sections
-  list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed)
+  list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed|dropped)
   retry <id>                    re-queue a failed/done task (cleans worktree+branch)
   purge <id>                    delete a failed/done task entirely (worktree+branch+row)
   watch [--detach|--stop|--status|--force]
@@ -253,7 +253,7 @@ Print full task incl. plan sections.`,
   list: `mars list [status]
 
 List tasks. Status one of: draft, queued, running, verifying, merging,
-done, failed. Defaults to all when omitted.`,
+done, failed, dropped. Defaults to all when omitted.`,
   retry: `mars retry <id>
 
 Re-queue a failed/done task. Cleans the worktree and branch first.`,
@@ -584,6 +584,12 @@ const main = async (): Promise<void> => {
     if (task.error) {
       console.log(`error:`)
       console.log(task.error)
+    }
+    if (task.dropReason) {
+      console.log(`dropReason: ${task.dropReason}`)
+    }
+    if (task.retryCount > 0) {
+      console.log(`retryCount: ${task.retryCount}`)
     }
     return
   }

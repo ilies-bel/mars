@@ -20,6 +20,7 @@ const roleFromTask = (t: Task): Role => {
       return 'planner'
     case 'done':
     case 'failed':
+    case 'dropped':
       return 'orchestrator'
   }
 }
@@ -36,6 +37,7 @@ const columnFor = (t: Task): ColumnKey | null => {
       return 'in_progress'
     case 'done':
     case 'failed':
+    case 'dropped':
       return 'done'
   }
 }
