@@ -45,6 +45,36 @@ the single source of truth for outstanding work in this repo.
 - **Integration branch** — `integration` is the merge target; `main` is the
   PR target.
 
+## Glossary and ADRs
+
+Two tracked files at the repo root encode the project's domain language and
+its irreversible decisions. Both are written through a daemon-routed
+**structured-write** path — a fresh worktree off `integration`, a
+deterministic file edit, a commit, and a merge back via the existing merge
+lock. No LLM is involved in the edit itself, so the content is exactly what
+the verb produced.
+
+- **`CONTEXT.md`** (repo root) — project glossary of canonical domain terms.
+  Edit only via `mars glossary set <term> "<definition>"` and
+  `mars glossary remove <term>`. Read via `mars glossary list` and
+  `mars glossary show <term>`.
+- **`docs/adr/NNNN-<slug>.md`** — Architecture Decision Records. Add only
+  via `mars adr add`. Read via `mars adr list` and `mars adr show <NNNN>`.
+
+Direct edits to `CONTEXT.md` or `docs/adr/**` from inside coding worktrees
+(via Edit/Write tools, `sed`, etc.) are forbidden — the
+`block-tracked-writes` hook enforces this. Always go through the verbs.
+
+Coding agents in dispatched worktrees can **read** `CONTEXT.md` freely; it
+is a normal tracked file on `integration` and reflects the latest agreed
+vocabulary.
+
+The `/mars:chat` slash command (alias `/mars:next`) grills the user's plan
+against `CONTEXT.md`, adding new terms and removing wrong ones as the
+conversation progresses. It only proposes an ADR when the three-condition
+test holds: the decision is hard to reverse, surprising to a future reader,
+and embodies a real trade-off.
+
 ## Creating a new orchestrator task
 
 Use the `mars` CLI (installed by `install.sh`, or via `npm link` from `orchestrator/`):
