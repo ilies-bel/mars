@@ -9,19 +9,16 @@ export type TaskStatus =
   | 'done'
   | 'failed'
 
-export type QuestionCategory = 'scope' | 'tech' | 'ux' | 'risk'
-export type QuestionStatus = 'open' | 'answered' | 'dismissed'
-
-export interface Question {
+export interface DraftFeature {
   id: string
-  taskId: string
-  taskPrompt: string
-  question: string
-  rationale: string | null
-  category: QuestionCategory | null
-  answer: string | null
-  status: QuestionStatus
-  createdAt: string
+  goal: string
+  story: string
+  technical: string
+  status: string
+  origin: string
+  createdAt: number
+  updatedAt: number
+  acceptanceCount: number
 }
 
 export type SuggestionStatus = 'proposed' | 'accepted' | 'dismissed'
@@ -104,13 +101,6 @@ export class TaskDb {
     return r.rows.length > 0
   }
 
-  async questionsTableExists(): Promise<boolean> {
-    const r = await this.client.execute(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='questions'`,
-    )
-    return r.rows.length > 0
-  }
-
   async suggestionsTableExists(): Promise<boolean> {
     const r = await this.client.execute(
       `SELECT name FROM sqlite_master WHERE type='table' AND name='task_suggestions'`,
@@ -118,35 +108,12 @@ export class TaskDb {
     return r.rows.length > 0
   }
 
-  async listQuestions(): Promise<Question[]> {
-    const r = await this.client.execute(
-      `SELECT q.id, q.task_id, q.question, q.rationale, q.category, q.answer, q.status,
-              q.created_at, t.prompt AS task_prompt
-       FROM questions q
-       LEFT JOIN tasks t ON t.id = q.task_id
-       ORDER BY q.task_id, q.created_at`,
-    )
-    return r.rows.map((row) => {
-      const r0 = row as unknown as Record<string, unknown>
-      return {
-        id: r0.id as string,
-        taskId: r0.task_id as string,
-        taskPrompt: (r0.task_prompt as string | null) ?? '',
-        question: r0.question as string,
-        rationale: (r0.rationale as string | null) ?? null,
-        category: (r0.category as QuestionCategory | null) ?? null,
-        answer: (r0.answer as string | null) ?? null,
-        status: r0.status as QuestionStatus,
-        createdAt: r0.created_at as string,
-      }
-    })
-  }
-
-  async listSuggestions(): Promise<TaskSuggestion[]> {
+  async listProposedSuggestions(): Promise<TaskSuggestion[]> {
     const r = await this.client.execute(
       `SELECT id, source_task_id, title, prompt, rationale, status, created_task_id, created_at
        FROM task_suggestions
-       ORDER BY source_task_id, created_at`,
+       WHERE status = 'proposed'
+       ORDER BY created_at DESC`,
     )
     return r.rows.map((row) => {
       const r0 = row as unknown as Record<string, unknown>
@@ -159,6 +126,50 @@ export class TaskDb {
         status: r0.status as SuggestionStatus,
         createdTaskId: (r0.created_task_id as string | null) ?? null,
         createdAt: r0.created_at as string,
+      }
+    })
+  }
+}
+
+export class StateDb {
+  private client: Client
+
+  constructor(dbPath: string) {
+    this.client = createClient({ url: `file:${dbPath}` })
+  }
+
+  async init(): Promise<void> {
+    await this.client.execute(`PRAGMA journal_mode = WAL`)
+  }
+
+  async ideasTableExists(): Promise<boolean> {
+    const r = await this.client.execute(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='ideas'`,
+    )
+    return r.rows.length > 0
+  }
+
+  async listDraftFeatures(): Promise<DraftFeature[]> {
+    const r = await this.client.execute(
+      `SELECT i.id, i.goal, i.story, i.technical, i.status, i.origin,
+              i.created_at, i.updated_at,
+              (SELECT COUNT(*) FROM idea_acceptance a WHERE a.idea_id = i.id) AS acceptance_count
+       FROM ideas i
+       WHERE i.status = 'draft'
+       ORDER BY i.created_at DESC`,
+    )
+    return r.rows.map((row) => {
+      const r0 = row as unknown as Record<string, unknown>
+      return {
+        id: r0.id as string,
+        goal: (r0.goal as string | null) ?? '',
+        story: (r0.story as string | null) ?? '',
+        technical: (r0.technical as string | null) ?? '',
+        status: (r0.status as string | null) ?? 'draft',
+        origin: (r0.origin as string | null) ?? 'user',
+        createdAt: Number(r0.created_at ?? 0),
+        updatedAt: Number(r0.updated_at ?? 0),
+        acceptanceCount: Number(r0.acceptance_count ?? 0),
       }
     })
   }

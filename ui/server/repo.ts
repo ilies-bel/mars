@@ -6,6 +6,7 @@ export interface RepoContext {
   repoRoot: string
   stateDir: string
   queueDbPath: string
+  stateDbPath: string
 }
 
 const detectRepoRoot = (start: string): string => {
@@ -26,5 +27,6 @@ export const resolveRepo = (override?: string): RepoContext => {
     repoRoot,
     stateDir,
     queueDbPath: resolve(stateDir, 'queue.db'),
+    stateDbPath: resolve(stateDir, 'state.db'),
   }
 }

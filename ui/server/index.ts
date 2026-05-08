@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
-import { TaskDb } from './db.ts'
+import { StateDb, TaskDb } from './db.ts'
 import { resolveRepo } from './repo.ts'
 import { SseHub } from './sse.ts'
 import { watchQueue } from './watch.ts'
@@ -66,11 +66,16 @@ export const startServer = async (args: CliArgs): Promise<void> => {
   const ctx = resolveRepo(args.repo)
   const db = new TaskDb(ctx.queueDbPath)
   await db.init()
+  const stateDb = new StateDb(ctx.stateDbPath)
+  await stateDb.init()
 
   const hub = new SseHub()
   watchQueue(ctx.queueDbPath, () => {
     hub.broadcast('tasks')
-    hub.broadcast('questions')
+    hub.broadcast('todo')
+  })
+  watchQueue(ctx.stateDbPath, () => {
+    hub.broadcast('todo')
   })
 
   const distDir = args.distDir ? resolve(args.distDir) : undefined
@@ -106,22 +111,13 @@ export const startServer = async (args: CliArgs): Promise<void> => {
       return
     }
 
-    if (url === '/api/questions') {
+    if (url === '/api/todo') {
       try {
-        const exists = await db.questionsTableExists()
-        const questions = exists ? await db.listQuestions() : []
-        sendJson(res, 200, { questions })
-      } catch (err) {
-        sendJson(res, 500, { error: (err as Error).message })
-      }
-      return
-    }
-
-    if (url === '/api/suggestions') {
-      try {
-        const exists = await db.suggestionsTableExists()
-        const suggestions = exists ? await db.listSuggestions() : []
-        sendJson(res, 200, { suggestions })
+        const ideasExist = await stateDb.ideasTableExists()
+        const drafts = ideasExist ? await stateDb.listDraftFeatures() : []
+        const suggExist = await db.suggestionsTableExists()
+        const suggestions = suggExist ? await db.listProposedSuggestions() : []
+        sendJson(res, 200, { drafts, suggestions })
       } catch (err) {
         sendJson(res, 500, { error: (err as Error).message })
       }
