@@ -8,6 +8,7 @@ import {
   insertSuggestion,
 } from '../queue'
 import { runClaudeCode } from '../lib/git'
+import { parseClaudeJsonResult } from '../lib/claude-json'
 import { getRepoRoot } from '../context'
 
 const planInputSchema = z.object({
@@ -57,57 +58,14 @@ Produce TWO outputs:
 
 Return ONLY a single JSON object matching exactly this shape, with no surrounding prose, no code fences, and no commentary:
 
-{
-  "questions": [
-    { "question": "...", "rationale": "...", "category": "scope|tech|ux|risk" }
-  ],
-  "suggestions": [
-    { "title": "...", "prompt": "...", "rationale": "..." }
-  ]
-}
+{"questions":[{"question":"...","rationale":"...","category":"scope|tech|ux|risk"}],"suggestions":[{"title":"...","prompt":"...","rationale":"..."}]}
 
 Spec to analyze:
 
 ${spec}`
 
-interface ClaudeJsonEnvelope {
-  result?: unknown
-  is_error?: unknown
-}
-
-const extractJsonObject = (raw: string): string | null => {
-  const start = raw.indexOf('{')
-  const end = raw.lastIndexOf('}')
-  if (start === -1 || end === -1 || end <= start) return null
-  return raw.slice(start, end + 1)
-}
-
-const parsePlannerOutput = (claudeStdout: string): z.infer<typeof plannerOutputSchema> => {
-  const trimmed = claudeStdout.trim()
-  if (!trimmed) throw new Error('claude returned empty output')
-
-  let modelText: string
-  try {
-    const env = JSON.parse(trimmed) as ClaudeJsonEnvelope
-    if (env.is_error) {
-      throw new Error(`claude reported error: ${String(env.result ?? 'unknown')}`)
-    }
-    modelText = typeof env.result === 'string' ? env.result : trimmed
-  } catch {
-    modelText = trimmed
-  }
-
-  const objectText = extractJsonObject(modelText) ?? modelText
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(objectText)
-  } catch (err) {
-    throw new Error(
-      `failed to parse planner JSON: ${(err as Error).message}\nraw: ${modelText.slice(0, 400)}`,
-    )
-  }
-  return plannerOutputSchema.parse(parsed)
-}
+const parsePlannerOutput = (claudeStdout: string): z.infer<typeof plannerOutputSchema> =>
+  plannerOutputSchema.parse(parseClaudeJsonResult(claudeStdout))
 
 const generateStep = createStep({
   id: 'generate-plan',

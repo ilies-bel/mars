@@ -10,6 +10,7 @@ import {
 } from '@mastra/observability'
 import { implementWorkflow } from './workflows/implement-workflow'
 import { initWorkflow } from './workflows/init-workflow'
+import { triageWorkflow } from './workflows/triage-workflow'
 import { verifyPassedScorer } from './scorers/verify-passed'
 import { mergeCleanScorer } from './scorers/merge-clean'
 import { resolveContext } from './context'
@@ -17,7 +18,7 @@ import { resolveContext } from './context'
 const { mastraDbPath } = resolveContext()
 
 export const mastra = new Mastra({
-  workflows: { implementWorkflow, initWorkflow },
+  workflows: { implementWorkflow, initWorkflow, triageWorkflow },
   scorers: {
     verifyPassed: verifyPassedScorer,
     mergeClean: mergeCleanScorer,

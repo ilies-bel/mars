@@ -1,6 +1,6 @@
 ---
-description: Guided chat to fill in a Mars feature's Story and Technical sections
-argument-hint: "[feature-id]"
+description: Guided chat to fill in a Mars feature's Story and Technical sections (creates a new draft if no existing match)
+argument-hint: "[feature-id | new-goal-text]"
 ---
 
 You are running as the Mars feature planner inside the user's Claude Code session.
@@ -14,34 +14,62 @@ Mars keeps planning state in `.mars/state.db` (SQLite). Use the read-only
 `mars feature` subcommands to find drafts — faster and more reliable than
 scanning the filesystem.
 
-If the DB is missing or stale, ask the user to run `mars rebuild` first. (The
-slash command does not run write-side `mars` commands itself.)
+If the DB is missing or stale, ask the user to run `mars rebuild` first.
 
-If the user passed an argument: treat it as the feature id. Verify it's a draft:
+The command supports two modes:
 
-```bash
-mars feature show <feature-id>
-```
+- **Refine an existing draft** — when the argument resolves to a known draft id.
+- **Create a new draft, then refine it** — when no argument is passed, or the
+  argument is free-text that doesn't resolve to an id. In this mode (and only
+  this mode) you may run `mars feature plan "<goal>"` once to create the
+  draft. All other write-side `mars` commands remain off-limits.
 
-Look at the `status:` line. If `mars feature show` exits non-zero with
-`feature <id> not found`, the feature does not exist (suggest `mars rebuild`
-if the markdown is on disk). If `status:` is anything other than `draft`,
-stop and tell the user: this command only works on drafts.
+## 1a — Argument passed: try id first, fall back to goal
 
-If no argument was passed: pick the most recently created draft.
+Run:
 
 ```bash
-mars feature list draft
+mars feature show <argument>
 ```
 
-`mars feature list` orders by `created_at DESC`, so the first row is the most
-recent draft. The output is tab-separated `id\tstatus\tgoal`.
+- If it succeeds and `status:` is `draft` → use this feature; skip to Step 2.
+- If it succeeds but `status:` is anything else → stop and tell the user this
+  command only works on drafts.
+- If it exits non-zero with `feature <id> not found` → the argument is **not**
+  an id. Treat the entire argument as the goal text for a new feature and go
+  to Step 1c.
 
-If the command prints nothing, stop and print:
-`No draft features found. Run \`mars feature plan "<goal>"\` first.`
+## 1b — No argument: create a new feature
 
-Otherwise, Read `features/<id>.md` for the actual body to work with. The DB
-gives you the *which*; the markdown is still the *what*.
+Ask the user one question: **"What's the goal of the new feature? (one
+sentence)"** Use their answer as the goal text and go to Step 1c.
+
+## 1c — Create the draft
+
+With the goal text in hand, run:
+
+```bash
+mars feature plan "<goal>"
+```
+
+Parse the new feature id from the output (the command prints the created id;
+if needed, run `mars feature list draft` and take the most recent row — its
+`created_at` will be newer than every other draft). Tell the user:
+
+```
+Created draft: <id>
+  Goal: <goal>
+```
+
+Then proceed to Step 2 with that id. (`mars feature plan` writes the
+scaffolded `features/<id>.md` for you, so the body will be the empty
+template — both `## Story` and `## Technical` will be empty in Step 2.)
+
+## 1d — Read the body
+
+Once you have an id (existing or freshly created), Read `features/<id>.md`
+for the actual body to work with. The DB gives you the *which*; the markdown
+is still the *what*.
 
 # Step 2 — Read the feature file
 
@@ -117,10 +145,11 @@ the user should trigger explicitly.
   headless `mars feature chat` REPL, not this slash command.
 - Do not append to `.mars/inbox.jsonl`. The inbox is for the planner agent's
   questions, not yours.
-- Do not run `mars feature refine`, `mars feature plan`, or any other write-side
-  `mars` command. You are an editor, not an orchestrator. The read-only
-  `mars feature list` and `mars feature show` commands are allowed (and
-  required by Step 1).
+- Do not run `mars feature refine` or any other write-side `mars` command.
+  You are an editor, not an orchestrator. The read-only `mars feature list`
+  and `mars feature show` commands are always allowed. `mars feature plan`
+  is allowed **only once**, **only in Step 1c**, and **only** when no
+  existing draft matched — to bootstrap the new draft you'll then refine.
 - Do not invent details the user did not provide. If something is ambiguous,
   ask. Three similar lines beats a guess.
 

@@ -13,6 +13,8 @@ import type { ClaudeEvent } from '../lib/claude-stream'
 import { updateTask } from '../queue'
 import { verifyPassedScorer } from '../scorers/verify-passed'
 import { mergeCleanScorer } from '../scorers/merge-clean'
+import { summarizeUsage } from '../lib/claude-usage'
+import { recordSignals } from '../lib/reflect-signals'
 
 const resolveVerifyCwd = (worktreeRoot: string): string => {
   if (existsSync(resolve(worktreeRoot, 'package.json'))) return worktreeRoot
@@ -101,16 +103,21 @@ const codeStep = createStep({
         await writer?.write({ type: 'claude-event', event })
       },
     })
+    const usage = summarizeUsage(conversation)
     tracingContext?.currentSpan?.update({
       metadata: {
         claudeSessionId: r.sessionId,
         conversation,
         conversationBytes: JSON.stringify(conversation).length,
+        usage,
       },
     })
     if (r.sessionId) {
       await updateTask(inputData.taskId, { claudeSessionId: r.sessionId })
     }
+    await recordSignals(inputData.taskId, 'run-claude-code', usage).catch(() => {
+      // signal capture must never fail the task
+    })
     return {
       taskId: inputData.taskId,
       integrationBranch: inputData.integrationBranch,
@@ -204,6 +211,7 @@ const mergeStep = createStep({
     const supervisorConversation: ClaudeEvent[] = []
     const m = await mergeBranch({
       branch: inputData.branch,
+      worktreePath: inputData.path,
       integrationBranch: inputData.integrationBranch,
       lockTimeoutMs: 5 * 60 * 1000,
       onSupervisorEvent: async (event) => {
@@ -213,11 +221,16 @@ const mergeStep = createStep({
     })
 
     if (supervisorConversation.length > 0) {
+      const supervisorUsage = summarizeUsage(supervisorConversation)
       tracingContext?.currentSpan?.update({
         metadata: {
           supervisorConversation,
           supervisorConversationBytes: JSON.stringify(supervisorConversation).length,
+          supervisorUsage,
         },
+      })
+      await recordSignals(inputData.taskId, 'vcs-supervisor', supervisorUsage).catch(() => {
+        // signal capture must never fail the task
       })
     }
 
