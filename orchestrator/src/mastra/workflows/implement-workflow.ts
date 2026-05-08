@@ -67,7 +67,7 @@ const setupStep = createStep({
     taskId: z.string(),
     prompt: z.string(),
     plan: planSchema.default(null),
-    integrationBranch: z.string().default('integration'),
+    integrationBranch: z.string().default('main'),
   }),
   outputSchema: z.object({
     taskId: z.string(),
@@ -421,7 +421,7 @@ export const implementWorkflow = createWorkflow({
     taskId: z.string(),
     prompt: z.string(),
     plan: planSchema.default(null),
-    integrationBranch: z.string().default('integration'),
+    integrationBranch: z.string().default('main'),
   }),
   outputSchema: z.object({
     taskId: z.string(),

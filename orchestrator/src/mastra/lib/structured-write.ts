@@ -34,7 +34,7 @@ export type StructuredWriteOutcome =
   | { kind: 'aborted'; reason: string; output: string }
 
 const integrationFromEnv = (): string =>
-  process.env.INTEGRATION_BRANCH ?? 'integration'
+  process.env.INTEGRATION_BRANCH ?? 'main'
 
 const stagedHasChanges = async (cwd: string): Promise<boolean> => {
   const { stdout } = await exec('git', ['status', '--porcelain'], { cwd })

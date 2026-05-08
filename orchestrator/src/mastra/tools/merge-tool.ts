@@ -22,7 +22,7 @@ export const mergeTool = createTool({
     mergeBranch({
       branch: inputData.branch,
       worktreePath: inputData.worktreePath,
-      integrationBranch: inputData.integrationBranch ?? 'integration',
+      integrationBranch: inputData.integrationBranch ?? 'main',
       lockTimeoutMs: inputData.lockTimeoutMs ?? 5 * 60 * 1000,
     }),
 })

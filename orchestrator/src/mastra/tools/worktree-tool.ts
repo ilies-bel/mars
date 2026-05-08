@@ -4,7 +4,7 @@ import { createWorktree, removeWorktree } from '../lib/git'
 
 export const createWorktreeTool = createTool({
   id: 'create-worktree',
-  description: 'Create a new git worktree on a fresh branch off the integration branch.',
+  description: 'Create a new git worktree on a fresh branch off the integration branch (default: main).',
   inputSchema: z.object({
     taskId: z.string(),
     integrationBranch: z.string().optional(),
@@ -16,7 +16,7 @@ export const createWorktreeTool = createTool({
   execute: async (inputData) =>
     createWorktree({
       taskId: inputData.taskId,
-      integrationBranch: inputData.integrationBranch ?? 'integration',
+      integrationBranch: inputData.integrationBranch ?? 'main',
     }),
 })
 

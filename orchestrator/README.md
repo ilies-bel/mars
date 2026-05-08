@@ -6,10 +6,10 @@ Mastra-driven orchestrator that runs Claude Code in parallel git worktrees. Inst
 
 Each task in the queue runs through a 4-step Mastra workflow:
 
-1. **setup** — `git worktree add` on a fresh `task/<id>` branch off `integration`
+1. **setup** — `git worktree add` on a fresh `task/<id>` branch off `main`
 2. **code** — `claude -p "<prompt>"` runs headless inside the worktree
 3. **verify** — typecheck → tests → lint (must all pass)
-4. **merge** — fast-forward into `integration`. On conflict, the bundled **vcs-supervisor** ("Vega") agent prompt is dispatched via `claude -p` to reconcile intent and verify, then commit. If unresolvable, `git merge --abort` and the task is marked `failed`. Merges are serialized via a file lock; coding runs unlimited-parallel.
+4. **merge** — fast-forward into `main`. On conflict, the bundled **vcs-supervisor** ("Vega") agent prompt is dispatched via `claude -p` to reconcile intent and verify, then commit. If unresolvable, `git merge --abort` and the task is marked `failed`. Merges are serialized via a file lock; coding runs unlimited-parallel.
 
 ## Install
 
@@ -70,12 +70,11 @@ Add `/.mars/` to the target repo's `.gitignore`.
 ## Prerequisites
 
 - `claude` CLI on PATH (Claude Code).
-- An `integration` branch in the target repo (`git checkout -b integration` if missing).
 - Node `>=22.13.0`.
 
 ## Env
 
-- `INTEGRATION_BRANCH` — target branch for merges (default `integration`).
+- `INTEGRATION_BRANCH` — target branch for merges (default `main`).
 - `MARS_REPO` — target repo path (overrides cwd-based detection).
 - `MARS_REFLECT_DISABLED=1` — skip per-task token/cost capture and
   short-circuit `mars reflect`. Scorers stay attached either way.
