@@ -113,20 +113,45 @@ const TERMINAL_STATUSES: ReadonlySet<Task['status']> = new Set([
   'failed',
 ])
 
-const isAncestorOfMain = async (
+export const isBranchMergedIntoMain = async (
   branch: string,
   repoRoot: string,
 ): Promise<boolean> => {
+  // Step 1: branch tip must be reachable from main.
   try {
     await exec('git', ['merge-base', '--is-ancestor', branch, 'main'], {
       cwd: repoRoot,
     })
-    return true
   } catch (err: unknown) {
     const code = (err as { code?: number }).code
     if (code === 1) return false
-    // Any other error (e.g. branch missing): treat as not-an-ancestor so
-    // the desync path runs and the operator gets a self-heal task.
+    // Any other error (e.g. branch missing): treat as not-merged so the
+    // desync path runs and the operator gets a self-heal task.
+    return false
+  }
+  // Step 2: main must NOT be ahead of branch. A branch that was created
+  // off main but never advanced past its fork point is trivially an
+  // ancestor of main — but if main has moved on since, the branch tip is
+  // strictly behind main's tip, which is the never-landed signature we
+  // need to reject. After the orchestrator's rebase + fast-forward merge,
+  // branch tip == main tip, so `branch..main` == 0 and we report merged.
+  //
+  // Caveat: if main advances after a successful FF merge, this also
+  // reports merged=false. The orchestrator removes the worktree at merge
+  // time, so the sweeper does not normally see that case; if it does, the
+  // worktree falls through to the stale-worktree alert path, which is
+  // acceptable — operator gets a one-shot alert instead of a desync
+  // self-heal loop firing every tick.
+  try {
+    const { stdout } = await exec(
+      'git',
+      ['rev-list', '--count', `${branch}..main`],
+      { cwd: repoRoot },
+    )
+    const mainAhead = Number.parseInt(stdout.trim(), 10)
+    if (!Number.isFinite(mainAhead)) return false
+    return mainAhead === 0
+  } catch {
     return false
   }
 }
@@ -163,8 +188,8 @@ const buildDesyncPrompt = (
 ): string => {
   const symptom =
     status === 'done'
-      ? `task ${taskId} reports done in queue.db but ${branch} is not an ancestor of main`
-      : `task ${taskId} reports ${status} in queue.db but ${branch} IS an ancestor of main (terminal-failure status with a landed branch)`
+      ? `task ${taskId} reports done in queue.db but ${branch} did not land into main`
+      : `task ${taskId} reports ${status} in queue.db but ${branch} did land into main (terminal-failure status with a landed branch)`
   return [
     `Self-heal a desynced task. Mars and git disagree about whether ${branch} landed.`,
     ``,
@@ -201,7 +226,7 @@ const handleCandidate = async (
   log: (line: string) => void,
   counters: SweepCounters,
 ): Promise<void> => {
-  const merged = await isAncestorOfMain(wt.branch, repoRoot)
+  const merged = await isBranchMergedIntoMain(wt.branch, repoRoot)
   const status = task.status
   const ageMs = Math.max(0, now - new Date(task.updatedAt).getTime())
   const ageHours = ageMs / (1000 * 60 * 60)
@@ -266,7 +291,7 @@ const handleCandidate = async (
       priority: 'normal',
       title: `stale worktree for ${wt.branch} (${status})`,
       body:
-        `Task ${wt.taskId} is ${status} but its worktree is still on disk and the branch is not an ancestor of main.\n` +
+        `Task ${wt.taskId} is ${status} but its worktree is still on disk and the branch did not land into main.\n` +
         `Path: ${wt.path}\nBranch: ${wt.branch}\nAge since last update: ${ageHours.toFixed(1)}h.`,
       payload,
       context: { worktreePath: wt.path, branch: wt.branch },
