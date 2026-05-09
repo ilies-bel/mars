@@ -24,7 +24,13 @@ describe('fix-recipes', () => {
       const recipe = getRecipe('dirty_merge_target')
       const prompt = recipe.buildPrompt(ctx)
       expect(prompt).toMatchInlineSnapshot(`
-"The merge target at /tmp/main-checkout has uncommitted changes that block a fast-forward merge. Inspect each modified or untracked file:
+"The merge target at /tmp/main-checkout appeared dirty when merge pre-flight ran, blocking a fast-forward merge into main. By the time you read this another task may already have cleaned it up.
+
+STEP 1 — re-check first. Run \`git -C /tmp/main-checkout status --porcelain\` right now.
+ - If the output is empty, the tree is already clean: do NOT touch any file, do NOT commit, do NOT emit an inbox notification. Exit successfully — the original task can be retried as-is.
+ - If the output is non-empty, proceed to STEP 2 with the CURRENT status, not the snapshot below.
+
+STEP 2 — only if STEP 1 still shows a dirty tree. Inspect each modified or untracked file:
  (a) commit files that represent intentional work with a meaningful commit message that describes the actual changes;
  (b) discard files that are clearly transient (build artifacts, .DS_Store, editor swap files, anything in .gitignore that slipped in via \`git add -f\` etc.);
  (c) for anything ambiguous, do NOT guess — emit a high-priority inbox notification listing the file(s) and what's unclear, and exit.
@@ -34,7 +40,7 @@ Do not push. Save your work.
 Merge target path: /tmp/main-checkout
 Merge target branch: main
 
-\`git status --porcelain\` output:
+Original \`git status --porcelain\` output captured at failure time (may be stale — re-check before acting):
 \`\`\`
  M src/foo.ts
 ?? new-file.txt
@@ -58,6 +64,20 @@ If you need to file an inbox notification, create a row in .mars/queue.db inbox_
       expect(prompt).toContain('do NOT guess')
       expect(prompt).toContain('high-priority inbox notification')
       expect(prompt).toContain('Do not push. Save your work.')
+    })
+
+    it('instructs the agent to re-check git status first and no-op if clean', () => {
+      const recipe = getRecipe('dirty_merge_target')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(
+        `git -C ${ctx.targetPath} status --porcelain`,
+      )
+      expect(prompt).toContain('STEP 1')
+      expect(prompt).toContain(
+        'If the output is empty, the tree is already clean',
+      )
+      expect(prompt).toMatch(/Exit successfully/i)
+      expect(prompt).toContain('may be stale')
     })
   })
 
