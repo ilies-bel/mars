@@ -1,0 +1,3 @@
+# Single ideas inbox with task_dependencies junction
+
+Reflection-source rows live in the ideas table (source='reflection') alongside human and planner ideas, and task_suggestions is removed; task-to-task blocker linkage moves from tasks.blocker_id (one blocker per task) to a task_dependencies junction (many-to-many). Chosen so LLM agents and humans see one human-curatable inbox with a single source field instead of two parallel buckets to reconcile, and so a task can express more than one blocker. Trade-off: extra join for unblock checks and a non-trivial migration, accepted for the simpler mental model and richer dependency graph.
