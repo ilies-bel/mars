@@ -440,19 +440,22 @@ const fieldColumn: Record<IdeaField, string> = {
 }
 
 export const setIdeaField = async (
-  id: string,
+  idOrPrefix: string,
   field: IdeaField,
   value: string,
 ): Promise<Idea> => {
   await initIdeas()
-  const c = getClient()
-  const existing = await c.execute({
-    sql: `SELECT id FROM ideas WHERE id = ?`,
-    args: [id],
-  })
-  if (existing.rows.length === 0) {
-    throw new Error(`idea ${id} not found`)
+  const resolved = await resolveIdeaId(idOrPrefix)
+  if (resolved.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} ideas`,
+    )
   }
+  if (resolved.kind === 'none') {
+    throw new Error(`idea ${idOrPrefix} not found`)
+  }
+  const id = resolved.id
+  const c = getClient()
   const now = Date.now()
   await c.execute({
     sql: `UPDATE ideas SET ${fieldColumn[field]} = ?, updated_at = ? WHERE id = ?`,
@@ -466,18 +469,21 @@ export const setIdeaField = async (
 }
 
 export const addIdeaAcceptance = async (
-  id: string,
+  idOrPrefix: string,
   bullet: string,
 ): Promise<Idea> => {
   await initIdeas()
-  const c = getClient()
-  const existing = await c.execute({
-    sql: `SELECT id FROM ideas WHERE id = ?`,
-    args: [id],
-  })
-  if (existing.rows.length === 0) {
-    throw new Error(`idea ${id} not found`)
+  const resolved = await resolveIdeaId(idOrPrefix)
+  if (resolved.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} ideas`,
+    )
   }
+  if (resolved.kind === 'none') {
+    throw new Error(`idea ${idOrPrefix} not found`)
+  }
+  const id = resolved.id
+  const c = getClient()
   const positionRow = await c.execute({
     sql: `SELECT COALESCE(MAX(position), -1) AS max_pos FROM idea_acceptance WHERE idea_id = ?`,
     args: [id],
@@ -504,18 +510,21 @@ export const addIdeaAcceptance = async (
 }
 
 export const removeIdeaAcceptance = async (
-  id: string,
+  idOrPrefix: string,
   index: number,
 ): Promise<Idea> => {
   await initIdeas()
-  const c = getClient()
-  const existing = await c.execute({
-    sql: `SELECT id FROM ideas WHERE id = ?`,
-    args: [id],
-  })
-  if (existing.rows.length === 0) {
-    throw new Error(`idea ${id} not found`)
+  const resolved = await resolveIdeaId(idOrPrefix)
+  if (resolved.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} ideas`,
+    )
   }
+  if (resolved.kind === 'none') {
+    throw new Error(`idea ${idOrPrefix} not found`)
+  }
+  const id = resolved.id
+  const c = getClient()
   if (!Number.isInteger(index) || index < 0) {
     throw new Error(`acceptance index must be a non-negative integer`)
   }
