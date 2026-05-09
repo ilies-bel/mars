@@ -215,6 +215,59 @@ timeout is 10 minutes — these analyses can be large. Setting
 - Merge conflicts vcs-supervisor cannot reconcile → `git merge --abort`, task `failed`, worktree retained.
 - Clean merge (or supervised resolution) → worktree removed, task `done`.
 
+## Inbox
+
+Cross-cutting findings that don't belong to a single task — daemon
+desyncs, sweeper observations, self-heal investigations, anything raised
+by a dispatched agent — land in the inbox at `.mars/state.db`.
+
+CLI surface:
+
+| Command                                  | Purpose                                                  |
+| ---------------------------------------- | -------------------------------------------------------- |
+| `mars inbox` / `mars inbox list [state]` | List items by state (default `open`).                    |
+| `mars inbox show <id>`                   | Full detail for one item.                                |
+| `mars inbox ack <id>`                    | Mark an item acknowledged.                               |
+| `mars inbox resolve <id>`                | Mark an item resolved (`--note`, `--root-cause`).        |
+| `mars inbox dismiss <id>`                | Mark an item dismissed (`--note`).                       |
+| `mars inbox raise --from <-\|path>`      | File a new item from a JSON document.                    |
+| `mars inbox watch`                       | Live ink TUI.                                            |
+
+`mars inbox raise --from -` is the **correct** entry point for
+dispatched agents (sweeper recipes, self-heal investigations, anything
+running inside a `task/<id>` worktree) to file inbox items. It replaces
+the deprecated pattern of writing one-shot `.ts` scripts under
+`orchestrator/scripts/raise-*.ts`, which pollute the codebase, tie
+agents to the orchestrator's source tree, and have caused merge-target
+dirty failures when an uncommitted script was left in the worktree.
+
+The verb reads a JSON document from stdin (or from `--from <path>`),
+validates it against the same shape `raiseInboxItem` expects, dedupes
+server-side by `(kind, signature)` — re-piping the same payload bumps
+`seen_count` instead of creating a duplicate row — and prints the
+inbox id on stdout (one line, no decoration). Exit codes: `0` ok, `1`
+library error, `2` parse/validation error.
+
+```bash
+echo '{
+  "kind": "manual.smoketest",
+  "category": "orchestrator",
+  "priority": "low",
+  "title": "smoke test of mars inbox raise",
+  "body": "...",
+  "payload": {},
+  "context": {},
+  "raisedBy": "smoketest:agent",
+  "signature": "manual.smoketest:1"
+}' | mars inbox raise --from -
+```
+
+Required fields: `kind`, `category`, `priority` (`urgent|high|normal|low`),
+`title`, `body`, `payload`, `context`, `raisedBy`, `signature`. Optional:
+`occurrence`. Pass a real `raisedBy` (e.g. `self-heal:<task-id>` or
+`sweeper:<recipe>`) so the source of the finding is traceable; the empty
+string defaults to `agent:cli`, but a missing key is a schema error.
+
 ## `mars init` and monorepo recursion
 
 `mars init` walks the target repo from its root and merges every manifest it
