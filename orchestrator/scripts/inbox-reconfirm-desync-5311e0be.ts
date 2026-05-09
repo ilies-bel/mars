@@ -6,7 +6,7 @@
  * "rebase-landed-ref-stale" shape already escalated by the prior
  * self-heal task mars-f7a7483e (inbox item ecdd51fb, still open).
  *
- * Confirmed during this self-heal pass (task mars-18ceada3):
+ * Confirmed during this self-heal pass (task mars-f794be38):
  *   - task/mars-5311e0be tip = 1d1f8ef0a4b0faaf197a122e18f18976ef676eb1
  *   - main contains 73921cca6872c039e461dcbf64c2e20814a87552, byte-equivalent
  *     to the task-branch commit modulo one resolved hunk in
@@ -39,7 +39,7 @@
 
 import { raiseInboxItem } from '../src/mastra/lib/inbox'
 
-const SELF_HEAL_TASK_ID = 'mars-18ceada3'
+const SELF_HEAL_TASK_ID = 'mars-f794be38'
 const PRIOR_SELF_HEAL_TASK_ID = 'mars-f7a7483e'
 const PRIOR_INBOX_ID = 'ecdd51fb'
 const TARGET_TASK_ID = 'mars-5311e0be'
