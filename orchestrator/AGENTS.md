@@ -53,6 +53,18 @@ Top-level files define how your Mastra project is configured, built, and connect
   `isReflectDisabled()` (or `recordSignals`, which already gates itself)
   so `MARS_REFLECT_DISABLED=1` stays a single, comprehensive disable
 
+### Daemon worker pool
+
+`src/mastra/daemon/server.ts` dispatches work behind per-kind semaphores.
+When you add a new dispatch path, route it through `acquire(sems.<kind>)`
+in the dispatcher and `release(sems.<kind>)` in `finally`, then call
+`drain()` so any pending work picks up the freed slot. Do **not**
+emit-then-dispatch directly from a bus handler — push the id into the
+matching `pending*` set and call `drain()` instead, otherwise reconcile
+or a burst of `task add` calls will spawn one worktree per row and melt
+the host. Caps default to triage=4, implement=2, refine=2,
+structured-write=1; see README "Daemon worker pool" for the env vars.
+
 ### `mars init` recursion
 
 The `init` command walks the target repo and merges every manifest into a
