@@ -168,7 +168,7 @@ Commands:
                                 --force is also passed; --force-orphans extends
                                 removal to orphan worktrees that did contribute
                                 commits.
-  watch [--detach|--stop|--status|--force|--reload]
+  daemon [--detach|--stop|--status|--force|--reload]
                                 run the orchestration daemon (foreground by default);
                                 CLI write ops auto-spawn it. --detach forks to
                                 background; --stop asks daemon to exit (refuses
@@ -365,7 +365,7 @@ Flags:
 Errors during 'git worktree remove' are caught, logged with the directory
 path, and counted; the verb still processes remaining worktrees and exits
 0 unless every action failed.`,
-  watch: `mars watch [--detach|--stop|--status|--force|--reload]
+  daemon: `mars daemon [--detach|--stop|--status|--force|--reload]
 
 Run the orchestration daemon (foreground by default). CLI write ops
 auto-spawn it.
@@ -1141,12 +1141,19 @@ const main = async (): Promise<void> => {
   }
 
   if (cmd === 'watch') {
-    const watchFlags = new Set(rest.filter((a) => a.startsWith('--')))
-    const detach = watchFlags.has('--detach')
-    const stop = watchFlags.has('--stop')
-    const status = watchFlags.has('--status')
-    const force = watchFlags.has('--force')
-    const reload = watchFlags.has('--reload')
+    console.error(
+      'mars watch has been renamed to mars daemon — run `mars daemon --help` for usage.',
+    )
+    process.exit(2)
+  }
+
+  if (cmd === 'daemon') {
+    const daemonFlags = new Set(rest.filter((a) => a.startsWith('--')))
+    const detach = daemonFlags.has('--detach')
+    const stop = daemonFlags.has('--stop')
+    const status = daemonFlags.has('--status')
+    const force = daemonFlags.has('--force')
+    const reload = daemonFlags.has('--reload')
 
     if (stop) {
       const { sendRequest } = await import('./mastra/daemon/client')
@@ -1175,7 +1182,7 @@ const main = async (): Promise<void> => {
         const msg = (err as Error).message
         if (/not running|auto-spawn disabled/i.test(msg)) {
           console.error(
-            "daemon not running; use 'mars watch --detach' to start it",
+            "daemon not running; use 'mars daemon --detach' to start it",
           )
           process.exit(1)
         }
@@ -1213,7 +1220,7 @@ const main = async (): Promise<void> => {
         return
       }
       const { command, baseArgs } = resolveLaunchCommand()
-      const child = spawn(command, [...baseArgs, '--repo', ctx.repoRoot, 'watch'], {
+      const child = spawn(command, [...baseArgs, '--repo', ctx.repoRoot, 'daemon'], {
         detached: true,
         stdio: 'ignore',
         env: { ...process.env, MARS_REPO: ctx.repoRoot },
@@ -1268,7 +1275,7 @@ const main = async (): Promise<void> => {
     if (await isDaemonRunning(daemonPaths().socket)) {
       if (!force) {
         console.error(
-          'mars daemon is running; refusing to clean worktrees. Stop it (mars watch --stop) or pass --force to override.',
+          'mars daemon is running; refusing to clean worktrees. Stop it (mars daemon --stop) or pass --force to override.',
         )
         process.exit(1)
       }

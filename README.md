@@ -40,7 +40,7 @@ From inside any git repo:
 mars init                                # detect stack, generate supervisors
 mars add --draft "implement feature X"   # enqueue a draft
 # refine the plan via the chat skill (/mars:feature:chat) inside Claude Code
-mars watch                               # daemon dispatcher (poll queue.db)
+mars daemon                              # daemon dispatcher (poll queue.db)
 ```
 
 The full CLI reference and runtime details live in

@@ -194,7 +194,7 @@ Add `/.mars/` to the target repo's `.gitignore`.
 | `mars list [status]` | List tasks. |
 | `mars show <id>` | Print a task with plans, questions, suggestions. |
 | `mars run` | One-shot dispatch all `queued` tasks (drift — vision says watch is canonical). |
-| `mars watch [--interval <sec>]` | Daemon dispatcher (default 2s poll). |
+| `mars daemon [--interval <sec>]` | Daemon dispatcher (default 2s poll). |
 | `mars where` | Print resolved repo + state paths. |
 
 Repo resolution order: `--repo` flag → `MARS_REPO` env → `git rev-parse
@@ -252,7 +252,7 @@ Captured here so future-you doesn't trust either side blindly.
    in the top-level README — no code exists. Either build or remove.
 3. **`ready` status** is in the schema and CLI but redundant with
    `queued` per the vision. Plan to remove.
-4. **`mars run`** (synchronous batch) overlaps with `mars watch`. Vision
+4. **`mars run`** (synchronous batch) overlaps with `mars daemon`. Vision
    says watch is canonical.
 5. **`state.db`** exists in `.mars/` but no code reads or writes it.
 6. **README points to** `agents/` and `docs/CONTRACTS.md` — neither
