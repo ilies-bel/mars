@@ -26,3 +26,6 @@ The full tree of work sharing a single originId, from the first proposal (idea o
 
 **Inbox**:
 The single human-curatable list of items that need a human's attention, surfacing across lifecycle stages: ideas to shape (status='draft'), tasks blocked needing unblock, and tasks that finished in a state requiring review (e.g. failed).
+
+**Events**:
+A read-only, passive activity feed in the ui/ frontend tracking progress of completed tasks (and other terminal-state lifecycle moments) for situational awareness, with no acknowledgement or action required from the user.
