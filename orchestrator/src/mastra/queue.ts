@@ -52,8 +52,20 @@ export interface Task {
   fixForTaskId: string | null
   failureSignature: string | null
   originId: string
+  priority: number
   createdAt: string
   updatedAt: string
+}
+
+export const MIN_PRIORITY = 0
+export const MAX_PRIORITY = 3
+
+export const validatePriority = (value: number): void => {
+  if (!Number.isInteger(value) || value < MIN_PRIORITY || value > MAX_PRIORITY) {
+    throw new Error(
+      `priority must be an integer in ${MIN_PRIORITY}..${MAX_PRIORITY}; got ${value}`,
+    )
+  }
 }
 
 let clientSingleton: Client | null = null
@@ -118,6 +130,16 @@ export const initQueue = async (): Promise<void> => {
   if (!names.has('failure_signature')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN failure_signature TEXT`)
   }
+  if (!names.has('priority')) {
+    // CHECK constraint cannot be added via ALTER TABLE in SQLite; the
+    // application-level validatePriority() guards inserts/updates instead.
+    await c.execute(
+      `ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`,
+    )
+  }
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created ON tasks(priority DESC, created_at ASC)`,
+  )
   // origin_id: stable id of the originating row (idea or self-task) for an
   // arc of work. @libsql/client does not honour `DEFAULT (id)` self-reference
   // reliably, so the column is added without a default and back/forward-filled
@@ -371,6 +393,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     fixForTaskId: (row.fix_for_task_id as string | null) ?? null,
     failureSignature: (row.failure_signature as string | null) ?? null,
     originId: ((row.origin_id as string | null) ?? (row.id as string)),
+    priority: Number(row.priority ?? 0),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -380,6 +403,7 @@ export interface EnqueueTaskOptions {
   skipTriage?: boolean
   author?: Author
   originId?: string
+  priority?: number
 }
 
 export const enqueueTask = async (
@@ -388,6 +412,7 @@ export const enqueueTask = async (
   opts?: EnqueueTaskOptions,
 ): Promise<Task> => {
   const promptText = coerceToString(prompt, 'enqueueTask: prompt')
+  if (opts?.priority !== undefined) validatePriority(opts.priority)
   await initQueue()
   const id = `mars-${randomUUID().slice(0, 8)}`
   const now = new Date().toISOString()
@@ -395,8 +420,9 @@ export const enqueueTask = async (
   const authorKind = opts?.author?.kind ?? null
   const authorName = opts?.author?.name ?? null
   const originId = opts?.originId ?? id
+  const priority = opts?.priority ?? 0
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       promptText,
@@ -406,6 +432,7 @@ export const enqueueTask = async (
       authorKind,
       authorName,
       originId,
+      priority,
       now,
       now,
     ],
@@ -487,11 +514,45 @@ export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
   await initQueue()
   const r = status
     ? await getClient().execute({
-        sql: `SELECT * FROM tasks WHERE status = ? ORDER BY created_at`,
+        sql: `SELECT * FROM tasks WHERE status = ? ORDER BY priority DESC, created_at ASC`,
         args: [status],
       })
-    : await getClient().execute(`SELECT * FROM tasks ORDER BY created_at`)
+    : await getClient().execute(
+        `SELECT * FROM tasks ORDER BY priority DESC, created_at ASC`,
+      )
   return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
+}
+
+export const setTaskPriority = async (
+  id: string,
+  priority: number,
+): Promise<Task> => {
+  validatePriority(priority)
+  await initQueue()
+  const c = getClient()
+  const before = await c.execute({
+    sql: `SELECT status FROM tasks WHERE id = ?`,
+    args: [id],
+  })
+  if (before.rows.length === 0) {
+    throw new Error(`task ${id} not found`)
+  }
+  const status = (before.rows[0] as unknown as { status: string }).status
+  if (status !== 'queued') {
+    throw new Error(
+      `task ${id} is ${status}; only queued tasks can be reprioritized`,
+    )
+  }
+  const now = new Date().toISOString()
+  await c.execute({
+    sql: `UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?`,
+    args: [priority, now, id],
+  })
+  const r = await c.execute({
+    sql: `SELECT * FROM tasks WHERE id = ?`,
+    args: [id],
+  })
+  return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
 }
 
 export const deleteTask = async (id: string): Promise<void> => {

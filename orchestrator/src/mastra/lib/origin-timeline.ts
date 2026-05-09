@@ -59,6 +59,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     fixForTaskId: (row.fix_for_task_id as string | null) ?? null,
     failureSignature: (row.failure_signature as string | null) ?? null,
     originId: ((row.origin_id as string | null) ?? (row.id as string)),
+    priority: Number(row.priority ?? 0),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
