@@ -20,3 +20,6 @@ _Avoid_: watch process, watcher
 
 **Sweeper**:
 Background component that manages worktree cleanup, removing finished or abandoned task worktrees under .worktrees/ and .mars/worktrees/.
+
+**Arc**:
+The full tree of work sharing a single originId, from the first proposal (idea or direct task) through every promoted/spawned task and every Mastra span to the merged commit(s); the unit of analysis for mars deep-reflect.
