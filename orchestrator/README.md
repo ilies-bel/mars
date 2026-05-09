@@ -109,19 +109,21 @@ Both Claude dispatches (the `code` step and the `vcs-supervisor` invocation in
   is forwarded to the workflow's `writer.write(...)`. In Studio, while the run
   is in flight, watch the step's run-stream view to see `claude-event` /
   `vcs-supervisor-event` items arrive in real time.
-- **Persisted span metadata** — at step end the conversation is attached to
-  the step span via `tracingContext.currentSpan.update({ metadata: { ... } })`.
-  After a run completes, open Studio → Run history → click the step →
-  **Metadata** tab. The `code` step exposes `conversation`, `claudeSessionId`,
-  and `conversationBytes`. The `merge` step exposes `supervisorConversation`
-  and `supervisorConversationBytes` (only populated when a conflict triggered
-  the supervisor).
+- **Persisted span metadata** — at step end small span-shaped fields are
+  attached to the step span via
+  `tracingContext.currentSpan.update({ metadata: { ... } })`. After a run
+  completes, open Studio → Run history → click the step → **Metadata** tab.
+  The `code` step exposes `claudeSessionId` and `usage`; the full
+  conversation is persisted to `task_transcripts.conversation_json` in
+  `.mars/queue.db` (LibSQL) instead, which is what `mars deep-reflect` and
+  external skills read. The `merge` step still exposes
+  `supervisorConversation` and `supervisorConversationBytes` (only
+  populated when a conflict triggered the supervisor).
 
 Trim policy: assistant text and reasoning are kept in full. Tool calls with
 input larger than 2 KB and tool results larger than 4 KB are replaced with
 `{ truncated: true, originalBytes, head }` (first 2 KB of the JSON payload)
-to keep `.mars/mastra.db` small. Operators can monitor the
-`conversationBytes` field on the step span to spot pathological growth.
+to keep persisted conversations small.
 
 ## Reflection
 
