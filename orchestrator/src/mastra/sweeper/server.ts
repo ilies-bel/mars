@@ -61,7 +61,7 @@ const writeLog = (logFile: string, line: string): void => {
   }
 }
 
-interface DiscoveredWorktree {
+export interface DiscoveredWorktree {
   path: string
   branch: string
   taskId: string
@@ -210,7 +210,7 @@ const buildDesyncPrompt = (
   ].join('\n')
 }
 
-interface SweepCounters {
+export interface SweepCounters {
   cleaned: number
   keptInFlight: number
   keptFresh: number
@@ -262,8 +262,19 @@ const handleCandidate = async (
     return
   }
 
-  // status in {dropped, failed} AND not merged → expected stale; refire inbox
-  // every tick (no dedup).
+  // status in {dropped, failed} AND not merged → expected stale; surface as a
+  // single inbox item per (taskId, worktreePath) and bump seen_count each tick.
+  await alertOnStaleWorktree(wt, status, now, ageHours, log, counters)
+}
+
+export const alertOnStaleWorktree = async (
+  wt: DiscoveredWorktree,
+  status: string,
+  now: number,
+  ageHours: number,
+  log: (line: string) => void,
+  counters: SweepCounters,
+): Promise<void> => {
   const lastSweptAt = new Date(now).toISOString()
   const payload: SweeperPayload = sweeperPayloadSchema.parse({
     taskId: wt.taskId,
@@ -285,9 +296,7 @@ const handleCandidate = async (
       payload,
       context: { worktreePath: wt.path, branch: wt.branch },
       raisedBy: 'sweeper',
-      // Unique signature per sweep tick → fingerprint differs each time, so
-      // raiseInboxItem inserts a fresh row instead of bumping seen_count.
-      signature: `stale-worktree:${wt.taskId}:${wt.path}:${lastSweptAt}`,
+      signature: `stale-worktree:${wt.taskId}:${wt.path}`,
     })
     counters.alerted += 1
     log(

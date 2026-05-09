@@ -1,10 +1,18 @@
-import { execFile } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFile, execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { isBranchMergedIntoMain, isZeroCommitBranch } from './server'
+
+interface ServerModule {
+  alertOnStaleWorktree: typeof import('./server').alertOnStaleWorktree
+}
+
+interface InboxModule {
+  listInboxItems: typeof import('../lib/inbox').listInboxItems
+}
 
 const exec = promisify(execFile)
 
@@ -121,5 +129,54 @@ describe('isZeroCommitBranch', () => {
   it('returns false when the branch does not exist', async () => {
     await initRepo(repo)
     expect(await isZeroCommitBranch('task/does-not-exist', repo)).toBe(false)
+  })
+})
+
+describe('alertOnStaleWorktree', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-sweeper-alert-'))
+    execFileSync('git', ['init', '-q'], { cwd: repo })
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+    vi.resetModules()
+    process.env.MARS_REPO = repo
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('two consecutive ticks against the same stale worktree dedup into one row with seen_count=2', async () => {
+    const server = (await import('./server')) as unknown as ServerModule
+    const inbox = (await import('../lib/inbox')) as unknown as InboxModule
+
+    const wt = {
+      path: '/tmp/mars-test-worktrees/abc123',
+      branch: 'task/abc123',
+      taskId: 'abc123',
+      mtimeMs: 0,
+    }
+    const counters = {
+      cleaned: 0,
+      keptInFlight: 0,
+      keptFresh: 0,
+      alerted: 0,
+      desyncTasks: 0,
+    }
+    const lines: string[] = []
+    const log = (line: string): void => {
+      lines.push(line)
+    }
+
+    await server.alertOnStaleWorktree(wt, 'failed', 1_000_000, 1.5, log, counters)
+    await server.alertOnStaleWorktree(wt, 'failed', 2_000_000, 1.7, log, counters)
+
+    const items = await inbox.listInboxItems('open')
+    const stale = items.filter((i) => i.kind === 'stale-worktree')
+    expect(stale.length).toBe(1)
+    expect(stale[0].seenCount).toBe(2)
+    expect(counters.alerted).toBe(2)
   })
 })
