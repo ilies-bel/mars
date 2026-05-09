@@ -86,6 +86,16 @@ describe('runSubprocessStreaming', () => {
     expect(result.exitCode).toBe(0)
     expect(lines).toEqual(['no-newline'])
   })
+
+  it('resolves with exit code 127 when the binary is not found instead of crashing', async () => {
+    const result = await runSubprocessStreaming(
+      '/this/path/does/not/exist/mars-missing-binary',
+      [],
+      process.cwd(),
+    )
+    expect(result.exitCode).toBe(127)
+    expect(result.stderr).toContain('ENOENT')
+  })
 })
 
 describe('acquireLock', () => {
@@ -128,11 +138,12 @@ describe('acquireLock', () => {
 
 describe('runClaudeCode (stubbed claude binary)', () => {
   let stubDir: string
+  let stubPath: string
   let originalPath: string | undefined
 
   beforeAll(() => {
     stubDir = mkdtempSync(resolve(tmpdir(), 'mars-claude-stub-'))
-    const stubPath = resolve(stubDir, 'claude')
+    stubPath = resolve(stubDir, 'claude')
     // Stub emits 3 fixture stream-json lines + a final result line.
     const stubScript = `#!/usr/bin/env node
 const lines = [
@@ -174,6 +185,35 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
       'result',
     ])
     expect(seen).toEqual(['system', 'assistant', 'user', 'result'])
+  })
+
+  it('honours MARS_CLAUDE_BIN even when PATH does not include the stub', async () => {
+    const prevBin = process.env.MARS_CLAUDE_BIN
+    const prevPath = process.env.PATH
+    process.env.MARS_CLAUDE_BIN = stubPath
+    // Strip the stubDir from PATH so the override is the only way to find it.
+    // Keep the rest of PATH so the stub's `#!/usr/bin/env node` shebang
+    // still resolves `node` (this is a test-environment concern only;
+    // production callers pass a real `claude` binary path).
+    process.env.PATH = (prevPath ?? '')
+      .split(':')
+      .filter((p) => p !== stubDir)
+      .join(':')
+    try {
+      const r = await runClaudeCode({
+        cwd: process.cwd(),
+        prompt: 'noop',
+        timeoutMs: 5_000,
+      })
+      expect(r.exitCode).toBe(0)
+      expect(r.sessionId).toBe('stub-session-xyz')
+      expect(r.conversation).toHaveLength(4)
+    } finally {
+      if (prevBin === undefined) delete process.env.MARS_CLAUDE_BIN
+      else process.env.MARS_CLAUDE_BIN = prevBin
+      if (prevPath === undefined) delete process.env.PATH
+      else process.env.PATH = prevPath
+    }
   })
 })
 

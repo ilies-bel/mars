@@ -1,7 +1,8 @@
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import { resolve, dirname } from 'node:path'
+import { resolve, dirname, isAbsolute, join } from 'node:path'
 import { open, mkdir, readFile, rm, unlink } from 'node:fs/promises'
+import { statSync, constants as fsConstants, accessSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { getRepoRoot, getStateDir } from '../context'
 import { parseClaudeStreamLine, type ClaudeEvent } from './claude-stream'
@@ -224,10 +225,28 @@ export const runSubprocessStreaming = (
       else signal.addEventListener('abort', onAbort, { once: true })
     }
 
-    child.stdout.on('data', (chunk) => handleChunk('stdout', chunk))
-    child.stderr.on('data', (chunk) => handleChunk('stderr', chunk))
-    child.on('close', (code) => {
+    child.stdout?.on('data', (chunk) => handleChunk('stdout', chunk))
+    child.stderr?.on('data', (chunk) => handleChunk('stderr', chunk))
+    let settled = false
+    const settle = (result: RunSubprocessResult): void => {
+      if (settled) return
+      settled = true
       if (signal) signal.removeEventListener('abort', onAbort)
+      resolveFn(result)
+    }
+    // A spawn failure (e.g. ENOENT for a missing binary, EACCES) emits
+    // 'error' on the ChildProcess and never fires 'close'. Without this
+    // listener Node treats it as an unhandled 'error' event and crashes
+    // the entire daemon process.
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      const detail = err.code ? `${err.code}: ${err.message}` : err.message
+      settle({
+        exitCode: err.code === 'ENOENT' ? 127 : 1,
+        stdout,
+        stderr: stderr + (stderr.endsWith('\n') || stderr.length === 0 ? '' : '\n') + `spawn ${cmd} ${detail}`,
+      })
+    })
+    child.on('close', (code) => {
       if (onLine) {
         for (const stream of ['stdout', 'stderr'] as const) {
           if (buffers[stream].length > 0) {
@@ -241,7 +260,7 @@ export const runSubprocessStreaming = (
           }
         }
       }
-      resolveFn({ exitCode: code ?? 1, stdout, stderr })
+      settle({ exitCode: code ?? 1, stdout, stderr })
     })
   })
 
@@ -306,6 +325,63 @@ const claudeStreamArgs = (
 
 const DEFAULT_CLAUDE_MAX_MESSAGES = 100
 
+// Default search path for the `claude` binary when it is not on the daemon's
+// PATH (e.g. detached / launchd contexts strip everything but a minimal PATH).
+const FALLBACK_CLAUDE_PATH_DIRS = [
+  '/opt/homebrew/bin',
+  '/usr/local/bin',
+  '/usr/bin',
+  '/bin',
+]
+
+const isExecutableFile = (path: string): boolean => {
+  try {
+    const stat = statSync(path)
+    if (!stat.isFile()) return false
+    accessSync(path, fsConstants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+let cachedClaudeBin: string | null = null
+let cachedClaudeBinFor: string | undefined = undefined
+
+const resolveClaudeBin = (): string => {
+  const override = process.env.MARS_CLAUDE_BIN
+  // Re-resolve when the relevant env changes (mostly for tests; in prod it
+  // is set once at daemon start and never mutates).
+  const envFingerprint = `${override ?? ''} ${process.env.PATH ?? ''}`
+  if (cachedClaudeBin && cachedClaudeBinFor === envFingerprint) {
+    return cachedClaudeBin
+  }
+  cachedClaudeBinFor = envFingerprint
+
+  if (override && override.length > 0) {
+    cachedClaudeBin = override
+    return override
+  }
+
+  const pathDirs = (process.env.PATH ?? '').split(':').filter((p) => p.length > 0)
+  const seen = new Set<string>()
+  for (const dir of [...pathDirs, ...FALLBACK_CLAUDE_PATH_DIRS]) {
+    if (seen.has(dir)) continue
+    seen.add(dir)
+    if (!isAbsolute(dir)) continue
+    const candidate = join(dir, 'claude')
+    if (isExecutableFile(candidate)) {
+      cachedClaudeBin = candidate
+      return candidate
+    }
+  }
+
+  // Fall back to the bare name; spawn will surface ENOENT cleanly thanks to
+  // the 'error' handler in runSubprocessStreaming.
+  cachedClaudeBin = 'claude'
+  return 'claude'
+}
+
 const resolveClaudeMessageCap = (): number => {
   const raw = process.env.MARS_CLAUDE_MAX_MESSAGES
   if (raw === undefined) return DEFAULT_CLAUDE_MAX_MESSAGES
@@ -332,7 +408,7 @@ export const runClaudeCode = async ({
   const abort = new AbortController()
 
   const work = runSubprocessStreaming(
-    'claude',
+    resolveClaudeBin(),
     claudeStreamArgs(prompt, { model, systemPrompt, sessionId }),
     cwd,
     async ({ stream, line }) => {
@@ -727,7 +803,7 @@ const invokeVcsSupervisor = async (
   const prompt = await buildSupervisorPrompt(branch, integrationBranch)
   const conversation: ClaudeEvent[] = []
   const work = runSubprocessStreaming(
-    'claude',
+    resolveClaudeBin(),
     claudeStreamArgs(prompt),
     cwd,
     async ({ stream, line }) => {
