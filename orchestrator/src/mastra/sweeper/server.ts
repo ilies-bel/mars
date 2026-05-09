@@ -251,25 +251,14 @@ const handleCandidate = async (
       !(await isZeroCommitBranch(wt.branch, repoRoot)))
 
   if (desynced) {
-    // DESYNC. Enqueue one self-heal task per worktree, do not remove.
-    const prompt = buildDesyncPrompt(wt.taskId, wt.branch, status)
-    try {
-      const data = (await sendRequest({
-        op: 'add',
-        prompt,
-        skipTriage: true,
-        author: { kind: 'agent', name: 'sweeper' },
-      })) as { id?: string } | undefined
-      const id = typeof data?.id === 'string' ? data.id : '?'
-      counters.desyncTasks += 1
-      log(
-        `[sweeper] desync ${wt.branch} (mars=${status}, merged=${merged}); enqueued self-heal task ${id}`,
-      )
-    } catch (err) {
-      log(
-        `[sweeper] desync ${wt.branch} (mars=${status}, merged=${merged}); failed to enqueue self-heal: ${(err as Error).message}`,
-      )
-    }
+    // DESYNC. Self-heal enqueueing temporarily disabled (damage control):
+    // sweeper was looping on an unhealable branch and producing hundreds
+    // of self-heal tasks per minute. Re-enable after the desync detector
+    // gains a real dedup / give-up policy.
+    counters.desyncTasks += 1
+    log(
+      `[sweeper] desync ${wt.branch} (mars=${status}, merged=${merged}); self-heal disabled, no task enqueued`,
+    )
     return
   }
 
