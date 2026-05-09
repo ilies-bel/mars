@@ -649,6 +649,46 @@ export const startDaemon = async (
     return { taskId: task.id, ideaId: idea.id }
   }
 
+  const handleInit = async (
+    opts: import('../workflows/init-workflow').RunInitOptions,
+  ): Promise<import('../workflows/init-workflow').RunInitResult> => {
+    const { runInit } = await import('../workflows/init-workflow')
+    log(`[init] dispatching (force=${opts.force} fetch=${opts.fetch} dryRun=${opts.dryRun} refresh=${opts.refresh})`)
+    const result = await runInit(opts)
+    log(`[init] -> ${result.status}`)
+    return result
+  }
+
+  const handleAb = async (
+    instruction: string,
+    variants: readonly unknown[],
+  ): Promise<unknown> => {
+    const { mastra } = await import('../index')
+    const wf = mastra.getWorkflow('abExperimentWorkflow')
+    const run = await wf.createRun()
+    log(`[ab] dispatching instruction="${instruction.slice(0, 60)}${instruction.length > 60 ? '…' : ''}"`)
+    // Workflow inputSchema (zod) expects a mutable array; the wire delivers
+    // a readonly one. Validation happens inside .start() — the copy here
+    // is just to satisfy the static type.
+    const result = await run.start({
+      inputData: {
+        instruction,
+        variants: [...variants] as never,
+        integrationBranch,
+      },
+    })
+    if (result.status !== 'success') {
+      const err =
+        'error' in result && result.error instanceof Error
+          ? result.error.message
+          : '(no error message)'
+      log(`[ab] -> ${result.status}: ${err}`)
+      throw new Error(`ab experiment ${result.status}: ${err}`)
+    }
+    log(`[ab] -> success`)
+    return result.result
+  }
+
   const handleStatus = async (): Promise<DaemonStatusPayload> => {
     const counts = {
       draft: (await listTasks('draft')).length,
@@ -792,6 +832,41 @@ export const startDaemon = async (
           }
           void dispatchAdrAdd({ title: req.title.trim(), body: req.body })
           return { ok: true, data: { enqueued: true } }
+        }
+        case 'init': {
+          try {
+            const result = await handleInit(req.opts)
+            return { ok: true, data: result }
+          } catch (err) {
+            const { NestedTechError, WalkAccessError } = await import(
+              '../../init/walk-manifests'
+            )
+            if (err instanceof NestedTechError) {
+              return {
+                ok: false,
+                error: err.message,
+                errorCode: `nested-tech:${err.outerPath}::${err.innerPath}`,
+              }
+            }
+            if (err instanceof WalkAccessError) {
+              return {
+                ok: false,
+                error: err.message,
+                errorCode: `walk-access:${err.path}`,
+              }
+            }
+            throw err
+          }
+        }
+        case 'ab': {
+          if (!Array.isArray(req.variants) || req.variants.length !== 2) {
+            return {
+              ok: false,
+              error: 'ab requires exactly 2 variants',
+            }
+          }
+          const report = await handleAb(req.instruction, req.variants)
+          return { ok: true, data: report }
         }
         case 'status': {
           return { ok: true, data: await handleStatus() }

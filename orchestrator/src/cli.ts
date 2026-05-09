@@ -562,23 +562,27 @@ const main = async (): Promise<void> => {
     const dryRun = boolFlags.has('--dry-run')
     const refresh = boolFlags.has('--refresh')
     const verbose = boolFlags.has('--verbose')
-    const { runInit } = await import('./mastra/workflows/init-workflow')
-    const { NestedTechError, WalkAccessError } = await import(
-      './init/walk-manifests'
-    )
+    const { sendRequest } = await import('./mastra/daemon/client')
     let result
     try {
-      result = await runInit({ force, fetch, dryRun, refresh, verbose })
+      result = (await sendRequest({
+        op: 'init',
+        opts: { force, fetch, dryRun, refresh, verbose },
+      })) as Awaited<
+        ReturnType<typeof import('./mastra/workflows/init-workflow').runInit>
+      >
     } catch (err: unknown) {
-      if (err instanceof NestedTechError) {
-        console.error(`error: ${err.message}`)
-        console.error(`  outer: ${err.outerPath}`)
-        console.error(`  inner: ${err.innerPath}`)
+      const e = err as Error & { code?: string }
+      if (e.code?.startsWith('nested-tech:')) {
+        const [outer, inner] = e.code.slice('nested-tech:'.length).split('::')
+        console.error(`error: ${e.message}`)
+        console.error(`  outer: ${outer}`)
+        console.error(`  inner: ${inner}`)
         process.exit(1)
       }
-      if (err instanceof WalkAccessError) {
-        console.error(`error: ${err.message}`)
-        console.error(`  path:  ${err.path}`)
+      if (e.code?.startsWith('walk-access:')) {
+        console.error(`error: ${e.message}`)
+        console.error(`  path:  ${e.code.slice('walk-access:'.length)}`)
         process.exit(1)
       }
       throw err
@@ -1314,24 +1318,8 @@ const main = async (): Promise<void> => {
       process.exit(1)
     }
     const branch = process.env.INTEGRATION_BRANCH ?? 'main'
-    const { mastra } = await import('./mastra/index')
-    const wf = mastra.getWorkflow('abExperimentWorkflow')
-    const run = await wf.createRun()
-    const result = await run.start({
-      inputData: {
-        instruction,
-        variants: variantsJson,
-        integrationBranch: branch,
-      },
-    })
-    if (result.status !== 'success') {
-      const err = 'error' in result && result.error instanceof Error
-        ? result.error.message
-        : '(no error message)'
-      console.error(`ab experiment ${result.status}: ${err}`)
-      process.exit(1)
-    }
-    const report = result.result as {
+    const { sendRequest } = await import('./mastra/daemon/client')
+    let report: {
       experimentId: string
       baseSha: string
       instruction: string
@@ -1360,6 +1348,17 @@ const main = async (): Promise<void> => {
       }>
       judgeRationale: string
       tokensWinner: 'A' | 'B' | 'tie'
+    }
+    try {
+      report = (await sendRequest({
+        op: 'ab',
+        instruction,
+        variants: variantsJson,
+        integrationBranch: branch,
+      })) as typeof report
+    } catch (err) {
+      console.error((err as Error).message)
+      process.exit(1)
     }
     console.log(`\n=== A/B experiment ${report.experimentId} ===`)
     console.log(`base SHA: ${report.baseSha}`)
