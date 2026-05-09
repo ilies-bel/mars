@@ -32,3 +32,6 @@ A read-only, passive activity feed in the ui/ frontend tracking progress of comp
 
 **Worker**:
 A long-lived orchestrator process that hosts one or more Slots; the panel groups Slot cards by their parent Worker.
+
+**Slot**:
+A single concurrency lane inside a Worker that runs one task at a time; the unit shown by each card in the Workers panel and the mars monitor TUI.
