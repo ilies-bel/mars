@@ -164,3 +164,24 @@ operator who reads this row. They are the same two follow-ups already
 proposed in `NO-DIFF-mars-883fbafe.md`; a second NO-DIFF row on a
 different oversized feature task is corroborating evidence that the
 planner-side rule is worth the round-trip cost.
+
+## Re-enqueue storm
+
+This file is the canonical ack for the entire family of "Mark
+daemon-restart casualties as 'interrupted'…" no-diff failures. The
+same prompt body has been dispatched and gone no-diff repeatedly, all
+with `retry_count = 1`, neither `fix_for_task_id` nor
+`failure_signature` set — i.e. plain feature-task dispatches, not
+fix-fail rows. Confirmed copies in `.mars/queue.db`:
+
+- `mars-f1ab530f`, `mars-e3c1704d` (dropped), `mars-d82f5d60`,
+  `mars-209eb596` (this row), `mars-8cdf93a9`, `mars-54053301`,
+  `mars-00cc790e`, `mars-042440db`, `mars-31919f6d`, `mars-8de7784d`,
+  `mars-38636665`.
+
+Until the **two-strikes drop-and-reshape** rule lands, every fresh
+dispatch of this exact prompt body should be treated as already
+acknowledged by this file. No new `NO-DIFF-mars-*.md` per copy. The
+self-heal commit for any subsequent copy should reference this file
+and the canonical four-way split in §"Recommended split" above —
+that is the only useful artifact left to produce on disk.
