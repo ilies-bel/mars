@@ -17,3 +17,6 @@ Tracer id for a full workflow from `mars idea add` (or `mars task add`) through 
 **Daemon**:
 The long-lived background process started by 'mars watch' that runs Claude instances on ready tasks.
 _Avoid_: watch process, watcher
+
+**Sweeper**:
+Background component that manages worktree cleanup, removing finished or abandoned task worktrees under .worktrees/ and .mars/worktrees/.
