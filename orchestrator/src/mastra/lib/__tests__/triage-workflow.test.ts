@@ -58,7 +58,6 @@ describe('triage workflow', () => {
         actionable: true,
         reason: 'tight scope',
         blockerTaskIds: [],
-        newSuggestions: [],
       }),
     })
     vi.resetModules()
@@ -90,7 +89,6 @@ describe('triage workflow', () => {
         actionable: false,
         reason: 'needs prerequisite',
         blockerTaskIds: [b.id],
-        newSuggestions: [],
       }),
     })
     const queue2 = await import('../../queue')
@@ -118,7 +116,6 @@ describe('triage workflow', () => {
         actionable: false,
         reason: 'fake blockers',
         blockerTaskIds: ['nonexistent-id', a.id],
-        newSuggestions: [],
       }),
     })
     const queue2 = await import('../../queue')
@@ -129,30 +126,4 @@ describe('triage workflow', () => {
     expect(await queue2.listBlockers(a.id)).toEqual([])
   })
 
-  it('records new suggestions when triage proposes prerequisites', async () => {
-    vi.resetModules()
-    const queue = await import('../../queue')
-    await queue.initQueue()
-    const a = await queue.enqueueTask('big task')
-
-    vi.resetModules()
-    setClaudeStub({
-      exitCode: 0,
-      stdout: envelope({
-        actionable: false,
-        reason: 'needs setup',
-        blockerTaskIds: [],
-        newSuggestions: [
-          { title: 'add helper', prompt: 'create helper.ts', rationale: 'needed' },
-        ],
-      }),
-    })
-    const ideas = await import('../../ideas')
-    const triage = await import('../../workflows/triage-workflow')
-    const result = await triage.runTriage(a.id)
-
-    expect(result.suggestionCount).toBe(1)
-    const planner = await ideas.listIdeas({ source: 'planner' })
-    expect(planner.some((i) => i.goal === 'add helper')).toBe(true)
-  })
 })

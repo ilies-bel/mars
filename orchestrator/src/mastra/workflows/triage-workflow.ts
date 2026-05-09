@@ -9,7 +9,6 @@ import {
   promoteDraftToQueued,
   type Task,
 } from '../queue'
-import { createIdea } from '../ideas'
 import { runClaudeCode } from '../lib/git'
 import { parseClaudeJsonResult } from '../lib/claude-json'
 import { getRepoRoot } from '../context'
@@ -26,26 +25,15 @@ const triageOutputSchema = z.object({
   taskId: z.string(),
   actionable: z.boolean(),
   blockerCount: z.number(),
-  suggestionCount: z.number(),
   reason: z.string(),
 })
 
 const MAX_BLOCKERS = 10
-const MAX_NEW_SUGGESTIONS = 5
 
 const triageJsonSchema = z.object({
   actionable: z.boolean(),
   reason: z.string().default(''),
   blockerTaskIds: z.array(z.string()).default([]),
-  newSuggestions: z
-    .array(
-      z.object({
-        title: z.string(),
-        prompt: z.string(),
-        rationale: z.string().optional(),
-      }),
-    )
-    .default([]),
 })
 
 const buildTaskGraph = (tasks: readonly Task[], excludeId: string): string => {
@@ -83,14 +71,13 @@ What is NOT a blocker (these are normal parts of implementation, not prerequisit
 A real blocker is EXTERNAL: a missing user decision, an undefined requirement only the user can resolve,
 a dependency on another task that hasn't been written yet, or a reference to a file/system that doesn't exist.
 
-If real EXTERNAL prerequisites are missing, propose them in \`newSuggestions\` (title + prompt + rationale).
 If real prerequisites already exist as other tasks, list their ids in \`blockerTaskIds\`.
 Default to \`actionable: true\` for any task that a competent engineer could pick up and implement
 given access to the codebase. Only mark \`actionable: false\` when external input or another task
 is genuinely required first. Never list the task being triaged as its own blocker.
 
 Return ONLY this JSON, no prose, no fences:
-{"actionable": bool, "reason": string, "blockerTaskIds": string[], "newSuggestions": [{"title": string, "prompt": string, "rationale": string}]}`
+{"actionable": bool, "reason": string, "blockerTaskIds": string[]}`
 
 const generateStep = createStep({
   id: 'generate-triage',
@@ -129,16 +116,6 @@ const generateStep = createStep({
     await clearBlockers(task.id)
     await addBlockers(task.id, filteredBlockers)
 
-    const cappedSuggestions = parsed.newSuggestions.slice(0, MAX_NEW_SUGGESTIONS)
-    for (const s of cappedSuggestions) {
-      await createIdea(s.title, {
-        source: 'planner',
-        author: { kind: 'agent', name: 'triage' },
-        story: s.prompt,
-        technical: s.rationale ?? '',
-      })
-    }
-
     if (parsed.actionable) {
       const remaining = await listBlockers(task.id)
       if (remaining.length === 0) {
@@ -150,7 +127,6 @@ const generateStep = createStep({
       taskId: task.id,
       actionable: parsed.actionable,
       blockerCount: filteredBlockers.length,
-      suggestionCount: cappedSuggestions.length,
       reason: parsed.reason,
     }
   },
@@ -168,7 +144,6 @@ export interface TriageResult {
   taskId: string
   actionable: boolean
   blockerCount: number
-  suggestionCount: number
   reason: string
 }
 
