@@ -115,9 +115,7 @@ export const startServer = async (args: CliArgs): Promise<void> => {
       try {
         const ideasExist = await stateDb.ideasTableExists()
         const drafts = ideasExist ? await stateDb.listDraftFeatures() : []
-        const suggExist = await db.suggestionsTableExists()
-        const suggestions = suggExist ? await db.listProposedSuggestions() : []
-        sendJson(res, 200, { drafts, suggestions })
+        sendJson(res, 200, { drafts })
       } catch (err) {
         sendJson(res, 500, { error: (err as Error).message })
       }

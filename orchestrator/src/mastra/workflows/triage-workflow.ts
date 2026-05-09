@@ -4,12 +4,12 @@ import {
   addBlockers,
   clearBlockers,
   getTask,
-  insertSuggestion,
   listBlockers,
   listTasks,
   promoteDraftToQueued,
   type Task,
 } from '../queue'
+import { createIdea } from '../ideas'
 import { runClaudeCode } from '../lib/git'
 import { parseClaudeJsonResult } from '../lib/claude-json'
 import { getRepoRoot } from '../context'
@@ -131,11 +131,11 @@ const generateStep = createStep({
 
     const cappedSuggestions = parsed.newSuggestions.slice(0, MAX_NEW_SUGGESTIONS)
     for (const s of cappedSuggestions) {
-      await insertSuggestion({
-        sourceTaskId: task.id,
-        title: s.title,
-        prompt: s.prompt,
-        rationale: s.rationale ?? null,
+      await createIdea(s.title, {
+        source: 'planner',
+        author: { kind: 'agent', name: 'triage' },
+        story: s.prompt,
+        technical: s.rationale ?? '',
       })
     }
 

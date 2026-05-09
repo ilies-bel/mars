@@ -9,29 +9,18 @@ export type TaskStatus =
   | 'dropped'
   | 'blocked'
 
+export type IdeaSource = 'reflection' | 'human' | 'planner'
+
 export interface DraftFeature {
   id: string
   goal: string
   story: string
   technical: string
   status: string
-  origin: string
+  source: IdeaSource
   createdAt: number
   updatedAt: number
   acceptanceCount: number
-}
-
-export type SuggestionStatus = 'proposed' | 'accepted' | 'dismissed'
-
-export interface TaskSuggestion {
-  id: string
-  sourceTaskId: string
-  title: string
-  prompt: string
-  rationale: string | null
-  status: SuggestionStatus
-  createdTaskId: string | null
-  createdAt: string
 }
 
 export interface Task {
@@ -44,7 +33,7 @@ export interface Task {
   error: string | null
   dropReason: string | null
   retryCount: number
-  blockerSuggestionId: string | null
+  blockerTaskId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -67,7 +56,7 @@ export interface UITask {
   failed: boolean
   dropReason: string | null
   retryCount: number
-  blockerSuggestionId: string | null
+  blockerTaskId: string | null
   createdAt: string
 }
 

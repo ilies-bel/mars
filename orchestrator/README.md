@@ -149,17 +149,16 @@ to their respective steps and persist to `mastra_scorers` in
 
 **Cross-task synthesis (manual).** `mars reflect` reads the signal corpus,
 calls Claude Haiku once with the joined task records, and inserts the
-returned suggestions into `task_suggestions` with `status='proposed'`.
-Suggestions never auto-dispatch — `mars run` only picks up rows from
-`tasks` with `status='queued'`.
+returned suggestions into the `ideas` table as draft rows with
+`source='reflection'`. Reflection ideas never auto-dispatch — `mars run`
+only picks up rows from `tasks` with `status='queued'`.
 
 ```
-mars reflect                        # last 10 completed tasks
-mars reflect --since 2026-05-01     # ISO timestamp window
+mars reflect                                       # last 10 completed tasks
+mars reflect --since 2026-05-01                    # ISO timestamp window
 mars reflect --limit 25
-mars suggestions                    # list all suggestions
-mars suggestions proposed           # filter by status
-mars promote <suggestion-id>        # enqueue as a real task
+mars idea list --source reflection --status draft  # review proposals
+mars idea promote <idea-id>                        # shape & enqueue as a task
 ```
 
 **Disable.** Set `MARS_REFLECT_DISABLED=1` to skip signal capture and
@@ -200,9 +199,10 @@ Auto-pick rules, in priority order:
 4. Otherwise prints `no eligible session found` and exits 0.
 
 Suggestions are filtered through `save|absorb|drop` verdicts and only
-"save" verdicts land in `task_suggestions` (review with
-`mars suggestions`). The full structured report is persisted to
-`.mars/deep-reflections/<task-id>-<iso>.json` (gitignored).
+"save" verdicts land as draft ideas with `source='reflection'` (review
+with `mars idea list --source reflection`). The full structured report
+is persisted to `.mars/deep-reflections/<task-id>-<iso>.json`
+(gitignored).
 
 Model defaults to `opus`; override with `MARS_DEEP_REFLECT_MODEL`. The
 timeout is 10 minutes — these analyses can be large. Setting

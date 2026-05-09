@@ -1,4 +1,4 @@
-import type { DraftFeature, Task, TaskSuggestion } from './types'
+import type { DraftFeature, Task } from './types'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
@@ -21,7 +21,6 @@ export const fetchTasks = async (): Promise<Task[]> => {
 
 export interface TodoPayload {
   drafts: DraftFeature[]
-  suggestions: TaskSuggestion[]
 }
 
 export const fetchTodo = async (): Promise<TodoPayload> => {

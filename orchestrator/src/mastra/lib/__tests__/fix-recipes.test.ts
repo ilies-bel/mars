@@ -109,8 +109,8 @@ interface QueueModule {
   initQueue: typeof import('../../queue').initQueue
 }
 
-interface FixModule {
-  handleTaskFailure: typeof import('../../queue-fix-suggestions').handleTaskFailure
+interface FixTaskModule {
+  handleTaskFailureWithFixTask: typeof import('../../queue-fix-tasks').handleTaskFailureWithFixTask
 }
 
 const setupRepo = (): string => {
@@ -122,19 +122,19 @@ const setupRepo = (): string => {
 
 const loadModules = async (
   repo: string,
-): Promise<{ q: QueueModule; fix: FixModule }> => {
+): Promise<{ q: QueueModule; ft: FixTaskModule }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   delete process.env.MARS_FIX_RETRY_BUDGET
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.initQueue()
-  const fix = (await import(
-    '../../queue-fix-suggestions'
-  )) as unknown as FixModule
-  return { q, fix }
+  const ft = (await import(
+    '../../queue-fix-tasks'
+  )) as unknown as FixTaskModule
+  return { q, ft }
 }
 
-describe('handleTaskFailure with recipeSignature', () => {
+describe('handleTaskFailureWithFixTask with recipeSignature', () => {
   let repo: string
 
   beforeEach(() => {
@@ -147,11 +147,11 @@ describe('handleTaskFailure with recipeSignature', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('dirty_merge_target signature creates a suggestion using the canned recipe', async () => {
-    const { q, fix } = await loadModules(repo)
+  it('dirty_merge_target signature creates a fix-task using the canned recipe', async () => {
+    const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
     const statusOutput = ' M src/foo.ts\n?? leftover.tmp\n'
-    const result = await fix.handleTaskFailure({
+    const result = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'merge:preflight',
       errorOutput: statusOutput,
@@ -168,14 +168,12 @@ describe('handleTaskFailure with recipeSignature', () => {
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
-    expect(reloaded?.blockerId).toBe(result.suggestionId)
 
     const r = await q.getClient().execute({
-      sql: `SELECT title, prompt FROM task_suggestions WHERE id = ?`,
-      args: [result.suggestionId ?? ''],
+      sql: `SELECT prompt FROM tasks WHERE id = ?`,
+      args: [result.fixTaskId ?? ''],
     })
-    const row = r.rows[0] as unknown as { title: string; prompt: string }
-    expect(row.title).toBe('Resolve dirty changes blocking merge into main')
+    const row = r.rows[0] as unknown as { prompt: string }
     expect(row.prompt).toContain('leftover.tmp')
     expect(row.prompt).toContain('high-priority inbox notification')
   })

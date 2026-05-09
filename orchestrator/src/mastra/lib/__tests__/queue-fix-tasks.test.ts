@@ -20,7 +20,7 @@ interface FixTasksModule {
 
 interface BlockerModule {
   onBlockerTaskCompleted: typeof import('../../blocker-resolution').onBlockerTaskCompleted
-  recoverBlockedTasksByBlockerTable: typeof import('../../blocker-resolution').recoverBlockedTasksByBlockerTable
+  recoverBlockedTasks: typeof import('../../blocker-resolution').recoverBlockedTasks
 }
 
 const setupRepo = (): string => {
@@ -242,31 +242,15 @@ describe('queue-fix-tasks', () => {
     expect(reloaded?.status).toBe('dropped')
   })
 
-  it('drop on retry-budget exhausted leaves blocker_id NULL and no task_blockers rows (phantom-blocker fix)', async () => {
+  it('drop on retry-budget exhausted removes all task_blockers rows for the task', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '1'
     const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('merge into dirty target', undefined, {
       skipTriage: true,
     })
 
-    // Simulate a stale blocker_id left over from a legacy code path so we can
-    // verify the drop clears it. (In live runs the row could have been written
-    // by handleTaskFailure or by an older release.)
-    await q.getClient().execute({
-      sql: `UPDATE tasks SET blocker_id = ? WHERE id = ?`,
-      args: ['stale-suggestion-id', t.id],
-    })
-    const stale = await q.enqueueTask('stale upstream', undefined, {
-      skipTriage: true,
-    })
-    await q.getClient().execute({
-      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
-      args: [t.id, stale.id, new Date().toISOString()],
-    })
-
     // First failure with budget=1: bumps retry_count to 1, transitions to
-    // blocked, and clears any stale blocker_id (new fix-task path uses
-    // task_blockers rows for the link instead).
+    // blocked, inserts a task_blockers row pointing at the new fix-task.
     const first = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'merge:preflight',
@@ -282,12 +266,9 @@ describe('queue-fix-tasks', () => {
     expect(first.outcome).toBe('blocked')
     let reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
-    expect(reloaded?.blockerId).toBeNull()
 
     // Second failure: retry_count=1 >= budget=1 -> dropped. The drop must
-    // clear blocker_id and remove any task_blockers rows, otherwise the row
-    // ends up with a phantom blocker that breaks `mars retry` and
-    // `mars blockers`.
+    // remove every task_blockers row pointing from this task.
     const second = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'merge:preflight',
@@ -305,7 +286,6 @@ describe('queue-fix-tasks', () => {
     reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('dropped')
     expect(reloaded?.dropReason).toBe('retry_budget_exhausted:dirty_merge_target')
-    expect(reloaded?.blockerId).toBeNull()
 
     const remainingBlockers = await q.getClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
@@ -316,7 +296,7 @@ describe('queue-fix-tasks', () => {
     ).toBe(0)
   })
 
-  it('unblockTask flips a blocked task to failed and clears blocker_id + task_blockers rows', async () => {
+  it('unblockTask flips a blocked task to failed and clears task_blockers rows', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
@@ -327,20 +307,12 @@ describe('queue-fix-tasks', () => {
     })
     expect(f.outcome).toBe('blocked')
 
-    // Simulate the inconsistent state we are protecting against: a phantom
-    // blocker_id stuck on the row.
-    await q.getClient().execute({
-      sql: `UPDATE tasks SET blocker_id = ? WHERE id = ?`,
-      args: ['phantom-id', t.id],
-    })
-
     const r = await q.unblockTask(t.id)
     expect(r.outcome).toBe('unblocked')
     expect(r.previousStatus).toBe('blocked')
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('failed')
-    expect(reloaded?.blockerId).toBeNull()
 
     const remaining = await q.getClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
@@ -360,7 +332,7 @@ describe('queue-fix-tasks', () => {
     expect(reloaded?.status).toBe('queued')
   })
 
-  it('recoverBlockedTasksByBlockerTable unblocks tasks whose blocker task was already done', async () => {
+  it('recoverBlockedTasks unblocks tasks whose blocker task was already done', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft, br } = await loadModules(repo)
     const t = await q.enqueueTask('a', undefined, { skipTriage: true })
@@ -376,7 +348,7 @@ describe('queue-fix-tasks', () => {
       args: [new Date().toISOString(), f.fixTaskId!],
     })
 
-    const recovered = await br.recoverBlockedTasksByBlockerTable()
+    const recovered = await br.recoverBlockedTasks()
     expect(recovered).toHaveLength(1)
     expect(recovered[0].outcomes[0].outcome).toBe('queued')
 

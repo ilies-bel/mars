@@ -36,8 +36,8 @@ const insertIdea = async (
   const c = createClient({ url: `file:${process.env.MARS_REPO}/.mars/state.db` })
   const now = Date.now()
   await c.execute({
-    sql: `INSERT INTO ideas (id, goal, story, technical, status, origin, created_at, updated_at)
-          VALUES (?, ?, '', '', 'draft', 'user', ?, ?)`,
+    sql: `INSERT INTO ideas (id, goal, story, technical, status, source, created_at, updated_at)
+          VALUES (?, ?, '', '', 'draft', 'human', ?, ?)`,
     args: [id, goal, now, now],
   })
   c.close()

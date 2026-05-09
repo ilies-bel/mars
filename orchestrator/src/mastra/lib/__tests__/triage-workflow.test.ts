@@ -147,14 +147,12 @@ describe('triage workflow', () => {
         ],
       }),
     })
-    const sugs = await import('../../queue-suggestions')
+    const ideas = await import('../../ideas')
     const triage = await import('../../workflows/triage-workflow')
     const result = await triage.runTriage(a.id)
 
     expect(result.suggestionCount).toBe(1)
-    const all = await sugs.listSuggestions()
-    expect(all.some((s) => s.sourceTaskId === a.id && s.title === 'add helper')).toBe(
-      true,
-    )
+    const planner = await ideas.listIdeas({ source: 'planner' })
+    expect(planner.some((i) => i.goal === 'add helper')).toBe(true)
   })
 })

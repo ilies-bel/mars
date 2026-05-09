@@ -26,6 +26,8 @@ const FLAGS_WITH_VALUES = new Set([
   '--root-cause',
   '--avoid',
   '--blocked-by',
+  '--source',
+  '--status',
 ])
 
 const REPEATABLE_FLAGS = new Set(['--blocked-by'])
@@ -117,6 +119,8 @@ Commands:
                                 detected from env/git when omitted: human if
                                 running interactively, agent if MARS_AGENT_NAME
                                 or CLAUDE_CODE/CLAUDECODE is set.
+  idea list [--source reflection|human|planner] [--status <status>]
+                                list ideas; filter by source and/or status
   idea show <id>                show an idea from .mars/state.db
   idea set <id> <goal|story|technical|status> "<text>"
                                 update a single field on an idea row
@@ -183,13 +187,13 @@ Commands:
   adr list                      list ADRs in docs/adr/ (local read)
   adr show <NNNN|filename>      print one ADR (number prefix is zero-padded)
   reflect [--since <iso>] [--limit <n>]
-                                synthesize draft task suggestions from recent
-                                completed tasks. Reads token + scorer signals
-                                from .mars/queue.db and .mars/mastra.db.
-                                Default: last 10 completed tasks. Suggestions
-                                are inserted as proposals — never auto-run.
-                                Disable signal capture entirely with the env
-                                var MARS_REFLECT_DISABLED=1.
+                                synthesize draft ideas (source='reflection') from
+                                recent completed tasks. Reads token + scorer
+                                signals from .mars/queue.db and .mars/mastra.db.
+                                Default: last 10 completed tasks. Ideas are
+                                inserted as drafts — never auto-run. Disable
+                                signal capture entirely with the env var
+                                MARS_REFLECT_DISABLED=1.
   deep-reflect [<task-id>]      deep, single-session post-mortem on one task.
                                 Walks the stored claude -p transcript event-by
                                 -event to surface dissonant tool calls (success
@@ -197,17 +201,11 @@ Commands:
                                 intent), verify-claim mismatches, and thrashing
                                 patterns. Auto-picks a candidate when no id is
                                 given. Requires a stored transcript.
-  suggestions [status]          list reflection suggestions (status defaults
-                                to all; common values: proposed, accepted)
-  promote <suggestion-id>       enqueue a suggestion as a task; marks the
-                                suggestion accepted and links the new task id
-  reject <suggestion-id>        mark a proposed suggestion as rejected; errors
-                                if id is unknown or already accepted/rejected
-  next [--json]                 list the next things to refine — draft
-                                ideas (status=draft) plus proposed
-                                reflection suggestions. Default output is
-                                human-readable; --json prints a structured
-                                payload for the /mars:next skill to consume.
+  next [--json]                 list draft ideas (status='draft'). Default
+                                output is human-readable; --json prints a
+                                structured payload for the /mars:next skill
+                                to consume. Source ('reflection' | 'human' |
+                                'planner') is annotated per row.
   inbox                         alias for 'inbox list open'
   inbox list [state]            list inbox items. state one of:
                                 open|acknowledged|resolved|dismissed|all
@@ -298,6 +296,8 @@ Subcommands:
       and git when omitted (agent if MARS_AGENT_NAME/CLAUDE_CODE is set,
       otherwise human with git user.email). Use --author to override,
       e.g. --author agent:vega.
+  list [--source reflection|human|planner] [--status <status>]
+      List ideas. Filter by source and/or status.
   show <id>
       Show an idea from .mars/state.db. <id> must be the full idea slug.
   set <id> <goal|story|technical|status> "<text>"
@@ -436,7 +436,7 @@ Edit-and-revert pairs, repeated identical Bash invocations).
 Output: structured findings printed to stdout, full JSON report
 persisted to .mars/deep-reflections/<task-id>-<iso>.json (gitignored).
 Suggestions are filtered through save|absorb|drop verdicts and only
-"save" verdicts land as proposals in task_suggestions.
+"save" verdicts land as draft ideas with source='reflection'.
 
 When no <task-id> is given, the candidate is auto-picked:
   1. most recent failed task with a stored transcript;
@@ -447,26 +447,13 @@ When no <task-id> is given, the candidate is auto-picked:
 Requires a stored transcript (captured automatically by the implement
 workflow unless MARS_REFLECT_DISABLED=1 is set). The model defaults to
 opus; override with MARS_DEEP_REFLECT_MODEL.`,
-  suggestions: `mars suggestions [status]
-
-List reflection suggestions. Status defaults to all; common values:
-proposed, accepted.`,
-  promote: `mars promote <suggestion-id>
-
-Enqueue a suggestion as a task; marks the suggestion accepted and links
-the new task id.`,
-  reject: `mars reject <suggestion-id>
-
-Mark a proposed reflection suggestion as rejected. Errors if the id is
-unknown, or if the suggestion is already accepted or rejected.`,
   next: `mars next [--json]
 
-List the next things to refine. Sources:
-  - draft ideas in .mars/state.db (ideas where status='draft')
-  - proposed reflection suggestions in .mars/queue.db
-    (task_suggestions where status='proposed')
+List draft ideas in .mars/state.db (ideas where status='draft'),
+including reflection-origin and planner-origin ideas. Source can be
+inspected with 'mars show <id>' or 'mars idea list --source <s>'.
 
-Default output is two grouped sections, designed to be read by both
+Default output is a single section, designed to be read by both
 humans and the /mars:next slash command. Pass --json to get a
 machine-readable payload of the same data.`,
   inbox: `mars inbox <subcommand> ...
@@ -765,7 +752,7 @@ const main = async (): Promise<void> => {
       }
       console.log(`id:         ${idea.id}`)
       console.log(`status:     ${idea.status}`)
-      console.log(`origin:     ${idea.origin}`)
+      console.log(`source:     ${idea.source}`)
       console.log(`author:     ${formatAuthor(idea.author)}`)
       console.log(`createdAt:  ${new Date(idea.createdAt).toISOString()}`)
       console.log(`updatedAt:  ${new Date(idea.updatedAt).toISOString()}`)
@@ -880,8 +867,35 @@ const main = async (): Promise<void> => {
       }
       return
     }
+    if (sub === 'list') {
+      const sourceFlag = flags['--source']
+      const statusFlag = flags['--status']
+      const allowedSource = new Set(['reflection', 'human', 'planner'])
+      if (sourceFlag !== undefined && !allowedSource.has(sourceFlag)) {
+        console.error(
+          `--source must be one of: reflection|human|planner; got '${sourceFlag}'`,
+        )
+        process.exit(1)
+      }
+      const { listIdeas } = await import('./mastra/ideas')
+      const filter: { source?: 'reflection' | 'human' | 'planner'; status?: string } = {}
+      if (sourceFlag) filter.source = sourceFlag as 'reflection' | 'human' | 'planner'
+      if (statusFlag) filter.status = statusFlag
+      const ideas = await listIdeas(filter)
+      if (ideas.length === 0) {
+        console.log('no ideas')
+        return
+      }
+      for (const i of ideas) {
+        const goal = i.goal.trim() || '(no goal)'
+        console.log(
+          `${i.id.slice(0, 8)}\t${i.status}\tsource=${i.source}\t${goal}`,
+        )
+      }
+      return
+    }
     console.error(
-      'usage: mars idea <add|new|show|set|add-acceptance|remove-acceptance|promote> ...',
+      'usage: mars idea <add|new|list|show|set|add-acceptance|remove-acceptance|promote> ...',
     )
     process.exit(1)
   }
@@ -951,9 +965,6 @@ const main = async (): Promise<void> => {
       if (task.retryCount > 0) {
         console.log(`retryCount: ${task.retryCount}`)
       }
-      if (task.blockerId) {
-        console.log(`blockerId:  ${task.blockerId}`)
-      }
       if (task.fixForTaskId) {
         console.log(`fixForTask: ${task.fixForTaskId}`)
       }
@@ -981,7 +992,7 @@ const main = async (): Promise<void> => {
       console.log(`kind:       idea`)
       console.log(`id:         ${idea.id}`)
       console.log(`status:     ${idea.status}`)
-      console.log(`origin:     ${idea.origin}`)
+      console.log(`source:     ${idea.source}`)
       console.log(`author:     ${formatAuthor(idea.author)}`)
       console.log(`createdAt:  ${new Date(idea.createdAt).toISOString()}`)
       console.log(`updatedAt:  ${new Date(idea.updatedAt).toISOString()}`)
@@ -1559,7 +1570,7 @@ const main = async (): Promise<void> => {
       if (s.rationale) console.log(`    ${s.rationale}`)
     }
     console.log(
-      `\n${result.suggestions.length} suggestion(s) saved. Review with 'mars suggestions' and enqueue with 'mars promote <id>'.`,
+      `\n${result.suggestions.length} suggestion(s) saved as draft ideas (source='reflection'). Review with 'mars idea list --source reflection' and promote with 'mars idea promote <id>'.`,
     )
     return
   }
@@ -1666,100 +1677,41 @@ const main = async (): Promise<void> => {
     return
   }
 
-  if (cmd === 'suggestions') {
-    const { listSuggestions } = await import('./mastra/queue-suggestions')
-    const status = rest[0]
-    const rows = await listSuggestions(status)
-    if (rows.length === 0) {
-      console.log(status ? `no suggestions with status=${status}` : 'no suggestions')
-      return
-    }
-    for (const s of rows) {
-      const link = s.createdTaskId ? ` -> task ${s.createdTaskId}` : ''
-      console.log(`${s.id}\t${s.status}${link}\t${s.title}`)
-    }
-    return
-  }
-
-  if (cmd === 'promote') {
-    const id = rest[0]
-    if (!id) {
-      console.error('usage: mars promote <suggestion-id>')
-      process.exit(1)
-    }
-    const { sendRequest } = await import('./mastra/daemon/client')
-    const r = (await sendRequest({ op: 'promote', suggestionId: id })) as {
-      taskId: string
-    }
-    console.log(`drafted ${r.taskId} (from suggestion ${id})`)
-    return
-  }
-
-  if (cmd === 'reject') {
-    const id = rest[0]
-    if (!id) {
-      console.error('usage: mars reject <suggestion-id>')
-      process.exit(1)
-    }
-    const { rejectSuggestion } = await import('./mastra/queue')
-    await rejectSuggestion(id)
-    console.log(`rejected ${id}`)
-    return
-  }
-
   if (cmd === 'next') {
     const json = rest.includes('--json')
     const { listIdeas } = await import('./mastra/ideas')
-    const { listSuggestions } = await import('./mastra/queue-suggestions')
-    const ideas = await listIdeas()
-    const drafts = ideas
-      .filter((i) => i.status === 'draft')
-      .map((i) => ({
-        id: i.id,
-        goal: i.goal,
-        storySet: i.story.trim().length > 0,
-        technicalSet: i.technical.trim().length > 0,
-        acceptanceCount: i.acceptance.length,
-      }))
-    const proposed = (await listSuggestions('proposed')).map((s) => ({
-      id: s.id,
-      title: s.title,
-      rationale: s.rationale,
-      sourceTaskId: s.sourceTaskId,
+    const ideas = await listIdeas({ status: 'draft' })
+    const drafts = ideas.map((i) => ({
+      id: i.id,
+      goal: i.goal,
+      source: i.source,
+      storySet: i.story.trim().length > 0,
+      technicalSet: i.technical.trim().length > 0,
+      acceptanceCount: i.acceptance.length,
     }))
 
     if (json) {
-      console.log(JSON.stringify({ drafts, suggestions: proposed }, null, 2))
+      console.log(JSON.stringify({ drafts }, null, 2))
       return
     }
 
-    if (drafts.length === 0 && proposed.length === 0) {
+    if (drafts.length === 0) {
       console.log('Nothing to refine. Create a draft with: mars idea add "<goal>"')
       return
     }
 
     console.log('Pick something to refine, or describe a new feature:\n')
 
-    if (drafts.length > 0) {
-      console.log('Existing drafts:')
-      for (const d of drafts) {
-        const goal = d.goal.trim() || '(no goal)'
-        const flags: string[] = []
-        if (!d.storySet) flags.push('story:empty')
-        if (!d.technicalSet) flags.push('technical:empty')
-        if (d.acceptanceCount === 0) flags.push('acceptance:0')
-        const tail = flags.length > 0 ? `  [${flags.join(' ')}]` : ''
-        console.log(`  ${d.id.slice(0, 8)}  ${goal}${tail}`)
-      }
-    }
-
-    if (proposed.length > 0) {
-      if (drafts.length > 0) console.log('')
-      console.log('Reflection suggestions (would become new drafts):')
-      for (const s of proposed) {
-        const title = s.title.trim() || '(untitled)'
-        console.log(`  ${s.id.slice(0, 8)}  ${title}`)
-      }
+    console.log('Existing drafts:')
+    for (const d of drafts) {
+      const goal = d.goal.trim() || '(no goal)'
+      const flags: string[] = []
+      flags.push(`source:${d.source}`)
+      if (!d.storySet) flags.push('story:empty')
+      if (!d.technicalSet) flags.push('technical:empty')
+      if (d.acceptanceCount === 0) flags.push('acceptance:0')
+      const tail = flags.length > 0 ? `  [${flags.join(' ')}]` : ''
+      console.log(`  ${d.id.slice(0, 8)}  ${goal}${tail}`)
     }
     return
   }

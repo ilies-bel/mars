@@ -59,15 +59,15 @@ export const TaskCard = ({ task, index }: Props) => {
       ) : null}
       {task.status === 'blocked' ? (
         <div className="font-mono text-[11px] text-ochre">
-          {task.blockerSuggestionId ? (
+          {task.blockerTaskId ? (
             <a
-              href={`#/suggestion/${task.blockerSuggestionId}`}
+              href={`#/task/${task.blockerTaskId}`}
               className="underline decoration-dotted underline-offset-2"
             >
-              Blocked by fix · {task.blockerSuggestionId.slice(0, 8)}
+              Blocked by · {task.blockerTaskId.slice(0, 8)}
             </a>
           ) : (
-            'Blocked by fix'
+            'Blocked'
           )}
         </div>
       ) : null}

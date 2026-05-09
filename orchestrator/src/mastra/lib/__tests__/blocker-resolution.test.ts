@@ -10,15 +10,11 @@ interface QueueModule {
   getTask: typeof import('../../queue').getTask
   getClient: typeof import('../../queue').getClient
   initQueue: typeof import('../../queue').initQueue
-}
-
-interface FixModule {
-  handleTaskFailure: typeof import('../../queue-fix-suggestions').handleTaskFailure
+  addBlockers: typeof import('../../queue').addBlockers
 }
 
 interface BlockerModule {
-  resolveBlockerForSuggestion: typeof import('../../blocker-resolution').resolveBlockerForSuggestion
-  onChildTaskCompleted: typeof import('../../blocker-resolution').onChildTaskCompleted
+  onBlockerTaskCompleted: typeof import('../../blocker-resolution').onBlockerTaskCompleted
   recoverBlockedTasks: typeof import('../../blocker-resolution').recoverBlockedTasks
 }
 
@@ -31,33 +27,31 @@ const setupRepo = (): string => {
 
 const loadModules = async (
   repo: string,
-): Promise<{ q: QueueModule; fix: FixModule; br: BlockerModule }> => {
+): Promise<{ q: QueueModule; br: BlockerModule }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.initQueue()
-  const fix = (await import(
-    '../../queue-fix-suggestions'
-  )) as unknown as FixModule
   const br = (await import(
     '../../blocker-resolution'
   )) as unknown as BlockerModule
-  return { q, fix, br }
+  return { q, br }
 }
 
-const insertChildSuggestionLink = async (
+const blockTask = async (
   q: QueueModule,
-  suggestionId: string,
-  childTaskId: string,
-  status: 'promoted' | 'accepted' | 'proposed' = 'promoted',
+  taskId: string,
+  blockerTaskId: string,
+  retryCount: number = 1,
 ): Promise<void> => {
+  await q.addBlockers(taskId, [blockerTaskId])
   await q.getClient().execute({
-    sql: `UPDATE task_suggestions SET created_task_id = ?, status = ? WHERE id = ?`,
-    args: [childTaskId, status, suggestionId],
+    sql: `UPDATE tasks SET status = 'blocked', retry_count = ? WHERE id = ?`,
+    args: [retryCount, taskId],
   })
 }
 
-describe('blocker-resolution', () => {
+describe('blocker-resolution (task_blockers)', () => {
   let repo: string
 
   beforeEach(() => {
@@ -70,211 +64,98 @@ describe('blocker-resolution', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('suggestion accepted -> blocked tasks transition to queued with retry_count preserved', async () => {
+  it('onBlockerTaskCompleted unblocks a single dependent when its sole blocker lands done', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, fix, br } = await loadModules(repo)
-    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
-    const failure = await fix.handleTaskFailure({
-      taskId: t.id,
-      failingStep: 'verify:typecheck',
-      errorOutput: 'TS2304',
-    })
-    expect(failure.outcome).toBe('blocked')
-
-    const result = await br.resolveBlockerForSuggestion(failure.suggestionId!)
-    expect(result.outcomes).toHaveLength(1)
-    expect(result.outcomes[0].outcome).toBe('queued')
-    expect(result.outcomes[0].retryCount).toBe(1)
-
-    const reloaded = await q.getTask(t.id)
-    expect(reloaded?.status).toBe('queued')
-    expect(reloaded?.retryCount).toBe(1)
-    expect(reloaded?.blockerId).toBe(failure.suggestionId)
-  })
-
-  it('multiple tasks blocked on same suggestion all unblock together', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, fix, br } = await loadModules(repo)
-    const t1 = await q.enqueueTask('a', undefined, { skipTriage: true })
-    const t2 = await q.enqueueTask('b', undefined, { skipTriage: true })
-
-    const f1 = await fix.handleTaskFailure({
-      taskId: t1.id,
-      failingStep: 'verify:typecheck',
-      errorOutput: 'shared error',
-    })
-    // Manually point t2 at the same suggestion to simulate two tasks sharing
-    // the same blocker.
-    await q.getClient().execute({
-      sql: `UPDATE tasks SET status = 'blocked', blocker_id = ?, retry_count = 1 WHERE id = ?`,
-      args: [f1.suggestionId!, t2.id],
-    })
-
-    const result = await br.resolveBlockerForSuggestion(f1.suggestionId!)
-    const queuedIds = result.outcomes
-      .filter((o) => o.outcome === 'queued')
-      .map((o) => o.taskId)
-      .sort()
-    expect(queuedIds).toEqual([t1.id, t2.id].sort())
-
-    const r1 = await q.getTask(t1.id)
-    const r2 = await q.getTask(t2.id)
-    expect(r1?.status).toBe('queued')
-    expect(r2?.status).toBe('queued')
-  })
-
-  it('drops task with retry_count >= MARS_FIX_RETRY_BUDGET at unblock time', async () => {
-    // Budget=1, force retry_count=1 on a blocked task -> should drop on unblock.
-    process.env.MARS_FIX_RETRY_BUDGET = '1'
-    const { q, fix, br } = await loadModules(repo)
-    const t = await q.enqueueTask('a', undefined, { skipTriage: true })
-    const f = await fix.handleTaskFailure({
-      taskId: t.id,
-      failingStep: 'verify:typecheck',
-      errorOutput: 'err',
-    })
-    expect(f.outcome).toBe('blocked')
-    // After first failure, retry_count=1, budget=1 -> drop on unblock.
-
-    const result = await br.resolveBlockerForSuggestion(f.suggestionId!)
-    expect(result.outcomes).toHaveLength(1)
-    expect(result.outcomes[0].outcome).toBe('dropped')
-    expect(result.outcomes[0].dropReason).toBe(
-      'retry_budget_exhausted_at_unblock',
-    )
-
-    const reloaded = await q.getTask(t.id)
-    expect(reloaded?.status).toBe('dropped')
-    expect(reloaded?.dropReason).toBe('retry_budget_exhausted_at_unblock')
-  })
-
-  it('is idempotent: running unblock twice does not double-queue', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, fix, br } = await loadModules(repo)
-    const t = await q.enqueueTask('a', undefined, { skipTriage: true })
-    const f = await fix.handleTaskFailure({
-      taskId: t.id,
-      failingStep: 'verify:typecheck',
-      errorOutput: 'err',
-    })
-
-    const first = await br.resolveBlockerForSuggestion(f.suggestionId!)
-    expect(first.acceptedNow).toBe(true)
-    expect(first.outcomes[0].outcome).toBe('queued')
-
-    const second = await br.resolveBlockerForSuggestion(f.suggestionId!)
-    expect(second.acceptedNow).toBe(false)
-    // Already past 'blocked' (now 'queued'), so noop.
-    expect(second.outcomes).toHaveLength(0)
-
-    const reloaded = await q.getTask(t.id)
-    expect(reloaded?.status).toBe('queued')
-  })
-
-  it('onChildTaskCompleted resolves blocker via the suggestion->child link', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, fix, br } = await loadModules(repo)
-    const sourceTask = await q.enqueueTask('src', undefined, {
-      skipTriage: true,
-    })
-    const f = await fix.handleTaskFailure({
-      taskId: sourceTask.id,
-      failingStep: 'verify',
-      errorOutput: 'err',
-    })
-    const childTask = await q.enqueueTask('fix it', undefined, {
-      skipTriage: true,
-    })
-    await insertChildSuggestionLink(q, f.suggestionId!, childTask.id)
-
-    const r = await br.onChildTaskCompleted(childTask.id)
-    expect(r).not.toBeNull()
-    expect(r!.suggestionId).toBe(f.suggestionId)
-    expect(r!.outcomes[0].outcome).toBe('queued')
-
-    const reloaded = await q.getTask(sourceTask.id)
-    expect(reloaded?.status).toBe('queued')
-  })
-
-  it('onChildTaskCompleted returns null when the task is not linked to a fix suggestion', async () => {
     const { q, br } = await loadModules(repo)
-    const t = await q.enqueueTask('plain', undefined, { skipTriage: true })
-    const r = await br.onChildTaskCompleted(t.id)
-    expect(r).toBeNull()
+    const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
+    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+    await blockTask(q, dep.id, fix.id)
+    await q.updateTask(fix.id, { status: 'done' })
+
+    // updateTask already promoted via promoteDraftToQueued, so the dependent
+    // should now be queued; onBlockerTaskCompleted is idempotent.
+    const r = await br.onBlockerTaskCompleted(fix.id)
+    const reloaded = await q.getTask(dep.id)
+    expect(reloaded?.status).toBe('queued')
+    // Outcome list is empty because the dependent already left 'blocked'.
+    expect(r.outcomes.every((o) => o.outcome !== 'queued' || o.taskId === dep.id)).toBe(
+      true,
+    )
   })
 
-  it('recoverBlockedTasks unblocks tasks whose suggestion was already accepted while daemon was down', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, fix, br } = await loadModules(repo)
-    const sourceTask = await q.enqueueTask('src', undefined, {
-      skipTriage: true,
-    })
-    const f = await fix.handleTaskFailure({
-      taskId: sourceTask.id,
-      failingStep: 'verify',
-      errorOutput: 'err',
-    })
-    // Simulate: the suggestion's child task already completed, but the
-    // daemon died before running the unblock side-effects. Mark suggestion
-    // accepted directly.
+  it('drops dependent when retry budget is exhausted at unblock time', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '1'
+    const { q, br } = await loadModules(repo)
+    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+    await blockTask(q, dep.id, fix.id, 1)
+    // Mark fix done WITHOUT calling updateTask (which would auto-promote);
+    // simulate the daemon-down path.
     await q.getClient().execute({
-      sql: `UPDATE task_suggestions SET status = 'accepted' WHERE id = ?`,
-      args: [f.suggestionId!],
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [fix.id],
     })
-    const beforeRecover = await q.getTask(sourceTask.id)
-    expect(beforeRecover?.status).toBe('blocked')
+
+    const r = await br.onBlockerTaskCompleted(fix.id)
+    expect(r.outcomes).toHaveLength(1)
+    expect(r.outcomes[0].outcome).toBe('dropped')
+    const reloaded = await q.getTask(dep.id)
+    expect(reloaded?.status).toBe('dropped')
+  })
+
+  it('does not unblock when one of multiple blockers is still pending', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, br } = await loadModules(repo)
+    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+    const a = await q.enqueueTask('a', undefined, { skipTriage: true })
+    const b = await q.enqueueTask('b', undefined, { skipTriage: true })
+    await q.addBlockers(dep.id, [a.id, b.id])
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = 'blocked', retry_count = 1 WHERE id = ?`,
+      args: [dep.id],
+    })
+    // Only a is done; b is still pending.
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [a.id],
+    })
+
+    const r = await br.onBlockerTaskCompleted(a.id)
+    expect(r.outcomes).toHaveLength(1)
+    expect(r.outcomes[0].outcome).toBe('noop')
+    const reloaded = await q.getTask(dep.id)
+    expect(reloaded?.status).toBe('blocked')
+  })
+
+  it('recoverBlockedTasks queues a task whose blocker landed while daemon was down', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, br } = await loadModules(repo)
+    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+    await blockTask(q, dep.id, fix.id)
+    // Bypass updateTask to simulate the daemon dying mid-handoff.
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [fix.id],
+    })
 
     const recovered = await br.recoverBlockedTasks()
     expect(recovered).toHaveLength(1)
-    expect(recovered[0].suggestionId).toBe(f.suggestionId)
     expect(recovered[0].outcomes[0].outcome).toBe('queued')
-
-    const reloaded = await q.getTask(sourceTask.id)
+    const reloaded = await q.getTask(dep.id)
     expect(reloaded?.status).toBe('queued')
   })
 
-  it('recoverBlockedTasks unblocks tasks whose linked child task is already done', async () => {
+  it('recoverBlockedTasks is a no-op when blocker is still pending', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, fix, br } = await loadModules(repo)
-    const sourceTask = await q.enqueueTask('src', undefined, {
-      skipTriage: true,
-    })
-    const f = await fix.handleTaskFailure({
-      taskId: sourceTask.id,
-      failingStep: 'verify',
-      errorOutput: 'err',
-    })
-    const childTask = await q.enqueueTask('fix it', undefined, {
-      skipTriage: true,
-    })
-    await insertChildSuggestionLink(q, f.suggestionId!, childTask.id, 'promoted')
-    // Child completes but unblock never ran (daemon was down).
-    await q.updateTask(childTask.id, { status: 'done' })
+    const { q, br } = await loadModules(repo)
+    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+    await blockTask(q, dep.id, fix.id)
 
-    const recovered = await br.recoverBlockedTasks()
-    expect(recovered).toHaveLength(1)
-    expect(recovered[0].outcomes[0].outcome).toBe('queued')
-
-    const reloaded = await q.getTask(sourceTask.id)
-    expect(reloaded?.status).toBe('queued')
-  })
-
-  it('recoverBlockedTasks is a no-op when blocker is still unresolved', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, fix, br } = await loadModules(repo)
-    const sourceTask = await q.enqueueTask('src', undefined, {
-      skipTriage: true,
-    })
-    await fix.handleTaskFailure({
-      taskId: sourceTask.id,
-      failingStep: 'verify',
-      errorOutput: 'err',
-    })
-    // Suggestion still 'proposed', no child task.
     const recovered = await br.recoverBlockedTasks()
     expect(recovered).toHaveLength(0)
-
-    const reloaded = await q.getTask(sourceTask.id)
+    const reloaded = await q.getTask(dep.id)
     expect(reloaded?.status).toBe('blocked')
   })
 })

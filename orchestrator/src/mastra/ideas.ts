@@ -3,13 +3,15 @@ import { randomBytes } from 'node:crypto'
 import { resolveContext } from './context'
 import type { Author, AuthorKind } from './author'
 
+export type IdeaSource = 'reflection' | 'human' | 'planner'
+
 export interface Idea {
   id: string
   goal: string
   story: string
   technical: string
   status: string
-  origin: string
+  source: IdeaSource
   author: Author | null
   createdAt: number
   updatedAt: number
@@ -38,7 +40,7 @@ export const initIdeas = async (): Promise<void> => {
       story TEXT NOT NULL DEFAULT '',
       technical TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'draft',
-      origin TEXT NOT NULL DEFAULT 'user',
+      source TEXT NOT NULL DEFAULT 'human',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )
@@ -65,7 +67,34 @@ export const initIdeas = async (): Promise<void> => {
   if (!colNames.has('promoted_task_id')) {
     await c.execute(`ALTER TABLE ideas ADD COLUMN promoted_task_id TEXT`)
   }
+  // Migrate legacy `origin` column (values 'user' | 'agent') into `source`
+  // (values 'human' | 'planner' | 'reflection'). The legacy column is
+  // dropped after the values are copied across.
+  if (colNames.has('origin') && !colNames.has('source')) {
+    await c.execute(
+      `ALTER TABLE ideas ADD COLUMN source TEXT NOT NULL DEFAULT 'human'`,
+    )
+    await c.execute(
+      `UPDATE ideas
+          SET source = CASE
+            WHEN author_kind = 'agent' THEN 'planner'
+            WHEN origin = 'agent'      THEN 'planner'
+            ELSE 'human'
+          END`,
+    )
+    await c.execute(`ALTER TABLE ideas DROP COLUMN origin`)
+  } else if (!colNames.has('source')) {
+    await c.execute(
+      `ALTER TABLE ideas ADD COLUMN source TEXT NOT NULL DEFAULT 'human'`,
+    )
+  }
   await migrateLegacyFeatures(c)
+  // Run after `initQueue` has had a chance to migrate `tasks.blocker_id`
+  // out into `task_blockers` rows, since that migration reads
+  // `task_suggestions` and we are about to drop it.
+  const { initQueue } = await import('./queue')
+  await initQueue()
+  await migrateTaskSuggestions(c)
   initialised = true
 }
 
@@ -85,7 +114,8 @@ const migrateLegacyFeatures = async (c: Client): Promise<void> => {
       const id = r.id as string
       const goal = (r.goal as string | null) ?? ''
       const status = (r.status as string | null) ?? 'draft'
-      const origin = (r.origin as string | null) ?? 'user'
+      const legacyOrigin = (r.origin as string | null) ?? 'user'
+      const source: IdeaSource = legacyOrigin === 'agent' ? 'planner' : 'human'
       const createdMs = Date.parse((r.created_at as string | null) ?? '')
       const updatedMs = Date.parse((r.updated_at as string | null) ?? '')
       const now = Date.now()
@@ -93,9 +123,9 @@ const migrateLegacyFeatures = async (c: Client): Promise<void> => {
       const updatedAt = Number.isFinite(updatedMs) ? updatedMs : now
 
       const result = await tx.execute({
-        sql: `INSERT OR IGNORE INTO ideas (id, goal, story, technical, status, origin, created_at, updated_at)
+        sql: `INSERT OR IGNORE INTO ideas (id, goal, story, technical, status, source, created_at, updated_at)
               VALUES (?, ?, '', '', ?, ?, ?, ?)`,
-        args: [id, goal, status, origin, createdAt, updatedAt],
+        args: [id, goal, status, source, createdAt, updatedAt],
       })
       if (result.rowsAffected === 0) {
         console.warn(
@@ -114,6 +144,106 @@ const migrateLegacyFeatures = async (c: Client): Promise<void> => {
   }
 }
 
+/**
+ * One-shot migration: copy any reflection-origin rows out of the legacy
+ * `task_suggestions` table (in queue.db) into `ideas` with
+ * `source='reflection'`. Runs idempotently — rows whose id already exists
+ * in ideas are skipped. The actual DROP of task_suggestions happens during
+ * queue init, after this migration has copied the rows out.
+ */
+const migrateTaskSuggestions = async (c: Client): Promise<void> => {
+  const { queueDbPath } = resolveContext()
+  let queueClient: Client
+  try {
+    queueClient = createClient({ url: `file:${queueDbPath}` })
+  } catch {
+    return
+  }
+  try {
+    const tableCheck = await queueClient.execute({
+      sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='task_suggestions'`,
+      args: [],
+    })
+    if (tableCheck.rows.length === 0) return
+
+    const cols = await queueClient.execute(`PRAGMA table_info(task_suggestions)`)
+    const colNames = new Set(
+      cols.rows.map((r) => (r as unknown as { name: string }).name),
+    )
+    const hasKind = colNames.has('kind')
+    const sql = hasKind
+      ? `SELECT id, title, prompt, rationale, status, kind, created_task_id, created_at
+           FROM task_suggestions
+          WHERE kind = 'reflection' OR kind IS NULL`
+      : `SELECT id, title, prompt, rationale, status, created_task_id, created_at,
+                NULL AS kind FROM task_suggestions`
+    const rows = await queueClient.execute(sql)
+
+    const tx = await c.transaction('write')
+    try {
+      for (const row of rows.rows) {
+        const r = row as unknown as {
+          id: string
+          title: string | null
+          prompt: string | null
+          rationale: string | null
+          status: string | null
+          kind: string | null
+          created_task_id: string | null
+          created_at: string | null
+        }
+        const goal = (r.title ?? '').trim() || '(reflection)'
+        const story = (r.prompt ?? '').trim()
+        const technical = (r.rationale ?? '').trim()
+        const status =
+          r.status === 'promoted' || r.status === 'accepted'
+            ? 'promoted'
+            : r.status === 'rejected'
+              ? 'dismissed'
+              : 'draft'
+        const createdMs = Date.parse(r.created_at ?? '')
+        const now = Date.now()
+        const createdAt = Number.isFinite(createdMs) ? createdMs : now
+        await tx.execute({
+          sql: `INSERT OR IGNORE INTO ideas
+                  (id, goal, story, technical, status, source,
+                   author_kind, author_name, promoted_task_id,
+                   created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'reflection',
+                        'agent', 'reflector', ?,
+                        ?, ?)`,
+          args: [
+            r.id,
+            goal,
+            story,
+            technical,
+            status,
+            r.created_task_id ?? null,
+            createdAt,
+            createdAt,
+          ],
+        })
+      }
+      await tx.commit()
+    } catch (error: unknown) {
+      tx.close()
+      throw error
+    }
+    // After copying reflection rows out, drop the legacy table from queue.db.
+    // Any remaining rows (kind='fix') are vestigial — fix tasks are now
+    // first-class entries in `tasks` linked via `task_blockers`.
+    await queueClient.execute(
+      `DROP INDEX IF EXISTS idx_task_suggestions_source_task_id`,
+    )
+    await queueClient.execute(
+      `DROP INDEX IF EXISTS idx_task_suggestions_failure_signature`,
+    )
+    await queueClient.execute(`DROP TABLE IF EXISTS task_suggestions`)
+  } finally {
+    queueClient.close()
+  }
+}
+
 const slugify = (goal: string): string => {
   const slug = goal
     .toLowerCase()
@@ -127,6 +257,11 @@ const slugify = (goal: string): string => {
 export const generateIdeaId = (goal: string): string => {
   const prefix = randomBytes(4).toString('hex')
   return `${prefix}-${slugify(goal)}`
+}
+
+const normaliseSource = (raw: unknown): IdeaSource => {
+  if (raw === 'reflection' || raw === 'planner' || raw === 'human') return raw
+  return 'human'
 }
 
 const rowToIdea = (
@@ -145,7 +280,7 @@ const rowToIdea = (
     story: (row.story as string | null) ?? '',
     technical: (row.technical as string | null) ?? '',
     status: (row.status as string | null) ?? 'draft',
-    origin: (row.origin as string | null) ?? 'user',
+    source: normaliseSource(row.source),
     author,
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
@@ -167,6 +302,9 @@ const loadAcceptance = async (
 
 export interface CreateIdeaOptions {
   author?: Author
+  source?: IdeaSource
+  story?: string
+  technical?: string
 }
 
 export const createIdea = async (
@@ -177,27 +315,36 @@ export const createIdea = async (
   const c = getClient()
   const id = generateIdeaId(goal)
   const now = Date.now()
-  const origin = opts?.author?.kind === 'agent' ? 'agent' : 'user'
+  const source: IdeaSource =
+    opts?.source ??
+    (opts?.author?.kind === 'agent' ? 'planner' : 'human')
   const authorKind = opts?.author?.kind ?? null
   const authorName = opts?.author?.name ?? null
+  const story = opts?.story ?? ''
+  const technical = opts?.technical ?? ''
   await c.execute({
-    sql: `INSERT INTO ideas (id, goal, story, technical, status, origin, author_kind, author_name, created_at, updated_at)
-          VALUES (?, ?, '', '', 'draft', ?, ?, ?, ?, ?)`,
-    args: [id, goal, origin, authorKind, authorName, now, now],
+    sql: `INSERT INTO ideas (id, goal, story, technical, status, source, author_kind, author_name, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`,
+    args: [id, goal, story, technical, source, authorKind, authorName, now, now],
   })
   return {
     id,
     goal,
-    story: '',
-    technical: '',
+    story,
+    technical,
     status: 'draft',
-    origin,
+    source,
     author: opts?.author ?? null,
     createdAt: now,
     updatedAt: now,
     acceptance: [],
     promotedTaskId: null,
   }
+}
+
+export interface ListIdeasFilter {
+  source?: IdeaSource
+  status?: string
 }
 
 export type IdeaIdResolution =
@@ -254,10 +401,26 @@ export const getIdea = async (idOrPrefix: string): Promise<Idea | null> => {
   return rowToIdea(r.rows[0] as unknown as Record<string, unknown>, acceptance)
 }
 
-export const listIdeas = async (): Promise<Idea[]> => {
+export const listIdeas = async (filter?: ListIdeasFilter): Promise<Idea[]> => {
   await initIdeas()
   const c = getClient()
-  const r = await c.execute(`SELECT * FROM ideas ORDER BY created_at DESC`)
+  const where: string[] = []
+  const args: unknown[] = []
+  if (filter?.source) {
+    where.push('source = ?')
+    args.push(filter.source)
+  }
+  if (filter?.status) {
+    where.push('status = ?')
+    args.push(filter.status)
+  }
+  const sql = `SELECT * FROM ideas${
+    where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''
+  } ORDER BY created_at DESC`
+  const r =
+    args.length > 0
+      ? await c.execute({ sql, args: args as never })
+      : await c.execute(sql)
   const ideas: Idea[] = []
   for (const row of r.rows) {
     const r2 = row as unknown as Record<string, unknown>
