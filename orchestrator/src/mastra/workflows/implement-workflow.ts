@@ -19,6 +19,7 @@ import {
 import type { ClaudeEvent } from '../lib/claude-stream'
 import { hasIncompleteBlockers, updateTask, upsertTranscript } from '../queue'
 import { handleTaskFailureWithFixTask } from '../queue-fix-tasks'
+import { resolveOriginIdForTask } from '../lib/origin'
 
 export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} has incomplete blockers; aborting dispatch (task remains queued)`
@@ -79,7 +80,11 @@ const setupStep = createStep({
     path: z.string(),
     branch: z.string(),
   }),
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData, tracingContext }) => {
+    const originId = await resolveOriginIdForTask(inputData.taskId)
+    tracingContext?.currentSpan?.update({
+      metadata: { originId, taskId: inputData.taskId },
+    })
     if (await hasIncompleteBlockers(inputData.taskId)) {
       throw new Error(BLOCKERS_ABORT_MESSAGE(inputData.taskId))
     }
@@ -155,6 +160,7 @@ const codeStep = createStep({
     claudeExitCode: z.number(),
   }),
   execute: async ({ inputData, writer, tracingContext }) => {
+    const originId = await resolveOriginIdForTask(inputData.taskId)
     const fullPrompt = composePrompt(inputData.prompt, inputData.plan)
     const conversation: ClaudeEvent[] = []
     const r = await runClaudeCode({
@@ -169,6 +175,8 @@ const codeStep = createStep({
     const usage = summarizeUsage(conversation)
     tracingContext?.currentSpan?.update({
       metadata: {
+        originId,
+        taskId: inputData.taskId,
         claudeSessionId: r.sessionId,
         usage,
       },
@@ -219,7 +227,11 @@ const verifyStep = createStep({
       sampling: { type: 'ratio', rate: 1 },
     },
   },
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData, tracingContext }) => {
+    const originId = await resolveOriginIdForTask(inputData.taskId)
+    tracingContext?.currentSpan?.update({
+      metadata: { originId, taskId: inputData.taskId },
+    })
     await updateTask(inputData.taskId, { status: 'verifying' })
     const verifyCwd = resolveVerifyCwd(inputData.path)
     const ctx = resolveContext()
@@ -295,6 +307,10 @@ const mergeStep = createStep({
     },
   },
   execute: async ({ inputData, writer, tracingContext }) => {
+    const originId = await resolveOriginIdForTask(inputData.taskId)
+    tracingContext?.currentSpan?.update({
+      metadata: { originId, taskId: inputData.taskId },
+    })
     if (!inputData.verified) {
       return {
         taskId: inputData.taskId,
@@ -366,6 +382,8 @@ const mergeStep = createStep({
         const supervisorUsage = summarizeUsage(supervisorConversation)
         tracingContext?.currentSpan?.update({
           metadata: {
+            originId,
+            taskId: inputData.taskId,
             supervisorConversation,
             supervisorConversationBytes: JSON.stringify(supervisorConversation).length,
             supervisorUsage,

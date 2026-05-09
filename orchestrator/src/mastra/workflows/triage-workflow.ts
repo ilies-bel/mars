@@ -96,9 +96,13 @@ const generateStep = createStep({
   id: 'generate-triage',
   inputSchema: triageInputSchema,
   outputSchema: triageOutputSchema,
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData, tracingContext }) => {
     const task = await getTask(inputData.taskId)
     if (!task) throw new Error(`task ${inputData.taskId} not found`)
+
+    tracingContext?.currentSpan?.update({
+      metadata: { originId: task.originId, taskId: task.id },
+    })
 
     const allTasks = await listTasks()
     const knownIds = new Set(allTasks.map((t) => t.id))
