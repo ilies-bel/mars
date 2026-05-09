@@ -84,7 +84,8 @@ Add `/.mars/` to the target repo's `.gitignore`.
 The daemon dispatches work through per-kind semaphores so a reconcile
 storm or a burst of `task add` calls can't spawn one worktree + `claude
 -p` per row. Each cap is a positive integer; invalid values fall back to
-the default. Override per daemon (kill + restart picks up new values).
+the default. Tune at runtime with `mars watch --reload` (re-reads the
+env vars below without restarting); a kill + restart also picks them up.
 
 - `MARS_MAX_TRIAGE` (default `4`) — concurrent triage workflows.
 - `MARS_MAX_IMPLEMENT` (default `4`) — concurrent implement workflows

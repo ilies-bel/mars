@@ -60,19 +60,19 @@ const envInt = (name: string, fallback: number): number => {
   return Number.isFinite(n) && n > 0 ? n : fallback
 }
 
-interface Semaphore {
-  readonly limit: number
+export interface Semaphore {
+  limit: number
   inUse: number
   readonly waiters: Array<() => void>
 }
 
-const makeSem = (limit: number): Semaphore => ({
+export const makeSem = (limit: number): Semaphore => ({
   limit,
   inUse: 0,
   waiters: [],
 })
 
-const acquire = (s: Semaphore): Promise<void> => {
+export const acquire = (s: Semaphore): Promise<void> => {
   if (s.inUse < s.limit) {
     s.inUse += 1
     return Promise.resolve()
@@ -82,13 +82,34 @@ const acquire = (s: Semaphore): Promise<void> => {
 
 // When a waiter exists, hand the slot directly to it without bouncing inUse —
 // otherwise a parallel acquire could slip in between decrement and resume.
-const release = (s: Semaphore): void => {
+export const release = (s: Semaphore): void => {
   const next = s.waiters.shift()
   if (next) {
     next()
     return
   }
   s.inUse = Math.max(0, s.inUse - 1)
+}
+
+// Adjust the cap at runtime. Raising wakes up to `delta` waiters (mirroring
+// the hand-off in release() so a parallel acquire can't slip past). Lowering
+// never cancels in-flight work — release() simply won't hand to new acquirers
+// until inUse < limit again.
+export const setSemLimit = (s: Semaphore, newLimit: number): void => {
+  if (!Number.isInteger(newLimit) || newLimit < 1) {
+    throw new Error('limit must be a positive integer')
+  }
+  const delta = newLimit - s.limit
+  s.limit = newLimit
+  if (delta > 0 && s.waiters.length > 0) {
+    const wakeCount = Math.min(delta, s.waiters.length)
+    for (let i = 0; i < wakeCount; i += 1) {
+      const next = s.waiters.shift()
+      if (!next) break
+      s.inUse += 1
+      next()
+    }
+  }
 }
 
 export interface DaemonHandle {
@@ -720,6 +741,33 @@ export const startDaemon = async (
         }
         case 'status': {
           return { ok: true, data: await handleStatus() }
+        }
+        case 'reload-config': {
+          const newImplement = envInt('MARS_MAX_IMPLEMENT', 4)
+          const newTriage = envInt('MARS_MAX_TRIAGE', 4)
+          const newRefine = envInt('MARS_MAX_REFINE', 2)
+          const newStructured = envInt('MARS_MAX_STRUCTURED_WRITE', 1)
+          setSemLimit(sems.implement, newImplement)
+          setSemLimit(sems.triage, newTriage)
+          setSemLimit(sems.refine, newRefine)
+          // structuredWriteSem is shared by 'glossary-write' and 'adr-add';
+          // update once via the captured reference.
+          setSemLimit(structuredWriteSem, newStructured)
+          log(
+            `concurrency reloaded: implement=${newImplement} triage=${newTriage} refine=${newRefine} structured-write=${newStructured}`,
+          )
+          void drain()
+          return {
+            ok: true,
+            data: {
+              caps: {
+                implement: newImplement,
+                triage: newTriage,
+                refine: newRefine,
+                'structured-write': newStructured,
+              },
+            },
+          }
         }
         case 'ping': {
           return { ok: true, data: { pid: process.pid } }

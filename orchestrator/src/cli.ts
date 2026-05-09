@@ -125,12 +125,13 @@ Commands:
   unblock <id>                  flip a 'blocked' task to 'failed' (clears phantom
                                 blocker_id and any task_blockers rows). Use when a
                                 task is stuck on a blocker that no longer exists.
-  watch [--detach|--stop|--status|--force]
+  watch [--detach|--stop|--status|--force|--reload]
                                 run the orchestration daemon (foreground by default);
                                 CLI write ops auto-spawn it. --detach forks to
                                 background; --stop asks daemon to exit (refuses
                                 if tasks are in flight unless --force); --status
-                                prints inFlight + queue counts.
+                                prints inFlight + queue counts; --reload re-reads
+                                MARS_MAX_* env vars without restarting.
   ab "<instruction>" --variants <path>
                                 run an A/B experiment: same instruction, two
                                 configurable variants from the JSON file (must
@@ -299,7 +300,7 @@ Re-queue a failed/done task. Cleans the worktree and branch first.`,
 
 Delete a failed/done task entirely (worktree + branch + row). Refuses
 in-flight tasks.`,
-  watch: `mars watch [--detach|--stop|--status|--force]
+  watch: `mars watch [--detach|--stop|--status|--force|--reload]
 
 Run the orchestration daemon (foreground by default). CLI write ops
 auto-spawn it.
@@ -308,7 +309,8 @@ Flags:
   --detach   fork to background
   --stop     ask the daemon to exit (refuses if tasks are in flight)
   --status   print inFlight + queue counts
-  --force    with --stop, exit even if tasks are in flight`,
+  --force    with --stop, exit even if tasks are in flight
+  --reload   re-read MARS_MAX_* env vars without restarting the daemon`,
   ab: `mars ab "<instruction>" --variants <path>
 
 Run an A/B experiment: same instruction, two configurable variants from
@@ -922,11 +924,41 @@ const main = async (): Promise<void> => {
     const stop = watchFlags.has('--stop')
     const status = watchFlags.has('--status')
     const force = watchFlags.has('--force')
+    const reload = watchFlags.has('--reload')
 
     if (stop) {
       const { sendRequest } = await import('./mastra/daemon/client')
       await sendRequest({ op: 'shutdown', force }, { autoSpawn: false })
       console.log('daemon stopping')
+      return
+    }
+    if (reload) {
+      const { sendRequest } = await import('./mastra/daemon/client')
+      try {
+        const data = (await sendRequest(
+          { op: 'reload-config' },
+          { autoSpawn: false },
+        )) as {
+          caps: {
+            implement: number
+            triage: number
+            refine: number
+            'structured-write': number
+          }
+        }
+        console.log(
+          `concurrency reloaded: implement=${data.caps.implement} triage=${data.caps.triage} refine=${data.caps.refine} structured-write=${data.caps['structured-write']}`,
+        )
+      } catch (err) {
+        const msg = (err as Error).message
+        if (/not running|auto-spawn disabled/i.test(msg)) {
+          console.error(
+            "daemon not running; use 'mars watch --detach' to start it",
+          )
+          process.exit(1)
+        }
+        throw err
+      }
       return
     }
     if (status) {

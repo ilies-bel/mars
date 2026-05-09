@@ -36,6 +36,7 @@ export type DaemonRequest =
     }
   | { op: 'adr-add'; title: string; body: string }
   | { op: 'status' }
+  | { op: 'reload-config' }
   | { op: 'shutdown'; force?: boolean }
   | { op: 'ping' }
 
