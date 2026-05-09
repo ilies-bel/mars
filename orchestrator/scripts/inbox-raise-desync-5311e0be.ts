@@ -69,11 +69,19 @@
  * Run from `orchestrator/`:
  *   MARS_REPO=/Users/ib472e5l/project/perso/mars-framework \
  *     npx tsx scripts/inbox-raise-desync-5311e0be.ts
+ *
+ * Re-confirm passes (signature dedup keeps a single inbox row, bumps
+ * seen_count and appends an occurrence each pass):
+ *   - mars-f7a7483e: opened inbox ecdd51fb (initial raise).
+ *   - mars-0401530e: re-confirmed; same shape, same conclusion. Branch tip
+ *     still 1d1f8ef; main still contains content-equivalent 73921cc with
+ *     the `conversation` → `usage` resolution. Neither (a) nor (b) is
+ *     correct; cleanup remains operator-side.
  */
 
 import { raiseInboxItem } from '../src/mastra/lib/inbox'
 
-const SELF_HEAL_TASK_ID = 'mars-f7a7483e'
+const SELF_HEAL_TASK_ID = 'mars-0401530e'
 const TARGET_TASK_ID = 'mars-5311e0be'
 const TARGET_BRANCH = 'task/mars-5311e0be'
 const BRANCH_TIP = '1d1f8ef0a4b0faaf197a122e18f18976ef676eb1'
