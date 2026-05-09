@@ -35,3 +35,6 @@ A long-lived orchestrator process that hosts one or more Slots; the panel groups
 
 **Slot**:
 A single concurrency lane inside a Worker that runs one task at a time; the unit shown by each card in the Workers panel and the mars monitor TUI.
+
+**Pool**:
+A named work queue (triage, implement, refine, structured-write) that a Slot is configured to consume tasks from; each Slot belongs to exactly one Pool.
