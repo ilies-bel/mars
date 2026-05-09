@@ -53,6 +53,44 @@ interface InFlightEntry {
   kind: DispatchKind
 }
 
+const envInt = (name: string, fallback: number): number => {
+  const raw = process.env[name]
+  if (raw === undefined || raw === '') return fallback
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n > 0 ? n : fallback
+}
+
+interface Semaphore {
+  readonly limit: number
+  inUse: number
+  readonly waiters: Array<() => void>
+}
+
+const makeSem = (limit: number): Semaphore => ({
+  limit,
+  inUse: 0,
+  waiters: [],
+})
+
+const acquire = (s: Semaphore): Promise<void> => {
+  if (s.inUse < s.limit) {
+    s.inUse += 1
+    return Promise.resolve()
+  }
+  return new Promise<void>((resolve) => s.waiters.push(resolve))
+}
+
+// When a waiter exists, hand the slot directly to it without bouncing inUse —
+// otherwise a parallel acquire could slip in between decrement and resume.
+const release = (s: Semaphore): void => {
+  const next = s.waiters.shift()
+  if (next) {
+    next()
+    return
+  }
+  s.inUse = Math.max(0, s.inUse - 1)
+}
+
 export interface DaemonHandle {
   stop: (force?: boolean) => Promise<void>
   inFlightCount: () => number
@@ -110,14 +148,40 @@ export const startDaemon = async (
   const startedAt = new Date().toISOString()
   let shuttingDown = false
 
+  // Per-kind concurrency caps. glossary-write and adr-add share one pool
+  // because they both contend on the same merge lock downstream — a second
+  // slot would just sit waiting on the lock, so default to 1.
+  const structuredWriteSem = makeSem(envInt('MARS_MAX_STRUCTURED_WRITE', 1))
+  const sems: Record<DispatchKind, Semaphore> = {
+    triage: makeSem(envInt('MARS_MAX_TRIAGE', 4)),
+    implement: makeSem(envInt('MARS_MAX_IMPLEMENT', 2)),
+    refine: makeSem(envInt('MARS_MAX_REFINE', 2)),
+    'glossary-write': structuredWriteSem,
+    'adr-add': structuredWriteSem,
+  }
+  log(
+    `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit}`,
+  )
+
+  // Pending sets used by reconcile + drain: never bus.emit a storm; pull from
+  // these as semaphore slots free.
+  const pendingTriage = new Set<string>()
+  const pendingImplement = new Set<string>()
+
   const trackInFlight = (taskId: string, kind: DispatchKind): (() => void) => {
     inFlight.set(taskId, { taskId, kind })
     return () => inFlight.delete(taskId)
   }
 
+  // Forward-declared so dispatchers can call it from finally; assigned after
+  // both dispatchers exist.
+  let drain: () => Promise<void> = async () => {}
+
   const dispatchTriage = async (taskId: string): Promise<void> => {
     if (inFlight.has(taskId)) return
-    const release = trackInFlight(taskId, 'triage')
+    pendingTriage.delete(taskId)
+    await acquire(sems.triage)
+    const releaseTracking = trackInFlight(taskId, 'triage')
     log(`[triage] ${taskId} dispatching`)
     try {
       const { runTriage } = await import('../workflows/triage-workflow')
@@ -138,13 +202,17 @@ export const startDaemon = async (
     } catch (err) {
       log(`[triage] ${taskId} failed: ${(err as Error).message}`)
     } finally {
-      release()
+      releaseTracking()
+      release(sems.triage)
+      void drain()
     }
   }
 
   const dispatchImplement = async (task: Task): Promise<void> => {
     if (inFlight.has(task.id)) return
-    const release = trackInFlight(task.id, 'implement')
+    pendingImplement.delete(task.id)
+    await acquire(sems.implement)
+    const releaseTracking = trackInFlight(task.id, 'implement')
     log(`[implement] ${task.id} dispatching`)
     try {
       const { mastra } = await import('../index')
@@ -181,7 +249,9 @@ export const startDaemon = async (
         bus.emit('task.failed', { taskId: task.id, error: message })
       }
     } finally {
-      release()
+      releaseTracking()
+      release(sems.implement)
+      void drain()
     }
   }
 
@@ -192,7 +262,8 @@ export const startDaemon = async (
     aliases?: readonly string[]
   }): Promise<void> => {
     const synthetic = `glossary-write:${req.kind}:${req.term}:${Date.now()}`
-    const release = trackInFlight(synthetic, 'glossary-write')
+    await acquire(sems['glossary-write'])
+    const releaseTracking = trackInFlight(synthetic, 'glossary-write')
     log(`[glossary-write] ${req.kind} "${req.term}" dispatching`)
     try {
       const { runStructuredWrite } = await import('../lib/structured-write')
@@ -234,7 +305,8 @@ export const startDaemon = async (
         `[glossary-write] ${req.kind} "${req.term}" failed: ${(err as Error).message}`,
       )
     } finally {
-      release()
+      releaseTracking()
+      release(sems['glossary-write'])
     }
   }
 
@@ -243,7 +315,8 @@ export const startDaemon = async (
     body: string
   }): Promise<void> => {
     const synthetic = `adr-add:${req.title}:${Date.now()}`
-    const release = trackInFlight(synthetic, 'adr-add')
+    await acquire(sems['adr-add'])
+    const releaseTracking = trackInFlight(synthetic, 'adr-add')
     log(`[adr-add] "${req.title}" dispatching`)
     try {
       const { runStructuredWrite } = await import('../lib/structured-write')
@@ -265,7 +338,8 @@ export const startDaemon = async (
     } catch (err) {
       log(`[adr-add] "${req.title}" failed: ${(err as Error).message}`)
     } finally {
-      release()
+      releaseTracking()
+      release(sems['adr-add'])
     }
   }
 
@@ -274,7 +348,8 @@ export const startDaemon = async (
     refresh: boolean,
   ): Promise<void> => {
     if (inFlight.has(taskId)) return
-    const release = trackInFlight(taskId, 'refine')
+    await acquire(sems.refine)
+    const releaseTracking = trackInFlight(taskId, 'refine')
     log(`[refine] ${taskId} dispatching (refresh=${refresh})`)
     try {
       const { runPlan } = await import('../workflows/plan-workflow')
@@ -285,29 +360,55 @@ export const startDaemon = async (
     } catch (err) {
       log(`[refine] ${taskId} failed: ${(err as Error).message}`)
     } finally {
-      release()
+      releaseTracking()
+      release(sems.refine)
+    }
+  }
+
+  // Drain pulls from the pending sets as semaphore slots free. Bus handlers
+  // and dispatcher finally-blocks both call this. It's idempotent and cheap
+  // when there's nothing to do.
+  drain = async (): Promise<void> => {
+    while (
+      pendingTriage.size > 0 &&
+      sems.triage.inUse < sems.triage.limit
+    ) {
+      const id = pendingTriage.values().next().value as string
+      pendingTriage.delete(id)
+      void dispatchTriage(id)
+    }
+    while (
+      pendingImplement.size > 0 &&
+      sems.implement.inUse < sems.implement.limit
+    ) {
+      const id = pendingImplement.values().next().value as string
+      pendingImplement.delete(id)
+      const t = await getTask(id)
+      if (!t || t.status !== 'queued') continue
+      if (await hasIncompleteBlockers(id)) {
+        log(`[dispatch] ${id} blocked; deferring until blockers complete`)
+        continue
+      }
+      void dispatchImplement(t)
     }
   }
 
   bus.on('task.added', (e: { taskId: string }) => {
-    void dispatchTriage(e.taskId)
+    if (inFlight.has(e.taskId)) return
+    pendingTriage.add(e.taskId)
+    void drain()
   })
 
+  // refine is user-initiated and rare; let it push directly through its sem
+  // (dispatchRefine already acquires/releases). No pending-set needed.
   bus.on('task.refine', (e: { taskId: string; refresh: boolean }) => {
     void dispatchRefine(e.taskId, e.refresh)
   })
 
   bus.on('task.queued', (e: { taskId: string }) => {
-    void (async () => {
-      const task = await getTask(e.taskId)
-      if (task && task.status === 'queued') {
-        if (await hasIncompleteBlockers(task.id)) {
-          log(`[dispatch] ${task.id} blocked; deferring until blockers complete`)
-          return
-        }
-        void dispatchImplement(task)
-      }
-    })()
+    if (inFlight.has(e.taskId)) return
+    pendingImplement.add(e.taskId)
+    void drain()
   })
 
   // ── Wrappers around queue ops that emit the right events ──────────────────

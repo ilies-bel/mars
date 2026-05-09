@@ -375,7 +375,7 @@ export const enqueueTask = async (
 ): Promise<Task> => {
   const promptText = coerceToString(prompt, 'enqueueTask: prompt')
   await initQueue()
-  const id = randomUUID().slice(0, 8)
+  const id = `mars-${randomUUID().slice(0, 8)}`
   const now = new Date().toISOString()
   const status: TaskStatus = opts?.skipTriage ? 'queued' : 'draft'
   const authorKind = opts?.author?.kind ?? null
