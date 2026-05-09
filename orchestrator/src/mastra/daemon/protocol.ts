@@ -10,7 +10,9 @@ export type DaemonRequest =
       skipTriage?: boolean
       author?: Author
       blockerIds?: readonly string[]
+      priority?: number
     }
+  | { op: 'task.priority'; id: string; priority: number }
   | {
       op: 'update'
       id: string

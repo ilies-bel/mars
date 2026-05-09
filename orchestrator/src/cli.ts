@@ -608,6 +608,7 @@ const main = async (): Promise<void> => {
     prompt: string,
     skipTriage: boolean,
     blockerIds?: readonly string[],
+    priority?: number,
   ): Promise<void> => {
     const functional = resolvePlanText(
       flags,
@@ -634,6 +635,7 @@ const main = async (): Promise<void> => {
         skipTriage,
         author,
         ...(blockerIds && blockerIds.length > 0 ? { blockerIds } : {}),
+        ...(priority !== undefined ? { priority } : {}),
       },
       {
         onSpawnNotice: (pid, log) =>
@@ -667,15 +669,51 @@ const main = async (): Promise<void> => {
       const prompt = rest.slice(1).join(' ')
       if (!prompt) {
         console.error(
-          'usage: mars task add "<prompt>" [--author kind:name] [--blocked-by <id> ...] [plan flags]',
+          'usage: mars task add "<prompt>" [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [plan flags]',
         )
         process.exit(1)
       }
       const blockerIds = multiFlags['--blocked-by'] ?? []
-      await enqueueViaDaemon(prompt, true, blockerIds)
+      const priorityRaw = flags['--priority']
+      let priority: number | undefined
+      if (priorityRaw !== undefined) {
+        const n = Number(priorityRaw)
+        if (!Number.isInteger(n) || n < 0 || n > 3) {
+          console.error(`priority must be an integer in 0..3; got '${priorityRaw}'`)
+          process.exit(1)
+        }
+        priority = n
+      }
+      await enqueueViaDaemon(prompt, true, blockerIds, priority)
       return
     }
-    console.error('usage: mars task <add> ...')
+    if (sub === 'priority') {
+      const id = rest[1]
+      const valueRaw = rest[2]
+      if (!id || valueRaw === undefined) {
+        console.error('usage: mars task priority <id> <0..3>')
+        process.exit(1)
+      }
+      const value = Number(valueRaw)
+      if (!Number.isInteger(value) || value < 0 || value > 3) {
+        console.error(`priority must be an integer in 0..3; got '${valueRaw}'`)
+        process.exit(1)
+      }
+      const { sendRequest } = await import('./mastra/daemon/client')
+      try {
+        const task = (await sendRequest({
+          op: 'task.priority',
+          id,
+          priority: value,
+        })) as { id: string; priority: number }
+        console.log(`set priority of ${task.id} to ${task.priority}`)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
+    console.error('usage: mars task <add|priority> ...')
     process.exit(1)
   }
 
@@ -1046,7 +1084,8 @@ const main = async (): Promise<void> => {
   if (cmd === 'list') {
     const tasks = await listTasks(rest[0] as never)
     for (const t of tasks) {
-      console.log(`${t.id}\t${t.status}\t${t.prompt.slice(0, 60)}`)
+      const prio = t.priority > 0 ? `\tP${t.priority}` : ''
+      console.log(`${t.id}\t${t.status}${prio}\t${t.prompt.slice(0, 60)}`)
     }
     return
   }

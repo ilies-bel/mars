@@ -20,6 +20,7 @@ import {
   initQueue,
   listTasks,
   removeBlocker,
+  setTaskPriority,
   unblockTask,
   updateTask,
   type Task,
@@ -389,6 +390,27 @@ export const startDaemon = async (
     }
   }
 
+  // Pick the highest-priority pending task. Ties broken by oldest createdAt
+  // so equal-priority work stays FIFO. Returns null if no pending row resolves
+  // to a real task (drained while we looked).
+  const pickNextImplement = async (
+    pending: ReadonlySet<string>,
+  ): Promise<string | null> => {
+    let best: { id: string; priority: number; createdAt: string } | null = null
+    for (const id of pending) {
+      const t = await getTask(id)
+      if (!t) continue
+      if (
+        best === null ||
+        t.priority > best.priority ||
+        (t.priority === best.priority && t.createdAt < best.createdAt)
+      ) {
+        best = { id, priority: t.priority, createdAt: t.createdAt }
+      }
+    }
+    return best?.id ?? null
+  }
+
   // Drain pulls from the pending sets as semaphore slots free. Bus handlers
   // and dispatcher finally-blocks both call this. It's idempotent and cheap
   // when there's nothing to do.
@@ -405,7 +427,8 @@ export const startDaemon = async (
       pendingImplement.size > 0 &&
       sems.implement.inUse < sems.implement.limit
     ) {
-      const id = pendingImplement.values().next().value as string
+      const id = await pickNextImplement(pendingImplement)
+      if (id === null) break
       pendingImplement.delete(id)
       const t = await getTask(id)
       if (!t || t.status !== 'queued') continue
@@ -443,10 +466,12 @@ export const startDaemon = async (
     skipTriage?: boolean,
     author?: Task['author'],
     blockerIds?: readonly string[],
+    priority?: number,
   ): Promise<Task> => {
     const opts: Parameters<typeof enqueueTask>[2] = {}
     if (skipTriage) opts.skipTriage = true
     if (author) opts.author = author
+    if (priority !== undefined) opts.priority = priority
     const task = await enqueueTask(
       prompt,
       plan ?? undefined,
@@ -750,7 +775,12 @@ export const startDaemon = async (
             req.skipTriage,
             req.author,
             req.blockerIds,
+            req.priority,
           )
+          return { ok: true, data: task }
+        }
+        case 'task.priority': {
+          const task = await setTaskPriority(req.id, req.priority)
           return { ok: true, data: task }
         }
         case 'update': {
