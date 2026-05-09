@@ -189,6 +189,7 @@ export const runSubprocessStreaming = (
   args: readonly string[],
   cwd: string,
   onLine?: (event: SubprocessLine) => void | Promise<void>,
+  signal?: AbortSignal,
 ): Promise<RunSubprocessResult> =>
   new Promise((resolveFn) => {
     const child = spawn(cmd, args, { cwd, env: process.env })
@@ -215,9 +216,18 @@ export const runSubprocessStreaming = (
       }
     }
 
+    const onAbort = () => {
+      if (!child.killed) child.kill('SIGKILL')
+    }
+    if (signal) {
+      if (signal.aborted) onAbort()
+      else signal.addEventListener('abort', onAbort, { once: true })
+    }
+
     child.stdout.on('data', (chunk) => handleChunk('stdout', chunk))
     child.stderr.on('data', (chunk) => handleChunk('stderr', chunk))
     child.on('close', (code) => {
+      if (signal) signal.removeEventListener('abort', onAbort)
       if (onLine) {
         for (const stream of ['stdout', 'stderr'] as const) {
           if (buffers[stream].length > 0) {
@@ -294,6 +304,16 @@ const claudeStreamArgs = (
   ...(options.sessionId ? ['--session-id', options.sessionId] : []),
 ]
 
+const DEFAULT_CLAUDE_MAX_MESSAGES = 100
+
+const resolveClaudeMessageCap = (): number => {
+  const raw = process.env.MARS_CLAUDE_MAX_MESSAGES
+  if (raw === undefined) return DEFAULT_CLAUDE_MAX_MESSAGES
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isInteger(parsed) || parsed < 0) return DEFAULT_CLAUDE_MAX_MESSAGES
+  return parsed
+}
+
 export const runClaudeCode = async ({
   cwd,
   prompt,
@@ -304,6 +324,13 @@ export const runClaudeCode = async ({
   onEvent,
 }: RunClaudeArgs): Promise<RunClaudeResult> => {
   const conversation: ClaudeEvent[] = []
+  const cap = resolveClaudeMessageCap()
+  const capEnabled = cap > 0
+  const warnAt = capEnabled ? Math.floor(cap * 0.6) : Number.POSITIVE_INFINITY
+  let warned = false
+  let capHit = false
+  const abort = new AbortController()
+
   const work = runSubprocessStreaming(
     'claude',
     claudeStreamArgs(prompt, { model, systemPrompt, sessionId }),
@@ -312,9 +339,27 @@ export const runClaudeCode = async ({
       if (stream !== 'stdout') return
       const event = parseClaudeStreamLine(line)
       if (!event) return
+      // Once the cap has fired, drop any late-arriving events still buffered
+      // from the child between abort() and process death. The conversation
+      // length must equal exactly `cap` for cap-hit runs.
+      if (capHit) return
       conversation.push(event)
       if (onEvent) await onEvent(event)
+      if (!capEnabled) return
+      if (!warned && conversation.length === warnAt) {
+        warned = true
+        const sid =
+          extractSessionIdFromConversation(conversation) ?? sessionId ?? '?'
+        console.warn(
+          `[mars] claude session ${sid} crossed ${warnAt} messages (cap ${cap})`,
+        )
+      }
+      if (conversation.length >= cap) {
+        capHit = true
+        abort.abort()
+      }
     },
+    abort.signal,
   )
   const timeout = new Promise<RunSubprocessResult>((resolveFn) =>
     setTimeout(
@@ -333,6 +378,15 @@ export const runClaudeCode = async ({
     extractSessionId(result.stdout) ??
     sessionId ??
     null
+  if (capHit) {
+    return {
+      exitCode: 137,
+      stdout: result.stdout,
+      stderr: `claude -p hit message cap of ${cap} (MARS_CLAUDE_MAX_MESSAGES)`,
+      sessionId: detectedSessionId,
+      conversation,
+    }
+  }
   return { ...result, sessionId: detectedSessionId, conversation }
 }
 
