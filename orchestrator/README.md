@@ -79,6 +79,26 @@ Add `/.mars/` to the target repo's `.gitignore`.
 - `MARS_REFLECT_DISABLED=1` — skip per-task token/cost capture and
   short-circuit `mars reflect`. Scorers stay attached either way.
 
+### Daemon worker pool
+
+The daemon dispatches work through per-kind semaphores so a reconcile
+storm or a burst of `task add` calls can't spawn one worktree + `claude
+-p` per row. Each cap is a positive integer; invalid values fall back to
+the default. Override per daemon (kill + restart picks up new values).
+
+- `MARS_MAX_TRIAGE` (default `4`) — concurrent triage workflows.
+- `MARS_MAX_IMPLEMENT` (default `2`) — concurrent implement workflows
+  (worktree + `claude -p`). The hardware-bound knob; raise cautiously.
+- `MARS_MAX_REFINE` (default `2`) — concurrent `mars idea refine`
+  (planner) runs.
+- `MARS_MAX_STRUCTURED_WRITE` (default `1`) — shared cap for
+  `glossary-write` and `adr-add`. Both serialize on `.mars/.merge.lock`
+  downstream, so a second slot would just sit waiting.
+
+Excess work queues into in-memory pending sets and drains as slots free
+— it is not dropped. Restarting the daemon re-reads `draft` / `queued`
+rows from `.mars/queue.db` and re-pends them, so restarts are safe.
+
 ## Observing Claude runs in Studio
 
 Both Claude dispatches (the `code` step and the `vcs-supervisor` invocation in
