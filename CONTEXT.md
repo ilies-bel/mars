@@ -13,3 +13,7 @@ The single read-only ui/ view that lists every item awaiting human attention: id
 
 **originId**:
 Tracer id for a full workflow from `mars idea add` (or `mars task add`) through to merge; propagated onto every Mastra span in the arc so `mars deep-reflect` can analyze the whole workflow as one timeline.
+
+**Daemon**:
+The long-lived background process started by 'mars watch' that runs Claude instances on ready tasks.
+_Avoid_: watch process, watcher
