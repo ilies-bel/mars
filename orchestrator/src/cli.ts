@@ -212,11 +212,13 @@ Commands:
                                 intent), verify-claim mismatches, and thrashing
                                 patterns. Auto-picks a candidate when no id is
                                 given. Requires a stored transcript.
-  next [--json]                 list draft ideas (status='draft'). Default
-                                output is human-readable; --json prints a
-                                structured payload for the /mars:next skill
+  next [--json]                 list draft ideas (status='draft') and
+                                blocked tasks (status='blocked', with their
+                                blocker ids). Default output is human-
+                                readable; --json prints a structured payload
+                                ({drafts, blocked}) for the /mars:next skill
                                 to consume. Source ('reflection' | 'human' |
-                                'planner') is annotated per row.
+                                'planner') is annotated per draft row.
   inbox                         alias for 'inbox list open'
   inbox list [state]            list inbox items. state one of:
                                 open|acknowledged|resolved|dismissed|all
@@ -484,13 +486,21 @@ workflow unless MARS_REFLECT_DISABLED=1 is set). The model defaults to
 opus; override with MARS_DEEP_REFLECT_MODEL.`,
   next: `mars next [--json]
 
-List draft ideas in .mars/state.db (ideas where status='draft'),
-including reflection-origin and planner-origin ideas. Source can be
-inspected with 'mars show <id>' or 'mars idea list --source <s>'.
+List candidates the user might want to refine next:
 
-Default output is a single section, designed to be read by both
-humans and the /mars:next slash command. Pass --json to get a
-machine-readable payload of the same data.`,
+  - Draft ideas in .mars/state.db (ideas where status='draft'),
+    including reflection-origin and planner-origin ideas. Source
+    can be inspected with 'mars show <id>' or
+    'mars idea list --source <s>'.
+  - Blocked tasks in .mars/queue.db (tasks where status='blocked'),
+    annotated with the short ids of their open blockers. Use
+    'mars show <id>' for full detail or 'mars unblock <id>' as the
+    phantom-recovery escape hatch.
+
+Default output groups drafts and blocked tasks under separate
+headings, designed to be read by both humans and the /mars:next
+slash command. Pass --json for a machine-readable payload of the
+shape { drafts: [...], blocked: [...] }.`,
   inbox: `mars inbox <subcommand> ...
 
 Subcommands:
@@ -754,8 +764,13 @@ const main = async (): Promise<void> => {
       const { resolveAuthor, formatAuthor } = await import('./mastra/author')
       const author = resolveAuthor(flags['--author'])
       const { createIdea } = await import('./mastra/ideas')
-      const idea = await createIdea(goal, { author })
-      console.log(`${idea.id} (author: ${formatAuthor(author)})`)
+      try {
+        const idea = await createIdea(goal, { author })
+        console.log(`${idea.id} (author: ${formatAuthor(author)})`)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
       return
     }
     if (sub === 'new') {
@@ -765,8 +780,13 @@ const main = async (): Promise<void> => {
         process.exit(1)
       }
       const { createIdea } = await import('./mastra/ideas')
-      const idea = await createIdea(goal)
-      console.log(idea.id)
+      try {
+        const idea = await createIdea(goal)
+        console.log(idea.id)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
       return
     }
     if (sub === 'show') {
@@ -1766,6 +1786,7 @@ const main = async (): Promise<void> => {
   if (cmd === 'next') {
     const json = rest.includes('--json')
     const { listIdeas } = await import('./mastra/ideas')
+    const { listTasks, listBlockers } = await import('./mastra/queue')
     const ideas = await listIdeas({ status: 'draft' })
     const drafts = ideas.map((i) => ({
       id: i.id,
@@ -1776,28 +1797,53 @@ const main = async (): Promise<void> => {
       acceptanceCount: i.acceptance.length,
     }))
 
+    const blockedTasks = await listTasks('blocked')
+    const blocked = await Promise.all(
+      blockedTasks.map(async (t) => ({
+        id: t.id,
+        prompt: t.prompt,
+        blockerIds: await listBlockers(t.id),
+      })),
+    )
+
     if (json) {
-      console.log(JSON.stringify({ drafts }, null, 2))
+      console.log(JSON.stringify({ drafts, blocked }, null, 2))
       return
     }
 
-    if (drafts.length === 0) {
+    if (drafts.length === 0 && blocked.length === 0) {
       console.log('Nothing to refine. Create a draft with: mars idea add "<goal>"')
       return
     }
 
-    console.log('Pick something to refine, or describe a new feature:\n')
+    if (drafts.length > 0) {
+      console.log('Pick something to refine, or describe a new feature:\n')
+      console.log('Existing drafts:')
+      for (const d of drafts) {
+        const goal = d.goal.trim() || '(no goal)'
+        const flags: string[] = []
+        flags.push(`source:${d.source}`)
+        if (!d.storySet) flags.push('story:empty')
+        if (!d.technicalSet) flags.push('technical:empty')
+        if (d.acceptanceCount === 0) flags.push('acceptance:0')
+        const tail = flags.length > 0 ? `  [${flags.join(' ')}]` : ''
+        console.log(`  ${d.id.slice(0, 8)}  ${goal}${tail}`)
+      }
+    }
 
-    console.log('Existing drafts:')
-    for (const d of drafts) {
-      const goal = d.goal.trim() || '(no goal)'
-      const flags: string[] = []
-      flags.push(`source:${d.source}`)
-      if (!d.storySet) flags.push('story:empty')
-      if (!d.technicalSet) flags.push('technical:empty')
-      if (d.acceptanceCount === 0) flags.push('acceptance:0')
-      const tail = flags.length > 0 ? `  [${flags.join(' ')}]` : ''
-      console.log(`  ${d.id.slice(0, 8)}  ${goal}${tail}`)
+    if (blocked.length > 0) {
+      if (drafts.length > 0) console.log('')
+      console.log('Blocked tasks:')
+      for (const t of blocked) {
+        const firstLine = t.prompt.split('\n')[0]?.trim() ?? ''
+        const summary =
+          firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine || '(no prompt)'
+        const blockers =
+          t.blockerIds.length > 0
+            ? `  [blockedBy:${t.blockerIds.map((b) => b.slice(0, 8)).join(',')}]`
+            : '  [blockedBy:none — use `mars unblock`]'
+        console.log(`  ${t.id.slice(0, 8)}  ${summary}${blockers}`)
+      }
     }
     return
   }
@@ -2028,5 +2074,11 @@ const main = async (): Promise<void> => {
   process.exit(1)
 }
 
-await main()
+try {
+  await main()
+} catch (err: unknown) {
+  const message = err instanceof Error ? err.message : String(err)
+  console.error(`error: ${message}`)
+  process.exit(1)
+}
 process.exit(0)
