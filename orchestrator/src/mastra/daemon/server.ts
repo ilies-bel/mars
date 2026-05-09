@@ -739,6 +739,27 @@ export const startDaemon = async (
           void dispatchAdrAdd({ title: req.title.trim(), body: req.body })
           return { ok: true, data: { enqueued: true } }
         }
+        case 'spans': {
+          const { querySpans, SpansQueryError } = await import('./spans')
+          try {
+            const { getObservabilityDb } = await import('../index')
+            const db = getObservabilityDb()
+            const data = await querySpans(db, {
+              kind: req.kind,
+              id: req.id,
+              limit: req.limit,
+              offset: req.offset,
+            })
+            return { ok: true, data }
+          } catch (err) {
+            const message = (err as Error).message
+            if (err instanceof SpansQueryError) {
+              return { ok: false, error: message }
+            }
+            log(`[spans] query failed: ${message}`)
+            return { ok: false, error: message }
+          }
+        }
         case 'status': {
           return { ok: true, data: await handleStatus() }
         }

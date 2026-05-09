@@ -39,6 +39,57 @@ export type DaemonRequest =
   | { op: 'reload-config' }
   | { op: 'shutdown'; force?: boolean }
   | { op: 'ping' }
+  | {
+      op: 'spans'
+      kind: SpansKind
+      id: string
+      limit?: number
+      offset?: number
+    }
+
+export type SpansKind = 'by-run' | 'by-task' | 'by-trace'
+
+export interface SpanRow {
+  eventType: string | null
+  timestamp: string | null
+  traceId: string | null
+  spanId: string | null
+  parentSpanId: string | null
+  experimentId: string | null
+  entityType: string | null
+  entityId: string | null
+  entityName: string | null
+  entityVersionId: string | null
+  userId: string | null
+  organizationId: string | null
+  resourceId: string | null
+  runId: string | null
+  sessionId: string | null
+  threadId: string | null
+  requestId: string | null
+  environment: string | null
+  source: string | null
+  serviceName: string | null
+  requestContext: unknown
+  name: string | null
+  spanType: string | null
+  isEvent: boolean | null
+  endedAt: string | null
+  attributes: unknown
+  metadata: unknown
+  tags: unknown
+  scope: unknown
+  links: unknown
+  input: unknown
+  output: unknown
+  error: unknown
+}
+
+export interface SpansResponse {
+  rows: SpanRow[]
+  total: number
+  truncated: boolean
+}
 
 export type DaemonResponse =
   | { ok: true; data?: unknown }

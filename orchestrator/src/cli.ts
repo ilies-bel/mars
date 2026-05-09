@@ -18,6 +18,7 @@ const FLAGS_WITH_VALUES = new Set([
   '--technical-file',
   '--since',
   '--limit',
+  '--offset',
   '--variants',
   '--out',
   '--author',
@@ -192,6 +193,13 @@ Commands:
   inbox dismiss <id> [--note <text>]
                                 mark an inbox item dismissed
   inbox watch                   live terminal UI for the inbox (ink TUI)
+  spans <by-run|by-task|by-trace> <id> [--limit N] [--offset N] [--ndjson]
+                                read DuckDB-backed observability spans via
+                                the daemon (which already holds the
+                                process-exclusive lock). Filters narrowly by
+                                runId, attributes.taskId, or traceId. Output
+                                is pretty JSON by default; --ndjson prints
+                                one row per line for piping into jq.
   where                         print resolved repo + state directory
   help                          show this message
 
@@ -1810,6 +1818,33 @@ const main = async (): Promise<void> => {
       }
       console.log(`${t.id}\t${t.status}\t${t.prompt.slice(0, 60)}`)
     }
+    return
+  }
+
+  if (cmd === 'spans') {
+    const kind = rest[0]
+    const id = rest[1]
+    if (kind !== 'by-run' && kind !== 'by-task' && kind !== 'by-trace') {
+      console.error('usage: mars spans <by-run|by-task|by-trace> <id> [--limit N] [--offset N] [--ndjson]')
+      process.exit(1)
+    }
+    if (!id) {
+      console.error('usage: mars spans <by-run|by-task|by-trace> <id> [--limit N] [--offset N] [--ndjson]')
+      process.exit(1)
+    }
+    const ndjson = rest.includes('--ndjson')
+    const limit = flags['--limit'] ? Number.parseInt(flags['--limit'], 10) : undefined
+    const offset = flags['--offset'] ? Number.parseInt(flags['--offset'], 10) : undefined
+    const { fetchSpans } = await import('./mastra/daemon/client')
+    const args: Parameters<typeof fetchSpans>[0] = { kind, id }
+    if (limit !== undefined) args.limit = limit
+    if (offset !== undefined) args.offset = offset
+    const result = await fetchSpans(args)
+    if (ndjson) {
+      for (const row of result.rows) console.log(JSON.stringify(row))
+      return
+    }
+    console.log(JSON.stringify(result, null, 2))
     return
   }
 
