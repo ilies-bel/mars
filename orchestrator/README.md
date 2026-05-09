@@ -87,7 +87,7 @@ storm or a burst of `task add` calls can't spawn one worktree + `claude
 the default. Override per daemon (kill + restart picks up new values).
 
 - `MARS_MAX_TRIAGE` (default `4`) — concurrent triage workflows.
-- `MARS_MAX_IMPLEMENT` (default `2`) — concurrent implement workflows
+- `MARS_MAX_IMPLEMENT` (default `4`) — concurrent implement workflows
   (worktree + `claude -p`). The hardware-bound knob; raise cautiously.
 - `MARS_MAX_REFINE` (default `2`) — concurrent `mars idea refine`
   (planner) runs.
