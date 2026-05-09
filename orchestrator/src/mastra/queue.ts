@@ -585,15 +585,50 @@ export const addBlockers = async (
 ): Promise<void> => {
   if (blockerIds.length === 0) return
   await initQueue()
-  const now = new Date().toISOString()
   const c = getClient()
-  for (const blockerId of blockerIds) {
-    if (blockerId === taskId) continue
-    await c.execute({
-      sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
-      args: [taskId, blockerId, now],
-    })
+
+  const taskRow = await c.execute({
+    sql: `SELECT 1 FROM tasks WHERE id = ?`,
+    args: [taskId],
+  })
+  if (taskRow.rows.length === 0) {
+    throw new Error(`task ${taskId} not found`)
   }
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const id of blockerIds) {
+    if (id === taskId) continue
+    if (seen.has(id)) continue
+    seen.add(id)
+    const r = await c.execute({
+      sql: `SELECT 1 FROM tasks WHERE id = ?`,
+      args: [id],
+    })
+    if (r.rows.length === 0) {
+      throw new Error(`blocker ${id} not found`)
+    }
+    unique.push(id)
+  }
+
+  if (unique.length === 0) return
+  const now = new Date().toISOString()
+  const stmts = unique.map((blockerId) => ({
+    sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
+    args: [taskId, blockerId, now],
+  }))
+  await c.batch(stmts, 'write')
+}
+
+export const removeBlocker = async (
+  taskId: string,
+  blockerId: string,
+): Promise<{ removed: boolean }> => {
+  await initQueue()
+  const r = await getClient().execute({
+    sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+    args: [taskId, blockerId],
+  })
+  return { removed: r.rowsAffected > 0 }
 }
 
 export const clearBlockers = async (taskId: string): Promise<void> => {

@@ -9,6 +9,7 @@ export type DaemonRequest =
       plan?: TaskPlan
       skipTriage?: boolean
       author?: Author
+      blockerIds?: readonly string[]
     }
   | {
       op: 'update'
@@ -25,6 +26,8 @@ export type DaemonRequest =
   | { op: 'retry'; id: string }
   | { op: 'purge'; id: string }
   | { op: 'unblock'; id: string }
+  | { op: 'block'; id: string; blockerIds: readonly string[] }
+  | { op: 'remove-blockers'; id: string; blockerIds: readonly string[] }
   | { op: 'promote'; suggestionId: string }
   | { op: 'refine'; id: string; refresh?: boolean }
   | {

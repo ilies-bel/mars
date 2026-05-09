@@ -5,6 +5,7 @@ import { resolveContext } from './mastra/context'
 interface ParsedArgs {
   repo?: string
   flags: Record<string, string>
+  multiFlags: Record<string, string[]>
   positional: string[]
 }
 
@@ -24,11 +25,15 @@ const FLAGS_WITH_VALUES = new Set([
   '--note',
   '--root-cause',
   '--avoid',
+  '--blocked-by',
 ])
+
+const REPEATABLE_FLAGS = new Set(['--blocked-by'])
 
 const parseArgs = (argv: readonly string[]): ParsedArgs => {
   const positional: string[] = []
   const flags: Record<string, string> = {}
+  const multiFlags: Record<string, string[]> = {}
   let repo: string | undefined
 
   for (let i = 0; i < argv.length; i++) {
@@ -46,12 +51,18 @@ const parseArgs = (argv: readonly string[]): ParsedArgs => {
     if (FLAGS_WITH_VALUES.has(key)) {
       const value = inlineValue ?? argv[++i]
       if (value === undefined) throw new Error(`flag ${key} requires a value`)
-      flags[key] = value
+      if (REPEATABLE_FLAGS.has(key)) {
+        const list = multiFlags[key] ?? []
+        list.push(value)
+        multiFlags[key] = list
+      } else {
+        flags[key] = value
+      }
       continue
     }
     positional.push(a)
   }
-  return { repo, flags, positional }
+  return { repo, flags, multiFlags, positional }
 }
 
 const readMaybeFile = (raw: string): string => {
@@ -95,9 +106,12 @@ Commands:
                                 ayush-that/sub-agents.directory over HTTPS, cached
                                 under .mars/cache/sub-agents/ (7-day TTL).
                                 --verbose lists each discovered manifest on stderr.
-  task add "<prompt>" [--author kind:name] [plan flags]
+  task add "<prompt>" [--author kind:name] [--blocked-by <id>] [plan flags]
                                 enqueue a runnable task directly (status='queued',
-                                skips triage; can be picked up by agent runners)
+                                skips triage; can be picked up by agent runners).
+                                --blocked-by <id> is repeatable; every id must
+                                already exist. The task will not dispatch until
+                                every listed blocker reaches 'done'.
   idea add "<goal>" [--author kind:name]
                                 create an idea/plan in .mars/state.db. Author is
                                 detected from env/git when omitted: human if
@@ -122,9 +136,19 @@ Commands:
   list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed|dropped)
   retry <id>                    re-queue a failed/done task (cleans worktree+branch)
   purge <id>                    delete a failed/done task entirely (worktree+branch+row)
-  unblock <id>                  flip a 'blocked' task to 'failed' (clears phantom
-                                blocker_id and any task_blockers rows). Use when a
-                                task is stuck on a blocker that no longer exists.
+  unblock <id>                  phantom-recovery: flip a 'blocked' task to
+                                'failed' AND clear every task_blockers row for
+                                <id>. Use when a task is stuck on a blocker
+                                that no longer exists.
+  unblock <id> <blocker-id> [<blocker-id> ...]
+                                edge-removal: delete the listed (task,blocker)
+                                edges only; status is left untouched. Errors
+                                per-id when an edge is absent.
+  block <task-id> <blocker-id> [<blocker-id> ...]
+                                add blocker edges so <task-id> waits for each
+                                <blocker-id> to reach 'done' before dispatch.
+                                All ids must already exist; self-blocking is
+                                rejected.
   watch [--detach|--stop|--status|--force|--reload]
                                 run the orchestration daemon (foreground by default);
                                 CLI write ops auto-spawn it. --detach forks to
@@ -256,10 +280,12 @@ Plan flags:
   task: `mars task <subcommand> ...
 
 Subcommands:
-  add "<prompt>" [plan flags] [--author kind:name]
+  add "<prompt>" [plan flags] [--author kind:name] [--blocked-by <id> ...]
       Enqueue a runnable task directly (status='queued'; skips triage).
       Agent runners can pick it up immediately via 'mars run' / the
-      orchestrator. Plan flags and --author behave like 'mars add'.`,
+      orchestrator. Plan flags and --author behave like 'mars add'.
+      --blocked-by <id> may be repeated; each <id> must already exist.
+      The new task will not dispatch until every blocker reaches 'done'.`,
   idea: `mars idea <subcommand> ...
 
 Subcommands:
@@ -324,6 +350,27 @@ actionability + blockers.`,
   blockers: `mars blockers <task-id>
 
 List incomplete blockers on a task.`,
+  block: `mars block <task-id> <blocker-id> [<blocker-id> ...]
+
+Insert one or more blocker edges so <task-id> waits for the listed blocker
+tasks to reach 'done'. Every id must already exist in the queue. Self-blocking
+is rejected. The dependent task does not dispatch until every blocker is done.`,
+  unblock: `mars unblock <id>
+       mars unblock <id> <blocker-id> [<blocker-id> ...]
+
+Two distinct forms:
+
+  mars unblock <id>
+      Phantom-recovery escape hatch. Flips a 'blocked' task to 'failed' AND
+      deletes every row in task_blockers for <id>. Use when a task is stuck
+      on a blocker that no longer exists or was lost. Status changes; all
+      edges are wiped.
+
+  mars unblock <id> <blocker-id> [<blocker-id> ...]
+      Edge removal. Deletes the listed (task, blocker) edges only. Errors
+      per-id with 'no blocker edge: <id> -> <blocker-id>' when an edge is
+      absent. Does NOT touch the task's status; the task remains in
+      whatever state it was in.`,
   glossary: `mars glossary <subcommand> ...
 
 Edit the project glossary at <repo>/CONTEXT.md via deterministic, no-LLM
@@ -452,7 +499,7 @@ const printCommandHelp = (cmd: string): boolean => {
 }
 
 const main = async (): Promise<void> => {
-  const { repo, flags, positional } = parseArgs(process.argv.slice(2))
+  const { repo, flags, multiFlags, positional } = parseArgs(process.argv.slice(2))
   const cmd = positional[0]
   const rest = positional.slice(1)
 
@@ -556,6 +603,7 @@ const main = async (): Promise<void> => {
   const enqueueViaDaemon = async (
     prompt: string,
     skipTriage: boolean,
+    blockerIds?: readonly string[],
   ): Promise<void> => {
     const functional = resolvePlanText(
       flags,
@@ -575,14 +623,25 @@ const main = async (): Promise<void> => {
     const author = resolveAuthor(flags['--author'])
     const { sendRequest } = await import('./mastra/daemon/client')
     const task = (await sendRequest(
-      { op: 'add', prompt, plan, skipTriage, author },
+      {
+        op: 'add',
+        prompt,
+        plan,
+        skipTriage,
+        author,
+        ...(blockerIds && blockerIds.length > 0 ? { blockerIds } : {}),
+      },
       {
         onSpawnNotice: (pid, log) =>
           console.log(`[mars] started daemon (pid ${pid}, log: ${log})`),
       },
     )) as { id: string; status: string }
     const verb = task.status === 'queued' ? 'queued' : 'drafted'
-    console.log(`${verb} ${task.id} (author: ${formatAuthor(author)})`)
+    const suffix =
+      blockerIds && blockerIds.length > 0
+        ? ` (blocked by: ${blockerIds.join(', ')}; author: ${formatAuthor(author)})`
+        : ` (author: ${formatAuthor(author)})`
+    console.log(`${verb} ${task.id}${suffix}`)
   }
 
   if (cmd === 'add') {
@@ -603,10 +662,13 @@ const main = async (): Promise<void> => {
     if (sub === 'add') {
       const prompt = rest.slice(1).join(' ')
       if (!prompt) {
-        console.error('usage: mars task add "<prompt>" [--author kind:name] [plan flags]')
+        console.error(
+          'usage: mars task add "<prompt>" [--author kind:name] [--blocked-by <id> ...] [plan flags]',
+        )
         process.exit(1)
       }
-      await enqueueViaDaemon(prompt, true)
+      const blockerIds = multiFlags['--blocked-by'] ?? []
+      await enqueueViaDaemon(prompt, true, blockerIds)
       return
     }
     console.error('usage: mars task <add> ...')
@@ -890,21 +952,60 @@ const main = async (): Promise<void> => {
 
   if (cmd === 'unblock') {
     const id = rest[0]
+    const blockerArgs = rest.slice(1)
     if (!id) {
-      console.error(`usage: mars unblock <id>`)
+      console.error(
+        `usage: mars unblock <id>                       (phantom-recovery: clears all task_blockers, flips 'blocked' -> 'failed')\n       mars unblock <id> <blocker-id> [<blocker-id> ...]  (edge-removal: removes specific edges, status unchanged)`,
+      )
       process.exit(1)
     }
     const { sendRequest } = await import('./mastra/daemon/client')
-    const data = (await sendRequest({ op: 'unblock', id })) as {
-      taskId: string
-      outcome: 'unblocked' | 'noop'
-      previousStatus: string
+    if (blockerArgs.length === 0) {
+      const data = (await sendRequest({ op: 'unblock', id })) as {
+        taskId: string
+        outcome: 'unblocked' | 'noop'
+        previousStatus: string
+      }
+      if (data.outcome === 'unblocked') {
+        console.log(
+          `unblocked ${data.taskId} (was ${data.previousStatus}; now failed). Use 'mars retry ${data.taskId}' to re-queue.`,
+        )
+      } else {
+        console.log(
+          `task ${data.taskId} is ${data.previousStatus}; nothing to unblock`,
+        )
+      }
+      return
     }
-    if (data.outcome === 'unblocked') {
-      console.log(`unblocked ${data.taskId} (was ${data.previousStatus}; now failed). Use 'mars retry ${data.taskId}' to re-queue.`)
-    } else {
-      console.log(`task ${data.taskId} is ${data.previousStatus}; nothing to unblock`)
+    const data = (await sendRequest({
+      op: 'remove-blockers',
+      id,
+      blockerIds: blockerArgs,
+    })) as { taskId: string; removed: string[] }
+    console.log(`unblocked ${data.taskId} from: ${data.removed.join(', ')}`)
+    return
+  }
+
+  if (cmd === 'block') {
+    const id = rest[0]
+    const blockerArgs = rest.slice(1)
+    if (!id || blockerArgs.length === 0) {
+      console.error(
+        `usage: mars block <task-id> <blocker-id> [<blocker-id> ...]`,
+      )
+      process.exit(1)
     }
+    if (blockerArgs.some((b) => b === id)) {
+      console.error(`task ${id} cannot block itself`)
+      process.exit(1)
+    }
+    const { sendRequest } = await import('./mastra/daemon/client')
+    const data = (await sendRequest({
+      op: 'block',
+      id,
+      blockerIds: blockerArgs,
+    })) as { taskId: string; blockerIds: string[] }
+    console.log(`blocked ${data.taskId} by: ${data.blockerIds.join(', ')}`)
     return
   }
 

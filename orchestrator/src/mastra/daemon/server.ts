@@ -12,12 +12,14 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { dirname } from 'node:path'
 import { resolveContext } from '../context'
 import {
+  addBlockers,
   deleteTask,
   enqueueTask,
   getTask,
   hasIncompleteBlockers,
   initQueue,
   listTasks,
+  removeBlocker,
   unblockTask,
   updateTask,
   type Task,
@@ -439,6 +441,7 @@ export const startDaemon = async (
     plan?: Task['plan'],
     skipTriage?: boolean,
     author?: Task['author'],
+    blockerIds?: readonly string[],
   ): Promise<Task> => {
     const opts: Parameters<typeof enqueueTask>[2] = {}
     if (skipTriage) opts.skipTriage = true
@@ -448,12 +451,56 @@ export const startDaemon = async (
       plan ?? undefined,
       Object.keys(opts).length > 0 ? opts : undefined,
     )
+    if (blockerIds && blockerIds.length > 0) {
+      try {
+        await addBlockers(task.id, blockerIds)
+      } catch (err) {
+        await deleteTask(task.id).catch(() => {})
+        throw err
+      }
+    }
     if (task.status === 'queued') {
       bus.emit('task.queued', { taskId: task.id })
     } else if (task.status === 'draft') {
       bus.emit('task.added', { taskId: task.id })
     }
     return task
+  }
+
+  const handleBlock = async (
+    id: string,
+    blockerIds: readonly string[],
+  ): Promise<{ taskId: string; blockerIds: readonly string[] }> => {
+    if (blockerIds.length === 0) {
+      throw new Error('block requires at least one blocker id')
+    }
+    if (blockerIds.some((b) => b === id)) {
+      throw new Error(`task ${id} cannot block itself`)
+    }
+    const t = await getTask(id)
+    if (!t) throw new Error(`task ${id} not found`)
+    await addBlockers(id, blockerIds)
+    return { taskId: id, blockerIds }
+  }
+
+  const handleRemoveBlockers = async (
+    id: string,
+    blockerIds: readonly string[],
+  ): Promise<{ taskId: string; removed: readonly string[] }> => {
+    if (blockerIds.length === 0) {
+      throw new Error('remove-blockers requires at least one blocker id')
+    }
+    const t = await getTask(id)
+    if (!t) throw new Error(`task ${id} not found`)
+    const removed: string[] = []
+    for (const blockerId of blockerIds) {
+      const r = await removeBlocker(id, blockerId)
+      if (!r.removed) {
+        throw new Error(`no blocker edge: ${id} -> ${blockerId}`)
+      }
+      removed.push(blockerId)
+    }
+    return { taskId: id, removed }
   }
 
   const handleUpdate = async (
@@ -684,6 +731,7 @@ export const startDaemon = async (
             req.plan,
             req.skipTriage,
             req.author,
+            req.blockerIds,
           )
           return { ok: true, data: task }
         }
@@ -701,6 +749,14 @@ export const startDaemon = async (
         }
         case 'unblock': {
           const result = await handleUnblock(req.id)
+          return { ok: true, data: result }
+        }
+        case 'block': {
+          const result = await handleBlock(req.id, req.blockerIds ?? [])
+          return { ok: true, data: result }
+        }
+        case 'remove-blockers': {
+          const result = await handleRemoveBlockers(req.id, req.blockerIds ?? [])
           return { ok: true, data: result }
         }
         case 'promote': {

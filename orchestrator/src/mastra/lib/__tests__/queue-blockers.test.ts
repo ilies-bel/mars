@@ -12,6 +12,7 @@ interface Queue {
   addBlockers: typeof import('../../queue').addBlockers
   clearBlockers: typeof import('../../queue').clearBlockers
   listBlockers: typeof import('../../queue').listBlockers
+  removeBlocker: typeof import('../../queue').removeBlocker
   hasIncompleteBlockers: typeof import('../../queue').hasIncompleteBlockers
   promoteDraftToQueued: typeof import('../../queue').promoteDraftToQueued
   initQueue: typeof import('../../queue').initQueue
@@ -146,5 +147,56 @@ describe('queue blockers + draft promotion', () => {
     await q.addBlockers(a.id, [b.id, c.id])
     await q.clearBlockers(a.id)
     expect(await q.listBlockers(a.id)).toEqual([])
+  })
+
+  it('addBlockers inserts multiple edges and is idempotent on duplicate (task, blocker) pairs', async () => {
+    const q = await loadQueue(repo)
+    const a = await q.enqueueTask('a')
+    const b = await q.enqueueTask('b')
+    const c = await q.enqueueTask('c')
+    await q.addBlockers(a.id, [b.id, c.id])
+    expect((await q.listBlockers(a.id)).sort()).toEqual([b.id, c.id].sort())
+    // Re-inserting the same pairs should not duplicate or error.
+    await q.addBlockers(a.id, [b.id, c.id])
+    expect((await q.listBlockers(a.id)).sort()).toEqual([b.id, c.id].sort())
+  })
+
+  it('addBlockers rejects when any blocker id does not reference a real task', async () => {
+    const q = await loadQueue(repo)
+    const a = await q.enqueueTask('a')
+    const b = await q.enqueueTask('b')
+    await expect(
+      q.addBlockers(a.id, [b.id, 'nonexistent-id']),
+    ).rejects.toThrow(/blocker nonexistent-id not found/)
+    // Nothing inserted on failure (validation runs before the batch).
+    expect(await q.listBlockers(a.id)).toEqual([])
+  })
+
+  it('addBlockers rejects when the task id does not exist', async () => {
+    const q = await loadQueue(repo)
+    const b = await q.enqueueTask('b')
+    await expect(
+      q.addBlockers('nonexistent-task', [b.id]),
+    ).rejects.toThrow(/task nonexistent-task not found/)
+  })
+
+  it('removeBlocker removes a single edge and reports removed:false on a non-existent pair', async () => {
+    const q = await loadQueue(repo)
+    const a = await q.enqueueTask('a')
+    const b = await q.enqueueTask('b')
+    const c = await q.enqueueTask('c')
+    await q.addBlockers(a.id, [b.id, c.id])
+
+    const r1 = await q.removeBlocker(a.id, b.id)
+    expect(r1.removed).toBe(true)
+    expect(await q.listBlockers(a.id)).toEqual([c.id])
+
+    // Removing the same pair again is a no-op and reports removed:false.
+    const r2 = await q.removeBlocker(a.id, b.id)
+    expect(r2.removed).toBe(false)
+
+    // Non-existent pair (different blocker id) also reports removed:false.
+    const r3 = await q.removeBlocker(a.id, 'never-existed')
+    expect(r3.removed).toBe(false)
   })
 })
