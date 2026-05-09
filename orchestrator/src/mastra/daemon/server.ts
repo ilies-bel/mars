@@ -154,7 +154,7 @@ export const startDaemon = async (
   const structuredWriteSem = makeSem(envInt('MARS_MAX_STRUCTURED_WRITE', 1))
   const sems: Record<DispatchKind, Semaphore> = {
     triage: makeSem(envInt('MARS_MAX_TRIAGE', 4)),
-    implement: makeSem(envInt('MARS_MAX_IMPLEMENT', 2)),
+    implement: makeSem(envInt('MARS_MAX_IMPLEMENT', 4)),
     refine: makeSem(envInt('MARS_MAX_REFINE', 2)),
     'glossary-write': structuredWriteSem,
     'adr-add': structuredWriteSem,

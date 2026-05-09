@@ -62,7 +62,7 @@ in the dispatcher and `release(sems.<kind>)` in `finally`, then call
 emit-then-dispatch directly from a bus handler — push the id into the
 matching `pending*` set and call `drain()` instead, otherwise reconcile
 or a burst of `task add` calls will spawn one worktree per row and melt
-the host. Caps default to triage=4, implement=2, refine=2,
+the host. Caps default to triage=4, implement=4, refine=2,
 structured-write=1; see README "Daemon worker pool" for the env vars.
 
 ### `mars init` recursion
