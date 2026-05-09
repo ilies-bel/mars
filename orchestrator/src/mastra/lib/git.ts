@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { resolve, dirname } from 'node:path'
-import { open, mkdir, readFile, unlink } from 'node:fs/promises'
+import { open, mkdir, readFile, rm, unlink } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { getRepoRoot, getStateDir } from '../context'
 import { parseClaudeStreamLine, type ClaudeEvent } from './claude-stream'
@@ -23,6 +23,64 @@ export interface WorktreeRef {
   branch: string
 }
 
+interface RegisteredWorktree {
+  path: string
+  branch: string | null
+}
+
+const listRegisteredWorktrees = async (): Promise<RegisteredWorktree[]> => {
+  const { stdout } = await exec('git', ['worktree', 'list', '--porcelain'], {
+    cwd: repoRoot(),
+  })
+  const entries: RegisteredWorktree[] = []
+  let current: { path?: string; branch?: string | null } = {}
+  const flush = (): void => {
+    if (current.path) {
+      entries.push({ path: current.path, branch: current.branch ?? null })
+    }
+    current = {}
+  }
+  for (const line of stdout.split('\n')) {
+    if (line.startsWith('worktree ')) {
+      flush()
+      current.path = line.slice('worktree '.length).trim()
+    } else if (line.startsWith('branch ')) {
+      const ref = line.slice('branch '.length).trim()
+      current.branch = ref.startsWith('refs/heads/')
+        ? ref.slice('refs/heads/'.length)
+        : ref
+    } else if (line.startsWith('detached')) {
+      current.branch = null
+    } else if (line.length === 0) {
+      flush()
+    }
+  }
+  flush()
+  return entries
+}
+
+const branchExists = async (branch: string): Promise<boolean> => {
+  try {
+    await exec(
+      'git',
+      ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
+      { cwd: repoRoot() },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+const pathExists = async (p: string): Promise<boolean> => {
+  try {
+    await exec('test', ['-e', p])
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const createWorktree = async ({
   taskId,
   integrationBranch,
@@ -34,9 +92,65 @@ export const createWorktree = async ({
   const dirName = `${taskId}${suffix}`
   const path = resolve(getStateDir(), `worktrees/${dirName}`)
   const startPoint = baseSha ?? integrationBranch
-  await exec('git', ['worktree', 'add', '-b', branch, path, startPoint], {
-    cwd: repoRoot(),
-  })
+  const cwd = repoRoot()
+
+  await mkdir(resolve(path, '..'), { recursive: true })
+
+  // Prune any stale worktree registrations (paths recorded in .git/worktrees
+  // that no longer exist on disk) before inspecting state.
+  await exec('git', ['worktree', 'prune'], { cwd }).catch(() => {})
+
+  const registered = await listRegisteredWorktrees().catch(
+    () => [] as RegisteredWorktree[],
+  )
+  const existingForBranch = registered.find((w) => w.branch === branch)
+  const existingForPath = registered.find((w) => w.path === path)
+
+  // Already-registered worktree at the expected path on the expected branch:
+  // reuse it as-is. This is the "skip if it already exists" path.
+  if (
+    existingForBranch &&
+    existingForPath &&
+    existingForBranch.path === existingForPath.path &&
+    (await pathExists(path))
+  ) {
+    return { path, branch }
+  }
+
+  // Worktree registered at our path but on a different branch (or detached).
+  // It's stale state from a previous run — drop it.
+  if (existingForPath && existingForPath.branch !== branch) {
+    await exec(
+      'git',
+      ['worktree', 'remove', '--force', existingForPath.path],
+      { cwd },
+    ).catch(() => {})
+  }
+
+  // Worktree registered for our branch at a different path. Drop that
+  // registration so we can re-attach the branch at the canonical path.
+  if (existingForBranch && existingForBranch.path !== path) {
+    await exec(
+      'git',
+      ['worktree', 'remove', '--force', existingForBranch.path],
+      { cwd },
+    ).catch(() => {})
+  }
+
+  // Re-prune in case the removes above left dangling refs.
+  await exec('git', ['worktree', 'prune'], { cwd }).catch(() => {})
+
+  // If a directory still exists at our target path with no live worktree
+  // registration, it's leftover filesystem state — wipe it.
+  if (await pathExists(path)) {
+    await rm(path, { recursive: true, force: true }).catch(() => {})
+  }
+
+  const branchAlreadyExists = await branchExists(branch)
+  const args = branchAlreadyExists
+    ? ['worktree', 'add', path, branch]
+    : ['worktree', 'add', '-b', branch, path, startPoint]
+  await exec('git', args, { cwd })
   return { path, branch }
 }
 
