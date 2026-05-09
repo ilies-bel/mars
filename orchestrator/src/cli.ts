@@ -319,7 +319,12 @@ Subcommands:
   add-acceptance <id> "<bullet>"
       Append a bullet to the idea's acceptance list (positions auto-assigned).
   remove-acceptance <id> <index>
-      Remove the 0-based acceptance bullet; remaining positions repack.`,
+      Remove the 0-based acceptance bullet; remaining positions repack.
+  promote <id>
+      Promote a fully-shaped draft idea into a queued task (daemon-routed).
+  reject <id>
+      Mark a draft idea as 'dismissed' so it stops surfacing in 'mars next'
+      and reflection follow-ups.`,
   'set-functional': `mars set-functional <id> <text|@file>
 
 Set the functional plan on a draft/queued task. Use @path to read from a
@@ -926,6 +931,22 @@ const main = async (): Promise<void> => {
       }
       return
     }
+    if (sub === 'reject') {
+      const id = rest[1]
+      if (!id) {
+        console.error('usage: mars idea reject <id>')
+        process.exit(1)
+      }
+      const { rejectIdea } = await import('./mastra/ideas')
+      try {
+        const idea = await rejectIdea(id)
+        console.log(`rejected ${idea.id}`)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
     if (sub === 'list') {
       const sourceFlag = flags['--source']
       const statusFlag = flags['--status']
@@ -954,7 +975,7 @@ const main = async (): Promise<void> => {
       return
     }
     console.error(
-      'usage: mars idea <add|new|list|show|set|add-acceptance|remove-acceptance|promote> ...',
+      'usage: mars idea <add|new|list|show|set|add-acceptance|remove-acceptance|promote|reject> ...',
     )
     process.exit(1)
   }

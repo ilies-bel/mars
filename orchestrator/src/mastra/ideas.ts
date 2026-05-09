@@ -628,6 +628,40 @@ export const promoteIdea = async (
   return { idea, prompt }
 }
 
+// Direct DB write — rejection is a pure status flip with no side effects
+// (no worktree, no merge), so it does not need to go through the daemon.
+export const rejectIdea = async (idOrPrefix: string): Promise<Idea> => {
+  await initIdeas()
+  const resolved = await resolveIdeaId(idOrPrefix)
+  if (resolved.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} ideas`,
+    )
+  }
+  if (resolved.kind === 'none') {
+    throw new Error(`idea ${idOrPrefix} not found`)
+  }
+  const id = resolved.id
+  const c = getClient()
+  const now = Date.now()
+  const r = await c.execute({
+    sql: `UPDATE ideas SET status = 'dismissed', updated_at = ? WHERE id = ? AND status = 'draft'`,
+    args: [now, id],
+  })
+  if (r.rowsAffected === 0) {
+    const current = await getIdea(id)
+    if (!current) throw new Error(`idea ${id} not found`)
+    throw new Error(
+      `idea ${id} is '${current.status}'; only draft ideas can be rejected`,
+    )
+  }
+  const updated = await getIdea(id)
+  if (!updated) {
+    throw new Error(`idea ${id} disappeared after rejection`)
+  }
+  return updated
+}
+
 export const markIdeaPromoted = async (
   ideaId: string,
   taskId: string,
