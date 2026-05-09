@@ -2,14 +2,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { daemonPaths, isProcessAlive, resolveLaunchCommand } from './paths'
-import {
-  readLines,
-  writeLine,
-  type DaemonRequest,
-  type DaemonResponse,
-  type SpansKind,
-  type SpansResponse,
-} from './protocol'
+import { readLines, writeLine, type DaemonRequest, type DaemonResponse } from './protocol'
 import { resolveContext } from '../context'
 import { ensureSweeperRunning } from '../sweeper/client'
 
@@ -150,19 +143,4 @@ export const sendRequest = async (
       if (!settled) fail(new Error('daemon closed connection without responding'))
     })
   })
-}
-
-export interface FetchSpansArgs {
-  kind: SpansKind
-  id: string
-  limit?: number
-  offset?: number
-}
-
-export const fetchSpans = async (
-  args: FetchSpansArgs,
-  opts: ClientOptions = {},
-): Promise<SpansResponse> => {
-  const data = (await sendRequest({ op: 'spans', ...args }, opts)) as SpansResponse
-  return data
 }
