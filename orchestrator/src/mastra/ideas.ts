@@ -14,6 +14,7 @@ export interface Idea {
   createdAt: number
   updatedAt: number
   acceptance: string[]
+  promotedTaskId: string | null
 }
 
 let clientSingleton: Client | null = null
@@ -60,6 +61,9 @@ export const initIdeas = async (): Promise<void> => {
   }
   if (!colNames.has('author_name')) {
     await c.execute(`ALTER TABLE ideas ADD COLUMN author_name TEXT`)
+  }
+  if (!colNames.has('promoted_task_id')) {
+    await c.execute(`ALTER TABLE ideas ADD COLUMN promoted_task_id TEXT`)
   }
   await migrateLegacyFeatures(c)
   initialised = true
@@ -146,6 +150,7 @@ const rowToIdea = (
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
     acceptance,
+    promotedTaskId: (row.promoted_task_id as string | null) ?? null,
   }
 }
 
@@ -191,6 +196,7 @@ export const createIdea = async (
     createdAt: now,
     updatedAt: now,
     acceptance: [],
+    promotedTaskId: null,
   }
 }
 
@@ -385,6 +391,88 @@ export const removeIdeaAcceptance = async (
   const updated = await getIdea(id)
   if (!updated) {
     throw new Error(`idea ${id} disappeared after update`)
+  }
+  return updated
+}
+
+export interface PromoteIdeaResult {
+  idea: Idea
+  prompt: string
+}
+
+const composePromoteIdeaPrompt = (idea: Idea): string => {
+  const sections: string[] = []
+  sections.push(`# Goal\n${idea.goal.trim()}`)
+  if (idea.story.trim().length > 0) {
+    sections.push(`# Story\n${idea.story.trim()}`)
+  }
+  if (idea.acceptance.length > 0) {
+    const bullets = idea.acceptance.map((b) => `- ${b}`).join('\n')
+    sections.push(`# Acceptance\n${bullets}`)
+  }
+  if (idea.technical.trim().length > 0) {
+    sections.push(`# Technical notes\n${idea.technical.trim()}`)
+  }
+  return sections.join('\n\n')
+}
+
+export const validateIdeaShaped = (idea: Idea): string[] => {
+  const missing: string[] = []
+  if (idea.story.trim().length === 0) missing.push('story')
+  if (idea.technical.trim().length === 0) missing.push('technical')
+  if (idea.acceptance.length === 0) missing.push('acceptance (>=1 bullet)')
+  return missing
+}
+
+export const promoteIdea = async (
+  idOrPrefix: string,
+): Promise<PromoteIdeaResult> => {
+  await initIdeas()
+  const resolved = await resolveIdeaId(idOrPrefix)
+  if (resolved.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} ideas`,
+    )
+  }
+  if (resolved.kind === 'none') {
+    throw new Error(`idea ${idOrPrefix} not found`)
+  }
+  const idea = await getIdea(resolved.id)
+  if (!idea) {
+    throw new Error(`idea ${resolved.id} not found`)
+  }
+  if (idea.status !== 'draft') {
+    throw new Error(
+      `idea ${idea.id} is '${idea.status}'; only draft ideas can be promoted`,
+    )
+  }
+  const missing = validateIdeaShaped(idea)
+  if (missing.length > 0) {
+    throw new Error(
+      `idea ${idea.id} is not fully shaped; missing: ${missing.join(', ')}`,
+    )
+  }
+  const prompt = composePromoteIdeaPrompt(idea)
+  return { idea, prompt }
+}
+
+export const markIdeaPromoted = async (
+  ideaId: string,
+  taskId: string,
+): Promise<Idea> => {
+  await initIdeas()
+  const c = getClient()
+  const now = Date.now()
+  const r = await c.execute({
+    sql: `UPDATE ideas SET status = 'promoted', promoted_task_id = ?, updated_at = ? WHERE id = ?`,
+    args: [taskId, now, ideaId],
+  })
+  if (r.rowsAffected === 0) {
+    throw new Error(`idea ${ideaId} not found`)
+  }
+  const updated = await getIdea(ideaId)
+  if (!updated) {
+    throw new Error(`idea ${ideaId} disappeared after promotion`)
   }
   return updated
 }

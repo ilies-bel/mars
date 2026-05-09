@@ -124,6 +124,10 @@ Commands:
                                 append a bullet to the idea's acceptance list
   idea remove-acceptance <id> <index>
                                 remove the 0-based bullet; positions repack
+  idea promote <id>             promote a shaped draft idea (story+technical+
+                                >=1 acceptance) into a queued task. Flips the
+                                idea's status to 'promoted' and stores the
+                                resulting task id.
   add "<prompt>" [plan flags]   (deprecated) draft a task; lands in 'draft' state
                                 so triage can promote to 'queued'. Prefer
                                 'mars task add' or 'mars idea add'.
@@ -727,6 +731,9 @@ const main = async (): Promise<void> => {
       console.log(`author:     ${formatAuthor(idea.author)}`)
       console.log(`createdAt:  ${new Date(idea.createdAt).toISOString()}`)
       console.log(`updatedAt:  ${new Date(idea.updatedAt).toISOString()}`)
+      if (idea.promotedTaskId) {
+        console.log(`promotedTaskId: ${idea.promotedTaskId}`)
+      }
       console.log(`goal:`)
       console.log(idea.goal)
       if (idea.story.trim().length > 0) {
@@ -813,8 +820,30 @@ const main = async (): Promise<void> => {
       }
       return
     }
+    if (sub === 'promote') {
+      const id = rest[1]
+      if (!id) {
+        console.error('usage: mars idea promote <id>')
+        process.exit(1)
+      }
+      const { sendRequest } = await import('./mastra/daemon/client')
+      try {
+        const r = (await sendRequest(
+          { op: 'idea.promote', ideaId: id },
+          {
+            onSpawnNotice: (pid, log) =>
+              console.log(`[mars] started daemon (pid ${pid}, log: ${log})`),
+          },
+        )) as { taskId: string; ideaId: string }
+        console.log(`promoted idea ${r.ideaId} -> task ${r.taskId} (queued)`)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
     console.error(
-      'usage: mars idea <add|new|show|set|add-acceptance|remove-acceptance> ...',
+      'usage: mars idea <add|new|show|set|add-acceptance|remove-acceptance|promote> ...',
     )
     process.exit(1)
   }
@@ -918,6 +947,9 @@ const main = async (): Promise<void> => {
       console.log(`author:     ${formatAuthor(idea.author)}`)
       console.log(`createdAt:  ${new Date(idea.createdAt).toISOString()}`)
       console.log(`updatedAt:  ${new Date(idea.updatedAt).toISOString()}`)
+      if (idea.promotedTaskId) {
+        console.log(`promotedTaskId: ${idea.promotedTaskId}`)
+      }
       console.log(`goal:`)
       console.log(idea.goal)
       if (idea.story.trim().length > 0) {
