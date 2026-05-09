@@ -17,7 +17,13 @@ const dirtyMergeTargetRecipe: FixRecipe = {
   buildPrompt: (ctx) => {
     const status = ctx.statusOutput.length > 0 ? ctx.statusOutput : '(empty)'
     return [
-      `The merge target at ${ctx.targetPath} has uncommitted changes that block a fast-forward merge. Inspect each modified or untracked file:`,
+      `The merge target at ${ctx.targetPath} appeared dirty when merge pre-flight ran, blocking a fast-forward merge into ${ctx.targetBranch}. By the time you read this another task may already have cleaned it up.`,
+      '',
+      `STEP 1 — re-check first. Run \`git -C ${ctx.targetPath} status --porcelain\` right now.`,
+      ` - If the output is empty, the tree is already clean: do NOT touch any file, do NOT commit, do NOT emit an inbox notification. Exit successfully — the original task can be retried as-is.`,
+      ` - If the output is non-empty, proceed to STEP 2 with the CURRENT status, not the snapshot below.`,
+      '',
+      `STEP 2 — only if STEP 1 still shows a dirty tree. Inspect each modified or untracked file:`,
       ` (a) commit files that represent intentional work with a meaningful commit message that describes the actual changes;`,
       ` (b) discard files that are clearly transient (build artifacts, .DS_Store, editor swap files, anything in .gitignore that slipped in via \`git add -f\` etc.);`,
       ` (c) for anything ambiguous, do NOT guess — emit a high-priority inbox notification listing the file(s) and what's unclear, and exit.`,
@@ -27,7 +33,7 @@ const dirtyMergeTargetRecipe: FixRecipe = {
       `Merge target path: ${ctx.targetPath}`,
       `Merge target branch: ${ctx.targetBranch}`,
       '',
-      '`git status --porcelain` output:',
+      'Original `git status --porcelain` output captured at failure time (may be stale — re-check before acting):',
       '```',
       status,
       '```',
