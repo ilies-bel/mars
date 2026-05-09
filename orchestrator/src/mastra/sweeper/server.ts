@@ -131,6 +131,31 @@ const isAncestorOfMain = async (
   }
 }
 
+// A branch is "zero-commit" when its tip equals its merge-base with main —
+// nothing was ever committed on the branch. As main moves forward, such a
+// branch trivially passes `is-ancestor` but contributed no work. For a
+// failed task, that should NOT be treated as a desync (no landed commits
+// to reconcile); it should fall through to the stale-worktree path.
+export const isZeroCommitBranch = async (
+  branch: string,
+  repoRoot: string,
+): Promise<boolean> => {
+  try {
+    const { stdout: tip } = await exec('git', ['rev-parse', branch], {
+      cwd: repoRoot,
+    })
+    const { stdout: base } = await exec(
+      'git',
+      ['merge-base', branch, 'main'],
+      { cwd: repoRoot },
+    )
+    return tip.trim() === base.trim()
+  } catch {
+    // Branch missing or merge-base failed → not provably zero-commit.
+    return false
+  }
+}
+
 const buildDesyncPrompt = (
   taskId: string,
   branch: string,
@@ -188,7 +213,19 @@ const handleCandidate = async (
     return
   }
 
-  if ((status === 'done' && !merged) || (status !== 'done' && merged)) {
+  // For a terminal-failure status (failed/dropped), `merged=true` only
+  // signals a real desync if the branch actually contributed commits.
+  // A zero-commit branch is an ancestor of main by construction (its tip
+  // is the historical commit it was branched from); flagging it as
+  // desynced enqueues a self-heal task with nothing to land. Route those
+  // through the stale-worktree path instead.
+  const desynced =
+    (status === 'done' && !merged) ||
+    (status !== 'done' &&
+      merged &&
+      !(await isZeroCommitBranch(wt.branch, repoRoot)))
+
+  if (desynced) {
     // DESYNC. Enqueue one self-heal task per worktree, do not remove.
     const prompt = buildDesyncPrompt(wt.taskId, wt.branch, status)
     try {
