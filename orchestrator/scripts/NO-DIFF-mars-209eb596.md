@@ -185,3 +185,20 @@ acknowledged by this file. No new `NO-DIFF-mars-*.md` per copy. The
 self-heal commit for any subsequent copy should reference this file
 and the canonical four-way split in §"Recommended split" above —
 that is the only useful artifact left to produce on disk.
+
+### Recurrence log
+
+- `mars-f1ab530f` (self-heal worktree `fbe5578c`): 12th sibling
+  recurrence, plain feature dispatch (`retry_count=1`,
+  `fix_for_task_id` and `failure_signature` both NULL on the upstream
+  row), now `blocked`. The fix-fail row itself is `fbe5578c` with
+  `failure_signature=5d9f8e1a2f8ea1a1`. No code change is possible
+  from a fix-fail handler against a `verify:has-diff` failure on an
+  oversized feature prompt — the upstream task body crosses
+  TaskStatus union, daemon reconcile, DB schema/auto-retry, and
+  sweeper desync skip in a single `claude -p` budget. Recommended
+  split unchanged: see §"Recommended split" above. The structural
+  remedy remains the **two-strikes drop-and-reshape** rule plus a
+  daemon-side short-circuit that routes signature
+  `5d9f8e1a2f8ea1a1` dispatches straight to the human inbox instead
+  of chaining a 13th fix-fail row.
