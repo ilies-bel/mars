@@ -26,6 +26,7 @@ import {
   type UnblockTaskResult,
 } from '../queue'
 import { promoteSuggestion } from '../queue-suggestions'
+import { markIdeaPromoted, promoteIdea } from '../ideas'
 import {
   onBlockerTaskCompleted,
   onChildTaskCompleted,
@@ -635,6 +636,23 @@ export const startDaemon = async (
     return { taskId: r.taskId }
   }
 
+  const handleIdeaPromote = async (
+    ideaId: string,
+  ): Promise<{ taskId: string; ideaId: string }> => {
+    const { idea, prompt } = await promoteIdea(ideaId)
+    const opts: Parameters<typeof enqueueTask>[2] = { skipTriage: true }
+    if (idea.author) opts.author = idea.author
+    const task = await enqueueTask(prompt, undefined, opts)
+    try {
+      await markIdeaPromoted(idea.id, task.id)
+    } catch (err) {
+      await deleteTask(task.id).catch(() => {})
+      throw err
+    }
+    bus.emit('task.queued', { taskId: task.id })
+    return { taskId: task.id, ideaId: idea.id }
+  }
+
   const handleStatus = async (): Promise<DaemonStatusPayload> => {
     const counts = {
       draft: (await listTasks('draft')).length,
@@ -761,6 +779,10 @@ export const startDaemon = async (
         }
         case 'promote': {
           const r = await handlePromote(req.suggestionId)
+          return { ok: true, data: r }
+        }
+        case 'idea.promote': {
+          const r = await handleIdeaPromote(req.ideaId)
           return { ok: true, data: r }
         }
         case 'refine': {
