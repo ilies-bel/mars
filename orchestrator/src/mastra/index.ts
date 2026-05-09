@@ -16,7 +16,7 @@ import { verifyPassedScorer } from './scorers/verify-passed'
 import { mergeCleanScorer } from './scorers/merge-clean'
 import { resolveContext } from './context'
 
-const { mastraDbPath } = resolveContext()
+const { mastraDbPath, observabilityDbPath } = resolveContext()
 
 export const mastra = new Mastra({
   workflows: { implementWorkflow, initWorkflow, triageWorkflow, abExperimentWorkflow },
@@ -31,7 +31,7 @@ export const mastra = new Mastra({
       url: `file:${mastraDbPath}`,
     }),
     domains: {
-      observability: await new DuckDBStore().getStore('observability'),
+      observability: await new DuckDBStore({ path: observabilityDbPath }).getStore('observability'),
     },
   }),
   logger: new PinoLogger({ name: 'orchestrator', level: 'info' }),
