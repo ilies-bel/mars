@@ -156,8 +156,16 @@ Run the dedicated CLI verb:
 mars next
 ```
 
-It prints a single list of all draft ideas (`status='draft'` in the
-`ideas` table), regardless of source ('human' | 'planner' | 'reflection').
+It prints two grouped lists:
+
+- **Existing drafts** — all ideas in the `ideas` table with `status='draft'`,
+  regardless of source ('human' | 'planner' | 'reflection').
+- **Blocked tasks** — all tasks in the `tasks` table with `status='blocked'`,
+  annotated with the short ids of their open blockers. These are real work
+  the orchestrator stopped on; picking one usually means addressing the
+  blocker (a sibling task or a missing decision) rather than re-shaping the
+  prompt itself.
+
 Show that output to the user verbatim and append:
 
 ```
@@ -166,10 +174,14 @@ Or describe a new idea in one sentence.
 
 If you need a structured payload to make decisions programmatically (e.g.
 to count entries or pick by index), use `mars next --json` instead — same
-data, JSON shape `{ drafts: [...], suggestions: [...] }`.
+data, JSON shape `{ drafts: [...], blocked: [...] }`.
 
 Ask **"Which one?"** as a single question. Once the user answers, route their
-reply through Step 1a (if they gave an id) or Step 1b (if they gave free text).
+reply through Step 1a (if they gave an id — works for both idea drafts and
+blocked task ids) or Step 1b (if they gave free text). If the chosen id is a
+blocked task rather than a draft idea, this slash command can't shape it
+(only drafts get refined). Tell the user so and point them at
+`mars show <id>` and `mars unblock <id>` instead.
 
 ## 1d — Bootstrap a new draft from goal text
 
