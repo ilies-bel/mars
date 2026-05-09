@@ -170,8 +170,6 @@ const codeStep = createStep({
     tracingContext?.currentSpan?.update({
       metadata: {
         claudeSessionId: r.sessionId,
-        conversation,
-        conversationBytes: JSON.stringify(conversation).length,
         usage,
       },
     })
