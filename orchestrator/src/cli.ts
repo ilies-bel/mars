@@ -157,6 +157,17 @@ Commands:
                                 <blocker-id> to reach 'done' before dispatch.
                                 All ids must already exist; self-blocking is
                                 rejected.
+  worktree clean [--dry-run] [--force] [--force-orphans]
+                                classify every directory under .mars/worktrees/
+                                (and legacy .worktrees/) against queue.db and
+                                remove the safe ones: done+merged branches,
+                                failed/dropped+zero-commit branches, and orphan
+                                rows whose branch never advanced. Skips
+                                in-flight tasks and desyncs (done+not-merged).
+                                Refuses if the daemon is running unless
+                                --force is also passed; --force-orphans extends
+                                removal to orphan worktrees that did contribute
+                                commits.
   watch [--detach|--stop|--status|--force|--reload]
                                 run the orchestration daemon (foreground by default);
                                 CLI write ops auto-spawn it. --detach forks to
@@ -330,6 +341,30 @@ Re-queue a failed/done task. Cleans the worktree and branch first.`,
 
 Delete a failed/done task entirely (worktree + branch + row). Refuses
 in-flight tasks.`,
+  worktree: `mars worktree clean [--dry-run] [--force] [--force-orphans]
+
+Walk .mars/worktrees/ (and legacy .worktrees/), classify each directory
+by joining against the matching queue.db row, and remove the safe ones.
+
+Classifications:
+  done + branch merged into main          → remove
+  failed/dropped + zero-commit branch     → remove
+  orphan (no queue row) + zero-commit     → remove
+  orphan + branch has commits             → kept (use --force-orphans)
+  done + branch not merged                → kept (desync — not for this verb)
+  in-flight (queued/running/verifying/    → kept (never touch)
+    merging/ready)
+  draft / blocked                         → kept
+
+Flags:
+  --dry-run         print what would happen, change nothing, exit 0.
+  --force           run even if the daemon is up. Otherwise refused.
+  --force-orphans   also remove orphan worktrees whose branches contributed
+                    commits (work is dropped — use with care).
+
+Errors during 'git worktree remove' are caught, logged with the directory
+path, and counted; the verb still processes remaining worktrees and exits
+0 unless every action failed.`,
   watch: `mars watch [--detach|--stop|--status|--force|--reload]
 
 Run the orchestration daemon (foreground by default). CLI write ops
@@ -1208,6 +1243,51 @@ const main = async (): Promise<void> => {
       ...(Number.isInteger(intervalMs) && intervalMs! > 0 ? { intervalMs } : {}),
     })
     await new Promise(() => {})
+    return
+  }
+
+  if (cmd === 'worktree') {
+    const sub = rest[0]
+    if (sub !== 'clean') {
+      console.error('usage: mars worktree clean [--dry-run] [--force] [--force-orphans]')
+      process.exit(1)
+    }
+    const wtFlags = new Set(rest.slice(1).filter((a) => a.startsWith('--')))
+    const dryRun = wtFlags.has('--dry-run')
+    const force = wtFlags.has('--force')
+    const forceOrphans = wtFlags.has('--force-orphans')
+
+    const { daemonPaths } = await import('./mastra/daemon/paths')
+    const { isDaemonRunning, runWorktreeClean } = await import(
+      './mastra/lib/worktree-clean'
+    )
+    if (await isDaemonRunning(daemonPaths().socket)) {
+      if (!force) {
+        console.error(
+          'mars daemon is running; refusing to clean worktrees. Stop it (mars watch --stop) or pass --force to override.',
+        )
+        process.exit(1)
+      }
+      console.error(
+        'warning: mars daemon is running; --force in effect. Concurrent sweeps may race.',
+      )
+    }
+
+    const summary = await runWorktreeClean({
+      dryRun,
+      forceOrphans,
+      log: (line) => console.log(line),
+    })
+    if (
+      summary.errors > 0 &&
+      summary.removed === 0 &&
+      summary.keptInFlight === 0 &&
+      summary.keptDesync === 0 &&
+      summary.keptOrphan === 0 &&
+      summary.keptOther === 0
+    ) {
+      process.exit(1)
+    }
     return
   }
 
