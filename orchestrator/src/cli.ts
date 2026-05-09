@@ -1964,7 +1964,7 @@ const main = async (): Promise<void> => {
     if (id) {
       const result = await runTriage(id)
       console.log(
-        `[${result.taskId}] actionable=${result.actionable} blockers=${result.blockerCount} suggestions=${result.suggestionCount}`,
+        `[${result.taskId}] actionable=${result.actionable} blockers=${result.blockerCount}`,
       )
       if (result.reason) console.log(`  reason: ${result.reason}`)
       return
@@ -1991,7 +1991,7 @@ const main = async (): Promise<void> => {
       const v = s.value
       if (v.ok) {
         console.log(
-          `[${v.taskId}] actionable=${v.result.actionable} blockers=${v.result.blockerCount} suggestions=${v.result.suggestionCount}`,
+          `[${v.taskId}] actionable=${v.result.actionable} blockers=${v.result.blockerCount}`,
         )
       } else {
         console.log(`[${v.taskId}] error: ${v.error}`)
