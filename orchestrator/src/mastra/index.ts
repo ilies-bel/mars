@@ -18,8 +18,6 @@ import { resolveContext } from './context'
 
 const { mastraDbPath, observabilityDbPath } = resolveContext()
 
-const duckdbStore = new DuckDBStore({ path: observabilityDbPath })
-
 export const mastra = new Mastra({
   workflows: { implementWorkflow, initWorkflow, triageWorkflow, abExperimentWorkflow },
   scorers: {
@@ -33,7 +31,7 @@ export const mastra = new Mastra({
       url: `file:${mastraDbPath}`,
     }),
     domains: {
-      observability: await duckdbStore.getStore('observability'),
+      observability: await new DuckDBStore({ path: observabilityDbPath }).getStore('observability'),
     },
   }),
   logger: new PinoLogger({ name: 'orchestrator', level: 'info' }),
@@ -47,8 +45,3 @@ export const mastra = new Mastra({
     },
   }),
 })
-
-// Escape hatch for the daemon's `spans` op: the DuckDB file format takes a
-// process-exclusive OS lock, so out-of-process readers can't open it. Anything
-// reading observability spans goes through this connection.
-export const getObservabilityDb = (): DuckDBStore['db'] => duckdbStore.db
