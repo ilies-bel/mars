@@ -131,8 +131,13 @@ export const sendRequest = async (
           const res = JSON.parse(line) as DaemonResponse
           settled = true
           sock.end()
-          if (res.ok) resolve(res.data)
-          else reject(new Error(res.error))
+          if (res.ok) {
+            resolve(res.data)
+          } else {
+            const e = new Error(res.error) as Error & { code?: string }
+            if (res.errorCode) e.code = res.errorCode
+            reject(e)
+          }
         } catch (err) {
           fail(err as Error)
         }

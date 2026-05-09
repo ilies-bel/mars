@@ -1,6 +1,7 @@
 import type { Socket } from 'node:net'
 import type { Author } from '../author'
 import type { Task, TaskPlan } from '../queue'
+import type { RunInitOptions, RunInitResult } from '../workflows/init-workflow'
 
 export type DaemonRequest =
   | {
@@ -40,6 +41,13 @@ export type DaemonRequest =
       aliases?: readonly string[]
     }
   | { op: 'adr-add'; title: string; body: string }
+  | { op: 'init'; opts: RunInitOptions }
+  | {
+      op: 'ab'
+      instruction: string
+      variants: readonly unknown[]
+      integrationBranch: string
+    }
   | { op: 'status' }
   | { op: 'reload-config' }
   | { op: 'shutdown'; force?: boolean }
@@ -47,7 +55,9 @@ export type DaemonRequest =
 
 export type DaemonResponse =
   | { ok: true; data?: unknown }
-  | { ok: false; error: string }
+  | { ok: false; error: string; errorCode?: string }
+
+export type InitResponseData = RunInitResult
 
 export interface DaemonStatusPayload {
   pid: number
