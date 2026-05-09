@@ -23,3 +23,6 @@ Background component that manages worktree cleanup, removing finished or abandon
 
 **Arc**:
 The full tree of work sharing a single originId, from the first proposal (idea or direct task) through every promoted/spawned task and every Mastra span to the merged commit(s); the unit of analysis for mars deep-reflect.
+
+**Inbox**:
+The single human-curatable list of items that need a human's attention, surfacing across lifecycle stages: ideas to shape (status='draft'), tasks blocked needing unblock, and tasks that finished in a state requiring review (e.g. failed).
