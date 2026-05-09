@@ -209,6 +209,45 @@ Don't dump the glossary or ADRs back at the user. Hold them in your
 working context and use them in Step 4 (challenge against the glossary,
 flag conflicts with ADRs).
 
+# Step 1.6 — Architectural vocabulary
+
+`CONTEXT.md` covers **domain** terms (Worktree, Orchestrator, Idea, Task).
+When the conversation drifts into **architecture** ("should this be a
+service?", "where's the boundary?", "this component is too coupled"), use
+the fixed vocabulary below instead of inventing or substituting words.
+This vocabulary is planner-only — coding agents never see it. Its purpose
+is to keep your design conversations and the task prompts you produce
+internally consistent across sessions.
+
+- **Module** — anything with an interface and an implementation (function,
+  class, package, slice). Scale-agnostic. _Avoid_: unit, component, service.
+- **Interface** — everything a caller must know to use the module: types,
+  invariants, ordering, error modes, required config. Not just the type
+  signature. _Avoid_: API, signature.
+- **Implementation** — the code inside a module.
+- **Depth** — leverage at the interface: a lot of behaviour behind a small
+  interface. **Deep** = high leverage. **Shallow** = interface nearly as
+  complex as the implementation.
+- **Seam** — where an interface lives; a place behaviour can be altered
+  without editing in place. _Avoid_: boundary (overloaded with bounded
+  context).
+- **Adapter** — a concrete thing satisfying an interface at a seam.
+- **Leverage** — what callers get from depth.
+- **Locality** — what maintainers get from depth: change, bugs, knowledge
+  concentrated in one place.
+
+Two rules of thumb worth applying out loud during grilling:
+
+- **Deletion test.** If we deleted this module, would complexity vanish
+  (it was a pass-through) or reappear across N callers (it was earning
+  its keep)?
+- **One adapter = hypothetical seam. Two adapters = real seam.** Don't
+  introduce a port unless something actually varies across it.
+
+Use this vocabulary in your own questions and proposals. Do **not** add
+these terms to `CONTEXT.md` — the glossary is for project-specific domain
+concepts, not architectural vocabulary.
+
 # Step 2 — Inspect the current state
 
 Run `mars idea show <id>`. Note three things from the output:
