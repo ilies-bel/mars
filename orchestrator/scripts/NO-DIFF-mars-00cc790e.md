@@ -132,3 +132,23 @@ The two themes flagged in `NO-DIFF-mars-883fbafe.md` — oversized-prompt
 detection at `mars task add` time, and two-strikes drop-and-reshape
 on repeated no-diff verify failures — apply here as well. They are not
 re-filed in this ack; the original entries stand.
+
+## Second self-heal pass (signature 5d9f8e1a2f8ea1a1, repeat)
+
+The orchestrator dispatched a second self-heal worktree
+(`task/b430e054`) against the same `verify:has-diff` failure on
+`task/mars-00cc790e`. The diagnosis above is unchanged: the branch
+still sits at zero commits ahead of `main`, the prompt shape (5
+surfaces, 8–10 files, 4 tests) still exceeds one `claude -p` budget
+under `MARS_CLAUDE_MAX_MESSAGES=100`, and there is no code-level fix
+the self-heal worktree can apply on the original branch. The
+recommended action remains the 3-way split documented above —
+operator decision, not in-worktree work.
+
+This second pass is itself evidence for the "two-strikes
+drop-and-reshape" follow-up flagged at the top of this section:
+re-dispatching the same self-heal against a no-diff signature it has
+already acknowledged burns a worktree slot for no diff. The sweeper
+should treat a repeat `verify:has-diff` failure on the same signature
+within N hours as a signal to drop the original task rather than
+re-enqueue another self-heal.
