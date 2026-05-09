@@ -29,3 +29,6 @@ The single human-curatable list of items that need a human's attention, surfacin
 
 **Events**:
 A read-only, passive activity feed in the ui/ frontend tracking progress of completed tasks (and other terminal-state lifecycle moments) for situational awareness, with no acknowledgement or action required from the user.
+
+**Worker**:
+A long-lived orchestrator process that hosts one or more Slots; the panel groups Slot cards by their parent Worker.
