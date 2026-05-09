@@ -81,24 +81,12 @@ called `mars glossary set "Order" "..."`, treat "Order" as canonical for the
 remainder of the session even though `mars glossary show "Order"` may not yet
 return it.
 
-# Step 0 — Domain awareness
-
-Before resolving the target idea, take a quick pass over the project's
-existing domain language so you can grill the user's plan against it.
-
-1. Run `mars glossary list`. If terms exist, you have a starting glossary.
-   If the output says CONTEXT.md is empty or missing, treat the project as
-   "no glossary yet" — you'll create one lazily when the first term is
-   resolved (Step 4).
-2. Skim recent ADRs: `mars adr list` then `mars adr show <NNNN>` for any
-   that look topically related to the user's argument. ADRs are constraints;
-   the user's plan must not silently contradict them.
-
-Don't dump the glossary or ADRs back at the user. Hold them in your
-working context and use them in Step 4 (challenge against the glossary,
-flag conflicts with ADRs).
-
 # Step 1 — Resolve the target idea
+
+Resolve the target idea **first**, before reading any domain context. The
+glossary and ADRs only matter once you know what's being shaped — loading
+them upfront delays the first user-facing question and wastes effort if the
+user picks "nothing" or describes something brand-new.
 
 Three resolution modes, driven by the argument shape.
 
@@ -112,7 +100,7 @@ mars suggestions | grep -F <argument>
 ```
 
 - **Idea draft hit** (`mars idea show` succeeds, `status: draft`) → use this
-  id; skip to Step 2.
+  id; skip to Step 1.5.
 - **Idea non-draft hit** (`status:` anything else) → stop and tell the user
   this command only works on drafts.
 - **Suggestion hit** (`mars suggestions` row matches the id) → tell the user:
@@ -204,7 +192,25 @@ Created draft: <id>
   Goal: <goal>
 ```
 
-Then proceed to Step 2 with that id.
+Then proceed to Step 1.5 with that id.
+
+# Step 1.5 — Domain awareness
+
+Now that a target idea is resolved, take a quick pass over the project's
+existing domain language so you can grill the user's plan against it in
+Step 4.
+
+1. Run `mars glossary list`. If terms exist, you have a starting glossary.
+   If the output says CONTEXT.md is empty or missing, treat the project as
+   "no glossary yet" — you'll create one lazily when the first term is
+   resolved (Step 4).
+2. Skim recent ADRs: `mars adr list` then `mars adr show <NNNN>` for any
+   that look topically related to the resolved idea's goal. ADRs are
+   constraints; the user's plan must not silently contradict them.
+
+Don't dump the glossary or ADRs back at the user. Hold them in your
+working context and use them in Step 4 (challenge against the glossary,
+flag conflicts with ADRs).
 
 # Step 2 — Inspect the current state
 
@@ -296,15 +302,42 @@ Stop asking when **all** of the following are true:
 - `technical` has at least one specific file/path or contract reference in the DB.
 - The user signals they're done ("that's it", "good", "ship it", or similar).
 
-When you stop, print:
+When you stop, promote the idea into the runnable queue (Step 5.5) and
+**only then** print the readiness summary.
+
+# Step 5.5 — Promote the shaped idea into the queue
+
+Ideas live in `.mars/state.db` and are not picked up by the orchestrator on
+their own. Once the stop conditions in Step 5 hold, run the promotion verb
+so the orchestrator can implement the idea:
+
+```bash
+mars idea promote <id>
+```
+
+This composes a self-contained task prompt from the idea's goal, story,
+acceptance bullets, and technical notes; inserts it into `.mars/queue.db`
+with `status='queued'` (skipping triage); flips the idea to
+`status='promoted'`; and emits `task.queued` so the daemon dispatches it
+automatically — same chain `mars task add` uses today.
+
+Guards:
+- If `mars idea promote` is not yet a registered subcommand (the verb is
+  being added in task `e366f0da`), fall back to telling the user:
+  > "The `mars idea promote` verb hasn't landed yet — once task e366f0da
+  > merges, this will auto-promote. For now, run `mars idea refine <id>`
+  > or copy the shaped fields into `mars task add`."
+  Do not invent a workaround that bypasses the queue.
+- If `mars idea promote` exits non-zero (e.g. another shape check fails),
+  surface the error to the user verbatim and stop. Do not retry blindly.
+
+After a successful promotion, print:
 
 ```
-Idea <id> ready for the planner.
-  Run: mars idea refine <id>
+Idea <id> promoted to queued task <task-id>.
+  The orchestrator will pick it up automatically.
+  Inspect: mars list queued
 ```
-
-Do **not** run `mars idea refine` yourself — that's a separate, billable step
-the user should trigger explicitly.
 
 # Step 6 — Offer an ADR (sparingly)
 
@@ -347,11 +380,13 @@ asks for them. Most ADRs in this repo will be a single paragraph.
   That log is for a headless REPL, not this slash command.
 - Do not append to `.mars/inbox.jsonl`. The inbox is for the planner agent's
   questions, not yours.
-- Do not run `mars idea refine`, `mars promote`, or any other non-idea,
-  non-glossary, non-adr write-side `mars` command. The writes you may
-  issue are:
+- Do not run `mars idea refine`, `mars promote` (the suggestion-promote
+  verb), or any other non-idea, non-glossary, non-adr write-side `mars`
+  command. The writes you may issue are:
   - `mars idea {new,set,add-acceptance,remove-acceptance}` — the idea-
     shaping verbs (Steps 1–5).
+  - `mars idea promote <id>` — exactly once, in Step 5.5, after the stop
+    conditions hold and the user has signaled done.
   - `mars glossary {set,remove}` — when a domain term is resolved or
     retired (Step 4 grilling loop).
   - `mars adr add` — only when the three-condition test passes (Step 6),
