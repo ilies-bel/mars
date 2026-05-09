@@ -28,6 +28,7 @@ const FLAGS_WITH_VALUES = new Set([
   '--blocked-by',
   '--source',
   '--status',
+  '--from',
 ])
 
 const REPEATABLE_FLAGS = new Set(['--blocked-by'])
@@ -230,6 +231,10 @@ Commands:
                                 mark an inbox item resolved
   inbox dismiss <id> [--note <text>]
                                 mark an inbox item dismissed
+  inbox raise --from <-|path>   file an inbox item from a JSON document
+                                (stdin when path is '-'). Replaces the
+                                deprecated pattern of writing one-shot
+                                .ts scripts under orchestrator/scripts/.
   inbox watch                   live terminal UI for the inbox (ink TUI)
   where                         print resolved repo + state directory
   help                          show this message
@@ -519,6 +524,29 @@ Subcommands:
   resolve <id> [--note <text>] [--root-cause <text>]
                                      mark item resolved
   dismiss <id> [--note <text>]       mark item dismissed
+  raise --from <-|path>              file a new inbox item from JSON.
+                                     Use --from - to read JSON from stdin,
+                                     or --from <path> to read it from a file.
+                                     This is the CORRECT entry point for
+                                     dispatched agents (sweeper recipes,
+                                     self-heal investigations, anything
+                                     running inside a worktree) — it
+                                     replaces the deprecated pattern of
+                                     writing one-shot .ts scripts under
+                                     orchestrator/scripts/. The JSON
+                                     document must include the fields:
+                                       kind, category, priority, title,
+                                       body, payload, context, raisedBy,
+                                       signature
+                                     plus an optional 'occurrence' object.
+                                     Dedup by (kind, signature) is handled
+                                     server-side: piping the same payload
+                                     twice bumps seen_count instead of
+                                     creating a duplicate row. Prints the
+                                     inbox id on stdout, one line, no
+                                     decoration. Exit codes: 0 ok, 1
+                                     library error, 2 parse/validation
+                                     error.
   watch                              live terminal UI for the inbox (ink TUI;
                                      j/k move, enter detail, a ack,
                                      r resolve, d dismiss, R toggle resolved,
@@ -1938,6 +1966,59 @@ const main = async (): Promise<void> => {
       return
     }
 
+    if (sub === 'raise') {
+      const from = flags['--from']
+      if (!from) {
+        console.error('usage: mars inbox raise --from <-|path>')
+        process.exit(2)
+      }
+      let raw: string
+      try {
+        if (from === '-') {
+          const chunks: Buffer[] = []
+          for await (const chunk of process.stdin) {
+            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+          }
+          raw = Buffer.concat(chunks).toString('utf8')
+        } else {
+          raw = readFileSync(from, 'utf8')
+        }
+      } catch (err) {
+        console.error(`failed to read input: ${(err as Error).message}`)
+        process.exit(2)
+      }
+      let json: unknown
+      try {
+        json = JSON.parse(raw)
+      } catch (err) {
+        console.error(`invalid JSON: ${(err as Error).message}`)
+        process.exit(2)
+      }
+      const { inboxRaiseSchema } = await import('./cli/inbox-raise-schema')
+      const parseResult = inboxRaiseSchema.safeParse(json)
+      if (!parseResult.success) {
+        console.error('inbox raise: schema validation failed')
+        for (const issue of parseResult.error.issues) {
+          const path = issue.path.length > 0 ? issue.path.join('.') : '<root>'
+          console.error(`  ${path}: ${issue.message}`)
+        }
+        process.exit(2)
+      }
+      const data = parseResult.data
+      const payload = {
+        ...data,
+        raisedBy: data.raisedBy === '' ? 'agent:cli' : data.raisedBy,
+      }
+      try {
+        const id = await inbox.raiseInboxItem(payload)
+        console.log(id)
+      } catch (err) {
+        console.error(`inbox raise: ${(err as Error).message}`)
+        process.exit(1)
+      }
+      return
+    }
+
     if (sub === undefined || sub === 'list') {
       const stateRaw = sub === 'list' ? rest[1] : 'open'
       const state = stateRaw ?? 'open'
@@ -2020,7 +2101,7 @@ const main = async (): Promise<void> => {
     }
 
     console.error(
-      'usage: mars inbox [list [state] | show <id> | ack <id> | resolve <id> [--note <text>] [--root-cause <text>] | dismiss <id> [--note <text>] | watch]',
+      'usage: mars inbox [list [state] | show <id> | ack <id> | resolve <id> [--note <text>] [--root-cause <text>] | dismiss <id> [--note <text>] | raise --from <-|path> | watch]',
     )
     process.exit(1)
   }
