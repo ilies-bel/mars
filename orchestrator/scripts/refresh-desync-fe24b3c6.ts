@@ -1,4 +1,4 @@
-// Self-heal artifact for task fe24b3c6 (re-confirmation pass).
+// Self-heal artifact for task fe24b3c6 (re-confirmation pass, 2nd cycle).
 //
 // Context: task/fe24b3c6 is a "never-advanced" branch — created off main
 // for a queued task whose coding agent never produced a commit. The branch
@@ -6,7 +6,7 @@
 //
 //   git rev-parse task/fe24b3c6 → 23a7d2295f1c232c378cb080f733a3add590aad3
 //   git merge-base task/fe24b3c6 main → 23a7d2295f1c232c378cb080f733a3add590aad3
-//   git rev-list --left-right --count main...task/fe24b3c6 → "38  0"
+//   git rev-list --left-right --count main...task/fe24b3c6 → "40  0"
 //
 // Because the branch tip is an ancestor of main, the sweeper's "merged?"
 // check (is the branch reachable from main?) returns true and it flags
@@ -35,12 +35,14 @@
 // fingerprint and just bump seen_count, so we intentionally leave the
 // inbox alone.
 //
-// Investigation summary:
+// Investigation summary (re-verified this pass):
 //   - git merge-base main task/fe24b3c6 → 23a7d22 (== branch tip)
 //   - git log main..task/fe24b3c6 → empty
-//   - git rev-list --left-right --count main...task/fe24b3c6 → "38  0"
+//   - git rev-list --left-right --count main...task/fe24b3c6 → "40  0"
 //   - sqlite3 .mars/queue.db "SELECT ... WHERE id LIKE 'fe24b3c6%'" → no row
-//   - sqlite3 .mars/state.db inbox_items LIKE '%fe24b3c6%' → 1 open item
+//     (also no row matching branch='task/fe24b3c6')
+//   - sqlite3 .mars/state.db inbox_items WHERE id LIKE 'c2a02e4f%' → 1 row,
+//     state=open, seen_count=1, kind=desync-self-heal-runaway.
 //   - .mars/sweeper.log mentions: 30+ "desync task/fe24b3c6 (mars=failed,
 //     merged=true); enqueued self-heal" entries — confirms the runaway
 //     loop documented by inbox item c2a02e4f.
@@ -62,3 +64,4 @@ export const TARGET_BRANCH = "task/fe24b3c6";
 export const TARGET_BRANCH_TIP = "23a7d2295f1c232c378cb080f733a3add590aad3";
 export const PRIOR_INBOX_ITEM_IDS = ["c2a02e4f"] as const;
 export const REFRESHED_AT = "2026-05-09";
+export const REFRESH_PASSES = 2;
