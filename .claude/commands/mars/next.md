@@ -43,10 +43,10 @@ mars idea remove-acceptance <id> <index>       # remove bullet at 0-based index
 Read-side verbs (always allowed):
 
 ```bash
-mars idea list [status]                        # list ideas (e.g. draft)
+mars idea list [--source reflection|human|planner] [--status <s>]
+                                               # list ideas, filterable by source
 mars idea show <id>                            # show goal/story/technical/acceptance
-mars suggestions [status]                      # list reflection suggestions
-mars next                                      # unified menu of drafts + suggestions
+mars next                                      # menu of all draft ideas (any source)
 ```
 
 If `.mars/state.db` is missing or stale, ask the user to run `mars rebuild`
@@ -92,22 +92,19 @@ Three resolution modes, driven by the argument shape.
 
 ## 1a — Argument looks like an id (8-hex prefix or full slug)
 
-Try, in order:
+Try:
 
 ```bash
 mars idea show <argument>
-mars suggestions | grep -F <argument>
 ```
 
 - **Idea draft hit** (`mars idea show` succeeds, `status: draft`) → use this
-  id; skip to Step 1.5.
+  id; skip to Step 1.5. The idea's `source` line tells you whether it
+  originated from a human, the planner, or a reflection — all three are
+  shaped through the same flow.
 - **Idea non-draft hit** (`status:` anything else) → stop and tell the user
   this command only works on drafts.
-- **Suggestion hit** (`mars suggestions` row matches the id) → tell the user:
-  "That id resolves to a reflection suggestion, not a draft idea. I'll shape
-  it into a draft now." Treat the suggestion's text as the goal and continue
-  to **Step 1d**.
-- **No hit anywhere** → fall through to Step 1b.
+- **No hit** → fall through to Step 1b.
 
 ## 1b — Argument is free text (not an id)
 
@@ -159,9 +156,9 @@ Run the dedicated CLI verb:
 mars next
 ```
 
-It prints a single grouped menu of (a) existing drafts (`status=draft` in
-the `ideas` table) and (b) reflection suggestions (`status=proposed` in
-`task_suggestions`). Show that output to the user verbatim and append:
+It prints a single list of all draft ideas (`status='draft'` in the
+`ideas` table), regardless of source ('human' | 'planner' | 'reflection').
+Show that output to the user verbatim and append:
 
 ```
 Or describe a new idea in one sentence.
@@ -380,9 +377,8 @@ asks for them. Most ADRs in this repo will be a single paragraph.
   That log is for a headless REPL, not this slash command.
 - Do not append to `.mars/inbox.jsonl`. The inbox is for the planner agent's
   questions, not yours.
-- Do not run `mars idea refine`, `mars promote` (the suggestion-promote
-  verb), or any other non-idea, non-glossary, non-adr write-side `mars`
-  command. The writes you may issue are:
+- Do not run `mars idea refine` or any other non-idea, non-glossary,
+  non-adr write-side `mars` command. The writes you may issue are:
   - `mars idea {new,set,add-acceptance,remove-acceptance}` — the idea-
     shaping verbs (Steps 1–5).
   - `mars idea promote <id>` — exactly once, in Step 5.5, after the stop

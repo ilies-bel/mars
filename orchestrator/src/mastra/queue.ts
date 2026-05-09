@@ -24,13 +24,6 @@ export interface QuestionInput {
   category: QuestionCategory | null
 }
 
-export interface SuggestionInput {
-  sourceTaskId: string
-  title: string
-  prompt: string
-  rationale: string | null
-}
-
 export interface TaskPlan {
   functional: string
   technical: string
@@ -48,7 +41,6 @@ export interface Task {
   author: Author | null
   dropReason: string | null
   retryCount: number
-  blockerId: string | null
   fixForTaskId: string | null
   failureSignature: string | null
   originId: string
@@ -121,9 +113,6 @@ export const initQueue = async (): Promise<void> => {
   if (!names.has('retry_count')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`)
   }
-  if (!names.has('blocker_id')) {
-    await c.execute(`ALTER TABLE tasks ADD COLUMN blocker_id TEXT`)
-  }
   if (!names.has('fix_for_task_id')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN fix_for_task_id TEXT`)
   }
@@ -171,43 +160,6 @@ export const initQueue = async (): Promise<void> => {
     CREATE INDEX IF NOT EXISTS idx_questions_task_id ON questions(task_id)
   `)
   await c.execute(`
-    CREATE TABLE IF NOT EXISTS task_suggestions (
-      id TEXT PRIMARY KEY,
-      source_task_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      prompt TEXT NOT NULL,
-      rationale TEXT,
-      status TEXT NOT NULL DEFAULT 'proposed',
-      kind TEXT NOT NULL DEFAULT 'reflection',
-      created_task_id TEXT,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (source_task_id) REFERENCES tasks(id)
-    )
-  `)
-  const sugCols = await c.execute(`PRAGMA table_info(task_suggestions)`)
-  const sugNames = new Set(
-    sugCols.rows.map((r) => (r as unknown as { name: string }).name),
-  )
-  if (!sugNames.has('kind')) {
-    await c.execute(
-      `ALTER TABLE task_suggestions ADD COLUMN kind TEXT NOT NULL DEFAULT 'reflection'`,
-    )
-    await c.execute(
-      `UPDATE task_suggestions SET kind = 'reflection' WHERE kind IS NULL`,
-    )
-  }
-  if (!sugNames.has('failure_signature')) {
-    await c.execute(
-      `ALTER TABLE task_suggestions ADD COLUMN failure_signature TEXT`,
-    )
-  }
-  await c.execute(`
-    CREATE INDEX IF NOT EXISTS idx_task_suggestions_source_task_id ON task_suggestions(source_task_id)
-  `)
-  await c.execute(`
-    CREATE INDEX IF NOT EXISTS idx_task_suggestions_failure_signature ON task_suggestions(failure_signature)
-  `)
-  await c.execute(`
     CREATE TABLE IF NOT EXISTS task_signals (
       task_id TEXT NOT NULL,
       step_id TEXT NOT NULL,
@@ -240,6 +192,42 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_blockers_blocker ON task_blockers(blocker_task_id)
   `)
+  // Migrate legacy `tasks.blocker_id` -> `task_blockers` rows. blocker_id used
+  // to point into task_suggestions; the fix task itself is reachable via the
+  // suggestion's created_task_id. Where the suggestion no longer exists or
+  // has no created_task_id, the link is dropped (the dependent task is left
+  // blocked but with no recorded blocker — `mars unblock` is the escape
+  // hatch). After backfill the column is dropped to keep the schema honest.
+  if (names.has('blocker_id')) {
+    const sugTable = await c.execute(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='task_suggestions'`,
+    )
+    if (sugTable.rows.length > 0) {
+      const linkRows = await c.execute(`
+        SELECT t.id AS task_id, s.created_task_id AS fix_task_id
+          FROM tasks t
+          JOIN task_suggestions s ON s.id = t.blocker_id
+         WHERE t.blocker_id IS NOT NULL
+           AND s.created_task_id IS NOT NULL
+      `)
+      const now = new Date().toISOString()
+      for (const row of linkRows.rows) {
+        const r = row as unknown as { task_id: string; fix_task_id: string }
+        const fixTask = await c.execute({
+          sql: `SELECT 1 FROM tasks WHERE id = ?`,
+          args: [r.fix_task_id],
+        })
+        if (fixTask.rows.length === 0) continue
+        await c.execute({
+          sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
+                VALUES (?, ?, ?)`,
+          args: [r.task_id, r.fix_task_id, now],
+        })
+      }
+    }
+    await c.execute(`UPDATE tasks SET blocker_id = NULL`)
+    await c.execute(`ALTER TABLE tasks DROP COLUMN blocker_id`)
+  }
   await c.execute(`
     CREATE TABLE IF NOT EXISTS task_transcripts (
       task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
@@ -389,7 +377,6 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     author,
     dropReason: (row.drop_reason as string | null) ?? null,
     retryCount: Number(row.retry_count ?? 0),
-    blockerId: (row.blocker_id as string | null) ?? null,
     fixForTaskId: (row.fix_for_task_id as string | null) ?? null,
     failureSignature: (row.failure_signature as string | null) ?? null,
     originId: ((row.origin_id as string | null) ?? (row.id as string)),
@@ -601,41 +588,10 @@ export const insertReflectionTask = async (corpusSize: number): Promise<string> 
   return id
 }
 
-export const insertSuggestion = async (input: SuggestionInput): Promise<void> => {
-  await initQueue()
-  const id = randomUUID().slice(0, 8)
-  const now = new Date().toISOString()
-  await getClient().execute({
-    sql: `INSERT INTO task_suggestions (id, source_task_id, title, prompt, rationale, status, created_at) VALUES (?, ?, ?, ?, ?, 'proposed', ?)`,
-    args: [id, input.sourceTaskId, input.title, input.prompt, input.rationale, now],
-  })
-}
-
-export const rejectSuggestion = async (id: string): Promise<void> => {
-  await initQueue()
-  const result = await getClient().execute({
-    sql: `UPDATE task_suggestions SET status = 'rejected' WHERE id = ? AND status = 'proposed'`,
-    args: [id],
-  })
-  if (result.rowsAffected === 0) {
-    throw new Error(
-      `no proposed suggestion with id=${id} (already accepted/rejected, or unknown id)`,
-    )
-  }
-}
-
 export const clearQuestions = async (taskId: string): Promise<void> => {
   await initQueue()
   await getClient().execute({
     sql: `DELETE FROM questions WHERE task_id = ?`,
-    args: [taskId],
-  })
-}
-
-export const clearSuggestions = async (taskId: string): Promise<void> => {
-  await initQueue()
-  await getClient().execute({
-    sql: `DELETE FROM task_suggestions WHERE source_task_id = ?`,
     args: [taskId],
   })
 }
@@ -707,10 +663,10 @@ export interface UnblockTaskResult {
 }
 
 /**
- * Manual escape hatch: flip a `blocked` task to `failed`, clearing the
- * `blocker_id` column and any `task_blockers` rows pointing from it. Used by
- * `mars unblock <id>` so users do not need to reach for sqlite when the row
- * has slipped into an inconsistent state (phantom blocker_id, stale rows).
+ * Manual escape hatch: flip a `blocked` task to `failed`, clearing any
+ * `task_blockers` rows pointing from it. Used by `mars unblock <id>` so users
+ * do not need to reach for sqlite when the row has slipped into an
+ * inconsistent state (stale junction rows after a blocker was purged).
  */
 export const unblockTask = async (
   taskId: string,
@@ -732,7 +688,6 @@ export const unblockTask = async (
   await c.execute({
     sql: `UPDATE tasks
              SET status = 'failed',
-                 blocker_id = NULL,
                  updated_at = ?
            WHERE id = ? AND status = 'blocked'`,
     args: [now, taskId],

@@ -1,17 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { eventsUrl, fetchTodo } from '../lib/api'
-import type { DraftFeature, TaskSuggestion } from '../lib/types'
+import type { DraftFeature } from '../lib/types'
 
 interface State {
   drafts: DraftFeature[]
-  suggestions: TaskSuggestion[]
   error: string | null
   connected: boolean
 }
 
 export const useTodo = (): State => {
   const [drafts, setDrafts] = useState<DraftFeature[]>([])
-  const [suggestions, setSuggestions] = useState<TaskSuggestion[]>([])
   const [error, setError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
   const inflight = useRef(false)
@@ -22,7 +20,6 @@ export const useTodo = (): State => {
     try {
       const payload = await fetchTodo()
       setDrafts(payload.drafts)
-      setSuggestions(payload.suggestions)
       setError(null)
     } catch (err) {
       setError((err as Error).message)
@@ -41,5 +38,5 @@ export const useTodo = (): State => {
     return () => es.close()
   }, [])
 
-  return { drafts, suggestions, error, connected }
+  return { drafts, error, connected }
 }

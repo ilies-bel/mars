@@ -11,29 +11,18 @@ export type TaskStatus =
   | 'dropped'
   | 'blocked'
 
+export type IdeaSource = 'reflection' | 'human' | 'planner'
+
 export interface DraftFeature {
   id: string
   goal: string
   story: string
   technical: string
   status: string
-  origin: string
+  source: IdeaSource
   createdAt: number
   updatedAt: number
   acceptanceCount: number
-}
-
-export type SuggestionStatus = 'proposed' | 'accepted' | 'dismissed'
-
-export interface TaskSuggestion {
-  id: string
-  sourceTaskId: string
-  title: string
-  prompt: string
-  rationale: string | null
-  status: SuggestionStatus
-  createdTaskId: string | null
-  createdAt: string
 }
 
 export interface TaskRow {
@@ -48,8 +37,7 @@ export interface TaskRow {
   error: string | null
   drop_reason: string | null
   retry_count: number | null
-  blocker_id: string | null
-  blocker_suggestion_id: string | null
+  blocker_task_id: string | null
   created_at: string
   updated_at: string
 }
@@ -64,7 +52,7 @@ export interface Task {
   error: string | null
   dropReason: string | null
   retryCount: number
-  blockerSuggestionId: string | null
+  blockerTaskId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -82,10 +70,15 @@ const rowToTask = (row: TaskRow): Task => {
     error: row.error,
     dropReason: row.drop_reason ?? null,
     retryCount: Number(row.retry_count ?? 0),
-    blockerSuggestionId: row.blocker_suggestion_id ?? row.blocker_id ?? null,
+    blockerTaskId: row.blocker_task_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
+}
+
+const normaliseSource = (raw: unknown): IdeaSource => {
+  if (raw === 'reflection' || raw === 'planner' || raw === 'human') return raw
+  return 'human'
 }
 
 export class TaskDb {
@@ -106,7 +99,6 @@ export class TaskDb {
     )
     const hasDropReason = colNames.has('drop_reason')
     const hasRetryCount = colNames.has('retry_count')
-    const hasBlockerId = colNames.has('blocker_id')
 
     const select: string[] = [
       't.id',
@@ -120,25 +112,24 @@ export class TaskDb {
       't.error',
       hasDropReason ? 't.drop_reason' : `NULL AS drop_reason`,
       hasRetryCount ? 't.retry_count' : `0 AS retry_count`,
-      hasBlockerId ? 't.blocker_id' : `NULL AS blocker_id`,
       't.created_at',
       't.updated_at',
     ]
 
-    const sugTableExists = await this.suggestionsTableExists()
-    const join =
-      hasBlockerId && sugTableExists
-        ? `LEFT JOIN task_suggestions s
-             ON s.id = t.blocker_id
-            AND s.status = 'proposed'`
-        : ''
-    const blockerCol =
-      hasBlockerId && sugTableExists
-        ? `s.id AS blocker_suggestion_id`
-        : `NULL AS blocker_suggestion_id`
+    const blockersTableExists = await this.blockersTableExists()
+    // For blocked tasks, surface the first blocker task id (if any) so the
+    // UI can show a "blocked by" link. The composite junction can hold many
+    // edges, but the card only renders one.
+    const blockerCol = blockersTableExists
+      ? `(SELECT b.blocker_task_id
+            FROM task_blockers b
+           WHERE b.task_id = t.id
+        ORDER BY b.created_at ASC
+           LIMIT 1) AS blocker_task_id`
+      : `NULL AS blocker_task_id`
     select.push(blockerCol)
 
-    const sql = `SELECT ${select.join(', ')} FROM tasks t ${join} ORDER BY t.created_at`
+    const sql = `SELECT ${select.join(', ')} FROM tasks t ORDER BY t.created_at`
     const r = await this.client.execute(sql)
     return r.rows.map((row) => rowToTask(row as unknown as TaskRow))
   }
@@ -150,33 +141,11 @@ export class TaskDb {
     return r.rows.length > 0
   }
 
-  async suggestionsTableExists(): Promise<boolean> {
+  async blockersTableExists(): Promise<boolean> {
     const r = await this.client.execute(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='task_suggestions'`,
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='task_blockers'`,
     )
     return r.rows.length > 0
-  }
-
-  async listProposedSuggestions(): Promise<TaskSuggestion[]> {
-    const r = await this.client.execute(
-      `SELECT id, source_task_id, title, prompt, rationale, status, created_task_id, created_at
-       FROM task_suggestions
-       WHERE status = 'proposed'
-       ORDER BY created_at DESC`,
-    )
-    return r.rows.map((row) => {
-      const r0 = row as unknown as Record<string, unknown>
-      return {
-        id: r0.id as string,
-        sourceTaskId: r0.source_task_id as string,
-        title: r0.title as string,
-        prompt: r0.prompt as string,
-        rationale: (r0.rationale as string | null) ?? null,
-        status: r0.status as SuggestionStatus,
-        createdTaskId: (r0.created_task_id as string | null) ?? null,
-        createdAt: r0.created_at as string,
-      }
-    })
   }
 }
 
@@ -199,8 +168,17 @@ export class StateDb {
   }
 
   async listDraftFeatures(): Promise<DraftFeature[]> {
+    const cols = await this.client.execute(`PRAGMA table_info(ideas)`)
+    const colNames = new Set(
+      cols.rows.map((r) => (r as unknown as { name: string }).name),
+    )
+    const sourceCol = colNames.has('source')
+      ? 'i.source'
+      : colNames.has('origin')
+        ? `CASE WHEN i.origin = 'agent' THEN 'planner' ELSE 'human' END AS source`
+        : `'human' AS source`
     const r = await this.client.execute(
-      `SELECT i.id, i.goal, i.story, i.technical, i.status, i.origin,
+      `SELECT i.id, i.goal, i.story, i.technical, i.status, ${sourceCol},
               i.created_at, i.updated_at,
               (SELECT COUNT(*) FROM idea_acceptance a WHERE a.idea_id = i.id) AS acceptance_count
        FROM ideas i
@@ -215,7 +193,7 @@ export class StateDb {
         story: (r0.story as string | null) ?? '',
         technical: (r0.technical as string | null) ?? '',
         status: (r0.status as string | null) ?? 'draft',
-        origin: (r0.origin as string | null) ?? 'user',
+        source: normaliseSource(r0.source),
         createdAt: Number(r0.created_at ?? 0),
         updatedAt: Number(r0.updated_at ?? 0),
         acceptanceCount: Number(r0.acceptance_count ?? 0),

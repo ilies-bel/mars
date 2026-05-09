@@ -1,10 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { getRecipe, type FixRecipeContext } from './lib/fix-recipes'
 import { getClient, getTask, initQueue, type Task } from './queue'
-import {
-  getRetryBudget,
-  markTaskDropped,
-} from './queue-fix-suggestions'
+import { getRetryBudget, markTaskDropped } from './queue-retry'
 
 const truncate = (s: string, max: number): string =>
   s.length <= max ? s : `${s.slice(0, max)}…`
@@ -160,7 +157,6 @@ export const upsertFixTask = async (
     await tx.execute({
       sql: `UPDATE tasks
                SET status = 'blocked',
-                   blocker_id = NULL,
                    retry_count = ?,
                    error = ?,
                    updated_at = ?

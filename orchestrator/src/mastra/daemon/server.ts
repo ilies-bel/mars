@@ -26,13 +26,10 @@ import {
   type Task,
   type UnblockTaskResult,
 } from '../queue'
-import { promoteSuggestion } from '../queue-suggestions'
 import { markIdeaPromoted, promoteIdea } from '../ideas'
 import {
   onBlockerTaskCompleted,
-  onChildTaskCompleted,
   recoverBlockedTasks,
-  recoverBlockedTasksByBlockerTable,
 } from '../blocker-resolution'
 import { daemonPaths } from './paths'
 import {
@@ -543,25 +540,6 @@ export const startDaemon = async (
       }
       if (after.status === 'done') {
         try {
-          const resolved = await onChildTaskCompleted(id)
-          if (resolved) {
-            for (const o of resolved.outcomes) {
-              if (o.outcome === 'queued') {
-                log(
-                  `[unblock] task ${o.taskId} re-queued after suggestion ${resolved.suggestionId} accepted`,
-                )
-                bus.emit('task.queued', { taskId: o.taskId })
-              } else if (o.outcome === 'dropped') {
-                log(
-                  `[unblock] task ${o.taskId} dropped at unblock (retry budget exhausted)`,
-                )
-              }
-            }
-          }
-        } catch (err) {
-          log(`[unblock] error resolving blockers for ${id}: ${(err as Error).message}`)
-        }
-        try {
           const blockerResolved = await onBlockerTaskCompleted(id)
           for (const o of blockerResolved.outcomes) {
             if (o.outcome === 'queued') {
@@ -654,13 +632,6 @@ export const startDaemon = async (
     bus.emit('task.refine', { taskId: id, refresh })
   }
 
-  const handlePromote = async (suggestionId: string): Promise<{ taskId: string }> => {
-    const r = await promoteSuggestion(suggestionId)
-    if (!r) throw new Error(`suggestion ${suggestionId} not found or already promoted`)
-    bus.emit('task.added', { taskId: r.taskId })
-    return { taskId: r.taskId }
-  }
-
   const handleIdeaPromote = async (
     ideaId: string,
   ): Promise<{ taskId: string; ideaId: string }> => {
@@ -703,25 +674,6 @@ export const startDaemon = async (
         for (const o of r.outcomes) {
           if (o.outcome === 'queued') {
             log(
-              `[reconcile-unblock] task ${o.taskId} re-queued (suggestion ${r.suggestionId} resolved while daemon was down)`,
-            )
-          } else if (o.outcome === 'dropped') {
-            log(
-              `[reconcile-unblock] task ${o.taskId} dropped (retry budget exhausted)`,
-            )
-          }
-        }
-      }
-    } catch (err) {
-      log(`[reconcile-unblock] failed: ${(err as Error).message}`)
-    }
-
-    try {
-      const recoveredByTable = await recoverBlockedTasksByBlockerTable()
-      for (const r of recoveredByTable) {
-        for (const o of r.outcomes) {
-          if (o.outcome === 'queued') {
-            log(
               `[reconcile-unblock] task ${o.taskId} re-queued (blocker task already done while daemon was down)`,
             )
           } else if (o.outcome === 'dropped') {
@@ -732,9 +684,7 @@ export const startDaemon = async (
         }
       }
     } catch (err) {
-      log(
-        `[reconcile-unblock] task_blockers recovery failed: ${(err as Error).message}`,
-      )
+      log(`[reconcile-unblock] failed: ${(err as Error).message}`)
     }
 
     const drafts = await listTasks('draft')
@@ -806,10 +756,6 @@ export const startDaemon = async (
         case 'remove-blockers': {
           const result = await handleRemoveBlockers(req.id, req.blockerIds ?? [])
           return { ok: true, data: result }
-        }
-        case 'promote': {
-          const r = await handlePromote(req.suggestionId)
-          return { ok: true, data: r }
         }
         case 'idea.promote': {
           const r = await handleIdeaPromote(req.ideaId)

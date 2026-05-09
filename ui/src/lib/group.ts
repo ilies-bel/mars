@@ -55,7 +55,7 @@ const toUI = (t: Task): UITask => ({
   failed: t.status === 'failed',
   dropReason: t.dropReason ?? null,
   retryCount: t.retryCount ?? 0,
-  blockerSuggestionId: t.blockerSuggestionId ?? null,
+  blockerTaskId: t.blockerTaskId ?? null,
   createdAt: t.createdAt,
 })
 

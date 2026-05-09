@@ -1,6 +1,6 @@
 import { runClaudeCode } from './git'
 import { getRepoRoot } from '../context'
-import { insertSuggestion } from '../queue'
+import { createIdea } from '../ideas'
 import type { ReflectCorpus } from './reflect-query'
 
 export interface ReflectionSuggestion {
@@ -299,14 +299,14 @@ export const runReflector = async (
 
 export const persistSuggestions = async (
   suggestions: readonly ReflectionSuggestion[],
-  sourceTaskId: string,
+  _sourceTaskId: string,
 ): Promise<void> => {
   for (const s of suggestions) {
-    await insertSuggestion({
-      sourceTaskId,
-      title: s.title,
-      prompt: s.prompt,
-      rationale: s.rationale,
+    await createIdea(s.title, {
+      source: 'reflection',
+      author: { kind: 'agent', name: 'reflector' },
+      story: s.prompt,
+      technical: s.rationale ?? '',
     })
   }
 }
@@ -336,7 +336,7 @@ export const parseVerdict = (raw: unknown): SuggestionVerdict => {
 
 export const applyVerdicts = async (
   suggestions: readonly VerdictedSuggestion[],
-  sourceTaskId: string,
+  _sourceTaskId: string,
 ): Promise<ApplyVerdictsResult> => {
   let saved = 0
   let absorbed = 0
@@ -348,16 +348,16 @@ export const applyVerdicts = async (
       continue
     }
     if (s.verdict === 'absorb') {
-      // 'absorb' means the finding was folded into an existing suggestion or
+      // 'absorb' means the finding was folded into an existing idea or
       // task and does not warrant a new row. Counted but not persisted.
       absorbed += 1
       continue
     }
-    await insertSuggestion({
-      sourceTaskId,
-      title: s.title,
-      prompt: s.prompt,
-      rationale: s.rationale,
+    await createIdea(s.title, {
+      source: 'reflection',
+      author: { kind: 'agent', name: 'reflector' },
+      story: s.prompt,
+      technical: s.rationale ?? '',
     })
     saved += 1
     savedSuggestions.push(s)

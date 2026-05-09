@@ -55,7 +55,6 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     author,
     dropReason: (row.drop_reason as string | null) ?? null,
     retryCount: Number(row.retry_count ?? 0),
-    blockerId: (row.blocker_id as string | null) ?? null,
     fixForTaskId: (row.fix_for_task_id as string | null) ?? null,
     failureSignature: (row.failure_signature as string | null) ?? null,
     originId: ((row.origin_id as string | null) ?? (row.id as string)),

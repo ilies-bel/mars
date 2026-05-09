@@ -1,12 +1,7 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
-import {
-  clearQuestions,
-  clearSuggestions,
-  getTask,
-  insertQuestion,
-  insertSuggestion,
-} from '../queue'
+import { clearQuestions, getTask, insertQuestion } from '../queue'
+import { createIdea } from '../ideas'
 import { runClaudeCode } from '../lib/git'
 import { parseClaudeJsonResult } from '../lib/claude-json'
 import { getRepoRoot } from '../context'
@@ -81,7 +76,6 @@ const generateStep = createStep({
 
     if (inputData.refresh) {
       await clearQuestions(task.id)
-      await clearSuggestions(task.id)
     }
 
     const r = await runClaudeCode({
@@ -106,11 +100,11 @@ const generateStep = createStep({
       })
     }
     for (const s of parsed.suggestions) {
-      await insertSuggestion({
-        sourceTaskId: task.id,
-        title: s.title,
-        prompt: s.prompt,
-        rationale: s.rationale ?? null,
+      await createIdea(s.title, {
+        source: 'planner',
+        author: { kind: 'agent', name: 'planner' },
+        story: s.prompt,
+        technical: s.rationale ?? '',
       })
     }
 
