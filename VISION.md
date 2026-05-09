@@ -36,7 +36,7 @@ draft  ──► queued  ──► running  ──► verifying  ──► mergi
    and refuses to move on until the plan is precise.
 3. **Queued.** When I'm satisfied, the task transitions to `queued`. The
    plan is locked-in input for execution.
-4. **Watcher pickup.** A long-running `mars watch` daemon polls `queued`,
+4. **Daemon pickup.** A long-running `mars daemon` polls `queued`,
    claims a task atomically, and dispatches it through the implement
    workflow. I don't trigger anything by hand — the daemon is the dispatcher.
 5. **Implement.** Worktree on `task/<id>` off `integration` → `claude -p`
@@ -108,8 +108,9 @@ will be reconciled in subsequent passes.
 - **`mars context search/tree`.** The top-level README advertises a
   deterministic ripgrep wrapper for agents. No code exists. Decide: build it
   as a subcommand of the orchestrator CLI, or drop the claim from the README.
-- **`mars run` vs `mars watch`.** Current code has both: `run` is a
-  one-shot batch dispatcher, `watch` is the daemon. Vision says watch is
-  canonical. Decide whether to keep `run` as a debug tool or remove it.
+- **`mars run` vs `mars daemon`.** Current code has both: `run` is a
+  one-shot batch dispatcher, `daemon` is the long-running dispatcher.
+  Vision says the daemon is canonical. Decide whether to keep `run` as a
+  debug tool or remove it.
 - **`state.db` vs `queue.db`.** Two SQLite files exist in `.mars/`. Only
   `queue.db` is used. Either consolidate or document why both exist.
