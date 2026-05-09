@@ -1,4 +1,4 @@
-import { DuckDBConnection } from '@mastra/duckdb'
+import { createClient, type Client } from '@libsql/client'
 import { getClient as getQueueClient, initQueue, type Task } from '../queue'
 import { getIdea, type Idea } from '../ideas'
 import { resolveContext } from '../context'
@@ -21,12 +21,12 @@ export interface OriginTimeline {
   spans: OriginTimelineSpan[]
 }
 
-let connSingleton: DuckDBConnection | null = null
+let connSingleton: Client | null = null
 
-const getObservabilityConnection = (): DuckDBConnection => {
+const getObservabilityConnection = (): Client => {
   if (connSingleton) return connSingleton
   const { observabilityDbPath } = resolveContext()
-  connSingleton = new DuckDBConnection({ path: observabilityDbPath })
+  connSingleton = createClient({ url: `file:${observabilityDbPath}` })
   return connSingleton
 }
 
@@ -97,27 +97,31 @@ const tsToIso = (value: unknown): string | null => {
 
 const loadSpans = async (originId: string): Promise<OriginTimelineSpan[]> => {
   const conn = getObservabilityConnection()
-  // DuckDB JSON path access uses json_extract_string(metadata, '$.originId').
-  const rows = await conn.query(
-    `SELECT traceId, spanId, parentSpanId, name, timestamp, endedAt,
-            json_extract_string(metadata, '$.originId') AS origin_meta,
-            json_extract_string(error, '$.message') AS error_message
-       FROM span_events
-      WHERE json_extract_string(metadata, '$.originId') = ?
-      ORDER BY timestamp ASC`,
-    [originId],
-  )
-  return (rows as Array<Record<string, unknown>>).map((row) => ({
-    traceId: String(row.traceId ?? ''),
-    spanId: String(row.spanId ?? ''),
-    parentSpanId: (row.parentSpanId as string | null) ?? null,
-    name: (row.name as string | null) ?? null,
-    stage: stageFromName((row.name as string | null) ?? null),
-    startedAt: tsToIso(row.timestamp),
-    endedAt: tsToIso(row.endedAt),
-    status: row.error_message ? 'error' : 'ok',
-    summary: (row.error_message as string | null) ?? null,
-  }))
+  // Mastra's LibSQL observability adapter writes spans to mastra_ai_spans
+  // (see @mastra/core SPAN_SCHEMA). SQLite uses json_extract — DuckDB's
+  // json_extract_string is not available here.
+  const r = await conn.execute({
+    sql: `SELECT traceId, spanId, parentSpanId, name, startedAt, endedAt,
+                 json_extract(error, '$.message') AS error_message
+            FROM mastra_ai_spans
+           WHERE json_extract(metadata, '$.originId') = ?
+           ORDER BY startedAt ASC`,
+    args: [originId],
+  })
+  return r.rows.map((row) => {
+    const r = row as unknown as Record<string, unknown>
+    return {
+      traceId: String(r.traceId ?? ''),
+      spanId: String(r.spanId ?? ''),
+      parentSpanId: (r.parentSpanId as string | null) ?? null,
+      name: (r.name as string | null) ?? null,
+      stage: stageFromName((r.name as string | null) ?? null),
+      startedAt: tsToIso(r.startedAt),
+      endedAt: tsToIso(r.endedAt),
+      status: r.error_message ? 'error' : 'ok',
+      summary: (r.error_message as string | null) ?? null,
+    }
+  })
 }
 
 export const loadOriginTimeline = async (

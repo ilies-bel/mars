@@ -1,7 +1,6 @@
 import { Mastra } from '@mastra/core/mastra'
 import { PinoLogger } from '@mastra/loggers'
 import { LibSQLStore } from '@mastra/libsql'
-import { DuckDBStore } from '@mastra/duckdb'
 import { MastraCompositeStore } from '@mastra/core/storage'
 import {
   Observability,
@@ -31,7 +30,10 @@ export const mastra = new Mastra({
       url: `file:${mastraDbPath}`,
     }),
     domains: {
-      observability: await new DuckDBStore({ path: observabilityDbPath }).getStore('observability'),
+      observability: await new LibSQLStore({
+        id: 'observability-storage',
+        url: `file:${observabilityDbPath}`,
+      }).getStore('observability'),
     },
   }),
   logger: new PinoLogger({ name: 'orchestrator', level: 'info' }),
