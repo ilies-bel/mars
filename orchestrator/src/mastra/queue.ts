@@ -51,6 +51,7 @@ export interface Task {
   blockerId: string | null
   fixForTaskId: string | null
   failureSignature: string | null
+  originId: string
   createdAt: string
   updatedAt: string
 }
@@ -117,8 +118,19 @@ export const initQueue = async (): Promise<void> => {
   if (!names.has('failure_signature')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN failure_signature TEXT`)
   }
+  // origin_id: stable id of the originating row (idea or self-task) for an
+  // arc of work. @libsql/client does not honour `DEFAULT (id)` self-reference
+  // reliably, so the column is added without a default and back/forward-filled
+  // explicitly: backfill old rows below, populate new rows in enqueueTask.
+  if (!names.has('origin_id')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN origin_id TEXT`)
+    await c.execute(`UPDATE tasks SET origin_id = id WHERE origin_id IS NULL`)
+  }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
+  )
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_tasks_origin_id ON tasks(origin_id)`,
   )
   await c.execute(`
     CREATE TABLE IF NOT EXISTS questions (
@@ -358,6 +370,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     blockerId: (row.blocker_id as string | null) ?? null,
     fixForTaskId: (row.fix_for_task_id as string | null) ?? null,
     failureSignature: (row.failure_signature as string | null) ?? null,
+    originId: ((row.origin_id as string | null) ?? (row.id as string)),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -366,6 +379,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
 export interface EnqueueTaskOptions {
   skipTriage?: boolean
   author?: Author
+  originId?: string
 }
 
 export const enqueueTask = async (
@@ -380,8 +394,9 @@ export const enqueueTask = async (
   const status: TaskStatus = opts?.skipTriage ? 'queued' : 'draft'
   const authorKind = opts?.author?.kind ?? null
   const authorName = opts?.author?.name ?? null
+  const originId = opts?.originId ?? id
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       promptText,
@@ -390,6 +405,7 @@ export const enqueueTask = async (
       plan?.technical ?? null,
       authorKind,
       authorName,
+      originId,
       now,
       now,
     ],
@@ -518,8 +534,8 @@ export const insertReflectionTask = async (corpusSize: number): Promise<string> 
   const now = new Date().toISOString()
   const prompt = `mars reflect run over ${corpusSize} task(s) at ${now}`
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at) VALUES (?, ?, 'done', ?, ?)`,
-    args: [id, prompt, now, now],
+    sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at) VALUES (?, ?, 'done', ?, ?, ?)`,
+    args: [id, prompt, id, now, now],
   })
   return id
 }

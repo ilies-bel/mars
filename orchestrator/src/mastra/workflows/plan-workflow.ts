@@ -71,9 +71,13 @@ const generateStep = createStep({
   id: 'generate-plan',
   inputSchema: planInputSchema,
   outputSchema: planOutputSchema,
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData, tracingContext }) => {
     const task = await getTask(inputData.taskId)
     if (!task) throw new Error(`task ${inputData.taskId} not found`)
+
+    tracingContext?.currentSpan?.update({
+      metadata: { originId: task.originId, taskId: task.id },
+    })
 
     if (inputData.refresh) {
       await clearQuestions(task.id)

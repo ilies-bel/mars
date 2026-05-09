@@ -137,9 +137,9 @@ export const upsertFixTask = async (
               id, prompt, status,
               author_kind, author_name,
               fix_for_task_id, failure_signature,
-              retry_count,
+              retry_count, origin_id,
               created_at, updated_at
-            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 0, ?, ?)`,
+            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 0, ?, ?, ?)`,
       args: [
         fixTaskId,
         prompt,
@@ -147,6 +147,7 @@ export const upsertFixTask = async (
         FIX_TASK_AUTHOR_NAME,
         input.sourceTaskId,
         input.failureSignature,
+        source.originId,
         now,
         now,
       ],
