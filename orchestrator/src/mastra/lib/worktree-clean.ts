@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { resolveContext } from '../context'
 import { getTask, type Task, type TaskStatus } from '../queue'
-import { isBranchMergedIntoMain, isZeroCommitBranch } from '../sweeper/server'
+import { isBranchMergedIntoMain, isZeroCommitBranch } from './git'
 
 const exec = promisify(execFile)
 

@@ -544,9 +544,9 @@ Subcommands:
                                      Use --from - to read JSON from stdin,
                                      or --from <path> to read it from a file.
                                      This is the CORRECT entry point for
-                                     dispatched agents (sweeper recipes,
-                                     self-heal investigations, anything
-                                     running inside a worktree) — it
+                                     dispatched agents (self-heal
+                                     investigations, anything running
+                                     inside a worktree) — it
                                      replaces the deprecated pattern of
                                      writing one-shot .ts scripts under
                                      orchestrator/scripts/. The JSON
@@ -1345,24 +1345,6 @@ const main = async (): Promise<void> => {
     const { startDaemon } = await import('./mastra/daemon/server')
     await startDaemon({ log: (line) => console.log(line) })
     // Block forever until SIGINT/SIGTERM (the daemon handles shutdown).
-    await new Promise(() => {})
-    return
-  }
-
-  if (cmd === 'sweeper') {
-    const sweeperFlags = new Set(rest.filter((a) => a.startsWith('--')))
-    const intervalArg = flags['--interval-ms']
-    const intervalMs = intervalArg ? Number.parseInt(intervalArg, 10) : undefined
-    const oneShot = sweeperFlags.has('--once')
-    const { startSweeper, runSweep } = await import('./mastra/sweeper/server')
-    if (oneShot) {
-      await runSweep((line) => console.log(line))
-      return
-    }
-    await startSweeper({
-      log: (line) => console.log(line),
-      ...(Number.isInteger(intervalMs) && intervalMs! > 0 ? { intervalMs } : {}),
-    })
     await new Promise(() => {})
     return
   }

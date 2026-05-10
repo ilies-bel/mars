@@ -255,8 +255,8 @@ mars inbox list --kind no-recipe
 ## Inbox
 
 Cross-cutting findings that don't belong to a single task — daemon
-desyncs, sweeper observations, self-heal investigations, anything raised
-by a dispatched agent — land in the inbox at `.mars/state.db`.
+desyncs, self-heal investigations, anything raised by a dispatched
+agent — land in the inbox at `.mars/state.db`.
 
 CLI surface:
 
@@ -271,8 +271,8 @@ CLI surface:
 | `mars inbox watch`                       | Live ink TUI.                                            |
 
 `mars inbox raise --from -` is the **correct** entry point for
-dispatched agents (sweeper recipes, self-heal investigations, anything
-running inside a `task/<id>` worktree) to file inbox items. It replaces
+dispatched agents (self-heal investigations, anything running inside a
+`task/<id>` worktree) to file inbox items. It replaces
 the deprecated pattern of writing one-shot `.ts` scripts under
 `orchestrator/scripts/raise-*.ts`, which pollute the codebase, tie
 agents to the orchestrator's source tree, and have caused merge-target
@@ -301,9 +301,9 @@ echo '{
 
 Required fields: `kind`, `category`, `priority` (`urgent|high|normal|low`),
 `title`, `body`, `payload`, `context`, `raisedBy`, `signature`. Optional:
-`occurrence`. Pass a real `raisedBy` (e.g. `self-heal:<task-id>` or
-`sweeper:<recipe>`) so the source of the finding is traceable; the empty
-string defaults to `agent:cli`, but a missing key is a schema error.
+`occurrence`. Pass a real `raisedBy` (e.g. `self-heal:<task-id>`) so the source of the
+finding is traceable; the empty string defaults to `agent:cli`, but a
+missing key is a schema error.
 
 ## `mars init` and monorepo recursion
 
