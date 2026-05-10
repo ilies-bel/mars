@@ -60,3 +60,7 @@ _Avoid_: metric, stat, gauge
 **Chore**:
 A queued unit of side-effect-only work (e.g. re-running install.sh, warming a cache) that is expected to produce zero commits and therefore skips the verify:has-diff gate and its recovery recipe.
 _Avoid_: fix, fix-task, side-effect task
+
+**Task**:
+A queued unit of work expected to produce one or more commits on a task/<id> branch, which the orchestrator verifies (verify:has-diff + .mars/verify.json) and fast-forwards into the integration branch.
+_Avoid_: job, run
