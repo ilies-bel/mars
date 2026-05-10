@@ -79,3 +79,22 @@ fix-task forever.
   motivated for fix-tasks themselves: when the dispatched fix-task's
   branch already equals `main`, the recipe should close it `done`
   instead of re-running self-heal in a loop.
+- **2026-05-10 (second recurrence) — fix-task `30dc129f` re-dispatched
+  again.** The previous recurrence ack (`da17d46 chore(self-heal): log
+  recurrence of ghost no-diff …`) merged into `main`, then `task/30dc129f`
+  was re-spawned for the same parent failure (`a92e5fd0`, signature
+  `5d9f8e1a2f8ea1a1`). On entry, `git rev-parse HEAD` == `git rev-parse
+  main` == `da17d46…` and `git merge-base main HEAD` == `da17d46…`,
+  i.e. the worktree branch came up exactly equal to `main` (zero commits
+  ahead) and `verify:has-diff` would fire again. This is now the third
+  observation in the same arc (parent `a92e5fd0`, then self-heal
+  `30dc129f` round 1, now self-heal `30dc129f` round 2) — the loop
+  reproduces every time the previous ack itself ships to main before the
+  orchestrator re-checks the original failure. No code action on
+  `a92e5fd0` (still landed via `4e8f17a`); appending this entry is again
+  the entire diff so `verify:has-diff` clears. Escalation note for the
+  orchestrator short-circuit (still filed under
+  `NO-DIFF-mars-72858ad4.md`): the fix-task dispatcher should also debounce
+  on signature — if the same `(parent_task, failure_signature)` pair has
+  already produced a merged self-heal ack within the same `main` history,
+  do not re-spawn another fix-task for it.
