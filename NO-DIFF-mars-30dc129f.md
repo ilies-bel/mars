@@ -98,3 +98,28 @@ fix-task forever.
   on signature — if the same `(parent_task, failure_signature)` pair has
   already produced a merged self-heal ack within the same `main` history,
   do not re-spawn another fix-task for it.
+- **2026-05-10 (third recurrence) — fix-task `30dc129f` re-dispatched a
+  third time.** The previous "second recurrence" ack (`909d1ce
+  chore(self-heal): log second recurrence of ghost no-diff …`) merged into
+  `main`, and `task/30dc129f` was immediately re-spawned for the same parent
+  failure (`a92e5fd0`, signature `5d9f8e1a2f8ea1a1`). On entry, `git
+  rev-parse HEAD` == `git rev-parse main` == `git merge-base HEAD main` ==
+  `909d1ce6d53c5ba63e2decec9ecda12ac6ca3994` — once again zero commits ahead
+  of `main`, so `verify:has-diff` would fire on the empty diff. This is now
+  the **fourth** observation in the same arc (parent `a92e5fd0` → self-heal
+  round 1 (`ac6001c`) → round 2 (`da17d46`) → round 3 (`909d1ce`) → this
+  round 4 commit), and confirms the loop is steady-state: every ack itself
+  ships to main, then the dispatcher re-spawns the original fix-task on a
+  branch that already equals main, then this self-heal commit ships and
+  the cycle repeats. No code action on `a92e5fd0` (its feature commit
+  `4e8f17a` is still the only real work, and is on main). Appending this
+  entry is again the entire diff so `verify:has-diff` clears on
+  `task/30dc129f`. **The latent orchestrator bug is now urgent**, not just
+  latent — the loop has run four times against the same signature within
+  a single session and will keep running until the dispatcher implements
+  one of the short-circuits already filed in `NO-DIFF-mars-72858ad4.md`
+  (the simplest one: refuse to dispatch a fix-task whose target branch's
+  tip is already an ancestor of `$INTEGRATION_BRANCH`, i.e.
+  `git merge-base $INTEGRATION_BRANCH $TASK_BRANCH == $TASK_BRANCH`, and
+  close the parent task as `done` instead). Until that lands, each
+  re-dispatch will produce one more recurrence entry here.
