@@ -59,7 +59,7 @@ A read-only aggregate health number derived from completed task arcs over a roll
 _Avoid_: metric, stat, gauge
 
 **Chore**:
-A queued unit of side-effect-only work (e.g. re-running install.sh, warming a cache) that is expected to produce zero commits and therefore skips the verify:has-diff gate and its recovery recipe.
+A queued unit of work where the prompt is the source of truth: it may or may not produce commits. Skips the verify:has-diff gate (and its recovery recipe) but still runs the project's verify.json steps. If commits exist, they are merged into the integration branch; if not, the chore completes without merging.
 _Avoid_: fix, fix-task, side-effect task
 
 **Task**:
