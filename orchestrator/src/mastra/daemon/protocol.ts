@@ -32,6 +32,7 @@ export type DaemonRequest =
   | { op: 'block'; id: string; blockerIds: readonly string[] }
   | { op: 'remove-blockers'; id: string; blockerIds: readonly string[] }
   | { op: 'idea.promote'; ideaId: string }
+  | { op: 'idea.slice'; ideaId: string }
   | { op: 'refine'; id: string; refresh?: boolean }
   | {
       op: 'glossary-write'

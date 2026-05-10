@@ -29,6 +29,7 @@ const FLAGS_WITH_VALUES = new Set([
   '--source',
   '--status',
   '--from',
+  '--kind',
 ])
 
 const REPEATABLE_FLAGS = new Set(['--blocked-by'])
@@ -123,16 +124,21 @@ Commands:
   idea list [--source reflection|human|planner] [--status <status>]
                                 list ideas; filter by source and/or status
   idea show <id>                show an idea from .mars/state.db
-  idea set <id> <goal|story|technical|status> "<text>"
-                                update a single field on an idea row
-  idea add-acceptance <id> "<bullet>"
-                                append a bullet to the idea's acceptance list
-  idea remove-acceptance <id> <index>
-                                remove the 0-based bullet; positions repack
-  idea promote <id>             promote a shaped draft idea (story+technical+
-                                >=1 acceptance) into a queued task. Flips the
-                                idea's status to 'promoted' and stores the
-                                resulting task id.
+  idea set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"
+                                update a single field on a PRD-shaped idea
+  idea add-user-story <id> "<text>"
+                                append a user story to the idea's PRD
+  idea remove-user-story <id> <index>
+                                remove the 0-based user story; positions repack
+  idea promote <id>             mark a shaped draft idea as PRD-ready. Flips
+                                the idea's status from 'draft' to 'prd-ready'.
+                                The slicer creates one task per vertical slice
+                                separately; this verb does NOT enqueue a task.
+  idea slice <id>               decompose a 'prd-ready' idea into N
+                                tracer-bullet vertical-slice tasks (one per
+                                user-observable behaviour) and queue them with
+                                blockers wired between dependent slices. Flips
+                                the idea's status to 'sliced'.
   add "<prompt>" [plan flags]   (deprecated) draft a task; lands in 'draft' state
                                 so triage can promote to 'queued'. Prefer
                                 'mars task add' or 'mars idea add'.
@@ -221,9 +227,11 @@ Commands:
                                 to consume. Source ('reflection' | 'human' |
                                 'planner') is annotated per draft row.
   inbox                         alias for 'inbox list open'
-  inbox list [state]            list inbox items. state one of:
+  inbox list [state] [--kind <kind>]
+                                list inbox items. state one of:
                                 open|acknowledged|resolved|dismissed|all
-                                (default: open)
+                                (default: open). --kind filters by item
+                                kind, e.g. recovery-failed, no-recipe.
   inbox show <id>               full detail for an inbox item (accepts a
                                 full id or a unique 8-char prefix)
   inbox ack <id>                mark an inbox item acknowledged
@@ -318,15 +326,20 @@ Subcommands:
       List ideas. Filter by source and/or status.
   show <id>
       Show an idea from .mars/state.db. <id> must be the full idea slug.
-  set <id> <goal|story|technical|status> "<text>"
+  set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"
       Update a single field on an existing idea. Replaces the field; does
       not append.
-  add-acceptance <id> "<bullet>"
-      Append a bullet to the idea's acceptance list (positions auto-assigned).
-  remove-acceptance <id> <index>
-      Remove the 0-based acceptance bullet; remaining positions repack.
+  add-user-story <id> "<text>"
+      Append a user story to the idea's PRD (positions auto-assigned).
+  remove-user-story <id> <index>
+      Remove the 0-based user story; remaining positions repack.
   promote <id>
-      Promote a fully-shaped draft idea into a queued task (daemon-routed).
+      Mark a fully-shaped draft idea as PRD-ready. Does not enqueue a task —
+      slicing into runnable tasks happens separately.
+  slice <id>
+      Decompose a 'prd-ready' idea into N tracer-bullet vertical-slice tasks
+      and queue them with blockers wired between dependent slices. Flips the
+      idea's status to 'sliced'.
   reject <id>
       Mark a draft idea as 'dismissed' so it stops surfacing in 'mars next'
       and reflection follow-ups.`,
@@ -848,22 +861,27 @@ const main = async (): Promise<void> => {
       console.log(`author:     ${formatAuthor(idea.author)}`)
       console.log(`createdAt:  ${new Date(idea.createdAt).toISOString()}`)
       console.log(`updatedAt:  ${new Date(idea.updatedAt).toISOString()}`)
-      if (idea.promotedTaskId) {
-        console.log(`promotedTaskId: ${idea.promotedTaskId}`)
+      console.log(`title:`)
+      console.log(idea.title)
+      if (idea.problem.trim().length > 0) {
+        console.log(`problem:`)
+        console.log(idea.problem)
       }
-      console.log(`goal:`)
-      console.log(idea.goal)
-      if (idea.story.trim().length > 0) {
-        console.log(`story:`)
-        console.log(idea.story)
+      if (idea.solution.trim().length > 0) {
+        console.log(`solution:`)
+        console.log(idea.solution)
       }
-      if (idea.acceptance.length > 0) {
-        console.log(`acceptance:`)
-        idea.acceptance.forEach((b, i) => console.log(`  [${i}] ${b}`))
+      if (idea.userStories.length > 0) {
+        console.log(`user stories:`)
+        idea.userStories.forEach((s, i) => console.log(`  [${i}] ${s}`))
       }
-      if (idea.technical.trim().length > 0) {
-        console.log(`technical:`)
-        console.log(idea.technical)
+      if (idea.outOfScope.trim().length > 0) {
+        console.log(`out of scope:`)
+        console.log(idea.outOfScope)
+      }
+      if (idea.notes.trim().length > 0) {
+        console.log(`notes:`)
+        console.log(idea.notes)
       }
       return
     }
@@ -873,18 +891,20 @@ const main = async (): Promise<void> => {
       const value = rest.slice(3).join(' ')
       if (!id || !field || value.length === 0) {
         console.error(
-          'usage: mars idea set <id> <goal|story|technical|status> "<text>"',
+          'usage: mars idea set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"',
         )
         process.exit(1)
       }
       if (
-        field !== 'goal' &&
-        field !== 'story' &&
-        field !== 'technical' &&
+        field !== 'title' &&
+        field !== 'problem' &&
+        field !== 'solution' &&
+        field !== 'out-of-scope' &&
+        field !== 'notes' &&
         field !== 'status'
       ) {
         console.error(
-          `unknown field '${field}'; expected one of goal|story|technical|status`,
+          `unknown field '${field}'; expected one of title|problem|solution|out-of-scope|notes|status`,
         )
         process.exit(1)
       }
@@ -898,28 +918,28 @@ const main = async (): Promise<void> => {
       }
       return
     }
-    if (sub === 'add-acceptance') {
+    if (sub === 'add-user-story') {
       const id = rest[1]
-      const bullet = rest.slice(2).join(' ')
-      if (!id || bullet.length === 0) {
-        console.error('usage: mars idea add-acceptance <id> "<bullet>"')
+      const story = rest.slice(2).join(' ')
+      if (!id || story.length === 0) {
+        console.error('usage: mars idea add-user-story <id> "<text>"')
         process.exit(1)
       }
-      const { addIdeaAcceptance } = await import('./mastra/ideas')
+      const { addIdeaUserStory } = await import('./mastra/ideas')
       try {
-        const idea = await addIdeaAcceptance(id, bullet)
-        console.log(`added bullet [${idea.acceptance.length - 1}] to ${id}`)
+        const idea = await addIdeaUserStory(id, story)
+        console.log(`added user story [${idea.userStories.length - 1}] to ${id}`)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
         process.exit(1)
       }
       return
     }
-    if (sub === 'remove-acceptance') {
+    if (sub === 'remove-user-story') {
       const id = rest[1]
       const idxRaw = rest[2]
       if (!id || idxRaw === undefined) {
-        console.error('usage: mars idea remove-acceptance <id> <index>')
+        console.error('usage: mars idea remove-user-story <id> <index>')
         process.exit(1)
       }
       const idx = Number(idxRaw)
@@ -927,10 +947,10 @@ const main = async (): Promise<void> => {
         console.error(`index must be a non-negative integer; got '${idxRaw}'`)
         process.exit(1)
       }
-      const { removeIdeaAcceptance } = await import('./mastra/ideas')
+      const { removeIdeaUserStory } = await import('./mastra/ideas')
       try {
-        await removeIdeaAcceptance(id, idx)
-        console.log(`removed bullet [${idx}] from ${id}`)
+        await removeIdeaUserStory(id, idx)
+        console.log(`removed user story [${idx}] from ${id}`)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
         process.exit(1)
@@ -951,8 +971,33 @@ const main = async (): Promise<void> => {
             onSpawnNotice: (pid, log) =>
               console.log(`[mars] started daemon (pid ${pid}, log: ${log})`),
           },
-        )) as { taskId: string; ideaId: string }
-        console.log(`promoted idea ${r.ideaId} -> task ${r.taskId} (queued)`)
+        )) as { ideaId: string; status: string }
+        console.log(`idea ${r.ideaId} marked ${r.status}`)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
+    if (sub === 'slice') {
+      const id = rest[1]
+      if (!id) {
+        console.error('usage: mars idea slice <id>')
+        process.exit(1)
+      }
+      const { sendRequest } = await import('./mastra/daemon/client')
+      try {
+        const r = (await sendRequest(
+          { op: 'idea.slice', ideaId: id },
+          {
+            onSpawnNotice: (pid, log) =>
+              console.log(`[mars] started daemon (pid ${pid}, log: ${log})`),
+          },
+        )) as { ideaId: string; status: string; taskIds: string[] }
+        console.log(
+          `idea ${r.ideaId} ${r.status} into ${r.taskIds.length} task(s):`,
+        )
+        for (const t of r.taskIds) console.log(`  ${t}`)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
         process.exit(1)
@@ -995,15 +1040,15 @@ const main = async (): Promise<void> => {
         return
       }
       for (const i of ideas) {
-        const goal = i.goal.trim() || '(no goal)'
+        const title = i.title.trim() || '(no title)'
         console.log(
-          `${i.id.slice(0, 8)}\t${i.status}\tsource=${i.source}\t${goal}`,
+          `${i.id.slice(0, 8)}\t${i.status}\tsource=${i.source}\t${title}`,
         )
       }
       return
     }
     console.error(
-      'usage: mars idea <add|new|list|show|set|add-acceptance|remove-acceptance|promote|reject> ...',
+      'usage: mars idea <add|new|list|show|set|add-user-story|remove-user-story|promote|slice|reject> ...',
     )
     process.exit(1)
   }
@@ -1104,22 +1149,27 @@ const main = async (): Promise<void> => {
       console.log(`author:     ${formatAuthor(idea.author)}`)
       console.log(`createdAt:  ${new Date(idea.createdAt).toISOString()}`)
       console.log(`updatedAt:  ${new Date(idea.updatedAt).toISOString()}`)
-      if (idea.promotedTaskId) {
-        console.log(`promotedTaskId: ${idea.promotedTaskId}`)
+      console.log(`title:`)
+      console.log(idea.title)
+      if (idea.problem.trim().length > 0) {
+        console.log(`problem:`)
+        console.log(idea.problem)
       }
-      console.log(`goal:`)
-      console.log(idea.goal)
-      if (idea.story.trim().length > 0) {
-        console.log(`story:`)
-        console.log(idea.story)
+      if (idea.solution.trim().length > 0) {
+        console.log(`solution:`)
+        console.log(idea.solution)
       }
-      if (idea.acceptance.length > 0) {
-        console.log(`acceptance:`)
-        idea.acceptance.forEach((b, i) => console.log(`  [${i}] ${b}`))
+      if (idea.userStories.length > 0) {
+        console.log(`user stories:`)
+        idea.userStories.forEach((s, i) => console.log(`  [${i}] ${s}`))
       }
-      if (idea.technical.trim().length > 0) {
-        console.log(`technical:`)
-        console.log(idea.technical)
+      if (idea.outOfScope.trim().length > 0) {
+        console.log(`out of scope:`)
+        console.log(idea.outOfScope)
+      }
+      if (idea.notes.trim().length > 0) {
+        console.log(`notes:`)
+        console.log(idea.notes)
       }
       return
     }
@@ -1839,11 +1889,11 @@ const main = async (): Promise<void> => {
     const ideas = await listIdeas({ status: 'draft' })
     const drafts = ideas.map((i) => ({
       id: i.id,
-      goal: i.goal,
+      title: i.title,
       source: i.source,
-      storySet: i.story.trim().length > 0,
-      technicalSet: i.technical.trim().length > 0,
-      acceptanceCount: i.acceptance.length,
+      problemSet: i.problem.trim().length > 0,
+      solutionSet: i.solution.trim().length > 0,
+      userStoryCount: i.userStories.length,
     }))
 
     const blockedTasks = await listTasks('blocked')
@@ -1869,14 +1919,14 @@ const main = async (): Promise<void> => {
       console.log('Pick something to refine, or describe a new feature:\n')
       console.log('Existing drafts:')
       for (const d of drafts) {
-        const goal = d.goal.trim() || '(no goal)'
+        const title = d.title.trim() || '(no title)'
         const flags: string[] = []
         flags.push(`source:${d.source}`)
-        if (!d.storySet) flags.push('story:empty')
-        if (!d.technicalSet) flags.push('technical:empty')
-        if (d.acceptanceCount === 0) flags.push('acceptance:0')
+        if (!d.problemSet) flags.push('problem:empty')
+        if (!d.solutionSet) flags.push('solution:empty')
+        if (d.userStoryCount === 0) flags.push('user-stories:0')
         const tail = flags.length > 0 ? `  [${flags.join(' ')}]` : ''
-        console.log(`  ${d.id.slice(0, 8)}  ${goal}${tail}`)
+        console.log(`  ${d.id.slice(0, 8)}  ${title}${tail}`)
       }
     }
 
@@ -2031,11 +2081,15 @@ const main = async (): Promise<void> => {
       ])
       if (!allowed.has(state)) {
         console.error(
-          `usage: mars inbox list [open|acknowledged|resolved|dismissed|all]`,
+          `usage: mars inbox list [open|acknowledged|resolved|dismissed|all] [--kind <kind>]`,
         )
         process.exit(1)
       }
-      const rows = await inbox.listInboxItems(state as never)
+      const kind = flags['--kind']
+      const rows = await inbox.listInboxItems(
+        state as never,
+        kind === undefined ? {} : { kind },
+      )
       printList(rows)
       return
     }
