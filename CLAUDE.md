@@ -12,19 +12,12 @@ standalone `mars` binary with Bun, symlinks `~/.local/bin/mars`.
 
 ## Task management
 
-**This repo uses `mars` as its main task manager.** Do not use the built-in
-TodoWrite/TaskCreate tooling, ad-hoc markdown TODO files, or chat prose to
-track work. All actionable work — current tasks, loose ends, follow-ups,
-deferred refactors — must live in the `mars` queue (`.mars/queue.db`),
-created via `mars task add "..."` and inspected via `mars list`. The queue
-is the single source of truth for outstanding work in this repo.
-
-**Tasks are picked up automatically.** Once a task is enqueued via
-`mars task add`, the orchestrator dispatches it on its own — you do not need
-to run `mars run`, ask the user to run it, or otherwise hand-trigger
-execution. Your job ends at enqueueing a well-specified prompt. The user
-inspects progress via `mars list` / Mastra Studio; the worktree, code step,
-verify, and merge all happen without further prompting.
+Tasks live in `mars` (`.mars/queue.db`). Enqueue via `mars task add "..."`
+and inspect via `mars list`. Once a task is enqueued, the orchestrator
+dispatches it automatically — no `mars run` invocation is needed. Your job
+ends at enqueueing a well-specified prompt; the worktree, code step, verify,
+and merge all happen without further prompting. Inspect progress via
+`mars list` or Mastra Studio.
 
 ## Repositories / top-level directories
 
