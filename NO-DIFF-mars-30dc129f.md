@@ -61,3 +61,21 @@ none to make: `a92e5fd0`'s feature commit is already on `main`. This file
 gives `task/30dc129f` a non-empty diff so its own `verify:has-diff`
 clears and the orchestrator can move forward without looping the same
 fix-task forever.
+
+## Recurrence log
+
+- **2026-05-10 — recurrence on self-heal task `30dc129f` itself.** The
+  orchestrator re-dispatched the fix-task for `a92e5fd0` (same signature
+  `5d9f8e1a2f8ea1a1`). On entry, `task/30dc129f`'s tip equalled `main`
+  (`ac6001c chore(self-heal): ack ghost no-diff (5d9f8e1a2f8ea1a1) for
+  task a92e5fd0 …`) — i.e. the *previous* self-heal ack itself shipped to
+  main and the re-dispatched fix-task came up post-merge, reproducing the
+  ghost no-diff one level up. Confirmed: `git merge-base main
+  task/a92e5fd0` still resolves to `4e8f17a` (== task tip), and `git
+  rev-parse main` == `ac6001c` is strictly ahead of it. No code action
+  needed; appending this entry is the entire diff so `verify:has-diff`
+  clears on `task/30dc129f`. The latent orchestrator short-circuit
+  (filed in `NO-DIFF-mars-72858ad4.md`, recommendation §) is now also
+  motivated for fix-tasks themselves: when the dispatched fix-task's
+  branch already equals `main`, the recipe should close it `done`
+  instead of re-running self-heal in a loop.
