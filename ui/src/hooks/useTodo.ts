@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import { eventsUrl, fetchTodo } from '../lib/api'
+import { eventsUrl, fetchTodo, type StaleWorktree } from '../lib/api'
 import type { DraftFeature } from '../lib/types'
 
 interface State {
   drafts: DraftFeature[]
+  staleWorktrees: StaleWorktree[]
   error: string | null
   connected: boolean
 }
 
 export const useTodo = (): State => {
   const [drafts, setDrafts] = useState<DraftFeature[]>([])
+  const [staleWorktrees, setStaleWorktrees] = useState<StaleWorktree[]>([])
   const [error, setError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
   const inflight = useRef(false)
@@ -20,6 +22,7 @@ export const useTodo = (): State => {
     try {
       const payload = await fetchTodo()
       setDrafts(payload.drafts)
+      setStaleWorktrees(payload.staleWorktrees ?? [])
       setError(null)
     } catch (err) {
       setError((err as Error).message)
@@ -38,5 +41,5 @@ export const useTodo = (): State => {
     return () => es.close()
   }, [])
 
-  return { drafts, error, connected }
+  return { drafts, staleWorktrees, error, connected }
 }

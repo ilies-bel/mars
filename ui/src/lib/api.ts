@@ -19,8 +19,16 @@ export const fetchTasks = async (): Promise<Task[]> => {
   return json.tasks
 }
 
+export interface StaleWorktree {
+  taskId: string
+  status: string
+  ageHours: number
+  updatedAt: string
+}
+
 export interface TodoPayload {
   drafts: DraftFeature[]
+  staleWorktrees: StaleWorktree[]
 }
 
 export const fetchTodo = async (): Promise<TodoPayload> => {

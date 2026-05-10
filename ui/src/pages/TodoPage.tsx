@@ -1,4 +1,5 @@
 import { useTodo } from '../hooks/useTodo'
+import type { StaleWorktree } from '../lib/api'
 import type { DraftFeature } from '../lib/types'
 
 const shortId = (id: string): string => id.slice(0, 8)
@@ -7,8 +8,8 @@ const draftLabel = (d: DraftFeature): string =>
   d.goal.trim() || '(no goal)'
 
 export const TodoPage = () => {
-  const { drafts, error } = useTodo()
-  const empty = drafts.length === 0
+  const { drafts, staleWorktrees, error } = useTodo()
+  const empty = drafts.length === 0 && staleWorktrees.length === 0
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-bg">
@@ -37,46 +38,78 @@ export const TodoPage = () => {
             start one from scratch.
           </div>
         ) : (
-          <section>
-            <h2 className="mb-2 font-mono text-[10px] uppercase tracking-wider text-iron">
-              Existing drafts ({drafts.length})
-            </h2>
-            <ul className="flex flex-col gap-2">
-              {drafts.map((d) => (
-                <li
-                  key={d.id}
-                  className="rounded border border-iron/30 bg-bg p-3"
-                >
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-mono text-[11px] uppercase text-iron">
-                      {shortId(d.id)}
-                    </span>
-                    <span className="font-mono text-[13px] text-fg">
-                      {draftLabel(d)}
-                    </span>
-                    <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
-                      {d.source}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex gap-3 font-mono text-[10px] uppercase text-iron/80">
-                    <span>
-                      story: {d.story.trim() ? 'set' : 'empty'}
-                    </span>
-                    <span>
-                      technical: {d.technical.trim() ? 'set' : 'empty'}
-                    </span>
-                    <span>acceptance: {d.acceptanceCount}</span>
-                  </div>
-                  <div className="mt-2 font-mono text-[11px] text-iron">
-                    Refine:{' '}
-                    <code className="rounded bg-iron/20 px-1">
-                      /mars:next {d.id}
-                    </code>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
+          <div className="flex flex-col gap-6">
+            {drafts.length > 0 ? (
+              <section>
+                <h2 className="mb-2 font-mono text-[10px] uppercase tracking-wider text-iron">
+                  Existing drafts ({drafts.length})
+                </h2>
+                <ul className="flex flex-col gap-2">
+                  {drafts.map((d) => (
+                    <li
+                      key={d.id}
+                      className="rounded border border-iron/30 bg-bg p-3"
+                    >
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-mono text-[11px] uppercase text-iron">
+                          {shortId(d.id)}
+                        </span>
+                        <span className="font-mono text-[13px] text-fg">
+                          {draftLabel(d)}
+                        </span>
+                        <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
+                          {d.source}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex gap-3 font-mono text-[10px] uppercase text-iron/80">
+                        <span>
+                          story: {d.story.trim() ? 'set' : 'empty'}
+                        </span>
+                        <span>
+                          technical: {d.technical.trim() ? 'set' : 'empty'}
+                        </span>
+                        <span>acceptance: {d.acceptanceCount}</span>
+                      </div>
+                      <div className="mt-2 font-mono text-[11px] text-iron">
+                        Refine:{' '}
+                        <code className="rounded bg-iron/20 px-1">
+                          /mars:next {d.id}
+                        </code>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
+            {staleWorktrees.length > 0 ? (
+              <section>
+                <h2 className="mb-2 font-mono text-[10px] uppercase tracking-wider text-iron">
+                  Stale worktrees ({staleWorktrees.length})
+                </h2>
+                <ul className="flex flex-col gap-2">
+                  {staleWorktrees.map((w: StaleWorktree) => (
+                    <li
+                      key={w.taskId}
+                      className="rounded border border-iron/30 bg-bg p-3"
+                    >
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-mono text-[11px] uppercase text-iron">
+                          {shortId(w.taskId)}
+                        </span>
+                        <span className="font-mono text-[11px] uppercase text-fg">
+                          {w.status}
+                        </span>
+                        <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
+                          {w.ageHours}h
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </div>
         )}
       </main>
 
