@@ -9,6 +9,8 @@ interface IdeasModule {
   getIdea: typeof import('./ideas').getIdea
   resolveIdeaId: typeof import('./ideas').resolveIdeaId
   initIdeas: typeof import('./ideas').initIdeas
+  deleteIdea: typeof import('./ideas').deleteIdea
+  addIdeaUserStory: typeof import('./ideas').addIdeaUserStory
 }
 
 const setupRepo = (): string => {
@@ -118,5 +120,79 @@ describe('resolveIdeaId', () => {
 
     const r = await ideas.resolveIdeaId('xy')
     expect(r).toEqual({ kind: 'unique', id: 'xy' })
+  })
+})
+
+describe('deleteIdea', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('removes an existing idea by exact id', async () => {
+    const ideas = await loadModule(repo)
+    await insertIdea(ideas, 'abcd1234-foo', 'foo')
+
+    const removed = await ideas.deleteIdea('abcd1234-foo')
+    expect(removed).toBe('abcd1234-foo')
+    expect(await ideas.getIdea('abcd1234-foo')).toBeNull()
+  })
+
+  it('removes an idea matched by unique prefix', async () => {
+    const ideas = await loadModule(repo)
+    await insertIdea(ideas, 'abcd1234-foo', 'foo')
+    await insertIdea(ideas, 'wxyz9999-bar', 'bar')
+
+    const removed = await ideas.deleteIdea('abcd1234')
+    expect(removed).toBe('abcd1234-foo')
+    expect(await ideas.getIdea('abcd1234-foo')).toBeNull()
+    expect(await ideas.getIdea('wxyz9999-bar')).not.toBeNull()
+  })
+
+  it('cascades user-story rows', async () => {
+    const ideas = await loadModule(repo)
+    await insertIdea(ideas, 'abcd1234-foo', 'foo')
+    await ideas.addIdeaUserStory('abcd1234-foo', 'as a user, I delete')
+
+    await ideas.deleteIdea('abcd1234-foo')
+
+    const { createClient } = await import('@libsql/client')
+    const c = createClient({
+      url: `file:${process.env.MARS_REPO}/.mars/state.db`,
+    })
+    const r = await c.execute({
+      sql: `SELECT COUNT(*) AS n FROM idea_user_stories WHERE idea_id = ?`,
+      args: ['abcd1234-foo'],
+    })
+    c.close()
+    const n = Number(
+      (r.rows[0] as unknown as { n: number | bigint }).n ?? 0,
+    )
+    expect(n).toBe(0)
+  })
+
+  it('throws on unknown id', async () => {
+    const ideas = await loadModule(repo)
+    await insertIdea(ideas, 'abcd1234-foo', 'foo')
+
+    await expect(ideas.deleteIdea('zzzz9999')).rejects.toThrow(
+      /not found/,
+    )
+  })
+
+  it('throws on ambiguous prefix without deleting anything', async () => {
+    const ideas = await loadModule(repo)
+    await insertIdea(ideas, 'abcd1111-one', 'one')
+    await insertIdea(ideas, 'abcd2222-two', 'two')
+
+    await expect(ideas.deleteIdea('abcd')).rejects.toThrow(/ambiguous/)
+    expect(await ideas.getIdea('abcd1111-one')).not.toBeNull()
+    expect(await ideas.getIdea('abcd2222-two')).not.toBeNull()
   })
 })
