@@ -38,7 +38,7 @@ One concurrent unit inside a Pool; pulls a task from the daemon and runs it to c
 _Avoid_: daemon worker, dispatch slot
 
 **Pool**:
-A named work queue (triage, implement, refine, structured-write) that a Slot is configured to consume tasks from; each Slot belongs to exactly one Pool.
+A bounded concurrency budget per dispatch kind (triage, implement, refine, structured-write); a set of Slots.
 
 **Failure signature**:
 A human-readable technical key identifying a class of orchestrator failure (e.g. `verify:has-diff/no-commits-ahead`, `merge:dirty-target`, `setup:install-failed`); composed from the `failingStep` and a normalized error class so the same root cause produces the same signature across runs. The unit a recovery recipe binds to.
