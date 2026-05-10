@@ -164,7 +164,14 @@ what you already know from:
 - the conversation context that led the user to invoke `/mars:grill`,
 - the project glossary and ADRs you skimmed in Step 1,
 - (when the PRD's intent involves observable system behaviour) a quick
-  read of the relevant code to ground the synthesis.
+  read of the relevant code to ground the synthesis. As you read, **hunt
+  for contradictions** between what the user just told you and what the
+  code actually does today. If you find one — the user said "we cancel
+  partial Orders" but the code only cancels whole Orders — surface it
+  before continuing: *"You said X, but `<file or behaviour>` does Y today.
+  Which is right — is the code wrong, or did I misread your intent?"*
+  Resolve the contradiction before writing the PRD; otherwise the PRD
+  encodes a phantom requirement.
 
 …and **draft the PRD directly** by writing each field via `mars idea set`.
 
@@ -208,6 +215,40 @@ what you already know from:
 If you find yourself writing implementation language, stop and reframe in
 terms of *what the user observes* or *what success looks like*.
 
+## Stress-test with concrete scenarios
+
+Before you accept the synthesised PRD, invent **1–3 concrete scenarios**
+that probe the boundaries between the domain concepts the PRD mentions.
+Pick edge cases, not the happy path — the happy path is already in the
+user stories.
+
+Examples of scenario-shaped probes:
+
+- A relationship probe: *"A draft idea is promoted while a slicer run is
+  already in flight for it — which wins?"*
+- A boundary probe: *"The operator dismisses a stale-worktree alert,
+  then the same worktree becomes stale again two days later — is that
+  one alert or two?"*
+- A vocabulary probe: *"If the user can both 'cancel' and 'reject' an
+  idea, what's the operational difference between them?"*
+
+For each scenario, try to answer it using only the PRD's current
+vocabulary. The scenario serves three purposes:
+
+1. **Surface fuzzy terms.** If you can't answer the scenario without
+   inventing a new word or overloading an existing one, that's a
+   glossary gap — feed it into Step 4.
+2. **Surface user-story gaps.** If the scenario is realistic but the
+   user stories don't cover it, add a story (or fold it into `notes` if
+   it's deferrable).
+3. **Surface decisions worth recording.** If the scenario forces a
+   non-obvious choice, that's an ADR candidate — feed it into Step 6.
+
+Don't run scenarios past the user as a quiz. Run them in your own head,
+fold the *outcomes* (term sharpened, story added, ADR proposed) into the
+relevant downstream steps, and only escalate a scenario to the batched
+question if it surfaces a real ambiguity you genuinely can't resolve.
+
 ## When to ask the user
 
 Synthesise first. Then, if a section is genuinely empty after your best
@@ -232,7 +273,7 @@ DB.
 
 # Step 4 — Curate the domain language
 
-Three behaviours run in parallel with PRD synthesis:
+Five behaviours run in parallel with PRD synthesis:
 
 - **Conflict with an existing term.** If the PRD uses a glossary term to
   mean something different from its current definition, call it out:
@@ -252,6 +293,27 @@ Three behaviours run in parallel with PRD synthesis:
   for a one-sentence definition and persist with `mars glossary set`.
   Skip generic terms (timeout, retry, error) — the glossary is for
   project-specific concepts.
+- **Code contradicts a glossary term.** If the code-grounding read in
+  Step 3 turned up behaviour that contradicts an existing glossary
+  definition (the glossary says **Worktree** is "a per-task git
+  worktree under .mars/worktrees", but the code now also uses worktrees
+  under `.worktrees/` for something else), surface it:
+  > "Your glossary says **Worktree** is X, but the code now also does Y
+  > under that name. Should we tighten the definition, or is Y a new
+  > concept that needs its own term?"
+  Persist the resolution with `mars glossary set` (and a fresh entry for
+  the new concept if the user split them).
+- **Promote a sharper word for an existing term.** If during synthesis
+  you find a clearly better label for an entry already in the glossary
+  (the user keeps saying "draft" while the entry is filed under "idea",
+  and "draft" is the more precise word in this PRD's context), propose
+  the rename in one sentence:
+  > "You keep saying 'draft' where the glossary has 'idea'. **Draft**
+  > reads sharper here. Rename the entry?"
+  If the user agrees, `mars glossary set` the new term with the same
+  definition, then `mars glossary remove` the old one. Add the old term
+  as `--avoid` on the new entry. Don't promote silently — the rename is
+  itself a small decision and the user owns the vocabulary.
 
 Definitions go in via
 `mars glossary set "<term>" "<definition>" [--avoid …]`. One sentence;
