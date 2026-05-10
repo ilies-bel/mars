@@ -926,3 +926,49 @@ export const mergeBranch = async ({
     await release()
   }
 }
+
+export const isBranchMergedIntoMain = async (
+  branch: string,
+  repoRoot: string,
+): Promise<boolean> => {
+  try {
+    await exec('git', ['merge-base', '--is-ancestor', branch, 'main'], {
+      cwd: repoRoot,
+    })
+  } catch (err: unknown) {
+    const code = (err as { code?: number }).code
+    if (code === 1) return false
+    return false
+  }
+  try {
+    const { stdout } = await exec(
+      'git',
+      ['rev-list', '--count', `${branch}..main`],
+      { cwd: repoRoot },
+    )
+    const mainAhead = Number.parseInt(stdout.trim(), 10)
+    if (!Number.isFinite(mainAhead)) return false
+    return mainAhead === 0
+  } catch {
+    return false
+  }
+}
+
+export const isZeroCommitBranch = async (
+  branch: string,
+  repoRoot: string,
+): Promise<boolean> => {
+  try {
+    const { stdout: tip } = await exec('git', ['rev-parse', branch], {
+      cwd: repoRoot,
+    })
+    const { stdout: base } = await exec(
+      'git',
+      ['merge-base', branch, 'main'],
+      { cwd: repoRoot },
+    )
+    return tip.trim() === base.trim()
+  } catch {
+    return false
+  }
+}

@@ -54,10 +54,10 @@ Top-level files define how your Mastra project is configured, built, and connect
   so `MARS_REFLECT_DISABLED=1` stays a single, comprehensive disable
 - File inbox items via `mars inbox raise --from -` (JSON on stdin) instead
   of writing one-shot `.ts` scripts under `orchestrator/scripts/`. The CLI
-  verb is the supported entry point for dispatched agents, sweeper
-  recipes, and self-heal investigations. Leaving an uncommitted
-  `raise-*.ts` in a worktree dirties the merge target and has previously
-  blocked unrelated tasks from merging.
+  verb is the supported entry point for dispatched agents and self-heal
+  investigations. Leaving an uncommitted `raise-*.ts` in a worktree
+  dirties the merge target and has previously blocked unrelated tasks
+  from merging.
 
 ### Daemon worker pool
 

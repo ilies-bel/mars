@@ -7,9 +7,9 @@ import type { Database } from 'better-sqlite3';
  * multiple writer processes can append while the daemon tails the outbox
  * concurrently.
  *
- * TODO(retention): events grow unbounded. A future sweeper should delete
- * rows below `MIN(cursor)` once we track per-subscriber cursors, or apply
- * an age cap (e.g. `DELETE FROM events WHERE ts < unixepoch() - 7*86400`).
+ * TODO(retention): events grow unbounded. A future retention pass should
+ * delete rows below `MIN(cursor)` once we track per-subscriber cursors, or
+ * apply an age cap (e.g. `DELETE FROM events WHERE ts < unixepoch() - 7*86400`).
  */
 export function applySchema(db: Database): void {
   db.pragma('journal_mode = WAL');
