@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process'
 import { getRecipe, recipes } from '../fix-recipes'
 
 describe('fix-recipes', () => {
-  describe('dirty_merge_target recipe', () => {
+  describe('merge:preflight/uncommitted-changes recipe', () => {
     const ctx = {
       targetPath: '/tmp/main-checkout',
       statusOutput: ' M src/foo.ts\n?? new-file.txt\n',
@@ -14,45 +14,45 @@ describe('fix-recipes', () => {
     }
 
     it('produces stable title for stable input', () => {
-      const recipe = getRecipe('dirty_merge_target')
+      const recipe = getRecipe('merge:preflight/uncommitted-changes')
       expect(recipe.title(ctx)).toBe(
         'Resolve dirty changes blocking merge into main',
       )
     })
 
     it('produces stable prompt for stable input (snapshot)', () => {
-      const recipe = getRecipe('dirty_merge_target')
+      const recipe = getRecipe('merge:preflight/uncommitted-changes')
       const prompt = recipe.buildPrompt(ctx)
       expect(prompt).toMatchInlineSnapshot(`
-"The merge target at /tmp/main-checkout appeared dirty when merge pre-flight ran, blocking a fast-forward merge into main. By the time you read this another task may already have cleaned it up.
+        "The merge target at /tmp/main-checkout appeared dirty when merge pre-flight ran, blocking a fast-forward merge into main. By the time you read this another task may already have cleaned it up.
 
-STEP 1 — re-check first. Run \`git -C /tmp/main-checkout status --porcelain\` right now.
- - If the output is empty, the tree is already clean: do NOT touch any file, do NOT commit, do NOT emit an inbox notification. Exit successfully — the original task can be retried as-is.
- - If the output is non-empty, proceed to STEP 2 with the CURRENT status, not the snapshot below.
+        STEP 1 — re-check first. Run \`git -C /tmp/main-checkout status --porcelain\` right now.
+         - If the output is empty, the tree is already clean: do NOT touch any file, do NOT commit, do NOT emit an inbox notification. Exit successfully — the original task can be retried as-is.
+         - If the output is non-empty, proceed to STEP 2 with the CURRENT status, not the snapshot below.
 
-STEP 2 — only if STEP 1 still shows a dirty tree. Inspect each modified or untracked file:
- (a) commit files that represent intentional work with a meaningful commit message that describes the actual changes;
- (b) discard files that are clearly transient (build artifacts, .DS_Store, editor swap files, anything in .gitignore that slipped in via \`git add -f\` etc.);
- (c) for anything ambiguous, do NOT guess — emit a high-priority inbox notification listing the file(s) and what's unclear, and exit.
+        STEP 2 — only if STEP 1 still shows a dirty tree. Inspect each modified or untracked file:
+         (a) commit files that represent intentional work with a meaningful commit message that describes the actual changes;
+         (b) discard files that are clearly transient (build artifacts, .DS_Store, editor swap files, anything in .gitignore that slipped in via \`git add -f\` etc.);
+         (c) for anything ambiguous, do NOT guess — emit a high-priority inbox notification listing the file(s) and what's unclear, and exit.
 
-Do not push. Save your work.
+        Do not push. Save your work.
 
-Merge target path: /tmp/main-checkout
-Merge target branch: main
+        Merge target path: /tmp/main-checkout
+        Merge target branch: main
 
-Original \`git status --porcelain\` output captured at failure time (may be stale — re-check before acting):
-\`\`\`
- M src/foo.ts
-?? new-file.txt
+        Original \`git status --porcelain\` output captured at failure time (may be stale — re-check before acting):
+        \`\`\`
+         M src/foo.ts
+        ?? new-file.txt
 
-\`\`\`
+        \`\`\`
 
-If you need to file an inbox notification, create a row in .mars/queue.db inbox_items table with priority='high' and a clear message describing the ambiguous file(s)."
-`)
+        If you need to file an inbox notification, use \`mars inbox raise --from -\` with priority='high' and a clear message describing the ambiguous file(s)."
+      `)
     })
 
     it('includes targetPath, status output and verbatim instructions', () => {
-      const recipe = getRecipe('dirty_merge_target')
+      const recipe = getRecipe('merge:preflight/uncommitted-changes')
       const prompt = recipe.buildPrompt(ctx)
       expect(prompt).toContain(ctx.targetPath)
       expect(prompt).toContain(ctx.statusOutput.trim())
@@ -67,7 +67,7 @@ If you need to file an inbox notification, create a row in .mars/queue.db inbox_
     })
 
     it('instructs the agent to re-check git status first and no-op if clean', () => {
-      const recipe = getRecipe('dirty_merge_target')
+      const recipe = getRecipe('merge:preflight/uncommitted-changes')
       const prompt = recipe.buildPrompt(ctx)
       expect(prompt).toContain(
         `git -C ${ctx.targetPath} status --porcelain`,
@@ -81,7 +81,7 @@ If you need to file an inbox notification, create a row in .mars/queue.db inbox_
     })
   })
 
-  describe('worktree_install_failed recipe', () => {
+  describe('setup:install/install-frozen-lockfile recipe', () => {
     const ctx = {
       targetPath: '/tmp/worktree/orchestrator',
       statusOutput: 'ERR_PNPM_OUTDATED_LOCKFILE: Cannot install with frozen lockfile\n',
@@ -89,14 +89,14 @@ If you need to file an inbox notification, create a row in .mars/queue.db inbox_
     }
 
     it('produces a stable title', () => {
-      const recipe = getRecipe('worktree_install_failed')
+      const recipe = getRecipe('setup:install/install-frozen-lockfile')
       expect(recipe.title(ctx)).toBe(
         'Resolve dependency install failure in worktree setup',
       )
     })
 
     it('embeds the failing path, branch, and install error into the prompt', () => {
-      const recipe = getRecipe('worktree_install_failed')
+      const recipe = getRecipe('setup:install/install-frozen-lockfile')
       const prompt = recipe.buildPrompt(ctx)
       expect(prompt).toContain(ctx.targetPath)
       expect(prompt).toContain(ctx.targetBranch)
@@ -115,9 +115,9 @@ If you need to file an inbox notification, create a row in .mars/queue.db inbox_
     })
 
     it('returns the registered recipe by signature', () => {
-      const recipe = getRecipe('dirty_merge_target')
-      expect(recipe.signature).toBe('dirty_merge_target')
-      expect(recipes.dirty_merge_target).toBe(recipe)
+      const recipe = getRecipe('merge:preflight/uncommitted-changes')
+      expect(recipe.signature).toBe('merge:preflight/uncommitted-changes')
+      expect(recipes['merge:preflight/uncommitted-changes']).toBe(recipe)
     })
   })
 })
@@ -154,7 +154,7 @@ const loadModules = async (
   return { q, ft }
 }
 
-describe('handleTaskFailureWithFixTask with recipeSignature', () => {
+describe('handleTaskFailureWithFixTask routes to a registered recipe by signature', () => {
   let repo: string
 
   beforeEach(() => {
@@ -167,16 +167,16 @@ describe('handleTaskFailureWithFixTask with recipeSignature', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('dirty_merge_target signature creates a fix-task using the canned recipe', async () => {
+  it('an error matching the merge:preflight/uncommitted-changes classifier produces a fix-task using the canned recipe', async () => {
     const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
     const statusOutput = ' M src/foo.ts\n?? leftover.tmp\n'
     const result = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'merge:preflight',
-      errorOutput: statusOutput,
+      // Classifier-friendly lead line; raw porcelain via recipeContext.
+      errorOutput: `merge target ${resolve(repo)} has uncommitted changes blocking fast-forward\n${statusOutput}`,
       branch: 'task/abc',
-      recipeSignature: 'dirty_merge_target',
       recipeContext: {
         targetPath: resolve(repo),
         statusOutput,
@@ -184,7 +184,9 @@ describe('handleTaskFailureWithFixTask with recipeSignature', () => {
       },
     })
     expect(result.outcome).toBe('blocked')
-    expect(result.failureSignature).toBe('dirty_merge_target')
+    expect(result.failureSignature).toBe(
+      'merge:preflight/uncommitted-changes',
+    )
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')

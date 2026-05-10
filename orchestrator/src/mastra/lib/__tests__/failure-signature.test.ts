@@ -1,46 +1,115 @@
 import { describe, expect, it } from 'vitest'
 import {
+  classifyError,
   computeFailureSignature,
+  errorClassRules,
   firstNonBlankLine,
+  isUnclassifiedSignature,
+  UNCLASSIFIED_ERROR_CLASS,
 } from '../failure-signature'
 
 describe('computeFailureSignature', () => {
+  it('produces stable technical-key signatures of shape <failingStep>/<error-class>', () => {
+    const sig = computeFailureSignature(
+      'verify:has-diff',
+      'no commits ahead of integration branch — task did not produce any changes',
+    )
+    expect(sig).toBe('verify:has-diff/no-commits-ahead')
+  })
+
+  it('matches the documented signatures from the cascade incident', () => {
+    expect(
+      computeFailureSignature(
+        'verify:has-diff',
+        'no commits ahead of integration branch',
+      ),
+    ).toBe('verify:has-diff/no-commits-ahead')
+    expect(
+      computeFailureSignature(
+        'merge:preflight',
+        'merge target /tmp/foo has uncommitted changes that block a fast-forward',
+      ),
+    ).toBe('merge:preflight/uncommitted-changes')
+  })
+
+  it('returns the unclassified slug when no rule matches', () => {
+    const sig = computeFailureSignature(
+      'verify:test',
+      'something nobody has written a rule for yet',
+    )
+    expect(sig).toBe(`verify:test/${UNCLASSIFIED_ERROR_CLASS}`)
+    expect(isUnclassifiedSignature(sig)).toBe(true)
+  })
+
   it('produces identical signatures for identical inputs', () => {
-    const a = computeFailureSignature('verify', 'TS2304: Cannot find name foo')
-    const b = computeFailureSignature('verify', 'TS2304: Cannot find name foo')
+    const a = computeFailureSignature(
+      'verify:typecheck',
+      'TS2304: Cannot find name foo',
+    )
+    const b = computeFailureSignature(
+      'verify:typecheck',
+      'TS2304: Cannot find name foo',
+    )
     expect(a).toBe(b)
   })
 
-  it('produces different signatures when first error lines differ', () => {
-    const a = computeFailureSignature('verify', 'TS2304: Cannot find name foo')
-    const b = computeFailureSignature('verify', 'TS2305: Cannot find name bar')
-    expect(a).not.toBe(b)
+  it('different first-line errors map to different classes', () => {
+    expect(
+      computeFailureSignature('verify:typecheck', 'TS2304: cannot find name'),
+    ).toBe('verify:typecheck/typecheck-cannot-find-name')
+    expect(
+      computeFailureSignature(
+        'verify:typecheck',
+        'TS2307: cannot find module',
+      ),
+    ).toBe('verify:typecheck/typecheck-cannot-find-module')
   })
 
-  it('ignores ANSI escape codes', () => {
-    const plain = computeFailureSignature('verify', 'error: boom')
+  it('ignores ANSI escape codes when matching rules', () => {
+    const plain = computeFailureSignature(
+      'verify:has-diff',
+      'no commits ahead of integration branch',
+    )
     const ansi = computeFailureSignature(
-      'verify',
-      '\x1B[31merror\x1B[0m: boom',
+      'verify:has-diff',
+      '\x1B[31mno commits ahead of integration branch\x1B[0m',
     )
     expect(plain).toBe(ansi)
   })
 
-  it('ignores trailing whitespace and leading blank lines', () => {
-    const a = computeFailureSignature('verify', 'error: boom')
-    const b = computeFailureSignature('verify', '\n\n   error: boom   \n')
-    expect(a).toBe(b)
-  })
-
-  it('produces different signatures when failing step differs', () => {
-    const a = computeFailureSignature('verify', 'error: boom')
-    const b = computeFailureSignature('merge', 'error: boom')
+  it('different failing steps produce different signatures even for the same error class', () => {
+    const a = computeFailureSignature('verify:test', 'mystery boom')
+    const b = computeFailureSignature('merge:crashed', 'mystery boom')
     expect(a).not.toBe(b)
   })
+})
 
-  it('returns 16-character hex signatures', () => {
-    const sig = computeFailureSignature('verify', 'error: boom')
-    expect(sig).toMatch(/^[0-9a-f]{16}$/)
+describe('classifyError', () => {
+  it('returns the rule errorClass on first match (rule order wins)', () => {
+    expect(classifyError('no commits ahead of integration branch')).toBe(
+      'no-commits-ahead',
+    )
+  })
+
+  it('returns unclassified for empty input', () => {
+    expect(classifyError('')).toBe(UNCLASSIFIED_ERROR_CLASS)
+    expect(classifyError('   \n\n  ')).toBe(UNCLASSIFIED_ERROR_CLASS)
+  })
+})
+
+describe('errorClassRules registry', () => {
+  it('every rule slug is kebab-case with no whitespace', () => {
+    for (const rule of errorClassRules) {
+      expect(rule.errorClass).toMatch(/^[a-z][a-z0-9-]*$/)
+    }
+  })
+
+  it('errorClass slugs are unique', () => {
+    const seen = new Set<string>()
+    for (const rule of errorClassRules) {
+      expect(seen.has(rule.errorClass)).toBe(false)
+      seen.add(rule.errorClass)
+    }
   })
 })
 

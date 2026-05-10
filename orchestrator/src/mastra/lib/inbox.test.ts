@@ -137,6 +137,38 @@ describe('inbox', () => {
     expect(all).toHaveLength(3)
   })
 
+  it('listInboxItems filters by kind across any state', async () => {
+    const inbox = await loadModule(repo)
+    await inbox.raiseInboxItem(
+      baseItem({ kind: 'recovery-failed', signature: 'rf-1' }),
+    )
+    await inbox.raiseInboxItem(
+      baseItem({ kind: 'recovery-failed', signature: 'rf-2' }),
+    )
+    await inbox.raiseInboxItem(
+      baseItem({ kind: 'no-recipe', signature: 'nr-1' }),
+    )
+
+    const recoveryFailed = await inbox.listInboxItems('open', {
+      kind: 'recovery-failed',
+    })
+    expect(recoveryFailed).toHaveLength(2)
+    for (const item of recoveryFailed) {
+      expect(item.kind).toBe('recovery-failed')
+    }
+
+    const noRecipe = await inbox.listInboxItems('open', { kind: 'no-recipe' })
+    expect(noRecipe).toHaveLength(1)
+    expect(noRecipe[0].kind).toBe('no-recipe')
+
+    const noMatch = await inbox.listInboxItems('open', { kind: 'nope' })
+    expect(noMatch).toHaveLength(0)
+
+    // Combining state filter and kind filter still narrows correctly.
+    const openAll = await inbox.listInboxItems('open')
+    expect(openAll).toHaveLength(3)
+  })
+
   it('setInboxState transitions to resolved and persists resolution + note + rootCause', async () => {
     const inbox = await loadModule(repo)
     const id = await inbox.raiseInboxItem(baseItem())

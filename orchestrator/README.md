@@ -215,6 +215,43 @@ timeout is 10 minutes — these analyses can be large. Setting
 - Merge conflicts vcs-supervisor cannot reconcile → `git merge --abort`, task `failed`, worktree retained.
 - Clean merge (or supervised resolution) → worktree removed, task `done`.
 
+### Recovery, recipes, and escalation
+
+When a normal task fails, the orchestrator computes a **failure
+signature** — a human-readable technical key of shape
+`<failingStep>/<error-class>` (e.g. `verify:has-diff/no-commits-ahead`,
+`merge:preflight/uncommitted-changes`). The mapping from raw error to
+class lives in `errorClassRules` in
+`src/mastra/lib/failure-signature.ts`.
+
+The handler then takes one of three paths (see ADR
+`docs/adr/0002-recipe-per-failure-signature.md` for the contract):
+
+1. **Recipe registered** — a recovery task is enqueued from the recipe
+   in `src/mastra/lib/fix-recipes.ts`. The original task becomes
+   `blocked`. If the recovery succeeds, the original is re-queued via
+   the normal blocker-resolution path.
+2. **Recovery itself fails** — the orchestrator does NOT enqueue
+   another recovery (recovery has retry budget 0). The recovery is
+   marked `failed`, the original stays `blocked`, and an inbox item of
+   `kind='recovery-failed'` is raised. The human resolves via
+   `mars retry <recovery-id>`, `mars unblock <origin-id>`, or fixing
+   the upstream cause.
+3. **No recipe for the signature** — the handler does NOT fall back to
+   a generic prompt. The original is parked in `blocked`, an
+   **Investigator** task is queued (`author='agent:investigator'`)
+   whose sole job is to propose a draft recipe in
+   `fix-recipes.ts` (and a classifier rule in `failure-signature.ts`
+   if the signature ends in `/unclassified`), and an inbox item of
+   `kind='no-recipe'` is raised.
+
+To browse outstanding escalations:
+
+```bash
+mars inbox list --kind recovery-failed
+mars inbox list --kind no-recipe
+```
+
 ## Inbox
 
 Cross-cutting findings that don't belong to a single task — daemon

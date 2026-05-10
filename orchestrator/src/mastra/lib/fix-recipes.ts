@@ -1,17 +1,33 @@
+/**
+ * Recovery recipes are keyed by failure signature (the technical-key form
+ * produced by `computeFailureSignature` — e.g.
+ * `merge:preflight/uncommitted-changes`). Each recipe owns the prompt the
+ * orchestrator hands to the recovery agent for that exact signature.
+ *
+ * See docs/adr/0002-recipe-per-failure-signature.md for the contract:
+ * a signature without a registered recipe does NOT fall back to a generic
+ * prompt — it raises a `no-recipe` inbox item and dispatches the
+ * Investigator agent.
+ */
+
 export interface FixRecipeContext {
+  /** Absolute path of the artifact involved in the failure (worktree, merge target, etc.). */
   targetPath: string
+  /** Raw context output captured at failure time (e.g. `git status --porcelain`, install error). */
   statusOutput: string
+  /** Branch the failure occurred on (or the merge target branch, depending on recipe). */
   targetBranch: string
 }
 
 export interface FixRecipe {
+  /** The failure signature this recipe handles (technical key). */
   signature: string
   title: (ctx: FixRecipeContext) => string
   buildPrompt: (ctx: FixRecipeContext) => string
 }
 
 const dirtyMergeTargetRecipe: FixRecipe = {
-  signature: 'dirty_merge_target',
+  signature: 'merge:preflight/uncommitted-changes',
   title: (ctx) =>
     `Resolve dirty changes blocking merge into ${ctx.targetBranch}`,
   buildPrompt: (ctx) => {
@@ -38,13 +54,13 @@ const dirtyMergeTargetRecipe: FixRecipe = {
       status,
       '```',
       '',
-      `If you need to file an inbox notification, create a row in .mars/queue.db inbox_items table with priority='high' and a clear message describing the ambiguous file(s).`,
+      `If you need to file an inbox notification, use \`mars inbox raise --from -\` with priority='high' and a clear message describing the ambiguous file(s).`,
     ].join('\n')
   },
 }
 
-const worktreeInstallFailedRecipe: FixRecipe = {
-  signature: 'worktree_install_failed',
+const worktreeInstallFrozenLockfileRecipe: FixRecipe = {
+  signature: 'setup:install/install-frozen-lockfile',
   title: () => `Resolve dependency install failure in worktree setup`,
   buildPrompt: (ctx) => {
     const status = ctx.statusOutput.length > 0 ? ctx.statusOutput : '(empty)'
@@ -73,10 +89,45 @@ const worktreeInstallFailedRecipe: FixRecipe = {
   },
 }
 
-export const recipes: Record<string, FixRecipe> = {
-  [dirtyMergeTargetRecipe.signature]: dirtyMergeTargetRecipe,
-  [worktreeInstallFailedRecipe.signature]: worktreeInstallFailedRecipe,
+const noCommitsAheadRecipe: FixRecipe = {
+  signature: 'verify:has-diff/no-commits-ahead',
+  title: (ctx) =>
+    `Re-do the original task and commit your work (branch ${ctx.targetBranch})`,
+  buildPrompt: (ctx) => {
+    return [
+      `The previous attempt on branch ${ctx.targetBranch} ended with zero commits ahead of the integration branch — i.e., the agent did the analysis but exited without staging or committing. Verify cannot land work that doesn't exist on the branch.`,
+      '',
+      `STEP 1 — sanity-check first. Run \`git -C ${ctx.targetPath} log ${ctx.targetBranch} ^${ctx.targetBranch}~ 2>/dev/null || git -C ${ctx.targetPath} log -n 5 --oneline ${ctx.targetBranch}\` to confirm the branch tip really is at the integration branch (no hidden amends).`,
+      ` - If commits are present, this recovery is a false positive: do NOT modify files, exit successfully so the original task is retried as-is.`,
+      ` - If the branch is genuinely empty, proceed to STEP 2.`,
+      '',
+      `STEP 2 — RE-DO the original task on this branch. Read the task's prompt from .mars/queue.db (or from the original task row referenced in fix_for_task_id). Apply the changes the original task asked for. **Stage and commit** every file you intend to land, with a clear commit message. Do NOT skip the commit step — that is the entire reason this recovery exists.`,
+      '',
+      `Branch: ${ctx.targetBranch}`,
+      `Worktree: ${ctx.targetPath}`,
+      '',
+      `Save your work. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
 }
+
+const recipeList: readonly FixRecipe[] = [
+  dirtyMergeTargetRecipe,
+  worktreeInstallFrozenLockfileRecipe,
+  noCommitsAheadRecipe,
+]
+
+/**
+ * Registry keyed by the technical-key signature. The empty registry is
+ * legal — the failure handler will treat every observed signature as
+ * unrecognized and dispatch the Investigator.
+ */
+export const recipes: Record<string, FixRecipe> = Object.fromEntries(
+  recipeList.map((r) => [r.signature, r]),
+)
+
+export const hasRecipe = (signature: string): boolean =>
+  Object.prototype.hasOwnProperty.call(recipes, signature)
 
 export const getRecipe = (signature: string): FixRecipe => {
   const recipe = recipes[signature]
@@ -85,3 +136,5 @@ export const getRecipe = (signature: string): FixRecipe => {
   }
   return recipe
 }
+
+export const listRecipes = (): readonly FixRecipe[] => recipeList
