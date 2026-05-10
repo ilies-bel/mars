@@ -4,6 +4,7 @@ import { extname, join, normalize, resolve } from 'node:path'
 import { StateDb, TaskDb } from './db.ts'
 import { resolveRepo } from './repo.ts'
 import { SseHub } from './sse.ts'
+import { listStaleWorktrees } from './staleWorktrees.ts'
 import { watchQueue } from './watch.ts'
 
 interface CliArgs {
@@ -115,7 +116,8 @@ export const startServer = async (args: CliArgs): Promise<void> => {
       try {
         const ideasExist = await stateDb.ideasTableExists()
         const drafts = ideasExist ? await stateDb.listDraftFeatures() : []
-        sendJson(res, 200, { drafts })
+        const staleWorktrees = await listStaleWorktrees(db, ctx.repoRoot)
+        sendJson(res, 200, { drafts, staleWorktrees })
       } catch (err) {
         sendJson(res, 500, { error: (err as Error).message })
       }
