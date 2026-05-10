@@ -1,6 +1,6 @@
 ---
 name: mars:grill
-description: Shape an under-specified Mars draft idea into a well-specified PRD by synthesising what you already know from the conversation, then validating against the project glossary and ADRs. Use when the user says "grill this", "shape this idea", or invokes `/mars:grill`.
+description: Shape an under-specified Mars draft idea into a well-specified PRD by relentlessly interviewing the user one question at a time, validating against the project glossary and ADRs, and persisting decisions to the DB as they crystallise. Use when the user says "grill this", "shape this idea", or invokes `/mars:grill`.
 ---
 
 # Mars: shape a draft idea into a PRD
@@ -14,18 +14,35 @@ This skill produces a **PRD** — a high-level statement of *intent* and
 talk about code, file paths, modules, or implementation. Implementation
 decisions live on the per-slice tasks the slicer produces from the PRD.
 
-Two things happen in this skill, in parallel:
+## The one rule
 
-1. **Synthesise the PRD.** Do **not** interview the user one question at a
-   time. Take what you already know from the conversation context and the
-   codebase's existing CONTEXT.md / ADRs, write a draft PRD into the
-   idea's fields, and **show it to the user**. Ask only when something
-   material is genuinely missing — and even then, ask in batched form
-   (one short list at the end), never as a slow Q&A loop.
-2. **Curate the domain language.** When a term is resolved, persist it
-   via `mars glossary`. When a hard-to-reverse architectural decision
-   crystallises, capture it via `mars adr add`. These run inline as the
-   PRD takes shape, not as a separate phase.
+**Interview the user relentlessly about every aspect of the PRD until you
+reach a shared understanding.** Walk down each branch of the design tree,
+resolving dependencies between decisions one-by-one. For every question,
+state your **recommended answer** with a one-sentence rationale, so the
+user can confirm or redirect cheaply rather than answer from scratch.
+
+**Ask the questions one at a time, waiting for the user's reply before
+asking the next.** Do not batch questions. Do not synthesise an entire PRD
+up front and present it for review — that produces a PRD shaped by your
+reading of the conversation, not by the user's actual intent. The whole
+point of grilling is that the user steers every branch.
+
+If a question can be answered by exploring the codebase, **explore the
+codebase instead** of asking the user. Reserve questions for things only
+the user knows: their intent, their priorities, the trade-offs they want
+to make. Don't ask the user for facts the repo already encodes.
+
+Two things happen in parallel with the interview:
+
+1. **Persist decisions to the DB as soon as they're made.** When the user
+   confirms (or corrects) your recommendation for a field, write it via
+   the corresponding `mars idea set` / `add-user-story` verb immediately.
+   Don't accumulate state in your head and flush at the end.
+2. **Curate the domain language inline.** When a term is resolved, persist
+   it via `mars glossary`. When a hard-to-reverse architectural decision
+   crystallises, capture it via `mars adr add`. Both happen the moment
+   the decision is made, not as a separate phase.
 
 This skill is **DB-only**. The source of truth is the `ideas` table in
 `.mars/state.db`. Write through the `mars idea` verbs listed below; do
@@ -97,32 +114,33 @@ mars idea show <id>
   drafts and stop.
 - No hit → tell the user the id doesn't resolve and stop.
 
-# Step 1 — Domain awareness
+# Step 1 — Domain awareness (silent)
 
-Now that the target idea is locked in, take a quick pass over the
-project's existing domain language so you can synthesise the PRD inside
-that vocabulary rather than parallel to it.
+Before the interview begins, take a quick read-only pass so you can grill
+inside the project's existing vocabulary rather than parallel to it.
 
-1. Run `mars glossary list`. If terms exist, you have a starting glossary.
-   If `CONTEXT.md` is empty or missing, treat the project as "no glossary
-   yet" — you'll create entries lazily as you write the PRD.
-2. Skim recent ADRs: `mars adr list`, then `mars adr show <NNNN>` for any
-   that look topically related to the idea's title. ADRs are constraints;
-   the PRD must not silently contradict them.
+1. Run `mars glossary list`. Hold the terms in working memory; you'll use
+   them in Step 3 to challenge the user when their wording conflicts with
+   an existing definition.
+2. Run `mars adr list`, then `mars adr show <NNNN>` for any ADR whose
+   title looks topically related to the idea. ADRs are constraints — if
+   the user's intent contradicts one, surface it during the interview.
+3. If the idea's title hints at observable system behaviour, do a quick
+   targeted code read of the relevant module so you can cross-reference
+   user claims against what the code actually does.
 
-Do not dump the glossary or ADRs back at the user. Hold them in your
-working context and use them in Step 3 (synthesise inside the existing
-vocabulary; flag conflicts with ADRs).
+Do **not** dump the glossary or ADRs back at the user. Do not announce
+that you've done this step. Just internalise it and let it shape your
+questions.
 
-# Step 2 — Architectural vocabulary
+# Step 2 — Architectural vocabulary (shaper-only)
 
 `CONTEXT.md` covers **domain** terms (Worktree, Orchestrator, Idea, Task).
 When the conversation drifts into **architecture** ("should this be a
 service?", "where's the boundary?", "this is too coupled"), use the fixed
-vocabulary below instead of inventing or substituting words. This
-vocabulary is shaper-only — it never reaches dispatched workers. Its
-purpose is to keep your design conversations and the PRDs you produce
-internally consistent.
+vocabulary below in your own reasoning instead of inventing words. This
+vocabulary is shaper-only — it never reaches dispatched workers and never
+goes into the PRD itself.
 
 - **Module** — anything with an interface and an implementation (function,
   class, package, slice). Scale-agnostic. _Avoid_: unit, component, service.
@@ -154,26 +172,58 @@ Use this vocabulary in your own reasoning. Do **not** add these terms to
 architectural vocabulary. And do **not** put architectural words into the
 PRD itself — the PRD is intent and behaviour, not implementation.
 
-# Step 3 — Synthesise the PRD
+# Step 3 — The interview
 
-This is the heart of the skill, and it differs sharply from a Q&A
-interview. **Do not interview the user one question at a time.** Take
-what you already know from:
+This is the heart of the skill. Walk down the design tree one branch at a
+time. For each branch, ask **one question** with your **recommended
+answer** and a one-sentence rationale, then wait for the user's reply
+before moving on.
 
-- the existing idea row (`mars idea show <id>`),
-- the conversation context that led the user to invoke `/mars:grill`,
-- the project glossary and ADRs you skimmed in Step 1,
-- (when the PRD's intent involves observable system behaviour) a quick
-  read of the relevant code to ground the synthesis. As you read, **hunt
-  for contradictions** between what the user just told you and what the
-  code actually does today. If you find one — the user said "we cancel
-  partial Orders" but the code only cancels whole Orders — surface it
-  before continuing: *"You said X, but `<file or behaviour>` does Y today.
-  Which is right — is the code wrong, or did I misread your intent?"*
-  Resolve the contradiction before writing the PRD; otherwise the PRD
-  encodes a phantom requirement.
+## Question shape
 
-…and **draft the PRD directly** by writing each field via `mars idea set`.
+Every question follows the same shape:
+
+> *"\<one-sentence question\>. My recommendation: \<answer\> — \<one-sentence
+> rationale\>. Confirm, redirect, or tell me you don't know."*
+
+Use `AskUserQuestion` when the answer space is small and enumerable
+(2–4 distinct options). Use a plain prose question when the answer is
+free-form. Either way, lead with your recommendation. The user should be
+able to type "yes" most of the time; making them author every answer
+from scratch wastes their time.
+
+## Branches to walk
+
+There is no rigid script — follow the design tree wherever the user's
+answers take you — but most PRDs need at least these branches resolved.
+**Work top-down**: title before problem, problem before solution,
+solution before user stories. Each later branch depends on the earlier
+ones.
+
+1. **Title.** Is the idea row's current title a real verb-object-outcome
+   sentence, or a thin noun phrase? If thin, propose a sharper one.
+2. **Problem.** What hurts today, from the user's perspective? Probe
+   until you can write one paragraph in *user-observable* terms — not
+   "we should refactor X", but "the operator can't tell which X are Y,
+   so Z."
+3. **Solution shape.** What does the user *observe* when this ships,
+   end-to-end? Probe one observable behaviour at a time. After each
+   confirmed behaviour, you may have enough to write the `solution`
+   field; if not, keep probing.
+4. **User stories.** Walk the spread: happy path first, then each
+   meaningful branch (failure, empty state, edge cases the scenarios in
+   Step 3.5 surface). One story per question. Persist each one as it's
+   confirmed via `mars idea add-user-story`.
+5. **Out-of-scope.** What is the user *not* doing here? Propose the
+   obvious exclusions and ask the user to confirm or extend.
+6. **Notes.** Anything else worth recording: open questions, deferred
+   decisions, links to ADRs, edge cases the implementer should be aware
+   of.
+
+After each answer that fills a field, **persist it immediately** via
+`mars idea set` / `add-user-story`. Don't accumulate state in your head;
+the DB is the source of truth, and the user should be able to interrupt
+mid-grill and see real progress with `mars idea show <id>`.
 
 ## What goes in each field
 
@@ -215,14 +265,14 @@ what you already know from:
 If you find yourself writing implementation language, stop and reframe in
 terms of *what the user observes* or *what success looks like*.
 
-## Stress-test with concrete scenarios
+## Step 3.5 — Stress-test with concrete scenarios
 
-Before you accept the synthesised PRD, invent **1–3 concrete scenarios**
-that probe the boundaries between the domain concepts the PRD mentions.
-Pick edge cases, not the happy path — the happy path is already in the
-user stories.
+When the interview reaches a point where domain relationships are being
+discussed, **invent specific scenarios** that probe the boundaries
+between the concepts the PRD mentions, and put them to the user. Pick
+edge cases, not the happy path.
 
-Examples of scenario-shaped probes:
+Examples:
 
 - A relationship probe: *"A draft idea is promoted while a slicer run is
   already in flight for it — which wins?"*
@@ -232,96 +282,93 @@ Examples of scenario-shaped probes:
 - A vocabulary probe: *"If the user can both 'cancel' and 'reject' an
   idea, what's the operational difference between them?"*
 
-For each scenario, try to answer it using only the PRD's current
-vocabulary. The scenario serves three purposes:
+Each scenario serves three purposes:
 
-1. **Surface fuzzy terms.** If you can't answer the scenario without
-   inventing a new word or overloading an existing one, that's a
-   glossary gap — feed it into Step 4.
+1. **Surface fuzzy terms.** If the user's answer reveals a missing or
+   overloaded word, that's a glossary gap — feed it into Step 4
+   immediately.
 2. **Surface user-story gaps.** If the scenario is realistic but the
    user stories don't cover it, add a story (or fold it into `notes` if
    it's deferrable).
 3. **Surface decisions worth recording.** If the scenario forces a
    non-obvious choice, that's an ADR candidate — feed it into Step 6.
 
-Don't run scenarios past the user as a quiz. Run them in your own head,
-fold the *outcomes* (term sharpened, story added, ADR proposed) into the
-relevant downstream steps, and only escalate a scenario to the batched
-question if it surfaces a real ambiguity you genuinely can't resolve.
+Run scenarios *as questions to the user*, not in your own head. Their
+purpose is to make the user precise; you can't do that for them.
 
-## When to ask the user
+## Cross-reference with code
 
-Synthesise first. Then, if a section is genuinely empty after your best
-synthesis attempt — usually `problem` ("I'm not sure what hurts today")
-or one specific user-story branch ("what should happen on failure?") —
-ask **one batched question** with the specific gaps. Phrase as fill-ins,
-not open-ended interviews. Example:
+When the user states how something currently works, check the code. If
+you find a contradiction, surface it during the interview:
 
-> "PRD is mostly there. Two things I couldn't synthesise from context:
-> (1) what specifically goes wrong today when X happens (one sentence);
-> (2) when the operator dismisses an alert, should it be hidden forever
-> or just snoozed? If you know, fill these in; otherwise I'll mark them
-> in `notes` for the implementer to resolve."
+> *"You said cancellation removes the whole order, but
+> `src/orders/cancel.ts` only marks line items as cancelled — which is
+> right? Is the code wrong, or did I misread your intent?"*
 
-Persist any answers via the corresponding `mars idea set` / `add-user-story`.
+Resolve the contradiction before continuing; otherwise the PRD encodes a
+phantom requirement.
 
-## Show the PRD
+## When the user says "I don't know"
 
-After synthesising, run `mars idea show <id>` so the user sees the
-draft. Do not paraphrase the show output — let them read what's in the
-DB.
+If the user genuinely doesn't have an answer for a branch, don't invent
+one. Two options, in order of preference:
 
-# Step 4 — Curate the domain language
+1. **Propose a default and a deferral.** "Let's default to X for now and
+   record the decision in `notes` so the implementer can revisit if it
+   bites. Confirm?"
+2. **Mark the branch as open.** Add a one-line entry to `notes` (e.g.
+   *"Open question: behaviour when X — TBD by implementer"*) and move on.
 
-Five behaviours run in parallel with PRD synthesis:
+Either way, persist the resolution to the DB before walking to the next
+branch.
 
-- **Conflict with an existing term.** If the PRD uses a glossary term to
-  mean something different from its current definition, call it out:
-  > "Your glossary defines 'cancellation' as X, but in this PRD it
-  > seems to mean Y. Which is right?"
+# Step 4 — Curate the domain language (inline)
+
+These five behaviours run *during* the interview, not after it. The
+moment you spot one, ask the user the resolving question, then persist
+with `mars glossary set` / `remove` before walking the next branch.
+
+- **Conflict with an existing term.** If the user's wording conflicts
+  with a glossary entry's current definition, call it out:
+  > *"Your glossary defines 'cancellation' as X, but you seem to mean Y.
+  > Which is right?"*
   After the user resolves it, run `mars glossary set` with the agreed
   definition.
-- **Sharpen fuzzy language.** If you wrote a vague or overloaded word in
-  the PRD ("account", "thing", "object"), propose a precise canonical
-  term and ask:
-  > "I wrote 'account' in the solution — do you mean **Customer** or
-  > **User**?"
-  Once the user picks, run `mars glossary set` for the chosen term and
-  add the rejected one as `--avoid` if it was a near-miss.
-- **First mention of a domain noun.** If the PRD introduces a noun the
-  codebase doesn't yet own (and isn't a generic programming concept), ask
-  for a one-sentence definition and persist with `mars glossary set`.
-  Skip generic terms (timeout, retry, error) — the glossary is for
-  project-specific concepts.
-- **Code contradicts a glossary term.** If the code-grounding read in
-  Step 3 turned up behaviour that contradicts an existing glossary
-  definition (the glossary says **Worktree** is "a per-task git
-  worktree under .mars/worktrees", but the code now also uses worktrees
-  under `.worktrees/` for something else), surface it:
-  > "Your glossary says **Worktree** is X, but the code now also does Y
+- **Sharpen fuzzy language.** If the user uses a vague or overloaded
+  word ("account", "thing", "object"), propose a precise canonical term
+  and ask:
+  > *"You said 'account' — do you mean **Customer** or **User**? Those
+  > are different things."*
+  Once the user picks, `mars glossary set` the chosen term and add the
+  rejected one as `--avoid` if it was a near-miss.
+- **First mention of a domain noun.** If the conversation introduces a
+  noun the codebase doesn't yet own (and isn't a generic programming
+  concept), ask for a one-sentence definition and persist with
+  `mars glossary set`. Skip generic terms (timeout, retry, error) — the
+  glossary is for project-specific concepts.
+- **Code contradicts a glossary term.** If your Step 1 code read turned
+  up behaviour that contradicts an existing glossary definition, surface
+  it during the relevant branch of the interview:
+  > *"Your glossary says **Worktree** is X, but the code now also does Y
   > under that name. Should we tighten the definition, or is Y a new
-  > concept that needs its own term?"
+  > concept that needs its own term?"*
   Persist the resolution with `mars glossary set` (and a fresh entry for
   the new concept if the user split them).
-- **Promote a sharper word for an existing term.** If during synthesis
-  you find a clearly better label for an entry already in the glossary
-  (the user keeps saying "draft" while the entry is filed under "idea",
-  and "draft" is the more precise word in this PRD's context), propose
-  the rename in one sentence:
-  > "You keep saying 'draft' where the glossary has 'idea'. **Draft**
-  > reads sharper here. Rename the entry?"
-  If the user agrees, `mars glossary set` the new term with the same
-  definition, then `mars glossary remove` the old one. Add the old term
-  as `--avoid` on the new entry. Don't promote silently — the rename is
-  itself a small decision and the user owns the vocabulary.
+- **Promote a sharper word for an existing term.** If the user keeps
+  saying "draft" while the entry is filed under "idea" and "draft" reads
+  sharper here, propose the rename:
+  > *"You keep saying 'draft' where the glossary has 'idea'. **Draft**
+  > reads sharper. Rename the entry?"*
+  If yes: `mars glossary set` the new term with the same definition, then
+  `mars glossary remove` the old one. Add the old term as `--avoid`.
+  Don't promote silently — the rename is a small decision and the user
+  owns the vocabulary.
 
-Definitions go in via
-`mars glossary set "<term>" "<definition>" [--avoid …]`. One sentence;
-describe what the term **is**, not what it does. Don't batch — write each
-term the moment it's resolved.
+Definitions: one sentence; describe what the term **is**, not what it
+does. Don't batch — write each term the moment it's resolved.
 
-When you decide a term should be retired (renamed, conflated, or simply
-wrong), use `mars glossary remove "<term>"`. Don't leave dead entries.
+When a term should be retired (renamed, conflated, or wrong), use
+`mars glossary remove "<term>"`. Don't leave dead entries.
 
 # Step 5 — Stop conditions
 
@@ -337,16 +384,18 @@ Stop when **all** of the following are true:
 
 Out-of-scope and notes are nice-to-have, not gating.
 
-When all of the above hold, return control to the router (`mars:next`)
-or — if the user explicitly says "promote" — run `mars idea promote <id>`
-inline. Do **not** auto-promote without an explicit signal; the router's
-inline confirmation step (or a deliberate user request) is the gate.
+When all of the above hold, run `mars idea show <id>` once so the user
+sees the final PRD verbatim from the DB, then return control to the
+router (`mars:next`) — or, if the user explicitly says "promote", run
+`mars idea promote <id>` inline. Do **not** auto-promote without an
+explicit signal; the router's inline confirmation step (or a deliberate
+user request) is the gate.
 
 # Step 6 — Offer an ADR (sparingly)
 
 After the PRD is shaped but before you stop, ask yourself whether the
-shaping conversation surfaced a decision worth recording as an ADR.
-**All three** must be true:
+interview surfaced a decision worth recording as an ADR. **All three**
+must be true:
 
 1. **Hard to reverse** — the cost of changing your mind later is real.
 2. **Surprising without context** — a future reader will look at the code
@@ -359,9 +408,9 @@ and "we did the obvious thing" do not need ADRs.
 
 When all three hold, propose it in one sentence:
 
-> "We picked Postgres over an event store because of operational
+> *"We picked Postgres over an event store because of operational
 > simplicity at our scale — that's an ADR-shaped call. Want me to record
-> it?"
+> it?"*
 
 If they say yes:
 
@@ -379,8 +428,14 @@ Most ADRs in this repo will be one paragraph.
 - Do not pick a target idea yourself. The router (`mars:next`) has
   already done that. If `$ARGUMENTS` is empty, route the user back to
   `/mars:next`.
-- Do not interview the user one question at a time. Synthesise first;
-  ask only for the specific gaps you couldn't fill.
+- **Do not synthesise the entire PRD up front and present it for
+  review.** Walk the branches one question at a time, persisting each
+  decision as it's made. Synthesis-first produces a PRD shaped by your
+  reading of the conversation, not the user's intent.
+- Do not batch questions. One question per turn, with your recommended
+  answer, and wait for the user's reply before moving on.
+- Do not ask the user for facts the codebase already encodes — explore
+  the codebase instead.
 - Do not put implementation language in the PRD — file paths, module
   names, schema changes, library choices. Implementation belongs on the
   per-slice tasks the slicer produces.
@@ -393,7 +448,7 @@ Most ADRs in this repo will be one paragraph.
   questions, not yours.
 - Do not run `mars idea refine` or any non-idea, non-glossary, non-adr
   write-side `mars` command. The writes you may issue are:
-  - `mars idea {set,add-user-story,remove-user-story}` — Steps 3–4.
+  - `mars idea {set,add-user-story,remove-user-story}` — Step 3.
   - `mars idea promote <id>` — only when the user explicitly says
     "promote" (the router handles the normal confirmation flow).
   - `mars glossary {set,remove}` — Step 4 curation.
@@ -405,10 +460,9 @@ Most ADRs in this repo will be one paragraph.
 - Do not couple `CONTEXT.md` to implementation details. The glossary
   carries terms meaningful to domain experts — not function names,
   config keys, or library types.
-- Do not invent details the user did not provide and the conversation
-  context cannot support. If the synthesis would require guessing about
-  user intent, leave a short note in the relevant field and flag it in
-  the batched question at the end of Step 3.
+- Do not invent details the user did not provide. If a branch can't be
+  answered without guessing, ask — or, if the user says "I don't know",
+  default + defer to `notes` per Step 3's "I don't know" handling.
 
 # Argument
 
