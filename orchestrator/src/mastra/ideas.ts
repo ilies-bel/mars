@@ -778,6 +778,38 @@ export const promoteIdea = async (idOrPrefix: string): Promise<Idea> => {
   return updated
 }
 
+// Direct DB write — deletion has no worktree/merge side effects. Removes
+// the row from `ideas`; `idea_user_stories` rows cascade away via the
+// FK declared in initIdeas.
+export const deleteIdea = async (idOrPrefix: string): Promise<string> => {
+  await initIdeas()
+  const resolved = await resolveIdeaId(idOrPrefix)
+  if (resolved.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} ideas`,
+    )
+  }
+  if (resolved.kind === 'none') {
+    throw new Error(`idea ${idOrPrefix} not found`)
+  }
+  const id = resolved.id
+  const c = getClient()
+  // Older DBs were created before the FK existed, so wipe the children
+  // explicitly to keep cleanup deterministic across schema vintages.
+  await c.execute({
+    sql: `DELETE FROM idea_user_stories WHERE idea_id = ?`,
+    args: [id],
+  })
+  const r = await c.execute({
+    sql: `DELETE FROM ideas WHERE id = ?`,
+    args: [id],
+  })
+  if (r.rowsAffected === 0) {
+    throw new Error(`idea ${id} not found`)
+  }
+  return id
+}
+
 // Direct DB write — rejection is a pure status flip with no side effects
 // (no worktree, no merge), so it does not need to go through the daemon.
 export const rejectIdea = async (idOrPrefix: string): Promise<Idea> => {

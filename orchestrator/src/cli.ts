@@ -124,6 +124,9 @@ Commands:
   idea list [--source reflection|human|planner] [--status <status>]
                                 list ideas; filter by source and/or status
   idea show <id>                show an idea from .mars/state.db
+  idea delete <id>              remove an idea row from .mars/state.db
+                                (cascades idea_user_stories rows). No
+                                worktree, no merge — pure local DB write.
   idea set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"
                                 update a single field on a PRD-shaped idea
   idea add-user-story <id> "<text>"
@@ -992,6 +995,22 @@ const main = async (): Promise<void> => {
       }
       return
     }
+    if (sub === 'delete') {
+      const id = rest[1]
+      if (!id) {
+        console.error('usage: mars idea delete <id>')
+        process.exit(1)
+      }
+      const { deleteIdea } = await import('./mastra/ideas')
+      try {
+        const deletedId = await deleteIdea(id)
+        console.log(`deleted ${deletedId}`)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
     if (sub === 'list') {
       const sourceFlag = flags['--source']
       const statusFlag = flags['--status']
@@ -1020,7 +1039,7 @@ const main = async (): Promise<void> => {
       return
     }
     console.error(
-      'usage: mars idea <add|new|list|show|set|add-user-story|remove-user-story|promote|slice|reject> ...',
+      'usage: mars idea <add|new|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete> ...',
     )
     process.exit(1)
   }
