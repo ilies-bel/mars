@@ -11,6 +11,7 @@ export interface OrchestratorContext {
   stateDbPath: string
   supervisorsDir: string
   supervisorsManifest: string
+  verifyConfigPath: string
   cacheDir: string
 }
 
@@ -49,6 +50,7 @@ export const resolveContext = (override?: string): OrchestratorContext => {
     stateDbPath: resolve(stateDir, 'state.db'),
     supervisorsDir,
     supervisorsManifest: resolve(supervisorsDir, 'manifest.json'),
+    verifyConfigPath: resolve(stateDir, 'verify.json'),
     cacheDir,
   }
   return cached
