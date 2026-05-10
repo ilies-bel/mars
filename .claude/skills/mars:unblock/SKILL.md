@@ -24,6 +24,30 @@ mars show <id>
 mars blockers <id>
 ```
 
+## 1a — Re-orient the user first
+
+Before talking about blockers, give the user a **2–3 line recap** of what
+this task was actually trying to do. The user may not remember — the task
+might have been queued days ago, by another `/mars:next` session, or as a
+prerequisite from a sibling task. Diving straight into blocker mechanics
+without that context forces them to reconstruct the goal from raw fields.
+
+Print the recap in plain prose, in this shape:
+
+> *"Task `<id>` — `<one-line goal>`. It came from `<origin>` and was meant
+> to `<observable outcome>`. The orchestrator stopped on it at `<step>`."*
+
+Pull the goal from the task's prompt/title (the first sentence of the
+prompt body usually carries it). Origin candidates: a parent idea
+(`fromIdea: <idea-id>`), a sibling task that blocked it, or "user-queued
+via `mars task add`". The step is whichever workflow stage flipped it to
+blocked (`code`, `verify`, `merge`).
+
+Keep it terse — three lines, no field dump. The user just needs enough to
+remember why they cared. Then move on to the blockers.
+
+## 1b — Load the blockers
+
 `mars blockers <id>` lists the open blockers (sibling task ids or note
 rows). For each blocker id, run `mars show <blocker-id>` so you see what
 the blocker actually says. If a blocker references a file or symbol, read
