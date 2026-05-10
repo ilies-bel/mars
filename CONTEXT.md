@@ -31,7 +31,7 @@ The single human-curatable list of items that need a human's attention, surfacin
 A read-only, passive activity feed in the ui/ frontend tracking progress of completed tasks (and other terminal-state lifecycle moments) for situational awareness, with no acknowledgement or action required from the user.
 
 **Worker**:
-A long-lived orchestrator process that hosts one or more Slots; the panel groups Slot cards by their parent Worker.
+A preconfigured claude -p invocation bound to a stage (model, effort, permission-mode, agent, disallowed tools, output-format); the five named instances are Triager, Planner, Slicer, Coder, and Experimenter.
 
 **Slot**:
 A single concurrency lane inside a Worker that runs one task at a time; the unit shown by each card in the Workers panel and the mars monitor TUI.
