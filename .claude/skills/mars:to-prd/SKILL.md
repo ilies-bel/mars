@@ -113,16 +113,37 @@ write — but keep architectural words out of the PRD itself. The PRD is
 intent and behaviour; modules and seams belong on the implementation
 tasks the slicer produces.
 
-## Step 3 — Confirm and promote
+## Step 3 — Summarise and confirm
 
-Show the synthesised PRD back to the user once, then ask **one**
-confirmation question via `AskUserQuestion`:
+The PRD is now written to the draft row, but **not yet promoted**.
+Surface a tight summary so the user can decide without scrolling through
+the full field dump. Do **not** run `mars idea show <id>` here — that
+dumps everything verbatim and defeats the point of the summary. The
+user can run it themselves if they want the full text.
+
+The summary should fit in roughly 6–10 lines, e.g.:
+
+```
+PRD for <id>:
+  Title:     <one-line title>
+  Problem:   <one short sentence of the pain>
+  Solution:  <one short sentence of what ships>
+  Stories:   <N>  (e.g. "operator powers off mid-task", "Claude tokens run out", ...)
+  Scope cut: <one short sentence summarising the biggest out-of-scope item>
+  Notes:     <one short sentence flagging anything notable — new glossary terms, deferred questions, etc.>
+```
+
+Lift the summary text directly from the values you just wrote — do not
+re-paraphrase them, or the summary will drift from the PRD itself. For
+the stories line, give the count plus 2–3 representative actor phrases
+from the stories you added, not the full sentences.
+
+Then ask **one** confirmation question via `AskUserQuestion`:
 
 > *"Promote `<id>`?"* — options: **Yes, promote** / **No, keep
 > shaping** / **No, abandon**.
 
-No prose preamble in the question body. The user can run
-`mars idea show <id>` themselves to re-read before deciding.
+No prose preamble in the question body.
 
 Then act on the answer:
 
