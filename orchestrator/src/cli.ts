@@ -1868,10 +1868,12 @@ const main = async (): Promise<void> => {
       userStoryCount: i.userStories.length,
     }))
 
+    const { blockedTaskTitle } = await import('./cli/blocked-title')
     const blockedTasks = await listTasks('blocked')
     const blocked = await Promise.all(
       blockedTasks.map(async (t) => ({
         id: t.id,
+        title: blockedTaskTitle(t.prompt),
         prompt: t.prompt,
         blockerIds: await listBlockers(t.id),
       })),
@@ -1906,14 +1908,11 @@ const main = async (): Promise<void> => {
       if (drafts.length > 0) console.log('')
       console.log('Blocked tasks:')
       for (const t of blocked) {
-        const firstLine = t.prompt.split('\n')[0]?.trim() ?? ''
-        const summary =
-          firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine || '(no prompt)'
         const blockers =
           t.blockerIds.length > 0
             ? `  [blockedBy:${t.blockerIds.map((b) => b.slice(0, 8)).join(',')}]`
             : '  [blockedBy:none — use `mars unblock`]'
-        console.log(`  ${t.id.slice(0, 8)}  ${summary}${blockers}`)
+        console.log(`  ${t.id.slice(0, 8)}  ${t.title}${blockers}`)
       }
     }
     return
