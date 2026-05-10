@@ -34,7 +34,8 @@ A read-only, passive activity feed in the ui/ frontend tracking progress of comp
 A preconfigured claude -p invocation bound to a stage (model, effort, permission-mode, agent, disallowed tools, output-format); the five named instances are Triager, Planner, Slicer, Coder, and Experimenter.
 
 **Slot**:
-A single concurrency lane inside a Worker that runs one task at a time; the unit shown by each card in the Workers panel and the mars monitor TUI.
+One concurrent unit inside a Pool; pulls a task from the daemon and runs it to completion by enacting a Worker.
+_Avoid_: daemon worker, dispatch slot
 
 **Pool**:
 A named work queue (triage, implement, refine, structured-write) that a Slot is configured to consume tasks from; each Slot belongs to exactly one Pool.
