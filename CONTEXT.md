@@ -68,3 +68,7 @@ _Avoid_: job, run
 
 **Session**:
 A single live claude -p execution of a Worker, identified by a Claude session id; the runtime instance of a Worker (Worker is the class, Session is the instance).
+
+**Fix-task**:
+A Chore (kind='chore') spawned by a recovery recipe (per ADR-0002) in response to a failure signature on another task. The fixForTaskId column links back to the failed task; the kind column distinguishes it from a user-initiated chore.
+_Avoid_: recovery task, fix task
