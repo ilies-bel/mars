@@ -190,10 +190,25 @@ export const startDaemon = async (
   const pendingTriage = new Set<string>()
   const pendingImplement = new Set<string>()
 
+  // Tasks claimed by a drain pass but not yet tracked in inFlight (the gap is
+  // the time it takes to await the implement semaphore). Without this set
+  // multiple concurrent `void drain()` invocations can each pick the same
+  // task id from `pendingImplement` and start parallel dispatches before any
+  // of them call `trackInFlight`. That was the dispatch-storm bug.
+  const claimedImplement = new Set<string>()
+  const claimedTriage = new Set<string>()
+
   const trackInFlight = (taskId: string, kind: DispatchKind): (() => void) => {
     inFlight.set(taskId, { taskId, kind })
     return () => inFlight.delete(taskId)
   }
+
+  // Drain single-flight gate. While `drainRunning` is true, a second call
+  // sets `drainAgain` and returns; the running drain re-runs once it finishes.
+  // This + the claimed sets together guarantee no task id is ever dispatched
+  // more than once concurrently.
+  let drainRunning = false
+  let drainAgain = false
 
   // Forward-declared so dispatchers can call it from finally; assigned after
   // both dispatchers exist.
@@ -204,6 +219,7 @@ export const startDaemon = async (
     pendingTriage.delete(taskId)
     await acquire(sems.triage)
     const releaseTracking = trackInFlight(taskId, 'triage')
+    claimedTriage.delete(taskId)
     log(`[triage] ${taskId} dispatching`)
     try {
       const { runTriage } = await import('../workflows/triage-workflow')
@@ -235,6 +251,7 @@ export const startDaemon = async (
     pendingImplement.delete(task.id)
     await acquire(sems.implement)
     const releaseTracking = trackInFlight(task.id, 'implement')
+    claimedImplement.delete(task.id)
     log(`[implement] ${task.id} dispatching`)
     try {
       const { mastra } = await import('../index')
@@ -395,6 +412,10 @@ export const startDaemon = async (
   ): Promise<string | null> => {
     let best: { id: string; priority: number; createdAt: string } | null = null
     for (const id of pending) {
+      // Skip ids already claimed by an in-flight (or about-to-be-in-flight)
+      // dispatch — without this the same id can be picked by parallel
+      // drains during the gap between pop-from-pending and acquire-slot.
+      if (claimedImplement.has(id) || inFlight.has(id)) continue
       const t = await getTask(id)
       if (!t) continue
       if (
@@ -411,29 +432,56 @@ export const startDaemon = async (
   // Drain pulls from the pending sets as semaphore slots free. Bus handlers
   // and dispatcher finally-blocks both call this. It's idempotent and cheap
   // when there's nothing to do.
+  // Single-flight: only one drain runs at a time. Concurrent invocations
+  // (from bus events, dispatcher finally-blocks, etc.) flip drainAgain so
+  // the running drain re-enters once it finishes — no double-pick races.
   drain = async (): Promise<void> => {
-    while (
-      pendingTriage.size > 0 &&
-      sems.triage.inUse < sems.triage.limit
-    ) {
-      const id = pendingTriage.values().next().value as string
-      pendingTriage.delete(id)
-      void dispatchTriage(id)
+    if (drainRunning) {
+      drainAgain = true
+      return
     }
-    while (
-      pendingImplement.size > 0 &&
-      sems.implement.inUse < sems.implement.limit
-    ) {
-      const id = await pickNextImplement(pendingImplement)
-      if (id === null) break
-      pendingImplement.delete(id)
-      const t = await getTask(id)
-      if (!t || t.status !== 'queued') continue
-      if (await hasIncompleteBlockers(id)) {
-        log(`[dispatch] ${id} blocked; deferring until blockers complete`)
-        continue
-      }
-      void dispatchImplement(t)
+    drainRunning = true
+    try {
+      do {
+        drainAgain = false
+        // Triage: pick a candidate that isn't already claimed/in-flight,
+        // mark it claimed BEFORE the dispatchTriage call so the next drain
+        // pass can't pick it again.
+        while (sems.triage.inUse < sems.triage.limit) {
+          let pickedTriage: string | null = null
+          for (const id of pendingTriage) {
+            if (claimedTriage.has(id) || inFlight.has(id)) continue
+            pickedTriage = id
+            break
+          }
+          if (pickedTriage === null) break
+          claimedTriage.add(pickedTriage)
+          pendingTriage.delete(pickedTriage)
+          void dispatchTriage(pickedTriage)
+        }
+        // Implement: same guarantee but priority-ordered.
+        while (sems.implement.inUse < sems.implement.limit) {
+          const id = await pickNextImplement(pendingImplement)
+          if (id === null) break
+          // Mark claimed BEFORE any further await so concurrent drains
+          // (which we've gated, but belt-and-suspenders) can't double-pick.
+          claimedImplement.add(id)
+          pendingImplement.delete(id)
+          const t = await getTask(id)
+          if (!t || t.status !== 'queued') {
+            claimedImplement.delete(id)
+            continue
+          }
+          if (await hasIncompleteBlockers(id)) {
+            log(`[dispatch] ${id} blocked; deferring until blockers complete`)
+            claimedImplement.delete(id)
+            continue
+          }
+          void dispatchImplement(t)
+        }
+      } while (drainAgain)
+    } finally {
+      drainRunning = false
     }
   }
 
