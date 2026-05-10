@@ -121,13 +121,13 @@ describe('schema migration: drop blocker_id + task_suggestions, rename origin->s
     expect(ideaColNames).not.toContain('origin')
 
     const ideaRows = await s2.execute(
-      `SELECT id, goal, source FROM ideas ORDER BY id`,
+      `SELECT id, title, source FROM ideas ORDER BY id`,
     )
     const idMap = new Map(
       (
         ideaRows.rows as unknown as Array<{
           id: string
-          goal: string
+          title: string
           source: string
         }>
       ).map((r) => [r.id, r]),
@@ -136,7 +136,10 @@ describe('schema migration: drop blocker_id + task_suggestions, rename origin->s
     expect(idMap.get('idea-a')?.source).toBe('planner')
     // The reflection-kind suggestion landed in ideas with source='reflection'.
     expect(idMap.get('sug-refl')?.source).toBe('reflection')
-    expect(idMap.get('sug-refl')?.goal).toBe('invest cache misses')
+    expect(idMap.get('sug-refl')?.title).toBe('invest cache misses')
+    // The legacy goal column was backfilled into title for pre-existing rows.
+    expect(idMap.get('idea-h')?.title).toBe('human goal')
+    expect(idMap.get('idea-a')?.title).toBe('agent goal')
     // The fix-kind suggestion is vestigial; not migrated.
     expect(idMap.has('sug-fix')).toBe(false)
 

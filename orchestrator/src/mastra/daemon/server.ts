@@ -26,7 +26,7 @@ import {
   type Task,
   type UnblockTaskResult,
 } from '../queue'
-import { markIdeaPromoted, promoteIdea } from '../ideas'
+import { promoteIdea } from '../ideas'
 import {
   onBlockerTaskCompleted,
   recoverBlockedTasks,
@@ -634,19 +634,26 @@ export const startDaemon = async (
 
   const handleIdeaPromote = async (
     ideaId: string,
-  ): Promise<{ taskId: string; ideaId: string }> => {
-    const { idea, prompt } = await promoteIdea(ideaId)
-    const opts: Parameters<typeof enqueueTask>[2] = { skipTriage: true }
-    if (idea.author) opts.author = idea.author
-    const task = await enqueueTask(prompt, undefined, opts)
-    try {
-      await markIdeaPromoted(idea.id, task.id)
-    } catch (err) {
-      await deleteTask(task.id).catch(() => {})
-      throw err
+  ): Promise<{ ideaId: string; status: string }> => {
+    const idea = await promoteIdea(ideaId)
+    return { ideaId: idea.id, status: idea.status }
+  }
+
+  const handleIdeaSlice = async (
+    ideaId: string,
+  ): Promise<{ ideaId: string; status: string; taskIds: string[] }> => {
+    const { runSlice } = await import('../workflows/slice-workflow')
+    const result = await runSlice(ideaId)
+    // Newly-queued slice tasks need to enter the implement pool. Emit one
+    // 'task.queued' per id; the bus subscriber pushes them into pendingImplement
+    // and drain() picks them up under the implement semaphore.
+    for (const taskId of result.taskIds) {
+      const t = await getTask(taskId)
+      if (t?.status === 'queued') {
+        bus.emit('task.queued', { taskId })
+      }
     }
-    bus.emit('task.queued', { taskId: task.id })
-    return { taskId: task.id, ideaId: idea.id }
+    return result
   }
 
   const handleInit = async (
@@ -799,6 +806,10 @@ export const startDaemon = async (
         }
         case 'idea.promote': {
           const r = await handleIdeaPromote(req.ideaId)
+          return { ok: true, data: r }
+        }
+        case 'idea.slice': {
+          const r = await handleIdeaSlice(req.ideaId)
           return { ok: true, data: r }
         }
         case 'refine': {

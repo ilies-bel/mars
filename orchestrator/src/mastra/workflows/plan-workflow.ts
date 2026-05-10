@@ -103,8 +103,8 @@ const generateStep = createStep({
       await createIdea(s.title, {
         source: 'planner',
         author: { kind: 'agent', name: 'planner' },
-        story: s.prompt,
-        technical: s.rationale ?? '',
+        solution: s.prompt,
+        notes: s.rationale ?? '',
       })
     }
 

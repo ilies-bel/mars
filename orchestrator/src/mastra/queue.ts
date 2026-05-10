@@ -137,11 +137,23 @@ export const initQueue = async (): Promise<void> => {
     await c.execute(`ALTER TABLE tasks ADD COLUMN origin_id TEXT`)
     await c.execute(`UPDATE tasks SET origin_id = id WHERE origin_id IS NULL`)
   }
+  // parent_idea_id: link from a task to the PRD it slices. NULL for direct
+  // `mars task add` rows. slice_index records which slice this is within
+  // the PRD (1..N), again NULL for direct tasks.
+  if (!names.has('parent_idea_id')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN parent_idea_id TEXT`)
+  }
+  if (!names.has('slice_index')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN slice_index INTEGER`)
+  }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
   )
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_origin_id ON tasks(origin_id)`,
+  )
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_tasks_parent_idea_id ON tasks(parent_idea_id)`,
   )
   await c.execute(`
     CREATE TABLE IF NOT EXISTS questions (
@@ -391,6 +403,8 @@ export interface EnqueueTaskOptions {
   author?: Author
   originId?: string
   priority?: number
+  parentIdeaId?: string
+  sliceIndex?: number
 }
 
 export const enqueueTask = async (
@@ -408,8 +422,10 @@ export const enqueueTask = async (
   const authorName = opts?.author?.name ?? null
   const originId = opts?.originId ?? id
   const priority = opts?.priority ?? 0
+  const parentIdeaId = opts?.parentIdeaId ?? null
+  const sliceIndex = opts?.sliceIndex ?? null
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_idea_id, slice_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       promptText,
@@ -420,6 +436,8 @@ export const enqueueTask = async (
       authorName,
       originId,
       priority,
+      parentIdeaId,
+      sliceIndex,
       now,
       now,
     ],

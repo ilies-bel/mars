@@ -305,8 +305,8 @@ export const persistSuggestions = async (
     await createIdea(s.title, {
       source: 'reflection',
       author: { kind: 'agent', name: 'reflector' },
-      story: s.prompt,
-      technical: s.rationale ?? '',
+      solution: s.prompt,
+      notes: s.rationale ?? '',
     })
   }
 }
@@ -356,8 +356,8 @@ export const applyVerdicts = async (
     await createIdea(s.title, {
       source: 'reflection',
       author: { kind: 'agent', name: 'reflector' },
-      story: s.prompt,
-      technical: s.rationale ?? '',
+      solution: s.prompt,
+      notes: s.rationale ?? '',
     })
     saved += 1
     savedSuggestions.push(s)

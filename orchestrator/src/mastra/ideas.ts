@@ -7,16 +7,17 @@ export type IdeaSource = 'reflection' | 'human' | 'planner'
 
 export interface Idea {
   id: string
-  goal: string
-  story: string
-  technical: string
+  title: string
+  problem: string
+  solution: string
+  outOfScope: string
+  notes: string
   status: string
   source: IdeaSource
   author: Author | null
   createdAt: number
   updatedAt: number
-  acceptance: string[]
-  promotedTaskId: string | null
+  userStories: string[]
 }
 
 let clientSingleton: Client | null = null
@@ -28,6 +29,17 @@ const getClient = (): Client => {
   return clientSingleton
 }
 
+/**
+ * Direct access to the ideas DB client. Most callers should use the typed
+ * helpers (`getIdea`, `setIdeaField`, etc.); this is a low-level escape
+ * hatch for workflows that need to coordinate cross-table writes (e.g. the
+ * slicer flipping an idea's status alongside per-slice task inserts in
+ * queue.db).
+ */
+export const getIdeasClient = (): Client => {
+  return getClient()
+}
+
 let initialised = false
 
 export const initIdeas = async (): Promise<void> => {
@@ -36,17 +48,21 @@ export const initIdeas = async (): Promise<void> => {
   await c.execute(`
     CREATE TABLE IF NOT EXISTS ideas (
       id TEXT PRIMARY KEY,
-      goal TEXT NOT NULL,
-      story TEXT NOT NULL DEFAULT '',
-      technical TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      problem TEXT NOT NULL DEFAULT '',
+      solution TEXT NOT NULL DEFAULT '',
+      out_of_scope TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'draft',
       source TEXT NOT NULL DEFAULT 'human',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )
   `)
+  // The PRD-shaped user-stories list. New name; pre-existing databases keep
+  // their `idea_acceptance` rows and get migrated below.
   await c.execute(`
-    CREATE TABLE IF NOT EXISTS idea_acceptance (
+    CREATE TABLE IF NOT EXISTS idea_user_stories (
       idea_id TEXT NOT NULL,
       position INTEGER NOT NULL,
       text TEXT NOT NULL,
@@ -64,8 +80,41 @@ export const initIdeas = async (): Promise<void> => {
   if (!colNames.has('author_name')) {
     await c.execute(`ALTER TABLE ideas ADD COLUMN author_name TEXT`)
   }
-  if (!colNames.has('promoted_task_id')) {
-    await c.execute(`ALTER TABLE ideas ADD COLUMN promoted_task_id TEXT`)
+  // PRD-shape columns. Add idempotently for repos with the old shape.
+  if (!colNames.has('title')) {
+    await c.execute(`ALTER TABLE ideas ADD COLUMN title TEXT NOT NULL DEFAULT ''`)
+  }
+  if (!colNames.has('problem')) {
+    await c.execute(`ALTER TABLE ideas ADD COLUMN problem TEXT NOT NULL DEFAULT ''`)
+  }
+  if (!colNames.has('solution')) {
+    await c.execute(`ALTER TABLE ideas ADD COLUMN solution TEXT NOT NULL DEFAULT ''`)
+  }
+  if (!colNames.has('out_of_scope')) {
+    await c.execute(
+      `ALTER TABLE ideas ADD COLUMN out_of_scope TEXT NOT NULL DEFAULT ''`,
+    )
+  }
+  if (!colNames.has('notes')) {
+    await c.execute(`ALTER TABLE ideas ADD COLUMN notes TEXT NOT NULL DEFAULT ''`)
+  }
+  // One-shot backfill from the legacy goal/story/technical columns. Runs
+  // only when the new columns are still empty for the row, so re-running
+  // initIdeas after manual edits never clobbers user data.
+  if (colNames.has('goal')) {
+    await c.execute(
+      `UPDATE ideas SET title = goal WHERE (title IS NULL OR title = '')`,
+    )
+  }
+  if (colNames.has('story')) {
+    await c.execute(
+      `UPDATE ideas SET solution = story WHERE (solution IS NULL OR solution = '')`,
+    )
+  }
+  if (colNames.has('technical')) {
+    await c.execute(
+      `UPDATE ideas SET notes = technical WHERE (notes IS NULL OR notes = '')`,
+    )
   }
   // Migrate legacy `origin` column (values 'user' | 'agent') into `source`
   // (values 'human' | 'planner' | 'reflection'). The legacy column is
@@ -87,6 +136,20 @@ export const initIdeas = async (): Promise<void> => {
     await c.execute(
       `ALTER TABLE ideas ADD COLUMN source TEXT NOT NULL DEFAULT 'human'`,
     )
+  }
+  // Migrate idea_acceptance rows into idea_user_stories. Idempotent — runs
+  // only if the legacy table still exists. Rows are copied; the legacy
+  // table is dropped after.
+  const accCheck = await c.execute({
+    sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='idea_acceptance'`,
+    args: [],
+  })
+  if (accCheck.rows.length > 0) {
+    await c.execute(
+      `INSERT OR IGNORE INTO idea_user_stories (idea_id, position, text)
+         SELECT idea_id, position, text FROM idea_acceptance`,
+    )
+    await c.execute(`DROP TABLE idea_acceptance`)
   }
   await migrateLegacyFeatures(c)
   // Run after `initQueue` has had a chance to migrate `tasks.blocker_id`
@@ -122,10 +185,13 @@ const migrateLegacyFeatures = async (c: Client): Promise<void> => {
       const createdAt = Number.isFinite(createdMs) ? createdMs : now
       const updatedAt = Number.isFinite(updatedMs) ? updatedMs : now
 
+      // legacy `features` migration always runs against a DB that still has
+      // legacy `ideas` columns (otherwise `features` would already be gone).
       const result = await tx.execute({
-        sql: `INSERT OR IGNORE INTO ideas (id, goal, story, technical, status, source, created_at, updated_at)
-              VALUES (?, ?, '', '', ?, ?, ?, ?)`,
-        args: [id, goal, status, source, createdAt, updatedAt],
+        sql: `INSERT OR IGNORE INTO ideas
+                (id, goal, story, technical, title, status, source, created_at, updated_at)
+              VALUES (?, ?, '', '', ?, ?, ?, ?, ?)`,
+        args: [id, goal, goal, status, source, createdAt, updatedAt],
       })
       if (result.rowsAffected === 0) {
         console.warn(
@@ -192,37 +258,66 @@ const migrateTaskSuggestions = async (c: Client): Promise<void> => {
           created_task_id: string | null
           created_at: string | null
         }
-        const goal = (r.title ?? '').trim() || '(reflection)'
-        const story = (r.prompt ?? '').trim()
-        const technical = (r.rationale ?? '').trim()
+        const title = (r.title ?? '').trim() || '(reflection)'
+        const solution = (r.prompt ?? '').trim()
+        const notes = (r.rationale ?? '').trim()
         const status =
           r.status === 'promoted' || r.status === 'accepted'
-            ? 'promoted'
+            ? 'sliced'
             : r.status === 'rejected'
               ? 'dismissed'
               : 'draft'
         const createdMs = Date.parse(r.created_at ?? '')
         const now = Date.now()
         const createdAt = Number.isFinite(createdMs) ? createdMs : now
-        await tx.execute({
-          sql: `INSERT OR IGNORE INTO ideas
-                  (id, goal, story, technical, status, source,
-                   author_kind, author_name, promoted_task_id,
-                   created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, 'reflection',
-                        'agent', 'reflector', ?,
-                        ?, ?)`,
-          args: [
-            r.id,
-            goal,
-            story,
-            technical,
-            status,
-            r.created_task_id ?? null,
-            createdAt,
-            createdAt,
-          ],
-        })
+        // Detect whether the legacy `goal` column is still present (and
+        // therefore NOT NULL) on this DB. New repos have only `title`.
+        const ideaCols = await tx.execute(`PRAGMA table_info(ideas)`)
+        const hasLegacyGoal = (
+          ideaCols.rows as unknown as Array<{ name: string }>
+        ).some((rr) => rr.name === 'goal')
+        if (hasLegacyGoal) {
+          await tx.execute({
+            sql: `INSERT OR IGNORE INTO ideas
+                    (id, goal, story, technical, title, solution, notes,
+                     status, source, author_kind, author_name,
+                     created_at, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?,
+                          ?, 'reflection', 'agent', 'reflector',
+                          ?, ?)`,
+            args: [
+              r.id,
+              title,
+              solution,
+              notes,
+              title,
+              solution,
+              notes,
+              status,
+              createdAt,
+              createdAt,
+            ],
+          })
+        } else {
+          await tx.execute({
+            sql: `INSERT OR IGNORE INTO ideas
+                    (id, title, solution, notes, status, source,
+                     author_kind, author_name,
+                     created_at, updated_at)
+                  VALUES (?, ?, ?, ?, ?, 'reflection',
+                          'agent', 'reflector',
+                          ?, ?)`,
+            args: [
+              r.id,
+              title,
+              solution,
+              notes,
+              status,
+              createdAt,
+              createdAt,
+            ],
+          })
+        }
       }
       await tx.commit()
     } catch (error: unknown) {
@@ -244,8 +339,8 @@ const migrateTaskSuggestions = async (c: Client): Promise<void> => {
   }
 }
 
-const slugify = (goal: string): string => {
-  const slug = goal
+const slugify = (title: string): string => {
+  const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
@@ -254,9 +349,9 @@ const slugify = (goal: string): string => {
   return slug || 'idea'
 }
 
-export const generateIdeaId = (goal: string): string => {
+export const generateIdeaId = (title: string): string => {
   const prefix = randomBytes(4).toString('hex')
-  return `${prefix}-${slugify(goal)}`
+  return `${prefix}-${slugify(title)}`
 }
 
 const normaliseSource = (raw: unknown): IdeaSource => {
@@ -266,7 +361,7 @@ const normaliseSource = (raw: unknown): IdeaSource => {
 
 const rowToIdea = (
   row: Record<string, unknown>,
-  acceptance: string[],
+  userStories: string[],
 ): Idea => {
   const authorKindRaw = (row.author_kind as string | null) ?? null
   const authorName = (row.author_name as string | null) ?? null
@@ -276,25 +371,26 @@ const rowToIdea = (
       : null
   return {
     id: row.id as string,
-    goal: (row.goal as string | null) ?? '',
-    story: (row.story as string | null) ?? '',
-    technical: (row.technical as string | null) ?? '',
+    title: (row.title as string | null) ?? '',
+    problem: (row.problem as string | null) ?? '',
+    solution: (row.solution as string | null) ?? '',
+    outOfScope: (row.out_of_scope as string | null) ?? '',
+    notes: (row.notes as string | null) ?? '',
     status: (row.status as string | null) ?? 'draft',
     source: normaliseSource(row.source),
     author,
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
-    acceptance,
-    promotedTaskId: (row.promoted_task_id as string | null) ?? null,
+    userStories,
   }
 }
 
-const loadAcceptance = async (
+const loadUserStories = async (
   c: Client,
   ideaId: string,
 ): Promise<string[]> => {
   const r = await c.execute({
-    sql: `SELECT text FROM idea_acceptance WHERE idea_id = ? ORDER BY position ASC`,
+    sql: `SELECT text FROM idea_user_stories WHERE idea_id = ? ORDER BY position ASC`,
     args: [ideaId],
   })
   return r.rows.map((row) => (row as unknown as { text: string }).text)
@@ -303,42 +399,96 @@ const loadAcceptance = async (
 export interface CreateIdeaOptions {
   author?: Author
   source?: IdeaSource
-  story?: string
-  technical?: string
+  problem?: string
+  solution?: string
+  outOfScope?: string
+  notes?: string
 }
 
 export const createIdea = async (
-  goal: string,
+  title: string,
   opts?: CreateIdeaOptions,
 ): Promise<Idea> => {
   await initIdeas()
   const c = getClient()
-  const id = generateIdeaId(goal)
+  const id = generateIdeaId(title)
   const now = Date.now()
   const source: IdeaSource =
     opts?.source ??
     (opts?.author?.kind === 'agent' ? 'planner' : 'human')
   const authorKind = opts?.author?.kind ?? null
   const authorName = opts?.author?.name ?? null
-  const story = opts?.story ?? ''
-  const technical = opts?.technical ?? ''
-  await c.execute({
-    sql: `INSERT INTO ideas (id, goal, story, technical, status, source, author_kind, author_name, created_at, updated_at)
-          VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`,
-    args: [id, goal, story, technical, source, authorKind, authorName, now, now],
-  })
+  const problem = opts?.problem ?? ''
+  const solution = opts?.solution ?? ''
+  const outOfScope = opts?.outOfScope ?? ''
+  const notes = opts?.notes ?? ''
+  // Detect whether the legacy goal/story/technical columns still exist as
+  // NOT NULL — pre-existing repos do, fresh repos don't. Write to both
+  // sets when present so the legacy NOT NULL constraint is satisfied.
+  const ideaCols = await c.execute(`PRAGMA table_info(ideas)`)
+  const hasLegacyGoal = (
+    ideaCols.rows as unknown as Array<{ name: string }>
+  ).some((rr) => rr.name === 'goal')
+  if (hasLegacyGoal) {
+    await c.execute({
+      sql: `INSERT INTO ideas
+              (id, goal, story, technical,
+               title, problem, solution, out_of_scope, notes,
+               status, source, author_kind, author_name,
+               created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`,
+      args: [
+        id,
+        title,
+        solution,
+        notes,
+        title,
+        problem,
+        solution,
+        outOfScope,
+        notes,
+        source,
+        authorKind,
+        authorName,
+        now,
+        now,
+      ],
+    })
+  } else {
+    await c.execute({
+      sql: `INSERT INTO ideas
+              (id, title, problem, solution, out_of_scope, notes,
+               status, source, author_kind, author_name,
+               created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`,
+      args: [
+        id,
+        title,
+        problem,
+        solution,
+        outOfScope,
+        notes,
+        source,
+        authorKind,
+        authorName,
+        now,
+        now,
+      ],
+    })
+  }
   return {
     id,
-    goal,
-    story,
-    technical,
+    title,
+    problem,
+    solution,
+    outOfScope,
+    notes,
     status: 'draft',
     source,
     author: opts?.author ?? null,
     createdAt: now,
     updatedAt: now,
-    acceptance: [],
-    promotedTaskId: null,
+    userStories: [],
   }
 }
 
@@ -397,8 +547,8 @@ export const getIdea = async (idOrPrefix: string): Promise<Idea | null> => {
     args: [resolved.id],
   })
   if (r.rows.length === 0) return null
-  const acceptance = await loadAcceptance(c, resolved.id)
-  return rowToIdea(r.rows[0] as unknown as Record<string, unknown>, acceptance)
+  const userStories = await loadUserStories(c, resolved.id)
+  return rowToIdea(r.rows[0] as unknown as Record<string, unknown>, userStories)
 }
 
 export const listIdeas = async (filter?: ListIdeasFilter): Promise<Idea[]> => {
@@ -424,18 +574,26 @@ export const listIdeas = async (filter?: ListIdeasFilter): Promise<Idea[]> => {
   const ideas: Idea[] = []
   for (const row of r.rows) {
     const r2 = row as unknown as Record<string, unknown>
-    const acceptance = await loadAcceptance(c, r2.id as string)
-    ideas.push(rowToIdea(r2, acceptance))
+    const userStories = await loadUserStories(c, r2.id as string)
+    ideas.push(rowToIdea(r2, userStories))
   }
   return ideas
 }
 
-export type IdeaField = 'goal' | 'story' | 'technical' | 'status'
+export type IdeaField =
+  | 'title'
+  | 'problem'
+  | 'solution'
+  | 'out-of-scope'
+  | 'notes'
+  | 'status'
 
 const fieldColumn: Record<IdeaField, string> = {
-  goal: 'goal',
-  story: 'story',
-  technical: 'technical',
+  title: 'title',
+  problem: 'problem',
+  solution: 'solution',
+  'out-of-scope': 'out_of_scope',
+  notes: 'notes',
   status: 'status',
 }
 
@@ -468,9 +626,9 @@ export const setIdeaField = async (
   return updated
 }
 
-export const addIdeaAcceptance = async (
+export const addIdeaUserStory = async (
   idOrPrefix: string,
-  bullet: string,
+  story: string,
 ): Promise<Idea> => {
   await initIdeas()
   const resolved = await resolveIdeaId(idOrPrefix)
@@ -485,7 +643,7 @@ export const addIdeaAcceptance = async (
   const id = resolved.id
   const c = getClient()
   const positionRow = await c.execute({
-    sql: `SELECT COALESCE(MAX(position), -1) AS max_pos FROM idea_acceptance WHERE idea_id = ?`,
+    sql: `SELECT COALESCE(MAX(position), -1) AS max_pos FROM idea_user_stories WHERE idea_id = ?`,
     args: [id],
   })
   const maxPos = Number(
@@ -495,8 +653,8 @@ export const addIdeaAcceptance = async (
   const next = Number.isFinite(maxPos) ? maxPos + 1 : 0
   const now = Date.now()
   await c.execute({
-    sql: `INSERT INTO idea_acceptance (idea_id, position, text) VALUES (?, ?, ?)`,
-    args: [id, next, bullet],
+    sql: `INSERT INTO idea_user_stories (idea_id, position, text) VALUES (?, ?, ?)`,
+    args: [id, next, story],
   })
   await c.execute({
     sql: `UPDATE ideas SET updated_at = ? WHERE id = ?`,
@@ -509,7 +667,7 @@ export const addIdeaAcceptance = async (
   return updated
 }
 
-export const removeIdeaAcceptance = async (
+export const removeIdeaUserStory = async (
   idOrPrefix: string,
   index: number,
 ): Promise<Idea> => {
@@ -526,26 +684,26 @@ export const removeIdeaAcceptance = async (
   const id = resolved.id
   const c = getClient()
   if (!Number.isInteger(index) || index < 0) {
-    throw new Error(`acceptance index must be a non-negative integer`)
+    throw new Error(`user-story index must be a non-negative integer`)
   }
   const tx = await c.transaction('write')
   try {
     const target = await tx.execute({
-      sql: `SELECT position FROM idea_acceptance WHERE idea_id = ? AND position = ?`,
+      sql: `SELECT position FROM idea_user_stories WHERE idea_id = ? AND position = ?`,
       args: [id, index],
     })
     if (target.rows.length === 0) {
       tx.close()
       throw new Error(
-        `idea ${id} has no acceptance bullet at index ${index}`,
+        `idea ${id} has no user story at index ${index}`,
       )
     }
     await tx.execute({
-      sql: `DELETE FROM idea_acceptance WHERE idea_id = ? AND position = ?`,
+      sql: `DELETE FROM idea_user_stories WHERE idea_id = ? AND position = ?`,
       args: [id, index],
     })
     await tx.execute({
-      sql: `UPDATE idea_acceptance
+      sql: `UPDATE idea_user_stories
             SET position = position - 1
             WHERE idea_id = ? AND position > ?`,
       args: [id, index],
@@ -567,38 +725,21 @@ export const removeIdeaAcceptance = async (
   return updated
 }
 
-export interface PromoteIdeaResult {
-  idea: Idea
-  prompt: string
-}
-
-const composePromoteIdeaPrompt = (idea: Idea): string => {
-  const sections: string[] = []
-  sections.push(`# Goal\n${idea.goal.trim()}`)
-  if (idea.story.trim().length > 0) {
-    sections.push(`# Story\n${idea.story.trim()}`)
-  }
-  if (idea.acceptance.length > 0) {
-    const bullets = idea.acceptance.map((b) => `- ${b}`).join('\n')
-    sections.push(`# Acceptance\n${bullets}`)
-  }
-  if (idea.technical.trim().length > 0) {
-    sections.push(`# Technical notes\n${idea.technical.trim()}`)
-  }
-  return sections.join('\n\n')
-}
-
 export const validateIdeaShaped = (idea: Idea): string[] => {
   const missing: string[] = []
-  if (idea.story.trim().length === 0) missing.push('story')
-  if (idea.technical.trim().length === 0) missing.push('technical')
-  if (idea.acceptance.length === 0) missing.push('acceptance (>=1 bullet)')
+  if (idea.title.trim().length === 0) missing.push('title')
+  if (idea.problem.trim().length === 0) missing.push('problem')
+  if (idea.solution.trim().length === 0) missing.push('solution')
+  if (idea.userStories.length === 0) missing.push('user stories (>=1)')
   return missing
 }
 
-export const promoteIdea = async (
-  idOrPrefix: string,
-): Promise<PromoteIdeaResult> => {
+/**
+ * Mark a draft idea as PRD-ready. The idea row stays alive as the PRD;
+ * tasks get created separately (one per slice) with parent_idea_id set.
+ * No tasks are inserted here — that's the slicer's job.
+ */
+export const promoteIdea = async (idOrPrefix: string): Promise<Idea> => {
   await initIdeas()
   const resolved = await resolveIdeaId(idOrPrefix)
   if (resolved.kind === 'ambiguous') {
@@ -624,8 +765,17 @@ export const promoteIdea = async (
       `idea ${idea.id} is not fully shaped; missing: ${missing.join(', ')}`,
     )
   }
-  const prompt = composePromoteIdeaPrompt(idea)
-  return { idea, prompt }
+  const c = getClient()
+  const now = Date.now()
+  await c.execute({
+    sql: `UPDATE ideas SET status = 'prd-ready', updated_at = ? WHERE id = ?`,
+    args: [now, idea.id],
+  })
+  const updated = await getIdea(idea.id)
+  if (!updated) {
+    throw new Error(`idea ${idea.id} disappeared after promotion`)
+  }
+  return updated
 }
 
 // Direct DB write — rejection is a pure status flip with no side effects
@@ -658,27 +808,6 @@ export const rejectIdea = async (idOrPrefix: string): Promise<Idea> => {
   const updated = await getIdea(id)
   if (!updated) {
     throw new Error(`idea ${id} disappeared after rejection`)
-  }
-  return updated
-}
-
-export const markIdeaPromoted = async (
-  ideaId: string,
-  taskId: string,
-): Promise<Idea> => {
-  await initIdeas()
-  const c = getClient()
-  const now = Date.now()
-  const r = await c.execute({
-    sql: `UPDATE ideas SET status = 'promoted', promoted_task_id = ?, updated_at = ? WHERE id = ?`,
-    args: [taskId, now, ideaId],
-  })
-  if (r.rowsAffected === 0) {
-    throw new Error(`idea ${ideaId} not found`)
-  }
-  const updated = await getIdea(ideaId)
-  if (!updated) {
-    throw new Error(`idea ${ideaId} disappeared after promotion`)
   }
   return updated
 }

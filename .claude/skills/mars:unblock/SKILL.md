@@ -1,0 +1,108 @@
+---
+name: mars:unblock
+description: Help unblock a Mars task that the orchestrator stopped on. Loads the task and its blockers, reads implicated files, and proposes 2–3 concrete unblock options via AskUserQuestion. No idea-shaping, no glossary curation, no ADR offers. Use when the user says "unblock <id>", "why is this blocked", "help with <id>", or invokes `/mars:unblock`.
+---
+
+# Mars: unblock a stuck task
+
+A task is `status='blocked'` because the orchestrator hit something it
+couldn't decide on its own — usually a question for the user, a missing
+upstream task, or a decision that needs an ADR. Your job is to surface
+**why** it's blocked, give the user enough context to decide, and then
+execute their decision through the right `mars` verb.
+
+You do **not** shape ideas, curate the glossary, or offer ADRs. If the
+unblock decision turns out to need a new task, enqueue it and stop.
+
+# Step 1 — Load the task and its blockers
+
+The argument is the task id (required — fail fast if missing; the router
+should always pass one).
+
+```bash
+mars show <id>
+mars blockers <id>
+```
+
+`mars blockers <id>` lists the open blockers (sibling task ids or note
+rows). For each blocker id, run `mars show <blocker-id>` so you see what
+the blocker actually says. If a blocker references a file or symbol, read
+the file so your proposals are grounded in the code rather than a guess.
+
+Use `Read` and `Grep` for file inspection. (`mars context search/tree` is
+referenced in older docs but isn't a current CLI verb — don't try it.)
+
+# Step 2 — Decide the unblock options
+
+Build a short menu of 2–3 concrete options for the user. Choose from these
+shapes; combine when it fits:
+
+- **Decide + clear blockers.** The blocker is a question the user can
+  answer in one sentence. Their answer plus removing the blocker rows is
+  enough to let the task proceed.
+- **Split into a new task.** The blocker is real upstream work. Enqueue
+  the prerequisite via `mars task add "..."`, leave the blocked task as-is
+  (it will be re-checked when the new task lands).
+- **Mark non-issue and unblock as-is.** The blocker turns out to be a
+  phantom (already done elsewhere, no longer relevant). Phantom-recover
+  with `mars unblock <id>` (no blocker ids → flips to `failed` and clears
+  every blocker row; **the task itself does not auto-rerun** — `mars retry
+  <id>` is the verb to put it back on the queue).
+- **Remove only specific blocker edges.** Some blockers are real, others
+  aren't. `mars unblock <id> <blocker-id> [<blocker-id> ...]` removes
+  those specific edges and leaves status unchanged; the task will
+  re-evaluate when its remaining blockers clear.
+
+Phrase the options for `AskUserQuestion` in plain language (not "edge
+removal" — say "the missing piece is already done elsewhere; clear the
+specific blockers").
+
+If you are sure the blocker is structural (e.g. needs a brand-new
+prerequisite task), include the proposed `mars task add` prompt body in
+the option's `description` so the user can sanity-check it before you
+enqueue.
+
+# Step 3 — Execute the chosen option
+
+Run the corresponding `mars` verb. Verb signatures:
+
+```bash
+# Phantom recovery: clear ALL blocker rows, flip task to 'failed'.
+# Use when none of the blockers were real. Follow with `mars retry <id>`
+# if the user wants the task put back on the queue.
+mars unblock <id>
+
+# Edge removal: drop only the listed blocker edges; status unchanged.
+# Use when some blockers are real and others aren't.
+mars unblock <id> <blocker-id> [<blocker-id> ...]
+
+# Add a new prerequisite task; the blocked task waits for it.
+mars task add "<self-contained prompt body>"
+mars block <blocked-task-id> <new-task-id>
+
+# Re-queue a failed task (after phantom recovery).
+mars retry <id>
+```
+
+After the verb runs, print one short confirmation line — what changed,
+and (if relevant) what the user should expect next ("orchestrator will
+pick up <new-id> automatically" or "<id> is back on the queue").
+
+# What you do NOT do
+
+- Do not call any `mars idea` write verb (`add`, `set`, `promote`, etc.).
+  This skill operates on tasks, not ideas. If the unblock requires
+  shaping a new feature, enqueue it as a `mars task add` prompt with
+  enough self-contained context, or send the user to `/mars:next` for
+  idea-shaping.
+- Do not run `mars glossary set/remove` or `mars adr add`. Domain-language
+  curation belongs to `mars:grill`.
+- Do not invent flag combinations not shown above. If `mars unblock` or
+  `mars retry` errors, surface stderr verbatim and ask the user how to
+  proceed — do not retry blindly with different flags.
+- Do not promote the resolved task into "done" by hand. The orchestrator
+  owns task lifecycle once a task is queued/running.
+
+# Argument
+
+The user passed: `$ARGUMENTS`  (must be a task id)

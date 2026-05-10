@@ -27,7 +27,7 @@ const loadModule = async (repo: string): Promise<IdeasModule> => {
 const insertIdea = async (
   ideas: IdeasModule,
   id: string,
-  goal: string,
+  title: string,
 ): Promise<void> => {
   await ideas.initIdeas()
   // The createIdea path generates random ids; we need deterministic ids that
@@ -36,9 +36,9 @@ const insertIdea = async (
   const c = createClient({ url: `file:${process.env.MARS_REPO}/.mars/state.db` })
   const now = Date.now()
   await c.execute({
-    sql: `INSERT INTO ideas (id, goal, story, technical, status, source, created_at, updated_at)
-          VALUES (?, ?, '', '', 'draft', 'human', ?, ?)`,
-    args: [id, goal, now, now],
+    sql: `INSERT INTO ideas (id, title, status, source, created_at, updated_at)
+          VALUES (?, ?, 'draft', 'human', ?, ?)`,
+    args: [id, title, now, now],
   })
   c.close()
 }
@@ -74,7 +74,7 @@ describe('resolveIdeaId', () => {
 
     const idea = await ideas.getIdea('abcd1234')
     expect(idea?.id).toBe('abcd1234-foo')
-    expect(idea?.goal).toBe('foo idea')
+    expect(idea?.title).toBe('foo idea')
   })
 
   it('ambiguous prefix returns ambiguous with count', async () => {
