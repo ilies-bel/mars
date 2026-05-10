@@ -1,6 +1,6 @@
 ---
 name: mars:grill
-description: Shape an under-specified Mars draft idea into a well-specified PRD by relentlessly interviewing the user one question at a time, validating against the project glossary and ADRs, and persisting decisions to the DB as they crystallise. Use when the user says "grill this", "shape this idea", or invokes `/mars:grill`.
+description: Shape an under-specified Mars draft idea into a well-specified PRD by relentlessly interviewing the user one question at a time, validating against the project glossary and ADRs, persisting decisions to the DB as they crystallise, and auto-promoting the idea to PRD-ready once the stop conditions are met. Use when the user says "grill this", "shape this idea", or invokes `/mars:grill`.
 ---
 
 # Mars: shape a draft idea into a PRD
@@ -370,7 +370,7 @@ does. Don't batch — write each term the moment it's resolved.
 When a term should be retired (renamed, conflated, or wrong), use
 `mars glossary remove "<term>"`. Don't leave dead entries.
 
-# Step 5 — Stop conditions
+# Step 5 — Stop conditions and autonomous promotion
 
 Stop when **all** of the following are true:
 
@@ -379,17 +379,37 @@ Stop when **all** of the following are true:
 - `solution` describes what the user observes when this ships, end-to-end.
 - `userStories` has at least one entry covering the happy path; ideally
   several covering the spread.
-- The user signals they're done ("good", "ship it", "that's it", or
-  similar).
+- Every open branch has either a user-confirmed answer or an explicit
+  default-and-defer note (per Step 3's "I don't know" handling). No silent
+  guesses.
 
 Out-of-scope and notes are nice-to-have, not gating.
 
-When all of the above hold, run `mars idea show <id>` once so the user
-sees the final PRD verbatim from the DB, then return control to the
-router (`mars:next`) — or, if the user explicitly says "promote", run
-`mars idea promote <id>` inline. Do **not** auto-promote without an
-explicit signal; the router's inline confirmation step (or a deliberate
-user request) is the gate.
+When all of the above hold, **ask one confirmation question and promote
+inline if approved** — do not hand back to the router, do not recap the
+PRD, do not offer to slice. Use `AskUserQuestion` with exactly one
+question of the form:
+
+> *"Promote `<id>`?"* — options: **Yes, promote** / **No, keep shaping** /
+> **No, abandon**.
+
+No prose preamble, no PRD summary in the question body. The user can run
+`mars idea show <id>` themselves if they want to re-read the result
+before deciding.
+
+Then act on the answer:
+
+- **Yes, promote** → run `mars idea promote <id>` and end your turn with
+  a single line: `Promoted <id>.`
+- **No, keep shaping** → resume Step 3 from whichever branch the user
+  wants to revisit (ask one short question to find out which).
+- **No, abandon** → run `mars idea reject <id>` and end with a single
+  line: `Rejected <id>.`
+
+If the promote (or reject) command fails, surface the error verbatim in
+one sentence and stop — do not retry silently. This skill owns the
+promotion gate; the router's inline confirmation flow does not run again
+once grill has driven the decision.
 
 # Step 6 — Offer an ADR (sparingly)
 
@@ -449,8 +469,10 @@ Most ADRs in this repo will be one paragraph.
 - Do not run `mars idea refine` or any non-idea, non-glossary, non-adr
   write-side `mars` command. The writes you may issue are:
   - `mars idea {set,add-user-story,remove-user-story}` — Step 3.
-  - `mars idea promote <id>` — only when the user explicitly says
-    "promote" (the router handles the normal confirmation flow).
+  - `mars idea promote <id>` — inline at Step 5, only after the user
+    answers "Yes, promote" to the single confirmation question.
+  - `mars idea reject <id>` — inline at Step 5, only after the user
+    answers "No, abandon" to the single confirmation question.
   - `mars glossary {set,remove}` — Step 4 curation.
   - `mars adr add` — Step 6, only after the user said yes.
 - Do not edit `CONTEXT.md` or `docs/adr/*.md` directly with file-write
