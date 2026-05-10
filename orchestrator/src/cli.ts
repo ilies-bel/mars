@@ -30,6 +30,8 @@ const FLAGS_WITH_VALUES = new Set([
   '--status',
   '--from',
   '--kind',
+  '--port',
+  '--host',
 ])
 
 const REPEATABLE_FLAGS = new Set(['--blocked-by'])
@@ -247,6 +249,9 @@ Commands:
                                 deprecated pattern of writing one-shot
                                 .ts scripts under orchestrator/scripts/.
   inbox watch                   live terminal UI for the inbox (ink TUI)
+  ui [--repo <path>] [--port <n>] [--host <h>]
+                                launch the read-only Kanban viewer
+                                (defaults: port 7777, host 127.0.0.1)
   where                         print resolved repo + state directory
   help                          show this message
 
@@ -570,6 +575,16 @@ Subcommands:
   where: `mars where
 
 Print resolved repo + state directory.`,
+  ui: `mars ui [--repo <path>] [--port <n>] [--host <h>]
+
+Launch the read-only Kanban viewer. Resolves the bundled
+ui/bin/mars-ui.mjs launcher (which spawns the SSE server, serves the
+built dashboard when ui/dist/ exists, and forwards exit code).
+
+Flags:
+  --repo <path>   target repo (defaults to the resolver: --repo > MARS_REPO > git toplevel)
+  --port <n>      bind port (default: 7777)
+  --host <h>      bind host (default: 127.0.0.1)`,
   help: `mars help [command]
 
 Show top-level help, or detailed help for a single command. Equivalent
@@ -599,6 +614,16 @@ const main = async (): Promise<void> => {
   if (rest.some((a) => HELP_FLAGS.has(a))) {
     if (printCommandHelp(cmd)) return
     console.log(usage)
+    return
+  }
+
+  if (cmd === 'ui') {
+    const { launchUi } = await import('./cli/ui')
+    launchUi({
+      repo,
+      port: flags['--port'],
+      host: flags['--host'],
+    })
     return
   }
 
