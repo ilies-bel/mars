@@ -1,8 +1,14 @@
-import type { DraftFeature, Task } from './types'
+import type { ZodType } from 'zod'
+import {
+  tasksResponseSchema,
+  todoResponseSchema,
+  type Task,
+  type TodoPayload,
+} from './schemas'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
-const fetchJson = async <T>(path: string): Promise<T> => {
+const fetchJson = async <T>(path: string, schema: ZodType<T>): Promise<T> => {
   const r = await fetch(`${BASE}${path}`)
   if (!r.ok) throw new Error(`GET ${path} → ${r.status}`)
   const ct = r.headers.get('content-type') ?? ''
@@ -11,28 +17,25 @@ const fetchJson = async <T>(path: string): Promise<T> => {
       `GET ${path} → expected JSON but got ${ct || 'unknown'} (is the mars-ui API server running on :7777?)`,
     )
   }
-  return (await r.json()) as T
+  const raw = await r.json()
+  const result = schema.safeParse(raw)
+  if (!result.success) {
+    throw new Error(
+      `GET ${path} → response failed schema validation: ${result.error.message}`,
+    )
+  }
+  return result.data
 }
 
 export const fetchTasks = async (): Promise<Task[]> => {
-  const json = await fetchJson<{ tasks: Task[] }>('/api/tasks')
+  const json = await fetchJson('/api/tasks', tasksResponseSchema)
   return json.tasks
 }
 
-export interface StaleWorktree {
-  taskId: string
-  status: string
-  ageHours: number
-  updatedAt: string
-}
-
-export interface TodoPayload {
-  drafts: DraftFeature[]
-  staleWorktrees: StaleWorktree[]
-}
-
 export const fetchTodo = async (): Promise<TodoPayload> => {
-  return fetchJson<TodoPayload>('/api/todo')
+  return fetchJson('/api/todo', todoResponseSchema)
 }
 
 export const eventsUrl = (): string => `${BASE}/events`
+
+export type { StaleWorktree, TodoPayload } from './schemas'

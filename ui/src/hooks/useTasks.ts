@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
-import { eventsUrl, fetchTasks } from '../lib/api'
+import { useQuery } from '@tanstack/react-query'
+import { fetchTasks } from '../lib/api'
 import { groupTasks } from '../lib/group'
+import { useSseConnected } from '../lib/sseStatus'
 import type { Snapshot } from '../lib/types'
 
 interface State {
@@ -9,47 +10,15 @@ interface State {
   connected: boolean
 }
 
-const empty: Snapshot = {
-  columns: {
-    backlog: [],
-    planned: [],
-    in_progress: [],
-    blocked: [],
-    done: [],
-    dropped: [],
-  },
-  counts: { inProgress: 0, todo: 0, done: 0 },
-}
-
 export const useTasks = (): State => {
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [connected, setConnected] = useState(false)
-  const inflight = useRef(false)
+  const connected = useSseConnected()
+  const query = useQuery({
+    queryKey: ['tasks'],
+    queryFn: fetchTasks,
+  })
 
-  const reload = async () => {
-    if (inflight.current) return
-    inflight.current = true
-    try {
-      const tasks = await fetchTasks()
-      setSnapshot(groupTasks(tasks))
-      setError(null)
-    } catch (err) {
-      setError((err as Error).message)
-      setSnapshot((s) => s ?? empty)
-    } finally {
-      inflight.current = false
-    }
-  }
-
-  useEffect(() => {
-    void reload()
-    const es = new EventSource(eventsUrl())
-    es.addEventListener('hello', () => setConnected(true))
-    es.addEventListener('tasks', () => void reload())
-    es.onerror = () => setConnected(false)
-    return () => es.close()
-  }, [])
+  const snapshot = query.data ? groupTasks(query.data) : null
+  const error = query.error ? (query.error as Error).message : null
 
   return { snapshot, error, connected }
 }
