@@ -17,7 +17,8 @@ import {
   minimalRenderInput,
   validateSupervisor,
 } from '../../init/render'
-import { writeSupervisors } from '../../init/writer'
+import { writeSlimInit, type VerifyStepEntry } from '../../init/writer'
+import { resolve } from 'node:path'
 
 const verifyStepSchema = z.object({
   name: z.string(),
@@ -34,13 +35,6 @@ const supervisorSpecSchema = z.object({
   detectedFrom: z.array(z.string()),
   externalSlugs: z.array(z.string()),
 })
-
-interface VerifyStepEntry {
-  name: string
-  cmd: string
-  args: string[]
-  required: boolean
-}
 
 const VERIFY_DEFAULTS_BY_SUPERVISOR: Record<string, VerifyStepEntry[]> = {
   'node-backend-supervisor': [
@@ -239,53 +233,49 @@ const renderStep = createStep({
   },
 })
 
+const scopeDepth = (scope: string | undefined): number => {
+  if (!scope || scope === '.' || scope === '') return 0
+  return scope.split('/').filter(Boolean).length
+}
+
+const flattenVerifySteps = (
+  rendered: ReadonlyArray<z.infer<typeof renderedSupervisorSchema>>,
+): VerifyStepEntry[] => {
+  const byName = new Map<string, { entry: VerifyStepEntry; depth: number }>()
+  for (const r of rendered) {
+    const verify = r.verify
+    if (!verify || verify.length === 0) continue
+    const depth = scopeDepth(r.spec.scope)
+    for (const v of verify) {
+      const existing = byName.get(v.name)
+      if (!existing || depth < existing.depth) {
+        byName.set(v.name, { entry: { ...v, args: [...v.args] }, depth })
+      }
+    }
+  }
+  return Array.from(byName.values()).map((e) => e.entry)
+}
+
 const writeStep = createStep({
-  id: 'write-manifest',
+  id: 'write-slim-init',
   inputSchema: z.object({
     stack: stackSchema,
     rendered: z.array(renderedSupervisorSchema),
   }),
   outputSchema: z.object({
-    supervisorsDir: z.string(),
     written: z.array(z.string()),
-    outcomes: z.array(
-      z.object({
-        name: z.string(),
-        outcome: outcomeSchema,
-        triedSlugs: z.array(z.string()),
-        externalSource: externalSourceSchema,
-      }),
-    ),
   }),
   execute: async ({ inputData }) => {
     const ctx = resolveContext()
-    const result = writeSupervisors(
-      {
-        repoRoot: ctx.repoRoot,
-        supervisorsDir: ctx.supervisorsDir,
-        supervisorsManifest: ctx.supervisorsManifest,
-      },
-      {
-        languages: inputData.stack.languages,
-        frameworks: inputData.stack.frameworks,
-        infra: inputData.stack.infra,
-        mobile: inputData.stack.mobile,
-        specialized: inputData.stack.specialized,
-      },
-      inputData.rendered.map((r) => ({
-        spec: r.spec,
-        content: r.content,
-        outcome: r.outcome,
-        triedSlugs: r.triedSlugs,
-        externalSource: r.externalSource,
-        verify: r.verify,
-      })),
-    )
-    return {
-      supervisorsDir: result.supervisorsDir,
-      written: result.written,
-      outcomes: result.outcomes,
-    }
+    const verifySteps = flattenVerifySteps(inputData.rendered)
+    const result = writeSlimInit({
+      repoRoot: ctx.repoRoot,
+      verifyConfigPath: ctx.verifyConfigPath,
+      contextPath: resolve(ctx.repoRoot, 'CONTEXT.md'),
+      adrDir: resolve(ctx.repoRoot, 'docs', 'adr'),
+      verifySteps,
+    })
+    return { written: result.written }
   },
 })
 
@@ -296,16 +286,7 @@ export const initWorkflow = createWorkflow({
     refresh: z.boolean().default(false),
   }),
   outputSchema: z.object({
-    supervisorsDir: z.string(),
     written: z.array(z.string()),
-    outcomes: z.array(
-      z.object({
-        name: z.string(),
-        outcome: outcomeSchema,
-        triedSlugs: z.array(z.string()),
-        externalSource: externalSourceSchema,
-      }),
-    ),
   }),
 })
   .then(detectStep)
@@ -321,53 +302,34 @@ export interface RunInitOptions {
   verbose?: boolean
 }
 
-export interface RunInitOutcome {
-  name: string
-  outcome: 'hit' | 'miss' | 'error'
-  triedSlugs: string[]
-  externalSource: { slug: string; path: string } | null
-}
-
 export interface RunInitResult {
   status: 'ok' | 'aborted-existing' | 'dry-run'
   message: string
-  supervisorsDir?: string
   written?: string[]
-  outcomes?: RunInitOutcome[]
-  detected?: ReturnType<typeof detectStack>
 }
 
 export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
   const ctx = resolveContext()
-  const detected = detectStack(ctx.repoRoot, {
-    onManifest: opts.verbose
-      ? (m: ManifestFinding) => {
-          process.stderr.write(`[mars init] ${m.dir}: ${m.techs.join(', ')}\n`)
-        }
-      : undefined,
-  })
 
-  for (const w of detected.warnings) {
-    if (w.kind === 'depth-cap') {
-      process.stderr.write(
-        `[mars init] warning: walk depth cap reached; not descended into ${w.paths.length} dir(s) (e.g. ${w.paths[0]})\n`,
-      )
-    }
+  if (opts.verbose) {
+    detectStack(ctx.repoRoot, {
+      onManifest: (m: ManifestFinding) => {
+        process.stderr.write(`[mars init] ${m.dir}: ${m.techs.join(', ')}\n`)
+      },
+    })
   }
 
   if (opts.dryRun) {
     return {
       status: 'dry-run',
       message: 'dry run; no files written',
-      detected,
     }
   }
 
-  if (existsSync(ctx.supervisorsManifest) && !opts.force) {
+  if (existsSync(ctx.verifyConfigPath) && !opts.force) {
     return {
       status: 'aborted-existing',
-      message: `supervisors already exist at ${ctx.supervisorsDir}; pass --force to overwrite`,
-      detected,
+      message: `verify config already exists at ${ctx.verifyConfigPath}; pass --force to overwrite`,
     }
   }
 
@@ -383,10 +345,7 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
   }
   return {
     status: 'ok',
-    message: 'supervisors generated',
-    supervisorsDir: result.result.supervisorsDir,
+    message: 'verify config generated',
     written: result.result.written,
-    outcomes: result.result.outcomes,
-    detected,
   }
 }

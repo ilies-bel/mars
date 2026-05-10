@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { relative, resolve } from 'node:path'
+import { dirname, relative, resolve } from 'node:path'
 import {
   agentsMdPathForScope,
   removeAgentsBlock,
@@ -14,6 +14,59 @@ export interface VerifyStepEntry {
   cmd: string
   args: string[]
   required: boolean
+}
+
+export interface SlimInitInput {
+  repoRoot: string
+  verifyConfigPath: string
+  contextPath: string
+  adrDir: string
+  verifySteps: ReadonlyArray<VerifyStepEntry>
+  now?: () => string
+}
+
+export interface SlimInitResult {
+  written: string[]
+}
+
+const CONTEXT_SKELETON = `# Project Context
+
+Canonical domain terms for this project. Edited via \`mars glossary\`.
+
+## Language
+`
+
+export const writeSlimInit = (input: SlimInitInput): SlimInitResult => {
+  const now = input.now ?? (() => new Date().toISOString())
+  const written: string[] = []
+
+  mkdirSync(dirname(input.verifyConfigPath), { recursive: true })
+  const config = {
+    version: 1 as const,
+    generatedAt: now(),
+    verifySteps: input.verifySteps.map((s) => ({
+      name: s.name,
+      cmd: s.cmd,
+      args: [...s.args],
+      required: s.required,
+    })),
+  }
+  writeFileSync(
+    input.verifyConfigPath,
+    JSON.stringify(config, null, 2) + '\n',
+    'utf8',
+  )
+  written.push(relative(input.repoRoot, input.verifyConfigPath))
+
+  if (!existsSync(input.contextPath)) {
+    mkdirSync(dirname(input.contextPath), { recursive: true })
+    writeFileSync(input.contextPath, CONTEXT_SKELETON, 'utf8')
+    written.push(relative(input.repoRoot, input.contextPath))
+  }
+
+  mkdirSync(input.adrDir, { recursive: true })
+
+  return { written }
 }
 
 export interface RenderedSupervisor {

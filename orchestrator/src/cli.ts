@@ -644,44 +644,16 @@ const main = async (): Promise<void> => {
       throw err
     }
 
-    if (result.detected) {
-      const d = result.detected
-      console.log('detected stack:')
-      console.log(`  languages:   ${d.languages.join(', ') || '(none)'}`)
-      console.log(`  frameworks:  ${d.frameworks.join(', ') || '(none)'}`)
-      console.log(`  infra:       ${d.infra.join(', ') || '(none)'}`)
-      console.log(`  mobile:      ${d.mobile.join(', ') || '(none)'}`)
-      console.log(`  specialized: ${d.specialized.join(', ') || '(none)'}`)
-      console.log('proposed supervisors:')
-      for (const s of d.supervisors) {
-        console.log(`  - ${s.name} (${s.persona}) — ${s.kind} — ${s.detectedFrom.join(', ')}`)
-      }
-      if (d.supervisors.length === 0) console.log('  (none)')
-    }
-
     if (result.status === 'dry-run') {
-      console.log('\ndry run: no files written')
+      console.log('dry run: no files written')
       return
     }
     if (result.status === 'aborted-existing') {
-      console.error(`\n${result.message}`)
+      console.error(result.message)
       process.exit(1)
     }
 
-    if (result.outcomes && result.outcomes.length > 0) {
-      console.log('\nspecialist enrichment:')
-      for (const o of result.outcomes) {
-        if (o.outcome === 'hit' && o.externalSource) {
-          console.log(`  - ${o.name}: hit (${o.externalSource.slug}.md)`)
-        } else if (o.outcome === 'miss') {
-          console.log(`  - ${o.name}: miss (tried: ${o.triedSlugs.join(', ') || '-'})`)
-        } else {
-          console.log(`  - ${o.name}: error`)
-        }
-      }
-    }
-
-    console.log('\nwrote:')
+    console.log('wrote:')
     for (const w of result.written ?? []) console.log(`  ${w}`)
     return
   }
