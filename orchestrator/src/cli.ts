@@ -1888,6 +1888,7 @@ const main = async (): Promise<void> => {
     }))
 
     const { blockedTaskTitle } = await import('./cli/blocked-title')
+    const { shortId } = await import('./cli/short-id')
     const blockedTasks = await listTasks('blocked')
     const blocked = await Promise.all(
       blockedTasks.map(async (t) => ({
@@ -1919,7 +1920,7 @@ const main = async (): Promise<void> => {
         if (!d.solutionSet) flags.push('solution:empty')
         if (d.userStoryCount === 0) flags.push('user-stories:0')
         const tail = flags.length > 0 ? `  [${flags.join(' ')}]` : ''
-        console.log(`  ${d.id.slice(0, 8)}  ${title}${tail}`)
+        console.log(`  ${shortId(d.id)}  ${title}${tail}`)
       }
     }
 
@@ -1929,9 +1930,9 @@ const main = async (): Promise<void> => {
       for (const t of blocked) {
         const blockers =
           t.blockerIds.length > 0
-            ? `  [blockedBy:${t.blockerIds.map((b) => b.slice(0, 8)).join(',')}]`
+            ? `  [blockedBy:${t.blockerIds.map((b) => shortId(b)).join(',')}]`
             : '  [blockedBy:none — use `mars unblock`]'
-        console.log(`  ${t.id.slice(0, 8)}  ${t.title}${blockers}`)
+        console.log(`  ${shortId(t.id)}  ${t.title}${blockers}`)
       }
     }
     return
