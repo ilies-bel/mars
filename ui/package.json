@@ -9,7 +9,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "bun --watch run server/index.ts",
+    "dev:all": "node -e \"const {spawn}=require('node:child_process');const opts={stdio:'inherit',shell:true};const a=spawn('npm',['run','dev:server'],opts);const b=spawn('npm',['run','dev'],opts);const kill=()=>{a.kill('SIGINT');b.kill('SIGINT')};process.on('SIGINT',kill);process.on('SIGTERM',kill);a.on('exit',c=>{b.kill('SIGINT');process.exit(c||0)});b.on('exit',c=>{a.kill('SIGINT');process.exit(c||0)});\"",
     "build": "tsc -b && vite build && tsc -p tsconfig.server.json",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
@@ -19,11 +20,14 @@
     "@fontsource/inter": "^5.1.0",
     "@fontsource/jetbrains-mono": "^5.1.0",
     "@libsql/client": "^0.17.3",
+    "@tanstack/react-query": "^5.100.9",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.0",
+    "@types/bun": "^1.3.13",
     "@types/node": "^25.6.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
