@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import { eventsUrl, fetchTodo, type StaleWorktree } from '../lib/api'
+import { useQuery } from '@tanstack/react-query'
+import { fetchTodo, type StaleWorktree } from '../lib/api'
+import { useSseConnected } from '../lib/sseStatus'
 import type { DraftFeature } from '../lib/types'
 
 interface State {
@@ -10,36 +11,15 @@ interface State {
 }
 
 export const useTodo = (): State => {
-  const [drafts, setDrafts] = useState<DraftFeature[]>([])
-  const [staleWorktrees, setStaleWorktrees] = useState<StaleWorktree[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [connected, setConnected] = useState(false)
-  const inflight = useRef(false)
+  const connected = useSseConnected()
+  const query = useQuery({
+    queryKey: ['todo'],
+    queryFn: fetchTodo,
+  })
 
-  const reload = async (): Promise<void> => {
-    if (inflight.current) return
-    inflight.current = true
-    try {
-      const payload = await fetchTodo()
-      setDrafts(payload.drafts)
-      setStaleWorktrees(payload.staleWorktrees ?? [])
-      setError(null)
-    } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      inflight.current = false
-    }
-  }
-
-  useEffect(() => {
-    void reload()
-    const es = new EventSource(eventsUrl())
-    es.addEventListener('hello', () => setConnected(true))
-    es.addEventListener('todo', () => void reload())
-    es.addEventListener('tasks', () => void reload())
-    es.onerror = () => setConnected(false)
-    return () => es.close()
-  }, [])
+  const drafts = query.data?.drafts ?? []
+  const staleWorktrees = query.data?.staleWorktrees ?? []
+  const error = query.error ? (query.error as Error).message : null
 
   return { drafts, staleWorktrees, error, connected }
 }
