@@ -391,20 +391,32 @@ export const getInboxItem = async (
   return rowToInboxItem(row, history)
 }
 
+export interface ListInboxOptions {
+  /** Filter by item kind (exact match). E.g. `recovery-failed`, `no-recipe`. */
+  kind?: string
+}
+
 export const listInboxItems = async (
   state: InboxState | 'all' = 'open',
+  opts: ListInboxOptions = {},
 ): Promise<InboxItem[]> => {
   await initInbox()
   const c = getClient()
+  const wheres: string[] = []
+  const args: Array<string> = []
+  if (state !== 'all') {
+    wheres.push('state = ?')
+    args.push(state)
+  }
+  if (opts.kind !== undefined) {
+    wheres.push('kind = ?')
+    args.push(opts.kind)
+  }
+  const sql = `SELECT * FROM inbox_items${
+    wheres.length > 0 ? ` WHERE ${wheres.join(' AND ')}` : ''
+  } ORDER BY raised_at DESC`
   const r =
-    state === 'all'
-      ? await c.execute(
-          `SELECT * FROM inbox_items ORDER BY raised_at DESC`,
-        )
-      : await c.execute({
-          sql: `SELECT * FROM inbox_items WHERE state = ? ORDER BY raised_at DESC`,
-          args: [state],
-        })
+    args.length === 0 ? await c.execute(sql) : await c.execute({ sql, args })
   const items: InboxItem[] = []
   for (const row of r.rows) {
     const r2 = row as unknown as Record<string, unknown>

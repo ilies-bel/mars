@@ -38,3 +38,13 @@ A single concurrency lane inside a Worker that runs one task at a time; the unit
 
 **Pool**:
 A named work queue (triage, implement, refine, structured-write) that a Slot is configured to consume tasks from; each Slot belongs to exactly one Pool.
+
+**Failure signature**:
+A human-readable technical key identifying a class of orchestrator failure (e.g. `verify:has-diff/no-commits-ahead`, `merge:dirty-target`, `setup:install-failed`); composed from the `failingStep` and a normalized error class so the same root cause produces the same signature across runs. The unit a recovery recipe binds to.
+_Avoid_: failure hash, error fingerprint
+
+**Recovery recipe**:
+A code-registered handler keyed by failure signature that builds the prompt for the recovery task spawned when a normal task fails with that signature; without a recipe for the observed signature, the orchestrator does not enqueue a recovery (see Investigator).
+
+**Investigator**:
+The agent the orchestrator spawns when a task fails with a signature that has no registered Recovery recipe; its job is to inspect the failure and propose a draft recipe for the maintainer to review, not to fix the failing task.

@@ -121,9 +121,10 @@ const setupStep = createStep({
       await handleTaskFailureWithFixTask({
         taskId: inputData.taskId,
         failingStep: 'setup:install',
-        errorOutput,
+        // Lead with a classifier-friendly summary; the recipe gets the
+        // raw error via recipeContext.statusOutput.
+        errorOutput: `frozen-lockfile install failed\n${errorOutput}`,
         branch: ref.branch,
-        recipeSignature: 'worktree_install_failed',
         recipeContext: {
           targetPath: isInstallErr ? error.site.dir : ref.path,
           statusOutput: errorOutput,
@@ -335,9 +336,9 @@ const mergeStep = createStep({
         await handleTaskFailureWithFixTask({
           taskId: inputData.taskId,
           failingStep: 'merge:preflight',
-          errorOutput: targetStatus.statusOutput,
+          // Classifier-friendly lead line; raw porcelain via recipeContext.
+          errorOutput: `merge target ${targetStatus.targetPath} has uncommitted changes blocking fast-forward\n${targetStatus.statusOutput}`,
           branch: inputData.branch,
-          recipeSignature: 'dirty_merge_target',
           recipeContext: {
             targetPath: targetStatus.targetPath,
             statusOutput: targetStatus.statusOutput,

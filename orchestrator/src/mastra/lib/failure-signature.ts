@@ -1,4 +1,20 @@
-import { createHash } from 'node:crypto'
+/**
+ * Failure signatures are human-readable technical keys, not hashes.
+ *
+ * Shape: `<failingStep>/<error-class>` — e.g. `verify:has-diff/no-commits-ahead`,
+ * `merge:dirty-target/uncommitted-changes`, `setup:install-failed/lockfile-drift`.
+ *
+ * The signature is the unit a Recovery recipe binds to (see
+ * docs/adr/0002-recipe-per-failure-signature.md). Each registered recipe
+ * declares the signatures it covers; when a failure produces a signature
+ * with no recipe, the orchestrator does NOT enqueue a generic recovery —
+ * it raises an inbox item and dispatches an Investigator agent.
+ *
+ * `error-class` is derived by `classifyError`: for known error patterns it
+ * returns a stable slug; for unknown errors it returns `unclassified` so
+ * the registry lookup deterministically misses, surfacing the gap rather
+ * than papering over it.
+ */
 
 const ANSI_PATTERN =
   // CSI sequences and a few common other escape sequences.
@@ -16,11 +32,82 @@ export const firstNonBlankLine = (text: string): string => {
   return ''
 }
 
+export const UNCLASSIFIED_ERROR_CLASS = 'unclassified'
+
+export interface ErrorClassRule {
+  /** Slug returned when the rule matches. Becomes part of the signature. */
+  errorClass: string
+  /**
+   * Either a regex applied to the first non-blank stripped line of the
+   * error output, or an exact substring match. Order matters — the first
+   * matching rule wins.
+   */
+  match: RegExp | string
+}
+
+/**
+ * Closed registry of known error-class rules. Add an entry here when you
+ * add a new recovery recipe that covers a previously-unclassified error.
+ *
+ * Each rule's `errorClass` must be a stable slug (kebab-case, no spaces).
+ * The Investigator agent proposes additions to this list when it sees an
+ * unclassified error worth recovering automatically.
+ */
+export const errorClassRules: readonly ErrorClassRule[] = [
+  {
+    errorClass: 'no-commits-ahead',
+    match: /no commits ahead of integration branch/i,
+  },
+  {
+    errorClass: 'uncommitted-changes',
+    match: /merge target.*has uncommitted changes/i,
+  },
+  {
+    errorClass: 'install-frozen-lockfile',
+    match: /frozen-lockfile/i,
+  },
+  {
+    errorClass: 'install-missing-peer',
+    match: /requires a peer of/i,
+  },
+  {
+    errorClass: 'typecheck-cannot-find-name',
+    match: /^TS2304:/,
+  },
+  {
+    errorClass: 'typecheck-cannot-find-module',
+    match: /^TS2307:/,
+  },
+  {
+    errorClass: 'typecheck-type-mismatch',
+    match: /^TS2322:/,
+  },
+  {
+    errorClass: 'merge-conflict-unresolved',
+    match: /CONFLICT|fix conflicts/i,
+  },
+]
+
+export const classifyError = (errorOutput: string): string => {
+  const head = firstNonBlankLine(errorOutput)
+  if (head.length === 0) return UNCLASSIFIED_ERROR_CLASS
+  for (const rule of errorClassRules) {
+    if (typeof rule.match === 'string') {
+      if (head.includes(rule.match)) return rule.errorClass
+    } else {
+      if (rule.match.test(head)) return rule.errorClass
+    }
+  }
+  return UNCLASSIFIED_ERROR_CLASS
+}
+
 export const computeFailureSignature = (
   failingStep: string,
   errorOutput: string,
 ): string => {
-  const head = firstNonBlankLine(errorOutput)
-  const payload = `${failingStep}\n${head}`
-  return createHash('sha1').update(payload).digest('hex').slice(0, 16)
+  const errorClass = classifyError(errorOutput)
+  return `${failingStep}/${errorClass}`
 }
+
+export const isUnclassifiedSignature = (signature: string): boolean =>
+  signature.endsWith(`/${UNCLASSIFIED_ERROR_CLASS}`)

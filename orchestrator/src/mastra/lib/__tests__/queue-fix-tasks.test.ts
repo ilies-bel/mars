@@ -18,6 +18,10 @@ interface FixTasksModule {
   handleTaskFailureWithFixTask: typeof import('../../queue-fix-tasks').handleTaskFailureWithFixTask
 }
 
+interface RecipesModule {
+  recipes: typeof import('../fix-recipes').recipes
+}
+
 interface BlockerModule {
   onBlockerTaskCompleted: typeof import('../../blocker-resolution').onBlockerTaskCompleted
   recoverBlockedTasks: typeof import('../../blocker-resolution').recoverBlockedTasks
@@ -32,7 +36,12 @@ const setupRepo = (): string => {
 
 const loadModules = async (
   repo: string,
-): Promise<{ q: QueueModule; ft: FixTasksModule; br: BlockerModule }> => {
+): Promise<{
+  q: QueueModule
+  ft: FixTasksModule
+  br: BlockerModule
+  rc: RecipesModule
+}> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
@@ -41,7 +50,30 @@ const loadModules = async (
   const br = (await import(
     '../../blocker-resolution'
   )) as unknown as BlockerModule
-  return { q, ft, br }
+  const rc = (await import('../fix-recipes')) as unknown as RecipesModule
+  return { q, ft, br, rc }
+}
+
+/**
+ * Register a synthetic recipe under `signature` for the duration of a
+ * single test. Returns a teardown that deletes it. The classifier in
+ * `failure-signature.ts` won't produce arbitrary test signatures, so
+ * tests that need to exercise the recovery path with a custom signature
+ * call this directly via `upsertFixTask` (which takes the signature
+ * verbatim).
+ */
+const registerTestRecipe = (
+  rc: RecipesModule,
+  signature: string,
+): (() => void) => {
+  rc.recipes[signature] = {
+    signature,
+    title: () => `test recipe: ${signature}`,
+    buildPrompt: () => `synthetic recovery prompt for ${signature}`,
+  }
+  return () => {
+    delete rc.recipes[signature]
+  }
 }
 
 describe('queue-fix-tasks', () => {
@@ -59,7 +91,8 @@ describe('queue-fix-tasks', () => {
 
   it('upsertFixTask creates a queued task and a task_blockers row in one transaction', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, ft } = await loadModules(repo)
+    const { q, ft, rc } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'sig1')
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
 
     const r = await ft.upsertFixTask({
@@ -68,6 +101,11 @@ describe('queue-fix-tasks', () => {
       failingStep: 'verify:typecheck',
       truncatedError: 'TS2304',
       branch: 'task/x',
+      recipeContext: {
+        targetPath: '/tmp/x',
+        statusOutput: 'TS2304',
+        targetBranch: 'task/x',
+      },
     })
     expect(r.created).toBe(true)
     expect(r.fixTaskId).toBeTruthy()
@@ -88,19 +126,27 @@ describe('queue-fix-tasks', () => {
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
     expect(reloaded?.retryCount).toBe(1)
+    cleanup()
   })
 
   it('idempotent: calling upsertFixTask twice with same (sourceTaskId, failureSignature) reuses the existing fix task', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, ft } = await loadModules(repo)
+    const { q, ft, rc } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'sig-dup')
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
 
+    const ctx = {
+      targetPath: '/tmp/x',
+      statusOutput: 'errA',
+      targetBranch: 'task/x',
+    }
     const a = await ft.upsertFixTask({
       sourceTaskId: t.id,
       failureSignature: 'sig-dup',
       failingStep: 'verify:typecheck',
       truncatedError: 'errA',
       branch: null,
+      recipeContext: ctx,
     })
     const b = await ft.upsertFixTask({
       sourceTaskId: t.id,
@@ -108,6 +154,7 @@ describe('queue-fix-tasks', () => {
       failingStep: 'verify:typecheck',
       truncatedError: 'errA',
       branch: null,
+      recipeContext: ctx,
     })
     expect(a.created).toBe(true)
     expect(b.created).toBe(false)
@@ -118,11 +165,16 @@ describe('queue-fix-tasks', () => {
       args: [t.id, 'sig-dup'],
     })
     expect(Number((r.rows[0] as unknown as { n: number }).n)).toBe(1)
+    cleanup()
   })
 
-  it('handleTaskFailureWithFixTask transitions source to blocked with retry_count++', async () => {
+  it('handleTaskFailureWithFixTask transitions source to blocked with retry_count++ when a recipe is registered', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, ft } = await loadModules(repo)
+    const { q, ft, rc } = await loadModules(repo)
+    // The classifier maps `TS2304:` to typecheck-cannot-find-name, so
+    // the produced signature is verify:typecheck/typecheck-cannot-find-name.
+    const sig = 'verify:typecheck/typecheck-cannot-find-name'
+    const cleanup = registerTestRecipe(rc, sig)
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
 
     const r = await ft.handleTaskFailureWithFixTask({
@@ -132,12 +184,14 @@ describe('queue-fix-tasks', () => {
       branch: 'task/x',
     })
     expect(r.outcome).toBe('blocked')
+    expect(r.failureSignature).toBe(sig)
     expect(r.fixTaskId).toBeTruthy()
     expect(r.retryCount).toBe(1)
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
     expect(reloaded?.retryCount).toBe(1)
+    cleanup()
   })
 
   it('drops source task and creates no fix task when retry_count >= MARS_FIX_RETRY_BUDGET', async () => {
@@ -165,7 +219,8 @@ describe('queue-fix-tasks', () => {
 
   it('daemon trigger: when a fix task lands done, the source task it blocks transitions back to queued', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, ft, br } = await loadModules(repo)
+    const { q, ft, br, rc } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
     const f = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
@@ -183,11 +238,13 @@ describe('queue-fix-tasks', () => {
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
+    cleanup()
   })
 
   it('multiple tasks blocked on the same fix task all unblock atomically', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, ft, br } = await loadModules(repo)
+    const { q, ft, br, rc } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'shared')
     const t1 = await q.enqueueTask('a', undefined, { skipTriage: true })
     const t2 = await q.enqueueTask('b', undefined, { skipTriage: true })
 
@@ -197,6 +254,11 @@ describe('queue-fix-tasks', () => {
       failingStep: 'verify',
       truncatedError: 'shared err',
       branch: null,
+      recipeContext: {
+        targetPath: '/tmp/x',
+        statusOutput: 'shared err',
+        targetBranch: '',
+      },
     })
     // Manually wire t2 to the same fix task to simulate a shared blocker.
     const now = new Date().toISOString()
@@ -219,11 +281,13 @@ describe('queue-fix-tasks', () => {
 
     expect((await q.getTask(t1.id))?.status).toBe('queued')
     expect((await q.getTask(t2.id))?.status).toBe('queued')
+    cleanup()
   })
 
   it('drops dependent task at unblock time when retry budget already exhausted', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '1'
-    const { q, ft, br } = await loadModules(repo)
+    const { q, ft, br, rc } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
     const t = await q.enqueueTask('a', undefined, { skipTriage: true })
     const f = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
@@ -240,6 +304,7 @@ describe('queue-fix-tasks', () => {
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('dropped')
+    cleanup()
   })
 
   it('drop on retry-budget exhausted removes all task_blockers rows for the task', async () => {
@@ -249,14 +314,17 @@ describe('queue-fix-tasks', () => {
       skipTriage: true,
     })
 
-    // First failure with budget=1: bumps retry_count to 1, transitions to
-    // blocked, inserts a task_blockers row pointing at the new fix-task.
+    // First failure: classifier maps "merge target ... has uncommitted
+    // changes" to merge:preflight/uncommitted-changes (a registered
+    // recipe). Bumps retry_count to 1, transitions to blocked, inserts
+    // a task_blockers row pointing at the new fix-task.
+    const errorLine =
+      'merge target /repo has uncommitted changes blocking fast-forward'
     const first = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'merge:preflight',
-      errorOutput: 'dirty merge target',
+      errorOutput: errorLine,
       branch: 'task/x',
-      recipeSignature: 'dirty_merge_target',
       recipeContext: {
         targetPath: '/repo',
         statusOutput: '?? leftover.txt',
@@ -272,9 +340,8 @@ describe('queue-fix-tasks', () => {
     const second = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'merge:preflight',
-      errorOutput: 'dirty merge target',
+      errorOutput: errorLine,
       branch: 'task/x',
-      recipeSignature: 'dirty_merge_target',
       recipeContext: {
         targetPath: '/repo',
         statusOutput: '?? leftover.txt',
@@ -285,7 +352,9 @@ describe('queue-fix-tasks', () => {
 
     reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('dropped')
-    expect(reloaded?.dropReason).toBe('retry_budget_exhausted:dirty_merge_target')
+    expect(reloaded?.dropReason).toBe(
+      'retry_budget_exhausted:merge:preflight/uncommitted-changes',
+    )
 
     const remainingBlockers = await q.getClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
@@ -298,7 +367,8 @@ describe('queue-fix-tasks', () => {
 
   it('unblockTask flips a blocked task to failed and clears task_blockers rows', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, ft } = await loadModules(repo)
+    const { q, ft, rc } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'verify/unclassified')
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
     const f = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
@@ -319,6 +389,7 @@ describe('queue-fix-tasks', () => {
       args: [t.id],
     })
     expect(Number((remaining.rows[0] as unknown as { n: number }).n)).toBe(0)
+    cleanup()
   })
 
   it('unblockTask is a no-op for tasks that are not blocked', async () => {
@@ -332,9 +403,94 @@ describe('queue-fix-tasks', () => {
     expect(reloaded?.status).toBe('queued')
   })
 
+  it('escalates to inbox when a recovery (fix-task) itself fails — does NOT enqueue another recovery', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft, rc } = await loadModules(repo)
+    // Register a recipe so the FIRST failure produces a recovery row.
+    const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+    const first = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'err',
+    })
+    expect(first.outcome).toBe('blocked')
+    const recoveryId = first.fixTaskId!
+    expect(recoveryId).toBeTruthy()
+
+    // Now simulate the recovery itself failing. Without the
+    // recovery-escalation branch this would enqueue a fix-of-fix
+    // (the cascade pattern).
+    const second = await ft.handleTaskFailureWithFixTask({
+      taskId: recoveryId,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'err',
+    })
+    expect(second.outcome).toBe('escalated')
+    expect(second.fixTaskId).toBeUndefined()
+    expect(second.inboxItemId).toBeTruthy()
+
+    const recoveryRow = await q.getTask(recoveryId)
+    expect(recoveryRow?.status).toBe('failed')
+
+    // The original task stays blocked — the human resolves via
+    // mars retry / mars unblock.
+    const origin = await q.getTask(t.id)
+    expect(origin?.status).toBe('blocked')
+
+    // No new fix-task was enqueued for the failed recovery.
+    const descendants = await q.getClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [recoveryId],
+    })
+    expect(Number((descendants.rows[0] as unknown as { n: number }).n)).toBe(
+      0,
+    )
+    cleanup()
+  })
+
+  it('no-recipe path: spawns an investigator task and raises a no-recipe inbox item; original stays blocked', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+    // 'verify:test/unclassified' is NOT in the registered recipe set;
+    // the failure handler should NOT enqueue a recovery.
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:test',
+      errorOutput: 'something nobody has classified yet',
+      branch: 'task/x',
+    })
+    expect(r.outcome).toBe('no-recipe')
+    expect(r.failureSignature).toBe('verify:test/unclassified')
+    expect(r.investigatorTaskId).toBeTruthy()
+    expect(r.inboxItemId).toBeTruthy()
+    expect(r.fixTaskId).toBeUndefined()
+
+    // Original task is blocked but has NO task_blockers row pointing
+    // at the investigator (investigator does not unblock the source).
+    const origin = await q.getTask(t.id)
+    expect(origin?.status).toBe('blocked')
+    const blockers = await q.getClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((blockers.rows[0] as unknown as { n: number }).n)).toBe(0)
+
+    // Investigator exists, is queued, and references the same origin.
+    const inv = await q.getTask(r.investigatorTaskId!)
+    expect(inv?.status).toBe('queued')
+    expect(inv?.fixForTaskId).toBeNull()
+    expect(inv?.originId).toBe(origin?.originId)
+    expect(inv?.author?.name).toBe('agent:investigator')
+    expect(inv?.prompt).toContain('Investigator task')
+    expect(inv?.prompt).toContain('verify:test/unclassified')
+  })
+
   it('recoverBlockedTasks unblocks tasks whose blocker task was already done', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, ft, br } = await loadModules(repo)
+    const { q, ft, br, rc } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'verify/unclassified')
     const t = await q.enqueueTask('a', undefined, { skipTriage: true })
     const f = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
@@ -353,5 +509,6 @@ describe('queue-fix-tasks', () => {
     expect(recovered[0].outcomes[0].outcome).toBe('queued')
 
     expect((await q.getTask(t.id))?.status).toBe('queued')
+    cleanup()
   })
 })
