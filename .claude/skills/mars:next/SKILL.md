@@ -90,18 +90,30 @@ Created draft: <id>
 Then go directly to **Step 3** with classification = `grill` (skip Step 2's
 classifier — fresh free-text drafts always need shaping).
 
-## 1c — No argument: pick from the queue
+## 1c — No argument: show the queue and wait
 
-Run `mars next --json`. The shape is `{ drafts: [...], blocked: [...] }`.
+Run `mars next --json` to fetch `{ drafts: [...], blocked: [...] }`, then
+print a single combined list directly to the user — **no `AskUserQuestion`
+menu, no "pick a draft / pick a blocked task / describe new idea" wrapper**.
 
-Display the lists to the user (you can also run `mars next` without
-`--json` for a human-readable rendering and show that verbatim — same data),
-then use `AskUserQuestion` with the candidates as options. If there are
-many items, group "Drafts" and "Blocked tasks" and show the goal/short
-title for each.
+Order and format:
 
-Once the user picks, take their chosen id and route through Step 1a. If the
-user wants to describe a brand-new idea instead, route through Step 1b.
+1. **Blocked tasks first** (most urgent — orchestrator stopped on them).
+2. **Drafts second** (ordered as `mars next --json` returns them).
+
+For each row show the id (8-hex prefix is fine) and the goal/title on one
+line, so the user can copy an id. Keep it terse — one line per item.
+
+After printing the list, **stop and wait**. Do not ask a follow-up
+question. The user's next message is expected to be one of:
+
+- An id (or id prefix) → re-enter this skill via Step 1a.
+- Free text describing a new idea → re-enter via Step 1b. The user
+  typically does this by re-invoking `/mars:next <description>`; if they
+  just type free text in reply, treat it the same way.
+
+If both lists are empty, say so in one line and stop — the user will
+either describe a new idea or move on.
 
 # Step 2 — Classify the resolved target
 
