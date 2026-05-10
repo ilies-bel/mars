@@ -52,3 +52,7 @@ The agent the orchestrator spawns when a task fails with a signature that has no
 **Non-FF merge**:
 A task arc whose merge step could not land as an instant git fast-forward into the integration branch and therefore had to be reconciled by the vcs-supervisor (Vega), typically because the integration branch advanced after the worktree branched off.
 _Avoid_: non-fast-forward, conflicted merge, vega merge
+
+**KPI**:
+A read-only aggregate health number derived from completed task arcs over a rolling time window, surfaced on the dashboard so the operator can spot orchestrator drift at a glance.
+_Avoid_: metric, stat, gauge
