@@ -56,3 +56,7 @@ _Avoid_: non-fast-forward, conflicted merge, vega merge
 **KPI**:
 A read-only aggregate health number derived from completed task arcs over a rolling time window, surfaced on the dashboard so the operator can spot orchestrator drift at a glance.
 _Avoid_: metric, stat, gauge
+
+**Chore**:
+A queued unit of side-effect-only work (e.g. re-running install.sh, warming a cache) that is expected to produce zero commits and therefore skips the verify:has-diff gate and its recovery recipe.
+_Avoid_: fix, fix-task, side-effect task
