@@ -1,6 +1,6 @@
 ---
 name: mars:grill
-description: Grilling session that challenges the user's plan against the project's domain model, sharpens terminology, and updates the glossary and ADRs inline as decisions crystallise. Conversation only — no PRD synthesis. When the conversation is done, hand off to `/mars:to-prd`. Use when the user says "grill this", "shape this idea", or invokes `/mars:grill`.
+description: Grilling session that challenges the user's plan against the project's domain model, sharpens terminology, and updates the glossary and ADRs inline as decisions crystallise. Conversation only — no PRD synthesis. When the conversation settles, automatically invoke `/mars:to-prd` via the Skill tool. Use when the user says "grill this", "shape this idea", or invokes `/mars:grill`.
 ---
 
 # Mars: grill an idea against the project's domain model
@@ -13,8 +13,9 @@ This skill is a **conversation**, not a form-fill. You interview the user
 about their plan, walking down each branch of the design tree, sharpening
 language, and stress-testing decisions against the codebase and the
 project's existing documentation. **You do not write the PRD here.** When
-the conversation reaches a shared understanding, hand off to
-`/mars:to-prd`, which synthesises the PRD from context in one shot.
+the conversation reaches a shared understanding, **invoke `/mars:to-prd`
+via the Skill tool yourself** — do not ask the user to run it. `to-prd`
+synthesises the PRD from context in one shot.
 
 <what-to-do>
 
@@ -190,10 +191,19 @@ You don't need a checklist confirmation. You'll feel the conversation
 settle: the user stops introducing new constraints, the scenarios stop
 producing new branches, and the language has stabilised.
 
-When you're there, hand off to `/mars:to-prd <id>` in one short line:
+When you're there, announce the handoff in one short line and **invoke
+the `mars:to-prd` skill via the Skill tool yourself**, passing the idea
+id as `args`:
 
-> *"I think we have a shared understanding. Run `/mars:to-prd <id>` to
-> synthesise the PRD."*
+> *"I think we have a shared understanding — synthesising the PRD now."*
+
+```
+Skill({ skill: "mars:to-prd", args: "<id>" })
+```
+
+Do not ask the user to type `/mars:to-prd` — invoke it for them. The
+user's next interaction should be confirming the synthesised PRD inside
+`to-prd`, not running another slash command.
 
 Do **not** synthesise the PRD yourself in this skill. Do **not** call
 `mars idea set`, `mars idea add-user-story`, or `mars idea promote`.
