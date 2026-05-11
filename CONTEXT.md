@@ -74,7 +74,7 @@ A Chore (kind='chore') spawned by a recovery recipe (per ADR-0002) in response t
 _Avoid_: recovery task, fix task
 
 **Blocker**:
-A row in task_blockers asserting that a Task cannot be dispatched until the referenced row terminates; the referenced row is either another Task (terminates on merge/failure) or an Idea (terminates on promote, which transfers the block to every slice-spawned Task, or on reject, which drops it).
+A row in task_blockers asserting that a Task cannot be dispatched until another Task terminates (merge or failure); written by the Linker (lexical overlap), the slicer (intra-cohort wave intent), the fix-task pipeline, or by an operator via mars block.
 
 **Linker**:
 The deterministic, no-LLM component of triage that scans the Idea+Task graph by keyword overlap and writes Blocker rows for a freshly-promoted Task; its output alone gates dispatch, replacing the prior LLM actionable verdict.
