@@ -132,3 +132,6 @@ InboxState: operator has seen the item via 'mars inbox ack' but has not yet reso
 
 **resolved (inbox)**:
 InboxState terminal: the underlying problem was fixed. Set via 'mars inbox resolve [--root-cause <text>]'.
+
+**dismissed (inbox)**:
+InboxState terminal: the item was acknowledged-and-ignored — operator decided it does not need a fix. Set via 'mars inbox dismiss'.
