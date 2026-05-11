@@ -138,3 +138,7 @@ InboxState terminal: the item was acknowledged-and-ignored — operator decided 
 
 **Actionable state**:
 A task status the triage UI surfaces because the operator can still influence the task: queued, running, verifying, merging, blocked. Excludes terminal states (done, failed, dropped).
+
+**Owned file**:
+A path the framework fully owns in a consumer repo. The manifest's owned[] list. 'mars install' / 'mars update' overwrite owned files unconditionally per ADR-0004.
+_Avoid_: framework file, managed file
