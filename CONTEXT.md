@@ -105,3 +105,6 @@ TaskStatus terminal-success: the task has merged into the integration branch. Wo
 
 **failed (task)**:
 TaskStatus terminal-failure: a step (code, verify, or merge) errored out. Operator recovers via mars unblock or the (planned) mars continue/mars restart verbs.
+
+**dropped (task)**:
+TaskStatus terminal: the task was abandoned without merging (e.g. zero-commit run, user purge). Distinct from 'failed' — no error to recover from.
