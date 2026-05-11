@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react'
 import { useTodo } from '../hooks/useTodo'
 import type { StaleWorktree } from '../lib/api'
 import type { DraftFeature } from '../lib/types'
@@ -7,117 +8,286 @@ const shortId = (id: string): string => id.slice(0, 8)
 const draftLabel = (d: DraftFeature): string =>
   d.goal.trim() || '(no goal)'
 
+type InboxItem =
+  | { kind: 'draft'; id: string; draft: DraftFeature }
+  | { kind: 'stale'; id: string; worktree: StaleWorktree }
+
+const itemKey = (item: InboxItem): string =>
+  item.kind === 'draft' ? `draft:${item.id}` : `stale:${item.id}`
+
+const formatTime = (ts: number): string => {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return d.toLocaleString()
+}
+
+interface InboxRowProps {
+  item: InboxItem
+  active: boolean
+  onSelect: () => void
+}
+
+const InboxRow = ({ item, active, onSelect }: InboxRowProps) => {
+  const baseClass = [
+    'cursor-pointer border-l-2 px-3 py-2 transition-colors',
+    active
+      ? 'border-fg bg-iron/20'
+      : 'border-transparent hover:bg-iron/10',
+  ].join(' ')
+
+  if (item.kind === 'draft') {
+    const d = item.draft
+    return (
+      <li className={baseClass} onClick={onSelect}>
+        <div className="flex items-baseline gap-2">
+          <span className="font-mono text-[10px] uppercase text-iron">
+            {shortId(d.id)}
+          </span>
+          <span className="ml-auto font-mono text-[9px] uppercase text-iron/80">
+            {d.source}
+          </span>
+        </div>
+        <div className="mt-1 truncate font-mono text-[12px] text-fg">
+          {draftLabel(d)}
+        </div>
+        <div className="mt-1 font-mono text-[9px] uppercase text-iron/80">
+          draft · acceptance {d.acceptanceCount}
+        </div>
+      </li>
+    )
+  }
+
+  const w = item.worktree
+  return (
+    <li className={baseClass} onClick={onSelect}>
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono text-[10px] uppercase text-iron">
+          {shortId(w.taskId)}
+        </span>
+        <span className="ml-auto font-mono text-[9px] uppercase text-iron/80">
+          {w.ageHours}h
+        </span>
+      </div>
+      <div className="mt-1 truncate font-mono text-[12px] text-fg">
+        Stale worktree
+      </div>
+      <div className="mt-1 font-mono text-[9px] uppercase text-iron/80">
+        stale · {w.status}
+      </div>
+    </li>
+  )
+}
+
+interface DraftDetailProps {
+  draft: DraftFeature
+}
+
+const DraftDetail = ({ draft }: DraftDetailProps) => (
+  <div className="flex h-full flex-col overflow-auto">
+    <header className="border-b border-iron/30 px-6 py-4">
+      <div className="flex items-baseline gap-3">
+        <span className="font-mono text-[11px] uppercase text-iron">
+          {shortId(draft.id)}
+        </span>
+        <span className="font-mono text-[10px] uppercase text-iron/80">
+          {draft.source}
+        </span>
+        <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
+          updated {formatTime(draft.updatedAt)}
+        </span>
+      </div>
+      <h2 className="mt-2 font-mono text-[15px] text-fg">
+        {draftLabel(draft)}
+      </h2>
+      <div className="mt-2 font-mono text-[11px] text-iron">
+        Refine:{' '}
+        <code className="rounded bg-iron/20 px-1">
+          /mars:next {draft.id}
+        </code>
+      </div>
+    </header>
+
+    <main className="flex-1 px-6 py-4">
+      <dl className="flex flex-col gap-4 font-mono text-[12px]">
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Story
+          </dt>
+          <dd className="whitespace-pre-wrap text-fg">
+            {draft.story.trim() || (
+              <span className="text-iron/70">(empty)</span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Technical
+          </dt>
+          <dd className="whitespace-pre-wrap text-fg">
+            {draft.technical.trim() || (
+              <span className="text-iron/70">(empty)</span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Acceptance
+          </dt>
+          <dd className="text-fg">{draft.acceptanceCount}</dd>
+        </div>
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Status
+          </dt>
+          <dd className="text-fg">{draft.status}</dd>
+        </div>
+      </dl>
+    </main>
+  </div>
+)
+
+interface StaleDetailProps {
+  worktree: StaleWorktree
+}
+
+const StaleDetail = ({ worktree }: StaleDetailProps) => (
+  <div className="flex h-full flex-col overflow-auto">
+    <header className="border-b border-iron/30 px-6 py-4">
+      <div className="flex items-baseline gap-3">
+        <span className="font-mono text-[11px] uppercase text-iron">
+          {shortId(worktree.taskId)}
+        </span>
+        <span className="font-mono text-[10px] uppercase text-iron/80">
+          stale worktree
+        </span>
+        <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
+          {worktree.ageHours}h old
+        </span>
+      </div>
+      <h2 className="mt-2 font-mono text-[15px] text-fg">
+        Stale worktree {shortId(worktree.taskId)}
+      </h2>
+    </header>
+
+    <main className="flex-1 px-6 py-4">
+      <dl className="flex flex-col gap-4 font-mono text-[12px]">
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Task id
+          </dt>
+          <dd className="text-fg">{worktree.taskId}</dd>
+        </div>
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Status
+          </dt>
+          <dd className="text-fg">{worktree.status}</dd>
+        </div>
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Age
+          </dt>
+          <dd className="text-fg">{worktree.ageHours}h</dd>
+        </div>
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Updated at
+          </dt>
+          <dd className="text-fg">{worktree.updatedAt}</dd>
+        </div>
+      </dl>
+    </main>
+  </div>
+)
+
 export const TodoPage = () => {
   const { drafts, staleWorktrees, error } = useTodo()
-  const empty = drafts.length === 0 && staleWorktrees.length === 0
+
+  const items = useMemo<InboxItem[]>(() => {
+    const draftItems: InboxItem[] = drafts.map((d) => ({
+      kind: 'draft',
+      id: d.id,
+      draft: d,
+    }))
+    const staleItems: InboxItem[] = staleWorktrees.map((w) => ({
+      kind: 'stale',
+      id: w.taskId,
+      worktree: w,
+    }))
+    return [...draftItems, ...staleItems]
+  }, [drafts, staleWorktrees])
+
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (items.length === 0) {
+      setSelectedKey(null)
+      return
+    }
+    if (!selectedKey || !items.some((i) => itemKey(i) === selectedKey)) {
+      setSelectedKey(itemKey(items[0]))
+    }
+  }, [items, selectedKey])
+
+  const selected =
+    items.find((i) => itemKey(i) === selectedKey) ?? null
+
+  const empty = items.length === 0
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-bg">
-      <header className="border-b border-iron/30 px-6 py-3">
-        <h1 className="font-mono text-sm uppercase tracking-wide text-fg">
-          Todo
-        </h1>
-        <p className="mt-1 font-mono text-[11px] text-iron">
-          Pick the next thing to refine. Run{' '}
-          <code className="rounded bg-iron/20 px-1">
-            /mars:next &lt;id&gt;
-          </code>{' '}
-          in Claude Code to shape it into a well-specified feature.
-        </p>
-      </header>
-
-      <main className="flex-1 overflow-auto px-6 py-4">
-        {empty ? (
-          <div className="font-mono text-[12px] text-iron">
-            Nothing to refine. Create a draft with{' '}
-            <code className="rounded bg-iron/20 px-1">
-              mars idea add "&lt;goal&gt;"
-            </code>{' '}
-            or run{' '}
-            <code className="rounded bg-iron/20 px-1">/mars:next</code> to
-            start one from scratch.
+    <div className="flex h-full w-full overflow-hidden bg-bg">
+      <aside className="flex w-80 shrink-0 flex-col border-r border-iron/30">
+        <header className="border-b border-iron/30 px-4 py-3">
+          <h1 className="font-mono text-sm uppercase tracking-wide text-fg">
+            Todo
+          </h1>
+          <p className="mt-1 font-mono text-[10px] text-iron">
+            {drafts.length} draft{drafts.length === 1 ? '' : 's'} ·{' '}
+            {staleWorktrees.length} stale
+          </p>
+        </header>
+        <ul className="flex-1 overflow-auto">
+          {items.map((item) => (
+            <InboxRow
+              key={itemKey(item)}
+              item={item}
+              active={itemKey(item) === selectedKey}
+              onSelect={() => setSelectedKey(itemKey(item))}
+            />
+          ))}
+        </ul>
+        {error ? (
+          <div className="border-t border-iron/40 bg-iron/10 px-4 py-1.5 font-mono text-[10px] text-iron">
+            {error}
           </div>
-        ) : (
-          <div className="flex flex-col gap-6">
-            {drafts.length > 0 ? (
-              <section>
-                <h2 className="mb-2 font-mono text-[10px] uppercase tracking-wider text-iron">
-                  Existing drafts ({drafts.length})
-                </h2>
-                <ul className="flex flex-col gap-2">
-                  {drafts.map((d) => (
-                    <li
-                      key={d.id}
-                      className="rounded border border-iron/30 bg-bg p-3"
-                    >
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-mono text-[11px] uppercase text-iron">
-                          {shortId(d.id)}
-                        </span>
-                        <span className="font-mono text-[13px] text-fg">
-                          {draftLabel(d)}
-                        </span>
-                        <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
-                          {d.source}
-                        </span>
-                      </div>
-                      <div className="mt-1 flex gap-3 font-mono text-[10px] uppercase text-iron/80">
-                        <span>
-                          story: {d.story.trim() ? 'set' : 'empty'}
-                        </span>
-                        <span>
-                          technical: {d.technical.trim() ? 'set' : 'empty'}
-                        </span>
-                        <span>acceptance: {d.acceptanceCount}</span>
-                      </div>
-                      <div className="mt-2 font-mono text-[11px] text-iron">
-                        Refine:{' '}
-                        <code className="rounded bg-iron/20 px-1">
-                          /mars:next {d.id}
-                        </code>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
+        ) : null}
+      </aside>
 
-            {staleWorktrees.length > 0 ? (
-              <section>
-                <h2 className="mb-2 font-mono text-[10px] uppercase tracking-wider text-iron">
-                  Stale worktrees ({staleWorktrees.length})
-                </h2>
-                <ul className="flex flex-col gap-2">
-                  {staleWorktrees.map((w: StaleWorktree) => (
-                    <li
-                      key={w.taskId}
-                      className="rounded border border-iron/30 bg-bg p-3"
-                    >
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-mono text-[11px] uppercase text-iron">
-                          {shortId(w.taskId)}
-                        </span>
-                        <span className="font-mono text-[11px] uppercase text-fg">
-                          {w.status}
-                        </span>
-                        <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
-                          {w.ageHours}h
-                        </span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
+      <section className="flex min-w-0 flex-1 flex-col">
+        {empty ? (
+          <div className="flex h-full items-center justify-center px-6 text-center">
+            <div className="font-mono text-[12px] text-iron">
+              Nothing to refine. Create a draft with{' '}
+              <code className="rounded bg-iron/20 px-1">
+                mars idea add "&lt;goal&gt;"
+              </code>{' '}
+              or run{' '}
+              <code className="rounded bg-iron/20 px-1">
+                /mars:next
+              </code>{' '}
+              to start one from scratch.
+            </div>
+          </div>
+        ) : selected?.kind === 'draft' ? (
+          <DraftDetail draft={selected.draft} />
+        ) : selected?.kind === 'stale' ? (
+          <StaleDetail worktree={selected.worktree} />
+        ) : (
+          <div className="flex h-full items-center justify-center font-mono text-[12px] text-iron">
+            Select an item
           </div>
         )}
-      </main>
-
-      {error ? (
-        <div className="border-t border-iron/40 bg-iron/10 px-6 py-1.5 font-mono text-[11px] text-iron">
-          {error}
-        </div>
-      ) : null}
+      </section>
     </div>
   )
 }
