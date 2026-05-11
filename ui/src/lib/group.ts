@@ -77,9 +77,8 @@ export const groupTasks = (tasks: Task[]): Snapshot => {
     const ui = toUI(t)
     columns[key].push(ui)
     if (key === 'in_progress') inProgress++
-    else if (key === 'done' || key === 'dropped') done++
-    else if (key === 'blocked') todo++
-    else todo++
+    else if (key === 'done') done++
+    else if (key !== 'dropped') todo++
   }
   return { columns, counts: { inProgress, todo, done } }
 }
