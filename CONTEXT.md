@@ -81,3 +81,6 @@ The deterministic, no-LLM component of triage that scans the Idea+Task graph by 
 
 **Triaging**:
 A transient Task status assigned by the slicer at emit-time; the Task is not yet dispatch-eligible. The Linker runs synchronously over Triaging tasks, writes blocker rows, and flips the status to queued. A Task stuck in Triaging means the Linker pass did not complete.
+
+**draft (task)**:
+TaskStatus initial state: a task row that has been authored but not yet triaged into the dispatch queue. Triage promotes draft → queued.
