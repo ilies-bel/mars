@@ -149,3 +149,7 @@ _Avoid_: shared file, merged file, conflicted file
 
 **Framework version**:
 A semver git tag (vMAJOR.MINOR.PATCH) on the mars-framework repository; the canonical identifier of a framework release.
+
+**Focus subgraph**:
+The slice of the Graph view's blocker DAG anchored at a selected node — by default the upstream blocker chain to its roots plus one downstream hop, with the selected node's originating Idea attached as a fixed provenance hop.
+_Avoid_: focus query, focus mode
