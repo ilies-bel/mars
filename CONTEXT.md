@@ -90,3 +90,6 @@ TaskStatus: a task that has cleared triage and is waiting for a Worker slot. The
 
 **ready (task)**:
 TaskStatus: legacy/unreachable state that predates 'queued' as the claimable state. Slated for removal (idea 05fad6e6).
+
+**running (task)**:
+TaskStatus: a task whose code step (claude -p in the worktree) is currently executing.
