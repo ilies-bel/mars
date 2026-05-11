@@ -24,10 +24,19 @@ export interface FixRecipe {
   signature: string
   title: (ctx: FixRecipeContext) => string
   buildPrompt: (ctx: FixRecipeContext) => string
+  /**
+   * When true, a single outstanding fix-task is shared across every
+   * source task that hits this signature: subsequent failures attach
+   * a new `task_blockers` edge to the existing fix-task instead of
+   * spawning a duplicate. Used for repository-global remediations
+   * like cleaning a dirty merge target — one commit unblocks the herd.
+   */
+  shared?: boolean
 }
 
 const dirtyMergeTargetRecipe: FixRecipe = {
   signature: 'merge:preflight/uncommitted-changes',
+  shared: true,
   title: (ctx) =>
     `Resolve dirty changes blocking merge into ${ctx.targetBranch}`,
   buildPrompt: (ctx) => {

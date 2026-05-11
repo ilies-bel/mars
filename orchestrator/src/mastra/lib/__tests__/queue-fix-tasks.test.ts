@@ -284,6 +284,64 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
+  it('shared recipe: two sources hitting the same signature attach to ONE fix task with max priority', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft, br, rc } = await loadModules(repo)
+    rc.recipes['shared-sig'] = {
+      signature: 'shared-sig',
+      title: () => 'shared',
+      buildPrompt: () => 'shared recovery',
+      shared: true,
+    }
+    const t1 = await q.enqueueTask('a', undefined, { skipTriage: true })
+    const t2 = await q.enqueueTask('b', undefined, { skipTriage: true })
+    const ctx = {
+      targetPath: '/tmp/x',
+      statusOutput: 'dirty',
+      targetBranch: 'main',
+    }
+    const r1 = await ft.upsertFixTask({
+      sourceTaskId: t1.id,
+      failureSignature: 'shared-sig',
+      failingStep: 'merge:preflight',
+      truncatedError: 'dirty',
+      branch: null,
+      recipeContext: ctx,
+    })
+    const r2 = await ft.upsertFixTask({
+      sourceTaskId: t2.id,
+      failureSignature: 'shared-sig',
+      failingStep: 'merge:preflight',
+      truncatedError: 'dirty',
+      branch: null,
+      recipeContext: ctx,
+    })
+    expect(r1.created).toBe(true)
+    expect(r2.created).toBe(false)
+    expect(r2.fixTaskId).toBe(r1.fixTaskId)
+
+    // Both sources are blocked on the same fix-task.
+    const blockers = await q.getClient().execute({
+      sql: `SELECT task_id FROM task_blockers WHERE blocker_task_id = ? ORDER BY task_id`,
+      args: [r1.fixTaskId],
+    })
+    expect(blockers.rows).toHaveLength(2)
+
+    // Fix task runs at max priority so it preempts other queued work.
+    const fix = await q.getTask(r1.fixTaskId)
+    expect(fix?.priority).toBe(3)
+
+    // Completing the shared fix flips both sources back to queued.
+    await q.updateTask(r1.fixTaskId, { status: 'done' })
+    const result = await br.onBlockerTaskCompleted(r1.fixTaskId)
+    const queuedIds = result.outcomes
+      .filter((o) => o.outcome === 'queued')
+      .map((o) => o.taskId)
+      .sort()
+    expect(queuedIds).toEqual([t1.id, t2.id].sort())
+    delete rc.recipes['shared-sig']
+  })
+
   it('drops dependent task at unblock time when retry budget already exhausted', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '1'
     const { q, ft, br, rc } = await loadModules(repo)

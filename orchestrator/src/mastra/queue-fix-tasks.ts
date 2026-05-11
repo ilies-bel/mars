@@ -5,7 +5,15 @@ import {
   type FixRecipeContext,
 } from './lib/fix-recipes'
 import { raiseInboxItem } from './lib/inbox'
-import { getClient, getTask, initQueue, updateTask, type Task } from './queue'
+import { internalBus } from './internal-bus'
+import {
+  getClient,
+  getTask,
+  initQueue,
+  MAX_PRIORITY,
+  updateTask,
+  type Task,
+} from './queue'
 import { getRetryBudget, markTaskDropped } from './queue-retry'
 
 const truncate = (s: string, max: number): string =>
@@ -56,6 +64,27 @@ const findExistingFixTask = async (
 }
 
 /**
+ * For shared recipes: locate ANY outstanding fix-task for this signature,
+ * regardless of which source task spawned it. New blocked sources attach
+ * to it via a `task_blockers` edge instead of spawning a duplicate.
+ */
+const findSharedFixTask = async (
+  failureSignature: string,
+): Promise<string | null> => {
+  const r = await getClient().execute({
+    sql: `SELECT id FROM tasks
+           WHERE failure_signature = ?
+             AND fix_for_task_id IS NOT NULL
+             AND status IN ('queued','running','verifying','merging','draft','blocked')
+           ORDER BY created_at DESC
+           LIMIT 1`,
+    args: [failureSignature],
+  })
+  if (r.rows.length === 0) return null
+  return (r.rows[0] as unknown as { id: string }).id
+}
+
+/**
  * Atomically:
  *  - INSERT a new runnable fix-task row (status='queued', skip triage),
  *  - INSERT a task_blockers row linking the source task to the fix task,
@@ -74,16 +103,16 @@ export const upsertFixTask = async (
   await initQueue()
   const c = getClient()
 
-  const existingId = await findExistingFixTask(
-    input.sourceTaskId,
-    input.failureSignature,
-  )
-  if (existingId) {
-    return { fixTaskId: existingId, created: false }
-  }
-
   const recipe = getRecipe(input.failureSignature)
-  const prompt = recipe.buildPrompt(input.recipeContext)
+  const shared = recipe.shared === true
+
+  // Shared recipes (e.g. dirty merge target) reuse a single in-flight
+  // fix-task across every source task that hits the signature. New
+  // sources just attach a task_blockers edge — one commit unblocks
+  // every dependent at once via onBlockerTaskCompleted.
+  const existingId = shared
+    ? await findSharedFixTask(input.failureSignature)
+    : await findExistingFixTask(input.sourceTaskId, input.failureSignature)
 
   const source = await getTask(input.sourceTaskId)
   if (!source) {
@@ -94,8 +123,46 @@ export const upsertFixTask = async (
     `${input.failingStep}: ${input.truncatedError}`,
     1000,
   )
-  const fixTaskId = randomUUID().slice(0, 8)
   const now = new Date().toISOString()
+
+  if (existingId) {
+    // Attach this source to the existing fix-task and park it.
+    const tx = await c.transaction('write')
+    try {
+      await tx.execute({
+        sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
+              VALUES (?, ?, ?)`,
+        args: [input.sourceTaskId, existingId, now],
+      })
+      await tx.execute({
+        sql: `UPDATE tasks
+                 SET status = 'blocked',
+                     retry_count = ?,
+                     error = ?,
+                     updated_at = ?
+               WHERE id = ?`,
+        args: [nextRetryCount, errorSummary, now, input.sourceTaskId],
+      })
+      await tx.commit()
+    } catch (error: unknown) {
+      tx.close()
+      throw error
+    }
+    internalBus().emit('task.blocked', {
+      taskId: input.sourceTaskId,
+      fixTaskId: existingId,
+      failureSignature: input.failureSignature,
+      failingStep: input.failingStep,
+    })
+    return { fixTaskId: existingId, created: false }
+  }
+
+  const prompt = recipe.buildPrompt(input.recipeContext)
+  const fixTaskId = randomUUID().slice(0, 8)
+  // Shared remediations run at top priority — every other queued task is
+  // waiting on this one resource (e.g. a clean main). Non-shared fix-tasks
+  // stay at default priority; they only unblock the single source.
+  const fixPriority = shared ? MAX_PRIORITY : 0
 
   const tx = await c.transaction('write')
   try {
@@ -104,9 +171,9 @@ export const upsertFixTask = async (
               id, prompt, status,
               author_kind, author_name,
               fix_for_task_id, failure_signature,
-              retry_count, origin_id,
+              retry_count, origin_id, priority,
               created_at, updated_at
-            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 0, ?, ?, ?)`,
+            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
       args: [
         fixTaskId,
         prompt,
@@ -115,6 +182,7 @@ export const upsertFixTask = async (
         input.sourceTaskId,
         input.failureSignature,
         source.originId,
+        fixPriority,
         now,
         now,
       ],
@@ -138,6 +206,13 @@ export const upsertFixTask = async (
     tx.close()
     throw error
   }
+
+  internalBus().emit('task.blocked', {
+    taskId: input.sourceTaskId,
+    fixTaskId,
+    failureSignature: input.failureSignature,
+    failingStep: input.failingStep,
+  })
 
   return { fixTaskId, created: true }
 }
@@ -384,6 +459,13 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
     tx.close()
     throw error
   }
+
+  internalBus().emit('task.blocked', {
+    taskId: input.sourceTask.id,
+    fixTaskId: null,
+    failureSignature: input.failureSignature,
+    failingStep: input.failingStep,
+  })
 
   const inboxItemId = await raiseInboxItem({
     kind: NO_RECIPE_INBOX_KIND,
