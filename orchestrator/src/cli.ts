@@ -1898,26 +1898,40 @@ const main = async (): Promise<void> => {
     const json = rest.includes('--json')
     const { listIdeas } = await import('./mastra/ideas')
     const { listTasks, listBlockers } = await import('./mastra/queue')
+
+    const TITLE_MAX = 120
+    const truncateTitle = (raw: string): string => {
+      const flat = raw.replace(/\s+/g, ' ').trim()
+      if (flat.length <= TITLE_MAX) return flat
+      return `${flat.slice(0, TITLE_MAX - 1)}…`
+    }
+
     const ideas = await listIdeas({ status: 'draft' })
     const drafts = ideas.map((i) => ({
       id: i.id,
-      title: i.title,
+      title: truncateTitle(i.title),
+      status: i.status,
       source: i.source,
       problemSet: i.problem.trim().length > 0,
       solutionSet: i.solution.trim().length > 0,
       userStoryCount: i.userStories.length,
+      createdAtMs: i.createdAt,
     }))
 
     const { blockedTaskTitle } = await import('./cli/blocked-title')
     const { shortId } = await import('./cli/short-id')
     const blockedTasks = await listTasks('blocked')
     const blocked = await Promise.all(
-      blockedTasks.map(async (t) => ({
-        id: t.id,
-        title: blockedTaskTitle(t.prompt),
-        prompt: t.prompt,
-        blockerIds: await listBlockers(t.id),
-      })),
+      blockedTasks.map(async (t) => {
+        const parsedMs = Date.parse(t.createdAt)
+        return {
+          id: t.id,
+          title: truncateTitle(blockedTaskTitle(t.prompt)),
+          status: t.status,
+          createdAtMs: Number.isFinite(parsedMs) ? parsedMs : 0,
+          blockerIds: await listBlockers(t.id),
+        }
+      }),
     )
 
     if (json) {
