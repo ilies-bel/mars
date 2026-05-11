@@ -1,0 +1,3 @@
+# Framework versions are semver git tags on the framework repo
+
+Context: 'mars update' (and 'mars version') need a definition of 'framework version'. Decision: a framework version is a semver git tag (vMAJOR.MINOR.PATCH) on the framework repository. 'latest stable' = highest such tag, excluding prereleases (e.g. v0.4.2-rc.1). '--to <version>' accepts any existing tag. mars.lock records the resolved tag string. Why: the framework already ships as a clonable git repo (see install.sh), so no new release infrastructure is needed. Semver gives '--to' something meaningful to accept and makes 'stable' honest. Cost: someone has to start tagging releases — until the first tag lands, 'mars update' has nothing to resolve.
