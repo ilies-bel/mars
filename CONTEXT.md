@@ -96,3 +96,6 @@ TaskStatus: a task whose code step (claude -p in the worktree) is currently exec
 
 **verifying (task)**:
 TaskStatus: the code step has finished and verify (typecheck/test/lint) is running on the worktree.
+
+**merging (task)**:
+TaskStatus: verify passed and the task is being fast-forwarded into the merge target (main by default), serialized via the merge lock.
