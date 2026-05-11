@@ -101,6 +101,16 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(r.outcomes[0].outcome).toBe('dropped')
     const reloaded = await q.getTask(dep.id)
     expect(reloaded?.status).toBe('dropped')
+
+    const inbox = (await import('../inbox')) as unknown as {
+      listInboxItems: typeof import('../inbox').listInboxItems
+    }
+    const open = await inbox.listInboxItems('open')
+    const taskBlocked = open.filter((i) => i.kind.startsWith('task-blocked('))
+    expect(taskBlocked).toHaveLength(1)
+    expect(taskBlocked[0].kind).toBe(`task-blocked(${dep.id.slice(0, 8)})`)
+    expect(taskBlocked[0].signature).toBe(dep.id)
+    expect(taskBlocked[0].payload.taskId).toBe(dep.id)
   })
 
   it('does not unblock when one of multiple blockers is still pending', async () => {
