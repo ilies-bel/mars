@@ -114,3 +114,6 @@ TaskStatus: the task has at least one open task_blocker row referencing another 
 
 **draft (idea)**:
 IdeaStatus initial state: an unshaped idea row. Needs title + problem + solution + ≥1 user story before it can become prd-ready.
+
+**prd-ready**:
+IdeaStatus: a fully-shaped idea that has passed validateIdeaShaped(). Eligible for the slicer. Produced by 'mars idea promote' — note the verb name mismatch with the status.
