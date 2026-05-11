@@ -46,7 +46,7 @@ export const resolveContext = (override?: string): OrchestratorContext => {
     stateDir,
     queueDbPath: resolve(stateDir, 'queue.db'),
     mastraDbPath: resolve(stateDir, 'mastra.db'),
-    observabilityDbPath: resolve(stateDir, 'observability.db'),
+    observabilityDbPath: resolve(stateDir, 'observability.duckdb'),
     stateDbPath: resolve(stateDir, 'state.db'),
     supervisorsDir,
     supervisorsManifest: resolve(supervisorsDir, 'manifest.json'),
