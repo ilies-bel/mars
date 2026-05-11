@@ -186,7 +186,8 @@ Commands:
                                 background; --stop asks daemon to exit (refuses
                                 if tasks are in flight unless --force); --status
                                 prints inFlight + queue counts; --reload re-reads
-                                MARS_MAX_* env vars without restarting.
+                                .mars/daemon.json (falling back to MARS_MAX_* env
+                                vars and built-in defaults) without restarting.
   ab "<instruction>" --variants <path>
                                 run an A/B experiment: same instruction, two
                                 configurable variants from the JSON file (must
@@ -408,7 +409,8 @@ Flags:
   --stop     ask the daemon to exit (refuses if tasks are in flight)
   --status   print inFlight + queue counts
   --force    with --stop, exit even if tasks are in flight
-  --reload   re-read MARS_MAX_* env vars without restarting the daemon`,
+  --reload   re-read .mars/daemon.json (falling back to MARS_MAX_* env vars
+             and built-in defaults) without restarting the daemon`,
   ab: `mars ab "<instruction>" --variants <path>
 
 Run an A/B experiment: same instruction, two configurable variants from
