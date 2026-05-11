@@ -126,3 +126,6 @@ IdeaStatus terminal: the idea was decided against — no slicing, no tasks. Prod
 
 **open (inbox)**:
 InboxState initial: an inbox item that needs operator attention (stale-worktree alert, blocked task, failed task).
+
+**acknowledged (inbox)**:
+InboxState: operator has seen the item via 'mars inbox ack' but has not yet resolved or dismissed it.
