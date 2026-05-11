@@ -1,0 +1,3 @@
+# Linker is the sole lexical-overlap writer of task_blockers
+
+When the LLM-based triage linker is replaced by a deterministic keyword-overlap Linker, the slicer stops writing its own blockedBy rows even though its prompt may still surface planner-intent orderings. The Linker re-derives every lexical-overlap-derived dependency, while causal writers (fix-task pipeline, manual mars block, idea-promote transfer) continue to write rows as before. Chosen so that lexical-overlap blocker rows have a single owner with single tunable behaviour, at the cost of dropping the slicer's semantic planner-intent signal which keyword overlap cannot always recover.
