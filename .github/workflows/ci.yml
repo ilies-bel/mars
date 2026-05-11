@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  orchestrator:
+    name: Orchestrator (typecheck + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: orchestrator
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: orchestrator/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+  ui:
+    name: UI (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ui/package-lock.json
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run build
+
+  repo-hygiene:
+    name: Repo hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Forbid tracked artifacts
+        run: |
+          set -e
+          patterns=(
+            '(^|/)\.env$'
+            '(^|/)\.env\.local$'
+            '(^|/)\.mars/'
+            '(^|/)\.worktrees/'
+            '(^|/)node_modules/'
+            '\.duckdb(\.wal)?$'
+            '\.tsbuildinfo$'
+          )
+          tracked=$(git ls-files)
+          fail=0
+          for pat in "${patterns[@]}"; do
+            hits=$(printf '%s\n' "$tracked" | grep -E "$pat" || true)
+            if [ -n "$hits" ]; then
+              echo "::error::Forbidden tracked files match /$pat/:"
+              echo "$hits"
+              fail=1
+            fi
+          done
+          exit $fail
+
+  install-smoke:
+    name: install.sh smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run install.sh against the checkout
+        run: |
+          set -euxo pipefail
+          export HOME="$RUNNER_TEMP/home"
+          mkdir -p "$HOME/.local/bin"
+          export PATH="$HOME/.local/bin:$PATH"
+          bash ./install.sh
+          command -v mars
+          mars --help || mars help || true
