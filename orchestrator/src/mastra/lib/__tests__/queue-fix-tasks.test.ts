@@ -423,6 +423,92 @@ describe('queue-fix-tasks', () => {
     ).toBe(0)
   })
 
+  it('raises a task-blocked(<id>) inbox row when retry budget is exhausted, deduped by task id', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '1'
+    const { q, ft } = await loadModules(repo)
+    const inbox = (await import('../inbox')) as unknown as {
+      listInboxItems: typeof import('../inbox').listInboxItems
+    }
+    const t = await q.enqueueTask('merge into dirty target', undefined, {
+      skipTriage: true,
+    })
+
+    const errorLine =
+      'merge target /repo has uncommitted changes blocking fast-forward'
+
+    // First failure: blocked + recovery enqueued. No inbox row yet.
+    const first = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'merge:preflight',
+      errorOutput: errorLine,
+      branch: 'task/x',
+      recipeContext: {
+        targetPath: '/repo',
+        statusOutput: '?? leftover.txt',
+        targetBranch: 'main',
+      },
+    })
+    expect(first.outcome).toBe('blocked')
+    let openItems = await inbox.listInboxItems('open')
+    expect(
+      openItems.filter((i) => i.kind.startsWith('task-blocked(')),
+    ).toHaveLength(0)
+
+    // Second failure: retry budget exhausted -> dropped + inbox raised.
+    const second = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'merge:preflight',
+      errorOutput: errorLine,
+      branch: 'task/x',
+      recipeContext: {
+        targetPath: '/repo',
+        statusOutput: '?? leftover.txt',
+        targetBranch: 'main',
+      },
+    })
+    expect(second.outcome).toBe('dropped')
+
+    openItems = await inbox.listInboxItems('open')
+    const taskBlocked = openItems.filter((i) =>
+      i.kind.startsWith('task-blocked('),
+    )
+    expect(taskBlocked).toHaveLength(1)
+    expect(taskBlocked[0].kind).toBe(`task-blocked(${t.id.slice(0, 8)})`)
+    expect(taskBlocked[0].signature).toBe(t.id)
+    expect(taskBlocked[0].priority).toBe('high')
+    expect(taskBlocked[0].raisedBy).toBe('orchestrator:retry-budget')
+    expect(taskBlocked[0].seenCount).toBe(1)
+    expect(taskBlocked[0].payload.taskId).toBe(t.id)
+    expect(taskBlocked[0].payload.lastStep).toBe('merge:preflight')
+    expect(taskBlocked[0].payload.lastErrorSignature).toBe(
+      'merge:preflight/uncommitted-changes',
+    )
+
+    // Re-trigger the exhaustion path on the same task: row must dedup
+    // (seen_count bumps, NOT a second row).
+    // markTaskDropped already removed the task_blockers; re-call the
+    // helper directly to simulate the same exhaustion firing again.
+    const retry = (await import('../../queue-retry')) as unknown as {
+      raiseRetryBudgetExhaustedInbox: typeof import('../../queue-retry').raiseRetryBudgetExhaustedInbox
+    }
+    await retry.raiseRetryBudgetExhaustedInbox({
+      taskId: t.id,
+      lastStep: 'merge:preflight',
+      retryCount: 1,
+      lastErrorSignature: 'merge:preflight/uncommitted-changes',
+      lastErrorSummary: errorLine,
+      branch: 'task/x',
+      worktreePath: null,
+    })
+
+    const openAfter = await inbox.listInboxItems('open')
+    const taskBlockedAfter = openAfter.filter((i) =>
+      i.kind.startsWith('task-blocked('),
+    )
+    expect(taskBlockedAfter).toHaveLength(1)
+    expect(taskBlockedAfter[0].seenCount).toBe(2)
+  })
+
   it('unblockTask flips a blocked task to failed and clears task_blockers rows', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft, rc } = await loadModules(repo)

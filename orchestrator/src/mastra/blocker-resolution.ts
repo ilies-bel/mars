@@ -1,6 +1,10 @@
 import { internalBus } from './internal-bus'
-import { getRetryBudget, markTaskDropped } from './queue-retry'
-import { getClient, initQueue } from './queue'
+import {
+  getRetryBudget,
+  markTaskDropped,
+  raiseRetryBudgetExhaustedInbox,
+} from './queue-retry'
+import { getClient, getTask, initQueue } from './queue'
 
 export interface UnblockOutcome {
   taskId: string
@@ -20,6 +24,24 @@ interface BlockedDependentRow {
 }
 
 const RETRY_BUDGET_DROP_REASON = 'retry_budget_exhausted_at_unblock'
+
+const raiseInboxForBlockedTask = async (taskId: string): Promise<void> => {
+  const task = await getTask(taskId)
+  if (!task) return
+  const error = task.error ?? ''
+  const colon = error.indexOf(':')
+  const lastStep = colon > 0 ? error.slice(0, colon).trim() : 'unblock'
+  const lastErrorSummary = colon > 0 ? error.slice(colon + 1).trim() : error
+  await raiseRetryBudgetExhaustedInbox({
+    taskId,
+    lastStep,
+    retryCount: task.retryCount,
+    lastErrorSignature: task.failureSignature,
+    lastErrorSummary: lastErrorSummary || null,
+    branch: task.branch,
+    worktreePath: task.worktreePath,
+  })
+}
 
 /**
  * When a task lands `done`, look up every task that has it listed as a
@@ -49,6 +71,7 @@ export const onBlockerTaskCompleted = async (
   for (const row of r.rows as unknown as BlockedDependentRow[]) {
     const retryCount = Number(row.retry_count ?? 0)
     if (retryCount >= budget) {
+      await raiseInboxForBlockedTask(row.id)
       await markTaskDropped(row.id, RETRY_BUDGET_DROP_REASON)
       outcomes.push({
         taskId: row.id,
@@ -116,6 +139,7 @@ export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
     const retryCount = Number(row.retry_count ?? 0)
     const outcomes: UnblockOutcome[] = []
     if (retryCount >= budget) {
+      await raiseInboxForBlockedTask(row.id)
       await markTaskDropped(row.id, RETRY_BUDGET_DROP_REASON)
       outcomes.push({
         taskId: row.id,

@@ -1,6 +1,9 @@
+import { raiseInboxItem } from './lib/inbox'
 import { getClient, initQueue } from './queue'
 
 export const DEFAULT_RETRY_BUDGET = 1
+
+export const TASK_BLOCKED_INBOX_KIND_PREFIX = 'task-blocked'
 
 export const getRetryBudget = (): number => {
   const raw = process.env.MARS_FIX_RETRY_BUDGET
@@ -23,5 +26,70 @@ export const markTaskDropped = async (
   await getClient().execute({
     sql: `DELETE FROM task_blockers WHERE task_id = ?`,
     args: [taskId],
+  })
+}
+
+export interface RetryBudgetExhaustedInboxInput {
+  taskId: string
+  lastStep: string
+  retryCount: number
+  lastErrorSignature: string | null
+  lastErrorSummary?: string | null
+  branch?: string | null
+  worktreePath?: string | null
+}
+
+const buildTaskBlockedBody = (
+  input: RetryBudgetExhaustedInboxInput,
+): string => {
+  const lines: Array<string | null> = [
+    `Task ${input.taskId} exhausted its retry budget at step \`${input.lastStep}\` and is no longer being retried by the orchestrator.`,
+    input.lastErrorSignature
+      ? `Last failure signature: ${input.lastErrorSignature}`
+      : null,
+    `Retry count: ${input.retryCount}`,
+    input.branch ? `Branch: ${input.branch}` : null,
+    input.worktreePath ? `Worktree: ${input.worktreePath}` : null,
+    '',
+  ]
+  if (input.lastErrorSummary) {
+    lines.push('Last error (truncated):', '```', input.lastErrorSummary, '```', '')
+  }
+  lines.push(`Resolve with /mars:unblock ${input.taskId} or via mars inbox.`)
+  return lines.filter((line) => line !== null).join('\n')
+}
+
+/**
+ * Raise (or bump) the inbox item that flags a task as having exhausted its
+ * retry budget. Dedup is server-side on (kind, signature); we key both to
+ * the task id so re-flips bump `seen_count` instead of duplicating rows.
+ */
+export const raiseRetryBudgetExhaustedInbox = async (
+  input: RetryBudgetExhaustedInboxInput,
+): Promise<string> => {
+  const shortId = input.taskId.slice(0, 8)
+  return raiseInboxItem({
+    kind: `${TASK_BLOCKED_INBOX_KIND_PREFIX}(${shortId})`,
+    category: 'orchestrator',
+    priority: 'high',
+    title: `task ${shortId} blocked after retry budget exhausted at ${input.lastStep}`,
+    body: buildTaskBlockedBody(input),
+    payload: {
+      taskId: input.taskId,
+      lastStep: input.lastStep,
+      retryCount: input.retryCount,
+      lastErrorSignature: input.lastErrorSignature,
+    },
+    context: {
+      branch: input.branch ?? null,
+      worktreePath: input.worktreePath ?? null,
+    },
+    raisedBy: 'orchestrator:retry-budget',
+    signature: input.taskId,
+    occurrence: {
+      at: new Date().toISOString(),
+      lastStep: input.lastStep,
+      retryCount: input.retryCount,
+    },
   })
 }

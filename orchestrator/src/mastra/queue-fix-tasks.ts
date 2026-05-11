@@ -15,7 +15,11 @@ import {
   updateTask,
   type Task,
 } from './queue'
-import { getRetryBudget, markTaskDropped } from './queue-retry'
+import {
+  getRetryBudget,
+  markTaskDropped,
+  raiseRetryBudgetExhaustedInbox,
+} from './queue-retry'
 
 const truncate = (s: string, max: number): string =>
   s.length <= max ? s : `${s.slice(0, max)}…`
@@ -629,6 +633,15 @@ export const handleTaskFailureWithFixTask = async (
       input.taskId,
       `retry_budget_exhausted:${failureSignature}`,
     )
+    await raiseRetryBudgetExhaustedInbox({
+      taskId: input.taskId,
+      lastStep: input.failingStep,
+      retryCount: task.retryCount,
+      lastErrorSignature: failureSignature,
+      lastErrorSummary: truncatedError,
+      branch,
+      worktreePath: task.worktreePath,
+    })
     return {
       outcome: 'dropped',
       failureSignature,
