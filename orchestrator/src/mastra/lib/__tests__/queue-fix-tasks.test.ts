@@ -487,6 +487,48 @@ describe('queue-fix-tasks', () => {
     expect(inv?.prompt).toContain('verify:test/unclassified')
   })
 
+  it('investigator prompt follows the diagnose discipline (feedback-loop first, ranked falsifiable hypotheses, [DEBUG-] tags, "no recipe is the right answer" framing)', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:test',
+      errorOutput: 'something nobody has classified yet',
+      branch: 'task/x',
+    })
+    expect(r.outcome).toBe('no-recipe')
+    expect(r.investigatorTaskId).toBeTruthy()
+
+    const inv = await q.getTask(r.investigatorTaskId!)
+    expect(inv).not.toBeNull()
+    const prompt = inv!.prompt
+
+    // Feedback-loop-first discipline.
+    expect(prompt.toLowerCase()).toContain('feedback loop')
+    // Ranked hypotheses (covers "ranked" + "hypothes" stems).
+    expect(prompt).toMatch(/ranked/i)
+    expect(prompt).toMatch(/hypothes/i)
+    // Falsifiable framing.
+    expect(prompt).toMatch(/falsifiab/i)
+    // Tagged debug logs with the specific prefix shape.
+    expect(prompt).toContain('[DEBUG-')
+    // "No recipe is the right answer" is named as a first-class outcome.
+    expect(prompt).toContain('no recipe is the right answer')
+    // Concrete examples for outcome (b).
+    expect(prompt.toLowerCase()).toMatch(/flaky|credential|api key|underspecified/)
+    // Phase-6 grep-and-remove step + verify-gate forward reference.
+    expect(prompt.toLowerCase()).toContain('grep')
+    expect(prompt.toLowerCase()).toMatch(/verify step.*reject|reject.*\[debug-/i)
+    // Commit-message-carries-the-hypothesis requirement.
+    expect(prompt.toLowerCase()).toMatch(/commit message/)
+    // Existing boundaries / ADR reference / save-your-work closing preserved.
+    expect(prompt).toContain('docs/adr/0002-recipe-per-failure-signature.md')
+    expect(prompt).toContain('Save your work')
+    expect(prompt).toMatch(/vitest test/i)
+    expect(prompt).toMatch(/catch-all/i)
+  })
+
   it('recoverBlockedTasks unblocks tasks whose blocker task was already done', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft, br, rc } = await loadModules(repo)
