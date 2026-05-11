@@ -102,3 +102,6 @@ TaskStatus: verify passed and the task is being fast-forwarded into the merge ta
 
 **done (task)**:
 TaskStatus terminal-success: the task has merged into the integration branch. Worktree and branch may be reaped.
+
+**failed (task)**:
+TaskStatus terminal-failure: a step (code, verify, or merge) errored out. Operator recovers via mars unblock or the (planned) mars continue/mars restart verbs.
