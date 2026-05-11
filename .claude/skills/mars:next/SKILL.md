@@ -92,7 +92,8 @@ classifier — fresh free-text drafts always need shaping).
 
 ## 1c — No argument: show the queue and wait
 
-Run `mars next --json` to fetch `{ drafts: [...], blocked: [...] }`, then
+Run `mars next --json` to fetch
+`{ drafts: [...], blocked: [...], counts: { drafts, blocked } }`, then
 print a single combined list directly to the user — **no `AskUserQuestion`
 menu, no "pick a draft / pick a blocked task / describe new idea" wrapper**.
 
@@ -100,6 +101,10 @@ Order and format:
 
 1. **Blocked tasks first** (most urgent — orchestrator stopped on them).
 2. **Drafts second** (ordered as `mars next --json` returns them).
+
+Each section header **must** include the total count for that section, e.g.
+`**Blocked tasks (6)**` and `**Drafts (16)**`. Read the counts from
+`counts.blocked` and `counts.drafts` in the JSON payload.
 
 For each row show the id (8-hex prefix is fine) and the goal/title on one
 line, so the user can copy an id. Keep it terse — one line per item.
