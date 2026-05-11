@@ -93,3 +93,6 @@ TaskStatus: legacy/unreachable state that predates 'queued' as the claimable sta
 
 **running (task)**:
 TaskStatus: a task whose code step (claude -p in the worktree) is currently executing.
+
+**verifying (task)**:
+TaskStatus: the code step has finished and verify (typecheck/test/lint) is running on the worktree.
