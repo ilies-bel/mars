@@ -72,3 +72,6 @@ A single live claude -p execution of a Worker, identified by a Claude session id
 **Fix-task**:
 A Chore (kind='chore') spawned by a recovery recipe (per ADR-0002) in response to a failure signature on another task. The fixForTaskId column links back to the failed task; the kind column distinguishes it from a user-initiated chore.
 _Avoid_: recovery task, fix task
+
+**Blocker**:
+A row in task_blockers asserting that a Task cannot be dispatched until the referenced row terminates; the referenced row is either another Task (terminates on merge/failure) or an Idea (terminates on promote, which transfers the block to every slice-spawned Task, or on reject, which drops it).
