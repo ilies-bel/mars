@@ -8,20 +8,12 @@ export const KanbanPage = () => {
   const { snapshot, error, connected } = useTasks()
   const cols = snapshot?.columns ?? {
     backlog: [],
-    planned: [],
     in_progress: [],
-    blocked: [],
     done: [],
-    dropped: [],
   }
   const counts = snapshot?.counts ?? { inProgress: 0, todo: 0, done: 0 }
   const totalTasks =
-    cols.backlog.length +
-    cols.planned.length +
-    cols.in_progress.length +
-    cols.blocked.length +
-    cols.done.length +
-    cols.dropped.length
+    cols.backlog.length + cols.in_progress.length + cols.done.length
 
   let cursor = 0
   const startIdx = (n: number) => {
@@ -51,30 +43,15 @@ export const KanbanPage = () => {
             startIndex={startIdx(cols.backlog.length)}
           />
           <Column
-            label="PLANNED"
-            tasks={cols.planned}
-            startIndex={startIdx(cols.planned.length)}
-          />
-          <Column
             label="IN PROGRESS"
             accent="flame"
             tasks={cols.in_progress}
             startIndex={startIdx(cols.in_progress.length)}
           />
           <Column
-            label="BLOCKED"
-            tasks={cols.blocked}
-            startIndex={startIdx(cols.blocked.length)}
-          />
-          <Column
             label="DONE"
             tasks={cols.done}
             startIndex={startIdx(cols.done.length)}
-          />
-          <Column
-            label="DROPPED"
-            tasks={cols.dropped}
-            startIndex={startIdx(cols.dropped.length)}
           />
         </main>
         {error ? (

@@ -9,13 +9,7 @@ export type {
   TodoPayload,
 } from './schemas'
 
-export type ColumnKey =
-  | 'backlog'
-  | 'planned'
-  | 'in_progress'
-  | 'blocked'
-  | 'done'
-  | 'dropped'
+export type ColumnKey = 'backlog' | 'in_progress' | 'done'
 
 export type Role = 'planner' | 'builder' | 'reviewer' | 'orchestrator'
 

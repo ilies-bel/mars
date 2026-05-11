@@ -29,17 +29,15 @@ const roleFromTask = (t: Task): Role => {
 const columnFor = (t: Task): ColumnKey | null => {
   switch (t.status) {
     case 'draft':
+    case 'dropped':
       return null
     case 'queued':
-      return t.plan ? 'planned' : 'backlog'
+      return 'backlog'
     case 'running':
     case 'verifying':
     case 'merging':
-      return 'in_progress'
     case 'blocked':
-      return 'blocked'
-    case 'dropped':
-      return 'dropped'
+      return 'in_progress'
     case 'done':
     case 'failed':
       return 'done'
@@ -62,11 +60,8 @@ const toUI = (t: Task): UITask => ({
 export const groupTasks = (tasks: Task[]): Snapshot => {
   const columns: Snapshot['columns'] = {
     backlog: [],
-    planned: [],
     in_progress: [],
-    blocked: [],
     done: [],
-    dropped: [],
   }
   let inProgress = 0
   let todo = 0
@@ -78,7 +73,7 @@ export const groupTasks = (tasks: Task[]): Snapshot => {
     columns[key].push(ui)
     if (key === 'in_progress') inProgress++
     else if (key === 'done') done++
-    else if (key !== 'dropped') todo++
+    else todo++
   }
   return { columns, counts: { inProgress, todo, done } }
 }
