@@ -33,6 +33,7 @@ import {
 } from '../blocker-resolution'
 import { internalBus } from '../internal-bus'
 import { daemonPaths } from './paths'
+import { loadDaemonConfig } from './config'
 import {
   readLines,
   writeLine,
@@ -53,13 +54,6 @@ type DispatchKind =
 interface InFlightEntry {
   taskId: string
   kind: DispatchKind
-}
-
-const envInt = (name: string, fallback: number): number => {
-  const raw = process.env[name]
-  if (raw === undefined || raw === '') return fallback
-  const n = Number.parseInt(raw, 10)
-  return Number.isFinite(n) && n > 0 ? n : fallback
 }
 
 export interface Semaphore {
@@ -174,11 +168,12 @@ export const startDaemon = async (
   // Per-kind concurrency caps. glossary-write and adr-add share one pool
   // because they both contend on the same merge lock downstream — a second
   // slot would just sit waiting on the lock, so default to 1.
-  const structuredWriteSem = makeSem(envInt('MARS_MAX_STRUCTURED_WRITE', 1))
+  const initialCaps = loadDaemonConfig().caps
+  const structuredWriteSem = makeSem(initialCaps.structuredWrite)
   const sems: Record<DispatchKind, Semaphore> = {
-    triage: makeSem(envInt('MARS_MAX_TRIAGE', 4)),
-    implement: makeSem(envInt('MARS_MAX_IMPLEMENT', 4)),
-    refine: makeSem(envInt('MARS_MAX_REFINE', 2)),
+    triage: makeSem(initialCaps.triage),
+    implement: makeSem(initialCaps.implement),
+    refine: makeSem(initialCaps.refine),
     'glossary-write': structuredWriteSem,
     'adr-add': structuredWriteSem,
   }
@@ -947,28 +942,25 @@ export const startDaemon = async (
           return { ok: true, data: await handleStatus() }
         }
         case 'reload-config': {
-          const newImplement = envInt('MARS_MAX_IMPLEMENT', 4)
-          const newTriage = envInt('MARS_MAX_TRIAGE', 4)
-          const newRefine = envInt('MARS_MAX_REFINE', 2)
-          const newStructured = envInt('MARS_MAX_STRUCTURED_WRITE', 1)
-          setSemLimit(sems.implement, newImplement)
-          setSemLimit(sems.triage, newTriage)
-          setSemLimit(sems.refine, newRefine)
+          const caps = loadDaemonConfig().caps
+          setSemLimit(sems.implement, caps.implement)
+          setSemLimit(sems.triage, caps.triage)
+          setSemLimit(sems.refine, caps.refine)
           // structuredWriteSem is shared by 'glossary-write' and 'adr-add';
           // update once via the captured reference.
-          setSemLimit(structuredWriteSem, newStructured)
+          setSemLimit(structuredWriteSem, caps.structuredWrite)
           log(
-            `concurrency reloaded: implement=${newImplement} triage=${newTriage} refine=${newRefine} structured-write=${newStructured}`,
+            `concurrency reloaded: implement=${caps.implement} triage=${caps.triage} refine=${caps.refine} structured-write=${caps.structuredWrite}`,
           )
           void drain()
           return {
             ok: true,
             data: {
               caps: {
-                implement: newImplement,
-                triage: newTriage,
-                refine: newRefine,
-                'structured-write': newStructured,
+                implement: caps.implement,
+                triage: caps.triage,
+                refine: caps.refine,
+                'structured-write': caps.structuredWrite,
               },
             },
           }
