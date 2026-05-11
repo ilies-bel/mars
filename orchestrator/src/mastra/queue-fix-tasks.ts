@@ -142,6 +142,11 @@ export const upsertFixTask = async (
   return { fixTaskId, created: true }
 }
 
+// TODO: the orchestrator's verify step should reject any commit whose diff
+// contains the `[DEBUG-` tag prefix produced by Phase 4 of this prompt.
+// That gate is tracked as a separate task; until it lands, Phase 6 here is
+// the only enforcement, and a missed grep-and-remove will only be caught
+// by code review.
 const buildInvestigatorPrompt = (input: {
   sourceTaskId: string
   originTaskId: string
@@ -149,13 +154,20 @@ const buildInvestigatorPrompt = (input: {
   failureSignature: string
   truncatedError: string
   branch: string | null
+  worktreePath: string | null
 }): string => {
+  const worktreeLine = input.worktreePath
+    ? `Worktree path (run repros from here): ${input.worktreePath}`
+    : `Worktree path: <unknown — the failing task's worktree may have been cleaned up. If you cannot reach it, treat the failure as not-locally-reproducible and prefer option (b).>`
+
   return [
-    `# Investigator task — propose a recovery recipe`,
+    `# Investigator task — diagnose the failure, then decide`,
     '',
-    `Task ${input.sourceTaskId} (origin ${input.originTaskId}) failed with a signature that has no registered recovery recipe. Your job is NOT to fix the failing task. Your job is to read the failure, decide if it's recoverable by a coding agent, and either:`,
-    '  (a) propose a draft recipe by editing orchestrator/src/mastra/lib/fix-recipes.ts and (if needed) orchestrator/src/mastra/lib/failure-signature.ts to add a matching error-class rule, then commit; or',
-    `  (b) if the failure is fundamentally not recoverable by an agent (e.g. a real product bug, an environmental issue requiring human credentials, an underspecified original task), file a 'mars inbox raise --from -' item with priority='high' explaining why no recipe should be added.`,
+    `Task ${input.sourceTaskId} (origin ${input.originTaskId}) failed with a signature that has no registered recovery recipe. Your job is NOT to fix the failing task. Your job is to DIAGNOSE the failure first, and only then decide between two outcomes — both of which are equally first-class:`,
+    `  (a) the failure is mechanically recoverable by a coding agent and you can name a single root cause → propose a draft recipe by editing orchestrator/src/mastra/lib/fix-recipes.ts (and, if the signature ends in \`/unclassified\`, orchestrator/src/mastra/lib/failure-signature.ts), add a vitest test, and commit; or`,
+    `  (b) **no recipe is the right answer** → file an inbox item via \`mars inbox raise --from -\` with priority='high' explaining the diagnosis and why a recipe would be wrong here.`,
+    '',
+    `Outcome (b) is NOT a fallback. It is the correct outcome whenever the failure is environmental, requires human credentials, depends on a flaky external dependency, or stems from an underspecified original task prompt. Examples that MUST route to inbox: a flaky network call, a missing API key, an ambiguous task description, a real product bug in the target repo, a one-off race condition you cannot deterministically reproduce. Writing a recipe for any of these would produce a vibe-recipe that pattern-matches noise.`,
     '',
     `Read docs/adr/0002-recipe-per-failure-signature.md before editing — every recipe must obey the contract there (recipe binds to a technical-key signature, recovery has retry budget 0, etc.).`,
     '',
@@ -164,6 +176,7 @@ const buildInvestigatorPrompt = (input: {
     `Failing step: ${input.failingStep}`,
     `Failure signature: ${input.failureSignature}`,
     input.branch ? `Branch: ${input.branch}` : null,
+    worktreeLine,
     `Originally failing task: ${input.sourceTaskId}`,
     `Origin task: ${input.originTaskId}`,
     '',
@@ -172,11 +185,54 @@ const buildInvestigatorPrompt = (input: {
     input.truncatedError,
     '```',
     '',
-    `## What 'a draft recipe' means`,
+    `## Diagnose discipline — work in this order`,
+    '',
+    `### Phase 1 — feedback loop first`,
+    '',
+    `Before forming any hypothesis, identify the **deterministic command** that reproduces the failure from the worktree path above. This is the single most important step. A diagnosis without a feedback loop is a guess.`,
+    '',
+    ` - If you can find a repro command, run it and confirm it reproduces the failure deterministically (same exit code, same key error string). Record the exact command.`,
+    ` - If you CANNOT find a deterministic repro — e.g. the failure depends on network, on a credential you don't have, on timing, or on state that's already gone — say so explicitly in your commit message or inbox note and choose outcome (b). You MUST NOT draft a recipe without a repro. A recipe keyed to a failure you cannot trigger is a vibe-recipe.`,
+    '',
+    `### Phase 2 — 3–5 ranked falsifiable hypotheses`,
+    '',
+    `Before picking a signature slug or writing any recipe body, list 3–5 candidate root causes ranked by likelihood. Each hypothesis MUST be falsifiable and stated as:`,
+    '',
+    `> If <X> is the cause, then <Y> would change the outcome (running command Z, or observing signal W).`,
+    '',
+    `If you cannot phrase a candidate as a falsifiable "if/then", drop it — it's not a hypothesis, it's a vibe. Three sharp hypotheses beat five fuzzy ones.`,
+    '',
+    `Include this ranked list verbatim in the commit message (outcome a) OR in the inbox body (outcome b). The next person reading \`git log fix-recipes.ts\` or the inbox item must be able to see the alternatives you considered and ruled out.`,
+    '',
+    `### Phase 3 — pick the winning hypothesis by experiment, not by feel`,
+    '',
+    `Use the feedback loop from Phase 1 to falsify hypotheses one at a time, top-down. The first hypothesis whose "if/then" survives every check it predicts is your winner. If every hypothesis is falsified, return to Phase 2 with what you learned and generate new ones — do NOT pick the "least falsified" and pretend.`,
+    '',
+    `### Phase 4 — tagged debug logs (only if you instrument)`,
+    '',
+    `If you add any temporary logging, print statements, or instrumentation while diagnosing, prefix every such line with a unique tag of the form \`[DEBUG-<8hex>]\` (e.g. \`[DEBUG-a1b2c3d4]\`). Pick one tag for this entire session and reuse it. The tag makes the noise greppable and removable.`,
+    '',
+    `### Phase 5 — decide (a) or (b)`,
+    '',
+    `Apply the recipe test:`,
+    ` - Can you name a single mechanical root cause that a coding agent could fix in a deterministic, bounded sequence of edits? → (a).`,
+    ` - Is the cause environmental, credential-bound, human-judgement-bound, flaky, or rooted in an underspecified task prompt? → (b).`,
+    '',
+    `When in doubt, prefer (b). A missing recipe is recoverable next time the signature appears; a wrong recipe poisons every future occurrence.`,
+    '',
+    `### Phase 6 — grep-and-remove every \`[DEBUG-\` line BEFORE you commit`,
+    '',
+    `Run a search for your unique \`[DEBUG-<8hex>]\` tag across the worktree and remove every match. The orchestrator's verify step will reject any commit whose diff contains the \`[DEBUG-\` prefix, so a missed line will fail the merge. Re-grep after removal to confirm zero matches.`,
+    '',
+    `## What 'a draft recipe' means (outcome a only)`,
     '',
     `Add an entry to \`recipeList\` in orchestrator/src/mastra/lib/fix-recipes.ts. Its \`signature\` field MUST equal the signature above. Its \`buildPrompt\` returns the prompt for a recovery agent — concrete steps, exact paths, what to commit. Mirror the style of the existing recipes (\`merge:preflight/uncommitted-changes\`, \`setup:install/install-frozen-lockfile\`, \`verify:has-diff/no-commits-ahead\`).`,
     '',
     `If the signature ends in \`/unclassified\`, you must also add a rule to \`errorClassRules\` in orchestrator/src/mastra/lib/failure-signature.ts so future occurrences of this error map to a stable slug instead of \`unclassified\`. Pick the slug carefully — it becomes part of the technical-key signature contract.`,
+    '',
+    `## Commit message contract (outcome a only)`,
+    '',
+    `The commit that introduces the recipe MUST state, in plain prose, which of your ranked hypotheses the recipe is keyed to and why the others were ruled out. The next person reading \`git log fix-recipes.ts\` should learn the reasoning, not just see the recipe body. Include the deterministic repro command from Phase 1 in the commit message.`,
     '',
     `## Boundaries`,
     '',
@@ -276,6 +332,7 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
     failureSignature: input.failureSignature,
     truncatedError: input.truncatedError,
     branch: input.branch,
+    worktreePath: input.sourceTask.worktreePath,
   })
 
   const investigatorTaskId = randomUUID().slice(0, 8)
