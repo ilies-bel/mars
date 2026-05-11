@@ -1,0 +1,3 @@
+# mars update overwrites manifest-listed files unconditionally
+
+Context: 'mars update' re-applies framework-owned files from the manifest into the consumer repo. A consumer may have hand-edited one of those files since the last install. Decision: overwrite unconditionally; do not check for local drift, do not three-way merge, do not prompt. 'update' prints the list of rewritten paths so silent loss is at least visible. Why: the title bars prompting, refuse-on-drift breaks idempotent CI re-runs, and three-way merge implies a conflict UI we explicitly don't want. Framework-owned means framework-owned — if a path needs to be customizable, it doesn't belong in the manifest.
