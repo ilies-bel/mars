@@ -13,7 +13,7 @@ export const NavBar = ({ hash }: NavBarProps) => {
   return (
     <nav className="flex items-center gap-2 border-b border-iron/30 bg-bg px-4 py-1.5">
       <a className={linkClass(!onKanban)} href="#/todo">
-        Todo
+        Inbox
       </a>
       <a className={linkClass(onKanban)} href="#/kanban">
         Kanban
