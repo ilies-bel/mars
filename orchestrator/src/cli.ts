@@ -692,6 +692,20 @@ const main = async (): Promise<void> => {
     blockerIds?: readonly string[],
     priority?: number,
   ): Promise<void> => {
+    const { detectNoCommitMarker } = await import('./mastra/lib/no-commit-marker')
+    const marker = detectNoCommitMarker(prompt)
+    if (marker !== null) {
+      console.error(
+        `[mars] refusing to enqueue: prompt declares it produces no commit (matched: ${marker.slice(0, 80)}).`,
+      )
+      console.error(
+        `[mars] the orchestrator's verify step requires at least one commit ahead of the integration branch;`,
+      )
+      console.error(
+        `[mars] running this through Mars would loop forever. Run the operation manually instead.`,
+      )
+      process.exit(1)
+    }
     const functional = resolvePlanText(
       flags,
       ['--functional', '--func'],
