@@ -78,3 +78,6 @@ A row in task_blockers asserting that a Task cannot be dispatched until the refe
 
 **Linker**:
 The deterministic, no-LLM component of triage that scans the Idea+Task graph by keyword overlap and writes Blocker rows for a freshly-promoted Task; its output alone gates dispatch, replacing the prior LLM actionable verdict.
+
+**Triaging**:
+A transient Task status assigned by the slicer at emit-time; the Task is not yet dispatch-eligible. The Linker runs synchronously over Triaging tasks, writes blocker rows, and flips the status to queued. A Task stuck in Triaging means the Linker pass did not complete.
