@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { deriveReproCommand } from './lib/derive-repro-command'
 import {
   getRecipe,
   hasRecipe,
@@ -230,10 +231,15 @@ const buildInvestigatorPrompt = (input: {
   truncatedError: string
   branch: string | null
   worktreePath: string | null
+  reproCommand: string | null
 }): string => {
   const worktreeLine = input.worktreePath
     ? `Worktree path (run repros from here): ${input.worktreePath}`
     : `Worktree path: <unknown — the failing task's worktree may have been cleaned up. If you cannot reach it, treat the failure as not-locally-reproducible and prefer option (b).>`
+
+  const reproSection = input.reproCommand
+    ? ['## Reproduce', '', '```', input.reproCommand, '```', '']
+    : []
 
   return [
     `# Investigator task — diagnose the failure, then decide`,
@@ -260,6 +266,7 @@ const buildInvestigatorPrompt = (input: {
     input.truncatedError,
     '```',
     '',
+    ...reproSection,
     `## Diagnose discipline — work in this order`,
     '',
     `### Phase 1 — feedback loop first`,
@@ -398,6 +405,7 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
   failureSignature: string
   branch: string | null
   truncatedError: string
+  reproCommand: string | null
 }): Promise<SpawnInvestigatorResult> => {
   const c = getClient()
   const investigatorPrompt = buildInvestigatorPrompt({
@@ -408,6 +416,7 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
     truncatedError: input.truncatedError,
     branch: input.branch,
     worktreePath: input.sourceTask.worktreePath,
+    reproCommand: input.reproCommand,
   })
 
   const investigatorTaskId = randomUUID().slice(0, 8)
@@ -557,6 +566,7 @@ export const handleTaskFailureWithFixTask = async (
   )
   const truncatedError = input.errorOutput.slice(0, 2000)
   const branch = input.branch ?? task.branch
+  const reproCommand = deriveReproCommand(input.failingStep, task.worktreePath)
 
   // Recovery (fix-task) failures escalate to inbox; never spawn another
   // recovery. See ADR 0002 — this is the rule that broke the cascade.
@@ -638,6 +648,7 @@ export const handleTaskFailureWithFixTask = async (
         failureSignature,
         branch,
         truncatedError,
+        reproCommand,
       })
     return {
       outcome: 'no-recipe',
@@ -648,10 +659,14 @@ export const handleTaskFailureWithFixTask = async (
     }
   }
 
-  const recipeContext: FixRecipeContext = input.recipeContext ?? {
+  const baseRecipeContext: FixRecipeContext = input.recipeContext ?? {
     targetPath: task.worktreePath ?? '',
     statusOutput: truncatedError,
     targetBranch: branch ?? '',
+  }
+  const recipeContext: FixRecipeContext = {
+    ...baseRecipeContext,
+    reproCommand: baseRecipeContext.reproCommand ?? reproCommand,
   }
 
   const result = await upsertFixTask({

@@ -17,6 +17,24 @@ export interface FixRecipeContext {
   statusOutput: string
   /** Branch the failure occurred on (or the merge target branch, depending on recipe). */
   targetBranch: string
+  /**
+   * Optional deterministic command (with cwd hint) the recovery agent can
+   * run to reproduce the failure locally. When present, recipes should
+   * render it under a `## Reproduce` heading in their prompt.
+   */
+  reproCommand?: string | null
+}
+
+/**
+ * Render an optional reproduce section under a `## Reproduce` heading.
+ * Returns an empty array when no reproCommand is supplied so callers can
+ * spread it into their prompt-line arrays without conditional branches.
+ */
+export const renderReproSection = (
+  reproCommand: string | null | undefined,
+): readonly string[] => {
+  if (!reproCommand) return []
+  return ['## Reproduce', '', '```', reproCommand, '```', '']
 }
 
 export interface FixRecipe {
@@ -44,6 +62,7 @@ const dirtyMergeTargetRecipe: FixRecipe = {
     return [
       `The merge target at ${ctx.targetPath} appeared dirty when merge pre-flight ran, blocking a fast-forward merge into ${ctx.targetBranch}. By the time you read this another task may already have cleaned it up.`,
       '',
+      ...renderReproSection(ctx.reproCommand),
       `STEP 1 — re-check first. Run \`git -C ${ctx.targetPath} status --porcelain\` right now.`,
       ` - If the output is empty, the tree is already clean: do NOT touch any file, do NOT commit, do NOT emit an inbox notification. Exit successfully — the original task can be retried as-is.`,
       ` - If the output is non-empty, proceed to STEP 2 with the CURRENT status, not the snapshot below.`,
@@ -76,6 +95,7 @@ const worktreeInstallFrozenLockfileRecipe: FixRecipe = {
     return [
       `The orchestrator's worktree setup ran the package manager install (pnpm/npm/yarn/bun) and it failed before any code step ran. Without node_modules the verify step cannot resolve types — that is exactly the TS2688 class of error this recipe addresses.`,
       '',
+      ...renderReproSection(ctx.reproCommand),
       `Diagnose and fix the underlying drift. Common causes, in order of likelihood:`,
       ` (a) lockfile drift: \`package.json\` was edited without regenerating the lockfile — regenerate it (e.g. \`pnpm install\` without --frozen-lockfile, or \`npm install\`) and commit both \`package.json\` and the lockfile;`,
       ` (b) missing peer dep declared by a recently bumped package — add the missing peer to \`package.json\` and regenerate the lockfile;`,
@@ -106,6 +126,7 @@ const noCommitsAheadRecipe: FixRecipe = {
     return [
       `The previous attempt on branch ${ctx.targetBranch} ended with zero commits ahead of the integration branch — i.e., the agent did the analysis but exited without staging or committing. Verify cannot land work that doesn't exist on the branch.`,
       '',
+      ...renderReproSection(ctx.reproCommand),
       `STEP 1 — sanity-check first. Run \`git -C ${ctx.targetPath} log ${ctx.targetBranch} ^${ctx.targetBranch}~ 2>/dev/null || git -C ${ctx.targetPath} log -n 5 --oneline ${ctx.targetBranch}\` to confirm the branch tip really is at the integration branch (no hidden amends).`,
       ` - If commits are present, this recovery is a false positive: do NOT modify files, exit successfully so the original task is retried as-is.`,
       ` - If the branch is genuinely empty, proceed to STEP 2.`,
