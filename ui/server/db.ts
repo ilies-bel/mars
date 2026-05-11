@@ -180,7 +180,7 @@ export class StateDb {
     const r = await this.client.execute(
       `SELECT i.id, i.goal, i.story, i.technical, i.status, ${sourceCol},
               i.created_at, i.updated_at,
-              (SELECT COUNT(*) FROM idea_acceptance a WHERE a.idea_id = i.id) AS acceptance_count
+              (SELECT COUNT(*) FROM idea_user_stories s WHERE s.idea_id = i.id) AS acceptance_count
        FROM ideas i
        WHERE i.status = 'draft'
        ORDER BY i.created_at DESC`,
