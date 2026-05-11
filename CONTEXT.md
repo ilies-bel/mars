@@ -84,3 +84,6 @@ A transient Task status assigned by the slicer at emit-time; the Task is not yet
 
 **draft (task)**:
 TaskStatus initial state: a task row that has been authored but not yet triaged into the dispatch queue. Triage promotes draft → queued.
+
+**queued (task)**:
+TaskStatus: a task that has cleared triage and is waiting for a Worker slot. The dispatcher picks tasks in this state.
