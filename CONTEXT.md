@@ -129,3 +129,6 @@ InboxState initial: an inbox item that needs operator attention (stale-worktree 
 
 **acknowledged (inbox)**:
 InboxState: operator has seen the item via 'mars inbox ack' but has not yet resolved or dismissed it.
+
+**resolved (inbox)**:
+InboxState terminal: the underlying problem was fixed. Set via 'mars inbox resolve [--root-cause <text>]'.
