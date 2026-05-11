@@ -31,6 +31,7 @@ import {
   onBlockerTaskCompleted,
   recoverBlockedTasks,
 } from '../blocker-resolution'
+import { internalBus } from '../internal-bus'
 import { daemonPaths } from './paths'
 import {
   readLines,
@@ -501,6 +502,21 @@ export const startDaemon = async (
     if (inFlight.has(e.taskId)) return
     pendingImplement.add(e.taskId)
     void drain()
+  })
+
+  // Mirror internal-bus signals onto the daemon's local bus so existing
+  // subscribers (logs, future UI/CLI bridges) see a unified stream. The
+  // retry-on-unblock effect is already handled by handleUpdate's
+  // onBlockerTaskCompleted path — these events are purely observational.
+  internalBus().on('task.blocked', (e) => {
+    log(
+      `[blocked] ${e.taskId} signature=${e.failureSignature} step=${e.failingStep} fix=${e.fixTaskId ?? '(none)'}`,
+    )
+    bus.emit('task.blocked', e)
+  })
+  internalBus().on('task.unblocked', (e) => {
+    log(`[unblocked] ${e.taskId} via blocker ${e.blockerTaskId}`)
+    bus.emit('task.unblocked', e)
   })
 
   // ── Wrappers around queue ops that emit the right events ──────────────────

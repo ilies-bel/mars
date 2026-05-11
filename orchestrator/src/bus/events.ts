@@ -20,6 +20,16 @@ export const EventMap = {
     taskId: z.string(),
     error: z.string(),
   }),
+  'task.blocked': z.object({
+    taskId: z.string(),
+    fixTaskId: z.string().nullable(),
+    failureSignature: z.string(),
+    failingStep: z.string(),
+  }),
+  'task.unblocked': z.object({
+    taskId: z.string(),
+    blockerTaskId: z.string(),
+  }),
 } as const;
 
 /** Union of every registered event type name. */

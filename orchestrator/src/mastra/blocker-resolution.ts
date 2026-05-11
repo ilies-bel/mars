@@ -1,3 +1,4 @@
+import { internalBus } from './internal-bus'
 import { getRetryBudget, markTaskDropped } from './queue-retry'
 import { getClient, initQueue } from './queue'
 
@@ -77,6 +78,10 @@ export const onBlockerTaskCompleted = async (
     })
     if (upd.rowsAffected > 0) {
       outcomes.push({ taskId: row.id, outcome: 'queued', retryCount })
+      internalBus().emit('task.unblocked', {
+        taskId: row.id,
+        blockerTaskId,
+      })
     } else {
       outcomes.push({ taskId: row.id, outcome: 'noop', retryCount })
     }
