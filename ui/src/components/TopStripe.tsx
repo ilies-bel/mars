@@ -12,7 +12,7 @@ export const TopStripe = ({ inProgress, todo, done, connected }: Props) => (
       <div className="flex items-center gap-2.5 font-mono text-[12px] tracking-wide">
         <span className="font-bold text-flame">{inProgress} IN PROGRESS</span>
         <span className="text-muted">·</span>
-        <span className="font-semibold text-muted">{todo} TODO</span>
+        <span className="font-semibold text-muted">{todo} INBOX</span>
         <span className="text-muted">·</span>
         <span className="font-semibold text-muted">{done} DONE</span>
       </div>
