@@ -99,3 +99,6 @@ TaskStatus: the code step has finished and verify (typecheck/test/lint) is runni
 
 **merging (task)**:
 TaskStatus: verify passed and the task is being fast-forwarded into the merge target (main by default), serialized via the merge lock.
+
+**done (task)**:
+TaskStatus terminal-success: the task has merged into the integration branch. Worktree and branch may be reaped.
