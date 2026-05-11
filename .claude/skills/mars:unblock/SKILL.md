@@ -14,10 +14,26 @@ execute their decision through the right `mars` verb.
 You do **not** shape ideas, curate the glossary, or offer ADRs. If the
 unblock decision turns out to need a new task, enqueue it and stop.
 
+# Step 0 — No argument? Show the blocked list and stop.
+
+If `$ARGUMENTS` is empty, the user doesn't yet know which task they want
+to unblock. Run:
+
+```bash
+mars list blocked
+```
+
+Print the output verbatim (or a tight summary if it's long) and ask the
+user which id to work on. Do not guess and do not pick one yourself.
+Stop here until they reply with an id — then re-enter the skill with that
+id as the argument.
+
+If `mars list blocked` returns no rows, say so plainly ("nothing is
+blocked right now") and stop.
+
 # Step 1 — Load the task and its blockers
 
-The argument is the task id (required — fail fast if missing; the router
-should always pass one).
+The argument is the task id. With an id in hand, run:
 
 ```bash
 mars show <id>
@@ -129,4 +145,7 @@ pick up <new-id> automatically" or "<id> is back on the queue").
 
 # Argument
 
-The user passed: `$ARGUMENTS`  (must be a task id)
+The user passed: `$ARGUMENTS`
+
+If empty, go to **Step 0** (list blocked tasks and ask which one). If a
+task id is present, start at **Step 1**.
