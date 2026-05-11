@@ -117,3 +117,6 @@ IdeaStatus initial state: an unshaped idea row. Needs title + problem + solution
 
 **prd-ready**:
 IdeaStatus: a fully-shaped idea that has passed validateIdeaShaped(). Eligible for the slicer. Produced by 'mars idea promote' — note the verb name mismatch with the status.
+
+**sliced**:
+IdeaStatus terminal: the slicer has decomposed the idea into N tracer-bullet tasks (each linked back via parent_idea_id). The idea row stays alive as the PRD reference.
