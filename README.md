@@ -79,7 +79,7 @@ Everything Mars touches in a target repo lives under `.mars/`:
 
 | Path | Purpose |
 | --- | --- |
-| `queue.db` | LibSQL: tasks, questions, suggestions |
+| `queue.db` | LibSQL: tasks, suggestions |
 | `mastra.db` | Mastra observability (workflow runs, spans) |
 | `supervisors/*.md` | Generated supervisor system prompts |
 | `supervisors/manifest.json` | Supervisor registry |

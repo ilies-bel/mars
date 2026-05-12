@@ -11,10 +11,10 @@
 | Orchestrator CLI | `orchestrator/src/cli.ts` | Single entry point. All subcommands (`add`, `run`, `watch`, `init`, `plan`, `answer`, `show`, `list`, `where`, etc.). |
 | Mastra runtime | `orchestrator/src/mastra/index.ts` | Registers workflows + tools. No agents (we don't use Mastra's agent abstraction — see CLAUDE.md). |
 | Implement workflow | `orchestrator/src/mastra/workflows/implement-workflow.ts` | 4 steps: setup → claude → verify → merge. |
-| Plan workflow | `orchestrator/src/mastra/workflows/plan-workflow.ts` | Auto-generates clarifying questions and follow-up suggestions on draft tasks. |
+| Plan workflow | `orchestrator/src/mastra/workflows/plan-workflow.ts` | Auto-generates follow-up suggestions on draft tasks. |
 | Init workflow | `orchestrator/src/mastra/workflows/init-workflow.ts` | Stack detection + specialist fetch + supervisor render. |
 | Watcher daemon | `orchestrator/src/mastra/watcher.ts` | Polls `queue.db`, dispatches `queued` tasks to `implementWorkflow`. |
-| Queue | `orchestrator/src/mastra/queue.ts` | LibSQL-backed task store. Tables: `tasks`, `questions`, `task_suggestions`. |
+| Queue | `orchestrator/src/mastra/queue.ts` | LibSQL-backed task store. Tables: `tasks`, `task_suggestions`. |
 | Git/claude/verify primitives | `orchestrator/src/mastra/lib/git.ts` | `runClaudeCode`, `createWorktree`, `verifyChanges`, `mergeBranch`, lock primitives. |
 | Init pipeline | `orchestrator/src/init/` | Stack detection, GitHub HTTPS fetch against `ayush-that/sub-agents.directory`, supervisor templating. |
 | UI | `ui/` | Vite + React SPA with a small Express SSE server (`ui/server/`). Reads `queue.db` directly via `@libsql/client`. Read-only. |
@@ -84,13 +84,13 @@ All wrapped in `orchestrator/src/mastra/lib/git.ts`. No LLM SDK calls.
 `orchestrator/src/mastra/workflows/plan-workflow.ts`
 
 Single step: `generate-plan`. Calls `claude -p` against the draft's prompt,
-parses a JSON envelope (tolerating extra prose), and writes rows into
-`questions` and `task_suggestions` tables.
+parses a JSON envelope (tolerating extra prose), and writes rows into the
+`task_suggestions` table.
 
-`mars plan <id>` runs it; `mars plan <id> --refresh` clears and regenerates.
+`mars plan <id>` runs it; `mars plan <id> --refresh` regenerates.
 
-> **Drift note.** This auto-question generation overlaps with what the chat
-> skill is supposed to do. Vision says the chat skill is the primary
+> **Drift note.** This auto-suggestion generation overlaps with what the
+> chat skill is supposed to do. Vision says the chat skill is the primary
 > refinement loop — this workflow may be redundant.
 
 ### Init workflow
@@ -137,7 +137,7 @@ All state for a target repo lives in `<target-repo>/.mars/`:
 
 | File | Purpose | Status |
 | --- | --- | --- |
-| `queue.db` | LibSQL: `tasks`, `questions`, `task_suggestions` | Active |
+| `queue.db` | LibSQL: `tasks`, `task_suggestions` | Active |
 | `mastra.db` | Mastra observability (workflow runs, spans) | Active |
 | `state.db` | Currently unused; reserved | **Dead — drift** |
 | `cache/sub-agents/trees.json` | 7-day cached specialist index | Active |
@@ -168,9 +168,6 @@ Add `/.mars/` to the target repo's `.gitignore`.
 | `error` | TEXT | Failure reason, when `status='failed'` |
 | `created_at`, `updated_at` | TEXT | ISO timestamps |
 
-**`questions`**: `id`, `task_id`, `question`, `rationale`,
-`category` (`scope|tech|ux|risk`), `answer`, `status` (`open|answered|dismissed`).
-
 **`task_suggestions`**: `id`, `source_task_id`, `title`, `prompt`,
 `rationale`, `status` (`proposed|accepted|dismissed`), `created_task_id`.
 
@@ -186,13 +183,11 @@ Add `/.mars/` to the target repo's `.gitignore`.
 | `mars init [--force] [--no-fetch] [--dry-run] [--refresh]` | Detect stack, fetch specialists, generate `.mars/supervisors/`. |
 | `mars add "<prompt>" [--draft] [--functional ... ] [--technical ...]` | Enqueue a task. `--draft` triggers plan workflow. |
 | `mars plan <id> [--refresh]` | Run plan workflow on a draft. |
-| `mars questions [id]` | List generated questions and suggestions. |
-| `mars answer <qid> <text\|@file\|@-\|@@literal> [--force]` | Answer a question. |
 | `mars set-functional <id> <text\|@file>` | Write `plan_functional`. |
 | `mars set-technical <id> <text\|@file>` | Write `plan_technical`. |
 | `mars ready <id>` | Mark a queued task `ready` (drift — see vision). |
 | `mars list [status]` | List tasks. |
-| `mars show <id>` | Print a task with plans, questions, suggestions. |
+| `mars show <id>` | Print a task with plans and suggestions. |
 | `mars run` | One-shot dispatch all `queued` tasks (drift — vision says watch is canonical). |
 | `mars daemon [--interval <sec>]` | Daemon dispatcher (default 2s poll). |
 | `mars where` | Print resolved repo + state paths. |

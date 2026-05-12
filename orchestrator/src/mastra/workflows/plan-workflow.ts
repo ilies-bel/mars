@@ -1,6 +1,6 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
-import { clearQuestions, getTask, insertQuestion } from '../queue'
+import { getTask } from '../queue'
 import { createIdea } from '../ideas'
 import { runClaudeCode } from '../lib/git'
 import { parseClaudeJsonResult } from '../lib/claude-json'
@@ -13,20 +13,10 @@ const planInputSchema = z.object({
 
 const planOutputSchema = z.object({
   taskId: z.string(),
-  questionCount: z.number(),
   suggestionCount: z.number(),
 })
 
 const plannerOutputSchema = z.object({
-  questions: z
-    .array(
-      z.object({
-        question: z.string(),
-        rationale: z.string().optional(),
-        category: z.enum(['scope', 'tech', 'ux', 'risk']).optional(),
-      }),
-    )
-    .max(15),
   suggestions: z
     .array(
       z.object({
@@ -39,21 +29,13 @@ const plannerOutputSchema = z.object({
 })
 
 const buildPrompt = (spec: string): string =>
-  `You analyze a draft software task spec and surface what needs to be resolved before it becomes actionable.
+  `You analyze a draft software task spec and surface discrete follow-up tasks it implies but does not state.
 
-Produce TWO outputs:
-
-1. KEY-DECISION QUESTIONS — open questions that block the spec.
-   - concrete and single-issue
-   - genuinely answerable by a human reviewer
-   - tag each with one category: scope (what's in/out), tech (architecture/dependencies), ux (user-facing behaviour), risk (failure modes, rollout)
-   - aim for 5–10 questions, no filler, no restating the spec
-
-2. TASK SUGGESTIONS — discrete follow-up tasks the spec implies but does not state. Each is a separate runnable task (title + prompt). 0–5 max.
+Each suggestion is a separate runnable task (title + prompt). 0–5 max. No filler, no restating the spec.
 
 Return ONLY a single JSON object matching exactly this shape, with no surrounding prose, no code fences, and no commentary:
 
-{"questions":[{"question":"...","rationale":"...","category":"scope|tech|ux|risk"}],"suggestions":[{"title":"...","prompt":"...","rationale":"..."}]}
+{"suggestions":[{"title":"...","prompt":"...","rationale":"..."}]}
 
 Spec to analyze:
 
@@ -74,10 +56,6 @@ const generateStep = createStep({
       metadata: { originId: task.originId, taskId: task.id },
     })
 
-    if (inputData.refresh) {
-      await clearQuestions(task.id)
-    }
-
     const r = await runClaudeCode({
       cwd: getRepoRoot(),
       prompt: buildPrompt(task.prompt),
@@ -91,14 +69,6 @@ const generateStep = createStep({
 
     const parsed = parsePlannerOutput(r.stdout)
 
-    for (const q of parsed.questions) {
-      await insertQuestion({
-        taskId: task.id,
-        question: q.question,
-        rationale: q.rationale ?? null,
-        category: q.category ?? null,
-      })
-    }
     for (const s of parsed.suggestions) {
       await createIdea(s.title, {
         source: 'planner',
@@ -110,7 +80,6 @@ const generateStep = createStep({
 
     return {
       taskId: task.id,
-      questionCount: parsed.questions.length,
       suggestionCount: parsed.suggestions.length,
     }
   },
@@ -126,7 +95,6 @@ export const planWorkflow = createWorkflow({
 
 export interface RunPlanResult {
   taskId: string
-  questionCount: number
   suggestionCount: number
 }
 
