@@ -92,6 +92,11 @@ shapes; combine when it fits:
   aren't. `mars unblock <id> <blocker-id> [<blocker-id> ...]` removes
   those specific edges and leaves status unchanged; the task will
   re-evaluate when its remaining blockers clear.
+- **Drop the task entirely.** The task isn't worth pursuing anymore.
+  Two-step: `mars unblock <id>` (blocked → failed), then `mars purge <id>`
+  to delete the row, worktree, and branch. This is the only way to make
+  a task disappear from `mars list` — there is no `mars reject` for tasks.
+  Irreversible.
 
 Phrase the options for `AskUserQuestion` in plain language (not "edge
 removal" — say "the missing piece is already done elsewhere; clear the
@@ -122,6 +127,10 @@ mars block <blocked-task-id> <new-task-id>
 
 # Re-queue a failed task (after phantom recovery).
 mars retry <id>
+
+# Drop a task entirely (after flipping it to failed via `mars unblock`).
+# Deletes the queue row, the worktree, and the branch. Irreversible.
+mars purge <id>
 ```
 
 After the verb runs, print one short confirmation line — what changed,
