@@ -180,12 +180,13 @@ Commands:
                                 --force is also passed; --force-orphans extends
                                 removal to orphan worktrees that did contribute
                                 commits.
-  daemon [--detach|--stop|--status|--force|--reload]
-                                run the orchestration daemon (foreground by default);
-                                CLI write ops auto-spawn it. --detach forks to
-                                background; --stop asks daemon to exit (refuses
-                                if tasks are in flight unless --force); --status
-                                prints inFlight + queue counts; --reload re-reads
+  daemon <start|stop|status|reload> [flags]
+                                run the orchestration daemon. 'start' runs it in
+                                the foreground; 'start --detach' forks to
+                                background (also what CLI write ops auto-spawn).
+                                'stop' asks the daemon to exit (refuses if tasks
+                                are in flight unless --force). 'status' prints
+                                inFlight + queue counts. 'reload' re-reads
                                 .mars/daemon.json (falling back to MARS_MAX_* env
                                 vars and built-in defaults) without restarting.
   ab "<instruction>" --variants <path>
@@ -399,18 +400,19 @@ Flags:
 Errors during 'git worktree remove' are caught, logged with the directory
 path, and counted; the verb still processes remaining worktrees and exits
 0 unless every action failed.`,
-  daemon: `mars daemon [--detach|--stop|--status|--force|--reload]
+  daemon: `mars daemon <start|stop|status|reload> [flags]
 
-Run the orchestration daemon (foreground by default). CLI write ops
-auto-spawn it.
+Run the orchestration daemon. CLI write ops auto-spawn it via
+'daemon start --detach'.
 
-Flags:
-  --detach   fork to background
-  --stop     ask the daemon to exit (refuses if tasks are in flight)
-  --status   print inFlight + queue counts
-  --force    with --stop, exit even if tasks are in flight
-  --reload   re-read .mars/daemon.json (falling back to MARS_MAX_* env vars
-             and built-in defaults) without restarting the daemon`,
+Subcommands:
+  start [--detach]   run the daemon (foreground by default; --detach forks
+                     to background)
+  stop  [--force]    ask the daemon to exit. Refuses if tasks are in
+                     flight unless --force is also passed.
+  status             print pid, startedAt, inFlight, and queue counts
+  reload             re-read .mars/daemon.json (falling back to MARS_MAX_*
+                     env vars and built-in defaults) without restarting`,
   ab: `mars ab "<instruction>" --variants <path>
 
 Run an A/B experiment: same instruction, two configurable variants from
@@ -1299,20 +1301,18 @@ const main = async (): Promise<void> => {
   }
 
   if (cmd === 'daemon') {
-    const daemonFlags = new Set(rest.filter((a) => a.startsWith('--')))
-    const detach = daemonFlags.has('--detach')
-    const stop = daemonFlags.has('--stop')
-    const status = daemonFlags.has('--status')
-    const force = daemonFlags.has('--force')
-    const reload = daemonFlags.has('--reload')
+    const sub = rest[0]
+    const subFlags = new Set(rest.slice(1).filter((a) => a.startsWith('--')))
 
-    if (stop) {
+    if (sub === 'stop') {
+      const force = subFlags.has('--force')
       const { sendRequest } = await import('./mastra/daemon/client')
       await sendRequest({ op: 'shutdown', force }, { autoSpawn: false })
       console.log('daemon stopping')
       return
     }
-    if (reload) {
+
+    if (sub === 'reload') {
       const { sendRequest } = await import('./mastra/daemon/client')
       try {
         const data = (await sendRequest(
@@ -1333,7 +1333,7 @@ const main = async (): Promise<void> => {
         const msg = (err as Error).message
         if (/not running|auto-spawn disabled/i.test(msg)) {
           console.error(
-            "daemon not running; use 'mars daemon --detach' to start it",
+            "daemon not running; use 'mars daemon start --detach' to start it",
           )
           process.exit(1)
         }
@@ -1341,7 +1341,8 @@ const main = async (): Promise<void> => {
       }
       return
     }
-    if (status) {
+
+    if (sub === 'status') {
       const { sendRequest } = await import('./mastra/daemon/client')
       const data = (await sendRequest({ op: 'status' }, { autoSpawn: false })) as {
         pid: number
@@ -1359,33 +1360,43 @@ const main = async (): Promise<void> => {
       return
     }
 
-    if (detach) {
-      const { spawn } = await import('node:child_process')
-      const { daemonPaths, resolveLaunchCommand, tryConnectSocket } =
-        await import('./mastra/daemon/paths')
-      const { socket } = daemonPaths()
-      if (await tryConnectSocket(socket)) {
-        console.log('daemon already running')
+    if (sub === 'start') {
+      const detach = subFlags.has('--detach')
+      if (detach) {
+        const { spawn } = await import('node:child_process')
+        const { daemonPaths, resolveLaunchCommand, tryConnectSocket } =
+          await import('./mastra/daemon/paths')
+        const { socket } = daemonPaths()
+        if (await tryConnectSocket(socket)) {
+          console.log('daemon already running')
+          return
+        }
+        const { command, baseArgs } = resolveLaunchCommand()
+        const child = spawn(
+          command,
+          [...baseArgs, '--repo', ctx.repoRoot, 'daemon', 'start'],
+          {
+            detached: true,
+            stdio: 'ignore',
+            env: { ...process.env, MARS_REPO: ctx.repoRoot },
+          },
+        )
+        child.unref()
+        const { logFile } = daemonPaths()
+        console.log(`[mars] daemon detached (pid ${child.pid}, log: ${logFile})`)
         return
       }
-      const { command, baseArgs } = resolveLaunchCommand()
-      const child = spawn(command, [...baseArgs, '--repo', ctx.repoRoot, 'daemon'], {
-        detached: true,
-        stdio: 'ignore',
-        env: { ...process.env, MARS_REPO: ctx.repoRoot },
-      })
-      child.unref()
-      const { logFile } = daemonPaths()
-      console.log(`[mars] daemon detached (pid ${child.pid}, log: ${logFile})`)
+
+      // Foreground.
+      const { startDaemon } = await import('./mastra/daemon/server')
+      await startDaemon({ log: (line) => console.log(line) })
+      // Block forever until SIGINT/SIGTERM (the daemon handles shutdown).
+      await new Promise(() => {})
       return
     }
 
-    // Foreground.
-    const { startDaemon } = await import('./mastra/daemon/server')
-    await startDaemon({ log: (line) => console.log(line) })
-    // Block forever until SIGINT/SIGTERM (the daemon handles shutdown).
-    await new Promise(() => {})
-    return
+    console.error('usage: mars daemon <start|stop|status|reload> [flags]')
+    process.exit(2)
   }
 
   if (cmd === 'worktree') {
@@ -1406,7 +1417,7 @@ const main = async (): Promise<void> => {
     if (await isDaemonRunning(daemonPaths().socket)) {
       if (!force) {
         console.error(
-          'mars daemon is running; refusing to clean worktrees. Stop it (mars daemon --stop) or pass --force to override.',
+          'mars daemon is running; refusing to clean worktrees. Stop it (mars daemon stop) or pass --force to override.',
         )
         process.exit(1)
       }

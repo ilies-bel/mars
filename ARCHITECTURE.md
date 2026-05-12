@@ -189,7 +189,7 @@ Add `/.mars/` to the target repo's `.gitignore`.
 | `mars list [status]` | List tasks. |
 | `mars show <id>` | Print a task with plans and suggestions. |
 | `mars run` | One-shot dispatch all `queued` tasks (drift — vision says watch is canonical). |
-| `mars daemon [--interval <sec>]` | Daemon dispatcher (default 2s poll). |
+| `mars daemon <start\|stop\|status\|reload>` | Daemon dispatcher control. |
 | `mars where` | Print resolved repo + state paths. |
 
 Repo resolution order: `--repo` flag → `MARS_REPO` env → `git rev-parse

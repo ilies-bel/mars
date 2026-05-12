@@ -46,7 +46,7 @@ const spawnDaemon = async (
   const ctx = resolveContext()
   const { command, baseArgs } = resolveLaunchCommand()
 
-  const child = spawn(command, [...baseArgs, '--repo', ctx.repoRoot, 'daemon'], {
+  const child = spawn(command, [...baseArgs, '--repo', ctx.repoRoot, 'daemon', 'start'], {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env, MARS_REPO: ctx.repoRoot },
@@ -75,7 +75,7 @@ const ensureRunning = async (opts: ClientOptions): Promise<void> => {
   if (!alreadyUp) {
     if (opts.autoSpawn === false) {
       throw new Error(
-        `mars daemon not running and auto-spawn disabled. Start it with: mars daemon`,
+        `mars daemon not running and auto-spawn disabled. Start it with: mars daemon start`,
       )
     }
     await spawnDaemon(opts.onSpawnNotice)

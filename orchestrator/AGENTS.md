@@ -70,7 +70,7 @@ matching `pending*` set and call `drain()` instead, otherwise reconcile
 or a burst of `task add` calls will spawn one worktree per row and melt
 the host. Caps default to triage=4, implement=4, refine=2,
 structured-write=1; see README "Daemon worker pool" for the env vars.
-Tune them at runtime with `mars daemon --reload` (re-reads `MARS_MAX_*`
+Tune them at runtime with `mars daemon reload` (re-reads `MARS_MAX_*`
 without restarting the daemon).
 
 ### `mars init` recursion
