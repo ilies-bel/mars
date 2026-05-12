@@ -10,6 +10,13 @@ and its design drafts (`design/`).
 Installed globally via `install.sh`: clones into `~/.mars`, builds a
 standalone `mars` binary with Bun, symlinks `~/.local/bin/mars`.
 
+## Session start
+
+At the start of every session, run `mars next` and suggest a concrete next
+action to the user based on its output — pick one ready draft idea to shape
+or one blocked task to investigate, and propose it in one sentence. Do this
+once per session, before the user's first request.
+
 ## Task management
 
 Tasks live in `mars` (`.mars/queue.db`). Enqueue via `mars task add "..."`
@@ -18,6 +25,20 @@ dispatches it automatically — no `mars run` invocation is needed. Your job
 ends at enqueueing a well-specified prompt; the worktree, code step, verify,
 and merge all happen without further prompting. Inspect progress via
 `mars list` or Mastra Studio.
+
+## Route through the framework
+
+**Default: route all coding work through the mars framework.** When the
+user asks for a change, the first move is `mars task add "..."` with a
+self-contained prompt — not a direct `Edit`/`Write` on the working tree.
+The orchestrator opens the worktree, runs the agent, verifies, and merges;
+that path is the one we trust.
+
+Direct edits from this session are allowed **only when the user explicitly
+asks** ("edit it here", "do it directly", "no task, just fix it", or
+similar). Absent that explicit instruction, prefer enqueueing. If a request
+is ambiguous, ask once before touching files. Trivial reads, searches, and
+investigations stay direct — the rule is about mutations, not exploration.
 
 ## Repositories / top-level directories
 
