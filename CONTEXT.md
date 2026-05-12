@@ -157,3 +157,7 @@ _Avoid_: focus query, focus mode
 **Idea dependency**:
 A row in idea_dependencies asserting that one Idea cannot be meaningfully PRD-shaped until another Idea reaches sliced; lives in the planning graph, is written by operators or by the recursive planner when it spawns a gap-filling child Idea, and is never fanned out into task_blockers when the blocker Idea is sliced.
 _Avoid_: idea blocker
+
+**Bundle**:
+The framework's owned and hybrid files at a specific framework version, published as a single tarball asset (mars-bundle-vX.Y.Z.tar.gz) on the matching GitHub Release alongside a sha256 sidecar; consumed by mars install and mars update.
+_Avoid_: release tarball, framework bundle, mars bundle
