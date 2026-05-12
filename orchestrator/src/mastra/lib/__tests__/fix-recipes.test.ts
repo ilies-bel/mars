@@ -107,6 +107,74 @@ describe('fix-recipes', () => {
     })
   })
 
+  describe('verify:has-diff/no-commits-ahead recipe', () => {
+    const ctx = {
+      targetPath: '/tmp/worktree/abc',
+      statusOutput: 'branch task/abc has 0 commits ahead of main',
+      targetBranch: 'task/abc',
+      integrationBranch: 'main',
+    }
+
+    it('produces a stable title', () => {
+      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+      expect(recipe.title(ctx)).toBe(
+        'Re-do the original task and commit your work (branch task/abc)',
+      )
+    })
+
+    it('uses `git rev-list --count integration..task` as the sanity-check primitive', () => {
+      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(
+        `git -C ${ctx.targetPath} rev-list --count ${ctx.integrationBranch}..${ctx.targetBranch}`,
+      )
+    })
+
+    it('does NOT use the broken `git log task ^task~` primitive that printed integration tip commits', () => {
+      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).not.toContain(`^${ctx.targetBranch}~`)
+      expect(prompt).not.toContain(`git log -n 5 --oneline`)
+    })
+
+    it('gates the exit-successfully escape hatch on the rev-list integer being non-zero', () => {
+      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+      const prompt = recipe.buildPrompt(ctx)
+      // The string "exit successfully" must only appear inside the
+      // non-zero / false-positive branch, never as an unconditional
+      // escape hatch.
+      const exitOccurrences = prompt.match(/exit successfully/gi) ?? []
+      expect(exitOccurrences.length).toBeGreaterThan(0)
+      const nonZeroLine = prompt
+        .split('\n')
+        .find((line) => /exit successfully/i.test(line))
+      expect(nonZeroLine).toMatch(/non-zero/i)
+    })
+
+    it('instructs the agent to re-do and commit the work when the branch is empty', () => {
+      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('STEP 2')
+      expect(prompt).toMatch(/Stage and commit/i)
+      expect(prompt).toContain(ctx.targetBranch)
+      expect(prompt).toContain(ctx.integrationBranch)
+      expect(prompt).toContain(ctx.targetPath)
+      expect(prompt).toContain('Save your work')
+    })
+
+    it('falls back to `main` when integrationBranch is absent from the context', () => {
+      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+      const prompt = recipe.buildPrompt({
+        targetPath: ctx.targetPath,
+        statusOutput: ctx.statusOutput,
+        targetBranch: ctx.targetBranch,
+      })
+      expect(prompt).toContain(
+        `git -C ${ctx.targetPath} rev-list --count main..${ctx.targetBranch}`,
+      )
+    })
+  })
+
   describe('getRecipe', () => {
     it('throws on unknown signature', () => {
       expect(() => getRecipe('does_not_exist')).toThrow(

@@ -269,6 +269,12 @@ const verifyStep = createStep({
         failingStep: `verify:${firstFailedName}`,
         errorOutput: firstFailedOutput,
         branch: inputData.branch,
+        recipeContext: {
+          targetPath: inputData.path,
+          statusOutput: firstFailedOutput,
+          targetBranch: inputData.branch,
+          integrationBranch: inputData.integrationBranch,
+        },
       }).catch((err) => {
         console.error(
           `[failure-handler] task ${inputData.taskId} verify failure handling errored:`,
