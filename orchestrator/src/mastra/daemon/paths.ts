@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { createConnection } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveContext } from '../context'
@@ -42,5 +43,28 @@ export const isProcessAlive = (pid: number): boolean => {
     return true
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+export const tryConnectSocket = async (socketPath: string): Promise<boolean> => {
+  if (!existsSync(socketPath)) return false
+  return new Promise((resolveFn) => {
+    const sock = createConnection(socketPath)
+    sock.once('connect', () => {
+      sock.end()
+      resolveFn(true)
+    })
+    sock.once('error', () => resolveFn(false))
+  })
+}
+
+export const readDaemonPid = (pidFile: string): number | null => {
+  if (!existsSync(pidFile)) return null
+  try {
+    const raw = readFileSync(pidFile, 'utf8').trim()
+    const pid = Number.parseInt(raw, 10)
+    return Number.isInteger(pid) && pid > 0 ? pid : null
+  } catch {
+    return null
   }
 }
