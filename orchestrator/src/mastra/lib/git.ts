@@ -362,7 +362,7 @@ const resolveClaudeBin = (): string => {
   const override = process.env.MARS_CLAUDE_BIN
   // Re-resolve when the relevant env changes (mostly for tests; in prod it
   // is set once at daemon start and never mutates).
-  const envFingerprint = `${override ?? ''} ${process.env.PATH ?? ''}`
+  const envFingerprint = `${override ?? ''}\0${process.env.PATH ?? ''}`
   if (cachedClaudeBin && cachedClaudeBinFor === envFingerprint) {
     return cachedClaudeBin
   }
@@ -531,6 +531,20 @@ export const checkBranchHasDiff = async (
     )
     const count = Number.parseInt(stdout.trim(), 10)
     if (!Number.isInteger(count) || count <= 0) {
+      // Distinguish "branch tip is strictly behind integration" (work
+      // already shipped — fast-forward merged it into main between this
+      // task's setup and this check) from "branch tip equals integration"
+      // (genuine no-op — agent set up the worktree and didn't commit).
+      // Only the latter is a failure.
+      const branchSha = (await exec('git', ['rev-parse', '--verify', `${branch}^{commit}`], { cwd })).stdout.trim()
+      const integrationSha = (await exec('git', ['rev-parse', '--verify', `${integrationBranch}^{commit}`], { cwd })).stdout.trim()
+      if (branchSha !== integrationSha) {
+        return {
+          name: 'has-diff',
+          passed: true,
+          output: `branch ${branch} is an ancestor of ${integrationBranch} — work already merged`,
+        }
+      }
       return {
         name: 'has-diff',
         passed: false,

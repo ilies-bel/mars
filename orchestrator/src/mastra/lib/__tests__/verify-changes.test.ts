@@ -62,11 +62,27 @@ describe('checkBranchHasDiff (empty-diff guard)', () => {
     writeFileSync(resolve(repo, 'README'), 'hello\n')
     execFileSync('git', ['add', 'README'], { cwd: repo })
     execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
-    execFileSync('git', ['checkout', '-q', '-b', 'task/empty'], { cwd: repo })
+    // task/with-commit: branch ahead of main by one commit.
     execFileSync('git', ['checkout', '-q', '-b', 'task/with-commit', 'main'], { cwd: repo })
     writeFileSync(resolve(repo, 'NEW'), 'new\n')
     execFileSync('git', ['add', 'NEW'], { cwd: repo })
     execFileSync('git', ['commit', '-q', '-m', 'add new'], { cwd: repo })
+    // task/already-merged: simulate the post-merge ghost-no-diff case —
+    // the branch had a commit, that commit fast-forwarded into main, then
+    // main moved past it. The branch tip is now a strict ancestor of main.
+    execFileSync('git', ['checkout', '-q', '-b', 'task/already-merged', 'main'], { cwd: repo })
+    writeFileSync(resolve(repo, 'SHIPPED'), 'shipped\n')
+    execFileSync('git', ['add', 'SHIPPED'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'feat: shipped'], { cwd: repo })
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+    execFileSync('git', ['merge', '-q', '--ff-only', 'task/already-merged'], { cwd: repo })
+    writeFileSync(resolve(repo, 'AFTER'), 'after\n')
+    execFileSync('git', ['add', 'AFTER'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'chore: after'], { cwd: repo })
+    // task/empty: branch tip equals main; agent did nothing. Create this
+    // last so it points at the final main tip, not at any earlier commit.
+    execFileSync('git', ['checkout', '-q', '-b', 'task/empty', 'main'], { cwd: repo })
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
   })
 
   afterAll(() => {
@@ -83,6 +99,12 @@ describe('checkBranchHasDiff (empty-diff guard)', () => {
   it('returns passed=true when the branch has commits ahead', async () => {
     const step = await checkBranchHasDiff(repo, 'task/with-commit', 'main')
     expect(step.passed).toBe(true)
+  })
+
+  it('returns passed=true when the branch is a strict ancestor of integration (work already merged)', async () => {
+    const step = await checkBranchHasDiff(repo, 'task/already-merged', 'main')
+    expect(step.passed).toBe(true)
+    expect(step.output).toContain('already merged')
   })
 
   it('verifyChanges short-circuits when empty-diff guard fails', async () => {
