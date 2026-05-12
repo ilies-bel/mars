@@ -21,6 +21,40 @@ const formatTime = (ts: number): string => {
   return d.toLocaleString()
 }
 
+type BucketKey = 'today' | 'yesterday' | 'this_week' | 'older'
+
+const BUCKET_ORDER: BucketKey[] = ['today', 'yesterday', 'this_week', 'older']
+
+const BUCKET_LABEL: Record<BucketKey, string> = {
+  today: 'Today',
+  yesterday: 'Yesterday',
+  this_week: 'This Week',
+  older: 'Older',
+}
+
+const itemTimestamp = (item: InboxItem): number => {
+  if (item.kind === 'draft') return item.draft.updatedAt
+  const t = Date.parse(item.worktree.updatedAt)
+  return Number.isNaN(t) ? 0 : t
+}
+
+const startOfDay = (ms: number): number => {
+  const d = new Date(ms)
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+
+const bucketFor = (ts: number, now: number): BucketKey => {
+  if (!ts) return 'older'
+  const today = startOfDay(now)
+  const yesterday = today - 86_400_000
+  const weekStart = today - 6 * 86_400_000
+  if (ts >= today) return 'today'
+  if (ts >= yesterday) return 'yesterday'
+  if (ts >= weekStart) return 'this_week'
+  return 'older'
+}
+
 interface InboxRowProps {
   item: InboxItem
   active: boolean
@@ -82,7 +116,21 @@ interface DraftDetailProps {
   draft: DraftFeature
 }
 
-const DraftDetail = ({ draft }: DraftDetailProps) => (
+const DraftDetail = ({ draft }: DraftDetailProps) => {
+  const refineCommand = `/mars:next ${draft.id}`
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(refineCommand)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
   <div className="flex h-full flex-col overflow-auto">
     <header className="border-b border-iron/30 px-6 py-4">
       <div className="flex items-baseline gap-3">
@@ -101,9 +149,17 @@ const DraftDetail = ({ draft }: DraftDetailProps) => (
       </h2>
       <div className="mt-2 font-mono text-[11px] text-iron">
         Refine:{' '}
-        <code className="rounded bg-iron/20 px-1">
-          /mars:next {draft.id}
-        </code>
+        <button
+          type="button"
+          onClick={handleCopy}
+          title={copied ? 'Copied!' : 'Copy to clipboard'}
+          className="cursor-pointer rounded bg-iron/20 px-1 font-mono text-[11px] text-iron transition-colors hover:bg-iron/30"
+        >
+          <code>{refineCommand}</code>
+          <span className="ml-1 text-[9px] uppercase text-iron/70">
+            {copied ? 'copied' : 'copy'}
+          </span>
+        </button>
       </div>
     </header>
 
@@ -144,7 +200,8 @@ const DraftDetail = ({ draft }: DraftDetailProps) => (
       </dl>
     </main>
   </div>
-)
+  )
+}
 
 interface StaleDetailProps {
   worktree: StaleWorktree
@@ -218,6 +275,36 @@ export const TodoPage = () => {
   }, [drafts, staleWorktrees])
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [collapsedBuckets, setCollapsedBuckets] = useState<Set<BucketKey>>(
+    () => new Set(),
+  )
+
+  const groupedBuckets = useMemo(() => {
+    const now = Date.now()
+    const map = new Map<BucketKey, InboxItem[]>()
+    for (const item of items) {
+      const b = bucketFor(itemTimestamp(item), now)
+      const arr = map.get(b) ?? []
+      arr.push(item)
+      map.set(b, arr)
+    }
+    for (const arr of map.values()) {
+      arr.sort((a, b) => itemTimestamp(b) - itemTimestamp(a))
+    }
+    return BUCKET_ORDER.flatMap((key) => {
+      const arr = map.get(key)
+      return arr && arr.length > 0 ? [{ key, items: arr }] : []
+    })
+  }, [items])
+
+  const toggleBucket = (key: BucketKey) => {
+    setCollapsedBuckets((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   useEffect(() => {
     if (items.length === 0) {
@@ -247,14 +334,39 @@ export const TodoPage = () => {
           </p>
         </header>
         <ul className="flex-1 overflow-auto">
-          {items.map((item) => (
-            <InboxRow
-              key={itemKey(item)}
-              item={item}
-              active={itemKey(item) === selectedKey}
-              onSelect={() => setSelectedKey(itemKey(item))}
-            />
-          ))}
+          {groupedBuckets.map(({ key, items: bucketItems }) => {
+            const collapsed = collapsedBuckets.has(key)
+            return (
+              <li key={key}>
+                <button
+                  type="button"
+                  onClick={() => toggleBucket(key)}
+                  className="flex w-full items-center gap-2 border-b border-iron/20 bg-iron/5 px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-wider text-iron hover:bg-iron/10"
+                  aria-expanded={!collapsed}
+                >
+                  <span className="inline-block w-3 text-iron/80">
+                    {collapsed ? '▸' : '▾'}
+                  </span>
+                  <span>{BUCKET_LABEL[key]}</span>
+                  <span className="ml-auto text-iron/70">
+                    {bucketItems.length}
+                  </span>
+                </button>
+                {collapsed ? null : (
+                  <ul>
+                    {bucketItems.map((item) => (
+                      <InboxRow
+                        key={itemKey(item)}
+                        item={item}
+                        active={itemKey(item) === selectedKey}
+                        onSelect={() => setSelectedKey(itemKey(item))}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </li>
+            )
+          })}
         </ul>
         {error ? (
           <div className="border-t border-iron/40 bg-iron/10 px-4 py-1.5 font-mono text-[10px] text-iron">
