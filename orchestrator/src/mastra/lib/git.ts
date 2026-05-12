@@ -308,7 +308,15 @@ interface ClaudeStreamArgsOptions {
   sessionId?: string
 }
 
-const claudeStreamArgs = (
+// Agent-to-user tools denied for every dispatched Session. No human is
+// listening on a dispatched run, so a call to either tool errors at the
+// claude runtime and tempts the agent to silently drift from the task.
+// Denying them at the single shared wrapper means every workflow — including
+// paths that legitimately bypass the Worker primitive (e.g. A/B experiment)
+// — inherits the ban. See idea 948691d0.
+const AGENT_TO_USER_DENIED_TOOLS = ['AskUserQuestion', 'SendUserMessage'] as const
+
+export const claudeStreamArgs = (
   prompt: string,
   options: ClaudeStreamArgsOptions = {},
 ): readonly string[] => [
@@ -318,6 +326,8 @@ const claudeStreamArgs = (
   'stream-json',
   '--verbose',
   '--dangerously-skip-permissions',
+  '--disallowedTools',
+  AGENT_TO_USER_DENIED_TOOLS.join(','),
   ...(options.model ? ['--model', options.model] : []),
   ...(options.systemPrompt ? ['--system-prompt', options.systemPrompt] : []),
   ...(options.sessionId ? ['--session-id', options.sessionId] : []),
