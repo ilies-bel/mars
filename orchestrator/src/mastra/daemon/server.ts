@@ -34,6 +34,7 @@ import {
 import { internalBus } from '../internal-bus'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
 import { loadDaemonConfig } from './config'
+import { probeDuckDBLock } from './duckdb-lock'
 import {
   readLines,
   writeLine,
@@ -164,6 +165,28 @@ export const startDaemon = async (
       unlinkSync(socketPath)
     } catch {
       // best-effort
+    }
+  }
+
+  // Probe the DuckDB observability file before the first workflow dispatch
+  // lazily opens it. A live foreign holder is a hard error here so the user
+  // gets one clear message at startup instead of every implement step
+  // failing with "Could not set lock on file". Stale fds (PID gone) are
+  // tolerated: DuckDB will reclaim them on open.
+  if (process.env.MARS_DISABLE_DUCKDB !== '1') {
+    const { observabilityDbPath } = resolveContext()
+    const probe = probeDuckDBLock(observabilityDbPath)
+    if (probe.status === 'held') {
+      log(
+        `observability DuckDB lock held by pid ${probe.holderPid}; refusing to start. ` +
+          `Stop that process or set MARS_DISABLE_DUCKDB=1 to skip observability.`,
+      )
+      process.exit(1)
+    }
+    if (probe.status === 'stale') {
+      log(
+        `observability DuckDB has a stale fd holder (pid ${probe.holderPid} not alive); proceeding`,
+      )
     }
   }
 
