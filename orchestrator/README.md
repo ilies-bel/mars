@@ -100,6 +100,12 @@ Excess work queues into in-memory pending sets and drains as slots free
 — it is not dropped. Restarting the daemon re-reads `draft` / `queued`
 rows from `.mars/queue.db` and re-pends them, so restarts are safe.
 
+Dispatched `claude -p` workers run clean-room: their env is scrubbed of
+every `CLAUDE*` session-context var inherited from the daemon's parent
+shell, and they load only `project,local` setting sources (the worktree's
+own `.claude/settings.json`) — never the host user's `~/.claude/`. MCP is
+fully disabled and session files are not persisted to disk.
+
 ## Observing Claude runs in Studio
 
 Both Claude dispatches (the `code` step and the `vcs-supervisor` invocation in
