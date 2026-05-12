@@ -161,3 +161,7 @@ _Avoid_: idea blocker
 **Bundle**:
 The framework's owned and hybrid files at a specific framework version, published as a single tarball asset (mars-bundle-vX.Y.Z.tar.gz) on the matching GitHub Release alongside a sha256 sidecar; consumed by mars install and mars update.
 _Avoid_: release tarball, framework bundle, mars bundle
+
+**Mars id**:
+An entity identifier rendered as 'mars-<kind>-<hex>' (with an optional '-<slug>' suffix for ideas), where the bare hex is the storage primary key and the prefix is added only at the CLI/render seam.
+_Avoid_: prefixed id, namespaced id
