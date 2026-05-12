@@ -1031,6 +1031,13 @@ export const startDaemon = async (
     shuttingDown = true
     log(`shutting down (force=${force}, inFlight=${inFlight.size})`)
 
+    if (force && inFlight.size > 0) {
+      const entries = Array.from(inFlight.values())
+        .map((e) => `${e.taskId}(${e.kind})`)
+        .join(', ')
+      log(`force shutdown abandoning in-flight: ${entries}`)
+    }
+
     if (!force) {
       const start = Date.now()
       while (inFlight.size > 0 && Date.now() - start < 30_000) {
@@ -1049,12 +1056,17 @@ export const startDaemon = async (
       }
     }
     log('daemon stopped')
+    // The daemon process is expected to exit on shutdown: pending workflow
+    // runners, DuckDB/LibSQL handles, and child Claude processes keep the
+    // event loop alive otherwise, which leaks the DuckDB single-writer lock
+    // across restarts. SIGINT/SIGTERM already exit; mirror that for RPC.
+    process.exit(0)
   }
 
   for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     process.once(sig, () => {
       log(`received ${sig}`)
-      void shutdown(false).then(() => process.exit(0))
+      void shutdown(false)
     })
   }
 
