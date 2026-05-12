@@ -37,9 +37,11 @@ export const mastra = new Mastra({
       id: 'mastra-storage',
       url: `file:${mastraDbPath}`,
     }),
-    domains: {
-      observability: await new DuckDBStore({ path: observabilityDbPath }).getStore('observability'),
-    },
+    domains: process.env.MARS_DISABLE_DUCKDB === '1'
+      ? {}
+      : {
+          observability: await new DuckDBStore({ path: observabilityDbPath }).getStore('observability'),
+        },
   }),
   logger: new PinoLogger({ name: 'orchestrator', level: 'info' }),
   observability: new Observability({
