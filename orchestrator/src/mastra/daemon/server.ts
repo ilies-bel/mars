@@ -32,7 +32,7 @@ import {
   recoverBlockedTasks,
 } from '../blocker-resolution'
 import { internalBus } from '../internal-bus'
-import { daemonPaths } from './paths'
+import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
 import { loadDaemonConfig } from './config'
 import {
   readLines,
@@ -146,9 +146,20 @@ export const startDaemon = async (
     opts.log?.(line)
   }
 
-  // Stale-socket cleanup. We expect the client to have already reclaimed
-  // a dead daemon's PID file; this just clears the socket inode.
+  // Refuse to clobber a live daemon. Probe the socket before unlinking —
+  // a non-atomic existsSync check used to let two daemons coexist, leaking
+  // DuckDB/LibSQL handles and making "kill the daemon" recovery unreliable.
   if (existsSync(socketPath)) {
+    if (await tryConnectSocket(socketPath)) {
+      log(`another daemon is already listening on ${socketPath}; exiting`)
+      process.exit(0)
+    }
+    const recordedPid = readDaemonPid(pidFile)
+    if (recordedPid !== null && isProcessAlive(recordedPid)) {
+      log(
+        `warning: stale-but-running daemon (pid ${recordedPid}) not responding on ${socketPath}; taking over socket`,
+      )
+    }
     try {
       unlinkSync(socketPath)
     } catch {

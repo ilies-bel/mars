@@ -1,7 +1,13 @@
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, unlinkSync } from 'node:fs'
+import { existsSync, unlinkSync } from 'node:fs'
 import { createConnection } from 'node:net'
-import { daemonPaths, isProcessAlive, resolveLaunchCommand } from './paths'
+import {
+  daemonPaths,
+  isProcessAlive,
+  readDaemonPid,
+  resolveLaunchCommand,
+  tryConnectSocket,
+} from './paths'
 import { readLines, writeLine, type DaemonRequest, type DaemonResponse } from './protocol'
 import { resolveContext } from '../context'
 
@@ -13,30 +19,9 @@ interface ClientOptions {
   onSpawnNotice?: (pid: number, logFile: string) => void
 }
 
-const tryConnect = async (socketPath: string): Promise<boolean> =>
-  new Promise((resolve) => {
-    const sock = createConnection(socketPath)
-    sock.once('connect', () => {
-      sock.end()
-      resolve(true)
-    })
-    sock.once('error', () => resolve(false))
-  })
-
-const readPid = (pidFile: string): number | null => {
-  if (!existsSync(pidFile)) return null
-  try {
-    const raw = readFileSync(pidFile, 'utf8').trim()
-    const pid = Number.parseInt(raw, 10)
-    return Number.isInteger(pid) && pid > 0 ? pid : null
-  } catch {
-    return null
-  }
-}
-
 const reclaimStale = (): void => {
   const { socket, pidFile } = daemonPaths()
-  const pid = readPid(pidFile)
+  const pid = readDaemonPid(pidFile)
   if (pid !== null && isProcessAlive(pid)) return
   if (existsSync(pidFile)) {
     try {
@@ -71,9 +56,9 @@ const spawnDaemon = async (
   const start = Date.now()
   while (Date.now() - start < CONNECT_TIMEOUT_MS) {
     await new Promise((r) => setTimeout(r, CONNECT_RETRY_INTERVAL_MS))
-    if (existsSync(socket) && (await tryConnect(socket))) {
+    if (await tryConnectSocket(socket)) {
       const pidFile = daemonPaths().pidFile
-      const pid = readPid(pidFile) ?? child.pid ?? 0
+      const pid = readDaemonPid(pidFile) ?? child.pid ?? 0
       onSpawnNotice?.(pid, logFile)
       return
     }
@@ -86,7 +71,7 @@ const spawnDaemon = async (
 const ensureRunning = async (opts: ClientOptions): Promise<void> => {
   const { socket } = daemonPaths()
   reclaimStale()
-  const alreadyUp = existsSync(socket) && (await tryConnect(socket))
+  const alreadyUp = await tryConnectSocket(socket)
   if (!alreadyUp) {
     if (opts.autoSpawn === false) {
       throw new Error(

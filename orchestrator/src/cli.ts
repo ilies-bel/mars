@@ -1361,12 +1361,10 @@ const main = async (): Promise<void> => {
 
     if (detach) {
       const { spawn } = await import('node:child_process')
-      const { existsSync } = await import('node:fs')
-      const { daemonPaths, resolveLaunchCommand } = await import(
-        './mastra/daemon/paths'
-      )
+      const { daemonPaths, resolveLaunchCommand, tryConnectSocket } =
+        await import('./mastra/daemon/paths')
       const { socket } = daemonPaths()
-      if (existsSync(socket)) {
+      if (await tryConnectSocket(socket)) {
         console.log('daemon already running')
         return
       }
