@@ -191,9 +191,10 @@ export const runSubprocessStreaming = (
   cwd: string,
   onLine?: (event: SubprocessLine) => void | Promise<void>,
   signal?: AbortSignal,
+  env?: NodeJS.ProcessEnv,
 ): Promise<RunSubprocessResult> =>
   new Promise((resolveFn) => {
-    const child = spawn(cmd, args, { cwd, env: process.env })
+    const child = spawn(cmd, args, { cwd, env: env ?? process.env })
     let stdout = ''
     let stderr = ''
     const buffers: Record<'stdout' | 'stderr', string> = { stdout: '', stderr: '' }
@@ -326,6 +327,11 @@ export const claudeStreamArgs = (
   'stream-json',
   '--verbose',
   '--dangerously-skip-permissions',
+  '--strict-mcp-config',
+  '--setting-sources',
+  'project,local',
+  '--no-session-persistence',
+  '--exclude-dynamic-system-prompt-sections',
   '--disallowedTools',
   AGENT_TO_USER_DENIED_TOOLS.join(','),
   ...(options.model ? ['--model', options.model] : []),
@@ -353,6 +359,16 @@ const isExecutableFile = (path: string): boolean => {
   } catch {
     return false
   }
+}
+
+// Strip the host claude session's identity vars so a daemon launched from
+// inside an interactive `claude` shell cannot contaminate dispatched workers.
+export const buildWorkerEnv = (): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  for (const key of Object.keys(env)) {
+    if (/^CLAUDE(CODE)?($|_)/i.test(key)) delete env[key]
+  }
+  return env
 }
 
 let cachedClaudeBin: string | null = null
@@ -446,6 +462,7 @@ export const runClaudeCode = async ({
       }
     },
     abort.signal,
+    buildWorkerEnv(),
   )
   const timeout = new Promise<RunSubprocessResult>((resolveFn) =>
     setTimeout(
@@ -837,6 +854,8 @@ const invokeVcsSupervisor = async (
       conversation.push(event)
       if (onEvent) await onEvent(event)
     },
+    undefined,
+    buildWorkerEnv(),
   )
   const timeout = new Promise<RunSubprocessResult>((resolveFn) =>
     setTimeout(
