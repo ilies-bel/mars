@@ -62,8 +62,9 @@ produced.
   via `mars adr add`. Read via `mars adr list` and `mars adr show <NNNN>`.
 
 Direct edits to `CONTEXT.md` or `docs/adr/**` from inside coding worktrees
-(via Edit/Write tools, `sed`, etc.) are forbidden — the
-`block-tracked-writes` hook enforces this. Always go through the verbs.
+(via Edit/Write tools, `sed`, etc.) are forbidden. Always go through the
+verbs — they route through the daemon's structured-write path so the
+content is deterministic and the merge stays serialised.
 
 Coding agents in dispatched worktrees can **read** `CONTEXT.md` freely; it
 is a normal tracked file on `main` and reflects the latest agreed
@@ -128,7 +129,7 @@ be able to do the work without this session's context. Include:
 - a closing **"Save your work"** line reminding the agent to stage and commit
   the change — the orchestrator does not commit on their behalf.
 
-Avoid bare regex-trigger phrases in the outer shell (the `block-tracked-writes`
-hook denies standalone `git commit`, `git add`, `rm `, etc.). Inside a
-heredoc'd `mars task add "..."` prompt body those strings are fine, because
-the outer command itself is `mars task add`.
+The `mars task add "..."` outer command itself is just a CLI invocation —
+any `git commit`, `git add`, `rm`, etc. strings *inside* the heredoc'd
+prompt body are passed through verbatim to the dispatched agent and don't
+trip any hook on the outer shell.
