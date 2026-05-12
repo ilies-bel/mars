@@ -390,7 +390,7 @@ export const startDaemon = async (
       const { runPlan } = await import('../workflows/plan-workflow')
       const result = await runPlan(taskId, refresh)
       log(
-        `[refine] ${taskId} -> questions=${result.questionCount} suggestions=${result.suggestionCount}`,
+        `[refine] ${taskId} -> suggestions=${result.suggestionCount}`,
       )
     } catch (err) {
       log(`[refine] ${taskId} failed: ${(err as Error).message}`)

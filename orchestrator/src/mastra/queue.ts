@@ -15,15 +15,6 @@ export type TaskStatus =
   | 'dropped'
   | 'blocked'
 
-export type QuestionCategory = 'scope' | 'tech' | 'ux' | 'risk'
-
-export interface QuestionInput {
-  taskId: string
-  question: string
-  rationale: string | null
-  category: QuestionCategory | null
-}
-
 export interface TaskPlan {
   functional: string
   technical: string
@@ -155,22 +146,6 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_parent_idea_id ON tasks(parent_idea_id)`,
   )
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS questions (
-      id TEXT PRIMARY KEY,
-      task_id TEXT NOT NULL,
-      question TEXT NOT NULL,
-      rationale TEXT,
-      category TEXT,
-      answer TEXT,
-      status TEXT NOT NULL DEFAULT 'open',
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (task_id) REFERENCES tasks(id)
-    )
-  `)
-  await c.execute(`
-    CREATE INDEX IF NOT EXISTS idx_questions_task_id ON questions(task_id)
-  `)
   await c.execute(`
     CREATE TABLE IF NOT EXISTS task_signals (
       task_id TEXT NOT NULL,
@@ -584,16 +559,6 @@ export const claimReadyTask = async (id: string): Promise<Task | null> => {
   return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
 }
 
-export const insertQuestion = async (input: QuestionInput): Promise<void> => {
-  await initQueue()
-  const id = randomUUID().slice(0, 8)
-  const now = new Date().toISOString()
-  await getClient().execute({
-    sql: `INSERT INTO questions (id, task_id, question, rationale, category, status, created_at) VALUES (?, ?, ?, ?, ?, 'open', ?)`,
-    args: [id, input.taskId, input.question, input.rationale, input.category, now],
-  })
-}
-
 export const insertReflectionTask = async (corpusSize: number): Promise<string> => {
   await initQueue()
   const id = `reflect-${randomUUID().slice(0, 8)}`
@@ -604,14 +569,6 @@ export const insertReflectionTask = async (corpusSize: number): Promise<string> 
     args: [id, prompt, id, now, now],
   })
   return id
-}
-
-export const clearQuestions = async (taskId: string): Promise<void> => {
-  await initQueue()
-  await getClient().execute({
-    sql: `DELETE FROM questions WHERE task_id = ?`,
-    args: [taskId],
-  })
 }
 
 export const addBlockers = async (
