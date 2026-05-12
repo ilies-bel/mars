@@ -234,11 +234,15 @@ Commands:
                                 to consume. Source ('reflection' | 'human' |
                                 'planner') is annotated per draft row.
   inbox                         alias for 'inbox list open'
-  inbox list [state] [--kind <kind>]
+  inbox list [state] [--kind <kind>] [--lean]
                                 list inbox items. state one of:
                                 open|acknowledged|resolved|dismissed|all
                                 (default: open). --kind filters by item
                                 kind, e.g. recovery-failed, no-recipe.
+                                --lean prints a one-line summary (total
+                                + counts per priority) instead of one
+                                row per item; intended for SessionStart
+                                hooks and other terse summaries.
   inbox show <id>               full detail for an inbox item (accepts a
                                 full id or a unique 8-char prefix)
   inbox ack <id>                mark an inbox item acknowledged
@@ -540,9 +544,13 @@ shape { drafts: [...], blocked: [...] }.`,
 
 Subcommands:
   (no args)                          alias for 'inbox list open'
-  list [state]                       list items by state
+  list [state] [--lean]              list items by state
                                      (open|acknowledged|resolved|dismissed|all,
-                                     default: open)
+                                     default: open). --lean prints a
+                                     one-line summary (total + counts
+                                     per priority) instead of one row
+                                     per item; designed for SessionStart
+                                     hooks.
   show <id>                          full detail (accepts full id or unique
                                      8-char prefix)
   ack <id>                           mark item acknowledged
@@ -1985,7 +1993,9 @@ const main = async (): Promise<void> => {
   }
 
   if (cmd === 'inbox') {
-    const sub = rest[0]
+    const lean = rest.includes('--lean')
+    const subRest = lean ? rest.filter((a) => a !== '--lean') : rest
+    const sub = subRest[0]
     const inbox = await import('./mastra/lib/inbox')
     type InboxItem = Awaited<ReturnType<typeof inbox.listInboxItems>>[number]
 
@@ -2001,6 +2011,26 @@ const main = async (): Promise<void> => {
           `${idShort}\t${row.state}\t${row.priority}\t×${row.seenCount}\t${row.kind}${sig}\t${row.title}`,
         )
       }
+    }
+
+    const printLean = (rows: InboxItem[]): void => {
+      if (rows.length === 0) {
+        console.log('inbox empty')
+        return
+      }
+      const counts: Record<string, number> = {}
+      for (const row of rows) {
+        counts[row.priority] = (counts[row.priority] ?? 0) + 1
+      }
+      const order = ['high', 'medium', 'low']
+      const seen = new Set(order)
+      const parts = [
+        ...order.filter((p) => counts[p]).map((p) => `${p}:${counts[p]}`),
+        ...Object.keys(counts)
+          .filter((p) => !seen.has(p))
+          .map((p) => `${p}:${counts[p]}`),
+      ]
+      console.log(`inbox ${rows.length} open (${parts.join(', ')})`)
     }
 
     const printShow = (item: InboxItem): void => {
@@ -2107,7 +2137,7 @@ const main = async (): Promise<void> => {
     }
 
     if (sub === undefined || sub === 'list') {
-      const stateRaw = sub === 'list' ? rest[1] : 'open'
+      const stateRaw = sub === 'list' ? subRest[1] : 'open'
       const state = stateRaw ?? 'open'
       const allowed = new Set([
         'open',
@@ -2118,7 +2148,7 @@ const main = async (): Promise<void> => {
       ])
       if (!allowed.has(state)) {
         console.error(
-          `usage: mars inbox list [open|acknowledged|resolved|dismissed|all] [--kind <kind>]`,
+          `usage: mars inbox list [open|acknowledged|resolved|dismissed|all] [--kind <kind>] [--lean]`,
         )
         process.exit(1)
       }
@@ -2127,12 +2157,13 @@ const main = async (): Promise<void> => {
         state as never,
         kind === undefined ? {} : { kind },
       )
-      printList(rows)
+      if (lean) printLean(rows)
+      else printList(rows)
       return
     }
 
     if (sub === 'show') {
-      const id = rest[1]
+      const id = subRest[1]
       if (!id) {
         console.error('usage: mars inbox show <id>')
         process.exit(1)
@@ -2147,7 +2178,7 @@ const main = async (): Promise<void> => {
     }
 
     if (sub === 'ack' || sub === 'resolve' || sub === 'dismiss') {
-      const id = rest[1]
+      const id = subRest[1]
       if (!id) {
         console.error(`usage: mars inbox ${sub} <id>`)
         process.exit(1)
@@ -2192,7 +2223,7 @@ const main = async (): Promise<void> => {
     }
 
     console.error(
-      'usage: mars inbox [list [state] | show <id> | ack <id> | resolve <id> [--note <text>] [--root-cause <text>] | dismiss <id> [--note <text>] | raise --from <-|path> | watch]',
+      'usage: mars inbox [list [state] [--lean] | show <id> | ack <id> | resolve <id> [--note <text>] [--root-cause <text>] | dismiss <id> [--note <text>] | raise --from <-|path> | watch]',
     )
     process.exit(1)
   }
