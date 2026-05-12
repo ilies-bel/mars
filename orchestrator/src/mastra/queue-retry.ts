@@ -1,7 +1,7 @@
 import { raiseInboxItem } from './lib/inbox'
 import { getClient, initQueue } from './queue'
 
-export const DEFAULT_RETRY_BUDGET = 1
+export const DEFAULT_RETRY_BUDGET = 0
 
 export const TASK_BLOCKED_INBOX_KIND_PREFIX = 'task-blocked'
 
