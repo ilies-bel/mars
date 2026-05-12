@@ -18,6 +18,13 @@ export interface FixRecipeContext {
   /** Branch the failure occurred on (or the merge target branch, depending on recipe). */
   targetBranch: string
   /**
+   * Integration branch the task is meant to land on (the merge target —
+   * usually `main`, configurable via `INTEGRATION_BRANCH`). Required by
+   * recipes that need to compare the task branch against integration,
+   * e.g. `verify:has-diff/no-commits-ahead`.
+   */
+  integrationBranch?: string
+  /**
    * Optional deterministic command (with cwd hint) the recovery agent can
    * run to reproduce the failure locally. When present, recipes should
    * render it under a `## Reproduce` heading in their prompt.
@@ -123,17 +130,22 @@ const noCommitsAheadRecipe: FixRecipe = {
   title: (ctx) =>
     `Re-do the original task and commit your work (branch ${ctx.targetBranch})`,
   buildPrompt: (ctx) => {
+    const integration = ctx.integrationBranch ?? 'main'
+    const countCmd = `git -C ${ctx.targetPath} rev-list --count ${integration}..${ctx.targetBranch}`
     return [
-      `The previous attempt on branch ${ctx.targetBranch} ended with zero commits ahead of the integration branch — i.e., the agent did the analysis but exited without staging or committing. Verify cannot land work that doesn't exist on the branch.`,
+      `The previous attempt on branch ${ctx.targetBranch} ended with zero commits ahead of integration branch ${integration} — i.e., the agent did the analysis but exited without staging or committing. Verify cannot land work that doesn't exist on the branch.`,
       '',
       ...renderReproSection(ctx.reproCommand),
-      `STEP 1 — sanity-check first. Run \`git -C ${ctx.targetPath} log ${ctx.targetBranch} ^${ctx.targetBranch}~ 2>/dev/null || git -C ${ctx.targetPath} log -n 5 --oneline ${ctx.targetBranch}\` to confirm the branch tip really is at the integration branch (no hidden amends).`,
-      ` - If commits are present, this recovery is a false positive: do NOT modify files, exit successfully so the original task is retried as-is.`,
-      ` - If the branch is genuinely empty, proceed to STEP 2.`,
+      `STEP 1 — sanity-check first. Run \`${countCmd}\` to count commits on the task branch that are not yet on integration. The output is a plain integer.`,
+      ` - If it prints \`0\`, the branch is genuinely empty: proceed to STEP 2 and re-do the task.`,
+      ` - If it prints a non-zero integer (post-amend / out-of-band push), this recovery is a true false positive: do NOT modify files, exit successfully so the original task is retried as-is.`,
       '',
-      `STEP 2 — RE-DO the original task on this branch. Read the task's prompt from .mars/queue.db (or from the original task row referenced in fix_for_task_id). Apply the changes the original task asked for. **Stage and commit** every file you intend to land, with a clear commit message. Do NOT skip the commit step — that is the entire reason this recovery exists.`,
+      `Do not use \`git log\`, \`git log -n 5\`, or any other command to make this decision — only the integer from \`rev-list --count\` is authoritative. Other commands print integration-branch commits and will mislead you into the false-positive branch.`,
+      '',
+      `STEP 2 — only when \`${countCmd}\` printed \`0\`. RE-DO the original task on this branch. Read the task's prompt from .mars/queue.db (or from the original task row referenced in fix_for_task_id). Apply the changes the original task asked for. **Stage and commit** every file you intend to land, with a clear commit message. Do NOT skip the commit step — that is the entire reason this recovery exists.`,
       '',
       `Branch: ${ctx.targetBranch}`,
+      `Integration branch: ${integration}`,
       `Worktree: ${ctx.targetPath}`,
       '',
       `Save your work. The orchestrator does not commit on your behalf.`,
