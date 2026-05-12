@@ -237,6 +237,9 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
 
   it('an error matching the merge:preflight/uncommitted-changes classifier produces a fix-task using the canned recipe', async () => {
     const { q, ft } = await loadModules(repo)
+    // Default retry budget is 0 (every failure drops); this test exercises
+    // the recipe-routing path, which only fires when a retry is allowed.
+    process.env.MARS_FIX_RETRY_BUDGET = '1'
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
     const statusOutput = ' M src/foo.ts\n?? leftover.tmp\n'
     const result = await ft.handleTaskFailureWithFixTask({
