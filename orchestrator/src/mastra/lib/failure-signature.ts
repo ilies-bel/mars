@@ -72,15 +72,15 @@ export const errorClassRules: readonly ErrorClassRule[] = [
   },
   {
     errorClass: 'typecheck-cannot-find-name',
-    match: /^TS2304:/,
+    match: /\bTS2304:/,
   },
   {
     errorClass: 'typecheck-cannot-find-module',
-    match: /^TS2307:/,
+    match: /\bTS2307:/,
   },
   {
     errorClass: 'typecheck-type-mismatch',
-    match: /^TS2322:/,
+    match: /\bTS2322:/,
   },
   {
     errorClass: 'merge-conflict-unresolved',
