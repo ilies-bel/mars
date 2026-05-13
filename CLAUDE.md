@@ -1,125 +1,113 @@
 # CLAUDE.md
 
-## Project: Mars Framework
+## Mars Framework
 
-A modular, lean, future-proof AI coding agent team behind a single TypeScript
-CLI (`mars`). The repo bundles the framework, the orchestrator that runs
-Claude Code in parallel git worktrees, the local read-only frontend (`ui/`),
-and its design drafts (`design/`).
+Modular AI coding agent team behind a single TypeScript CLI (`mars`).
+Bundles the framework, orchestrator (Claude Code in parallel git worktrees),
+read-only frontend (`ui/`), and design drafts (`design/`).
 
-Installed globally via `install.sh`: clones into `~/.mars`, builds a
-standalone `mars` binary with Bun, symlinks `~/.local/bin/mars`.
+Install: `install.sh` clones into `~/.mars`, builds with Bun, symlinks
+`~/.local/bin/mars`.
 
 ## Session start
 
-At the start of every session, run `mars next` and suggest a concrete next
-action to the user based on its output — pick one ready draft idea to shape
-or one blocked task to investigate, and propose it in one sentence. Do this
-once per session, before the user's first request.
+A SessionStart hook runs `mars inbox --lean` and injects an inbox
+snapshot — counts (e.g. `inbox 58 open (high:58)`) plus the top
+blockers and drafts by short id and title. Once per session,
+**propose a specific next action** — do not just echo the count back.
 
-## Task management
+Pick one item and recommend it in **one sentence**, then wait:
 
-Tasks live in `mars` (`.mars/queue.db`). Enqueue via `mars task add "..."`
-and inspect via `mars list`. Once a task is enqueued, the orchestrator
-dispatches it automatically — no `mars run` invocation is needed. Your job
-ends at enqueueing a well-specified prompt; the worktree, code step, verify,
-and merge all happen without further prompting. Inspect progress via
-`mars list` or Mastra Studio.
+- Blockers present → name the top blocker by short id + title and
+  recommend `/mars:unblock <id>` (or "skip").
+- No blockers, drafts present → name the top draft by short id + title
+  and recommend `/mars:grill <id>` to shape it, or `mars task add` if
+  it's already concrete.
+- Empty inbox → stay silent.
 
-## Route through the framework
+If the snapshot has more than one strong candidate, invoke the
+`mars:inbox` skill instead of guessing — it does the full triage. Never
+ask "what should we work on?" without first suggesting something
+concrete from the snapshot.
 
-**Default: route all coding work through the mars framework.** When the
-user asks for a change, the first move is `mars task add "..."` with a
-self-contained prompt — not a direct `Edit`/`Write` on the working tree.
-The orchestrator opens the worktree, runs the agent, verifies, and merges;
-that path is the one we trust.
+## Triage protocol
 
-Direct edits from this session are allowed **only when the user explicitly
-asks** ("edit it here", "do it directly", "no task, just fix it", or
-similar). Absent that explicit instruction, prefer enqueueing. If a request
-is ambiguous, ask once before touching files. Trivial reads, searches, and
-investigations stay direct — the rule is about mutations, not exploration.
+Pick a lane before touching files; ask once if unclear.
 
-## Repositories / top-level directories
+- **Lane A — Direct enqueue** (default for concrete changes with a clear
+  file/symptom/fix). `mars task add "..."` and stop.
+- **Lane B — Grill first** (`/mars:grill`). For vague, cross-cutting, or
+  architectural asks, new domain terms, or explicit "shape this" requests.
+  Conversation only; enqueue happens after `/mars:to-prd`.
+- **Lane C — Direct edit** in this session. Opt-in only ("edit it here",
+  "do it directly"). Reads/searches always stay direct.
+
+Ambiguous A vs B → one short question.
+
+## Tasks
+
+Tasks live in `.mars/queue.db`. Enqueue via `mars task add "..."`; the
+orchestrator dispatches automatically (worktree → code → verify → merge).
+Inspect via `mars list` or Mastra Studio.
+
+Default mutations route through the orchestrator. Direct `Edit`/`Write` on
+the working tree is Lane C only.
+
+## Top-level directories
 
 | Path | Purpose |
 | --- | --- |
-| `orchestrator/` | **mars** — Mastra-driven orchestrator. Runs Claude Code headless in parallel git worktrees, verifies (typecheck/test/lint), then fast-forwards into `main`. Conflicts dispatched to bundled `vcs-supervisor` ("Vega") agent. State per-target-repo at `.mars/`. Node `>=22.13.0`. See `orchestrator/README.md` and `orchestrator/AGENTS.md`. |
-| `ui/` | Local read-only frontend for Mars runs. Three views (Topology / Runs / Run timeline), single shell, SSE event stream. Foreground only, port 7777. CLI is the only control surface — the UI never mutates state. |
-| `design/` | Design drafts (v0) that `ui/` is built from. Source-of-truth for layout/IA decisions; not shipped at runtime. |
-| `.mars/` | Unified per-repo state for both the Mars CLI and the orchestrator: `state.db` (CLI), `queue.db` (LibSQL task queue), `mastra.db` (Mastra workflow runs/traces), `worktrees/<task-id>/`, `.merge.lock`. Gitignored. |
-| `.worktrees/` | Git worktrees created by the orchestrator for parallel task execution. |
-| `.agents/` | Agent skill definitions consumed by the framework. |
+| `orchestrator/` | Mastra-driven orchestrator. Claude Code headless in parallel worktrees → verify → fast-forward into `main`. Conflicts → bundled `vcs-supervisor` ("Vega"). Per-repo state at `.mars/`. Node `>=22.13.0`. |
+| `ui/` | Read-only frontend. Three views, SSE stream, port 7777. CLI is the only control surface. |
+| `design/` | v0 design drafts; not shipped at runtime. |
+| `.mars/` | Per-repo state: `state.db`, `queue.db`, `mastra.db`, `worktrees/<task-id>/`, `.merge.lock`. Gitignored. |
+| `.worktrees/` | Orchestrator-created git worktrees. |
+| `.agents/` | Agent skill definitions. |
 | `.claude/` | Claude Code project settings, hooks, slash commands. |
-| `install.sh` | One-shot installer (Bun + clone + build + symlink). |
-| `skills-lock.json` | Pinned skill versions. |
 
 ## Key concepts
 
-- **`mars` CLI** — single TypeScript entry point. `mars context search/tree`
-  is a deterministic, no-network, no-LLM tool that gives agents structured
-  codebase context (`rg --json` for search, filtered tree). Prefer it over
-  ad-hoc grep/find.
-- **Orchestrator workflow** — 4 steps per task: `setup` (worktree on
-  `task/<id>` off `main`) → `code` (`claude -p`) → `verify` →
-  `merge` (serialized via file lock; coding parallel).
-- **Merge target** — `main` is both the merge target and the PR target.
-  Override per-invocation with `INTEGRATION_BRANCH=<branch>`.
+- **`mars context search/tree`** — deterministic, no-network, no-LLM
+  codebase context (`rg --json` + filtered tree). Prefer over ad-hoc grep.
+- **Orchestrator workflow** — 4 steps: `setup` (worktree on `task/<id>` off
+  `main`) → `code` (`claude -p`) → `verify` → `merge` (serialized via file
+  lock; coding parallel).
+- **Merge target** — `main`. Override per-invocation with
+  `INTEGRATION_BRANCH=<branch>`.
 
 ## Glossary and ADRs
 
-Two tracked files at the repo root encode the project's domain language and
-its irreversible decisions. Both are written through a daemon-routed
-**structured-write** path — a fresh worktree off `main`, a deterministic
-file edit, a commit, and a merge back via the existing merge lock. No LLM
-is involved in the edit itself, so the content is exactly what the verb
-produced.
+Both written via the daemon's **structured-write** path (worktree off
+`main`, deterministic edit, commit, merge through the lock). No LLM in the
+edit itself.
 
-- **`CONTEXT.md`** (repo root) — project glossary of canonical domain terms.
-  Edit only via `mars glossary set <term> "<definition>"` and
-  `mars glossary remove <term>`. Read via `mars glossary list` and
-  `mars glossary show <term>`.
-- **`docs/adr/NNNN-<slug>.md`** — Architecture Decision Records. Add only
-  via `mars adr add`. Read via `mars adr list` and `mars adr show <NNNN>`.
+- **`CONTEXT.md`** — domain glossary. Edit only via `mars glossary
+  set/remove`. Read via `mars glossary list/show`.
+- **`docs/adr/NNNN-<slug>.md`** — ADRs. Add via `mars adr add`. Read via
+  `mars adr list/show`.
 
-Direct edits to `CONTEXT.md` or `docs/adr/**` from inside coding worktrees
-(via Edit/Write tools, `sed`, etc.) are forbidden. Always go through the
-verbs — they route through the daemon's structured-write path so the
-content is deterministic and the merge stays serialised.
+Direct edits to `CONTEXT.md` or `docs/adr/**` from coding worktrees are
+forbidden. Coding agents may **read** `CONTEXT.md` freely.
 
-Coding agents in dispatched worktrees can **read** `CONTEXT.md` freely; it
-is a normal tracked file on `main` and reflects the latest agreed
-vocabulary.
+`/mars:chat` (alias `/mars:next`) grills the user's plan against
+`CONTEXT.md`, curating terms inline. ADR only when hard-to-reverse,
+surprising, and embodying a real trade-off.
 
-The `/mars:chat` slash command (alias `/mars:next`) grills the user's plan
-against `CONTEXT.md`, adding new terms and removing wrong ones as the
-conversation progresses. It only proposes an ADR when the three-condition
-test holds: the decision is hard to reverse, surprising to a future reader,
-and embodies a real trade-off.
-
-## Creating a new orchestrator task
-
-Use the `mars` CLI (installed by `install.sh`, or via `npm link` from `orchestrator/`):
+## Enqueue example
 
 ```bash
-# from inside the target repo
-mars task add "implement X in src/foo.ts"   # enqueue — orchestrator picks it up automatically
-mars list queued                             # inspect the queue
-mars where                                   # show resolved repo + state paths
-
-# from anywhere — explicit target repo
+mars task add "implement X in src/foo.ts"   # auto-dispatched
+mars list queued
+mars where
 mars --repo /path/to/repo task add "fix bug Y"
 ```
 
-The task prompt should be a single self-contained instruction; the orchestrator
-spawns it in a fresh `task/<id>` worktree off `main` automatically — you do
-not need to invoke `mars run` yourself. Inspect runs in Mastra Studio
-(`cd orchestrator && npm run dev` → http://localhost:4111).
+Inspect runs at `http://localhost:4111` (`cd orchestrator && npm run dev`).
 
 ## Conventions
 
 - Bun for the framework CLI; Node `>=22.13.0` for the orchestrator.
-- Mastra APIs change frequently — load the `mastra` skill before touching
+- Mastra APIs churn — load the `mastra` skill before touching
   `orchestrator/src/mastra/**`.
 - Register new Mastra agents/tools/workflows/scorers in
   `orchestrator/src/mastra/index.ts`.
@@ -127,30 +115,19 @@ not need to invoke `mars run` yourself. Inspect runs in Mastra Studio
 
 ## Loose ends
 
-Track loose ends as you work — latent bugs spotted but not fixed, deferred
-refactors, missing features, orphan rows in `.mars/queue.db` or `state.db`,
-anything outside the current task's scope. The queue is the source of truth;
-do not park them in chat prose, a markdown TODO, or a MEMORY.md.
+Enqueue the moment you spot one — **one `mars task add` per item**, no
+batching, no MEMORY.md, no markdown TODOs. Only concrete, actionable work
+the user has seen. If user says "skip", drop it. At stopping points
+("looks good", "ship it"), do a final sweep as a safety net.
 
-**Enqueue immediately, on the go.** The moment you spot a loose end, file it
-as **one `mars task add` per item** before moving on. Do not batch, do not
-defer to "end of session". No speculative entries ("maybe consider X
-someday"); only concrete, actionable work the user has seen or that blocks
-real follow-up. If the user says "skip" or "not now" for a specific item,
-drop it. When the user signals a stopping point ("looks good", "ship it",
-"done", "let's move on"), do a final sweep for anything that slipped through
-— but that sweep is a safety net, not the primary trigger.
+Each task prompt must stand alone. Include:
 
-Each task prompt must stand on its own — a colleague reading it cold should
-be able to do the work without this session's context. Include:
+- file path(s) + symptom,
+- suggested fix (with trade-offs if alternatives),
+- verification command(s),
+- a closing **"Save your work"** line — the orchestrator does not commit
+  on the agent's behalf.
 
-- the file path(s) and the symptom,
-- the suggested fix (or alternatives, with the trade-off),
-- the explicit verification command(s) to run,
-- a closing **"Save your work"** line reminding the agent to stage and commit
-  the change — the orchestrator does not commit on their behalf.
-
-The `mars task add "..."` outer command itself is just a CLI invocation —
-any `git commit`, `git add`, `rm`, etc. strings *inside* the heredoc'd
-prompt body are passed through verbatim to the dispatched agent and don't
-trip any hook on the outer shell.
+The `mars task add "..."` outer call is a CLI invocation; any `git`/`rm`
+strings inside the heredoc'd prompt are passed verbatim to the dispatched
+agent and don't trip the outer shell's hooks.

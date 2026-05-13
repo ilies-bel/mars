@@ -20,6 +20,10 @@ Run `mars inbox show <argument>`:
 
 - **Hit** → target is this item; print the output verbatim and go to
   Step 3 (skip listing).
+- **Draft redirect** (`mars inbox show` exits 1 with "is a draft idea,
+  not an inbox item …") → the id belongs to a draft, which `mars inbox
+  list` surfaces but doesn't own. Skip Step 3, run `mars idea show
+  <id>` instead, and offer the draft actions per Step 3b.
 - **No hit** → tell the user the id didn't match and stop. Do not
   fall through to listing — the user named something specific.
 
@@ -35,15 +39,19 @@ Run `mars inbox list open` and present the result per Step 2.
 # Step 2 — Present the list
 
 Print the items directly to the user — **no `AskUserQuestion`
-menu**. The CLI already returns one row per item; group and order them
-for skim-ability:
+menu**. The CLI returns one row per item, and **drafts surface
+alongside inbox rows** for `state=open|all` (look for
+`kind='draft(<source>)'` and priority shown as `-`). Group and order
+them for skim-ability:
 
-1. **High priority first**, then normal, then low.
-2. Within a priority, order by `seen_count` descending (recurring pain
-   first), then by most-recent `last_seen_at`.
-3. For each row show: 8-hex id, priority, seen_count (`×N` only when
-   N > 1), kind summary, message. One line per item. Truncate the
-   message at ~90 chars if needed.
+1. **Inbox rows first**, grouped by priority (high → normal → low).
+   Within a priority, order by `seen_count` descending (recurring
+   pain first), then most-recent `last_seen_at`.
+2. **Drafts last**, in a separate section. Order by `createdAt` (FIFO,
+   oldest first) so stale shaping work doesn't get buried.
+3. For each row show: 8-hex id, priority (or `draft`), seen_count
+   (`×N` only when N > 1), kind summary, message. One line per item.
+   Truncate the message at ~90 chars if needed.
 
 If items naturally cluster by `kind` prefix (e.g. many
 `recovery-failed(...)` or `stale-worktree(...)` rows), collapse the
@@ -63,9 +71,11 @@ The user's next message is expected to be one of:
 
 # Step 3 — Act on a single item
 
-When the user has resolved a specific item (Step 1a or by replying
-with an id after Step 2), you've already printed `mars inbox show
-<id>`. Now offer the three terminal actions via **one**
+## 3a — Inbox item
+
+When the user has resolved a specific inbox item (Step 1a or by
+replying with an id after Step 2), you've already printed `mars inbox
+show <id>`. Now offer the three terminal actions via **one**
 `AskUserQuestion`:
 
 - **Acknowledge** — `mars inbox ack <id>`. Use when the user has
@@ -83,6 +93,22 @@ with an id after Step 2), you've already printed `mars inbox show
 Run the chosen verb via Bash; print whatever the CLI reports
 verbatim. Stop after the dispatch.
 
+## 3b — Draft idea
+
+The inbox list surfaces drafts but doesn't own their lifecycle. After
+running `mars idea show <id>` for a draft, offer the draft-side
+actions via **one** `AskUserQuestion`:
+
+- **Grill** — invoke the `mars:grill` skill on `<id>` to shape it
+  into a PRD.
+- **Promote** — `mars idea promote <id>` (idea must already be
+  shaped). Slicing creates the underlying tasks.
+- **Reject** — `mars idea reject <id>` (flips status to dismissed).
+- **Delete** — `mars idea delete <id>` (hard delete; for noise).
+- **Skip** — do nothing and stop.
+
+Stop after dispatch.
+
 # What you do NOT do
 
 - Do not investigate the underlying issue. The inbox item already
@@ -92,9 +118,11 @@ verbatim. Stop after the dispatch.
 - Do not bulk-act on multiple items in one turn. One id per dispatch.
   If the user wants to clear a cluster, they ask explicitly; treat
   each id as a separate Step 3.
-- Do not load `mars next`, `mars list`, `mars idea list`, or any
-  other queue surface — this skill is inbox-only. If the user wants
-  a task, they invoke `/mars:next`.
+- Do not load `mars next`, `mars list`, or other queue surfaces —
+  this skill is inbox-only (drafts already arrive via `mars inbox
+  list`; you only call `mars idea show/promote/reject/delete` on the
+  specific id the user picked). If the user wants a task, they
+  invoke `/mars:next`.
 
 # Argument
 
