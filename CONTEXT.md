@@ -169,3 +169,6 @@ _Avoid_: prefixed id, namespaced id
 **Bare id**:
 The hex-only portion of a Mars id, stored as the primary key on every entity table (tasks, ideas, etc.). All SQL indexes and foreign keys use the bare form; the 'mars-<kind>-' prefix is added on render and stripped on parse.
 _Avoid_: short id, raw id, hex id
+
+**UI**:
+Local frontend for inspecting Mars runs (Topology / Runs / Run timeline views), served on port 7777. Lives in `ui/`.
