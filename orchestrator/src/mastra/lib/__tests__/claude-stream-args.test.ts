@@ -30,6 +30,43 @@ describe('claudeStreamArgs', () => {
     )
   })
 
+  it('merges a caller-supplied disallowedTools list with the agent-to-user denials', () => {
+    const args = claudeStreamArgs('hello', {
+      disallowedTools: ['Bash', 'WebFetch'],
+    })
+    const i = args.indexOf('--disallowedTools')
+    expect(i).toBeGreaterThanOrEqual(0)
+    const denied = (args[i + 1] ?? '').split(',')
+    expect(denied).toEqual(
+      expect.arrayContaining([
+        'AskUserQuestion',
+        'SendUserMessage',
+        'Bash',
+        'WebFetch',
+      ]),
+    )
+  })
+
+  it('cannot be overridden away by a caller list that omits the agent-to-user tools', () => {
+    const args = claudeStreamArgs('hello', {
+      disallowedTools: ['Bash'],
+    })
+    const i = args.indexOf('--disallowedTools')
+    const denied = (args[i + 1] ?? '').split(',')
+    expect(denied).toContain('AskUserQuestion')
+    expect(denied).toContain('SendUserMessage')
+  })
+
+  it('does not duplicate AskUserQuestion when caller also lists it', () => {
+    const args = claudeStreamArgs('hello', {
+      disallowedTools: ['AskUserQuestion', 'Bash'],
+    })
+    const i = args.indexOf('--disallowedTools')
+    const denied = (args[i + 1] ?? '').split(',')
+    const askCount = denied.filter((t) => t === 'AskUserQuestion').length
+    expect(askCount).toBe(1)
+  })
+
   it('passes through the prompt, model, systemPrompt, and sessionId', () => {
     const args = claudeStreamArgs('hello', {
       model: 'm',

@@ -217,6 +217,80 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
   })
 })
 
+describe('runClaudeCode agent-to-user tool ban (end-to-end via stub)', () => {
+  let stubDir: string
+  let stubPath: string
+  let argvLog: string
+  let originalPath: string | undefined
+
+  beforeAll(() => {
+    stubDir = mkdtempSync(resolve(tmpdir(), 'mars-claude-deny-stub-'))
+    stubPath = resolve(stubDir, 'claude')
+    argvLog = resolve(stubDir, 'argv.json')
+    // Stub records its argv to a file so the test can assert on the exact
+    // flags the wrapper handed to the subprocess. It then completes
+    // successfully without emitting an AskUserQuestion tool_use event.
+    const stubScript = `#!/usr/bin/env node
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)));
+process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'deny-session' }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', session_id: 'deny-session', total_cost_usd: 0 }) + '\\n');
+`
+    writeFileSync(stubPath, stubScript, 'utf8')
+    chmodSync(stubPath, 0o755)
+    originalPath = process.env.PATH
+    process.env.PATH = `${stubDir}:${originalPath ?? ''}`
+  })
+
+  afterAll(() => {
+    if (originalPath !== undefined) process.env.PATH = originalPath
+    rmSync(stubDir, { recursive: true, force: true })
+  })
+
+  it('hands the subprocess a --disallowedTools list that contains the agent-to-user tools', async () => {
+    const r = await runClaudeCode({
+      cwd: process.cwd(),
+      prompt: 'If you have any clarifying questions, please ask the user.',
+      timeoutMs: 5_000,
+    })
+    expect(r.exitCode).toBe(0)
+    const argv: string[] = JSON.parse(readFileSync(argvLog, 'utf8'))
+    const i = argv.indexOf('--disallowedTools')
+    expect(i).toBeGreaterThanOrEqual(0)
+    const denied = (argv[i + 1] ?? '').split(',')
+    expect(denied).toContain('AskUserQuestion')
+    expect(denied).toContain('SendUserMessage')
+    // No tool_use for AskUserQuestion was emitted by the stub — the run
+    // completed cleanly without an agent-to-user call.
+    const askUseEvents = r.conversation.filter((e) => {
+      if (e.type !== 'assistant') return false
+      const content = (e as { message?: { content?: Array<{ type?: string; name?: string }> } })
+        .message?.content
+      return (content ?? []).some(
+        (c) => c.type === 'tool_use' && c.name === 'AskUserQuestion',
+      )
+    })
+    expect(askUseEvents).toHaveLength(0)
+  })
+
+  it('still denies the agent-to-user tools even when the caller passes its own disallowedTools', async () => {
+    const r = await runClaudeCode({
+      cwd: process.cwd(),
+      prompt: 'noop',
+      timeoutMs: 5_000,
+      disallowedTools: ['Bash'],
+    })
+    expect(r.exitCode).toBe(0)
+    const argv: string[] = JSON.parse(readFileSync(argvLog, 'utf8'))
+    const i = argv.indexOf('--disallowedTools')
+    const denied = (argv[i + 1] ?? '').split(',')
+    expect(denied).toContain('AskUserQuestion')
+    expect(denied).toContain('SendUserMessage')
+    expect(denied).toContain('Bash')
+  })
+})
+
 describe('checkMergeTargetStatus', () => {
   let repo: string
 
