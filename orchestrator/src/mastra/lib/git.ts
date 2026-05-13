@@ -279,7 +279,27 @@ export interface RunClaudeArgs {
   systemPrompt?: string
   sessionId?: string
   onEvent?: (event: ClaudeEvent) => void | Promise<void>
+  // Per-Worker pinned config (claude -p flags). All optional; the wrapper
+  // applies them on top of the existing argv. Agent-to-user denials always
+  // remain in --disallowedTools regardless of caller-supplied disallowedTools.
+  effort?: ClaudeEffort
+  permissionMode?: ClaudePermissionMode
+  bare?: boolean
+  agent?: string
+  disallowedTools?: ReadonlyArray<string>
+  // Per-invocation override for the message cap enforced inside runClaudeCode.
+  // Falls back to MARS_CLAUDE_MAX_MESSAGES, then to DEFAULT_CLAUDE_MAX_MESSAGES.
+  maxMessages?: number
 }
+
+export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type ClaudePermissionMode =
+  | 'acceptEdits'
+  | 'auto'
+  | 'bypassPermissions'
+  | 'default'
+  | 'dontAsk'
+  | 'plan'
 
 export interface RunClaudeResult extends RunSubprocessResult {
   sessionId: string | null
@@ -307,6 +327,13 @@ interface ClaudeStreamArgsOptions {
   model?: string
   systemPrompt?: string
   sessionId?: string
+  effort?: ClaudeEffort
+  permissionMode?: ClaudePermissionMode
+  bare?: boolean
+  agent?: string
+  // Caller-supplied disallowed tools. Unioned with AGENT_TO_USER_DENIED_TOOLS;
+  // duplicates collapse. The agent-to-user denial cannot be removed by a caller.
+  disallowedTools?: ReadonlyArray<string>
 }
 
 // Agent-to-user tools denied for every dispatched Session. No human is
@@ -317,6 +344,44 @@ interface ClaudeStreamArgsOptions {
 // — inherits the ban. See idea 948691d0.
 const AGENT_TO_USER_DENIED_TOOLS = ['AskUserQuestion', 'SendUserMessage'] as const
 
+// Default search-tool guidance injected into every dispatched worker's system
+// prompt. The host previously enforced this via PreToolUse rewriter hooks on
+// the user's Claude settings; centralising it here keeps the constraint with
+// the orchestrator and propagates to every workflow path.
+export const SEARCH_TOOL_SYSTEM_PROMPT =
+  'Use `rg` (ripgrep) instead of `grep`/`egrep`/`fgrep`, and `fd` instead of `find`. Both are installed; they are faster, respect .gitignore by default, and have saner defaults.'
+
+const composeSystemPrompt = (caller?: string): string => {
+  const trimmed = caller?.trim()
+  if (!trimmed) return SEARCH_TOOL_SYSTEM_PROMPT
+  return `${SEARCH_TOOL_SYSTEM_PROMPT}\n\n${trimmed}`
+}
+
+// Resolve the permission flag(s). Callers that pin a non-bypass mode (e.g. the
+// Planner/Slicer/Triager Workers) get `--permission-mode <mode>` instead of
+// `--dangerously-skip-permissions`, so a read-only Worker cannot escalate.
+// The default (no caller pin) preserves the historical behaviour of running
+// dispatched workers under `--dangerously-skip-permissions` inside a fresh
+// worktree.
+const permissionFlags = (mode: ClaudePermissionMode | undefined): readonly string[] => {
+  if (mode === undefined || mode === 'bypassPermissions') {
+    return ['--dangerously-skip-permissions']
+  }
+  return ['--permission-mode', mode]
+}
+
+const mergeDisallowedTools = (
+  callerDisallowed: ReadonlyArray<string> | undefined,
+): string => {
+  const merged = new Set<string>(AGENT_TO_USER_DENIED_TOOLS)
+  for (const tool of callerDisallowed ?? []) {
+    const trimmed = tool.trim()
+    if (trimmed.length === 0) continue
+    merged.add(trimmed)
+  }
+  return [...merged].join(',')
+}
+
 export const claudeStreamArgs = (
   prompt: string,
   options: ClaudeStreamArgsOptions = {},
@@ -326,16 +391,20 @@ export const claudeStreamArgs = (
   '--output-format',
   'stream-json',
   '--verbose',
-  '--dangerously-skip-permissions',
+  ...permissionFlags(options.permissionMode),
   '--strict-mcp-config',
   '--setting-sources',
   'project,local',
   '--no-session-persistence',
   '--exclude-dynamic-system-prompt-sections',
+  ...(options.bare ? ['--bare'] : []),
+  ...(options.agent ? ['--agent', options.agent] : []),
+  ...(options.effort ? ['--effort', options.effort] : []),
   '--disallowedTools',
-  AGENT_TO_USER_DENIED_TOOLS.join(','),
+  mergeDisallowedTools(options.disallowedTools),
   ...(options.model ? ['--model', options.model] : []),
-  ...(options.systemPrompt ? ['--system-prompt', options.systemPrompt] : []),
+  '--system-prompt',
+  composeSystemPrompt(options.systemPrompt),
   ...(options.sessionId ? ['--session-id', options.sessionId] : []),
 ]
 
@@ -408,7 +477,10 @@ const resolveClaudeBin = (): string => {
   return 'claude'
 }
 
-const resolveClaudeMessageCap = (): number => {
+const resolveClaudeMessageCap = (override?: number): number => {
+  if (override !== undefined && Number.isInteger(override) && override >= 0) {
+    return override
+  }
   const raw = process.env.MARS_CLAUDE_MAX_MESSAGES
   if (raw === undefined) return DEFAULT_CLAUDE_MAX_MESSAGES
   const parsed = Number.parseInt(raw, 10)
@@ -424,9 +496,15 @@ export const runClaudeCode = async ({
   systemPrompt,
   sessionId,
   onEvent,
+  effort,
+  permissionMode,
+  bare,
+  agent,
+  disallowedTools,
+  maxMessages,
 }: RunClaudeArgs): Promise<RunClaudeResult> => {
   const conversation: ClaudeEvent[] = []
-  const cap = resolveClaudeMessageCap()
+  const cap = resolveClaudeMessageCap(maxMessages)
   const capEnabled = cap > 0
   const warnAt = capEnabled ? Math.floor(cap * 0.6) : Number.POSITIVE_INFINITY
   let warned = false
@@ -435,7 +513,16 @@ export const runClaudeCode = async ({
 
   const work = runSubprocessStreaming(
     resolveClaudeBin(),
-    claudeStreamArgs(prompt, { model, systemPrompt, sessionId }),
+    claudeStreamArgs(prompt, {
+      model,
+      systemPrompt,
+      sessionId,
+      effort,
+      permissionMode,
+      bare,
+      agent,
+      disallowedTools,
+    }),
     cwd,
     async ({ stream, line }) => {
       if (stream !== 'stdout') return
