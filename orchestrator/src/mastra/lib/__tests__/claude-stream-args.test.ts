@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { claudeStreamArgs } from '../git'
+import { claudeStreamArgs, SEARCH_TOOL_SYSTEM_PROMPT } from '../git'
 
 describe('claudeStreamArgs', () => {
   it('always denies AskUserQuestion and SendUserMessage', () => {
@@ -39,9 +39,19 @@ describe('claudeStreamArgs', () => {
     expect(args).toContain('hello')
     expect(args).toContain('--model')
     expect(args).toContain('m')
-    expect(args).toContain('--system-prompt')
-    expect(args).toContain('sp')
+    const sysIdx = args.indexOf('--system-prompt')
+    expect(sysIdx).toBeGreaterThanOrEqual(0)
+    const sysVal = args[sysIdx + 1] ?? ''
+    expect(sysVal).toContain(SEARCH_TOOL_SYSTEM_PROMPT)
+    expect(sysVal).toContain('sp')
     expect(args).toContain('--session-id')
     expect(args).toContain('sid')
+  })
+
+  it('always injects the default search-tool guidance, even with no caller systemPrompt', () => {
+    const args = claudeStreamArgs('hello')
+    const sysIdx = args.indexOf('--system-prompt')
+    expect(sysIdx).toBeGreaterThanOrEqual(0)
+    expect(args[sysIdx + 1]).toBe(SEARCH_TOOL_SYSTEM_PROMPT)
   })
 })
