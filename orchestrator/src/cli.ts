@@ -239,10 +239,18 @@ Commands:
                                 open|acknowledged|resolved|dismissed|all
                                 (default: open). --kind filters by item
                                 kind, e.g. recovery-failed, no-recipe.
-                                --lean prints a one-line summary (total
-                                + counts per priority) instead of one
-                                row per item; intended for SessionStart
-                                hooks and other terse summaries.
+                                Draft ideas (status='draft') surface
+                                alongside inbox rows for state=open|all
+                                with kind='draft(<source>)'; dismissed
+                                drafts surface for state=dismissed. Use
+                                'mars idea ...' for the draft lifecycle.
+                                --kind suppresses draft rows. --lean
+                                prints a compact summary (counts per
+                                priority, then up to 3 oldest blockers
+                                and 3 oldest drafts with section
+                                totals) instead of one row per item;
+                                intended for SessionStart hooks and
+                                other terse summaries.
   inbox show <id>               full detail for an inbox item (accepts a
                                 full id or a unique 8-char prefix)
   inbox ack <id>                mark an inbox item acknowledged
@@ -547,8 +555,10 @@ Subcommands:
   list [state] [--lean]              list items by state
                                      (open|acknowledged|resolved|dismissed|all,
                                      default: open). --lean prints a
-                                     one-line summary (total + counts
-                                     per priority) instead of one row
+                                     compact summary (counts per
+                                     priority, then up to 3 oldest
+                                     blockers and 3 oldest drafts with
+                                     section totals) instead of one row
                                      per item; designed for SessionStart
                                      hooks.
   show <id>                          full detail (accepts full id or unique
@@ -1999,8 +2009,16 @@ const main = async (): Promise<void> => {
     const inbox = await import('./mastra/lib/inbox')
     type InboxItem = Awaited<ReturnType<typeof inbox.listInboxItems>>[number]
 
-    const printList = (rows: InboxItem[]): void => {
-      if (rows.length === 0) {
+    interface DraftRow {
+      id: string
+      title: string
+      source: string
+      status: 'draft' | 'dismissed'
+      createdAt: number
+    }
+
+    const printList = (rows: InboxItem[], drafts: DraftRow[]): void => {
+      if (rows.length === 0 && drafts.length === 0) {
         console.log('inbox empty')
         return
       }
@@ -2011,10 +2029,24 @@ const main = async (): Promise<void> => {
           `${idShort}\t${row.state}\t${row.priority}\t×${row.seenCount}\t${row.kind}${sig}\t${row.title}`,
         )
       }
+      for (const d of drafts) {
+        const idShort = d.id.slice(0, 8)
+        const title = d.title.replace(/\s+/g, ' ').trim() || '(no title)'
+        console.log(
+          `${idShort}\t${d.status === 'draft' ? 'open' : 'dismissed'}\t-\t-\tdraft(${d.source})\t${title}`,
+        )
+      }
     }
 
-    const printLean = (rows: InboxItem[]): void => {
-      if (rows.length === 0) {
+    interface LeanDraft {
+      id: string
+      title: string
+    }
+
+    const LEAN_PREVIEW = 3
+
+    const printLean = (rows: InboxItem[], drafts: LeanDraft[]): void => {
+      if (rows.length === 0 && drafts.length === 0) {
         console.log('inbox empty')
         return
       }
@@ -2030,7 +2062,29 @@ const main = async (): Promise<void> => {
           .filter((p) => !seen.has(p))
           .map((p) => `${p}:${counts[p]}`),
       ]
-      console.log(`inbox ${rows.length} open (${parts.join(', ')})`)
+      const summary =
+        parts.length > 0
+          ? `inbox ${rows.length} open (${parts.join(', ')})`
+          : `inbox ${rows.length} open`
+      console.log(summary)
+
+      // listInboxItems orders raised_at DESC; reverse for FIFO (oldest first).
+      const blockersFifo = [...rows].reverse().slice(0, LEAN_PREVIEW)
+      if (rows.length > 0) {
+        console.log(`blockers (${rows.length}):`)
+        for (const row of blockersFifo) {
+          const idShort = row.id.slice(0, 8)
+          console.log(`  ${idShort}  ${row.priority}  ${row.title}`)
+        }
+      }
+
+      if (drafts.length > 0) {
+        console.log(`drafts (${drafts.length}):`)
+        for (const d of drafts.slice(0, LEAN_PREVIEW)) {
+          const idShort = d.id.slice(0, 8)
+          console.log(`  ${idShort}  ${d.title}`)
+        }
+      }
     }
 
     const printShow = (item: InboxItem): void => {
@@ -2157,9 +2211,50 @@ const main = async (): Promise<void> => {
         state as never,
         kind === undefined ? {} : { kind },
       )
-      if (lean) printLean(rows)
-      else printList(rows)
+      // Drafts surface alongside inbox rows for the human-attention views.
+      // --kind filters inbox kinds only, so suppress drafts when it's set.
+      const draftStatusForState =
+        kind === undefined
+          ? state === 'open' || state === 'all'
+            ? 'draft'
+            : state === 'dismissed'
+              ? 'dismissed'
+              : null
+          : null
+      const draftIdeas =
+        draftStatusForState === null
+          ? []
+          : await (async () => {
+              const { listIdeas } = await import('./mastra/ideas')
+              return listIdeas({ status: draftStatusForState })
+            })()
+      if (lean) {
+        // listIdeas returns newest first; reverse for FIFO (oldest first).
+        const drafts: LeanDraft[] = [...draftIdeas].reverse().map((i) => ({
+          id: i.id,
+          title: i.title.replace(/\s+/g, ' ').trim() || '(no title)',
+        }))
+        printLean(rows, drafts)
+      } else {
+        const drafts: DraftRow[] = draftIdeas.map((i) => ({
+          id: i.id,
+          title: i.title,
+          source: i.source,
+          status: i.status === 'dismissed' ? 'dismissed' : 'draft',
+          createdAt: i.createdAt,
+        }))
+        printList(rows, drafts)
+      }
       return
+    }
+
+    // Drafts surface in `mars inbox list`, but the inbox verbs don't own
+    // their lifecycle — point the caller at `mars idea ...` instead of
+    // failing with a generic "no inbox item" message.
+    const isDraftId = async (id: string): Promise<boolean> => {
+      const { resolveIdeaId } = await import('./mastra/ideas')
+      const resolved = await resolveIdeaId(id)
+      return resolved.kind === 'unique'
     }
 
     if (sub === 'show') {
@@ -2170,7 +2265,13 @@ const main = async (): Promise<void> => {
       }
       const item = await inbox.getInboxItem(id)
       if (!item) {
-        console.error(`no inbox item matching ${id}`)
+        if (await isDraftId(id)) {
+          console.error(
+            `${id} is a draft idea, not an inbox item. Use \`mars idea show ${id}\`.`,
+          )
+        } else {
+          console.error(`no inbox item matching ${id}`)
+        }
         process.exit(1)
       }
       printShow(item)
@@ -2193,7 +2294,19 @@ const main = async (): Promise<void> => {
       }
       const before = await inbox.getInboxItem(id)
       if (!before) {
-        console.error(`no inbox item matching ${id}`)
+        if (await isDraftId(id)) {
+          const hint =
+            sub === 'dismiss'
+              ? `Use \`mars idea reject ${id}\` or \`mars idea delete ${id}\`.`
+              : sub === 'resolve'
+                ? `Promote it with \`mars idea promote ${id}\` or enqueue via \`mars task add\`.`
+                : `Shape it with \`/mars:grill ${id}\` or promote via \`mars idea promote\`.`
+          console.error(
+            `${id} is a draft idea, not an inbox item. ${hint}`,
+          )
+        } else {
+          console.error(`no inbox item matching ${id}`)
+        }
         process.exit(1)
       }
       const isAlreadyTerminal =
