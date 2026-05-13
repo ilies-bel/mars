@@ -65,6 +65,22 @@ describe('computeFailureSignature', () => {
     ).toBe('verify:typecheck/typecheck-cannot-find-module')
   })
 
+  it('classifies realistic tsc lines that prefix the TSxxxx code with a file location', () => {
+    expect(
+      classifyError(
+        "src/foo.ts(1,1): error TS2322: Type 'x' is not assignable to type 'y'.",
+      ),
+    ).toBe('typecheck-type-mismatch')
+    expect(
+      classifyError("src/foo.ts(12,3): error TS2304: Cannot find name 'bar'."),
+    ).toBe('typecheck-cannot-find-name')
+    expect(
+      classifyError(
+        "src/foo.ts(4,8): error TS2307: Cannot find module 'baz' or its corresponding type declarations.",
+      ),
+    ).toBe('typecheck-cannot-find-module')
+  })
+
   it('ignores ANSI escape codes when matching rules', () => {
     const plain = computeFailureSignature(
       'verify:has-diff',
