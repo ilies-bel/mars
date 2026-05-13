@@ -172,3 +172,6 @@ _Avoid_: short id, raw id, hex id
 
 **UI**:
 Local frontend for inspecting Mars runs (Topology / Runs / Run timeline views), served on port 7777. Lives in `ui/`.
+
+**DaemonProbe**:
+--definition
