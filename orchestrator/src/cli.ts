@@ -2105,8 +2105,8 @@ const main = async (): Promise<void> => {
     }
 
     // Normalize the kind for grouping. task-blocked rows embed the task
-    // id in the kind (e.g. `task-blocked(mars-dad)`); strip the suffix so
-    // siblings collapse.
+    // id in the kind (e.g. `task-blocked(mars-bf2ae21b)`); strip the
+    // suffix so siblings collapse.
     const normalizeKind = (kind: string): string => {
       const paren = kind.indexOf('(')
       return paren === -1 ? kind : kind.slice(0, paren)

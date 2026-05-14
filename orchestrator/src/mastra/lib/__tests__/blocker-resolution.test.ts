@@ -109,7 +109,7 @@ describe('blocker-resolution (task_blockers)', () => {
     const open = await inbox.listInboxItems('open')
     const taskBlocked = open.filter((i) => i.kind.startsWith('task-blocked('))
     expect(taskBlocked).toHaveLength(1)
-    expect(taskBlocked[0].kind).toBe(`task-blocked(${dep.id.slice(0, 8)})`)
+    expect(taskBlocked[0].kind).toBe(`task-blocked(${dep.id})`)
     expect(taskBlocked[0].signature).toBe(dep.id)
     expect(taskBlocked[0].payload.taskId).toBe(dep.id)
   })
