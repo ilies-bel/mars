@@ -10,13 +10,18 @@ const linkClass = (active: boolean): string =>
 
 export const NavBar = ({ hash }: NavBarProps) => {
   const onKanban = hash.startsWith('#/kanban')
+  const onAgents = hash.startsWith('#/agents')
+  const onInbox = !onKanban && !onAgents
   return (
     <nav className="flex items-center gap-2 border-b border-iron/30 bg-bg px-4 py-1.5">
-      <a className={linkClass(!onKanban)} href="#/todo">
+      <a className={linkClass(onInbox)} href="#/todo">
         Inbox
       </a>
       <a className={linkClass(onKanban)} href="#/kanban">
         Kanban
+      </a>
+      <a className={linkClass(onAgents)} href="#/agents">
+        Agents
       </a>
     </nav>
   )
