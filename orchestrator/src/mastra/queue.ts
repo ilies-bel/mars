@@ -733,7 +733,11 @@ export const unblockTask = async (
     throw new Error(`task ${taskId} not found`)
   }
   const previousStatus = (before.rows[0] as unknown as { status: string }).status
-  if (previousStatus !== 'blocked') {
+  // 'queued' is accepted alongside 'blocked' so a user can drop a task that
+  // hasn't dispatched yet (e.g. an auto-spawned recovery whose parent chain
+  // has been replaced). The flip is the same: status -> 'failed', clear any
+  // task_blockers rows. The follow-up `mars purge` then deletes the row.
+  if (previousStatus !== 'blocked' && previousStatus !== 'queued') {
     return { taskId, outcome: 'noop', previousStatus }
   }
   const now = new Date().toISOString()
@@ -741,7 +745,7 @@ export const unblockTask = async (
     sql: `UPDATE tasks
              SET status = 'failed',
                  updated_at = ?
-           WHERE id = ? AND status = 'blocked'`,
+           WHERE id = ? AND status IN ('blocked', 'queued')`,
     args: [now, taskId],
   })
   await c.execute({

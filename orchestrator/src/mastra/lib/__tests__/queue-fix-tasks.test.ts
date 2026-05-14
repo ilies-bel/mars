@@ -536,15 +536,31 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
-  it('unblockTask is a no-op for tasks that are not blocked', async () => {
+  it('unblockTask flips a queued task to failed (so it can be purged before dispatch)', async () => {
     const { q } = await loadModules(repo)
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+    expect(t.status).toBe('queued')
+
     const r = await q.unblockTask(t.id)
-    expect(r.outcome).toBe('noop')
+    expect(r.outcome).toBe('unblocked')
     expect(r.previousStatus).toBe('queued')
 
     const reloaded = await q.getTask(t.id)
-    expect(reloaded?.status).toBe('queued')
+    expect(reloaded?.status).toBe('failed')
+  })
+
+  it('unblockTask is a no-op for tasks that are not queued or blocked', async () => {
+    const { q } = await loadModules(repo)
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+    // Force a terminal status that unblock should refuse to touch.
+    await q.updateTask(t.id, { status: 'done' })
+
+    const r = await q.unblockTask(t.id)
+    expect(r.outcome).toBe('noop')
+    expect(r.previousStatus).toBe('done')
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('done')
   })
 
   it('escalates to inbox when a recovery (fix-task) itself fails — does NOT enqueue another recovery', async () => {

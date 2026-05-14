@@ -156,10 +156,13 @@ Commands:
   list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed|dropped)
   retry <id>                    re-queue a failed/done task (cleans worktree+branch)
   purge <id>                    delete a failed/done task entirely (worktree+branch+row)
-  unblock <id>                  phantom-recovery: flip a 'blocked' task to
-                                'failed' AND clear every task_blockers row for
-                                <id>. Use when a task is stuck on a blocker
-                                that no longer exists.
+  unblock <id>                  phantom-recovery: flip a 'blocked' or 'queued'
+                                task to 'failed' AND clear every
+                                task_blockers row for <id>. Use when a task
+                                is stuck on a blocker that no longer exists,
+                                or when a still-queued auto-recovery is now
+                                obsolete (follow up with 'mars purge <id>'
+                                to delete the row).
   unblock <id> <blocker-id> [<blocker-id> ...]
                                 edge-removal: delete the listed (task,blocker)
                                 edges only; status is left untouched. Errors
@@ -1246,7 +1249,7 @@ const main = async (): Promise<void> => {
     const blockerArgs = rest.slice(1)
     if (!id) {
       console.error(
-        `usage: mars unblock <id>                       (phantom-recovery: clears all task_blockers, flips 'blocked' -> 'failed')\n       mars unblock <id> <blocker-id> [<blocker-id> ...]  (edge-removal: removes specific edges, status unchanged)`,
+        `usage: mars unblock <id>                       (phantom-recovery: clears all task_blockers, flips 'blocked' or 'queued' -> 'failed' so the row can then be 'mars purge'd)\n       mars unblock <id> <blocker-id> [<blocker-id> ...]  (edge-removal: removes specific edges, status unchanged)`,
       )
       process.exit(1)
     }
