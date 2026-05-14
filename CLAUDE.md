@@ -9,33 +9,6 @@ read-only frontend (`ui/`), and design drafts (`design/`).
 Install: `install.sh` clones into `~/.mars`, builds with Bun, symlinks
 `~/.local/bin/mars`.
 
-## Session start
-
-A SessionStart hook runs `mars inbox --lean` and injects an inbox
-snapshot — counts (e.g. `inbox 58 open (high:58)`) plus the top
-blockers and drafts by short id and title. Once per session,
-**propose a specific next action** — do not just echo the count back.
-
-Pick **one** item across the whole snapshot and recommend it in **one
-sentence**, then wait. Don't default to "first blocker in the list"
-every session — scan blockers *and* drafts and pick what actually wins:
-
-- A blocker with the highest severity, or one in a category that
-  hasn't been touched recently → `/mars:inbox <id>` to triage. Ids in
-  the `blockers` section are **inbox-item ids, not task ids** — never
-  use `/mars:unblock <id>` on them; that skill only accepts task ids.
-- A draft that already looks concrete (clear file/symptom/fix) →
-  recommend `mars task add "..."` directly (Lane A). Don't grill what's
-  already shaped.
-- A draft that's vague or cross-cutting → `/mars:grill <id>` to shape.
-- A quick win that unblocks others — call that out as the reason.
-
-If multiple candidates are close, say **why** the chosen one wins
-("highest priority", "blocks others", "quick win", "rotates off
-last session's category") in the same sentence.
-
-Empty inbox → stay silent.
-
 ## Triage protocol
 
 Pick a lane before touching files. Read the user's request through these
