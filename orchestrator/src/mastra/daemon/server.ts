@@ -293,6 +293,10 @@ export const startDaemon = async (
           prompt: task.prompt,
           plan: task.plan,
           integrationBranch,
+          resumeFrom:
+            task.resumeFrom === 'verify' || task.resumeFrom === 'merge'
+              ? task.resumeFrom
+              : null,
         },
       })
       const { isBlockersAbortError } = await import('../workflows/implement-workflow')
@@ -640,9 +644,9 @@ export const startDaemon = async (
                 `[unblock] task ${o.taskId} re-queued after blocker task ${id} completed`,
               )
               bus.emit('task.queued', { taskId: o.taskId })
-            } else if (o.outcome === 'dropped') {
+            } else if (o.outcome === 'failed') {
               log(
-                `[unblock] task ${o.taskId} dropped at unblock (retry budget exhausted)`,
+                `[unblock] task ${o.taskId} failed at unblock (retry budget exhausted)`,
               )
             }
           }
@@ -660,11 +664,13 @@ export const startDaemon = async (
     }
   }
 
-  const handleRetry = async (id: string): Promise<void> => {
+  // 'mars restart <id>' wipes the worktree+branch and re-runs the full
+  // pipeline from setup. Same body as the legacy 'retry' verb.
+  const handleRestart = async (id: string): Promise<void> => {
     const task = await getTask(id)
     if (!task) throw new Error(`task ${id} not found`)
     if (task.status !== 'failed' && task.status !== 'done') {
-      throw new Error(`task ${id} is ${task.status}; only failed/done tasks can be retried`)
+      throw new Error(`task ${id} is ${task.status}; only failed/done tasks can be restarted`)
     }
 
     const { existsSync: exists } = await import('node:fs')
@@ -686,6 +692,49 @@ export const startDaemon = async (
       worktreePath: null,
       claudeSessionId: null,
       error: null,
+      failedPhase: null,
+      resumeFrom: null,
+    })
+    bus.emit('task.queued', { taskId: id })
+  }
+
+  // 'mars continue <id>' resumes a failed task on its existing branch+
+  // worktree, skipping into the failed phase. Refuses if preconditions
+  // aren't met — the user should reach for `mars restart` instead.
+  const handleContinue = async (id: string): Promise<void> => {
+    const task = await getTask(id)
+    if (!task) throw new Error(`task ${id} not found`)
+    if (task.status !== 'failed') {
+      throw new Error(
+        `task ${id} is ${task.status}; only failed tasks can be continued (use 'mars restart' instead)`,
+      )
+    }
+    if (task.failedPhase === null) {
+      throw new Error(
+        `task ${id} has no recorded failed_phase; this is a legacy row from before continue/restart split. Use 'mars restart ${id}' instead.`,
+      )
+    }
+    if (task.failedPhase === 'code') {
+      throw new Error(
+        `task ${id} failed in the 'code' phase (no verifiable artefact exists). Use 'mars restart ${id}' to start over.`,
+      )
+    }
+    if (!task.branch || !task.worktreePath) {
+      throw new Error(
+        `task ${id} has no branch+worktree on the row; cannot continue. Use 'mars restart ${id}' to start over.`,
+      )
+    }
+    const { existsSync: exists } = await import('node:fs')
+    if (!exists(task.worktreePath)) {
+      throw new Error(
+        `task ${id} worktree ${task.worktreePath} is missing on disk; cannot continue. Use 'mars restart ${id}' to start over.`,
+      )
+    }
+
+    await updateTask(id, {
+      status: 'queued',
+      error: null,
+      resumeFrom: task.failedPhase,
     })
     bus.emit('task.queued', { taskId: id })
   }
@@ -816,9 +865,9 @@ export const startDaemon = async (
             log(
               `[reconcile-unblock] task ${o.taskId} re-queued (blocker task already done while daemon was down)`,
             )
-          } else if (o.outcome === 'dropped') {
+          } else if (o.outcome === 'failed') {
             log(
-              `[reconcile-unblock] task ${o.taskId} dropped (retry budget exhausted)`,
+              `[reconcile-unblock] task ${o.taskId} failed (retry budget exhausted)`,
             )
           }
         }
@@ -877,8 +926,12 @@ export const startDaemon = async (
           await handleUpdate(req.id, req.patch)
           return { ok: true }
         }
-        case 'retry': {
-          await handleRetry(req.id)
+        case 'continue': {
+          await handleContinue(req.id)
+          return { ok: true }
+        }
+        case 'restart': {
+          await handleRestart(req.id)
           return { ok: true }
         }
         case 'purge': {

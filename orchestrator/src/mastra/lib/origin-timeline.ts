@@ -66,15 +66,23 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     error: (row.error as string | null) ?? null,
     author,
     dropReason: (row.drop_reason as string | null) ?? null,
+    failureReason: (row.failure_reason as string | null) ?? null,
     retryCount: Number(row.retry_count ?? 0),
     fixForTaskId,
     failureSignature: (row.failure_signature as string | null) ?? null,
     kind,
     originId: ((row.origin_id as string | null) ?? (row.id as string)),
     priority: Number(row.priority ?? 0),
+    failedPhase: coerceFailedPhase(row.failed_phase),
+    resumeFrom: coerceFailedPhase(row.resume_from),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
+}
+
+const coerceFailedPhase = (raw: unknown): 'code' | 'verify' | 'merge' | null => {
+  if (raw === 'code' || raw === 'verify' || raw === 'merge') return raw
+  return null
 }
 
 const loadTasksByOrigin = async (originId: string): Promise<Task[]> => {

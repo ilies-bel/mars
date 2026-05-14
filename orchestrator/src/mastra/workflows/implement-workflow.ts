@@ -17,7 +17,7 @@ import {
   WorktreeInstallError,
 } from '../lib/worktree-install'
 import type { ClaudeEvent } from '../lib/claude-stream'
-import { hasIncompleteBlockers, updateTask, upsertTranscript } from '../queue'
+import { getTask, hasIncompleteBlockers, updateTask, upsertTranscript } from '../queue'
 import { handleTaskFailureWithFixTask } from '../queue-fix-tasks'
 import { resolveOriginIdForTask } from '../lib/origin'
 
@@ -49,6 +49,22 @@ const planSchema = z
     technical: z.string(),
   })
   .nullable()
+
+// Phases that the workflow can be resumed from. Mirrors {@link FailedPhase}
+// in queue.ts but the workflow only ever resumes from a verify-or-later
+// failure: 'code' failures (setup:install) are non-resumable.
+const resumeFromSchema = z.enum(['verify', 'merge']).nullable().default(null)
+
+const STEP_ORDER = ['setup-worktree', 'run-claude-code', 'verify', 'merge'] as const
+
+// Map a resume hint to the rank of the first step that should actually
+// execute. Steps with a lower rank pass through, reusing the persisted
+// branch + worktree from the previous run.
+const resumeRank = (resumeFrom: 'verify' | 'merge' | null): number => {
+  if (resumeFrom === 'verify') return STEP_ORDER.indexOf('verify')
+  if (resumeFrom === 'merge') return STEP_ORDER.indexOf('merge')
+  return 0
+}
 
 // Mandatory footer appended to every implementor prompt. The verify step
 // fails any task whose branch has zero commits ahead of integration, so
@@ -93,6 +109,7 @@ const setupStep = createStep({
     prompt: z.string(),
     plan: planSchema.default(null),
     integrationBranch: z.string().default('main'),
+    resumeFrom: resumeFromSchema,
   }),
   outputSchema: z.object({
     taskId: z.string(),
@@ -101,6 +118,7 @@ const setupStep = createStep({
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
+    resumeFrom: resumeFromSchema,
   }),
   execute: async ({ inputData, tracingContext }) => {
     const originId = await resolveOriginIdForTask(inputData.taskId)
@@ -110,6 +128,24 @@ const setupStep = createStep({
     if (await hasIncompleteBlockers(inputData.taskId)) {
       throw new Error(BLOCKERS_ABORT_MESSAGE(inputData.taskId))
     }
+
+    // Resume short-circuit: 'mars continue' restarted this task on the
+    // existing branch+worktree. Skip worktree creation and dep install;
+    // re-use whatever the previous run committed.
+    if (resumeRank(inputData.resumeFrom) > STEP_ORDER.indexOf('setup-worktree')) {
+      const persisted = await getTask(inputData.taskId)
+      if (!persisted?.branch || !persisted?.worktreePath) {
+        throw new Error(
+          `task ${inputData.taskId} has resumeFrom=${inputData.resumeFrom} but no branch/worktree on the row; refusing to resume`,
+        )
+      }
+      return {
+        ...inputData,
+        path: persisted.worktreePath,
+        branch: persisted.branch,
+      }
+    }
+
     await updateTask(inputData.taskId, { status: 'running' })
     const ref = await createWorktree({
       taskId: inputData.taskId,
@@ -139,6 +175,7 @@ const setupStep = createStep({
       await updateTask(inputData.taskId, {
         status: 'failed',
         error: summary,
+        failedPhase: 'code',
       })
       await handleTaskFailureWithFixTask({
         taskId: inputData.taskId,
@@ -174,6 +211,7 @@ const codeStep = createStep({
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
+    resumeFrom: resumeFromSchema,
   }),
   outputSchema: z.object({
     taskId: z.string(),
@@ -181,8 +219,23 @@ const codeStep = createStep({
     path: z.string(),
     branch: z.string(),
     claudeExitCode: z.number(),
+    resumeFrom: resumeFromSchema,
   }),
   execute: async ({ inputData, writer, tracingContext }) => {
+    // Resume short-circuit: the worker already ran in a previous attempt
+    // and committed its work. Skip the claude-code invocation entirely;
+    // pass-through with a synthetic exit code 0.
+    if (resumeRank(inputData.resumeFrom) > STEP_ORDER.indexOf('run-claude-code')) {
+      return {
+        taskId: inputData.taskId,
+        integrationBranch: inputData.integrationBranch,
+        path: inputData.path,
+        branch: inputData.branch,
+        claudeExitCode: 0,
+        resumeFrom: inputData.resumeFrom,
+      }
+    }
+
     const originId = await resolveOriginIdForTask(inputData.taskId)
     const fullPrompt = composePrompt(inputData.prompt, inputData.plan)
     const conversation: ClaudeEvent[] = []
@@ -224,6 +277,7 @@ const codeStep = createStep({
       path: inputData.path,
       branch: inputData.branch,
       claudeExitCode: r.exitCode,
+      resumeFrom: inputData.resumeFrom,
     }
   },
 })
@@ -236,6 +290,7 @@ const verifyStep = createStep({
     path: z.string(),
     branch: z.string(),
     claudeExitCode: z.number(),
+    resumeFrom: resumeFromSchema,
   }),
   outputSchema: z.object({
     taskId: z.string(),
@@ -255,7 +310,26 @@ const verifyStep = createStep({
     tracingContext?.currentSpan?.update({
       metadata: { originId, taskId: inputData.taskId },
     })
-    await updateTask(inputData.taskId, { status: 'verifying' })
+
+    // Resume short-circuit: 'mars continue' is jumping straight to merge.
+    // Verify already passed in the previous run; trust it and pass through.
+    if (resumeRank(inputData.resumeFrom) > STEP_ORDER.indexOf('verify')) {
+      return {
+        taskId: inputData.taskId,
+        integrationBranch: inputData.integrationBranch,
+        path: inputData.path,
+        branch: inputData.branch,
+        verified: true,
+      }
+    }
+
+    // Entering verify for real: clear both the previous failure stamp and
+    // the resume hint so a subsequent failure records this run's phase.
+    await updateTask(inputData.taskId, {
+      status: 'verifying',
+      failedPhase: null,
+      resumeFrom: null,
+    })
     const verifyCwd = resolveVerifyCwd(inputData.path)
     const ctx = resolveContext()
     const steps = await loadVerifySteps(ctx.supervisorsManifest)
@@ -285,7 +359,11 @@ const verifyStep = createStep({
         .join('\n')
       const firstFailedName = failed[0]?.name ?? 'verify'
       const firstFailedOutput = failed[0]?.output ?? summary
-      await updateTask(inputData.taskId, { status: 'failed', error: summary })
+      await updateTask(inputData.taskId, {
+        status: 'failed',
+        error: summary,
+        failedPhase: 'verify',
+      })
       await handleTaskFailureWithFixTask({
         taskId: inputData.taskId,
         failingStep: `verify:${firstFailedName}`,
@@ -352,7 +430,13 @@ const mergeStep = createStep({
     // must transition the task to a terminal status. Otherwise the queue row
     // stays at 'merging' forever and `mars list` hides the failure.
     try {
-      await updateTask(inputData.taskId, { status: 'merging' })
+      // Entering merge for real: clear any previous failure stamp + the
+      // resume hint so a subsequent failure records this run's phase.
+      await updateTask(inputData.taskId, {
+        status: 'merging',
+        failedPhase: null,
+        resumeFrom: null,
+      })
 
       const targetStatus = await checkMergeTargetStatus()
       if (targetStatus.kind === 'dirty') {
@@ -360,6 +444,7 @@ const mergeStep = createStep({
         await updateTask(inputData.taskId, {
           status: 'failed',
           error: errorMsg,
+          failedPhase: 'merge',
         })
         await handleTaskFailureWithFixTask({
           taskId: inputData.taskId,
@@ -388,6 +473,7 @@ const mergeStep = createStep({
         await updateTask(inputData.taskId, {
           status: 'failed',
           error: `merge pre-flight git status failed: ${targetStatus.error.message}`.slice(0, 1000),
+          failedPhase: 'merge',
         })
         return {
           taskId: inputData.taskId,
@@ -428,6 +514,7 @@ const mergeStep = createStep({
         await updateTask(inputData.taskId, {
           status: 'failed',
           error: errorMsg,
+          failedPhase: 'merge',
         })
         await handleTaskFailureWithFixTask({
           taskId: inputData.taskId,
@@ -448,7 +535,7 @@ const mergeStep = createStep({
       }
 
       await removeWorktree({ path: inputData.path, branch: inputData.branch }, true)
-      await updateTask(inputData.taskId, { status: 'done' })
+      await updateTask(inputData.taskId, { status: 'done', failedPhase: null })
 
       return {
         taskId: inputData.taskId,
@@ -463,6 +550,7 @@ const mergeStep = createStep({
       await updateTask(inputData.taskId, {
         status: 'failed',
         error: `merge step crashed: ${message}`.slice(0, 1000),
+        failedPhase: 'merge',
       })
       await handleTaskFailureWithFixTask({
         taskId: inputData.taskId,
@@ -491,6 +579,7 @@ export const implementWorkflow = createWorkflow({
     prompt: z.string(),
     plan: planSchema.default(null),
     integrationBranch: z.string().default('main'),
+    resumeFrom: resumeFromSchema,
   }),
   outputSchema: z.object({
     taskId: z.string(),

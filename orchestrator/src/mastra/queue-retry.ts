@@ -29,6 +29,29 @@ export const markTaskDropped = async (
   })
 }
 
+/**
+ * Terminal failure path. Use when a task exhausted its retry budget on a
+ * real error (verify failure, blocker dependent stuck after unblock).
+ * Distinct from `markTaskDropped`, which is reserved for explicit abandonment
+ * (user "skip", invalid input). A `failed` task can be retried via
+ * `mars restart <id>`; a `dropped` task cannot.
+ */
+export const markTaskFailed = async (
+  taskId: string,
+  reason: string,
+): Promise<void> => {
+  await initQueue()
+  const now = new Date().toISOString()
+  await getClient().execute({
+    sql: `UPDATE tasks SET status = 'failed', failure_reason = ?, updated_at = ? WHERE id = ?`,
+    args: [reason, now, taskId],
+  })
+  await getClient().execute({
+    sql: `DELETE FROM task_blockers WHERE task_id = ?`,
+    args: [taskId],
+  })
+}
+
 export interface RetryBudgetExhaustedInboxInput {
   taskId: string
   lastStep: string
