@@ -1,4 +1,4 @@
-import { internalBus } from './internal-bus'
+import { internalBus } from '../internal-bus'
 import {
   getRetryBudget,
   markTaskFailed,

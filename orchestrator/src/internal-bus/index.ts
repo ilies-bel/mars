@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import type { InternalEventName, InternalEvents } from './events'
 
 /**
  * Process-local event bus for cross-module signals emitted from library
@@ -12,22 +13,15 @@ import { EventEmitter } from 'node:events'
  * of the current Node process.
  */
 
-export interface InternalEvents {
-  'task.blocked': {
-    taskId: string
-    fixTaskId: string | null
-    failureSignature: string
-    failingStep: string
-  }
-  'task.unblocked': {
-    taskId: string
-    blockerTaskId: string
-  }
+export interface InternalBus {
+  emit<T extends InternalEventName>(type: T, payload: InternalEvents[T]): void
+  on<T extends InternalEventName>(
+    type: T,
+    handler: (payload: InternalEvents[T]) => void,
+  ): () => void
 }
 
-export type InternalEventName = keyof InternalEvents
-
-class TypedEmitter {
+class TypedEmitter implements InternalBus {
   private readonly inner = new EventEmitter()
 
   constructor() {
@@ -49,9 +43,11 @@ class TypedEmitter {
   }
 }
 
-let singleton: TypedEmitter | null = null
+let singleton: InternalBus | null = null
 
-export const internalBus = (): TypedEmitter => {
+export const internalBus = (): InternalBus => {
   if (!singleton) singleton = new TypedEmitter()
   return singleton
 }
+
+export type { InternalEventName, InternalEvents } from './events'

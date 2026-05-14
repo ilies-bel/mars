@@ -6,7 +6,7 @@ import {
   type FixRecipeContext,
 } from './lib/fix-recipes'
 import { raiseInboxItem } from './lib/inbox'
-import { internalBus } from './internal-bus'
+import { internalBus } from '../internal-bus'
 import {
   getClient,
   getTask,
