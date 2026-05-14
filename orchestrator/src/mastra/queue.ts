@@ -51,6 +51,15 @@ export interface Task {
   branch: string | null
   worktreePath: string | null
   claudeSessionId: string | null
+  /**
+   * Append-only history of every Claude session ID seen for this task,
+   * in order of arrival. The latest entry mirrors {@link claudeSessionId}
+   * (kept for backwards compatibility with callers that only want the
+   * most recent pointer). Retries append; existing entries are never
+   * dropped, so transcripts on disk remain reachable for `mars reflect`
+   * and `mars deep-reflect` across the full retry chain.
+   */
+  claudeSessionIds: string[]
   error: string | null
   author: Author | null
   dropReason: string | null
@@ -164,6 +173,22 @@ export const initQueue = async (): Promise<void> => {
   }
   if (!names.has('claude_session_id')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN claude_session_id TEXT`)
+  }
+  // claude_session_ids: append-only JSON-array history of Claude session
+  // IDs across retries. The legacy `claude_session_id` column is kept as
+  // the latest pointer (see Task.claudeSessionId). Backfill from any
+  // pre-existing latest pointer so the history is consistent with the
+  // mirrored field on day one.
+  if (!names.has('claude_session_ids')) {
+    await c.execute(
+      `ALTER TABLE tasks ADD COLUMN claude_session_ids TEXT NOT NULL DEFAULT '[]'`,
+    )
+    await c.execute(
+      `UPDATE tasks
+          SET claude_session_ids = json_array(claude_session_id)
+        WHERE claude_session_id IS NOT NULL
+          AND (claude_session_ids = '[]' OR claude_session_ids IS NULL)`,
+    )
   }
   if (!names.has('author_kind')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN author_kind TEXT`)
@@ -474,6 +499,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     branch: (row.branch as string | null) ?? null,
     worktreePath: (row.worktree_path as string | null) ?? null,
     claudeSessionId: (row.claude_session_id as string | null) ?? null,
+    claudeSessionIds: parseClaudeSessionIds(row.claude_session_ids),
     error: (row.error as string | null) ?? null,
     author,
     dropReason: (row.drop_reason as string | null) ?? null,
@@ -494,6 +520,17 @@ const rowToTask = (row: Record<string, unknown>): Task => {
 const coerceFailedPhase = (raw: unknown): FailedPhase | null => {
   if (raw === 'code' || raw === 'verify' || raw === 'merge') return raw
   return null
+}
+
+const parseClaudeSessionIds = (raw: unknown): string[] => {
+  if (typeof raw !== 'string' || raw.length === 0) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((v): v is string => typeof v === 'string')
+  } catch {
+    return []
+  }
 }
 
 export interface EnqueueTaskOptions {
@@ -604,13 +641,58 @@ export const updateTask = async (
   args.push(new Date().toISOString())
   args.push(id)
 
-  await getClient().execute({
-    sql: `UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`,
-    args: args as never,
-  })
+  const c = getClient()
+  const appendSessionId =
+    patch.claudeSessionId !== undefined &&
+    patch.claudeSessionId !== null &&
+    patch.claudeSessionId.length > 0
+
+  if (appendSessionId) {
+    // Atomically (a) apply the field updates and (b) append the new
+    // session id to claude_session_ids if it isn't already in the array.
+    // Two concurrent retry workers racing on the same task each see a
+    // serialised view and both append, so the array is the full
+    // append-only history.
+    const tx = await c.transaction('write')
+    try {
+      await tx.execute({
+        sql: `UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`,
+        args: args as never,
+      })
+      await tx.execute({
+        sql: `UPDATE tasks
+                 SET claude_session_ids =
+                       json_insert(
+                         claude_session_ids,
+                         '$[#]',
+                         ?
+                       )
+               WHERE id = ?
+                 AND NOT EXISTS (
+                   SELECT 1
+                     FROM json_each(claude_session_ids)
+                    WHERE value = ?
+                 )`,
+        args: [
+          patch.claudeSessionId as string,
+          id,
+          patch.claudeSessionId as string,
+        ],
+      })
+      await tx.commit()
+    } catch (error: unknown) {
+      tx.close()
+      throw error
+    }
+  } else {
+    await c.execute({
+      sql: `UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`,
+      args: args as never,
+    })
+  }
 
   if (patch.status === 'done') {
-    const dependents = await getClient().execute({
+    const dependents = await c.execute({
       sql: `SELECT DISTINCT task_id FROM task_blockers WHERE blocker_task_id = ?`,
       args: [id],
     })
