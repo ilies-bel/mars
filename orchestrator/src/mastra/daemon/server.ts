@@ -1098,6 +1098,31 @@ export const startDaemon = async (
             },
           }
         }
+        case 'set-flag': {
+          // In-memory kill-switch toggle. No persistence — a daemon
+          // restart legitimately re-reads the spawn env. Allowlist is
+          // narrow on purpose; extend deliberately rather than exposing
+          // arbitrary env mutation over IPC.
+          if (req.flag !== 'recovery') {
+            return {
+              ok: false,
+              error: `set-flag: unknown flag '${req.flag}'; supported flags: recovery`,
+            }
+          }
+          if (req.value !== 'on' && req.value !== 'off') {
+            return {
+              ok: false,
+              error: `set-flag: value must be 'on' or 'off'; got '${req.value}'`,
+            }
+          }
+          if (req.value === 'on') {
+            process.env.MARS_RECOVERY_DISABLED = '1'
+          } else {
+            delete process.env.MARS_RECOVERY_DISABLED
+          }
+          log(`set-flag: recovery=${req.value} (MARS_RECOVERY_DISABLED=${process.env.MARS_RECOVERY_DISABLED ?? '<unset>'})`)
+          return { ok: true, data: { flag: req.flag, value: req.value } }
+        }
         case 'ping': {
           return { ok: true, data: { pid: process.pid } }
         }
