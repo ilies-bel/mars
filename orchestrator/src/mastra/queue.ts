@@ -15,6 +15,20 @@ export type TaskStatus =
   | 'dropped'
   | 'blocked'
 
+/**
+ * Distinguishes ordinary user/agent tasks from orchestrator-spawned recovery
+ * fix-tasks. The value is mirrored by, and must agree with, the
+ * `fixForTaskId` pointer:
+ *
+ *   - `'task'` → ordinary work; `fixForTaskId` MUST be null
+ *   - `'fix'`  → recovery fix-task; `fixForTaskId` MUST be non-null
+ *
+ * The field is declared optional on the TypeScript type for backwards
+ * compatibility with existing `Task` literals in tests and fixtures; every
+ * persistence path defaults `undefined` to `'task'`.
+ */
+export type TaskKind = 'task' | 'fix'
+
 export interface TaskPlan {
   functional: string
   technical: string
@@ -34,10 +48,45 @@ export interface Task {
   retryCount: number
   fixForTaskId: string | null
   failureSignature: string | null
+  /**
+   * Marker for the task's role in the queue. See {@link TaskKind}. Optional
+   * on the type but always populated at the persistence boundary; reads
+   * derive a value via {@link deriveTaskKind} when the column is missing.
+   */
+  kind?: TaskKind
   originId: string
   priority: number
   createdAt: string
   updatedAt: string
+}
+
+/**
+ * Derive the canonical `kind` for a task from its `fix-for` pointer. Used
+ * during backfill of old rows and as the read-time default when a row is
+ * fetched before the migration has run.
+ */
+export const deriveTaskKind = (fixForTaskId: string | null): TaskKind =>
+  fixForTaskId === null ? 'task' : 'fix'
+
+/**
+ * Enforce the invariant that ties `kind` and `fixForTaskId` together.
+ * Throws a precise message naming the bad combination; callers should let it
+ * propagate so the writer sees the rejection.
+ */
+export const assertTaskKindInvariant = (
+  kind: TaskKind,
+  fixForTaskId: string | null,
+): void => {
+  if (kind === 'fix' && fixForTaskId === null) {
+    throw new Error(
+      `task kind 'fix' requires a non-null fix-for pointer; got null`,
+    )
+  }
+  if (kind === 'task' && fixForTaskId !== null) {
+    throw new Error(
+      `task kind 'task' requires a null fix-for pointer; got ${fixForTaskId}`,
+    )
+  }
 }
 
 export const MIN_PRIORITY = 0
