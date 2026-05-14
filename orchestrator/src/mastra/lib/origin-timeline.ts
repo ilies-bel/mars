@@ -1,5 +1,11 @@
 import { DuckDBConnection } from '@mastra/duckdb'
-import { getClient as getQueueClient, initQueue, type Task } from '../queue'
+import {
+  deriveTaskKind,
+  getClient as getQueueClient,
+  initQueue,
+  type Task,
+  type TaskKind,
+} from '../queue'
 import { getIdea, type Idea } from '../ideas'
 import { resolveContext } from '../context'
 
@@ -43,6 +49,12 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     authorKindRaw === 'human' || authorKindRaw === 'agent'
       ? { kind: authorKindRaw as 'human' | 'agent', name: authorName ?? 'unknown' }
       : null
+  const fixForTaskId = (row.fix_for_task_id as string | null) ?? null
+  const rawKind = (row.kind as string | null) ?? null
+  const kind: TaskKind =
+    rawKind === 'fix' || rawKind === 'task'
+      ? rawKind
+      : deriveTaskKind(fixForTaskId)
   return {
     id: row.id as string,
     prompt: String(row.prompt ?? ''),
@@ -55,8 +67,9 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     author,
     dropReason: (row.drop_reason as string | null) ?? null,
     retryCount: Number(row.retry_count ?? 0),
-    fixForTaskId: (row.fix_for_task_id as string | null) ?? null,
+    fixForTaskId,
     failureSignature: (row.failure_signature as string | null) ?? null,
+    kind,
     originId: ((row.origin_id as string | null) ?? (row.id as string)),
     priority: Number(row.priority ?? 0),
     createdAt: row.created_at as string,

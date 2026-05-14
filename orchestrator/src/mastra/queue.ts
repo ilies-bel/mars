@@ -159,6 +159,24 @@ export const initQueue = async (): Promise<void> => {
   if (!names.has('failure_signature')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN failure_signature TEXT`)
   }
+  // kind: explicit marker for the task's role. Backfill from fix_for_task_id
+  // so legacy rows match the invariant (`fix` iff fix_for_task_id IS NOT
+  // NULL). SQLite cannot add a NOT NULL column without a DEFAULT to an
+  // existing table reliably across libsql versions, so the column is
+  // declared nullable at the schema level; the application-level
+  // `assertTaskKindInvariant()` is the source of truth on writes, and the
+  // read path coerces NULL via {@link deriveTaskKind}.
+  if (!names.has('kind')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN kind TEXT`)
+    await c.execute(
+      `UPDATE tasks SET kind = 'fix'
+        WHERE kind IS NULL AND fix_for_task_id IS NOT NULL`,
+    )
+    await c.execute(
+      `UPDATE tasks SET kind = 'task'
+        WHERE kind IS NULL AND fix_for_task_id IS NULL`,
+    )
+  }
   if (!names.has('priority')) {
     // CHECK constraint cannot be added via ALTER TABLE in SQLite; the
     // application-level validatePriority() guards inserts/updates instead.
@@ -188,6 +206,9 @@ export const initQueue = async (): Promise<void> => {
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
+  )
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_tasks_kind ON tasks(kind)`,
   )
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_origin_id ON tasks(origin_id)`,
@@ -401,6 +422,12 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     authorKindRaw === 'human' || authorKindRaw === 'agent'
       ? { kind: authorKindRaw as AuthorKind, name: authorName ?? 'unknown' }
       : null
+  const fixForTaskId = (row.fix_for_task_id as string | null) ?? null
+  const rawKind = (row.kind as string | null) ?? null
+  const kind: TaskKind =
+    rawKind === 'fix' || rawKind === 'task'
+      ? rawKind
+      : deriveTaskKind(fixForTaskId)
   return {
     id: row.id as string,
     prompt: coerceToString(row.prompt, 'rowToTask: prompt'),
@@ -413,8 +440,9 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     author,
     dropReason: (row.drop_reason as string | null) ?? null,
     retryCount: Number(row.retry_count ?? 0),
-    fixForTaskId: (row.fix_for_task_id as string | null) ?? null,
+    fixForTaskId,
     failureSignature: (row.failure_signature as string | null) ?? null,
+    kind,
     originId: ((row.origin_id as string | null) ?? (row.id as string)),
     priority: Number(row.priority ?? 0),
     createdAt: row.created_at as string,
