@@ -50,7 +50,28 @@ const planSchema = z
   })
   .nullable()
 
-const composePrompt = (
+// Mandatory footer appended to every implementor prompt. The verify step
+// fails any task whose branch has zero commits ahead of integration, so
+// exiting without staging and committing produces a `verify:has-diff/
+// no-commits-ahead` failure that routes to the recovery recipe. Forcing
+// the instruction at the primitive guarantees every implementor —
+// user-authored, plan-driven, sliced, or otherwise — sees the same
+// commit contract, regardless of what the upstream prompt happened to
+// include.
+export const COMMIT_FOOTER = [
+  '## Save your work',
+  '',
+  'Before exiting, stage and commit every file you intend to land:',
+  '',
+  '```',
+  'git add -A',
+  'git commit -m "<message describing the change>"',
+  '```',
+  '',
+  'The orchestrator does not commit on your behalf. The verify step rejects any task branch with zero commits ahead of integration — exiting without a commit triggers the `verify:has-diff/no-commits-ahead` failure and parks this task in `blocked`.',
+].join('\n')
+
+export const composePrompt = (
   prompt: string,
   plan: z.infer<typeof planSchema>,
 ): string => {
@@ -61,6 +82,7 @@ const composePrompt = (
   if (plan?.technical?.trim()) {
     sections.push(`## Technical plan\n\n${plan.technical.trim()}`)
   }
+  sections.push(COMMIT_FOOTER)
   return sections.join('\n\n')
 }
 
