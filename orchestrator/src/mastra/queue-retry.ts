@@ -90,12 +90,11 @@ const buildTaskBlockedBody = (
 export const raiseRetryBudgetExhaustedInbox = async (
   input: RetryBudgetExhaustedInboxInput,
 ): Promise<string> => {
-  const shortId = input.taskId.slice(0, 8)
   return raiseInboxItem({
-    kind: `${TASK_BLOCKED_INBOX_KIND_PREFIX}(${shortId})`,
+    kind: `${TASK_BLOCKED_INBOX_KIND_PREFIX}(${input.taskId})`,
     category: 'orchestrator',
     priority: 'high',
-    title: `task ${shortId} blocked after retry budget exhausted at ${input.lastStep}`,
+    title: `task ${input.taskId} blocked after retry budget exhausted at ${input.lastStep}`,
     body: buildTaskBlockedBody(input),
     payload: {
       taskId: input.taskId,

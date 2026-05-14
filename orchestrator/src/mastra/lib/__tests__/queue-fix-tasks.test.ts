@@ -475,7 +475,7 @@ describe('queue-fix-tasks', () => {
       i.kind.startsWith('task-blocked('),
     )
     expect(taskBlocked).toHaveLength(1)
-    expect(taskBlocked[0].kind).toBe(`task-blocked(${t.id.slice(0, 8)})`)
+    expect(taskBlocked[0].kind).toBe(`task-blocked(${t.id})`)
     expect(taskBlocked[0].signature).toBe(t.id)
     expect(taskBlocked[0].priority).toBe('high')
     expect(taskBlocked[0].raisedBy).toBe('orchestrator:retry-budget')
