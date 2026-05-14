@@ -2046,7 +2046,79 @@ const main = async (): Promise<void> => {
       title: string
     }
 
+    interface BlockerGroup {
+      kind: string
+      signature: string
+      count: number
+      latestTaskId: string
+      latestRaisedAt: string
+    }
+
     const LEAN_PREVIEW = 3
+
+    // Pull the upstream task id out of an inbox payload. recovery-failed
+    // items use `originTaskId`; task-blocked items use `taskId`. Fall back
+    // to '-' so the group row stays renderable.
+    const extractTaskId = (payload: Record<string, unknown>): string => {
+      const origin = payload.originTaskId
+      if (typeof origin === 'string' && origin.length > 0) return origin
+      const taskId = payload.taskId
+      if (typeof taskId === 'string' && taskId.length > 0) return taskId
+      return '-'
+    }
+
+    // Normalize the kind for grouping. task-blocked rows embed the task
+    // id in the kind (e.g. `task-blocked(mars-dad)`); strip the suffix so
+    // siblings collapse.
+    const normalizeKind = (kind: string): string => {
+      const paren = kind.indexOf('(')
+      return paren === -1 ? kind : kind.slice(0, paren)
+    }
+
+    // Extract the failure signature (step + reason) without the task id.
+    // recovery-failed signatures look like `<taskId>:<step>/<reason>`; we
+    // drop the leading task-id segment. task-blocked signatures are just
+    // the task id, so we fall back to payload.lastErrorSignature.
+    const extractSignature = (row: InboxItem): string => {
+      const sig = row.signature ?? ''
+      if (sig.includes(':')) return sig.slice(sig.indexOf(':') + 1)
+      const fallback = row.payload.lastErrorSignature
+      if (typeof fallback === 'string' && fallback.length > 0) return fallback
+      return '-'
+    }
+
+    const groupBlockers = (rows: InboxItem[]): BlockerGroup[] => {
+      const byKey = new Map<string, BlockerGroup>()
+      for (const row of rows) {
+        const kind = normalizeKind(row.kind)
+        const signature = extractSignature(row)
+        const key = `${kind}|${signature}`
+        const taskId = extractTaskId(row.payload)
+        const existing = byKey.get(key)
+        if (existing === undefined) {
+          byKey.set(key, {
+            kind,
+            signature,
+            count: 1,
+            latestTaskId: taskId,
+            latestRaisedAt: row.raisedAt,
+          })
+          continue
+        }
+        existing.count += 1
+        // listInboxItems returns raised_at DESC, so the first row we see
+        // for a group is already the latest. Guard anyway in case ordering
+        // changes upstream.
+        if (row.raisedAt > existing.latestRaisedAt) {
+          existing.latestRaisedAt = row.raisedAt
+          existing.latestTaskId = taskId
+        }
+      }
+      return [...byKey.values()].sort((a, b) => {
+        if (b.count !== a.count) return b.count - a.count
+        return b.latestRaisedAt.localeCompare(a.latestRaisedAt)
+      })
+    }
 
     const printLean = (rows: InboxItem[], drafts: LeanDraft[]): void => {
       if (rows.length === 0 && drafts.length === 0) {
@@ -2071,13 +2143,21 @@ const main = async (): Promise<void> => {
           : `inbox ${rows.length} open`
       console.log(summary)
 
-      // listInboxItems orders raised_at DESC; reverse for FIFO (oldest first).
-      const blockersFifo = [...rows].reverse().slice(0, LEAN_PREVIEW)
       if (rows.length > 0) {
-        console.log(`blockers (${rows.length}):`)
-        for (const row of blockersFifo) {
-          const idShort = row.id.slice(0, 8)
-          console.log(`  ${idShort}  ${row.priority}  ${row.title}`)
+        const groups = groupBlockers(rows)
+        const header =
+          groups.length < rows.length
+            ? `blockers (${groups.length} groups, ${rows.length} items):`
+            : `blockers (${rows.length}):`
+        console.log(header)
+        for (const g of groups.slice(0, LEAN_PREVIEW)) {
+          console.log(
+            `  ${g.kind}  ${g.signature}  x${g.count}  latest ${g.latestTaskId}`,
+          )
+        }
+        const overflow = groups.length - LEAN_PREVIEW
+        if (overflow > 0) {
+          console.log(`  ... +${overflow} more`)
         }
       }
 
