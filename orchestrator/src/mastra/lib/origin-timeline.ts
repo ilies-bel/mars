@@ -63,6 +63,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     branch: (row.branch as string | null) ?? null,
     worktreePath: (row.worktree_path as string | null) ?? null,
     claudeSessionId: (row.claude_session_id as string | null) ?? null,
+    claudeSessionIds: parseClaudeSessionIds(row.claude_session_ids),
     error: (row.error as string | null) ?? null,
     author,
     dropReason: (row.drop_reason as string | null) ?? null,
@@ -83,6 +84,17 @@ const rowToTask = (row: Record<string, unknown>): Task => {
 const coerceFailedPhase = (raw: unknown): 'code' | 'verify' | 'merge' | null => {
   if (raw === 'code' || raw === 'verify' || raw === 'merge') return raw
   return null
+}
+
+const parseClaudeSessionIds = (raw: unknown): string[] => {
+  if (typeof raw !== 'string' || raw.length === 0) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((v): v is string => typeof v === 'string')
+  } catch {
+    return []
+  }
 }
 
 const loadTasksByOrigin = async (originId: string): Promise<Task[]> => {

@@ -13,6 +13,7 @@ const baseTask = (overrides: Partial<Task>): Task => ({
   branch: 'task/mars-test',
   worktreePath: '/tmp/mars-test',
   claudeSessionId: null,
+  claudeSessionIds: [],
   error: null,
   author: null,
   dropReason: null,
