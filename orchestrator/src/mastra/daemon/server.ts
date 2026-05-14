@@ -31,7 +31,7 @@ import {
   onBlockerTaskCompleted,
   recoverBlockedTasks,
 } from '../blocker-resolution'
-import { internalBus } from '../internal-bus'
+import { internalBus } from '../../internal-bus'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
 import { loadDaemonConfig } from './config'
 import { probeDuckDBLock } from './duckdb-lock'
