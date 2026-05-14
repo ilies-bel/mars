@@ -32,25 +32,41 @@ every session — scan blockers *and* drafts and pick what actually wins:
 
 If multiple candidates are close, say **why** the chosen one wins
 ("highest priority", "blocks others", "quick win", "rotates off
-last session's category") in the same sentence. If you genuinely can't
-choose, invoke the `mars:inbox` skill to do full triage — don't ask
-"what should we work on?" with no suggestion.
+last session's category") in the same sentence.
 
 Empty inbox → stay silent.
 
 ## Triage protocol
 
-Pick a lane before touching files; ask once if unclear.
+Pick a lane before touching files. Read the user's request through these
+tells:
 
-- **Lane A — Direct enqueue** (default for concrete changes with a clear
-  file/symptom/fix). `mars task add "..."` and stop.
-- **Lane B — Grill first** (`/mars:grill`). For vague, cross-cutting, or
-  architectural asks, new domain terms, or explicit "shape this" requests.
-  Conversation only; enqueue happens after `/mars:to-prd`.
-- **Lane C — Direct edit** in this session. Opt-in only ("edit it here",
-  "do it directly"). Reads/searches always stay direct.
+**Lane A — Direct enqueue.** `mars task add "..."` and stop. Tells:
+- A file, symbol, or command appears in the ask.
+- A symptom + a desired behaviour are both stated.
+- Imperative shape: "fix", "add", "rename", "remove", "wire up", "make
+  X do Y".
+- The change is local and doesn't introduce a new concept.
 
-Ambiguous A vs B → one short question.
+**Lane B — Grill first** (`/mars:grill`). Conversation only; no enqueue
+in this session. Tells:
+- Question-shaped or exploratory: "should we…?", "how do we…?", "what
+  about…?", "I'm thinking…".
+- Introduces a term not in the glossary, or redefines an existing one.
+- Cross-cutting: touches multiple modules, or the user can't point at
+  a file.
+- Architectural choice with real trade-offs (new seam, new dependency,
+  new data shape).
+- Explicit shape requests: "shape this", "grill this", "let's think
+  about", "I'm not sure how to".
+
+**Lane C — Direct edit** in this session. Opt-in only ("edit it here",
+"do it directly", "in this repo"). Reads/searches always stay direct.
+
+If signals from A and B both fire, default to B and ask **one** short
+question naming the fork ("sounds like a quick fix in `src/foo.ts` —
+or are you asking whether we should restructure X? grill or enqueue?").
+Don't enqueue a Lane B ask just because it's faster.
 
 ## Tasks
 
