@@ -83,7 +83,7 @@ describe('blocker-resolution (task_blockers)', () => {
     )
   })
 
-  it('drops dependent when retry budget is exhausted at unblock time', async () => {
+  it('fails dependent when retry budget is exhausted at unblock time', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '1'
     const { q, br } = await loadModules(repo)
     const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
@@ -98,9 +98,10 @@ describe('blocker-resolution (task_blockers)', () => {
 
     const r = await br.onBlockerTaskCompleted(fix.id)
     expect(r.outcomes).toHaveLength(1)
-    expect(r.outcomes[0].outcome).toBe('dropped')
+    expect(r.outcomes[0].outcome).toBe('failed')
     const reloaded = await q.getTask(dep.id)
-    expect(reloaded?.status).toBe('dropped')
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failureReason).toBe('retry_budget_exhausted_at_unblock')
 
     const inbox = (await import('../inbox')) as unknown as {
       listInboxItems: typeof import('../inbox').listInboxItems

@@ -154,7 +154,14 @@ Commands:
   show <id>                     print full detail for an id; tries tasks
                                 (.mars/queue.db), then ideas (.mars/state.db)
   list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed|dropped)
-  retry <id>                    re-queue a failed/done task (cleans worktree+branch)
+  continue <id>                 resume a failed task on its existing worktree+branch,
+                                jumping straight into the failed phase
+                                (verify or merge). Refuses if the task is not
+                                'failed', has no recorded failed_phase, failed
+                                in the 'code' phase, or lost its worktree on
+                                disk — use 'mars restart' instead.
+  restart <id>                  wipe worktree+branch and re-queue a failed/done
+                                task from setup (full pipeline re-run).
   purge <id>                    delete a failed/done task entirely (worktree+branch+row)
   unblock <id>                  phantom-recovery: flip a 'blocked' or 'queued'
                                 task to 'failed' AND clear every
@@ -384,9 +391,23 @@ then ideas (.mars/state.db).`,
 
 List tasks. Status one of: draft, queued, running, verifying, merging,
 done, failed, dropped. Defaults to all when omitted.`,
-  retry: `mars retry <id>
+  continue: `mars continue <id>
 
-Re-queue a failed/done task. Cleans the worktree and branch first.`,
+Resume a failed task on its existing worktree+branch, jumping straight
+into the failed phase (verify or merge). Reuses every commit the worker
+already landed on the task branch.
+
+Refuses (non-zero exit) when:
+  - the task is not in 'failed' status
+  - the task has no recorded failed_phase (legacy row)
+  - the task failed in the 'code' phase (no verifiable artefact)
+  - the branch or worktree is missing on disk
+In those cases reach for 'mars restart <id>' to start over from setup.`,
+  restart: `mars restart <id>
+
+Re-queue a failed/done task from setup. Removes the existing worktree
+and branch first, then runs the full pipeline (setup -> code -> verify
+-> merge) on a fresh worktree.`,
   purge: `mars purge <id>
 
 Delete a failed/done task entirely (worktree + branch + row). Refuses
@@ -1170,6 +1191,9 @@ const main = async (): Promise<void> => {
       if (task.dropReason) {
         console.log(`dropReason: ${task.dropReason}`)
       }
+      if (task.failureReason) {
+        console.log(`failureReason: ${task.failureReason}`)
+      }
       if (task.retryCount > 0) {
         console.log(`retryCount: ${task.retryCount}`)
       }
@@ -1232,7 +1256,14 @@ const main = async (): Promise<void> => {
     process.exit(1)
   }
 
-  if (cmd === 'retry' || cmd === 'purge') {
+  if (cmd === 'retry') {
+    console.error(
+      `unknown command: retry. Use 'mars continue <id>' to resume on the existing worktree, or 'mars restart <id>' to wipe and re-run.`,
+    )
+    process.exit(1)
+  }
+
+  if (cmd === 'continue' || cmd === 'restart' || cmd === 'purge') {
     const id = rest[0]
     if (!id) {
       console.error(`usage: mars ${cmd} <id>`)
@@ -1240,7 +1271,13 @@ const main = async (): Promise<void> => {
     }
     const { sendRequest } = await import('./mastra/daemon/client')
     await sendRequest({ op: cmd, id })
-    console.log(cmd === 'retry' ? `queued ${id} for retry` : `purged ${id}`)
+    const verb =
+      cmd === 'continue'
+        ? `queued ${id} to continue from the failed phase`
+        : cmd === 'restart'
+          ? `queued ${id} for restart from setup`
+          : `purged ${id}`
+    console.log(verb)
     return
   }
 
@@ -1262,7 +1299,7 @@ const main = async (): Promise<void> => {
       }
       if (data.outcome === 'unblocked') {
         console.log(
-          `unblocked ${data.taskId} (was ${data.previousStatus}; now failed). Use 'mars retry ${data.taskId}' to re-queue.`,
+          `unblocked ${data.taskId} (was ${data.previousStatus}; now failed). Use 'mars restart ${data.taskId}' to re-queue.`,
         )
       } else {
         console.log(

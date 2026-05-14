@@ -1,16 +1,16 @@
 import { internalBus } from './internal-bus'
 import {
   getRetryBudget,
-  markTaskDropped,
+  markTaskFailed,
   raiseRetryBudgetExhaustedInbox,
 } from './queue-retry'
 import { getClient, getTask, initQueue } from './queue'
 
 export interface UnblockOutcome {
   taskId: string
-  outcome: 'queued' | 'dropped' | 'noop'
+  outcome: 'queued' | 'failed' | 'noop'
   retryCount: number
-  dropReason?: string
+  failureReason?: string
 }
 
 export interface UnblockByTaskResult {
@@ -23,7 +23,7 @@ interface BlockedDependentRow {
   retry_count: number | null
 }
 
-const RETRY_BUDGET_DROP_REASON = 'retry_budget_exhausted_at_unblock'
+const RETRY_BUDGET_FAILURE_REASON = 'retry_budget_exhausted_at_unblock'
 
 const raiseInboxForBlockedTask = async (taskId: string): Promise<void> => {
   const task = await getTask(taskId)
@@ -72,12 +72,12 @@ export const onBlockerTaskCompleted = async (
     const retryCount = Number(row.retry_count ?? 0)
     if (retryCount >= budget) {
       await raiseInboxForBlockedTask(row.id)
-      await markTaskDropped(row.id, RETRY_BUDGET_DROP_REASON)
+      await markTaskFailed(row.id, RETRY_BUDGET_FAILURE_REASON)
       outcomes.push({
         taskId: row.id,
-        outcome: 'dropped',
+        outcome: 'failed',
         retryCount,
-        dropReason: RETRY_BUDGET_DROP_REASON,
+        failureReason: RETRY_BUDGET_FAILURE_REASON,
       })
       continue
     }
@@ -140,12 +140,12 @@ export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
     const outcomes: UnblockOutcome[] = []
     if (retryCount >= budget) {
       await raiseInboxForBlockedTask(row.id)
-      await markTaskDropped(row.id, RETRY_BUDGET_DROP_REASON)
+      await markTaskFailed(row.id, RETRY_BUDGET_FAILURE_REASON)
       outcomes.push({
         taskId: row.id,
-        outcome: 'dropped',
+        outcome: 'failed',
         retryCount,
-        dropReason: RETRY_BUDGET_DROP_REASON,
+        failureReason: RETRY_BUDGET_FAILURE_REASON,
       })
     } else {
       const upd = await c.execute({

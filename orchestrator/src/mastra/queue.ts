@@ -29,6 +29,15 @@ export type TaskStatus =
  */
 export type TaskKind = 'task' | 'fix'
 
+/**
+ * The phase that stamped a `'failed'` task. Set on the failure transition
+ * by the implement workflow and consumed by `mars continue <id>` to decide
+ * which step to resume from. `'code'` is reserved for failures that occur
+ * before any verifiable artefact exists (e.g. install errors): such tasks
+ * cannot be continued and must be restarted from scratch.
+ */
+export type FailedPhase = 'code' | 'verify' | 'merge'
+
 export interface TaskPlan {
   functional: string
   technical: string
@@ -45,6 +54,7 @@ export interface Task {
   error: string | null
   author: Author | null
   dropReason: string | null
+  failureReason: string | null
   retryCount: number
   fixForTaskId: string | null
   failureSignature: string | null
@@ -56,6 +66,20 @@ export interface Task {
   kind?: TaskKind
   originId: string
   priority: number
+  /**
+   * Set on the `'failed'` transition by the implement workflow's verify
+   * and merge steps. `'code'` is reserved for setup-time failures that
+   * cannot be continued. `null` for non-failed tasks and for legacy rows
+   * that failed before this column existed.
+   */
+  failedPhase: FailedPhase | null
+  /**
+   * When set, the dispatcher passes this hint into the workflow run so the
+   * earlier steps (setup, code, optionally verify) pass through without
+   * re-executing. Cleared on every successful step entry. Only `mars
+   * continue` sets it.
+   */
+  resumeFrom: FailedPhase | null
   createdAt: string
   updatedAt: string
 }
@@ -150,6 +174,9 @@ export const initQueue = async (): Promise<void> => {
   if (!names.has('drop_reason')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN drop_reason TEXT`)
   }
+  if (!names.has('failure_reason')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN failure_reason TEXT`)
+  }
   if (!names.has('retry_count')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`)
   }
@@ -203,6 +230,17 @@ export const initQueue = async (): Promise<void> => {
   }
   if (!names.has('slice_index')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN slice_index INTEGER`)
+  }
+  // failed_phase: which step stamped the failure ('code' | 'verify' | 'merge').
+  // Backed by application-level writes only on the failure transition; the
+  // CHECK constraint is enforced in TypeScript (see {@link FailedPhase}).
+  // resume_from: hint set by 'mars continue' so the dispatcher knows which
+  // step to skip into. Cleared on every step entry.
+  if (!names.has('failed_phase')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN failed_phase TEXT`)
+  }
+  if (!names.has('resume_from')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN resume_from TEXT`)
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
@@ -439,15 +477,23 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     error: (row.error as string | null) ?? null,
     author,
     dropReason: (row.drop_reason as string | null) ?? null,
+    failureReason: (row.failure_reason as string | null) ?? null,
     retryCount: Number(row.retry_count ?? 0),
     fixForTaskId,
     failureSignature: (row.failure_signature as string | null) ?? null,
     kind,
     originId: ((row.origin_id as string | null) ?? (row.id as string)),
     priority: Number(row.priority ?? 0),
+    failedPhase: coerceFailedPhase(row.failed_phase),
+    resumeFrom: coerceFailedPhase(row.resume_from),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
+}
+
+const coerceFailedPhase = (raw: unknown): FailedPhase | null => {
+  if (raw === 'code' || raw === 'verify' || raw === 'merge') return raw
+  return null
 }
 
 export interface EnqueueTaskOptions {
@@ -504,7 +550,17 @@ export const enqueueTask = async (
 export const updateTask = async (
   id: string,
   patch: Partial<
-    Pick<Task, 'status' | 'plan' | 'branch' | 'worktreePath' | 'claudeSessionId' | 'error'>
+    Pick<
+      Task,
+      | 'status'
+      | 'plan'
+      | 'branch'
+      | 'worktreePath'
+      | 'claudeSessionId'
+      | 'error'
+      | 'failedPhase'
+      | 'resumeFrom'
+    >
   >,
 ): Promise<void> => {
   const fields: string[] = []
@@ -535,6 +591,14 @@ export const updateTask = async (
   if (patch.error !== undefined) {
     fields.push('error = ?')
     args.push(patch.error)
+  }
+  if (patch.failedPhase !== undefined) {
+    fields.push('failed_phase = ?')
+    args.push(patch.failedPhase)
+  }
+  if (patch.resumeFrom !== undefined) {
+    fields.push('resume_from = ?')
+    args.push(patch.resumeFrom)
   }
   fields.push('updated_at = ?')
   args.push(new Date().toISOString())

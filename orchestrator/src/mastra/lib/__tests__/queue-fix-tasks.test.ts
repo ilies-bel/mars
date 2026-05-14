@@ -194,7 +194,7 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
-  it('drops source task and creates no fix task when retry_count >= MARS_FIX_RETRY_BUDGET', async () => {
+  it('fails source task and creates no fix task when retry_count >= MARS_FIX_RETRY_BUDGET', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '0'
     const { q, ft } = await loadModules(repo)
     process.env.MARS_FIX_RETRY_BUDGET = '0'
@@ -205,10 +205,10 @@ describe('queue-fix-tasks', () => {
       failingStep: 'verify:typecheck',
       errorOutput: 'errA',
     })
-    expect(r.outcome).toBe('dropped')
+    expect(r.outcome).toBe('failed')
 
     const reloaded = await q.getTask(t.id)
-    expect(reloaded?.status).toBe('dropped')
+    expect(reloaded?.status).toBe('failed')
 
     const fixTasks = await q.getClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
@@ -342,7 +342,7 @@ describe('queue-fix-tasks', () => {
     delete rc.recipes['shared-sig']
   })
 
-  it('drops dependent task at unblock time when retry budget already exhausted', async () => {
+  it('fails dependent task at unblock time when retry budget already exhausted', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '1'
     const { q, ft, br, rc } = await loadModules(repo)
     const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
@@ -358,10 +358,11 @@ describe('queue-fix-tasks', () => {
     await q.updateTask(f.fixTaskId!, { status: 'done' })
     const result = await br.onBlockerTaskCompleted(f.fixTaskId!)
     expect(result.outcomes).toHaveLength(1)
-    expect(result.outcomes[0].outcome).toBe('dropped')
+    expect(result.outcomes[0].outcome).toBe('failed')
 
     const reloaded = await q.getTask(t.id)
-    expect(reloaded?.status).toBe('dropped')
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failureReason).toBe('retry_budget_exhausted_at_unblock')
     cleanup()
   })
 
@@ -406,13 +407,14 @@ describe('queue-fix-tasks', () => {
         targetBranch: 'main',
       },
     })
-    expect(second.outcome).toBe('dropped')
+    expect(second.outcome).toBe('failed')
 
     reloaded = await q.getTask(t.id)
-    expect(reloaded?.status).toBe('dropped')
-    expect(reloaded?.dropReason).toBe(
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failureReason).toBe(
       'retry_budget_exhausted:merge:preflight/uncommitted-changes',
     )
+    expect(reloaded?.dropReason).toBeNull()
 
     const remainingBlockers = await q.getClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
@@ -466,7 +468,7 @@ describe('queue-fix-tasks', () => {
         targetBranch: 'main',
       },
     })
-    expect(second.outcome).toBe('dropped')
+    expect(second.outcome).toBe('failed')
 
     openItems = await inbox.listInboxItems('open')
     const taskBlocked = openItems.filter((i) =>
@@ -486,7 +488,7 @@ describe('queue-fix-tasks', () => {
 
     // Re-trigger the exhaustion path on the same task: row must dedup
     // (seen_count bumps, NOT a second row).
-    // markTaskDropped already removed the task_blockers; re-call the
+    // markTaskFailed already removed the task_blockers; re-call the
     // helper directly to simulate the same exhaustion firing again.
     const retry = (await import('../../queue-retry')) as unknown as {
       raiseRetryBudgetExhaustedInbox: typeof import('../../queue-retry').raiseRetryBudgetExhaustedInbox

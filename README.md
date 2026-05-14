@@ -199,7 +199,7 @@ dispatches into the workflows above. `reload` re-reads
 | `blocked` | Has one or more open `task_blockers` edges. |
 | `running` / `verifying` / `merging` | In-flight inside the implement workflow. |
 | `done` | Merged into the integration branch. |
-| `failed` | Any step failed; worktree retained. `mars retry <id>` re-queues; `mars purge <id>` deletes. |
+| `failed` | Any step failed; worktree retained. `mars continue <id>` resumes from the failed phase on the same worktree, `mars restart <id>` wipes and re-runs from setup, `mars purge <id>` deletes. |
 | `dropped` | Explicitly discarded; row + worktree + branch removed. |
 
 ### Other workflows
@@ -215,7 +215,8 @@ dispatches into the workflows above. `reload` re-reads
 
 | Command | Purpose |
 | --- | --- |
-| `mars retry <id>` | Re-queue a failed/done task (cleans worktree + branch). |
+| `mars continue <id>` | Resume a failed task on its existing worktree, jumping straight into the failed phase (verify or merge). Refuses when the task failed in setup/code or lost its worktree on disk. |
+| `mars restart <id>` | Re-queue a failed/done task from setup (cleans worktree + branch first). |
 | `mars purge <id>` | Delete a failed/done task entirely (worktree + branch + row). |
 | `mars block <task> <blocker>...` | Add blocker edges; task waits until each blocker reaches `done`. |
 | `mars unblock <id>` | Phantom-recovery: flip `blocked → failed` and clear every edge for `<id>`. |

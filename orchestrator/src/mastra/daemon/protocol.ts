@@ -26,7 +26,8 @@ export type DaemonRequest =
         error?: string | null
       }
     }
-  | { op: 'retry'; id: string }
+  | { op: 'continue'; id: string }
+  | { op: 'restart'; id: string }
   | { op: 'purge'; id: string }
   | { op: 'unblock'; id: string }
   | { op: 'block'; id: string; blockerIds: readonly string[] }

@@ -17,7 +17,7 @@ import {
 } from './queue'
 import {
   getRetryBudget,
-  markTaskDropped,
+  markTaskFailed,
   raiseRetryBudgetExhaustedInbox,
 } from './queue-retry'
 
@@ -540,7 +540,7 @@ export interface HandleTaskFailureViaTaskInput {
 }
 
 export interface HandleTaskFailureViaTaskResult {
-  outcome: 'blocked' | 'dropped' | 'escalated' | 'no-recipe' | 'noop'
+  outcome: 'blocked' | 'failed' | 'escalated' | 'no-recipe' | 'noop'
   fixTaskId?: string
   failureSignature?: string
   retryCount?: number
@@ -636,7 +636,7 @@ export const handleTaskFailureWithFixTask = async (
   const budget = getRetryBudget()
 
   if (task.retryCount >= budget) {
-    await markTaskDropped(
+    await markTaskFailed(
       input.taskId,
       `retry_budget_exhausted:${failureSignature}`,
     )
@@ -650,7 +650,7 @@ export const handleTaskFailureWithFixTask = async (
       worktreePath: task.worktreePath,
     })
     return {
-      outcome: 'dropped',
+      outcome: 'failed',
       failureSignature,
       retryCount: task.retryCount,
     }
