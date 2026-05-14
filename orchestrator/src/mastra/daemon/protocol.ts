@@ -53,7 +53,8 @@ export type DaemonRequest =
     }
   | { op: 'status' }
   | { op: 'reload-config' }
-  | { op: 'shutdown'; force?: boolean }
+  | { op: 'shutdown'; force?: boolean; drain?: boolean }
+  | { op: 'kill' }
   | { op: 'ping' }
 
 export type DaemonResponse =

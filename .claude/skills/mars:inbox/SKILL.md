@@ -18,12 +18,16 @@ Three resolution modes, driven by the argument shape.
 
 Run `mars inbox show <argument>`:
 
-- **Hit** → target is this item; print the output verbatim and go to
+- **Hit** → target is this item. **Print the full CLI output
+  verbatim** in a fenced block — no summarising, no paraphrasing, no
+  collapsing the `Last error` excerpt or the `payload`/`context`/`history`
+  sections. The user needs the raw content to decide. Then go to
   Step 3 (skip listing).
 - **Draft redirect** (`mars inbox show` exits 1 with "is a draft idea,
   not an inbox item …") → the id belongs to a draft, which `mars inbox
   list` surfaces but doesn't own. Skip Step 3, run `mars idea show
-  <id>` instead, and offer the draft actions per Step 3b.
+  <id>` and **print its full output verbatim** the same way, then
+  offer the draft actions per Step 3b.
 - **No hit** → tell the user the id didn't match and stop. Do not
   fall through to listing — the user named something specific.
 

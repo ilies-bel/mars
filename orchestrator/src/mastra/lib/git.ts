@@ -185,6 +185,30 @@ export interface SubprocessLine {
   line: string
 }
 
+// Live PIDs for every subprocess spawned through this module. Used by
+// `mars daemon kill` to terminate every child claude -p (and any git/verify
+// subprocess) when foreground-mode pgid signalling isn't safe. Entries are
+// added at spawn time and removed on 'close'/'error'.
+const liveChildPids = new Set<number>()
+
+export const getLiveChildPids = (): readonly number[] => Array.from(liveChildPids)
+
+// SIGKILL every tracked child. Best-effort: a PID that has already exited or
+// that the process lacks permission to signal is silently skipped. Returns
+// the list of PIDs we attempted to kill.
+export const killAllChildren = (): readonly number[] => {
+  const killed: number[] = []
+  for (const pid of liveChildPids) {
+    try {
+      process.kill(pid, 'SIGKILL')
+      killed.push(pid)
+    } catch {
+      // child already gone or unsignalable
+    }
+  }
+  return killed
+}
+
 export const runSubprocessStreaming = (
   cmd: string,
   args: readonly string[],
@@ -195,6 +219,7 @@ export const runSubprocessStreaming = (
 ): Promise<RunSubprocessResult> =>
   new Promise((resolveFn) => {
     const child = spawn(cmd, args, { cwd, env: env ?? process.env })
+    if (typeof child.pid === 'number') liveChildPids.add(child.pid)
     let stdout = ''
     let stderr = ''
     const buffers: Record<'stdout' | 'stderr', string> = { stdout: '', stderr: '' }
@@ -240,6 +265,7 @@ export const runSubprocessStreaming = (
     // listener Node treats it as an unhandled 'error' event and crashes
     // the entire daemon process.
     child.on('error', (err: NodeJS.ErrnoException) => {
+      if (typeof child.pid === 'number') liveChildPids.delete(child.pid)
       const detail = err.code ? `${err.code}: ${err.message}` : err.message
       settle({
         exitCode: err.code === 'ENOENT' ? 127 : 1,
@@ -248,6 +274,7 @@ export const runSubprocessStreaming = (
       })
     })
     child.on('close', (code) => {
+      if (typeof child.pid === 'number') liveChildPids.delete(child.pid)
       if (onLine) {
         for (const stream of ['stdout', 'stderr'] as const) {
           if (buffers[stream].length > 0) {

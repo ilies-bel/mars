@@ -198,6 +198,11 @@ export const startDaemon = async (
   const inFlight = new Map<string, InFlightEntry>()
   const startedAt = new Date().toISOString()
   let shuttingDown = false
+  // When false, `drain()` is a no-op, new bus events skip enqueue, and
+  // mutating RPCs (`add`, `continue`, `restart`, structured-write…) are
+  // refused. Flipped by `shutdown { drain: true }` so in-flight tasks
+  // finish without any new work landing on top of them.
+  let acceptingWork = true
 
   // Per-kind concurrency caps. glossary-write and adr-add share one pool
   // because they both contend on the same merge lock downstream — a second
@@ -481,6 +486,7 @@ export const startDaemon = async (
   // (from bus events, dispatcher finally-blocks, etc.) flip drainAgain so
   // the running drain re-enters once it finishes — no double-pick races.
   drain = async (): Promise<void> => {
+    if (!acceptingWork) return
     if (drainRunning) {
       drainAgain = true
       return
@@ -531,6 +537,7 @@ export const startDaemon = async (
   }
 
   bus.on('task.added', (e: { taskId: string }) => {
+    if (!acceptingWork) return
     if (inFlight.has(e.taskId)) return
     pendingTriage.add(e.taskId)
     void drain()
@@ -539,10 +546,12 @@ export const startDaemon = async (
   // refine is user-initiated and rare; let it push directly through its sem
   // (dispatchRefine already acquires/releases). No pending-set needed.
   bus.on('task.refine', (e: { taskId: string; refresh: boolean }) => {
+    if (!acceptingWork) return
     void dispatchRefine(e.taskId, e.refresh)
   })
 
   bus.on('task.queued', (e: { taskId: string }) => {
+    if (!acceptingWork) return
     if (inFlight.has(e.taskId)) return
     pendingImplement.add(e.taskId)
     void drain()
@@ -911,7 +920,30 @@ export const startDaemon = async (
 
   // ── Network: UDS server ───────────────────────────────────────────────────
 
+  // Ops that spawn or schedule new work. Refused while the daemon is
+  // draining (after `mars daemon stop`) so an in-flight drain isn't
+  // chased by fresh task additions.
+  const WORK_SPAWNING_OPS: ReadonlySet<DaemonRequest['op']> = new Set([
+    'add',
+    'continue',
+    'restart',
+    'refine',
+    'idea.promote',
+    'idea.slice',
+    'glossary-write',
+    'adr-add',
+    'ab',
+    'init',
+  ])
+
   const handleRequest = async (req: DaemonRequest): Promise<DaemonResponse> => {
+    if (!acceptingWork && WORK_SPAWNING_OPS.has(req.op)) {
+      return {
+        ok: false,
+        error: 'daemon draining; new work refused. Use `mars daemon kill` to abort, or wait for shutdown',
+        errorCode: 'DRAINING',
+      }
+    }
     try {
       switch (req.op) {
         case 'add': {
@@ -1070,17 +1102,116 @@ export const startDaemon = async (
           return { ok: true, data: { pid: process.pid } }
         }
         case 'shutdown': {
+          // Three modes:
+          //   drain=true  → stop picking new work, wait for in-flight to
+          //                 finish, then exit. No timeout.
+          //   force=true  → exit now and abandon in-flight (legacy
+          //                 fast-path; in-flight tasks remain at
+          //                 running/verifying in the queue).
+          //   neither     → exit only if idle; refuse otherwise so the
+          //                 user can pick drain or kill explicitly.
+          if (req.drain) {
+            if (acceptingWork) {
+              acceptingWork = false
+              pendingTriage.clear()
+              pendingImplement.clear()
+              log(`drain requested; stopped accepting new work (inFlight=${inFlight.size})`)
+            }
+            queueMicrotask(() => {
+              void shutdown(false)
+            })
+            return { ok: true, data: { inFlight: inFlight.size, draining: true } }
+          }
           if (!req.force && inFlight.size > 0) {
             return {
               ok: false,
-              error: `${inFlight.size} task(s) in flight; pass force=true to override`,
+              error: `${inFlight.size} task(s) in flight; pass drain=true to wait or use \`mars daemon kill\` to abort`,
             }
           }
-          // Schedule shutdown after responding.
           queueMicrotask(() => {
             void shutdown(req.force === true)
           })
           return { ok: true }
+        }
+        case 'kill': {
+          // Hard stop: mark every in-flight task failed, then SIGKILL the
+          // daemon's process group so every spawned `claude -p` (and any
+          // child git/verify processes) dies with it.
+          acceptingWork = false
+          pendingTriage.clear()
+          pendingImplement.clear()
+          const victims = Array.from(inFlight.values())
+          log(
+            `kill requested; aborting ${victims.length} in-flight task(s): ${
+              victims.map((v) => `${v.taskId}(${v.kind})`).join(', ') || '(none)'
+            }`,
+          )
+          // Mark task rows failed so the queue reflects reality after the
+          // children are gone. Best-effort — don't block kill on DB I/O.
+          for (const v of victims) {
+            if (v.kind !== 'implement' && v.kind !== 'triage' && v.kind !== 'refine') continue
+            try {
+              await updateTask(v.taskId, {
+                status: 'failed',
+                error: 'killed by `mars daemon kill`',
+              })
+            } catch {
+              // best-effort
+            }
+          }
+          // SIGKILL every tracked child (claude -p + any git/verify
+          // subprocess) explicitly so the work dies even when we can't
+          // safely signal our process group (foreground daemons share the
+          // user's terminal pgid). killAllChildren() is a no-op if nothing
+          // is in flight.
+          const { killAllChildren } = await import('../lib/git')
+          const killedPids = killAllChildren()
+          if (killedPids.length > 0) {
+            log(`SIGKILL'd ${killedPids.length} child pid(s): ${killedPids.join(', ')}`)
+          }
+          // Respond before pulling the rug on the event loop. Use a short
+          // setTimeout so the response flush actually lands on the wire.
+          setTimeout(() => {
+            try {
+              for (const f of [socketPath, pidFile]) {
+                if (existsSync(f)) {
+                  try {
+                    unlinkSync(f)
+                  } catch {
+                    // best-effort
+                  }
+                }
+              }
+            } finally {
+              // Belt-and-suspenders: SIGKILL our own process group too when
+              // we lead it (detached mode). Catches anything killAllChildren
+              // missed (e.g. a child that spawned its own subprocess and
+              // exited before we got the pid). In foreground mode the pgid
+              // is the user's terminal, so we only kill ourselves.
+              try {
+                // process.getpgrp is POSIX-only and not in @types/node; cast
+                // through unknown so the type checker accepts the lookup.
+                const getpgrp = (process as unknown as {
+                  getpgrp?: () => number
+                }).getpgrp
+                const pgid = typeof getpgrp === 'function' ? getpgrp() : -1
+                if (pgid === process.pid) {
+                  process.kill(-process.pid, 'SIGKILL')
+                } else {
+                  process.kill(process.pid, 'SIGKILL')
+                }
+              } catch {
+                process.kill(process.pid, 'SIGKILL')
+              }
+            }
+          }, 50)
+          return {
+            ok: true,
+            data: {
+              killed: victims.map((v) => ({ taskId: v.taskId, kind: v.kind })),
+              killedPids,
+            },
+          }
         }
         default: {
           const _exhaustive: never = req
@@ -1130,6 +1261,12 @@ export const startDaemon = async (
   const shutdown = async (force = false): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
+    // Once shutdown starts, stop dispatching new work even if drain wasn't
+    // explicitly requested — a SIGINT/SIGTERM that arrives while the
+    // dispatcher is mid-pick must not strand an extra worktree.
+    acceptingWork = false
+    pendingTriage.clear()
+    pendingImplement.clear()
     log(`shutting down (force=${force}, inFlight=${inFlight.size})`)
 
     if (force && inFlight.size > 0) {
@@ -1140,9 +1277,15 @@ export const startDaemon = async (
     }
 
     if (!force) {
-      const start = Date.now()
-      while (inFlight.size > 0 && Date.now() - start < 30_000) {
-        await new Promise((r) => setTimeout(r, 100))
+      // No timeout: a drain stop waits as long as the in-flight tasks need.
+      // `mars daemon kill` is the escape hatch for stuck work.
+      let lastLogged = -1
+      while (inFlight.size > 0) {
+        if (inFlight.size !== lastLogged) {
+          log(`waiting on ${inFlight.size} in-flight task(s)`)
+          lastLogged = inFlight.size
+        }
+        await new Promise((r) => setTimeout(r, 250))
       }
     }
 
