@@ -9,11 +9,10 @@ import {
   promoteDraftToQueued,
   type Task,
 } from '../queue'
-import { runClaudeCode } from '../lib/git'
+import { Workers } from '../workers'
 import { parseClaudeJsonResult } from '../lib/claude-json'
 import { getRepoRoot } from '../context'
 
-const TRIAGE_MODEL = 'claude-haiku-4-5-20251001'
 const TASK_GRAPH_LIMIT = 30
 const PROMPT_PREVIEW_CHARS = 200
 
@@ -95,11 +94,9 @@ const generateStep = createStep({
     const knownIds = new Set(allTasks.map((t) => t.id))
     const taskGraph = buildTaskGraph(allTasks, task.id)
 
-    const r = await runClaudeCode({
+    const r = await Workers.Triager.run(buildPrompt(task, taskGraph), {
       cwd: getRepoRoot(),
-      prompt: buildPrompt(task, taskGraph),
       timeoutMs: 2 * 60 * 1000,
-      model: TRIAGE_MODEL,
     })
     if (r.exitCode !== 0) {
       throw new Error(
