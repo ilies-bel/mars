@@ -19,7 +19,12 @@ blockers and drafts by short id and title. Once per session,
 Pick one item and recommend it in **one sentence**, then wait:
 
 - Blockers present → name the top blocker by short id + title and
-  recommend `/mars:unblock <id>` (or "skip").
+  recommend `/mars:inbox <id>` to triage the row (or "skip"). The ids in
+  the snapshot's `blockers` section are **inbox-item ids, not task ids**
+  — do not recommend `/mars:unblock <id>` on them; that skill only
+  accepts task ids and will reject an inbox id with `no task or idea
+  matching`. `/mars:inbox` resolves the underlying task and routes from
+  there.
 - No blockers, drafts present → name the top draft by short id + title
   and recommend `/mars:grill <id>` to shape it, or `mars task add` if
   it's already concrete.
