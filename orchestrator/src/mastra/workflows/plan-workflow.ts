@@ -2,7 +2,7 @@ import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
 import { getTask } from '../queue'
 import { createIdea } from '../ideas'
-import { runClaudeCode } from '../lib/git'
+import { Workers } from '../workers'
 import { parseClaudeJsonResult } from '../lib/claude-json'
 import { getRepoRoot } from '../context'
 
@@ -56,9 +56,8 @@ const generateStep = createStep({
       metadata: { originId: task.originId, taskId: task.id },
     })
 
-    const r = await runClaudeCode({
+    const r = await Workers.Planner.run(buildPrompt(task.prompt), {
       cwd: getRepoRoot(),
-      prompt: buildPrompt(task.prompt),
       timeoutMs: 5 * 60 * 1000,
     })
     if (r.exitCode !== 0) {

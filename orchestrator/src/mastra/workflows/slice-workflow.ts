@@ -6,7 +6,7 @@ import {
   enqueueTask,
   initQueue,
 } from '../queue'
-import { runClaudeCode } from '../lib/git'
+import { Workers } from '../workers'
 import { parseClaudeJsonResult } from '../lib/claude-json'
 import { getRepoRoot } from '../context'
 import { TDD_WORKER_BRIEF } from './tdd-brief'
@@ -176,9 +176,8 @@ const generateStep = createStep({
       metadata: { ideaId: idea.id, originId: idea.id },
     })
 
-    const r = await runClaudeCode({
+    const r = await Workers.Slicer.run(buildSlicerPrompt(idea), {
       cwd: getRepoRoot(),
-      prompt: buildSlicerPrompt(idea),
       timeoutMs: 5 * 60 * 1000,
     })
     if (r.exitCode !== 0) {
