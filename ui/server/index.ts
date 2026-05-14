@@ -1,5 +1,6 @@
 import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
+import { loadAgents } from './agents.ts'
 import { StateDb, TaskDb } from './db.ts'
 import { resolveRepo } from './repo.ts'
 import { SseHub } from './sse.ts'
@@ -105,6 +106,15 @@ export const startServer = async (args: CliArgs): Promise<void> => {
           const exists = await db.tableExists()
           const tasks = exists ? await db.listTasks() : []
           return jsonResponse(200, { tasks })
+        } catch (err) {
+          return jsonResponse(500, { error: (err as Error).message })
+        }
+      }
+
+      if (path === '/api/agents') {
+        try {
+          const agents = await loadAgents(ctx.repoRoot)
+          return jsonResponse(200, { agents })
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }
