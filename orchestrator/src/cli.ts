@@ -196,7 +196,7 @@ Commands:
                                 --force is also passed; --force-orphans extends
                                 removal to orphan worktrees that did contribute
                                 commits.
-  daemon <start|stop|kill|status|reload> [flags]
+  daemon <start|stop|kill|status|reload|set-flag> [flags]
                                 run the orchestration daemon. 'start' runs it in
                                 the foreground; 'start --detach' forks to
                                 background (also what CLI write ops auto-spawn).
@@ -208,7 +208,10 @@ Commands:
                                 failed. 'status' prints inFlight + queue counts.
                                 'reload' re-reads .mars/daemon.json (falling
                                 back to MARS_MAX_* env vars and built-in
-                                defaults) without restarting.
+                                defaults) without restarting. 'set-flag
+                                recovery <on|off>' toggles the
+                                MARS_RECOVERY_DISABLED kill-switch in-memory
+                                (not persisted across restarts).
   ab "<instruction>" --variants <path>
                                 run an A/B experiment: same instruction, two
                                 configurable variants from the JSON file (must
@@ -446,7 +449,7 @@ Flags:
 Errors during 'git worktree remove' are caught, logged with the directory
 path, and counted; the verb still processes remaining worktrees and exits
 0 unless every action failed.`,
-  daemon: `mars daemon <start|stop|kill|status|reload> [flags]
+  daemon: `mars daemon <start|stop|kill|status|reload|set-flag> [flags]
 
 Run the orchestration daemon. CLI write ops auto-spawn it via
 'daemon start --detach'.
@@ -463,7 +466,13 @@ Subcommands:
                      workers). Use when 'stop' is hanging on stuck work.
   status             print pid, startedAt, inFlight, and queue counts
   reload             re-read .mars/daemon.json (falling back to MARS_MAX_*
-                     env vars and built-in defaults) without restarting`,
+                     env vars and built-in defaults) without restarting
+  set-flag <flag> <on|off>
+                     toggle an in-memory kill-switch on the running daemon.
+                     Currently only 'recovery' is supported: 'on' sets
+                     MARS_RECOVERY_DISABLED=1 (fix-task/Investigator spawns
+                     are suppressed); 'off' unsets it. Not persisted —
+                     a daemon restart re-reads the spawn env.`,
   ab: `mars ab "<instruction>" --variants <path>
 
 Run an A/B experiment: same instruction, two configurable variants from
@@ -1480,6 +1489,38 @@ const main = async (): Promise<void> => {
       return
     }
 
+    if (sub === 'set-flag') {
+      const positional = rest.slice(1).filter((a) => !a.startsWith('--'))
+      const flag = positional[0]
+      const value = positional[1]
+      if (!flag || !value) {
+        console.error('usage: mars daemon set-flag <flag> <on|off>')
+        process.exit(2)
+      }
+      if (value !== 'on' && value !== 'off') {
+        console.error(`mars daemon set-flag: value must be 'on' or 'off'; got '${value}'`)
+        process.exit(2)
+      }
+      const { sendRequest } = await import('./mastra/daemon/client')
+      try {
+        const data = (await sendRequest(
+          { op: 'set-flag', flag, value },
+          { autoSpawn: false },
+        )) as { flag: string; value: string }
+        console.log(`flag ${data.flag}=${data.value}`)
+      } catch (err) {
+        const msg = (err as Error).message
+        if (/not running|auto-spawn disabled/i.test(msg)) {
+          console.error(
+            "daemon not running; use 'mars daemon start --detach' to start it",
+          )
+          process.exit(1)
+        }
+        throw err
+      }
+      return
+    }
+
     if (sub === 'status') {
       const { sendRequest } = await import('./mastra/daemon/client')
       const data = (await sendRequest({ op: 'status' }, { autoSpawn: false })) as {
@@ -1533,7 +1574,7 @@ const main = async (): Promise<void> => {
       return
     }
 
-    console.error('usage: mars daemon <start|stop|kill|status|reload> [flags]')
+    console.error('usage: mars daemon <start|stop|kill|status|reload|set-flag> [flags]')
     process.exit(2)
   }
 
