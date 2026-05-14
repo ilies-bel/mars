@@ -49,6 +49,8 @@ Top-level files define how your Mastra project is configured, built, and connect
 - Register new agents, tools, workflows, and scorers in `src/mastra/index.ts`
 - Use schemas for tool inputs and outputs
 - Run `npm run build` to verify changes compile
+- Non-AI logic lives in `src/mastra/lib/` and is called from `createStep`
+  `execute`. Only wrap as `createTool` if an agent actually consumes it.
 - Gate any new per-task signal-capture call site through
   `isReflectDisabled()` (or `recordSignals`, which already gates itself)
   so `MARS_REFLECT_DISABLED=1` stays a single, comprehensive disable
