@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTodo } from '../hooks/useTodo'
 import type { StaleWorktree } from '../lib/api'
+import { formatRelativeAgeFromHours } from '../lib/time'
 import type { DraftFeature } from '../lib/types'
 
 const shortId = (id: string): string => id.slice(0, 8)
@@ -99,7 +100,7 @@ const InboxRow = ({ item, active, onSelect }: InboxRowProps) => {
           {shortId(w.taskId)}
         </span>
         <span className="ml-auto font-mono text-[9px] uppercase text-iron/80">
-          {w.ageHours}h
+          {formatRelativeAgeFromHours(w.ageHours)}
         </span>
       </div>
       <div className="mt-1 truncate font-mono text-[12px] text-fg">
@@ -218,7 +219,7 @@ const StaleDetail = ({ worktree }: StaleDetailProps) => (
           stale worktree
         </span>
         <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
-          {worktree.ageHours}h old
+          {formatRelativeAgeFromHours(worktree.ageHours)} old
         </span>
       </div>
       <h2 className="mt-2 font-mono text-[15px] text-fg">
