@@ -162,7 +162,14 @@ export const upsertFixTask = async (
     return { fixTaskId: existingId, created: false }
   }
 
-  const prompt = recipe.buildPrompt(input.recipeContext)
+  // Inline the source task's prompt so recipes that re-do the original
+  // work (e.g. verify:has-diff/no-commits-ahead) don't burn turns
+  // re-fetching it from .mars/queue.db.
+  const recipeContextWithSource = {
+    ...input.recipeContext,
+    sourceTaskPrompt: input.recipeContext.sourceTaskPrompt ?? source.prompt,
+  }
+  const prompt = recipe.buildPrompt(recipeContextWithSource)
   const fixTaskId = randomUUID().slice(0, 8)
   // Shared remediations run at top priority — every other queued task is
   // waiting on this one resource (e.g. a clean main). Non-shared fix-tasks

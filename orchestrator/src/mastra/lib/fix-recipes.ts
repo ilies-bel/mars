@@ -30,6 +30,13 @@ export interface FixRecipeContext {
    * render it under a `## Reproduce` heading in their prompt.
    */
   reproCommand?: string | null
+  /**
+   * Prompt of the source task this recovery is unblocking. Injected by
+   * `upsertFixTask` so recipes can inline it verbatim — keeps the
+   * recovery agent from burning its turn budget on `.mars/queue.db`
+   * exploration before making the edit.
+   */
+  sourceTaskPrompt?: string | null
 }
 
 /**
@@ -128,25 +135,53 @@ const worktreeInstallFrozenLockfileRecipe: FixRecipe = {
 const noCommitsAheadRecipe: FixRecipe = {
   signature: 'verify:has-diff/no-commits-ahead',
   title: (ctx) =>
-    `Re-do the original task and commit your work (branch ${ctx.targetBranch})`,
+    `Re-do the original task and commit your work (failing branch ${ctx.targetBranch})`,
   buildPrompt: (ctx) => {
     const integration = ctx.integrationBranch ?? 'main'
-    const countCmd = `git -C ${ctx.targetPath} rev-list --count ${integration}..${ctx.targetBranch}`
+    const countCmd = `git rev-list --count ${integration}..HEAD`
+    const sourcePromptSection =
+      ctx.sourceTaskPrompt && ctx.sourceTaskPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.sourceTaskPrompt.trim(),
+            '',
+          ]
+        : []
     return [
       `The previous attempt on branch ${ctx.targetBranch} ended with zero commits ahead of integration branch ${integration} — i.e., the agent did the analysis but exited without staging or committing. Verify cannot land work that doesn't exist on the branch.`,
       '',
+      `You are running in a FRESH recovery worktree on a FRESH branch (not ${ctx.targetBranch}). Your job is to re-do the work HERE — in your own \`cwd\`, on your own branch — and commit it. Do NOT \`cd\` into ${ctx.targetPath} and do NOT edit files there: that worktree may be gone, may be stale, and is never the right merge source for this recovery.`,
+      '',
       ...renderReproSection(ctx.reproCommand),
-      `STEP 1 — sanity-check first. Run \`${countCmd}\` to count commits on the task branch that are not yet on integration. The output is a plain integer.`,
-      ` - If it prints \`0\`, the branch is genuinely empty: proceed to STEP 2 and re-do the task.`,
-      ` - If it prints a non-zero integer (post-amend / out-of-band push), this recovery is a true false positive: do NOT modify files, exit successfully so the original task is retried as-is.`,
+      `STEP 1 — sanity-check first. From your current working directory, run \`${countCmd}\` to count commits on your recovery branch that are not yet on integration. The output is a plain integer.`,
+      ` - If it prints \`0\`, your branch is genuinely empty: proceed to STEP 2 and do the work.`,
+      ` - If it prints a non-zero integer (you already committed on a previous turn / out-of-band push), this recovery is a true false positive: do NOT modify files, exit successfully.`,
       '',
       `Do not use \`git log\`, \`git log -n 5\`, or any other command to make this decision — only the integer from \`rev-list --count\` is authoritative. Other commands print integration-branch commits and will mislead you into the false-positive branch.`,
       '',
-      `STEP 2 — only when \`${countCmd}\` printed \`0\`. RE-DO the original task on this branch. Read the task's prompt from .mars/queue.db (or from the original task row referenced in fix_for_task_id). Apply the changes the original task asked for. **Stage and commit** every file you intend to land, with a clear commit message. Do NOT skip the commit step — that is the entire reason this recovery exists.`,
+      `STEP 2 — Commit-first checkpoint. Only enter this step when \`${countCmd}\` printed \`0\`.`,
       '',
-      `Branch: ${ctx.targetBranch}`,
+      `The previous attempt failed for exactly one reason: it exited with no commits. Your single highest-priority job this turn is to leave a commit on your recovery branch. Everything else is secondary.`,
+      '',
+      ...sourcePromptSection,
+      `Do these in order. Do NOT reorder. Do NOT expand scope:`,
+      ` 1. Read the **Original task prompt** above. It is already inlined — do NOT \`grep\` for it, do NOT open \`.mars/queue.db\`, do NOT explore the failing worktree.`,
+      ` 2. Identify the smallest viable edit that satisfies the prompt's acceptance criteria. If the prompt names a chokepoint file/symbol/line, edit THAT file and only that file. If you're choosing between two edits, pick the smaller one.`,
+      ` 3. Apply that edit IN YOUR CURRENT WORKTREE. A stub plus a TODO test is acceptable — a parked, partly-correct commit is strictly better than no commit at all.`,
+      ` 4. **Commit immediately**: \`git add -A && git commit -m "recover: <one-line summary>"\`. Do this BEFORE running tests, BEFORE refactoring, BEFORE refining the message, BEFORE any further exploration.`,
+      ` 5. Re-run \`${countCmd}\`. It MUST now print a non-zero integer. If it still prints \`0\`, your commit did not land on your current branch — fix that before anything else.`,
+      ` 6. Only after step 5 prints non-zero may you iterate: improve the implementation, add tests, polish the commit message via \`git commit --amend\`.`,
+      '',
+      `Example of an acceptable minimal first commit when the original prompt asks for a behaviour change in \`src/foo.ts\`:`,
+      ` - edit \`src/foo.ts\` with the smallest stub that compiles and reflects the intended behaviour;`,
+      ` - add a \`TODO\` comment naming the follow-up (e.g. \`// TODO: cover the empty-input case\`);`,
+      ` - \`git add src/foo.ts && git commit -m "recover: stub <behaviour> in src/foo.ts (TODO: tests)"\`.`,
+      `That commit unblocks verify. Refinement happens in subsequent commits on the same branch.`,
+      '',
+      `Failing task branch (for context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (for context only — do not edit there): ${ctx.targetPath}`,
       `Integration branch: ${integration}`,
-      `Worktree: ${ctx.targetPath}`,
       '',
       `Save your work. The orchestrator does not commit on your behalf.`,
     ].join('\n')
