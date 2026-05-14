@@ -31,16 +31,62 @@ id as the argument.
 If `mars list blocked` returns no rows, say so plainly ("nothing is
 blocked right now") and stop.
 
-# Step 1 — Load the task and its blockers
+# Step 1 — Identify whether the id is a task or an inbox item
 
-The argument is the task id. With an id in hand, run:
+**Read this carefully — the SessionStart inbox snapshot is the most
+common source of confusion.** The snapshot prints lines like:
+
+```
+blockers (69):
+  507862e3  high  no recovery recipe for verify:typecheck/unclassified
+```
+
+Those ids under "blockers" are **inbox item ids, not task ids**, and they
+are not what `mars blockers <task-id>` operates on. If you pass one to
+`mars show`, you'll get `no task or idea matching <id>` and waste a turn.
+
+Resolve the id **once, up front**, before doing anything else:
+
+```bash
+mars show <id> 2>&1 | head -1
+```
+
+- If it prints `kind: task` (or `kind: idea`) → it's a task/idea id, this
+  skill applies as written. Continue to Step 2.
+- If it prints `no task or idea matching <id>` → try
+  `mars inbox show <id>`. If that succeeds, the id is an **inbox item**.
+  STOP and hand off — see "Inbox-item ids" below.
+- If both fail → tell the user the id doesn't resolve and ask them to
+  recheck the snapshot.
+
+## Inbox-item ids — not this skill's job
+
+This skill unblocks tasks. Inbox items are a different surface
+(`mars inbox show/ack/resolve/dismiss`). If the id resolves to an inbox
+item:
+
+1. Print `mars inbox show <id>` so the user can see what it says.
+2. Note that the underlying task (the inbox item's `payload.sourceTaskId`)
+   may already be `dropped`, `done`, or `failed` — check it with
+   `mars show <source-task-id>`. A stale inbox row pointing at a dead
+   task is the most common case.
+3. Hand off to `/mars:inbox` (which is built for triaging inbox rows) or
+   ask the user whether they want to `ack`, `resolve`, or `dismiss` the
+   row directly. Do not run those verbs yourself — they're outside this
+   skill's scope.
+
+Stop here. Do not proceed to Step 2.
+
+# Step 2 — Load the task and its blockers
+
+The argument is a real task id. Run:
 
 ```bash
 mars show <id>
 mars blockers <id>
 ```
 
-## 1a — Re-orient the user first
+## 2a — Re-orient the user first
 
 Before talking about blockers, give the user a **2–3 line recap** of what
 this task was actually trying to do. The user may not remember — the task
@@ -62,7 +108,7 @@ blocked (`code`, `verify`, `merge`).
 Keep it terse — three lines, no field dump. The user just needs enough to
 remember why they cared. Then move on to the blockers.
 
-## 1b — Load the blockers
+## 2b — Load the blockers
 
 `mars blockers <id>` lists the open blockers (sibling task ids or note
 rows). For each blocker id, run `mars show <blocker-id>` so you see what
@@ -72,7 +118,7 @@ the file so your proposals are grounded in the code rather than a guess.
 Use `Read` and `Grep` for file inspection. (`mars context search/tree` is
 referenced in older docs but isn't a current CLI verb — don't try it.)
 
-# Step 2 — Decide the unblock options
+# Step 3 — Decide the unblock options
 
 Build a short menu of 2–3 concrete options for the user. Choose from these
 shapes; combine when it fits:
@@ -107,7 +153,7 @@ prerequisite task), include the proposed `mars task add` prompt body in
 the option's `description` so the user can sanity-check it before you
 enqueue.
 
-# Step 3 — Execute the chosen option
+# Step 4 — Execute the chosen option
 
 Run the corresponding `mars` verb. Verb signatures:
 
@@ -156,5 +202,5 @@ pick up <new-id> automatically" or "<id> is back on the queue").
 
 The user passed: `$ARGUMENTS`
 
-If empty, go to **Step 0** (list blocked tasks and ask which one). If a
-task id is present, start at **Step 1**.
+If empty, go to **Step 0** (list blocked tasks and ask which one). If an
+id is present, start at **Step 1** (resolve task vs. inbox item first).
