@@ -4,8 +4,10 @@ import {
   FIXER_BACKLOG_DENIED_TOOLS,
   READ_ONLY_DENIED_TOOLS,
   WORKER_CONFIGS,
+  WRITER_DENIED_TOOLS,
   Workers,
   getWorker,
+  getWorkerForTag,
   type WorkerName,
 } from '..'
 
@@ -31,17 +33,19 @@ const valueAfter = (args: readonly string[], flag: string): string | undefined =
 }
 
 describe('Worker registry', () => {
-  it('exposes Coder, Planner, Slicer, Triager, and Fixer as named Workers', () => {
+  it('exposes Coder, Planner, Slicer, Triager, Fixer, and Writer as named Workers', () => {
     expect(Workers.Coder).toBeDefined()
     expect(Workers.Planner).toBeDefined()
     expect(Workers.Slicer).toBeDefined()
     expect(Workers.Triager).toBeDefined()
     expect(Workers.Fixer).toBeDefined()
+    expect(Workers.Writer).toBeDefined()
   })
 
   it('returns the same instance from getWorker(name)', () => {
     expect(getWorker('Coder')).toBe(Workers.Coder)
     expect(getWorker('Fixer')).toBe(Workers.Fixer)
+    expect(getWorker('Writer')).toBe(Workers.Writer)
   })
 
   it("pins Triager's message cap at 40 (tighter than the global default of 100)", () => {
@@ -108,6 +112,31 @@ describe('Fixer pinned config', () => {
   })
 })
 
+describe('Writer pinned config', () => {
+  const args = argvFor('Writer')
+
+  it('runs haiku-4.5 on medium effort with permission-mode default (no bypass)', () => {
+    expect(valueAfter(args, '--model')).toBe('claude-haiku-4-5-20251001')
+    expect(valueAfter(args, '--effort')).toBe('medium')
+    expect(valueAfter(args, '--permission-mode')).toBe('default')
+    expect(args).not.toContain('--dangerously-skip-permissions')
+  })
+
+  it('denies Edit/Write/NotebookEdit so the writer cannot bypass the structured-write daemon', () => {
+    const denied = (valueAfter(args, '--disallowedTools') ?? '').split(',')
+    for (const tool of WRITER_DENIED_TOOLS) {
+      expect(denied).toContain(tool)
+    }
+  })
+})
+
+describe('getWorkerForTag', () => {
+  it('routes "coder" to the Coder Worker and "writer" to the Writer Worker', () => {
+    expect(getWorkerForTag('coder')).toBe(Workers.Coder)
+    expect(getWorkerForTag('writer')).toBe(Workers.Writer)
+  })
+})
+
 describe('agent-to-user denial inheritance', () => {
   it('is present in every Worker on top of any per-Worker denial', () => {
     const allRoles: ReadonlyArray<WorkerName> = [
@@ -116,6 +145,7 @@ describe('agent-to-user denial inheritance', () => {
       'Slicer',
       'Triager',
       'Fixer',
+      'Writer',
     ]
     for (const name of allRoles) {
       const denied = (valueAfter(argvFor(name), '--disallowedTools') ?? '').split(',')

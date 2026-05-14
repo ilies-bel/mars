@@ -30,6 +30,31 @@ export type TaskStatus =
 export type TaskKind = 'task' | 'fix'
 
 /**
+ * Routing hint that selects which Worker implements a Task. Authored by the
+ * slicer/planner (or `mars task add --tag`) and consumed by the implement
+ * workflow to pick a Worker from the registry. Adding a tag never widens
+ * what a Worker can do — each tag maps to a single, pinned Worker.
+ *
+ *   - `'coder'`  → default. Routes to the Coder Worker (opus, bypass,
+ *                  full tool surface). Slices that need to edit code in
+ *                  the worktree pick this.
+ *   - `'writer'` → routes to the Writer Worker. Used for slices whose
+ *                  acceptance criteria require calls to the daemon's
+ *                  structured-write verbs (`mars glossary set/remove`,
+ *                  `mars adr add`) — direct worktree edits to
+ *                  `CONTEXT.md` or `docs/adr/**` are forbidden.
+ *
+ * Untagged rows default to `'coder'` at the read boundary, preserving the
+ * "quick escape hatch" behaviour for hand-written `mars task add` calls.
+ */
+export type TaskTag = 'coder' | 'writer'
+
+export const TASK_TAGS: readonly TaskTag[] = ['coder', 'writer'] as const
+
+export const isTaskTag = (value: unknown): value is TaskTag =>
+  value === 'coder' || value === 'writer'
+
+/**
  * The phase that stamped a `'failed'` task. Set on the failure transition
  * by the implement workflow and consumed by `mars continue <id>` to decide
  * which step to resume from. `'code'` is reserved for failures that occur
@@ -73,6 +98,13 @@ export interface Task {
    * derive a value via {@link deriveTaskKind} when the column is missing.
    */
   kind?: TaskKind
+  /**
+   * Routing hint that picks the Worker. See {@link TaskTag}. Optional on the
+   * type for backwards compatibility with existing `Task` literals in tests
+   * and fixtures; the persistence boundary defaults missing/NULL values to
+   * `'coder'`.
+   */
+  tag?: TaskTag
   originId: string
   priority: number
   /**
@@ -235,6 +267,13 @@ export const initQueue = async (): Promise<void> => {
     await c.execute(
       `ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`,
     )
+  }
+  // tag: Worker-routing hint. NULL on legacy rows; the read path coerces
+  // NULL to 'coder' via {@link rowToTask}. New rows always carry a value;
+  // the application-level {@link isTaskTag} guards writes.
+  if (!names.has('tag')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN tag TEXT`)
+    await c.execute(`UPDATE tasks SET tag = 'coder' WHERE tag IS NULL`)
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created ON tasks(priority DESC, created_at ASC)`,
@@ -491,6 +530,8 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     rawKind === 'fix' || rawKind === 'task'
       ? rawKind
       : deriveTaskKind(fixForTaskId)
+  const rawTag = (row.tag as string | null) ?? null
+  const tag: TaskTag = isTaskTag(rawTag) ? rawTag : 'coder'
   return {
     id: row.id as string,
     prompt: coerceToString(row.prompt, 'rowToTask: prompt'),
@@ -508,6 +549,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     fixForTaskId,
     failureSignature: (row.failure_signature as string | null) ?? null,
     kind,
+    tag,
     originId: ((row.origin_id as string | null) ?? (row.id as string)),
     priority: Number(row.priority ?? 0),
     failedPhase: coerceFailedPhase(row.failed_phase),
@@ -540,6 +582,13 @@ export interface EnqueueTaskOptions {
   priority?: number
   parentIdeaId?: string
   sliceIndex?: number
+  /**
+   * Worker-routing hint. Defaults to `'coder'` when omitted, matching the
+   * read-time coercion in {@link rowToTask}. Authored values must satisfy
+   * {@link isTaskTag}; an unknown string throws so the caller sees the
+   * rejection at enqueue rather than dispatch.
+   */
+  tag?: TaskTag
 }
 
 export const enqueueTask = async (
@@ -549,6 +598,11 @@ export const enqueueTask = async (
 ): Promise<Task> => {
   const promptText = coerceToString(prompt, 'enqueueTask: prompt')
   if (opts?.priority !== undefined) validatePriority(opts.priority)
+  if (opts?.tag !== undefined && !isTaskTag(opts.tag)) {
+    throw new Error(
+      `tag must be one of ${TASK_TAGS.join(', ')}; got '${String(opts.tag)}'`,
+    )
+  }
   await initQueue()
   const id = `mars-${randomUUID().slice(0, 8)}`
   const now = new Date().toISOString()
@@ -559,8 +613,9 @@ export const enqueueTask = async (
   const priority = opts?.priority ?? 0
   const parentIdeaId = opts?.parentIdeaId ?? null
   const sliceIndex = opts?.sliceIndex ?? null
+  const tag: TaskTag = opts?.tag ?? 'coder'
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_idea_id, slice_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_idea_id, slice_index, tag, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       promptText,
@@ -573,6 +628,7 @@ export const enqueueTask = async (
       priority,
       parentIdeaId,
       sliceIndex,
+      tag,
       now,
       now,
     ],
