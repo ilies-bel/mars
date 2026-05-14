@@ -22,10 +22,54 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
   acquireLock,
+  claudeBinEnvFingerprint,
   runSubprocessStreaming,
   runClaudeCode,
   stripFrontmatter,
 } from '../git'
+
+describe('claudeBinEnvFingerprint', () => {
+  it('produces identical fingerprints for identical envs', () => {
+    const a = claudeBinEnvFingerprint('/opt/claude/bin/claude', '/usr/bin:/bin')
+    const b = claudeBinEnvFingerprint('/opt/claude/bin/claude', '/usr/bin:/bin')
+    expect(a).toBe(b)
+  })
+
+  it('produces a different fingerprint when PATH changes', () => {
+    const a = claudeBinEnvFingerprint(undefined, '/usr/bin:/bin')
+    const b = claudeBinEnvFingerprint(undefined, '/usr/local/bin:/usr/bin:/bin')
+    expect(a).not.toBe(b)
+  })
+
+  it('produces a different fingerprint when the MARS_CLAUDE_BIN override changes', () => {
+    const a = claudeBinEnvFingerprint('/opt/claude/bin/claude', '/usr/bin')
+    const b = claudeBinEnvFingerprint('/opt/other/bin/claude', '/usr/bin')
+    expect(a).not.toBe(b)
+  })
+
+  it('treats undefined and empty string the same so unset and "" do not collide', () => {
+    // Both unset (undefined) and explicit "" normalise to '' in the key. This
+    // is intentional: process.env reports unset vars as undefined and we want
+    // the same cache slot for either shape.
+    expect(claudeBinEnvFingerprint(undefined, '/usr/bin')).toBe(
+      claudeBinEnvFingerprint('', '/usr/bin'),
+    )
+  })
+
+  it('does not collide when the override/PATH boundary shifts', () => {
+    // Without a separator, ('a', 'bc') and ('ab', 'c') would both produce
+    // 'abc' and incorrectly hit the same cache slot. The U+0001 separator
+    // keeps these distinct.
+    const a = claudeBinEnvFingerprint('a', 'bc')
+    const b = claudeBinEnvFingerprint('ab', 'c')
+    expect(a).not.toBe(b)
+  })
+
+  it('uses a non-NUL separator so the source file stays text for ripgrep', () => {
+    const fp = claudeBinEnvFingerprint('x', 'y')
+    expect(fp.includes('\0')).toBe(false)
+  })
+})
 
 describe('stripFrontmatter', () => {
   it('strips a leading YAML frontmatter block', () => {

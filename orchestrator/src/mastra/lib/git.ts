@@ -443,11 +443,23 @@ export const buildWorkerEnv = (): NodeJS.ProcessEnv => {
 let cachedClaudeBin: string | null = null
 let cachedClaudeBinFor: string | undefined = undefined
 
+// Build a cache key from MARS_CLAUDE_BIN + PATH. The separator must be a
+// single character that cannot legitimately appear inside either env var.
+// We avoid U+0000 (NUL) on purpose: a literal NUL in the compiled template
+// literal makes ripgrep classify this file as binary and refuse to print
+// matches ("binary file matches"), forcing agents grepping git.ts into
+// awk + multi-Read fallbacks. U+0001 (SOH) is just as unusable inside a
+// real binary path or PATH entry, but ripgrep treats it as text.
+export const claudeBinEnvFingerprint = (
+  override: string | undefined,
+  path: string | undefined,
+): string => `${override ?? ''}${path ?? ''}`
+
 const resolveClaudeBin = (): string => {
   const override = process.env.MARS_CLAUDE_BIN
   // Re-resolve when the relevant env changes (mostly for tests; in prod it
   // is set once at daemon start and never mutates).
-  const envFingerprint = `${override ?? ''}\0${process.env.PATH ?? ''}`
+  const envFingerprint = claudeBinEnvFingerprint(override, process.env.PATH)
   if (cachedClaudeBin && cachedClaudeBinFor === envFingerprint) {
     return cachedClaudeBin
   }
