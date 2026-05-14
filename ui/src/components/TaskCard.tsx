@@ -15,11 +15,9 @@ export const TaskCard = ({ task, index }: Props) => {
   const accent =
     task.status === 'failed'
       ? 'border-l-2 border-l-iron'
-      : task.status === 'blocked'
-        ? 'border-l-2 border-l-amber'
-        : task.status === 'dropped'
-          ? 'border-l-2 border-l-muted opacity-70'
-          : ''
+      : task.status === 'dropped'
+        ? 'border-l-2 border-l-muted opacity-70'
+        : ''
   const showChip =
     task.status === 'blocked' ||
     task.status === 'dropped' ||
