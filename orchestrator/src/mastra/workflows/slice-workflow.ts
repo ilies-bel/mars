@@ -178,7 +178,6 @@ const generateStep = createStep({
 
     const r = await Workers.Slicer.run(buildSlicerPrompt(idea), {
       cwd: getRepoRoot(),
-      timeoutMs: 5 * 60 * 1000,
     })
     if (r.exitCode !== 0) {
       throw new Error(

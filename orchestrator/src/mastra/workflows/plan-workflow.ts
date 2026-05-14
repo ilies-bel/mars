@@ -58,7 +58,6 @@ const generateStep = createStep({
 
     const r = await Workers.Planner.run(buildPrompt(task.prompt), {
       cwd: getRepoRoot(),
-      timeoutMs: 5 * 60 * 1000,
     })
     if (r.exitCode !== 0) {
       throw new Error(
