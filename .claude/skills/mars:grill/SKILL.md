@@ -67,6 +67,23 @@ grill inside the project's existing vocabulary, not parallel to it.
 Do not dump the glossary or ADRs at the user. Do not announce that you've
 done this. Just internalise it and let it shape your questions.
 
+## Open the conversation
+
+Before any questions, reflect the idea back in your own words — one or
+two sentences on what you understood the user to be after, grounded in
+the draft title/body and anything the pre-read surfaced. This is the
+moment to name the tension you see ("sounds like you're trying to X,
+but Y is already doing half of that — fair read?") or the assumption
+you're carrying in.
+
+End the opener with an invitation, not a question list. Something the
+user can correct, expand, or redirect. Only after they've reacted do
+you move into the branch-by-branch interview below.
+
+If the opener already exposes a fork ("are we solving A or B?"), let
+that be the first real question — don't ask a generic "what's the
+problem?" on top of it.
+
 ## During the conversation
 
 ### Challenge against the glossary
