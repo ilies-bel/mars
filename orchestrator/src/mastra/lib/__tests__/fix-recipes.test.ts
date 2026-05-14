@@ -118,15 +118,22 @@ describe('fix-recipes', () => {
     it('produces a stable title', () => {
       const recipe = getRecipe('verify:has-diff/no-commits-ahead')
       expect(recipe.title(ctx)).toBe(
-        'Re-do the original task and commit your work (branch task/abc)',
+        'Re-do the original task and commit your work (failing branch task/abc)',
       )
     })
 
-    it('uses `git rev-list --count integration..task` as the sanity-check primitive', () => {
+    it('counts via `git rev-list --count integration..HEAD` against the recovery cwd, not the failing worktree', () => {
       const recipe = getRecipe('verify:has-diff/no-commits-ahead')
       const prompt = recipe.buildPrompt(ctx)
       expect(prompt).toContain(
-        `git -C ${ctx.targetPath} rev-list --count ${ctx.integrationBranch}..${ctx.targetBranch}`,
+        `git rev-list --count ${ctx.integrationBranch}..HEAD`,
+      )
+      // The old form pointed `git -C <failing worktree>` at the failing
+      // branch and either fatalled (worktree gone) or led the agent to
+      // edit the wrong tree. Lock the new form in.
+      expect(prompt).not.toContain(`git -C ${ctx.targetPath} rev-list`)
+      expect(prompt).not.toContain(
+        `rev-list --count ${ctx.integrationBranch}..${ctx.targetBranch}`,
       )
     })
 
@@ -155,11 +162,57 @@ describe('fix-recipes', () => {
       const recipe = getRecipe('verify:has-diff/no-commits-ahead')
       const prompt = recipe.buildPrompt(ctx)
       expect(prompt).toContain('STEP 2')
-      expect(prompt).toMatch(/Stage and commit/i)
+      expect(prompt).toMatch(/commit-first checkpoint/i)
+      expect(prompt).toContain('git add -A && git commit')
       expect(prompt).toContain(ctx.targetBranch)
       expect(prompt).toContain(ctx.integrationBranch)
       expect(prompt).toContain(ctx.targetPath)
       expect(prompt).toContain('Save your work')
+    })
+
+    it('orders the commit before any further refinement', () => {
+      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+      const prompt = recipe.buildPrompt(ctx)
+      // The commit step must come BEFORE the iterate/refine step so the
+      // recovery agent cannot burn its budget on refactors and tests
+      // first and then exit empty-handed.
+      const commitIdx = prompt.indexOf('Commit immediately')
+      const iterateIdx = prompt.search(/may you iterate/i)
+      expect(commitIdx).toBeGreaterThan(0)
+      expect(iterateIdx).toBeGreaterThan(commitIdx)
+    })
+
+    it('shows a concrete minimal-commit example (stub + TODO)', () => {
+      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/Example of an acceptable minimal first commit/i)
+      expect(prompt).toMatch(/TODO/)
+      expect(prompt).toMatch(/stub/i)
+    })
+
+    it('inlines the source task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+      const promptWithSource = recipe.buildPrompt({
+        ...ctx,
+        sourceTaskPrompt: 'rename foo to bar in src/baz.ts',
+      })
+      expect(promptWithSource).toContain('rename foo to bar in src/baz.ts')
+      expect(promptWithSource).toMatch(/inlined/i)
+      // Without it, no inlined section and no leftover marker.
+      const promptWithout = recipe.buildPrompt(ctx)
+      expect(promptWithout).not.toContain('rename foo to bar in src/baz.ts')
+      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
+    })
+
+    it('warns the agent NOT to edit the failing task worktree', () => {
+      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+      const prompt = recipe.buildPrompt(ctx)
+      // Regression: the previous recipe pointed `Worktree: <failing>` and
+      // the agent obediently edited there, leaving the recovery branch
+      // empty. The new prompt must explicitly warn off that path.
+      expect(prompt).toMatch(/do not edit/i)
+      expect(prompt).toContain(ctx.targetPath)
+      expect(prompt).toMatch(/FRESH recovery worktree/i)
     })
 
     it('falls back to `main` when integrationBranch is absent from the context', () => {
@@ -169,9 +222,7 @@ describe('fix-recipes', () => {
         statusOutput: ctx.statusOutput,
         targetBranch: ctx.targetBranch,
       })
-      expect(prompt).toContain(
-        `git -C ${ctx.targetPath} rev-list --count main..${ctx.targetBranch}`,
-      )
+      expect(prompt).toContain(`git rev-list --count main..HEAD`)
     })
   })
 
