@@ -332,6 +332,16 @@ export const TodoPage = () => {
             {drafts.length} draft{drafts.length === 1 ? '' : 's'} ·{' '}
             {staleWorktrees.length} stale
           </p>
+          {groupedBuckets.length > 0 ? (
+            <p className="mt-1 font-mono text-[10px] text-iron">
+              {groupedBuckets
+                .map(
+                  ({ key, items: bucketItems }) =>
+                    `${BUCKET_LABEL[key].toLowerCase()} ${bucketItems.length}`,
+                )
+                .join(' · ')}
+            </p>
+          ) : null}
         </header>
         <ul className="flex-1 overflow-auto">
           {groupedBuckets.map(({ key, items: bucketItems }) => {
