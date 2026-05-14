@@ -598,6 +598,13 @@ export interface VerifyArgs {
   steps: ReadonlyArray<VerifyStepSpec>
   branch?: string
   integrationBranch?: string
+  /**
+   * Skip the {@link checkBranchHasDiff} gate. Used by Writer tasks: the
+   * structured-write daemon commits on the integration branch directly, so
+   * the task branch is correctly 0 commits ahead and the diff gate would
+   * incorrectly reject a successful run. Default `false`.
+   */
+  skipDiffCheck?: boolean
 }
 
 const runVerifyStep = async (
@@ -669,7 +676,7 @@ export const checkBranchHasDiff = async (
 export const verifyChanges = async (
   args: VerifyArgs,
 ): Promise<{ passed: boolean; steps: VerifyStep[] }> => {
-  if (args.branch && args.integrationBranch) {
+  if (args.branch && args.integrationBranch && !args.skipDiffCheck) {
     const diffStep = await checkBranchHasDiff(args.cwd, args.branch, args.integrationBranch)
     if (!diffStep.passed) {
       return { passed: false, steps: [diffStep] }

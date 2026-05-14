@@ -5,12 +5,13 @@ import { z } from 'zod'
 import {
   createWorktree,
   removeWorktree,
-  runClaudeCode,
   verifyChanges,
   loadVerifySteps,
   mergeBranch,
   checkMergeTargetStatus,
 } from '../lib/git'
+import { getWorkerForTag } from '../workers'
+import { TASK_TAGS, isTaskTag, type TaskTag } from '../queue'
 import { resolveContext } from '../context'
 import {
   installWorktreeDeps,
@@ -50,6 +51,12 @@ const planSchema = z
   })
   .nullable()
 
+// Worker-routing tag, mirroring {@link TaskTag}. Defaults to 'coder' when
+// the dispatcher omits it (legacy/tagless rows) so the workflow keeps
+// running on Coder unless a tag is explicitly threaded through.
+const tagSchema: z.ZodType<TaskTag> = z.enum(TASK_TAGS as readonly [TaskTag, ...TaskTag[]])
+  .default('coder')
+
 // Phases that the workflow can be resumed from. Mirrors {@link FailedPhase}
 // in queue.ts but the workflow only ever resumes from a verify-or-later
 // failure: 'code' failures (setup:install) are non-resumable.
@@ -87,9 +94,51 @@ export const COMMIT_FOOTER = [
   'The orchestrator does not commit on your behalf. The verify step rejects any task branch with zero commits ahead of integration — exiting without a commit triggers the `verify:has-diff/no-commits-ahead` failure and parks this task in `blocked`.',
 ].join('\n')
 
+// Footer for Writer tasks. The Writer lands its work via `mars glossary
+// set/remove` and `mars adr add`, both of which route through the daemon's
+// structured-write path and commit on the integration branch directly —
+// there is no worktree commit to make. Telling the Writer to run
+// `git add -A && git commit` (the Coder footer) would be a no-op at best
+// and confuse the agent into thinking it failed at worst. Instead, the
+// Writer footer names the canonical verbs and reminds it that the
+// daemon, not the worktree, owns the commit.
+export const WRITER_FOOTER = [
+  '## Save your work',
+  '',
+  'You are a Writer worker. You cannot edit files in this worktree directly. Land every change through the canonical daemon verbs:',
+  '',
+  '- `mars glossary set "<term>" "<definition>"` to add or update a glossary term.',
+  '- `mars glossary remove "<term>"` to retire a glossary term.',
+  '- `mars adr add --title "<title>" --body "<body>"` to record an ADR.',
+  '',
+  'Each call routes through the structured-write daemon, which performs the file edit on its own internal worktree and merges into the integration branch. You do not run `git add` or `git commit` yourself — the daemon owns the commit.',
+  '',
+  'After every call succeeds, verify the change took effect (e.g. `mars glossary show "<term>"` or `mars adr show <NNNN>`) before moving to the next acceptance criterion. When every criterion is satisfied, exit.',
+].join('\n')
+
+// System prompt injected on top of the worker's default for Writer Sessions.
+// Pins the agent's mental model to the structured-write verbs so it does not
+// reach for Edit/Write (which are denied at the wrapper layer anyway) when
+// asked to update CONTEXT.md or docs/adr/**.
+export const WRITER_SYSTEM_PROMPT = [
+  'You are the Writer worker.',
+  '',
+  'You land documentation changes (glossary terms, ADRs) by calling the Mars CLI verbs that route through the structured-write daemon, NOT by editing files in this worktree.',
+  '',
+  'The only mutation verbs available to you are:',
+  '  - mars glossary set "<term>" "<definition>" [--aliases "<alias1>,<alias2>"]',
+  '  - mars glossary remove "<term>"',
+  '  - mars adr add --title "<title>" --body "<body>"',
+  '',
+  'You may read freely (Read, Grep, Glob, Bash for read-only commands). Edit, Write, and NotebookEdit are disabled — attempting to edit CONTEXT.md or docs/adr/** in the worktree will fail.',
+  '',
+  'When every acceptance criterion is satisfied via the verbs above, exit cleanly. The daemon commits each verb on the integration branch on your behalf.',
+].join('\n')
+
 export const composePrompt = (
   prompt: string,
   plan: z.infer<typeof planSchema>,
+  tag: TaskTag = 'coder',
 ): string => {
   const sections: string[] = [prompt.trim()]
   if (plan?.functional?.trim()) {
@@ -98,7 +147,7 @@ export const composePrompt = (
   if (plan?.technical?.trim()) {
     sections.push(`## Technical plan\n\n${plan.technical.trim()}`)
   }
-  sections.push(COMMIT_FOOTER)
+  sections.push(tag === 'writer' ? WRITER_FOOTER : COMMIT_FOOTER)
   return sections.join('\n\n')
 }
 
@@ -108,6 +157,7 @@ const setupStep = createStep({
     taskId: z.string(),
     prompt: z.string(),
     plan: planSchema.default(null),
+    tag: tagSchema,
     integrationBranch: z.string().default('main'),
     resumeFrom: resumeFromSchema,
   }),
@@ -115,6 +165,7 @@ const setupStep = createStep({
     taskId: z.string(),
     prompt: z.string(),
     plan: planSchema,
+    tag: tagSchema,
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
@@ -208,6 +259,7 @@ const codeStep = createStep({
     taskId: z.string(),
     prompt: z.string(),
     plan: planSchema,
+    tag: tagSchema,
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
@@ -218,6 +270,7 @@ const codeStep = createStep({
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
+    tag: tagSchema,
     claudeExitCode: z.number(),
     resumeFrom: resumeFromSchema,
   }),
@@ -231,18 +284,20 @@ const codeStep = createStep({
         integrationBranch: inputData.integrationBranch,
         path: inputData.path,
         branch: inputData.branch,
+        tag: inputData.tag,
         claudeExitCode: 0,
         resumeFrom: inputData.resumeFrom,
       }
     }
 
     const originId = await resolveOriginIdForTask(inputData.taskId)
-    const fullPrompt = composePrompt(inputData.prompt, inputData.plan)
+    const tag = isTaskTag(inputData.tag) ? inputData.tag : 'coder'
+    const fullPrompt = composePrompt(inputData.prompt, inputData.plan, tag)
     const conversation: ClaudeEvent[] = []
-    const r = await runClaudeCode({
+    const worker = getWorkerForTag(tag)
+    const r = await worker.run(fullPrompt, {
       cwd: inputData.path,
-      prompt: fullPrompt,
-      timeoutMs: 20 * 60 * 1000,
+      systemPrompt: tag === 'writer' ? WRITER_SYSTEM_PROMPT : undefined,
       onEvent: async (event) => {
         conversation.push(event)
         await writer?.write({ type: 'claude-event', event })
@@ -276,6 +331,7 @@ const codeStep = createStep({
       integrationBranch: inputData.integrationBranch,
       path: inputData.path,
       branch: inputData.branch,
+      tag,
       claudeExitCode: r.exitCode,
       resumeFrom: inputData.resumeFrom,
     }
@@ -289,6 +345,7 @@ const verifyStep = createStep({
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
+    tag: tagSchema,
     claudeExitCode: z.number(),
     resumeFrom: resumeFromSchema,
   }),
@@ -297,6 +354,7 @@ const verifyStep = createStep({
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
+    tag: tagSchema,
     verified: z.boolean(),
   }),
   scorers: {
@@ -319,6 +377,7 @@ const verifyStep = createStep({
         integrationBranch: inputData.integrationBranch,
         path: inputData.path,
         branch: inputData.branch,
+        tag: inputData.tag,
         verified: true,
       }
     }
@@ -333,11 +392,17 @@ const verifyStep = createStep({
     const verifyCwd = resolveVerifyCwd(inputData.path)
     const ctx = resolveContext()
     const steps = await loadVerifySteps(ctx.supervisorsManifest)
+    // Writer tasks land their changes on the integration branch via the
+    // daemon's structured-write path, not on the task branch — so the
+    // task branch is correctly 0 commits ahead of integration and the
+    // has-diff check would reject a perfectly successful Writer run.
+    // Skip has-diff for writer; the typecheck/test/lint gates still apply.
     const r = await verifyChanges({
       cwd: verifyCwd,
       steps,
       branch: inputData.branch,
       integrationBranch: inputData.integrationBranch,
+      skipDiffCheck: inputData.tag === 'writer',
     })
 
     if (!isReflectDisabled()) {
@@ -388,6 +453,7 @@ const verifyStep = createStep({
       integrationBranch: inputData.integrationBranch,
       path: inputData.path,
       branch: inputData.branch,
+      tag: inputData.tag,
       verified: r.passed,
     }
   },
@@ -400,6 +466,7 @@ const mergeStep = createStep({
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
+    tag: tagSchema,
     verified: z.boolean(),
   }),
   outputSchema: z.object({
@@ -423,6 +490,21 @@ const mergeStep = createStep({
         taskId: inputData.taskId,
         success: false,
         message: 'verification failed; worktree retained for inspection',
+      }
+    }
+
+    // Writer short-circuit: the daemon's structured-write path already
+    // committed every change on the integration branch, so the task
+    // branch is identical to integration and there is nothing to merge.
+    // Clean up the worktree and mark the task done; the merge primitive
+    // would otherwise contend for the merge lock for a guaranteed no-op.
+    if (inputData.tag === 'writer') {
+      await removeWorktree({ path: inputData.path, branch: inputData.branch }, true)
+      await updateTask(inputData.taskId, { status: 'done', failedPhase: null })
+      return {
+        taskId: inputData.taskId,
+        success: true,
+        message: 'writer task: changes landed on integration via structured-write daemon',
       }
     }
 
@@ -578,6 +660,7 @@ export const implementWorkflow = createWorkflow({
     taskId: z.string(),
     prompt: z.string(),
     plan: planSchema.default(null),
+    tag: tagSchema,
     integrationBranch: z.string().default('main'),
     resumeFrom: resumeFromSchema,
   }),

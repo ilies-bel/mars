@@ -32,6 +32,8 @@ const FLAGS_WITH_VALUES = new Set([
   '--kind',
   '--port',
   '--host',
+  '--priority',
+  '--tag',
 ])
 
 const REPEATABLE_FLAGS = new Set(['--blocked-by'])
@@ -112,12 +114,16 @@ Commands:
                                 ayush-that/sub-agents.directory over HTTPS, cached
                                 under .mars/cache/sub-agents/ (7-day TTL).
                                 --verbose lists each discovered manifest on stderr.
-  task add "<prompt>" [--author kind:name] [--blocked-by <id>] [plan flags]
+  task add "<prompt>" [--author kind:name] [--blocked-by <id>] [--tag coder|writer] [plan flags]
                                 enqueue a runnable task directly (status='queued',
                                 skips triage; can be picked up by agent runners).
                                 --blocked-by <id> is repeatable; every id must
                                 already exist. The task will not dispatch until
-                                every listed blocker reaches 'done'.
+                                every listed blocker reaches 'done'. --tag picks
+                                the Worker that implements the task: 'coder'
+                                (default) edits the worktree; 'writer' lands
+                                glossary/ADR changes via the structured-write
+                                daemon (no in-worktree edits).
   idea add "<goal>" [--author kind:name]
                                 create an idea/plan in .mars/state.db. Author is
                                 detected from env/git when omitted: human if
@@ -737,6 +743,7 @@ const main = async (): Promise<void> => {
     skipTriage: boolean,
     blockerIds?: readonly string[],
     priority?: number,
+    tag?: 'coder' | 'writer',
   ): Promise<void> => {
     const { detectNoCommitMarker } = await import('./mastra/lib/no-commit-marker')
     const marker = detectNoCommitMarker(prompt)
@@ -778,6 +785,7 @@ const main = async (): Promise<void> => {
         author,
         ...(blockerIds && blockerIds.length > 0 ? { blockerIds } : {}),
         ...(priority !== undefined ? { priority } : {}),
+        ...(tag !== undefined ? { tag } : {}),
       },
       {
         onSpawnNotice: (pid, log) =>
@@ -811,7 +819,7 @@ const main = async (): Promise<void> => {
       const prompt = rest.slice(1).join(' ')
       if (!prompt) {
         console.error(
-          'usage: mars task add "<prompt>" [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [plan flags]',
+          'usage: mars task add "<prompt>" [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder|writer] [plan flags]',
         )
         process.exit(1)
       }
@@ -826,7 +834,16 @@ const main = async (): Promise<void> => {
         }
         priority = n
       }
-      await enqueueViaDaemon(prompt, true, blockerIds, priority)
+      const tagRaw = flags['--tag']
+      let tag: 'coder' | 'writer' | undefined
+      if (tagRaw !== undefined) {
+        if (tagRaw !== 'coder' && tagRaw !== 'writer') {
+          console.error(`tag must be one of coder, writer; got '${tagRaw}'`)
+          process.exit(1)
+        }
+        tag = tagRaw
+      }
+      await enqueueViaDaemon(prompt, true, blockerIds, priority, tag)
       return
     }
     if (sub === 'priority') {
@@ -1173,6 +1190,7 @@ const main = async (): Promise<void> => {
       console.log(`kind:       task`)
       console.log(`id:         ${task.id}`)
       console.log(`status:     ${task.status}`)
+      console.log(`tag:        ${task.tag ?? 'coder'}`)
       console.log(`author:     ${formatAuthor(task.author)}`)
       console.log(`branch:     ${task.branch ?? '-'}`)
       console.log(`worktree:   ${task.worktreePath ?? '-'}`)

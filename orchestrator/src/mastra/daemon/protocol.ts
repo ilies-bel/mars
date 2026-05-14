@@ -1,6 +1,6 @@
 import type { Socket } from 'node:net'
 import type { Author } from '../author'
-import type { Task, TaskPlan } from '../queue'
+import type { Task, TaskPlan, TaskTag } from '../queue'
 import type { RunInitOptions, RunInitResult } from '../workflows/init-workflow'
 
 export type DaemonRequest =
@@ -12,6 +12,7 @@ export type DaemonRequest =
       author?: Author
       blockerIds?: readonly string[]
       priority?: number
+      tag?: TaskTag
     }
   | { op: 'task.priority'; id: string; priority: number }
   | {
