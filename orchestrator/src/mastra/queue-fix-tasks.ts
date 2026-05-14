@@ -579,6 +579,22 @@ export const handleTaskFailureWithFixTask = async (
   const branch = input.branch ?? task.branch
   const reproCommand = deriveReproCommand(input.failingStep, task.worktreePath)
 
+  // Kill-switch: when MARS_RECOVERY_DISABLED=1, never spawn fix-tasks or
+  // Investigators. Mark the failing task failed and stop. Recovery (fix-
+  // tasks already in flight) is escalated to inbox as usual so a partial
+  // disable doesn't leave them silently dangling.
+  if (process.env.MARS_RECOVERY_DISABLED === '1' && task.fixForTaskId === null) {
+    await markTaskFailed(
+      input.taskId,
+      `recovery_disabled:${failureSignature}: ${truncatedError.slice(0, 500)}`,
+    )
+    return {
+      outcome: 'failed',
+      failureSignature,
+      retryCount: task.retryCount,
+    }
+  }
+
   // Recovery (fix-task) failures escalate to inbox; never spawn another
   // recovery. See ADR 0002 — this is the rule that broke the cascade.
   if (task.fixForTaskId !== null) {

@@ -196,15 +196,19 @@ Commands:
                                 --force is also passed; --force-orphans extends
                                 removal to orphan worktrees that did contribute
                                 commits.
-  daemon <start|stop|status|reload> [flags]
+  daemon <start|stop|kill|status|reload> [flags]
                                 run the orchestration daemon. 'start' runs it in
                                 the foreground; 'start --detach' forks to
                                 background (also what CLI write ops auto-spawn).
-                                'stop' asks the daemon to exit (refuses if tasks
-                                are in flight unless --force). 'status' prints
-                                inFlight + queue counts. 'reload' re-reads
-                                .mars/daemon.json (falling back to MARS_MAX_* env
-                                vars and built-in defaults) without restarting.
+                                'stop' stops accepting new tasks then waits for
+                                in-flight to finish (--force exits immediately
+                                and abandons in-flight). 'kill' SIGKILLs the
+                                daemon's process group, terminating every child
+                                claude -p worker, and marks in-flight tasks
+                                failed. 'status' prints inFlight + queue counts.
+                                'reload' re-reads .mars/daemon.json (falling
+                                back to MARS_MAX_* env vars and built-in
+                                defaults) without restarting.
   ab "<instruction>" --variants <path>
                                 run an A/B experiment: same instruction, two
                                 configurable variants from the JSON file (must
@@ -442,7 +446,7 @@ Flags:
 Errors during 'git worktree remove' are caught, logged with the directory
 path, and counted; the verb still processes remaining worktrees and exits
 0 unless every action failed.`,
-  daemon: `mars daemon <start|stop|status|reload> [flags]
+  daemon: `mars daemon <start|stop|kill|status|reload> [flags]
 
 Run the orchestration daemon. CLI write ops auto-spawn it via
 'daemon start --detach'.
@@ -450,8 +454,13 @@ Run the orchestration daemon. CLI write ops auto-spawn it via
 Subcommands:
   start [--detach]   run the daemon (foreground by default; --detach forks
                      to background)
-  stop  [--force]    ask the daemon to exit. Refuses if tasks are in
-                     flight unless --force is also passed.
+  stop  [--force]    graceful shutdown: stop accepting new tasks, then wait
+                     for in-flight tasks to finish and exit. No timeout — use
+                     'kill' if you need to abort stuck work. --force exits
+                     immediately and abandons in-flight tasks (legacy).
+  kill               hard stop: mark every in-flight task failed and SIGKILL
+                     the daemon's process group (kills all child claude -p
+                     workers). Use when 'stop' is hanging on stuck work.
   status             print pid, startedAt, inFlight, and queue counts
   reload             re-read .mars/daemon.json (falling back to MARS_MAX_*
                      env vars and built-in defaults) without restarting`,
@@ -1383,8 +1392,61 @@ const main = async (): Promise<void> => {
     if (sub === 'stop') {
       const force = subFlags.has('--force')
       const { sendRequest } = await import('./mastra/daemon/client')
-      await sendRequest({ op: 'shutdown', force }, { autoSpawn: false })
-      console.log('daemon stopping')
+      try {
+        if (force) {
+          await sendRequest({ op: 'shutdown', force: true }, { autoSpawn: false })
+          console.log('daemon stopping (force; in-flight tasks abandoned)')
+          return
+        }
+        const data = (await sendRequest(
+          { op: 'shutdown', drain: true },
+          { autoSpawn: false },
+        )) as { inFlight: number; draining: boolean }
+        if (data.inFlight === 0) {
+          console.log('daemon stopping')
+        } else {
+          console.log(
+            `daemon draining: stopped accepting new work; waiting on ${data.inFlight} in-flight task(s). Run \`mars daemon kill\` to abort.`,
+          )
+        }
+      } catch (err) {
+        const msg = (err as Error).message
+        if (/not running|auto-spawn disabled/i.test(msg)) {
+          console.error('daemon not running')
+          process.exit(1)
+        }
+        throw err
+      }
+      return
+    }
+
+    if (sub === 'kill') {
+      const { sendRequest } = await import('./mastra/daemon/client')
+      try {
+        const data = (await sendRequest({ op: 'kill' }, { autoSpawn: false })) as {
+          killed: ReadonlyArray<{ taskId: string; kind: string }>
+        }
+        if (data.killed.length === 0) {
+          console.log('daemon killed (no in-flight tasks)')
+        } else {
+          console.log(`daemon killed; aborted ${data.killed.length} in-flight task(s):`)
+          for (const t of data.killed) console.log(`  ${t.kind} ${t.taskId}`)
+        }
+      } catch (err) {
+        const msg = (err as Error).message
+        // Connection reset is the expected outcome — the daemon kills its
+        // process group immediately after responding, which the kernel may
+        // tear down before the response flushes on slower hosts.
+        if (/ECONNRESET|EPIPE|socket hang up/i.test(msg)) {
+          console.log('daemon killed')
+          return
+        }
+        if (/not running|auto-spawn disabled/i.test(msg)) {
+          console.error('daemon not running')
+          process.exit(1)
+        }
+        throw err
+      }
       return
     }
 
@@ -1471,7 +1533,7 @@ const main = async (): Promise<void> => {
       return
     }
 
-    console.error('usage: mars daemon <start|stop|status|reload> [flags]')
+    console.error('usage: mars daemon <start|stop|kill|status|reload> [flags]')
     process.exit(2)
   }
 
