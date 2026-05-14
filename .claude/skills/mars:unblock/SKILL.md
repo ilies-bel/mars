@@ -33,8 +33,8 @@ blocked right now") and stop.
 
 # Step 1 — Identify whether the id is a task or an inbox item
 
-**Read this carefully — the SessionStart inbox snapshot is the most
-common source of confusion.** The snapshot prints lines like:
+**Read this carefully — confusing inbox-item ids with task ids is the
+most common failure mode.** `mars inbox` prints lines like:
 
 ```
 blockers (69):
