@@ -16,24 +16,27 @@ snapshot — counts (e.g. `inbox 58 open (high:58)`) plus the top
 blockers and drafts by short id and title. Once per session,
 **propose a specific next action** — do not just echo the count back.
 
-Pick one item and recommend it in **one sentence**, then wait:
+Pick **one** item across the whole snapshot and recommend it in **one
+sentence**, then wait. Don't default to "first blocker in the list"
+every session — scan blockers *and* drafts and pick what actually wins:
 
-- Blockers present → name the top blocker by short id + title and
-  recommend `/mars:inbox <id>` to triage the row (or "skip"). The ids in
-  the snapshot's `blockers` section are **inbox-item ids, not task ids**
-  — do not recommend `/mars:unblock <id>` on them; that skill only
-  accepts task ids and will reject an inbox id with `no task or idea
-  matching`. `/mars:inbox` resolves the underlying task and routes from
-  there.
-- No blockers, drafts present → name the top draft by short id + title
-  and recommend `/mars:grill <id>` to shape it, or `mars task add` if
-  it's already concrete.
-- Empty inbox → stay silent.
+- A blocker with the highest severity, or one in a category that
+  hasn't been touched recently → `/mars:inbox <id>` to triage. Ids in
+  the `blockers` section are **inbox-item ids, not task ids** — never
+  use `/mars:unblock <id>` on them; that skill only accepts task ids.
+- A draft that already looks concrete (clear file/symptom/fix) →
+  recommend `mars task add "..."` directly (Lane A). Don't grill what's
+  already shaped.
+- A draft that's vague or cross-cutting → `/mars:grill <id>` to shape.
+- A quick win that unblocks others — call that out as the reason.
 
-If the snapshot has more than one strong candidate, invoke the
-`mars:inbox` skill instead of guessing — it does the full triage. Never
-ask "what should we work on?" without first suggesting something
-concrete from the snapshot.
+If multiple candidates are close, say **why** the chosen one wins
+("highest priority", "blocks others", "quick win", "rotates off
+last session's category") in the same sentence. If you genuinely can't
+choose, invoke the `mars:inbox` skill to do full triage — don't ask
+"what should we work on?" with no suggestion.
+
+Empty inbox → stay silent.
 
 ## Triage protocol
 
@@ -94,9 +97,9 @@ edit itself.
 Direct edits to `CONTEXT.md` or `docs/adr/**` from coding worktrees are
 forbidden. Coding agents may **read** `CONTEXT.md` freely.
 
-`/mars:chat` (alias `/mars:next`) grills the user's plan against
-`CONTEXT.md`, curating terms inline. ADR only when hard-to-reverse,
-surprising, and embodying a real trade-off.
+`/mars:chat` grills the user's plan against `CONTEXT.md`, curating
+terms inline. ADR only when hard-to-reverse, surprising, and embodying
+a real trade-off.
 
 ## Enqueue example
 
