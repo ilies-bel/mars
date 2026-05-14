@@ -685,6 +685,92 @@ export const checkBranchHasDiff = async (
   }
 }
 
+export interface CleanWorktreeArgs {
+  worktreePath: string
+  integrationBranch: string
+}
+
+export interface CleanWorktreeResult {
+  cleaned: boolean
+  reason: string
+  output: string
+}
+
+/**
+ * Remove stray untracked files from a task worktree before re-invoking
+ * the coder, BUT only when the branch is still 0 commits ahead of the
+ * integration branch. The 0-commits-ahead gate distinguishes "debris
+ * from a prior failed attempt that exited without committing" (clean
+ * it) from "real work the agent committed on a previous turn" (leave
+ * it alone — those commits ARE the worktree's state).
+ *
+ * Background: when a source task is re-dispatched after a recovery
+ * fix-task unblocks it, the orchestrator reuses the original branch+
+ * worktree (see {@link createWorktree}'s reuse path). The reused
+ * worktree may carry untracked files the previous Coder wrote and never
+ * staged — including misnested paths like
+ * `orchestrator/orchestrator/...` — which the new agent then spends
+ * turns inspecting before getting to the actual work.
+ *
+ * Honours .gitignore (no `-x`), so `node_modules/` (already populated
+ * by the install step) and `.mars/` are preserved either way.
+ */
+export const cleanWorktreeIfNoCommitsAhead = async (
+  args: CleanWorktreeArgs,
+): Promise<CleanWorktreeResult> => {
+  let count: number
+  try {
+    const { stdout } = await exec(
+      'git',
+      ['rev-list', '--count', `${args.integrationBranch}..HEAD`],
+      { cwd: args.worktreePath },
+    )
+    count = Number.parseInt(stdout.trim(), 10)
+    if (!Number.isInteger(count)) {
+      return {
+        cleaned: false,
+        reason: `rev-list emitted non-integer count: ${stdout.trim()}`,
+        output: '',
+      }
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      cleaned: false,
+      reason: `rev-list ${args.integrationBranch}..HEAD failed: ${message}`,
+      output: '',
+    }
+  }
+
+  if (count > 0) {
+    return {
+      cleaned: false,
+      reason: `branch is ${count} commit(s) ahead of ${args.integrationBranch}; preserving worktree state`,
+      output: '',
+    }
+  }
+
+  try {
+    const { stdout, stderr } = await exec(
+      'git',
+      ['clean', '-fd'],
+      { cwd: args.worktreePath },
+    )
+    return {
+      cleaned: true,
+      reason: `branch is 0 commits ahead of ${args.integrationBranch}; removed untracked debris`,
+      output: stdout + stderr,
+    }
+  } catch (error: unknown) {
+    const e = error as { stdout?: string; stderr?: string; message?: string }
+    return {
+      cleaned: false,
+      reason: `git clean -fd failed: ${e.message ?? ''}`,
+      output: (e.stdout ?? '') + (e.stderr ?? ''),
+    }
+  }
+}
+
 export const verifyChanges = async (
   args: VerifyArgs,
 ): Promise<{ passed: boolean; steps: VerifyStep[] }> => {

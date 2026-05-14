@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
 import {
+  cleanWorktreeIfNoCommitsAhead,
   createWorktree,
   removeWorktree,
   verifyChanges,
@@ -288,6 +289,36 @@ const codeStep = createStep({
         claudeExitCode: 0,
         resumeFrom: inputData.resumeFrom,
       }
+    }
+
+    // Sweep stray untracked files from a previous failed attempt on this
+    // branch BEFORE invoking the agent. Without this, a re-dispatch of a
+    // source task that the orchestrator unblocked after a recovery
+    // inherits the prior Coder's debris (e.g. files written under a
+    // wrongly-nested path that the previous run never staged) and burns
+    // turns inspecting them before getting to the actual work. The clean
+    // is gated on `rev-list --count <integration>..HEAD == 0`, so any
+    // commits the agent already produced are preserved.
+    try {
+      const cleanResult = await cleanWorktreeIfNoCommitsAhead({
+        worktreePath: inputData.path,
+        integrationBranch: inputData.integrationBranch,
+      })
+      if (cleanResult.cleaned && cleanResult.output.trim().length > 0) {
+        console.log(
+          `[clean] task ${inputData.taskId} ${cleanResult.reason}\n${cleanResult.output.trim()}`,
+        )
+      } else if (!cleanResult.cleaned) {
+        console.log(
+          `[clean] task ${inputData.taskId} skipped: ${cleanResult.reason}`,
+        )
+      }
+    } catch (err) {
+      // Clean is a best-effort hygiene step; never fail the dispatch on it.
+      console.error(
+        `[clean] task ${inputData.taskId} threw, continuing without clean:`,
+        err,
+      )
     }
 
     const originId = await resolveOriginIdForTask(inputData.taskId)
