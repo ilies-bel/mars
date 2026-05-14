@@ -93,6 +93,15 @@ describe('Planner / Slicer / Triager pinned config', () => {
     expect(WORKER_CONFIGS.Triager.model).toBe('claude-sonnet-4-6')
     expect(WORKER_CONFIGS.Triager.effort).toBe('medium')
   })
+
+  it('pins per-Worker defaultTimeoutMs so call sites do not need to override', () => {
+    // Call sites for Planner/Slicer/Triager (slice 4 migration) drop their
+    // local timeoutMs and rely on these registry defaults. Changing these
+    // numbers changes stage timeouts; this test names the contract.
+    expect(WORKER_CONFIGS.Planner.defaultTimeoutMs).toBe(5 * 60 * 1000)
+    expect(WORKER_CONFIGS.Slicer.defaultTimeoutMs).toBe(5 * 60 * 1000)
+    expect(WORKER_CONFIGS.Triager.defaultTimeoutMs).toBe(2 * 60 * 1000)
+  })
 })
 
 describe('Fixer pinned config', () => {

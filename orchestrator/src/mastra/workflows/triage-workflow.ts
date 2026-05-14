@@ -96,7 +96,6 @@ const generateStep = createStep({
 
     const r = await Workers.Triager.run(buildPrompt(task, taskGraph), {
       cwd: getRepoRoot(),
-      timeoutMs: 2 * 60 * 1000,
     })
     if (r.exitCode !== 0) {
       throw new Error(
