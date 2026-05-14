@@ -372,7 +372,13 @@ export const startDaemon = async (
           await writeGlossaryFile(path, nextDoc)
         },
       })
-      log(`[glossary-write] ${req.kind} "${req.term}" -> ${outcome.kind}`)
+      if (outcome.kind === 'aborted') {
+        log(
+          `[glossary-write] ${req.kind} "${req.term}" -> aborted: ${outcome.reason}`,
+        )
+      } else {
+        log(`[glossary-write] ${req.kind} "${req.term}" -> ${outcome.kind}`)
+      }
     } catch (err) {
       log(
         `[glossary-write] ${req.kind} "${req.term}" failed: ${(err as Error).message}`,
@@ -407,7 +413,11 @@ export const startDaemon = async (
           })
         },
       })
-      log(`[adr-add] "${req.title}" -> ${outcome.kind}`)
+      if (outcome.kind === 'aborted') {
+        log(`[adr-add] "${req.title}" -> aborted: ${outcome.reason}`)
+      } else {
+        log(`[adr-add] "${req.title}" -> ${outcome.kind}`)
+      }
     } catch (err) {
       log(`[adr-add] "${req.title}" failed: ${(err as Error).message}`)
     } finally {
