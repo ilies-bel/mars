@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from './App'
-import { SseInvalidator } from './lib/SseInvalidator'
+import { SseInvalidator } from '@/lib/SseInvalidator'
 import './styles/index.css'
 
 const root = document.getElementById('root')

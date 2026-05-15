@@ -1,4 +1,4 @@
-import type { UITask } from '../lib/types'
+import type { UITask } from '@/lib/types'
 import { TaskCard } from './TaskCard'
 
 interface Props {

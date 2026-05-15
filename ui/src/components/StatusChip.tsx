@@ -1,4 +1,4 @@
-import type { TaskStatus } from '../lib/types'
+import type { TaskStatus } from '@/lib/types'
 
 interface Variant {
   label: string
