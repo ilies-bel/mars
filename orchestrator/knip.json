@@ -1,0 +1,12 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/mastra/index.ts",
+    "src/**/*.{test,spec}.ts",
+    "src/**/__tests__/**/*.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx,mts,cts,js,mjs,cjs,jsx}",
+    "bin/**/*.{js,mjs,cjs}"
+  ]
+}
