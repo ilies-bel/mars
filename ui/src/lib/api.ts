@@ -1,7 +1,9 @@
 import type { ZodType } from 'zod'
 import {
+  agentsResponseSchema,
   tasksResponseSchema,
   todoResponseSchema,
+  type Agent,
   type Task,
   type TodoPayload,
 } from './schemas'
@@ -36,6 +38,11 @@ export const fetchTodo = async (): Promise<TodoPayload> => {
   return fetchJson('/api/todo', todoResponseSchema)
 }
 
+export const fetchAgents = async (): Promise<Agent[]> => {
+  const json = await fetchJson('/api/agents', agentsResponseSchema)
+  return json.agents
+}
+
 export const eventsUrl = (): string => `${BASE}/events`
 
-export type { StaleWorktree, TodoPayload } from './schemas'
+export type { Agent, StaleWorktree, TodoPayload } from './schemas'
