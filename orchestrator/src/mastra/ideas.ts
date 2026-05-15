@@ -136,6 +136,16 @@ export const initIdeas = async (): Promise<void> => {
     await c.execute(
       `ALTER TABLE ideas ADD COLUMN source TEXT NOT NULL DEFAULT 'human'`,
     )
+    // Backfill from author_kind: rows authored by an agent (i.e. whose
+    // rendered author starts with 'agent:') become 'planner'; everything
+    // else stays at the 'human' default. Runs only at column-add time —
+    // a subsequent initIdeas() won't re-enter this branch, so the
+    // backfill is naturally idempotent.
+    if (colNames.has('author_kind')) {
+      await c.execute(
+        `UPDATE ideas SET source = 'planner' WHERE author_kind = 'agent'`,
+      )
+    }
   }
   // Migrate idea_acceptance rows into idea_user_stories. Idempotent — runs
   // only if the legacy table still exists. Rows are copied; the legacy
@@ -354,9 +364,21 @@ export const generateIdeaId = (title: string): string => {
   return `${prefix}-${slugify(title)}`
 }
 
+const VALID_SOURCES: readonly IdeaSource[] = ['reflection', 'human', 'planner']
+
+const isValidSource = (raw: unknown): raw is IdeaSource =>
+  raw === 'reflection' || raw === 'planner' || raw === 'human'
+
 const normaliseSource = (raw: unknown): IdeaSource => {
-  if (raw === 'reflection' || raw === 'planner' || raw === 'human') return raw
+  if (isValidSource(raw)) return raw
   return 'human'
+}
+
+const assertValidSource = (raw: unknown): IdeaSource => {
+  if (isValidSource(raw)) return raw
+  throw new Error(
+    `invalid idea source '${String(raw)}'; expected one of ${VALID_SOURCES.join(', ')}`,
+  )
 }
 
 const rowToIdea = (
@@ -414,8 +436,11 @@ export const createIdea = async (
   const id = generateIdeaId(title)
   const now = Date.now()
   const source: IdeaSource =
-    opts?.source ??
-    (opts?.author?.kind === 'agent' ? 'planner' : 'human')
+    opts?.source !== undefined
+      ? assertValidSource(opts.source)
+      : opts?.author?.kind === 'agent'
+        ? 'planner'
+        : 'human'
   const authorKind = opts?.author?.kind ?? null
   const authorName = opts?.author?.name ?? null
   const problem = opts?.problem ?? ''

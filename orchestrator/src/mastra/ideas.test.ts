@@ -123,6 +123,154 @@ describe('resolveIdeaId', () => {
   })
 })
 
+describe('ideas source column migration', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('source column is NOT NULL after init', async () => {
+    const ideas = await loadModule(repo)
+    await ideas.initIdeas()
+    const { createClient } = await import('@libsql/client')
+    const c = createClient({ url: `file:${repo}/.mars/state.db` })
+    const cols = await c.execute(`PRAGMA table_info(ideas)`)
+    c.close()
+    const sourceCol = cols.rows
+      .map((r) => r as unknown as { name: string; notnull: number })
+      .find((r) => r.name === 'source')
+    expect(sourceCol).toBeDefined()
+    expect(sourceCol?.notnull).toBe(1)
+  })
+
+  it("backfills source='planner' for pre-existing rows authored by agents", async () => {
+    // Simulate a pre-existing DB shape that has author_kind columns but no
+    // source column. initIdeas should add the column AND backfill.
+    const { createClient } = await import('@libsql/client')
+    const c = createClient({ url: `file:${repo}/.mars/state.db` })
+    await c.execute(`
+      CREATE TABLE ideas (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'draft',
+        author_kind TEXT,
+        author_name TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `)
+    const now = Date.now()
+    await c.execute({
+      sql: `INSERT INTO ideas (id, title, author_kind, author_name, created_at, updated_at)
+            VALUES (?, ?, 'agent', 'reflector', ?, ?)`,
+      args: ['agent01-x', 'agent idea', now, now],
+    })
+    await c.execute({
+      sql: `INSERT INTO ideas (id, title, author_kind, author_name, created_at, updated_at)
+            VALUES (?, ?, 'human', 'alice', ?, ?)`,
+      args: ['human01-x', 'human idea', now, now],
+    })
+    c.close()
+
+    const ideas = await loadModule(repo)
+    await ideas.initIdeas()
+
+    const agentIdea = await ideas.getIdea('agent01-x')
+    expect(agentIdea?.source).toBe('planner')
+  })
+
+  it("backfills source='human' for pre-existing rows authored by humans", async () => {
+    const { createClient } = await import('@libsql/client')
+    const c = createClient({ url: `file:${repo}/.mars/state.db` })
+    await c.execute(`
+      CREATE TABLE ideas (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'draft',
+        author_kind TEXT,
+        author_name TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `)
+    const now = Date.now()
+    await c.execute({
+      sql: `INSERT INTO ideas (id, title, author_kind, author_name, created_at, updated_at)
+            VALUES (?, ?, 'human', 'alice', ?, ?)`,
+      args: ['human01-x', 'human idea', now, now],
+    })
+    await c.execute({
+      sql: `INSERT INTO ideas (id, title, author_kind, author_name, created_at, updated_at)
+            VALUES (?, ?, NULL, NULL, ?, ?)`,
+      args: ['nulla01-x', 'no author', now, now],
+    })
+    c.close()
+
+    const ideas = await loadModule(repo)
+    await ideas.initIdeas()
+
+    const humanIdea = await ideas.getIdea('human01-x')
+    expect(humanIdea?.source).toBe('human')
+    const noAuthor = await ideas.getIdea('nulla01-x')
+    expect(noAuthor?.source).toBe('human')
+  })
+
+  it('rejects createIdea with an invalid source value', async () => {
+    const ideas = await loadModule(repo)
+    await ideas.initIdeas()
+    await expect(
+      ideas.createIdea('bogus', {
+        source: 'not-a-source' as unknown as 'human',
+      }),
+    ).rejects.toThrow(/source/i)
+  })
+
+  it('is idempotent — running initIdeas twice does not error or change backfilled values', async () => {
+    const { createClient } = await import('@libsql/client')
+    const c = createClient({ url: `file:${repo}/.mars/state.db` })
+    await c.execute(`
+      CREATE TABLE ideas (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'draft',
+        author_kind TEXT,
+        author_name TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `)
+    const now = Date.now()
+    await c.execute({
+      sql: `INSERT INTO ideas (id, title, author_kind, author_name, created_at, updated_at)
+            VALUES (?, ?, 'agent', 'reflector', ?, ?)`,
+      args: ['agent01-x', 'agent idea', now, now],
+    })
+    c.close()
+
+    const first = await loadModule(repo)
+    await first.initIdeas()
+    // Flip the source manually to confirm the second run doesn't clobber it
+    // back to 'planner' (i.e. backfill must not run twice).
+    const c2 = createClient({ url: `file:${repo}/.mars/state.db` })
+    await c2.execute({
+      sql: `UPDATE ideas SET source = 'human' WHERE id = 'agent01-x'`,
+      args: [],
+    })
+    c2.close()
+
+    const second = await loadModule(repo)
+    await expect(second.initIdeas()).resolves.not.toThrow()
+    const idea = await second.getIdea('agent01-x')
+    expect(idea?.source).toBe('human')
+  })
+})
+
 describe('deleteIdea', () => {
   let repo: string
 
