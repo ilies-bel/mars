@@ -14,7 +14,7 @@
     "build": "tsc -b && vite build && tsc -p tsconfig.server.json",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "test": "bun test server",
+    "test": "bun test server src",
     "start": "node bin/mars-ui.mjs"
   },
   "dependencies": {
