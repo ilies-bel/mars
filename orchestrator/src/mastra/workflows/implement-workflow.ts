@@ -1,5 +1,9 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { z } from 'zod'
+
+const execFileAsync = promisify(execFile)
 import {
   cleanWorktreeIfNoCommitsAhead,
   createWorktree,
@@ -355,6 +359,97 @@ export const composePrompt = (
   return sections.join('\n\n')
 }
 
+// Post-coder worktree classifier.
+//
+// After the dispatched coder session returns, the workflow inspects the
+// worktree to tell apart three end-states:
+//
+//   - 'dirty-no-commits' — the agent wrote files but never staged/committed
+//     them. Verify will reject the run with `has-diff/no-commits-ahead`;
+//     surfacing it here gives operators a clear, file-listed log line so
+//     the wasted run is debuggable from the workflow log alone.
+//   - 'clean-with-commits' — the agent committed at least once. Normal
+//     success path; the guard does not fire.
+//   - 'clean-no-work' — the tree is clean and zero commits ahead. The
+//     agent set up the worktree but produced nothing. Also passes through
+//     the guard; verify's no-commits-ahead check owns that failure mode.
+//   - 'error' — git itself failed (e.g. missing integration branch). The
+//     classifier never throws; the caller decides whether to retry or log.
+//
+// The function is pure: it shells out to git and returns the result.
+// Logging lives at the call site (codeStep below) so the same classifier
+// is reusable from tests without spying on console.
+export interface PostCoderStateArgs {
+  worktreePath: string
+  integrationBranch: string
+}
+
+export type PostCoderState =
+  | { kind: 'dirty-no-commits'; dirtyFiles: string[] }
+  | { kind: 'clean-with-commits'; commitsAhead: number }
+  | { kind: 'clean-no-work' }
+  | { kind: 'error'; error: string }
+
+// Parse `git status --porcelain=v1` into a list of paths. Each non-empty
+// line is `XY <path>` where XY is the status code; rename lines use
+// `XY <orig> -> <new>` and we take the new path.
+const parsePorcelainPaths = (raw: string): string[] => {
+  const out: string[] = []
+  for (const line of raw.split('\n')) {
+    if (line.length === 0) continue
+    const after = line.slice(3)
+    const arrowIdx = after.indexOf(' -> ')
+    const path = arrowIdx === -1 ? after : after.slice(arrowIdx + 4)
+    out.push(path.replace(/^"|"$/g, ''))
+  }
+  return out
+}
+
+export const detectPostCoderState = async (
+  args: PostCoderStateArgs,
+): Promise<PostCoderState> => {
+  let commitsAhead: number
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['rev-list', '--count', `${args.integrationBranch}..HEAD`],
+      { cwd: args.worktreePath },
+    )
+    const parsed = Number.parseInt(stdout.trim(), 10)
+    if (!Number.isInteger(parsed)) {
+      return { kind: 'error', error: `rev-list emitted non-integer: ${stdout.trim()}` }
+    }
+    commitsAhead = parsed
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { kind: 'error', error: `rev-list ${args.integrationBranch}..HEAD failed: ${message}` }
+  }
+
+  let dirtyFiles: string[]
+  try {
+    // --untracked-files=all so a wholly-new directory is listed file-by-file
+    // rather than collapsed to its top-level path. The dirty-file list is
+    // for operators reading the run log; per-file detail is what they want.
+    const { stdout } = await execFileAsync(
+      'git',
+      ['status', '--porcelain=v1', '--untracked-files=all'],
+      { cwd: args.worktreePath },
+    )
+    dirtyFiles = parsePorcelainPaths(stdout)
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { kind: 'error', error: `git status failed: ${message}` }
+  }
+
+  if (commitsAhead > 0) {
+    return { kind: 'clean-with-commits', commitsAhead }
+  }
+  if (dirtyFiles.length === 0) {
+    return { kind: 'clean-no-work' }
+  }
+  return { kind: 'dirty-no-commits', dirtyFiles }
+}
+
 const setupStep = createStep({
   id: 'setup-worktree',
   inputSchema: z.object({
@@ -571,6 +666,33 @@ const codeStep = createStep({
         await writer?.write({ type: 'claude-event', event })
       },
     })
+    // Classify the worktree end-state. Only the 'dirty-no-commits' case is
+    // worth a log line — it's the new failure mode the post-test commit
+    // guard is being built to detect. Clean-success and clean-no-work are
+    // already covered by verify's existing signal. Errors are logged at
+    // warn level so a flaky git invocation doesn't pollute the success
+    // path. Best-effort: never fails the dispatch.
+    try {
+      const postState = await detectPostCoderState({
+        worktreePath: inputData.path,
+        integrationBranch: inputData.integrationBranch,
+      })
+      if (postState.kind === 'dirty-no-commits') {
+        console.log(
+          `[post-coder] task ${inputData.taskId}: dirty tree with 0 commits ahead of ${inputData.integrationBranch} — ${postState.dirtyFiles.length} uncommitted path(s):\n  ${postState.dirtyFiles.join('\n  ')}`,
+        )
+      } else if (postState.kind === 'error') {
+        console.warn(
+          `[post-coder] task ${inputData.taskId}: classifier error: ${postState.error}`,
+        )
+      }
+    } catch (err) {
+      console.warn(
+        `[post-coder] task ${inputData.taskId}: classifier threw, continuing:`,
+        err,
+      )
+    }
+
     const usage = summarizeUsage(conversation)
     tracingContext?.currentSpan?.update({
       metadata: {
