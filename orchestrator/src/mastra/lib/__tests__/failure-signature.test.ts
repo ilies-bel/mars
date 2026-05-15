@@ -30,6 +30,18 @@ describe('computeFailureSignature', () => {
         'merge target /tmp/foo has uncommitted changes that block a fast-forward',
       ),
     ).toBe('merge:preflight/uncommitted-changes')
+    expect(
+      computeFailureSignature(
+        'merge:preflight',
+        'tracked changes on paths the fast-forward would update:\n M A\n',
+      ),
+    ).toBe('merge:preflight/uncommitted-changes')
+    expect(
+      computeFailureSignature(
+        'merge:preflight',
+        'task branch task/x is not a fast-forward of main (diverged or behind)',
+      ),
+    ).toBe('merge:preflight/not-fast-forward')
   })
 
   it('returns the unclassified slug when no rule matches', () => {

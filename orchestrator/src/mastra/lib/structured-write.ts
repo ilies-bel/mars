@@ -55,7 +55,14 @@ export const runStructuredWrite = async (
   const integration = args.integrationBranch ?? integrationFromEnv()
   const lockTimeoutMs = args.lockTimeoutMs ?? 5 * 60 * 1000
 
-  const target = await checkMergeTargetStatus()
+  // Writer preflight runs before the worktree exists, so there is no task
+  // branch yet. Self-check the integration ref: an integration-vs-integration
+  // ff is trivially clean unless the ref itself is broken, in which case we
+  // surface 'error' and abort below.
+  const target = await checkMergeTargetStatus({
+    integrationBranch: integration,
+    taskBranch: integration,
+  })
   if (target.kind === 'dirty') {
     return {
       kind: 'aborted',

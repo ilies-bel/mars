@@ -959,14 +959,82 @@ export type MergeTargetStatus =
   | { kind: 'dirty'; targetPath: string; statusOutput: string }
   | { kind: 'error'; error: Error }
 
-export const checkMergeTargetStatus = async (): Promise<MergeTargetStatus> => {
+export interface CheckMergeTargetArgs {
+  integrationBranch: string
+  taskBranch: string
+}
+
+// A fast-forward of integrationBranch -> taskBranch is feasible when:
+//   1. both refs resolve,
+//   2. integrationBranch is an ancestor of taskBranch (topological ff),
+//   3. no tracked, uncommitted change in the merge target sits on a path
+//      the ff would update (untracked files are irrelevant to git merge --ff-only).
+// We deliberately ignore untracked files: an untracked .idea/ or editor scratch
+// file in the merge target cannot block a fast-forward, but the previous
+// `git status --porcelain` check treated any such file as dirty.
+export const checkMergeTargetStatus = async (
+  args: CheckMergeTargetArgs,
+): Promise<MergeTargetStatus> => {
   const targetPath = repoRoot()
+  const { integrationBranch, taskBranch } = args
   try {
-    const { stdout } = await exec('git', ['status', '--porcelain'], {
+    await exec('git', ['rev-parse', '--verify', `${integrationBranch}^{commit}`], {
       cwd: targetPath,
     })
-    if (stdout.length === 0) return { kind: 'clean' }
-    return { kind: 'dirty', targetPath, statusOutput: stdout }
+    await exec('git', ['rev-parse', '--verify', `${taskBranch}^{commit}`], {
+      cwd: targetPath,
+    })
+
+    // `git merge-base --is-ancestor` exits 0 when ancestor, 1 when not, other
+    // codes on usage/IO errors. promisified execFile rejects on any non-zero,
+    // so distinguish via the error's .code (numeric exit) field.
+    const ancestryError = await exec(
+      'git',
+      ['merge-base', '--is-ancestor', integrationBranch, taskBranch],
+      { cwd: targetPath },
+    ).then(
+      () => null,
+      (err: NodeJS.ErrnoException & { code?: number | string }) => err,
+    )
+    if (ancestryError !== null) {
+      if (ancestryError.code === 1) {
+        return {
+          kind: 'dirty',
+          targetPath,
+          statusOutput: `task branch ${taskBranch} is not a fast-forward of ${integrationBranch} (diverged or behind)`,
+        }
+      }
+      return {
+        kind: 'error',
+        error: new Error(
+          `git merge-base --is-ancestor failed (code=${String(ancestryError.code)}): ${ancestryError.message}`,
+        ),
+      }
+    }
+
+    const diff = await exec(
+      'git',
+      ['diff', '--name-only', `${integrationBranch}..${taskBranch}`],
+      { cwd: targetPath },
+    )
+    const changedPaths = diff.stdout.split('\n').filter((p) => p.length > 0)
+    if (changedPaths.length === 0) return { kind: 'clean' }
+
+    // Cap pathspec argv to avoid blowing past ARG_MAX on huge diffs; if we
+    // exceed it, fall back to a tracked-only global status. Untracked files
+    // are still ignored — they cannot block an ff.
+    const PATH_CAP = 500
+    const statusArgs = ['status', '--porcelain', '--untracked-files=no']
+    if (changedPaths.length <= PATH_CAP) {
+      statusArgs.push('--', ...changedPaths)
+    }
+    const status = await exec('git', statusArgs, { cwd: targetPath })
+    if (status.stdout.length === 0) return { kind: 'clean' }
+    return {
+      kind: 'dirty',
+      targetPath,
+      statusOutput: `tracked changes on paths the fast-forward would update:\n${status.stdout}`,
+    }
     // TODO(merge_target_missing): also surface a 'missing' kind when the
     // merge target branch has been deleted/renamed; for now any unexpected
     // git failure is reported as 'error'.

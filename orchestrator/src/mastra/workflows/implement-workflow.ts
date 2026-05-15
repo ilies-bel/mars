@@ -551,7 +551,10 @@ const mergeStep = createStep({
         resumeFrom: null,
       })
 
-      const targetStatus = await checkMergeTargetStatus()
+      const targetStatus = await checkMergeTargetStatus({
+        integrationBranch: inputData.integrationBranch,
+        taskBranch: inputData.branch,
+      })
       if (targetStatus.kind === 'dirty') {
         const errorMsg = `merge target has uncommitted changes; cannot fast-forward into ${inputData.integrationBranch}`
         await updateTask(inputData.taskId, {
