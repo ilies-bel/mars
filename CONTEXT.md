@@ -179,3 +179,7 @@ A Worker attribute, valued either 'headless' (today's claude -p, the default) or
 **Workflow**:
 A named, declarative pipeline of typed TypeScript steps composed via the in-house engine's fluent builder (createWorkflow({...}).then(step).then(step).commit()). The Workflow is the runtime contract under which a Task executes: it owns the step shape, the input/output schemas, the order of steps, and the logging surface. In v1 the composition primitive is linear .then chaining only; richer primitives (branching, parallel, foreach, dountil, dowhile) are added when a real pipeline demands them. Workflows are domain-agnostic and introspectable as plain data so future tooling can render them without importing the engine at runtime.
 _Avoid_: named pipeline, workflow definition, pipeline, Mastra workflow
+
+**Workflow instance**:
+A single execution of a Workflow. In v1 a Workflow instance is one-to-one with a Task: the moment a Task is dispatched, the orchestrator resolves its tag plus task type to exactly one Workflow id and records it on the Task, and from that point on Task and Workflow instance are the same thing. The instance carries durable per-step state (last completed step, step input/output payloads, child-logger lineage) so a crashed Task can resume from the last completed step on retry.
+_Avoid_: workflow run, run, task run, workflow execution
