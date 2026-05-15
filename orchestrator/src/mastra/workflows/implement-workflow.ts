@@ -477,6 +477,12 @@ const setupStep = createStep({
     tracingContext?.currentSpan?.update({
       metadata: { originId, taskId: inputData.taskId },
     })
+    // `hasIncompleteBlockers` checks the task-dependency junction
+    // (`task_blockers`), NOT the removed question/answer feature. The
+    // orchestrator does not read, wait on, or branch based on question rows —
+    // the planner emits ideas, not questions, and a task progresses through
+    // draft → queued → running purely on plan completeness (PRD eb6f8cc6).
+    // Do not reintroduce question-gating here.
     if (await hasIncompleteBlockers(inputData.taskId)) {
       throw new Error(BLOCKERS_ABORT_MESSAGE(inputData.taskId))
     }

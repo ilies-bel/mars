@@ -44,6 +44,14 @@ ${spec}`
 const parsePlannerOutput = (claudeStdout: string): z.infer<typeof plannerOutputSchema> =>
   plannerOutputSchema.parse(parseClaudeJsonResult(claudeStdout))
 
+// Contract: the planner emits follow-up suggestions as ideas (source='planner')
+// only. It MUST NOT insert question rows or otherwise produce a mid-run
+// human-question artefact — the orchestrator commits to a "plan fully up
+// front, then run autonomously" model. The question/answer feature has been
+// removed from the orchestrator (PRD eb6f8cc6); a planner run on a task with
+// incomplete information either completes a plan or leaves the task in draft,
+// with no question artefact created. Do not reintroduce a question-emission
+// branch here.
 const generateStep = createStep({
   id: 'generate-plan',
   inputSchema: planInputSchema,
