@@ -71,6 +71,28 @@ them stores a typed spec; the implementor receives `<files>`, `<verify>`,
 checklist. The slicer always emits structured tasks; free-prose still
 works and degrades to prompt-only.
 
+## Blockers
+
+Blocker edges live in the `task_blockers` junction table (`task_id` waits
+on `blocker_task_id`). A task in `blocked` only flips to `queued` once
+**every** one of its blockers reaches `done`; the daemon's
+`onBlockerTaskCompleted` runs on each completion, and `recoverBlockedTasks`
+re-checks at daemon startup so a crash between completion and unblock
+doesn't strand work.
+
+- Create edges at enqueue with `mars task add ... --blocked-by <id>`
+  (repeatable; each id must already exist) or after the fact with
+  `mars block <task-id> <blocker-id> [<blocker-id> ...]`.
+- `mars unblock <id> <blocker-id> ...` removes specific edges (status
+  unchanged). `mars unblock <id>` with no blocker ids is phantom-recovery:
+  it clears all edges and flips the task to `failed` so it can be
+  `mars purge`d or `mars restart`ed.
+- Dependents whose retry budget is already exhausted at unblock time go
+  to `failed` with an inbox item rather than `queued`.
+- Coders that can't make progress should emit a `--blocked-by $TASK_ID`
+  follow-up instead of bailing; the deviation-rules brief in the
+  orchestrator notes spells this out.
+
 ## Orchestrator notes
 
 - Coder runs get a deviation-rules brief: no bailing without an auto-fix
