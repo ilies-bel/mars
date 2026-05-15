@@ -61,19 +61,19 @@ provided costSummary. Specifically:
 For each suggestion, prefer cost-grounded ones over generic cleanups.
 Categories, in priority order:
 (a) **cost sinks**: a specific step or task pattern that is burning
-    money relative to its value. Cite USD figures.
+    tokens relative to its value. Cite token counts.
 (b) **failure clusters**: tasks sharing a verify-failed root cause
     (typecheck vs test vs lint) or repeated merge aborts. Quantify the
-    wasted spend (sum of failed-task costs).
+    wasted spend in tokens (sum of failed-task token totals).
 (c) **cache-miss patterns**: cache_create_tokens >> cache_read_tokens
     on a hot step.
 (d) **workflow drift**: repeated vcs-supervisor invocations, prompt
     patterns that consistently fail.
 
-If totalCostUsd > $1 across the window, you MUST produce at least one
-cost-grounded suggestion. If a single task is > 3× the median, you MUST
-either suggest investigating it or explicitly justify ignoring it in
-costAnalysis.notes.
+If total token spend across the window is non-trivial, you MUST produce
+at least one cost-grounded suggestion. If a single task is > 3× the
+median token spend, you MUST either suggest investigating it or
+explicitly justify ignoring it in costAnalysis.notes.
 
 Output a single JSON document on stdout, with no prose, no code fences,
 no markdown — just the JSON. Shape:
@@ -96,7 +96,7 @@ no markdown — just the JSON. Shape:
       "title": "short imperative title (≤ 60 chars)",
       "category": "cost|failure|cache|drift",
       "prompt": "self-contained Mars task prompt that a fresh agent can act on without further context. Include file paths, the symptom, the suggested fix, and the verification command. End with 'Save your work.'",
-      "rationale": "1–2 sentences citing the evidence: task ids, USD figures, token counts, error patterns"
+      "rationale": "1–2 sentences citing the evidence: task ids, token counts, error patterns"
     }
   ]
 }
@@ -108,7 +108,7 @@ Rules:
 - If there are no high-quality suggestions, return {"suggestions": []}
   but still fill costAnalysis.`
 
-const buildPrompt = (corpus: ReflectCorpus): string => {
+export const buildPrompt = (corpus: ReflectCorpus): string => {
   const summaryJson = JSON.stringify(corpus.costSummary, null, 2)
   const entriesJson = JSON.stringify(corpus.entries, null, 2)
   return `${SYNTHESIS_INSTRUCTIONS}
