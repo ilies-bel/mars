@@ -3,6 +3,7 @@ import { extname, join, normalize, resolve } from 'node:path'
 import { loadAgents } from './agents.ts'
 import { StateDb, TaskDb } from './db.ts'
 import { listTerminalEvents } from './events.ts'
+import { aggregateInbox } from './inbox.ts'
 import { resolveRepo } from './repo.ts'
 import { SseHub } from './sse.ts'
 import { listStaleWorktrees } from './staleWorktrees.ts'
@@ -125,15 +126,8 @@ export const startServer = async (
 
       if (path === '/api/inbox') {
         try {
-          const ideasExist = await stateDb.ideasTableExists()
-          const drafts = ideasExist ? await stateDb.listDraftFeatures() : []
-          const tasksExist = await db.tableExists()
-          const inboxTasks = tasksExist
-            ? await db.listTasksByStatus(['blocked', 'failed'])
-            : []
-          const blocked = inboxTasks.filter((t) => t.status === 'blocked')
-          const failed = inboxTasks.filter((t) => t.status === 'failed')
-          return jsonResponse(200, { drafts, blocked, failed })
+          const inbox = await aggregateInbox(db, stateDb)
+          return jsonResponse(200, inbox)
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }
