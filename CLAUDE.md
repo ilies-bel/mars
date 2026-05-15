@@ -5,6 +5,15 @@
 TypeScript CLI (`mars`) + orchestrator running Claude Code in parallel
 git worktrees, read-only frontend (`ui/`), design drafts (`design/`).
 
+## Project status
+
+Mars is an ongoing project with no external users yet. **Every change is
+a hard cut.** No backwards-compat shims, no deprecation aliases, no
+"keep both for now" — rename, move, or delete in one step and update
+every call site in the same change. No feature flags or migration
+windows for internal API churn. If a name, signature, or schema is
+wrong, fix it everywhere now; do not leave the old form behind.
+
 ## Routing
 
 Route silently between three actions: enqueue (`mars task add "..."`),

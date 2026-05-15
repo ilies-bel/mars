@@ -165,15 +165,18 @@ Commands:
   show <id>                     print full detail for an id; tries tasks
                                 (.mars/queue.db), then ideas (.mars/state.db)
   list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed|dropped)
-  continue <id>                 resume a failed task on its existing worktree+branch,
-                                jumping straight into the failed phase
-                                (verify or merge). Refuses if the task is not
-                                'failed', has no recorded failed_phase, failed
-                                in the 'code' phase, or lost its worktree on
-                                disk — use 'mars restart' instead.
-  restart <id>                  wipe worktree+branch and re-queue a failed/done
-                                task from setup (full pipeline re-run).
-  purge <id>                    delete a failed/done task entirely (worktree+branch+row)
+  continue <id> [<id> ...]      resume failed task(s) on their existing
+                                worktree+branch, jumping straight into the
+                                failed phase (verify or merge). Refuses if a
+                                task is not 'failed', has no recorded
+                                failed_phase, failed in the 'code' phase, or
+                                lost its worktree on disk — use 'mars restart'
+                                instead. Stops on the first error.
+  restart <id> [<id> ...]       wipe worktree+branch and re-queue failed/done
+                                task(s) from setup (full pipeline re-run).
+                                Stops on the first error.
+  purge <id> [<id> ...]         delete failed/done task(s) entirely
+                                (worktree+branch+row). Stops on the first error.
   drop <id> [--force]           delete any task regardless of status: clears
                                 task_blockers edges (both directions), nulls
                                 sibling fix_for_task_id pointers, removes the
@@ -411,11 +414,14 @@ then ideas (.mars/state.db).`,
 
 List tasks. Status one of: draft, queued, running, verifying, merging,
 done, failed, dropped. Defaults to all when omitted.`,
-  continue: `mars continue <id>
+  continue: `mars continue <id> [<id> ...]
 
-Resume a failed task on its existing worktree+branch, jumping straight
-into the failed phase (verify or merge). Reuses every commit the worker
-already landed on the task branch.
+Resume failed task(s) on their existing worktree+branch, jumping
+straight into the failed phase (verify or merge). Reuses every commit
+the worker already landed on the task branch.
+
+Accepts one or more ids; processes them in order and stops on the first
+error (the failing id is printed to stderr and exit is non-zero).
 
 Refuses (non-zero exit) when:
   - the task is not in 'failed' status
@@ -423,15 +429,21 @@ Refuses (non-zero exit) when:
   - the task failed in the 'code' phase (no verifiable artefact)
   - the branch or worktree is missing on disk
 In those cases reach for 'mars restart <id>' to start over from setup.`,
-  restart: `mars restart <id>
+  restart: `mars restart <id> [<id> ...]
 
-Re-queue a failed/done task from setup. Removes the existing worktree
+Re-queue failed/done task(s) from setup. Removes each existing worktree
 and branch first, then runs the full pipeline (setup -> code -> verify
--> merge) on a fresh worktree.`,
-  purge: `mars purge <id>
+-> merge) on a fresh worktree.
 
-Delete a failed/done task entirely (worktree + branch + row). Refuses
-in-flight tasks.`,
+Accepts one or more ids; processes them in order and stops on the first
+error.`,
+  purge: `mars purge <id> [<id> ...]
+
+Delete failed/done task(s) entirely (worktree + branch + row). Refuses
+in-flight tasks.
+
+Accepts one or more ids; processes them in order and stops on the first
+error.`,
   drop: `mars drop <id> [--force]
 
 Universal deletion verb. Works regardless of status (draft, queued,
@@ -1391,26 +1403,33 @@ const main = async (): Promise<void> => {
 
   if (cmd === 'retry') {
     console.error(
-      `unknown command: retry. Use 'mars continue <id>' to resume on the existing worktree, or 'mars restart <id>' to wipe and re-run.`,
+      `unknown command: retry. Use 'mars continue <id> [<id> ...]' to resume on the existing worktree, or 'mars restart <id> [<id> ...]' to wipe and re-run.`,
     )
     process.exit(1)
   }
 
   if (cmd === 'continue' || cmd === 'restart' || cmd === 'purge') {
-    const id = rest[0]
-    if (!id) {
-      console.error(`usage: mars ${cmd} <id>`)
+    const ids = rest.filter((a) => !a.startsWith('--'))
+    if (ids.length === 0) {
+      console.error(`usage: mars ${cmd} <id> [<id> ...]`)
       process.exit(1)
     }
     const { sendRequest } = await import('./mastra/daemon/client')
-    await sendRequest({ op: cmd, id })
-    const verb =
-      cmd === 'continue'
-        ? `queued ${id} to continue from the failed phase`
-        : cmd === 'restart'
-          ? `queued ${id} for restart from setup`
-          : `purged ${id}`
-    console.log(verb)
+    for (const id of ids) {
+      try {
+        await sendRequest({ op: cmd, id })
+      } catch (err) {
+        console.error(`${id}: ${(err as Error).message}`)
+        process.exit(1)
+      }
+      const verb =
+        cmd === 'continue'
+          ? `queued ${id} to continue from the failed phase`
+          : cmd === 'restart'
+            ? `queued ${id} for restart from setup`
+            : `purged ${id}`
+      console.log(verb)
+    }
     return
   }
 
