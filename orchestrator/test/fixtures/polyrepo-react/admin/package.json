@@ -1,0 +1,8 @@
+{
+  "name": "polyrepo-react-admin",
+  "private": true,
+  "dependencies": {
+    "react": "*",
+    "react-dom": "*"
+  }
+}
