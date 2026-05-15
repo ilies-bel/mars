@@ -313,8 +313,9 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
     const result = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:has-diff',
-      // Signature 'verify:has-diff/no-commits-ahead' is keyed on this lead.
-      errorOutput: `verify: task branch task/${t.id} has 0 commits ahead of main`,
+      // Signature 'verify:has-diff/no-commits-ahead' is keyed on this
+      // canonical lead from git.ts:807 (checkBranchHasDiff).
+      errorOutput: `no commits ahead of integration branch — task did not produce any changes\nbranch task/${t.id} has 0 commits ahead of main`,
       branch: `task/${t.id}`,
       recipeContext: {
         targetPath: resolve(repo, '.mars/worktrees', t.id),
