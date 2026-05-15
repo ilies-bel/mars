@@ -33,8 +33,8 @@ blocked right now") and stop.
 
 # Step 1 — Identify whether the id is a task or an inbox item
 
-**Read this carefully — the SessionStart inbox snapshot is the most
-common source of confusion.** The snapshot prints lines like:
+**Read this carefully — confusing inbox-item ids with task ids is the
+most common failure mode.** `mars inbox` prints lines like:
 
 ```
 blockers (69):
@@ -132,8 +132,10 @@ shapes; combine when it fits:
 - **Mark non-issue and unblock as-is.** The blocker turns out to be a
   phantom (already done elsewhere, no longer relevant). Phantom-recover
   with `mars unblock <id>` (no blocker ids → flips to `failed` and clears
-  every blocker row; **the task itself does not auto-rerun** — `mars retry
-  <id>` is the verb to put it back on the queue).
+  every blocker row; **the task itself does not auto-rerun** — `mars
+  restart <id>` is the verb to put it back on the queue from setup, or
+  `mars continue <id>` if the worktree is still on disk and you only
+  want to re-run the failed phase).
 - **Remove only specific blocker edges.** Some blockers are real, others
   aren't. `mars unblock <id> <blocker-id> [<blocker-id> ...]` removes
   those specific edges and leaves status unchanged; the task will
@@ -159,8 +161,9 @@ Run the corresponding `mars` verb. Verb signatures:
 
 ```bash
 # Phantom recovery: clear ALL blocker rows, flip task to 'failed'.
-# Use when none of the blockers were real. Follow with `mars retry <id>`
-# if the user wants the task put back on the queue.
+# Use when none of the blockers were real. Follow with `mars restart <id>`
+# (or `mars continue <id>`) if the user wants the task put back on the
+# queue.
 mars unblock <id>
 
 # Edge removal: drop only the listed blocker edges; status unchanged.
@@ -172,7 +175,10 @@ mars task add "<self-contained prompt body>"
 mars block <blocked-task-id> <new-task-id>
 
 # Re-queue a failed task (after phantom recovery).
-mars retry <id>
+# `continue` resumes on the existing worktree from the failed phase;
+# `restart` wipes worktree+branch and runs the pipeline from setup.
+mars continue <id>
+mars restart <id>
 
 # Drop a task entirely (after flipping it to failed via `mars unblock`).
 # Deletes the queue row, the worktree, and the branch. Irreversible.
@@ -192,9 +198,10 @@ pick up <new-id> automatically" or "<id> is back on the queue").
   idea-shaping.
 - Do not run `mars glossary set/remove` or `mars adr add`. Domain-language
   curation belongs to `mars:grill`.
-- Do not invent flag combinations not shown above. If `mars unblock` or
-  `mars retry` errors, surface stderr verbatim and ask the user how to
-  proceed — do not retry blindly with different flags.
+- Do not invent flag combinations not shown above. If `mars unblock`,
+  `mars continue`, or `mars restart` errors, surface stderr verbatim and
+  ask the user how to proceed — do not retry blindly with different
+  flags.
 - Do not promote the resolved task into "done" by hand. The orchestrator
   owns task lifecycle once a task is queued/running.
 
