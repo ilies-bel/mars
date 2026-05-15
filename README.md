@@ -286,7 +286,6 @@ session loads automatically when invoked inside this repo:
 
 | Skill | Purpose |
 | --- | --- |
-| `/mars:next` | Triage between blocked tasks, ready-to-promote drafts, and drafts that need shaping. Picks one specific next action. |
 | `/mars:grill <id>` | Challenges a draft idea against `CONTEXT.md`, curates glossary + ADRs inline. Conversation only. |
 | `/mars:to-prd <id>` | Synthesises the current grill conversation into a PRD and writes it to `state.db`. |
 | `/mars:inbox [<id>]` | Show the inbox grouped by priority and resolve one item. |

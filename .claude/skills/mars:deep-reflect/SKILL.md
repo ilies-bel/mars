@@ -26,8 +26,8 @@ things aggregate reflection cannot see:
 The CLI persists a structured JSON report under
 `.mars/deep-reflections/<task-id>-<iso>.json` (gitignored) and inserts
 "save"-verdict findings as draft ideas with `source='reflection'`.
-Ideas are **never auto-run** — they are proposals for the user (or
-`/mars:next`) to triage.
+Ideas are **never auto-run** — they are proposals for the user to
+triage.
 
 This skill does **not** invent findings itself. It runs the CLI, then
 points the user at the report and the resulting draft ideas.
@@ -90,7 +90,7 @@ shape, in this order:
    path from `Full report:`.
 10. **Next step** — only if `saved > 0`: point at
     `mars idea list --source reflection --status draft` and
-    `/mars:next <idea-id>`.
+    `/mars:grill <idea-id>`.
 
 Rules:
 - Do **not** add findings the CLI did not print.
@@ -137,9 +137,9 @@ Rules:
    ```
    Then tell them how to act:
    ```
-   To shape a reflection idea into a runnable task: /mars:next <idea-id>
+   To shape a reflection idea into a runnable task: /mars:grill <idea-id>
    ```
-   Do **not** run `/mars:next` yourself — that is a separate
+   Do **not** run `/mars:grill` yourself — that is a separate
    user-driven step.
 
 ## Conventions
@@ -155,7 +155,7 @@ Rules:
 - **Repo resolution.** The CLI resolves the target repo itself. Do not
   pass `--repo` unless the user explicitly provided one.
 - **No auto-promotion.** Reflection ideas stay in `draft` status. This
-  skill does not call `mars idea promote`, `/mars:next`, or any write
+  skill does not call `mars idea promote`, `/mars:grill`, or any write
   verb beyond `mars deep-reflect` itself.
 
 ## Failure handling
@@ -185,7 +185,7 @@ Rules:
 > `ls -1t .mars/deep-reflections/mars-7f86263a-*.json | head -1` and
 > tells the user the path. If new draft ideas landed, points at
 > `mars idea list --source reflection --status draft` and
-> `/mars:next <idea-id>` to shape one into a task.
+> `/mars:grill <idea-id>` to shape one into a task.
 >
 > User: `/mars:deep-reflect` (no id)
 >

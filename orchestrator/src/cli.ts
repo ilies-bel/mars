@@ -262,13 +262,6 @@ Commands:
                                 intent), verify-claim mismatches, and thrashing
                                 patterns. Auto-picks a candidate when no id is
                                 given. Requires a stored transcript.
-  next [--json]                 list draft ideas (status='draft') and
-                                blocked tasks (status='blocked', with their
-                                blocker ids). Default output is human-
-                                readable; --json prints a structured payload
-                                ({drafts, blocked}) for the /mars:next skill
-                                to consume. Source ('reflection' | 'human' |
-                                'planner') is annotated per draft row.
   inbox                         alias for 'inbox list open'
   inbox list [state] [--kind <kind>] [--lean]
                                 list inbox items. state one of:
@@ -400,8 +393,8 @@ Subcommands:
       and queue them with blockers wired between dependent slices. Flips the
       idea's status to 'sliced'.
   reject <id>
-      Mark a draft idea as 'dismissed' so it stops surfacing in 'mars next'
-      and reflection follow-ups.`,
+      Mark a draft idea as 'dismissed' so it stops surfacing in reflection
+      follow-ups.`,
   'set-functional': `mars set-functional <id> <text|@file>
 
 Set the functional plan on a draft/queued task. Use @path to read from a
@@ -619,23 +612,6 @@ When no <task-id> is given, the candidate is auto-picked:
 Requires a stored transcript (captured automatically by the implement
 workflow unless MARS_REFLECT_DISABLED=1 is set). The model defaults to
 opus; override with MARS_DEEP_REFLECT_MODEL.`,
-  next: `mars next [--json]
-
-List candidates the user might want to refine next:
-
-  - Draft ideas in .mars/state.db (ideas where status='draft'),
-    including reflection-origin and planner-origin ideas. Source
-    can be inspected with 'mars show <id>' or
-    'mars idea list --source <s>'.
-  - Blocked tasks in .mars/queue.db (tasks where status='blocked'),
-    annotated with the short ids of their open blockers. Use
-    'mars show <id>' for full detail or 'mars unblock <id>' as the
-    phantom-recovery escape hatch.
-
-Default output groups drafts and blocked tasks under separate
-headings, designed to be read by both humans and the /mars:next
-slash command. Pass --json for a machine-readable payload of the
-shape { drafts: [...], blocked: [...] }.`,
   inbox: `mars inbox <subcommand> ...
 
 Subcommands:
@@ -2243,85 +2219,6 @@ const main = async (): Promise<void> => {
     console.log(`Full report: ${outPath}`)
     if (result.exitCode !== 0) {
       console.error(`deep-reflector exit code ${result.exitCode}`)
-    }
-    return
-  }
-
-  if (cmd === 'next') {
-    const json = rest.includes('--json')
-    const { listIdeas } = await import('./mastra/ideas')
-    const { listTasks, listBlockers } = await import('./mastra/queue')
-
-    const TITLE_MAX = 120
-    const truncateTitle = (raw: string): string => {
-      const flat = raw.replace(/\s+/g, ' ').trim()
-      if (flat.length <= TITLE_MAX) return flat
-      return `${flat.slice(0, TITLE_MAX - 1)}…`
-    }
-
-    const ideas = await listIdeas({ status: 'draft' })
-    const drafts = ideas.map((i) => ({
-      id: i.id,
-      title: truncateTitle(i.title),
-      status: i.status,
-      source: i.source,
-      problemSet: i.problem.trim().length > 0,
-      solutionSet: i.solution.trim().length > 0,
-      userStoryCount: i.userStories.length,
-      createdAtMs: i.createdAt,
-    }))
-
-    const { blockedTaskTitle } = await import('./cli/blocked-title')
-    const { shortId } = await import('./cli/short-id')
-    const blockedTasks = await listTasks('blocked')
-    const blocked = await Promise.all(
-      blockedTasks.map(async (t) => {
-        const parsedMs = Date.parse(t.createdAt)
-        return {
-          id: t.id,
-          title: truncateTitle(blockedTaskTitle(t.prompt)),
-          status: t.status,
-          createdAtMs: Number.isFinite(parsedMs) ? parsedMs : 0,
-          blockerIds: await listBlockers(t.id),
-        }
-      }),
-    )
-
-    if (json) {
-      console.log(JSON.stringify({ drafts, blocked }, null, 2))
-      return
-    }
-
-    if (drafts.length === 0 && blocked.length === 0) {
-      console.log('Nothing to refine. Create a draft with: mars idea add "<goal>"')
-      return
-    }
-
-    if (drafts.length > 0) {
-      console.log('Pick something to refine, or describe a new feature:\n')
-      console.log('Existing drafts:')
-      for (const d of drafts) {
-        const title = d.title.trim() || '(no title)'
-        const flags: string[] = []
-        flags.push(`source:${d.source}`)
-        if (!d.problemSet) flags.push('problem:empty')
-        if (!d.solutionSet) flags.push('solution:empty')
-        if (d.userStoryCount === 0) flags.push('user-stories:0')
-        const tail = flags.length > 0 ? `  [${flags.join(' ')}]` : ''
-        console.log(`  ${shortId(d.id)}  ${title}${tail}`)
-      }
-    }
-
-    if (blocked.length > 0) {
-      if (drafts.length > 0) console.log('')
-      console.log('Blocked tasks:')
-      for (const t of blocked) {
-        const blockers =
-          t.blockerIds.length > 0
-            ? `  [blockedBy:${t.blockerIds.map((b) => shortId(b)).join(',')}]`
-            : '  [blockedBy:none — use `mars unblock`]'
-        console.log(`  ${shortId(t.id)}  ${t.title}${blockers}`)
-      }
     }
     return
   }
