@@ -205,3 +205,7 @@ _Avoid_: task type, task-type, checkpoint flag
 **Verify scope**:
 A subtree of the repo to which a set of verify steps applies, keyed by the verify recipe (e.g. web/, api/).
 _Avoid_: supervisor scope, project root, stack scope
+
+**Root verify scope**:
+The repo-root verify scope whose steps run on every task as a repo-wide invariant floor, with any narrower matched verify scopes layered on top.
+_Avoid_: default scope, dot scope, baseline scope
