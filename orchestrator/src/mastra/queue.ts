@@ -63,6 +63,42 @@ export const isTaskTag = (value: unknown): value is TaskTag =>
  */
 export type FailedPhase = 'code' | 'verify' | 'merge'
 
+/**
+ * Structured-task contract (gsd-executor-style). When a task ships with a
+ * spec, the implementor agent receives the prompt rendered as four explicit
+ * sections — `<files>` (in-scope paths), `<verify>` (verification command),
+ * `<done>` (boolean done criteria), and `task_type` — instead of free prose.
+ *
+ * `task_type='auto'` is the default: the agent executes end-to-end and
+ * commits. `task_type='checkpoint'` pauses before merge for explicit human
+ * verification (mirrors gsd's `checkpoint:human-verify`). Direct
+ * `mars task add` rows without `--type` default to `'auto'`.
+ *
+ * Every field is optional on the type to preserve legacy free-form rows:
+ * an empty/NULL spec degrades cleanly to the pre-existing prompt-only
+ * behaviour. Slicer emissions always populate a full spec.
+ */
+export type TaskType = 'auto' | 'checkpoint'
+
+export const TASK_TYPES: readonly TaskType[] = ['auto', 'checkpoint'] as const
+
+export const isTaskType = (value: unknown): value is TaskType =>
+  value === 'auto' || value === 'checkpoint'
+
+export interface TaskSpec {
+  files: readonly string[]
+  verifyCmd: string | null
+  doneCriteria: readonly string[]
+  taskType: TaskType
+}
+
+export const EMPTY_TASK_SPEC: TaskSpec = {
+  files: [],
+  verifyCmd: null,
+  doneCriteria: [],
+  taskType: 'auto',
+}
+
 export interface TaskPlan {
   functional: string
   technical: string
@@ -121,6 +157,14 @@ export interface Task {
    * continue` sets it.
    */
   resumeFrom: FailedPhase | null
+  /**
+   * Structured-task contract. NULL on legacy rows where `prompt` is the
+   * complete brief. When populated, `composePrompt` renders the spec on
+   * top of `prompt` so the agent sees a typed checklist instead of free
+   * prose. Slicer emissions and `mars task add --files/--verify/--done`
+   * always populate this; ad-hoc `mars task add "..."` does not.
+   */
+  spec: TaskSpec | null
   createdAt: string
   updatedAt: string
 }
@@ -305,6 +349,22 @@ export const initQueue = async (): Promise<void> => {
   }
   if (!names.has('resume_from')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN resume_from TEXT`)
+  }
+  // Structured-task spec sidecar columns. NULL on legacy rows; populated by
+  // the slicer and by `mars task add` when --files/--verify/--done is
+  // passed. The composePrompt path renders the spec on top of `prompt` so
+  // the implementor agent receives a typed brief. See {@link TaskSpec}.
+  if (!names.has('files_json')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN files_json TEXT`)
+  }
+  if (!names.has('verify_cmd')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN verify_cmd TEXT`)
+  }
+  if (!names.has('done_criteria_json')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN done_criteria_json TEXT`)
+  }
+  if (!names.has('task_type')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN task_type TEXT`)
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
@@ -575,6 +635,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     priority: Number(row.priority ?? 0),
     failedPhase: coerceFailedPhase(row.failed_phase),
     resumeFrom: coerceFailedPhase(row.resume_from),
+    spec: rowToTaskSpec(row),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -583,6 +644,33 @@ const rowToTask = (row: Record<string, unknown>): Task => {
 const coerceFailedPhase = (raw: unknown): FailedPhase | null => {
   if (raw === 'code' || raw === 'verify' || raw === 'merge') return raw
   return null
+}
+
+const parseStringArray = (raw: unknown): string[] => {
+  if (typeof raw !== 'string' || raw.length === 0) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((v): v is string => typeof v === 'string')
+  } catch {
+    return []
+  }
+}
+
+const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
+  const rawFiles = (row.files_json as string | null) ?? null
+  const rawVerify = (row.verify_cmd as string | null) ?? null
+  const rawDone = (row.done_criteria_json as string | null) ?? null
+  const rawType = (row.task_type as string | null) ?? null
+  const anySet =
+    rawFiles !== null || rawVerify !== null || rawDone !== null || rawType !== null
+  if (!anySet) return null
+  return {
+    files: parseStringArray(rawFiles),
+    verifyCmd: rawVerify,
+    doneCriteria: parseStringArray(rawDone),
+    taskType: isTaskType(rawType) ? rawType : 'auto',
+  }
 }
 
 const parseClaudeSessionIds = (raw: unknown): string[] => {
@@ -610,6 +698,14 @@ export interface EnqueueTaskOptions {
    * rejection at enqueue rather than dispatch.
    */
   tag?: TaskTag
+  /**
+   * Structured-task contract. When omitted the row is stored with the
+   * legacy free-prose shape (every spec column NULL) and the implementor
+   * agent sees only `prompt`. When set, the spec is persisted alongside
+   * the prompt and {@link composePrompt} renders `<files>/<verify>/<done>`
+   * sections on top.
+   */
+  spec?: TaskSpec
 }
 
 export const enqueueTask = async (
@@ -635,8 +731,18 @@ export const enqueueTask = async (
   const parentIdeaId = opts?.parentIdeaId ?? null
   const sliceIndex = opts?.sliceIndex ?? null
   const tag: TaskTag = opts?.tag ?? 'coder'
+  const spec = opts?.spec ?? null
+  if (spec !== null && !isTaskType(spec.taskType)) {
+    throw new Error(
+      `spec.taskType must be one of ${TASK_TYPES.join(', ')}; got '${String(spec.taskType)}'`,
+    )
+  }
+  const filesJson = spec ? JSON.stringify(spec.files) : null
+  const verifyCmd = spec ? spec.verifyCmd : null
+  const doneCriteriaJson = spec ? JSON.stringify(spec.doneCriteria) : null
+  const taskType = spec ? spec.taskType : null
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_idea_id, slice_index, tag, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_idea_id, slice_index, tag, files_json, verify_cmd, done_criteria_json, task_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       promptText,
@@ -650,6 +756,10 @@ export const enqueueTask = async (
       parentIdeaId,
       sliceIndex,
       tag,
+      filesJson,
+      verifyCmd,
+      doneCriteriaJson,
+      taskType,
       now,
       now,
     ],

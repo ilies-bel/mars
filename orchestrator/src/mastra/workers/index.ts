@@ -78,6 +78,12 @@ export interface RunOptions {
   readonly onEvent?: (event: ClaudeEvent) => void | Promise<void>
   readonly timeoutMs?: number
   readonly systemPrompt?: string
+  /**
+   * Caller-supplied abort signal. Forwarded to {@link runClaudeCode} so the
+   * read/grep span watcher can terminate a stalled session. When fired the
+   * Worker returns exitCode 138.
+   */
+  readonly externalAbort?: AbortSignal
 }
 
 export interface Worker {
@@ -184,6 +190,7 @@ const buildWorker = (config: WorkerConfig): Worker => ({
       bare: config.bare,
       disallowedTools: config.disallowedTools,
       maxMessages: config.maxMessages,
+      externalAbort: options.externalAbort,
     }),
 })
 

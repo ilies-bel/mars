@@ -305,21 +305,35 @@ export const startDaemon = async (
             task.resumeFrom === 'verify' || task.resumeFrom === 'merge'
               ? task.resumeFrom
               : null,
+          spec: task.spec
+            ? {
+                files: [...task.spec.files],
+                verifyCmd: task.spec.verifyCmd,
+                doneCriteria: [...task.spec.doneCriteria],
+                taskType: task.spec.taskType,
+              }
+            : null,
         },
       })
-      const { isBlockersAbortError } = await import('../workflows/implement-workflow')
+      const { isBlockersAbortError, isTooHardAbortError } = await import('../workflows/implement-workflow')
       const resultError = 'error' in result && result.error instanceof Error ? result.error : null
       if (result.status === 'failed' && resultError && isBlockersAbortError(resultError)) {
         log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
+        return
+      }
+      if (result.status === 'failed' && resultError && isTooHardAbortError(resultError)) {
+        log(`[implement] ${task.id} parked in blocked: read/grep span watcher tripped; spawned context-gathering child task`)
         return
       }
       log(`[implement] ${task.id} -> ${result.status}`)
       bus.emit('task.completed', { taskId: task.id, status: result.status })
     } catch (err) {
       const message = (err as Error).message
-      const { isBlockersAbortError } = await import('../workflows/implement-workflow')
+      const { isBlockersAbortError, isTooHardAbortError } = await import('../workflows/implement-workflow')
       if (isBlockersAbortError(err)) {
         log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
+      } else if (isTooHardAbortError(err)) {
+        log(`[implement] ${task.id} parked in blocked: read/grep span watcher tripped; spawned context-gathering child task`)
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
         try {
@@ -584,12 +598,14 @@ export const startDaemon = async (
     blockerIds?: readonly string[],
     priority?: number,
     tag?: Task['tag'],
+    spec?: Task['spec'],
   ): Promise<Task> => {
     const opts: Parameters<typeof enqueueTask>[2] = {}
     if (skipTriage) opts.skipTriage = true
     if (author) opts.author = author
     if (priority !== undefined) opts.priority = priority
     if (tag !== undefined) opts.tag = tag
+    if (spec) opts.spec = spec
     const task = await enqueueTask(
       prompt,
       plan ?? undefined,
@@ -1037,6 +1053,7 @@ export const startDaemon = async (
             req.blockerIds,
             req.priority,
             req.tag,
+            req.spec,
           )
           return { ok: true, data: task }
         }
