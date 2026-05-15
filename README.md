@@ -11,10 +11,19 @@ See [`VISION.md`](./VISION.md) for the target state and
 ## Install
 
 ```sh
+curl -sSL https://raw.githubusercontent.com/ilies-bel/mars/main/get-mars.sh | bash
+```
+
+Bootstraps the `mars` CLI for your OS/arch (`darwin`/`linux` ×
+`arm64`/`x86_64`). Re-run the same command to upgrade.
+
+### Install from source
+
+```sh
 curl -fsSL https://raw.githubusercontent.com/ilies-bel/mars/main/install-dev.sh | bash
 ```
 
-The installer:
+The source installer:
 
 - installs [Bun](https://bun.sh) if missing,
 - clones this repo into `~/.mars` (override with `MARS_HOME`),
