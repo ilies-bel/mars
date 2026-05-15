@@ -60,7 +60,15 @@ export const errorClassRules: readonly ErrorClassRule[] = [
   },
   {
     errorClass: 'uncommitted-changes',
-    match: /merge target.*has uncommitted changes/i,
+    // Matches both legacy wording (`merge target ... has uncommitted changes`)
+    // and the new fast-forward-feasibility wording emitted by
+    // checkMergeTargetStatus when a tracked-file change overlaps the ff path
+    // set. Folded into one slug so retry recipes don't fork.
+    match: /has uncommitted changes|tracked changes on paths the fast-forward would update/i,
+  },
+  {
+    errorClass: 'not-fast-forward',
+    match: /is not a fast-forward of/i,
   },
   {
     errorClass: 'install-frozen-lockfile',

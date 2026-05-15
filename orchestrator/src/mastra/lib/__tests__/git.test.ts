@@ -337,15 +337,22 @@ process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', sessio
 
 describe('checkMergeTargetStatus', () => {
   let repo: string
+  const args = { integrationBranch: 'main', taskBranch: 'task/x' }
 
   beforeEach(() => {
     repo = mkdtempSync(resolve(tmpdir(), 'mars-merge-target-'))
-    execFileSync('git', ['init', '-q'], { cwd: repo })
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
     execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
-    writeFileSync(resolve(repo, 'README'), 'hello\n')
-    execFileSync('git', ['add', 'README'], { cwd: repo })
+    writeFileSync(resolve(repo, 'A'), 'a0\n')
+    writeFileSync(resolve(repo, 'B'), 'b0\n')
+    execFileSync('git', ['add', 'A', 'B'], { cwd: repo })
     execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+    // task/x: one commit ahead of main, modifies A only.
+    execFileSync('git', ['checkout', '-q', '-b', 'task/x'], { cwd: repo })
+    writeFileSync(resolve(repo, 'A'), 'a1\n')
+    execFileSync('git', ['commit', '-q', '-am', 'task edit on A'], { cwd: repo })
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
     mkdirSync(resolve(repo, '.mars'), { recursive: true })
     process.env.MARS_REPO = repo
     vi.resetModules()
@@ -356,22 +363,53 @@ describe('checkMergeTargetStatus', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('reports clean for an unmodified working tree', async () => {
+  it('reports clean when ff is feasible and target is pristine', async () => {
     const { checkMergeTargetStatus } = await import('../git')
-    const status = await checkMergeTargetStatus()
+    const status = await checkMergeTargetStatus(args)
     expect(status.kind).toBe('clean')
   })
 
-  it('reports dirty with porcelain output when files are modified or untracked', async () => {
-    writeFileSync(resolve(repo, 'README'), 'hello mutated\n')
+  it('ignores untracked files in the merge target', async () => {
     writeFileSync(resolve(repo, 'leftover.tmp'), 'x\n')
+    mkdirSync(resolve(repo, '.idea'), { recursive: true })
+    writeFileSync(resolve(repo, '.idea/workspace.xml'), '<x/>\n')
     const { checkMergeTargetStatus } = await import('../git')
-    const status = await checkMergeTargetStatus()
+    const status = await checkMergeTargetStatus(args)
+    expect(status.kind).toBe('clean')
+  })
+
+  it('ignores tracked uncommitted changes on paths the ff would not touch', async () => {
+    writeFileSync(resolve(repo, 'B'), 'b-mutated\n')
+    const { checkMergeTargetStatus } = await import('../git')
+    const status = await checkMergeTargetStatus(args)
+    expect(status.kind).toBe('clean')
+  })
+
+  it('reports dirty when a tracked uncommitted change overlaps the ff path set', async () => {
+    writeFileSync(resolve(repo, 'A'), 'a-local\n')
+    const { checkMergeTargetStatus } = await import('../git')
+    const status = await checkMergeTargetStatus(args)
     expect(status.kind).toBe('dirty')
     if (status.kind === 'dirty') {
       expect(status.targetPath).toBe(repo)
-      expect(status.statusOutput).toContain('README')
-      expect(status.statusOutput).toContain('leftover.tmp')
+      expect(status.statusOutput).toContain('A')
+      expect(status.statusOutput).toMatch(
+        /tracked changes on paths the fast-forward would update/i,
+      )
+    }
+  })
+
+  it('reports dirty when task branch is not a fast-forward of integration', async () => {
+    // Force divergence: add a main-only commit so task/x is no longer an
+    // ancestor of main from main's POV.
+    writeFileSync(resolve(repo, 'C'), 'c0\n')
+    execFileSync('git', ['add', 'C'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'main-only commit'], { cwd: repo })
+    const { checkMergeTargetStatus } = await import('../git')
+    const status = await checkMergeTargetStatus(args)
+    expect(status.kind).toBe('dirty')
+    if (status.kind === 'dirty') {
+      expect(status.statusOutput).toMatch(/is not a fast-forward of/i)
     }
   })
 })
