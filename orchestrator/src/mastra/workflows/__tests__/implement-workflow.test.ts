@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
 import {
   COMMIT_FOOTER,
   WRITER_FOOTER,
@@ -68,5 +71,80 @@ describe('composePrompt — writer routing', () => {
     expect(WRITER_SYSTEM_PROMPT).toContain('mars glossary set')
     expect(WRITER_SYSTEM_PROMPT).toContain('mars glossary remove')
     expect(WRITER_SYSTEM_PROMPT).toContain('mars adr add')
+  })
+})
+
+describe('composePrompt — worktree orientation', () => {
+  let worktree: string
+
+  beforeEach(() => {
+    worktree = mkdtempSync(resolve(tmpdir(), 'mars-compose-prompt-'))
+  })
+
+  afterEach(() => {
+    rmSync(worktree, { recursive: true, force: true })
+  })
+
+  const seedOrchestrator = (): string => {
+    const sub = resolve(worktree, 'orchestrator')
+    mkdirSync(sub)
+    writeFileSync(
+      resolve(sub, 'package.json'),
+      JSON.stringify({ scripts: { test: 'vitest run' } }),
+    )
+    writeFileSync(resolve(sub, 'tsconfig.json'), '{}')
+    return sub
+  }
+
+  it('emits the orientation block with the resolved project subdirectory before the spec block', () => {
+    const sub = seedOrchestrator()
+    const out = composePrompt(
+      'do the thing',
+      null,
+      'coder',
+      {
+        files: ['orchestrator/src/foo.ts'],
+        verifyCmd: 'npx vitest run',
+        doneCriteria: ['it works'],
+        taskType: 'auto',
+      },
+      'mars-test-123',
+      worktree,
+    )
+    expect(out).toContain('## Worktree orientation')
+    expect(out).toContain(`You are at worktree root: ${worktree}`)
+    expect(out).toContain(`Project subdirectory for tests, typecheck, and build commands: ${sub}`)
+    expect(out).toContain('cd orchestrator && <verifyCmd>')
+
+    const orientationIdx = out.indexOf('## Worktree orientation')
+    const specIdx = out.indexOf('## Structured-task contract')
+    expect(orientationIdx).toBeGreaterThan(-1)
+    expect(specIdx).toBeGreaterThan(orientationIdx)
+  })
+
+  it('uses the simpler root-only phrasing when taskCwd equals worktreeRoot', () => {
+    // No subprojects seeded → resolveTaskCwd falls back to resolveVerifyCwd,
+    // which returns the worktree root unchanged.
+    const out = composePrompt(
+      'do the thing',
+      null,
+      'coder',
+      {
+        files: ['.github/workflows/ci.yml', 'orchestrator/y.ts'],
+        verifyCmd: null,
+        doneCriteria: [],
+        taskType: 'auto',
+      },
+      'mars-test-123',
+      worktree,
+    )
+    expect(out).toContain('## Worktree orientation')
+    expect(out).toContain(`You operate from this worktree root: ${worktree}`)
+    expect(out).not.toContain('Project subdirectory for tests')
+  })
+
+  it('omits the orientation block entirely when worktreeRoot is not supplied (legacy callers)', () => {
+    const out = composePrompt('do the thing', null)
+    expect(out).not.toContain('## Worktree orientation')
   })
 })

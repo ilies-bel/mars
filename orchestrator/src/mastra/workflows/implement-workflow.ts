@@ -60,6 +60,8 @@ import { mergeCleanScorer } from '../scorers/merge-clean'
 import { summarizeUsage } from '../lib/claude-usage'
 import { recordSignals, isReflectDisabled } from '../lib/reflect-signals'
 import { resolveVerifyCwd } from '../lib/derive-repro-command'
+import { resolveTaskCwd } from '../lib/resolve-task-cwd'
+import { relative } from 'node:path'
 import {
   createReadSpanWatcher,
   resolveReadSpanLimit,
@@ -283,12 +285,51 @@ const buildTooHardChildPrompt = (
     formatTrace(trace),
   ].join('\n')
 
+// Build the "## Worktree orientation" preamble. Disclosing the resolved
+// verify cwd up-front kills the recurring 2-3 read tax we used to see
+// (pwd / ls / ls .github/workflows/) and keeps the read-span watcher's
+// budget aimed at actual work.
+//
+// Note: the worker process is still spawned at `worktreeRoot` (see
+// codeStep below). We *disclose* the project subdirectory here rather
+// than `cd`-ing the worker, so:
+//   - Mars CLI commands continue to resolve `repoRoot()` from the
+//     worktree root (the CLAUDE.md cwd trap),
+//   - multi-subproject slices (e.g. `.github/` + `orchestrator/`) still
+//     work without an arbitrary baseline cwd,
+//   - a session-long cd doesn't ripple into every Bash invocation.
+const renderOrientation = (
+  worktreeRoot: string,
+  taskCwd: string,
+): string => {
+  if (taskCwd === worktreeRoot) {
+    return [
+      '## Worktree orientation',
+      '',
+      `You operate from this worktree root: ${worktreeRoot}`,
+      '',
+      'Run verification, typecheck, and build commands from the worktree root.',
+    ].join('\n')
+  }
+  const sub = relative(worktreeRoot, taskCwd) || '.'
+  return [
+    '## Worktree orientation',
+    '',
+    `You are at worktree root: ${worktreeRoot}`,
+    `Project subdirectory for tests, typecheck, and build commands: ${taskCwd}`,
+    '',
+    'Run verification commands from the project subdirectory:',
+    `  cd ${sub} && <verifyCmd>`,
+  ].join('\n')
+}
+
 export const composePrompt = (
   prompt: string,
   plan: z.infer<typeof planSchema>,
   tag: TaskTag = 'coder',
   spec: TaskSpec | null = null,
   taskId = '',
+  worktreeRoot = '',
 ): string => {
   const sections: string[] = [prompt.trim()]
   if (plan?.functional?.trim()) {
@@ -296,6 +337,13 @@ export const composePrompt = (
   }
   if (plan?.technical?.trim()) {
     sections.push(`## Technical plan\n\n${plan.technical.trim()}`)
+  }
+  // Orientation must come BEFORE the structured-task spec block so the
+  // agent sees its cwd before reading <files> / <verify>. Skipped when
+  // worktreeRoot is unknown (legacy call sites / unit tests with no path).
+  if (worktreeRoot.length > 0) {
+    const taskCwd = resolveTaskCwd(worktreeRoot, spec?.files ?? [])
+    sections.push(renderOrientation(worktreeRoot, taskCwd))
   }
   const specBlock = renderSpec(spec, taskId)
   if (specBlock !== null) sections.push(specBlock)
@@ -489,6 +537,7 @@ const codeStep = createStep({
       tag,
       inputData.spec ?? null,
       inputData.taskId,
+      inputData.path,
     )
     const conversation: ClaudeEvent[] = []
     const worker = getWorkerForTag(tag)
