@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, it, expect } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -7,6 +8,7 @@ import {
   WRITER_FOOTER,
   WRITER_SYSTEM_PROMPT,
   composePrompt,
+  detectPostCoderState,
 } from '../implement-workflow'
 
 describe('composePrompt — coder default', () => {
@@ -146,5 +148,79 @@ describe('composePrompt — worktree orientation', () => {
   it('omits the orientation block entirely when worktreeRoot is not supplied (legacy callers)', () => {
     const out = composePrompt('do the thing', null)
     expect(out).not.toContain('## Worktree orientation')
+  })
+})
+
+describe('detectPostCoderState', () => {
+  let repo: string
+
+  const initRepo = (): void => {
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], {
+      cwd: repo,
+    })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+    writeFileSync(resolve(repo, 'README'), 'hello\n')
+    execFileSync('git', ['add', 'README'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+    execFileSync('git', ['checkout', '-q', '-b', 'task/X', 'main'], {
+      cwd: repo,
+    })
+  }
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-post-coder-state-'))
+    initRepo()
+  })
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('does NOT flag a clean-no-work run (no diff, no commits) as dirty-no-commits', async () => {
+    // Coder ran but produced nothing — tree is clean, branch tip equals
+    // integration. The has-diff verify gate owns this failure; the new
+    // guard must stay quiet here so the two signals don't double-fire.
+    const result = await detectPostCoderState({
+      worktreePath: repo,
+      integrationBranch: 'main',
+    })
+
+    expect(result.kind).toBe('clean-no-work')
+  })
+
+  it('does NOT flag a clean-success run (commits present) as dirty-no-commits', async () => {
+    writeFileSync(resolve(repo, 'real.ts'), 'export const ok = true\n')
+    execFileSync('git', ['add', 'real.ts'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'feat: real work'], { cwd: repo })
+
+    const result = await detectPostCoderState({
+      worktreePath: repo,
+      integrationBranch: 'main',
+    })
+
+    expect(result.kind).toBe('clean-with-commits')
+    if (result.kind === 'clean-with-commits') {
+      expect(result.commitsAhead).toBe(1)
+    }
+  })
+
+  it('flags dirty-tree with zero commits ahead of integration as the guarded condition', async () => {
+    // Simulate a coder that wrote files but never staged/committed them.
+    writeFileSync(resolve(repo, 'untracked.ts'), 'export const wrong = true\n')
+    mkdirSync(resolve(repo, 'src'), { recursive: true })
+    writeFileSync(resolve(repo, 'src', 'also-untracked.ts'), 'x\n')
+
+    const result = await detectPostCoderState({
+      worktreePath: repo,
+      integrationBranch: 'main',
+    })
+
+    expect(result.kind).toBe('dirty-no-commits')
+    if (result.kind === 'dirty-no-commits') {
+      expect(result.dirtyFiles).toEqual(
+        expect.arrayContaining(['untracked.ts', 'src/also-untracked.ts']),
+      )
+    }
   })
 })
