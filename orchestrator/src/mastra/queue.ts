@@ -1,7 +1,5 @@
 import { createClient, type Client } from '@libsql/client'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
-import { resolve as joinPath } from 'node:path'
 import { resolveContext } from './context'
 import type { Author, AuthorKind } from './author'
 
