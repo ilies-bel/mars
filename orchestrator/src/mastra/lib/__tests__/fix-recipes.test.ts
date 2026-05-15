@@ -11,6 +11,7 @@ describe('fix-recipes', () => {
       targetPath: '/tmp/main-checkout',
       statusOutput: ' M src/foo.ts\n?? new-file.txt\n',
       targetBranch: 'main',
+      originalPrompt: '',
     }
 
     it('produces stable title for stable input', () => {
@@ -86,6 +87,7 @@ describe('fix-recipes', () => {
       targetPath: '/tmp/worktree/orchestrator',
       statusOutput: 'ERR_PNPM_OUTDATED_LOCKFILE: Cannot install with frozen lockfile\n',
       targetBranch: 'task/abc123',
+      originalPrompt: '',
     }
 
     it('produces a stable title', () => {
@@ -113,6 +115,7 @@ describe('fix-recipes', () => {
       statusOutput: 'branch task/abc has 0 commits ahead of main',
       targetBranch: 'task/abc',
       integrationBranch: 'main',
+      originalPrompt: '',
     }
 
     it('produces a stable title', () => {
@@ -190,11 +193,11 @@ describe('fix-recipes', () => {
       expect(prompt).toMatch(/stub/i)
     })
 
-    it('inlines the source task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
       const recipe = getRecipe('verify:has-diff/no-commits-ahead')
       const promptWithSource = recipe.buildPrompt({
         ...ctx,
-        sourceTaskPrompt: 'rename foo to bar in src/baz.ts',
+        originalPrompt: 'rename foo to bar in src/baz.ts',
       })
       expect(promptWithSource).toContain('rename foo to bar in src/baz.ts')
       expect(promptWithSource).toMatch(/inlined/i)
@@ -233,6 +236,7 @@ describe('fix-recipes', () => {
         targetPath: ctx.targetPath,
         statusOutput: ctx.statusOutput,
         targetBranch: ctx.targetBranch,
+        originalPrompt: '',
       })
       expect(prompt).toContain(`git rev-list --count main..HEAD`)
     })
@@ -298,6 +302,43 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
     rmSync(repo, { recursive: true, force: true })
   })
 
+  it('flows the original task prompt into the recovery recipe output so the agent does not need to re-fetch it from .mars/queue.db', async () => {
+    const { q, ft } = await loadModules(repo)
+    process.env.MARS_FIX_RETRY_BUDGET = '1'
+    const originalPrompt =
+      'rename oldName to newName in orchestrator/src/foo.ts'
+    const t = await q.enqueueTask(originalPrompt, undefined, {
+      skipTriage: true,
+    })
+    const result = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:has-diff',
+      // Signature 'verify:has-diff/no-commits-ahead' is keyed on this lead.
+      errorOutput: `verify: task branch task/${t.id} has 0 commits ahead of main`,
+      branch: `task/${t.id}`,
+      recipeContext: {
+        targetPath: resolve(repo, '.mars/worktrees', t.id),
+        statusOutput: '',
+        targetBranch: `task/${t.id}`,
+        integrationBranch: 'main',
+        // Deliberately leave originalPrompt empty: the handler must
+        // backfill it from the source task row, not require callers
+        // to thread it through manually.
+        originalPrompt: '',
+      },
+    })
+    expect(result.outcome).toBe('blocked')
+    expect(result.failureSignature).toBe('verify:has-diff/no-commits-ahead')
+
+    const r = await q.getClient().execute({
+      sql: `SELECT prompt FROM tasks WHERE id = ?`,
+      args: [result.fixTaskId ?? ''],
+    })
+    const row = r.rows[0] as unknown as { prompt: string }
+    expect(row.prompt).toContain(originalPrompt)
+    expect(row.prompt).toMatch(/Original task prompt \(inlined/i)
+  })
+
   it('an error matching the merge:preflight/uncommitted-changes classifier produces a fix-task using the canned recipe', async () => {
     const { q, ft } = await loadModules(repo)
     // Default retry budget is 0 (every failure drops); this test exercises
@@ -315,6 +356,7 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
         targetPath: resolve(repo),
         statusOutput,
         targetBranch: 'main',
+        originalPrompt: '',
       },
     })
     expect(result.outcome).toBe('blocked')

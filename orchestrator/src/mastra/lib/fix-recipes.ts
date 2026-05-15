@@ -31,12 +31,13 @@ export interface FixRecipeContext {
    */
   reproCommand?: string | null
   /**
-   * Prompt of the source task this recovery is unblocking. Injected by
-   * `upsertFixTask` so recipes can inline it verbatim — keeps the
-   * recovery agent from burning its turn budget on `.mars/queue.db`
-   * exploration before making the edit.
+   * Prompt of the original (source) task this recovery is unblocking.
+   * Injected by `handleTaskFailureWithFixTask` so recipes can inline it
+   * verbatim — keeps the recovery agent from burning its turn budget on
+   * `.mars/queue.db` exploration before making the edit. Defaults to ''
+   * only when the source task genuinely has no prompt recorded.
    */
-  sourceTaskPrompt?: string | null
+  originalPrompt: string
 }
 
 /**
@@ -140,11 +141,11 @@ const noCommitsAheadRecipe: FixRecipe = {
     const integration = ctx.integrationBranch ?? 'main'
     const countCmd = `git rev-list --count ${integration}..HEAD`
     const sourcePromptSection =
-      ctx.sourceTaskPrompt && ctx.sourceTaskPrompt.trim().length > 0
+      ctx.originalPrompt.trim().length > 0
         ? [
             `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
             '',
-            ctx.sourceTaskPrompt.trim(),
+            ctx.originalPrompt.trim(),
             '',
           ]
         : []

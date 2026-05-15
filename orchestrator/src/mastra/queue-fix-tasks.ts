@@ -164,10 +164,16 @@ export const upsertFixTask = async (
 
   // Inline the source task's prompt so recipes that re-do the original
   // work (e.g. verify:has-diff/no-commits-ahead) don't burn turns
-  // re-fetching it from .mars/queue.db.
-  const recipeContextWithSource = {
+  // re-fetching it from .mars/queue.db. Handlers should already set
+  // `originalPrompt`; backfill from the source row if a direct caller
+  // forgot. Default to '' only when the source genuinely has no prompt.
+  const incomingPrompt = input.recipeContext.originalPrompt
+  const recipeContextWithSource: FixRecipeContext = {
     ...input.recipeContext,
-    sourceTaskPrompt: input.recipeContext.sourceTaskPrompt ?? source.prompt,
+    originalPrompt:
+      incomingPrompt && incomingPrompt.trim().length > 0
+        ? incomingPrompt
+        : source.prompt ?? '',
   }
   const prompt = recipe.buildPrompt(recipeContextWithSource)
   const fixTaskId = randomUUID().slice(0, 8)
@@ -243,6 +249,7 @@ const buildInvestigatorPrompt = (input: {
   branch: string | null
   worktreePath: string | null
   reproCommand: string | null
+  originalPrompt: string
 }): string => {
   const worktreeLine = input.worktreePath
     ? `Worktree path (run repros from here): ${input.worktreePath}`
@@ -251,6 +258,18 @@ const buildInvestigatorPrompt = (input: {
   const reproSection = input.reproCommand
     ? ['## Reproduce', '', '```', input.reproCommand, '```', '']
     : []
+
+  const originalPromptSection =
+    input.originalPrompt.trim().length > 0
+      ? [
+          `## Original task prompt`,
+          '',
+          `This is what the failing task was trying to do. Use it to judge whether the failure is a real product bug or a malformed task — outcome (b) is correct whenever the prompt itself is the problem (ambiguous, underspecified, or asking for the impossible).`,
+          '',
+          input.originalPrompt.trim(),
+          '',
+        ]
+      : []
 
   return [
     `# Investigator task — diagnose the failure, then decide`,
@@ -277,6 +296,7 @@ const buildInvestigatorPrompt = (input: {
     input.truncatedError,
     '```',
     '',
+    ...originalPromptSection,
     ...reproSection,
     `## Diagnose discipline — work in this order`,
     '',
@@ -428,6 +448,7 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
     branch: input.branch,
     worktreePath: input.sourceTask.worktreePath,
     reproCommand: input.reproCommand,
+    originalPrompt: input.sourceTask.prompt ?? '',
   })
 
   const investigatorTaskId = randomUUID().slice(0, 8)
@@ -699,10 +720,19 @@ export const handleTaskFailureWithFixTask = async (
     targetPath: task.worktreePath ?? '',
     statusOutput: truncatedError,
     targetBranch: branch ?? '',
+    originalPrompt: task.prompt ?? '',
   }
+  // Always populate `originalPrompt` from the loaded source task so the
+  // recovery agent receives the original intent verbatim, not just the
+  // incident. Default to '' only when the source genuinely has no prompt.
+  const incomingOriginalPrompt = baseRecipeContext.originalPrompt
   const recipeContext: FixRecipeContext = {
     ...baseRecipeContext,
     reproCommand: baseRecipeContext.reproCommand ?? reproCommand,
+    originalPrompt:
+      incomingOriginalPrompt && incomingOriginalPrompt.trim().length > 0
+        ? incomingOriginalPrompt
+        : task.prompt ?? '',
   }
 
   const result = await upsertFixTask({
