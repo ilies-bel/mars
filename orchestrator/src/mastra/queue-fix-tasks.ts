@@ -30,6 +30,44 @@ const INVESTIGATOR_AUTHOR_NAME = 'agent:investigator'
 
 export const RECOVERY_FAILED_INBOX_KIND = 'recovery-failed'
 export const NO_RECIPE_INBOX_KIND = 'no-recipe'
+export const FIX_FAIL_LOOP_INBOX_KIND = 'fix-fail-loop'
+
+const DEFAULT_MAX_FIX_ATTEMPTS = 2
+
+/**
+ * Cap on the number of fix-task rows we'll ever insert for a single
+ * (sourceTaskId, failureSignature) pair. Once the cap is hit, the next
+ * dispatch escalates to the inbox instead of looping. The rule is
+ * signature-agnostic — no hardcoded signature strings.
+ */
+export const getMaxFixAttempts = (): number => {
+  const raw = process.env.MARS_MAX_FIX_ATTEMPTS
+  if (!raw) return DEFAULT_MAX_FIX_ATTEMPTS
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_MAX_FIX_ATTEMPTS
+  return Math.floor(n)
+}
+
+/**
+ * Count every historical fix-task row for a given (sourceTaskId,
+ * failureSignature) pair, regardless of status. Used to drive the
+ * fix-fail-loop cap so failed/done/abandoned attempts still count.
+ *
+ * Stays schema-free — relies only on `fix_for_task_id` and
+ * `failure_signature` columns that already exist on `tasks`.
+ */
+export const countFixTaskAttempts = async (
+  sourceTaskId: string,
+  failureSignature: string,
+): Promise<number> => {
+  const r = await getClient().execute({
+    sql: `SELECT COUNT(*) AS n FROM tasks
+           WHERE fix_for_task_id = ?
+             AND failure_signature = ?`,
+    args: [sourceTaskId, failureSignature],
+  })
+  return Number((r.rows[0] as unknown as { n: number }).n)
+}
 
 export interface UpsertFixTaskInput {
   sourceTaskId: string
@@ -425,6 +463,41 @@ const buildNoRecipeBody = (input: {
     .join('\n')
 }
 
+const buildFixFailLoopBody = (input: {
+  sourceTaskId: string
+  originTaskId: string
+  failingStep: string
+  failureSignature: string
+  branch: string | null
+  truncatedError: string
+  attempts: number
+  cap: number
+}): string => {
+  return [
+    `Task ${input.sourceTaskId} (origin ${input.originTaskId}) has hit the fix-fail retry cap of ${input.cap} for signature \`${input.failureSignature}\`.`,
+    `The orchestrator stopped enqueuing new fix tasks for this pair after ${input.attempts} attempt(s) and is escalating to the inbox instead.`,
+    `The source task remains in 'blocked' status with its existing error summary; resolve manually via 'mars retry' or 'mars unblock'.`,
+    '',
+    `Failing step: ${input.failingStep}`,
+    `Failure signature: ${input.failureSignature}`,
+    input.branch ? `Branch: ${input.branch}` : null,
+    `Prior fix-task attempts: ${input.attempts}`,
+    `Cap (MARS_MAX_FIX_ATTEMPTS): ${input.cap}`,
+    '',
+    'Last error output (truncated):',
+    '```',
+    input.truncatedError,
+    '```',
+    '',
+    'Resolve options:',
+    `  - inspect the source task and its recovery history, then 'mars retry ${input.sourceTaskId}' to re-attempt once the underlying issue is understood`,
+    `  - 'mars unblock ${input.sourceTaskId}' to abandon the source task`,
+    `  - 'mars inbox resolve <item-id>' once handled`,
+  ]
+    .filter((line) => line !== null)
+    .join('\n')
+}
+
 interface SpawnInvestigatorResult {
   investigatorTaskId: string
   inboxItemId: string
@@ -561,16 +634,23 @@ export interface HandleTaskFailureViaTaskInput {
 }
 
 export interface HandleTaskFailureViaTaskResult {
-  outcome: 'blocked' | 'failed' | 'escalated' | 'no-recipe' | 'noop'
+  outcome:
+    | 'blocked'
+    | 'failed'
+    | 'escalated'
+    | 'fix-fail-loop'
+    | 'no-recipe'
+    | 'noop'
   fixTaskId?: string
   failureSignature?: string
   retryCount?: number
   inboxItemId?: string
   investigatorTaskId?: string
+  attempts?: number
 }
 
 /**
- * Failure-handler entrypoint. Three terminal outcomes:
+ * Failure-handler entrypoint. Terminal outcomes:
  *
  *  - `blocked`: original task → blocked, recovery fix-task enqueued from
  *     the registered recipe for the computed signature.
@@ -580,8 +660,13 @@ export interface HandleTaskFailureViaTaskResult {
  *  - `no-recipe`: signature has no recipe registered. Original task →
  *     blocked, an Investigator task is queued to propose a draft recipe,
  *     and a `no-recipe` inbox item is raised.
+ *  - `fix-fail-loop`: (sourceTaskId, failureSignature) pair has already
+ *     burned its fix-task attempts cap (`MARS_MAX_FIX_ATTEMPTS`, default
+ *     2). No new fix task is inserted; a deduped `fix-fail-loop` inbox
+ *     item is raised and the source task stays in `blocked` with its
+ *     existing error summary.
  *
- * Plus `dropped` when the legacy retry budget for the original task is
+ * Plus `failed` when the legacy retry budget for the original task is
  * exhausted, and `noop` when the task row vanished.
  */
 export const handleTaskFailureWithFixTask = async (
@@ -713,6 +798,83 @@ export const handleTaskFailureWithFixTask = async (
       retryCount: task.retryCount + 1,
       investigatorTaskId,
       inboxItemId,
+    }
+  }
+
+  // Fix-fail-loop cap. Count every historical fix-task row for this
+  // (sourceTaskId, failureSignature) pair regardless of status. When
+  // the cap is hit, stop inserting new fix tasks and escalate to the
+  // inbox; repeat escalations dedupe on (kind, signature) fingerprint
+  // and bump seenCount on the existing row. Source task stays in
+  // 'blocked' with its existing error summary — never silently flipped
+  // back to 'queued'.
+  const cap = getMaxFixAttempts()
+  const priorAttempts = await countFixTaskAttempts(
+    input.taskId,
+    failureSignature,
+  )
+  if (priorAttempts >= cap) {
+    const now = new Date().toISOString()
+    await getClient().execute({
+      sql: `UPDATE tasks
+               SET status = 'blocked', updated_at = ?
+             WHERE id = ?`,
+      args: [now, input.taskId],
+    })
+
+    const inboxItemId = await raiseInboxItem({
+      kind: FIX_FAIL_LOOP_INBOX_KIND,
+      category: 'orchestrator',
+      priority: 'high',
+      title: `fix-fail loop: ${failureSignature} on task ${input.taskId}`,
+      body: buildFixFailLoopBody({
+        sourceTaskId: input.taskId,
+        originTaskId: task.originId,
+        failingStep: input.failingStep,
+        failureSignature,
+        branch,
+        truncatedError,
+        attempts: priorAttempts,
+        cap,
+      }),
+      payload: {
+        sourceTaskId: input.taskId,
+        originTaskId: task.originId,
+        failingStep: input.failingStep,
+        failureSignature,
+        attempts: priorAttempts,
+        cap,
+        branch,
+      },
+      context: {
+        repoRoot: process.env.MARS_REPO ?? null,
+      },
+      raisedBy: 'agent:fail-fix-handler',
+      // Dedup on the failure signature so repeat escalations bump
+      // seenCount instead of spawning new rows. No signature string is
+      // hardcoded — the value flows from the classifier.
+      signature: failureSignature,
+      occurrence: {
+        at: now,
+        sourceTaskId: input.taskId,
+        failingStep: input.failingStep,
+        attempts: priorAttempts,
+      },
+    })
+
+    internalBus().emit('task.blocked', {
+      taskId: input.taskId,
+      fixTaskId: null,
+      failureSignature,
+      failingStep: input.failingStep,
+    })
+
+    return {
+      outcome: 'fix-fail-loop',
+      failureSignature,
+      retryCount: task.retryCount,
+      inboxItemId,
+      attempts: priorAttempts,
     }
   }
 
