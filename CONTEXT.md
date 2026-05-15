@@ -159,7 +159,7 @@ A row in idea_dependencies asserting that one Idea cannot be meaningfully PRD-sh
 _Avoid_: idea blocker
 
 **Bundle**:
-The framework's owned and hybrid files at a specific framework version, published as a single tarball asset (mars-bundle-vX.Y.Z.tar.gz) on the matching GitHub Release alongside a sha256 sidecar; consumed by mars install and mars update.
+A tarball asset (mars-bundle-vX.Y.Z.tar.gz) containing manifest.json plus exactly the union of its owned and hybrid paths at a specific framework version. Published on the matching GitHub Release alongside a .sha256 sidecar; consumed by mars install and mars update.
 _Avoid_: release tarball, framework bundle, mars bundle
 
 **Mars id**:
