@@ -1,5 +1,7 @@
 import { createClient, type Client } from '@libsql/client'
 import { randomUUID } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve as joinPath } from 'node:path'
 import { resolveContext } from './context'
 import type { Author, AuthorKind } from './author'
 
@@ -387,6 +389,27 @@ export const initQueue = async (): Promise<void> => {
     await c.execute(`UPDATE tasks SET blocker_id = NULL`)
     await c.execute(`ALTER TABLE tasks DROP COLUMN blocker_id`)
   }
+  // task_acceptance: per-task acceptance criteria (Definition of Done).
+  // Authored deterministically by the slicer; not retroactively added to
+  // direct `mars task add` rows or to recovery fix-tasks. The worker ticks
+  // each row off via `mars task <id> acceptance pass <pos>` and the
+  // implement workflow soft-enforces the list after the worker session
+  // exits (any row still 'pending' parks the task in 'blocked').
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS task_acceptance (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      note TEXT,
+      updated_at TEXT NOT NULL,
+      UNIQUE(task_id, position)
+    )
+  `)
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_task_acceptance_task ON task_acceptance(task_id)`,
+  )
   await c.execute(`
     CREATE TABLE IF NOT EXISTS task_transcripts (
       task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
