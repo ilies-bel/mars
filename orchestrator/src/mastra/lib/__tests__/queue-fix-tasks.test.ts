@@ -105,6 +105,7 @@ describe('queue-fix-tasks', () => {
         targetPath: '/tmp/x',
         statusOutput: 'TS2304',
         targetBranch: 'task/x',
+        originalPrompt: '',
       },
     })
     expect(r.created).toBe(true)
@@ -139,6 +140,7 @@ describe('queue-fix-tasks', () => {
       targetPath: '/tmp/x',
       statusOutput: 'errA',
       targetBranch: 'task/x',
+      originalPrompt: '',
     }
     const a = await ft.upsertFixTask({
       sourceTaskId: t.id,
@@ -258,6 +260,7 @@ describe('queue-fix-tasks', () => {
         targetPath: '/tmp/x',
         statusOutput: 'shared err',
         targetBranch: '',
+        originalPrompt: '',
       },
     })
     // Manually wire t2 to the same fix task to simulate a shared blocker.
@@ -299,6 +302,7 @@ describe('queue-fix-tasks', () => {
       targetPath: '/tmp/x',
       statusOutput: 'dirty',
       targetBranch: 'main',
+      originalPrompt: '',
     }
     const r1 = await ft.upsertFixTask({
       sourceTaskId: t1.id,
@@ -388,6 +392,7 @@ describe('queue-fix-tasks', () => {
         targetPath: '/repo',
         statusOutput: '?? leftover.txt',
         targetBranch: 'main',
+        originalPrompt: '',
       },
     })
     expect(first.outcome).toBe('blocked')
@@ -405,6 +410,7 @@ describe('queue-fix-tasks', () => {
         targetPath: '/repo',
         statusOutput: '?? leftover.txt',
         targetBranch: 'main',
+        originalPrompt: '',
       },
     })
     expect(second.outcome).toBe('failed')
@@ -448,6 +454,7 @@ describe('queue-fix-tasks', () => {
         targetPath: '/repo',
         statusOutput: '?? leftover.txt',
         targetBranch: 'main',
+        originalPrompt: '',
       },
     })
     expect(first.outcome).toBe('blocked')
@@ -466,6 +473,7 @@ describe('queue-fix-tasks', () => {
         targetPath: '/repo',
         statusOutput: '?? leftover.txt',
         targetBranch: 'main',
+        originalPrompt: '',
       },
     })
     expect(second.outcome).toBe('failed')

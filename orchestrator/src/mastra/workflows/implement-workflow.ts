@@ -245,6 +245,8 @@ const setupStep = createStep({
           targetPath: isInstallErr ? error.site.dir : ref.path,
           statusOutput: errorOutput,
           targetBranch: ref.branch,
+          // Handler backfills from task.prompt when '' is passed.
+          originalPrompt: '',
         },
       }).catch((err) => {
         console.error(
@@ -475,6 +477,8 @@ const verifyStep = createStep({
           statusOutput: firstFailedOutput,
           targetBranch: inputData.branch,
           integrationBranch: inputData.integrationBranch,
+          // Handler backfills from task.prompt when '' is passed.
+          originalPrompt: '',
         },
       }).catch((err) => {
         console.error(
@@ -577,6 +581,8 @@ const mergeStep = createStep({
             targetPath: targetStatus.targetPath,
             statusOutput: targetStatus.statusOutput,
             targetBranch: inputData.integrationBranch,
+            // Handler backfills from task.prompt when '' is passed.
+            originalPrompt: '',
           },
         }).catch((err) => {
           console.error(
