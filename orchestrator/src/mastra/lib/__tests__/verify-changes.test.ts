@@ -1,5 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  existsSync,
+} from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -117,6 +123,32 @@ describe('checkBranchHasDiff (empty-diff guard)', () => {
     expect(r.passed).toBe(false)
     expect(r.steps).toHaveLength(1)
     expect(r.steps[0].name).toBe('has-diff')
+  })
+
+  // Regression guard for the systemic `verify:has-diff/no-commits-ahead`
+  // failures: when the workflow's `resolveVerifyCwd` picks a `package.json`
+  // subdirectory of the worktree (e.g. `<worktree>/orchestrator`), the
+  // rev-list invocation must still resolve the shared `task/<id>` ref and
+  // recognise that a commit exists. Operating from a sub-cwd was one of
+  // the leading hypotheses for the false-positive failures.
+  it('returns passed=true when run from a subdirectory of the worktree', async () => {
+    const sub = resolve(repo, 'sub')
+    if (!existsSync(sub)) mkdirSync(sub)
+    const step = await checkBranchHasDiff(sub, 'task/with-commit', 'main')
+    expect(step.passed).toBe(true)
+    expect(step.output).toMatch(/commit\(s\) ahead/)
+  })
+
+  it('embeds diagnostic context in the no-commits-ahead failure', async () => {
+    const step = await checkBranchHasDiff(repo, 'task/empty', 'main')
+    expect(step.passed).toBe(false)
+    // SHA probes — the integration tip SHA must show up so a flapping
+    // failure can be cross-referenced against the actual ref state.
+    expect(step.output).toContain('HEAD:')
+    expect(step.output).toContain('task/empty:')
+    expect(step.output).toContain('main:')
+    expect(step.output).toContain('status:')
+    expect(step.output).toContain('recent log on task/empty:')
   })
 })
 

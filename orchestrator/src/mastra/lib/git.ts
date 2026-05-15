@@ -550,7 +550,22 @@ export const runClaudeCode = async ({
   let capHit = false
   const abort = new AbortController()
 
-  const work = runSubprocessStreaming(
+  // Track whether the wall-clock timeout fired so we can synthesise the
+  // 124/"timed out" result after the subprocess has actually died. We MUST
+  // await the underlying `work` promise before returning — racing it against
+  // a setTimeout that only resolves a sibling promise (the previous design)
+  // leaks the live Claude child: the workflow proceeds to `verifyChanges`
+  // while Claude keeps writing files and running `git commit`, producing a
+  // ghost `verify:has-diff/no-commits-ahead` failure whose worktree later
+  // shows a commit that "should have passed". Aborting via the same
+  // AbortController used for the message cap funnels both kill paths
+  // through `runSubprocessStreaming`'s SIGKILL + drain semantics.
+  let timedOut = false
+  const timeoutHandle = setTimeout(() => {
+    timedOut = true
+    abort.abort()
+  }, timeoutMs)
+  const result = await runSubprocessStreaming(
     resolveClaudeBin(),
     claudeStreamArgs(prompt, {
       model,
@@ -590,18 +605,7 @@ export const runClaudeCode = async ({
     abort.signal,
     buildWorkerEnv(),
   )
-  const timeout = new Promise<RunSubprocessResult>((resolveFn) =>
-    setTimeout(
-      () =>
-        resolveFn({
-          exitCode: 124,
-          stdout: '',
-          stderr: `claude -p timed out after ${timeoutMs}ms`,
-        }),
-      timeoutMs,
-    ),
-  )
-  const result = await Promise.race([work, timeout])
+  clearTimeout(timeoutHandle)
   const detectedSessionId =
     extractSessionIdFromConversation(conversation) ??
     extractSessionId(result.stdout) ??
@@ -612,6 +616,15 @@ export const runClaudeCode = async ({
       exitCode: 137,
       stdout: result.stdout,
       stderr: `claude -p hit message cap of ${cap} (MARS_CLAUDE_MAX_MESSAGES)`,
+      sessionId: detectedSessionId,
+      conversation,
+    }
+  }
+  if (timedOut) {
+    return {
+      exitCode: 124,
+      stdout: result.stdout,
+      stderr: `claude -p timed out after ${timeoutMs}ms`,
       sessionId: detectedSessionId,
       conversation,
     }
@@ -668,6 +681,49 @@ const runVerifyStep = async (
   }
 }
 
+// Best-effort capture of the worktree state at the moment has-diff failed.
+// Surfaced in the failure output so post-mortems and inbox investigators
+// can tell apart "agent really did nothing" from "agent's commit landed
+// after verify ran" (the runClaudeCode timeout-leak class) without having
+// to re-shell into the worktree manually.
+const captureHasDiffDiagnostics = async (
+  cwd: string,
+  branch: string,
+  integrationBranch: string,
+): Promise<string> => {
+  const probe = async (
+    label: string,
+    args: readonly string[],
+  ): Promise<string> => {
+    try {
+      const { stdout } = await exec('git', [...args], { cwd })
+      const trimmed = stdout.trim()
+      return `${label}: ${trimmed.length > 0 ? trimmed : '(empty)'}`
+    } catch (error: unknown) {
+      const e = error as { stderr?: string; message?: string }
+      return `${label}: <error: ${(e.stderr ?? e.message ?? 'unknown').trim()}>`
+    }
+  }
+  const lines = await Promise.all([
+    probe(`HEAD`, ['rev-parse', 'HEAD']),
+    probe(`${branch}`, ['rev-parse', '--verify', `${branch}^{commit}`]),
+    probe(`${integrationBranch}`, [
+      'rev-parse',
+      '--verify',
+      `${integrationBranch}^{commit}`,
+    ]),
+    probe(`status`, ['status', '--porcelain=v1']),
+    probe(`recent log on ${branch}`, [
+      'log',
+      '--oneline',
+      '-n',
+      '3',
+      branch,
+    ]),
+  ])
+  return lines.join('\n')
+}
+
 export const checkBranchHasDiff = async (
   cwd: string,
   branch: string,
@@ -695,10 +751,19 @@ export const checkBranchHasDiff = async (
           output: `branch ${branch} is an ancestor of ${integrationBranch} — work already merged`,
         }
       }
+      // Append diagnostic context (SHAs, porcelain status, recent log) so
+      // a recurrence is debuggable from the inbox payload alone — without
+      // it the 'no commits ahead' message is indistinguishable from a
+      // late-arriving commit produced by a leaked subprocess.
+      const diagnostics = await captureHasDiffDiagnostics(
+        cwd,
+        branch,
+        integrationBranch,
+      )
       return {
         name: 'has-diff',
         passed: false,
-        output: 'no commits ahead of integration branch — task did not produce any changes',
+        output: `no commits ahead of integration branch — task did not produce any changes\n${diagnostics}`,
       }
     }
     return { name: 'has-diff', passed: true, output: `${count} commit(s) ahead of ${integrationBranch}` }
