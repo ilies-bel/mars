@@ -1,6 +1,7 @@
 import { createClient, type Client } from '@libsql/client'
 import { randomUUID } from 'node:crypto'
 import { resolveContext } from './context'
+import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
 
 export type TaskStatus =
@@ -691,17 +692,6 @@ const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
     verifyCmd: rawVerify,
     doneCriteria: parseStringArray(rawDone),
     taskType: isTaskType(rawType) ? rawType : 'auto',
-  }
-}
-
-const parseClaudeSessionIds = (raw: unknown): string[] => {
-  if (typeof raw !== 'string' || raw.length === 0) return []
-  try {
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((v): v is string => typeof v === 'string')
-  } catch {
-    return []
   }
 }
 
