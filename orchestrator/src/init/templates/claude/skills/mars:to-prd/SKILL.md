@@ -17,7 +17,7 @@ all PRD fields in one batch through the `mars idea` verbs.
 ## Step 0 — Sanity-check the argument
 
 `$ARGUMENTS` should be a draft idea id. If empty, tell the user to pass
-one or run `/mars:next` first, and stop.
+one (e.g. `mars idea list --status draft` to find one), and stop.
 
 Verify it resolves to a draft:
 

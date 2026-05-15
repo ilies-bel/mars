@@ -122,11 +122,10 @@ Stop after dispatch.
 - Do not bulk-act on multiple items in one turn. One id per dispatch.
   If the user wants to clear a cluster, they ask explicitly; treat
   each id as a separate Step 3.
-- Do not load `mars next`, `mars list`, or other queue surfaces —
-  this skill is inbox-only (drafts already arrive via `mars inbox
-  list`; you only call `mars idea show/promote/reject/delete` on the
-  specific id the user picked). If the user wants a task, they
-  invoke `/mars:next`.
+- Do not load `mars list` or other queue surfaces — this skill is
+  inbox-only (drafts already arrive via `mars inbox list`; you only
+  call `mars idea show/promote/reject/delete` on the specific id the
+  user picked).
 
 # Argument
 

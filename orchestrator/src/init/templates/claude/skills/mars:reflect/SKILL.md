@@ -9,7 +9,7 @@ Synthesize reflection-source ideas from completed Mars tasks. `mars reflect`
 reads token + scorer signals from `.mars/queue.db` and `.mars/mastra.db`,
 defaults to the last 10 completed tasks, and inserts draft ideas into the
 `ideas` table with `source='reflection'`. Ideas are **never auto-run** —
-they are proposals for the user (or `/mars:next`) to triage.
+they are proposals for the user to triage.
 
 This skill does **not** invent suggestions itself. It runs the CLI, then
 shows the resulting proposals so the user can act on them.
@@ -69,9 +69,9 @@ Never invent task ids or fabricate suggestions. The CLI is the only producer.
 
 5. Tell the user how to act on an idea:
    ```
-   To shape a reflection idea into a runnable task: /mars:next <idea-id>
+   To shape a reflection idea into a runnable task: /mars:grill <idea-id>
    ```
-   Do **not** run `/mars:next` yourself — that is a separate user-driven
+   Do **not** run `/mars:grill` yourself — that is a separate user-driven
    step.
 
 ## Conventions
@@ -83,8 +83,8 @@ Never invent task ids or fabricate suggestions. The CLI is the only producer.
 - **Repo resolution.** The CLI resolves the target repo itself. Do not pass
   `--repo` unless the user explicitly provided one.
 - **No auto-promotion.** Reflection ideas stay in `draft` status. This
-  skill does not call `mars idea promote`, `/mars:next`, or any write verb
-  beyond `mars reflect` itself.
+  skill does not call `mars idea promote`, `/mars:grill`, or any write
+  verb beyond `mars reflect` itself.
 
 ## Failure handling
 
@@ -102,5 +102,5 @@ Never invent task ids or fabricate suggestions. The CLI is the only producer.
 > Skill checks `MARS_REFLECT_DISABLED`, runs `mars list done | head -5` to
 > confirm there is history, runs `mars reflect --limit 20` in the
 > foreground, then `mars idea list --source reflection --status draft` to
-> display the new ideas, and points the user at `/mars:next <id>` to
+> display the new ideas, and points the user at `/mars:grill <id>` to
 > shape one into a task.

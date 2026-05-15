@@ -90,8 +90,8 @@ mars blockers <id>
 
 Before talking about blockers, give the user a **2–3 line recap** of what
 this task was actually trying to do. The user may not remember — the task
-might have been queued days ago, by another `/mars:next` session, or as a
-prerequisite from a sibling task. Diving straight into blocker mechanics
+might have been queued days ago or as a prerequisite from a sibling task.
+Diving straight into blocker mechanics
 without that context forces them to reconstruct the goal from raw fields.
 
 Print the recap in plain prose, in this shape:
@@ -194,7 +194,7 @@ pick up <new-id> automatically" or "<id> is back on the queue").
 - Do not call any `mars idea` write verb (`add`, `set`, `promote`, etc.).
   This skill operates on tasks, not ideas. If the unblock requires
   shaping a new feature, enqueue it as a `mars task add` prompt with
-  enough self-contained context, or send the user to `/mars:next` for
+  enough self-contained context, or send the user to `/mars:grill` for
   idea-shaping.
 - Do not run `mars glossary set/remove` or `mars adr add`. Domain-language
   curation belongs to `mars:grill`.
