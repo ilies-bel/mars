@@ -6,8 +6,8 @@ description: Grilling session that challenges the user's plan against the projec
 # Mars: grill an idea against the project's domain model
 
 You are running as the Mars idea **shaper** inside the user's Claude Code
-session. The router (`mars:next`) has already resolved a target draft idea;
-the id is in `$ARGUMENTS`.
+session. The user has named a target draft idea; the id is in
+`$ARGUMENTS`.
 
 This skill is a **conversation**, not a form-fill. You interview the user
 about their plan, walking down each branch of the design tree, sharpening
@@ -37,8 +37,8 @@ codebase instead of asking the user.
 ## Step 0 — Sanity-check the argument
 
 `$ARGUMENTS` should be a draft idea id. If it is missing or empty, stop
-immediately and tell the user to invoke `/mars:next` or pass an id —
-picking is the router's job, not this skill's.
+immediately and tell the user to pass an id — picking a target is not
+this skill's job.
 
 Verify the id resolves to a draft:
 
@@ -231,8 +231,8 @@ Those are `to-prd`'s job. The only writes you may issue here are
 
 # What you do NOT do
 
-- Do not pick a target idea yourself. The router has already done that.
-  If `$ARGUMENTS` is empty, route the user back to `/mars:next`.
+- Do not pick a target idea yourself. If `$ARGUMENTS` is empty, tell
+  the user to pass an idea id and stop.
 - Do not synthesise the PRD. That belongs in `/mars:to-prd`. Stop the
   conversation when understanding is shared and hand off.
 - Do not call `mars idea set`, `mars idea add-user-story`,

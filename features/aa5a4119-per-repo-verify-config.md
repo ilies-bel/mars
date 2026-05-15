@@ -8,7 +8,7 @@ origin: user
 
 ## Story
 
-<!-- Decide how the orchestrator's `verify` step picks the right commands for the target repo's stack (npm vs bun vs cargo vs python vs docs-only). Three candidate approaches discussed: (a) agent infers per-task, (b) declarative .mars/verify.toml, (c) hybrid with (a) as fallback. Refine via /mars:next before turning into tasks. -->
+<!-- Decide how the orchestrator's `verify` step picks the right commands for the target repo's stack (npm vs bun vs cargo vs python vs docs-only). Three candidate approaches discussed: (a) agent infers per-task, (b) declarative .mars/verify.toml, (c) hybrid with (a) as fallback. Refine via /mars:grill before turning into tasks. -->
 
 ## Technical
 
