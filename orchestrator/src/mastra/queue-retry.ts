@@ -66,19 +66,21 @@ const buildTaskBlockedBody = (
   input: RetryBudgetExhaustedInboxInput,
 ): string => {
   const lines: Array<string | null> = [
-    `Task ${input.taskId} exhausted its retry budget at step \`${input.lastStep}\` and is no longer being retried by the orchestrator.`,
-    input.lastErrorSignature
-      ? `Last failure signature: ${input.lastErrorSignature}`
-      : null,
-    `Retry count: ${input.retryCount}`,
-    input.branch ? `Branch: ${input.branch}` : null,
-    input.worktreePath ? `Worktree: ${input.worktreePath}` : null,
+    `Unblock task ${input.taskId} now: run /mars:unblock ${input.taskId}, or resolve it from the mars inbox.`,
     '',
+    `Why you're seeing this: task ${input.taskId} exhausted its retry budget at step \`${input.lastStep}\` and the orchestrator will not retry it again. It stays blocked until you act.`,
+    '',
+    'Context:',
+    input.lastErrorSignature
+      ? `  Last failure signature: ${input.lastErrorSignature}`
+      : null,
+    `  Retry count: ${input.retryCount}`,
+    input.branch ? `  Branch: ${input.branch}` : null,
+    input.worktreePath ? `  Worktree: ${input.worktreePath}` : null,
   ]
   if (input.lastErrorSummary) {
-    lines.push('Last error (truncated):', '```', input.lastErrorSummary, '```', '')
+    lines.push('', 'Last error (truncated):', '```', input.lastErrorSummary, '```')
   }
-  lines.push(`Resolve with /mars:unblock ${input.taskId} or via mars inbox.`)
   return lines.filter((line) => line !== null).join('\n')
 }
 
@@ -94,7 +96,7 @@ export const raiseRetryBudgetExhaustedInbox = async (
     kind: `${TASK_BLOCKED_INBOX_KIND_PREFIX}(${input.taskId})`,
     category: 'orchestrator',
     priority: 'high',
-    title: `task ${input.taskId} blocked after retry budget exhausted at ${input.lastStep}`,
+    title: `Unblock ${input.taskId}: retry budget exhausted at ${input.lastStep}`,
     body: buildTaskBlockedBody(input),
     payload: {
       taskId: input.taskId,
