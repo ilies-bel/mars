@@ -1,8 +1,8 @@
-import { NavBar } from './components/NavBar'
-import { useHashRoute } from './hooks/useHashRoute'
-import { AgentsPage } from './pages/AgentsPage'
-import { KanbanPage } from './pages/KanbanPage'
-import { TodoPage } from './pages/TodoPage'
+import { NavBar } from '@/components/NavBar'
+import { useHashRoute } from '@/hooks/useHashRoute'
+import { AgentsPage } from '@/pages/AgentsPage'
+import { KanbanPage } from '@/pages/KanbanPage'
+import { TodoPage } from '@/pages/TodoPage'
 
 export const App = () => {
   const hash = useHashRoute()

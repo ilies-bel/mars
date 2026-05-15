@@ -1,8 +1,8 @@
-import { useTasks } from '../hooks/useTasks'
-import { Column } from '../components/Column'
-import { Footer } from '../components/Footer'
-import { Sidebar } from '../components/Sidebar'
-import { TopStripe } from '../components/TopStripe'
+import { useTasks } from '@/hooks/useTasks'
+import { Column } from '@/components/Column'
+import { Footer } from '@/components/Footer'
+import { Sidebar } from '@/components/Sidebar'
+import { TopStripe } from '@/components/TopStripe'
 
 export const KanbanPage = () => {
   const { snapshot, error, connected } = useTasks()
