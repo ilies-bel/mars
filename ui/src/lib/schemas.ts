@@ -64,9 +64,25 @@ export const todoResponseSchema = z.object({
   staleWorktrees: z.array(staleWorktreeSchema),
 })
 
+export const agentSchema = z.object({
+  name: z.string(),
+  model: z.string(),
+  effort: z.string().nullable(),
+  permissionMode: z.string().nullable(),
+  allowedTools: z.array(z.string()),
+  deniedTools: z.array(z.string()),
+  messageCap: z.number().nullable(),
+  role: z.string(),
+})
+
+export const agentsResponseSchema = z.object({
+  agents: z.array(agentSchema),
+})
+
 export type TaskStatus = z.infer<typeof taskStatusSchema>
 export type IdeaSource = z.infer<typeof ideaSourceSchema>
 export type DraftFeature = z.infer<typeof draftFeatureSchema>
 export type Task = z.infer<typeof taskSchema>
 export type StaleWorktree = z.infer<typeof staleWorktreeSchema>
 export type TodoPayload = z.infer<typeof todoResponseSchema>
+export type Agent = z.infer<typeof agentSchema>
