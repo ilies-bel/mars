@@ -58,3 +58,16 @@ export const resolveContext = (override?: string): OrchestratorContext => {
 
 export const getRepoRoot = (): string => resolveContext().repoRoot
 export const getStateDir = (): string => resolveContext().stateDir
+
+/**
+ * Resolve the repo root using the same precedence as the rest of the
+ * orchestrator (`override` > `MARS_REPO` > git toplevel from cwd).
+ *
+ * Thin alias over `resolveContext(override).repoRoot` that mirrors the
+ * `resolveRepo` helper exposed by the UI server in `ui/server/repo.ts`.
+ * Use this when you only need the repo root path (e.g. to derive a
+ * `.mars/<file>` location) and don't want to pull the full context
+ * struct.
+ */
+export const resolveRepo = (override?: string): string =>
+  resolveContext(override).repoRoot
