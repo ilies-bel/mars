@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { deriveReproCommand } from '../derive-repro-command'
+import {
+  deriveReproCommand,
+  resolveVerifyCwd,
+} from '../derive-repro-command'
 
 describe('deriveReproCommand', () => {
   let worktree: string
@@ -86,6 +89,79 @@ describe('deriveReproCommand', () => {
     it('returns null when worktreePath is null', () => {
       expect(deriveReproCommand('verify:test', null)).toBeNull()
       expect(deriveReproCommand('verify:typecheck', null)).toBeNull()
+    })
+  })
+
+  describe('nested project layout (project lives under <worktree>/orchestrator)', () => {
+    // Mirrors this repo's layout: the worktree root only declares
+    // dependencies; the test runner and tsconfig live in `orchestrator/`.
+    // The repro command must `cd` into the subproject or it will not
+    // reproduce the verify failure.
+    const seedNested = () => {
+      writeFileSync(
+        resolve(worktree, 'package.json'),
+        JSON.stringify({ dependencies: {} }),
+      )
+      const sub = resolve(worktree, 'orchestrator')
+      mkdirSync(sub)
+      writeFileSync(
+        resolve(sub, 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } }),
+      )
+      writeFileSync(resolve(sub, 'tsconfig.json'), '{}')
+      return sub
+    }
+
+    it('cd-s into the orchestrator subproject for verify:test', () => {
+      const sub = seedNested()
+      const cmd = deriveReproCommand('verify:test', worktree)
+      expect(cmd).toBe(`cd ${sub} && npm test`)
+    })
+
+    it('cd-s into the orchestrator subproject for verify:typecheck', () => {
+      const sub = seedNested()
+      const cmd = deriveReproCommand('verify:typecheck', worktree)
+      expect(cmd).toBe(`cd ${sub} && npx tsc -p .`)
+    })
+
+    it('still picks the root when it owns both package.json and tsconfig.json', () => {
+      writeFileSync(
+        resolve(worktree, 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } }),
+      )
+      writeFileSync(resolve(worktree, 'tsconfig.json'), '{}')
+      // The nested orchestrator dir also looks like a project, but root
+      // wins because resolveVerifyCwd checks it first.
+      const sub = resolve(worktree, 'orchestrator')
+      mkdirSync(sub)
+      writeFileSync(
+        resolve(sub, 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } }),
+      )
+      writeFileSync(resolve(sub, 'tsconfig.json'), '{}')
+      const cmd = deriveReproCommand('verify:test', worktree)
+      expect(cmd).toBe(`cd ${worktree} && npm test`)
+    })
+  })
+
+  describe('resolveVerifyCwd', () => {
+    it('returns the worktree root when it has both package.json and tsconfig.json', () => {
+      writeFileSync(resolve(worktree, 'package.json'), '{}')
+      writeFileSync(resolve(worktree, 'tsconfig.json'), '{}')
+      expect(resolveVerifyCwd(worktree)).toBe(worktree)
+    })
+
+    it('falls back to <root>/orchestrator when the root is missing tsconfig.json', () => {
+      writeFileSync(resolve(worktree, 'package.json'), '{}')
+      const sub = resolve(worktree, 'orchestrator')
+      mkdirSync(sub)
+      writeFileSync(resolve(sub, 'package.json'), '{}')
+      writeFileSync(resolve(sub, 'tsconfig.json'), '{}')
+      expect(resolveVerifyCwd(worktree)).toBe(sub)
+    })
+
+    it('returns the worktree root unchanged when no project layout is found', () => {
+      expect(resolveVerifyCwd(worktree)).toBe(worktree)
     })
   })
 })

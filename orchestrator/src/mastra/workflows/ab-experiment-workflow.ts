@@ -1,6 +1,4 @@
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { createWorkflow, createStep } from '@mastra/core/workflows'
@@ -14,6 +12,7 @@ import {
 import type { ClaudeEvent } from '../lib/claude-stream'
 import { summarizeUsage } from '../lib/claude-usage'
 import { getRepoRoot } from '../context'
+import { resolveVerifyCwd } from '../lib/derive-repro-command'
 
 const exec = promisify(execFile)
 
@@ -123,16 +122,6 @@ interface VariantRunArgs {
   experimentId: string
   baseSha: string
   integrationBranch: string
-}
-
-const resolveVerifyCwd = (worktreeRoot: string): string => {
-  const hasProject = (dir: string): boolean =>
-    existsSync(resolve(dir, 'package.json')) &&
-    existsSync(resolve(dir, 'tsconfig.json'))
-  if (hasProject(worktreeRoot)) return worktreeRoot
-  const orchestrator = resolve(worktreeRoot, 'orchestrator')
-  if (hasProject(orchestrator)) return orchestrator
-  return worktreeRoot
 }
 
 const runSingleVariant = async ({

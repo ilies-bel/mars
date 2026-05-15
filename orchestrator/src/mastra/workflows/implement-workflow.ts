@@ -1,5 +1,3 @@
-import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
 import {
@@ -34,16 +32,7 @@ import { verifyPassedScorer } from '../scorers/verify-passed'
 import { mergeCleanScorer } from '../scorers/merge-clean'
 import { summarizeUsage } from '../lib/claude-usage'
 import { recordSignals, isReflectDisabled } from '../lib/reflect-signals'
-
-const resolveVerifyCwd = (worktreeRoot: string): string => {
-  const hasProject = (dir: string): boolean =>
-    existsSync(resolve(dir, 'package.json')) &&
-    existsSync(resolve(dir, 'tsconfig.json'))
-  if (hasProject(worktreeRoot)) return worktreeRoot
-  const orchestrator = resolve(worktreeRoot, 'orchestrator')
-  if (hasProject(orchestrator)) return orchestrator
-  return worktreeRoot
-}
+import { resolveVerifyCwd } from '../lib/derive-repro-command'
 
 const planSchema = z
   .object({

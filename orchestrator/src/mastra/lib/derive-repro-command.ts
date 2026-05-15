@@ -1,11 +1,40 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+
+/**
+ * Mirror of `resolveVerifyCwd` in `workflows/implement-workflow.ts`. The
+ * verify step doesn't always run at the worktree root: if the project
+ * lives in a subdirectory (e.g. `orchestrator/` in this repo), verify
+ * resolves there instead. A repro command rooted at the worktree would
+ * not actually reproduce the failure — it would either fail to find the
+ * test runner or run a different test set. Both call sites must use the
+ * same heuristic; keeping the implementation here and importing from
+ * the workflow guarantees they cannot drift.
+ *
+ * Heuristic: a directory is a project if it has both `package.json` and
+ * `tsconfig.json`. Worktree root wins; otherwise fall back to
+ * `<worktreeRoot>/orchestrator`; otherwise return the worktree root
+ * unchanged.
+ */
+export const resolveVerifyCwd = (worktreeRoot: string): string => {
+  const hasProject = (dir: string): boolean =>
+    existsSync(resolve(dir, 'package.json')) &&
+    existsSync(resolve(dir, 'tsconfig.json'))
+  if (hasProject(worktreeRoot)) return worktreeRoot
+  const orchestrator = resolve(worktreeRoot, 'orchestrator')
+  if (hasProject(orchestrator)) return orchestrator
+  return worktreeRoot
+}
 
 /**
  * Derive a deterministic command that reproduces a verify failure from a
  * known worktree. The orchestrator already knows the failing step and the
  * worktree path; the recovery / investigator agent should not have to
  * guess.
+ *
+ * The emitted `cd` target is resolved via {@link resolveVerifyCwd} so the
+ * command points at the same directory verify ran in — not always the
+ * worktree root.
  *
  * Returns null when the failing step is not one of the supported verify
  * steps. The caller decides whether to include a `## Reproduce` section.
@@ -16,16 +45,18 @@ export const deriveReproCommand = (
 ): string | null => {
   if (!worktreePath) return null
 
+  const cwd = resolveVerifyCwd(worktreePath)
+
   if (failingStep === 'verify:typecheck') {
-    return `cd ${worktreePath} && npx tsc -p .`
+    return `cd ${cwd} && npx tsc -p .`
   }
 
   if (failingStep === 'verify:test') {
-    const testScript = pickTestScriptCommand(worktreePath)
+    const testScript = pickTestScriptCommand(cwd)
     if (testScript) {
-      return `cd ${worktreePath} && ${testScript}`
+      return `cd ${cwd} && ${testScript}`
     }
-    return `cd ${worktreePath} && npx vitest run`
+    return `cd ${cwd} && npx vitest run`
   }
 
   return null
