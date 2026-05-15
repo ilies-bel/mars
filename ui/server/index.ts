@@ -2,6 +2,7 @@ import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { loadAgents } from './agents.ts'
 import { StateDb, TaskDb } from './db.ts'
+import { listTerminalEvents } from './events.ts'
 import { resolveRepo } from './repo.ts'
 import { SseHub } from './sse.ts'
 import { listStaleWorktrees } from './staleWorktrees.ts'
@@ -133,6 +134,15 @@ export const startServer = async (
           const blocked = inboxTasks.filter((t) => t.status === 'blocked')
           const failed = inboxTasks.filter((t) => t.status === 'failed')
           return jsonResponse(200, { drafts, blocked, failed })
+        } catch (err) {
+          return jsonResponse(500, { error: (err as Error).message })
+        }
+      }
+
+      if (path === '/api/events') {
+        try {
+          const events = await listTerminalEvents(db)
+          return jsonResponse(200, { events })
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }
