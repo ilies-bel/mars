@@ -26,8 +26,8 @@ things aggregate reflection cannot see:
 The CLI persists a structured JSON report under
 `.mars/deep-reflections/<task-id>-<iso>.json` (gitignored) and inserts
 "save"-verdict findings as draft ideas with `source='reflection'`.
-Ideas are **never auto-run** — they are proposals for the user (or
-`/mars:next`) to triage.
+Ideas are **never auto-run** — they are proposals for the user to
+triage.
 
 This skill does **not** invent findings itself. It runs the CLI, then
 points the user at the report and the resulting draft ideas.
@@ -63,6 +63,41 @@ why-picked) so the user can see what was chosen.
 `mars deep-reflect` is single-session by design. **Do not** loop it
 over multiple ids; if the user wants several arcs reviewed, run the
 skill once per id.
+
+## Output contract
+
+The skill's chat response is a structured relay of the CLI's output —
+**not** a re-analysis. The LLM does not re-rank, re-summarise, or
+re-score; it surfaces what the CLI already produced, in this fixed
+shape, in this order:
+
+1. **Pick line** — verbatim from the CLI:
+   `task <id> (status=<status>, cost=$<usd>, picked: <reason>)`
+   or `task <id> (explicit selection)`.
+2. **Transcript size** — verbatim:
+   `loading transcript: <n> event(s), verifyOutput=<n> chars | none`.
+3. **Summary** — the CLI's `Summary:` line if present, else omit.
+4. **Tool-call stats** — `Tool calls: <total> total — Edit=N, Bash=N, …`.
+5. **Top 3 dissonant calls** — the CLI's printed `Top dissonant calls`
+   block, kept as-is (severity, eventIndex, tool, stated→actual). If
+   the CLI printed none, say so in one line.
+6. **Verify mismatch** — severity + claimed→actual, only if the CLI
+   reported one.
+7. **Root cause** — the CLI's `Root cause:` line if present.
+8. **Verdict counts** — `Suggestions: <saved> saved, <absorbed>
+   absorbed, <dropped> dropped`.
+9. **Report path** — the absolute `.mars/deep-reflections/<task>-<iso>.json`
+   path from `Full report:`.
+10. **Next step** — only if `saved > 0`: point at
+    `mars idea list --source reflection --status draft` and
+    `/mars:grill <idea-id>`.
+
+Rules:
+- Do **not** add findings the CLI did not print.
+- Do **not** paraphrase severity, intent, or outcome — quote.
+- Do **not** `cat` or `Read` the JSON report.
+- If the CLI emits a non-zero exit code line, surface it verbatim as a
+  final note; do not retry.
 
 ## Plan
 
@@ -102,9 +137,9 @@ skill once per id.
    ```
    Then tell them how to act:
    ```
-   To shape a reflection idea into a runnable task: /mars:next <idea-id>
+   To shape a reflection idea into a runnable task: /mars:grill <idea-id>
    ```
-   Do **not** run `/mars:next` yourself — that is a separate
+   Do **not** run `/mars:grill` yourself — that is a separate
    user-driven step.
 
 ## Conventions
@@ -120,7 +155,7 @@ skill once per id.
 - **Repo resolution.** The CLI resolves the target repo itself. Do not
   pass `--repo` unless the user explicitly provided one.
 - **No auto-promotion.** Reflection ideas stay in `draft` status. This
-  skill does not call `mars idea promote`, `/mars:next`, or any write
+  skill does not call `mars idea promote`, `/mars:grill`, or any write
   verb beyond `mars deep-reflect` itself.
 
 ## Failure handling
@@ -150,7 +185,7 @@ skill once per id.
 > `ls -1t .mars/deep-reflections/mars-7f86263a-*.json | head -1` and
 > tells the user the path. If new draft ideas landed, points at
 > `mars idea list --source reflection --status draft` and
-> `/mars:next <idea-id>` to shape one into a task.
+> `/mars:grill <idea-id>` to shape one into a task.
 >
 > User: `/mars:deep-reflect` (no id)
 >

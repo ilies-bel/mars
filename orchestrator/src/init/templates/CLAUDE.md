@@ -5,12 +5,20 @@
 TypeScript CLI (`mars`) + orchestrator running Claude Code in parallel
 git worktrees, read-only frontend (`ui/`), design drafts (`design/`).
 
+## Project status
+
+Mars is an ongoing project with no external users yet. **Every change is
+a hard cut.** No backwards-compat shims, no deprecation aliases, no
+"keep both for now" — rename, move, or delete in one step and update
+every call site in the same change. No feature flags or migration
+windows for internal API churn. If a name, signature, or schema is
+wrong, fix it everywhere now; do not leave the old form behind.
+
 ## Routing
 
-Route silently between three actions: enqueue (`mars task add "..."`),
-grill conversationally, or edit directly. Never name the routes, narrate
-the decision, or ask the user to pick. Reads and searches are always
-direct.
+Route silently between two actions: enqueue (`mars task add "..."`) or
+grill conversationally. Never name the routes, narrate the decision, or
+ask the user to pick. Reads and searches are always direct.
 
 Enqueue by default. Grill instead when any of these hold:
 
@@ -22,8 +30,21 @@ Enqueue by default. Grill instead when any of these hold:
 - conflicts with an existing ADR, invariant, or queued work.
 
 If both signals fire, grill — by asking a sharpening question, not by
-asking the user to choose. Edit directly only when the user explicitly
-opts in for this session.
+asking the user to choose.
+
+**Direct editing on `main` is a last resort, not a third route.** It is
+never silent and never implied. The bar is all of:
+
+- the user explicitly opts in *for this specific change* (a prior
+  session-level "you can edit directly" does **not** carry over);
+- the orchestrator path is genuinely unavailable or unsuitable (e.g.
+  the orchestrator itself is broken, or the change is a single-line
+  CLAUDE.md / docs tweak the user just dictated);
+- you state out loud that you are bypassing the orchestrator and why,
+  before the first `Edit`/`Write`.
+
+When in doubt, enqueue. A redundant task is cheap; a silent commit on
+`main` is not.
 
 ## Tasks
 
@@ -31,9 +52,10 @@ Tasks live in `.mars/queue.db`. Enqueue via `mars task add "..."`; the
 orchestrator dispatches automatically (worktree → code → verify → merge).
 Inspect via `mars list` or Mastra Studio.
 
-Default mutations route through the orchestrator. Direct `Edit`/`Write`
-on the working tree only when the user has explicitly opted in for this
-session.
+**All mutations route through the orchestrator.** Direct `Edit`/`Write`
+on the working tree (i.e. on `main`) is a last resort — see Routing
+above. Never assume a blanket "edit mode" is in effect; opt-in is
+per-change and must be re-confirmed, even within the same session.
 
 ## Top-level directories
 
@@ -70,6 +92,28 @@ them stores a typed spec; the implementor receives `<files>`, `<verify>`,
 `<done>`, `<task_type>`, `<task_id>` sections so completion is a
 checklist. The slicer always emits structured tasks; free-prose still
 works and degrades to prompt-only.
+
+## Blockers
+
+Blocker edges live in the `task_blockers` junction table (`task_id` waits
+on `blocker_task_id`). A task in `blocked` only flips to `queued` once
+**every** one of its blockers reaches `done`; the daemon's
+`onBlockerTaskCompleted` runs on each completion, and `recoverBlockedTasks`
+re-checks at daemon startup so a crash between completion and unblock
+doesn't strand work.
+
+- Create edges at enqueue with `mars task add ... --blocked-by <id>`
+  (repeatable; each id must already exist) or after the fact with
+  `mars block <task-id> <blocker-id> [<blocker-id> ...]`.
+- `mars unblock <id> <blocker-id> ...` removes specific edges (status
+  unchanged). `mars unblock <id>` with no blocker ids is phantom-recovery:
+  it clears all edges and flips the task to `failed` so it can be
+  `mars purge`d or `mars restart`ed.
+- Dependents whose retry budget is already exhausted at unblock time go
+  to `failed` with an inbox item rather than `queued`.
+- Coders that can't make progress should emit a `--blocked-by $TASK_ID`
+  follow-up instead of bailing; the deviation-rules brief in the
+  orchestrator notes spells this out.
 
 ## Orchestrator notes
 
