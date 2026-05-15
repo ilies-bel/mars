@@ -61,7 +61,9 @@ const staticResponse = (root: string, urlPath: string): Response | null => {
   return new Response(Bun.file(target), { headers: { 'Content-Type': mime } })
 }
 
-export const startServer = async (args: CliArgs): Promise<void> => {
+export const startServer = async (
+  args: CliArgs,
+): Promise<ReturnType<typeof Bun.serve>> => {
   const ctx = resolveRepo(args.repo)
   const db = new TaskDb(ctx.queueDbPath)
   await db.init()
@@ -115,6 +117,22 @@ export const startServer = async (args: CliArgs): Promise<void> => {
         try {
           const agents = await loadAgents(ctx.repoRoot)
           return jsonResponse(200, { agents })
+        } catch (err) {
+          return jsonResponse(500, { error: (err as Error).message })
+        }
+      }
+
+      if (path === '/api/inbox') {
+        try {
+          const ideasExist = await stateDb.ideasTableExists()
+          const drafts = ideasExist ? await stateDb.listDraftFeatures() : []
+          const tasksExist = await db.tableExists()
+          const inboxTasks = tasksExist
+            ? await db.listTasksByStatus(['blocked', 'failed'])
+            : []
+          const blocked = inboxTasks.filter((t) => t.status === 'blocked')
+          const failed = inboxTasks.filter((t) => t.status === 'failed')
+          return jsonResponse(200, { drafts, blocked, failed })
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }
@@ -177,6 +195,7 @@ export const startServer = async (args: CliArgs): Promise<void> => {
   console.log(`mars-ui  repo=${ctx.repoRoot}`)
   console.log(`         db=${ctx.queueDbPath}`)
   console.log(`         listening on ${url}`)
+  return server
 }
 
 if (import.meta.main) {

@@ -134,6 +134,13 @@ export class TaskDb {
     return r.rows.map((row) => rowToTask(row as unknown as TaskRow))
   }
 
+  async listTasksByStatus(statuses: TaskStatus[]): Promise<Task[]> {
+    if (statuses.length === 0) return []
+    const all = await this.listTasks()
+    const wanted = new Set<TaskStatus>(statuses)
+    return all.filter((t) => wanted.has(t.status))
+  }
+
   async tableExists(): Promise<boolean> {
     const r = await this.client.execute(
       `SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'`,
