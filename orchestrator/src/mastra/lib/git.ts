@@ -218,7 +218,11 @@ export const runSubprocessStreaming = (
   env?: NodeJS.ProcessEnv,
 ): Promise<RunSubprocessResult> =>
   new Promise((resolveFn) => {
-    const child = spawn(cmd, args, { cwd, env: env ?? process.env })
+    const child = spawn(cmd, args, {
+      cwd,
+      env: env ?? process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     if (typeof child.pid === 'number') liveChildPids.add(child.pid)
     let stdout = ''
     let stderr = ''
