@@ -780,7 +780,10 @@ const main = async (): Promise<void> => {
       console.log('dry run: no files written')
       return
     }
-    if (result.status === 'aborted-existing') {
+    if (
+      result.status === 'aborted-existing' ||
+      result.status === 'aborted-conflict'
+    ) {
       console.error(result.message)
       process.exit(1)
     }

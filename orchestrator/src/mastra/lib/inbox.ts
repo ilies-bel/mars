@@ -84,7 +84,7 @@ const computeFingerprint = (kind: string, signature: string): string =>
 
 const generateInboxId = (): string => randomUUID().slice(0, 8)
 
-const initInbox = async (): Promise<void> => {
+export const initInbox = async (): Promise<void> => {
   if (initialised) return
   const c = getClient()
   await c.execute(`

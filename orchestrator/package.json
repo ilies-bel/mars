@@ -7,6 +7,9 @@
     "mars": "./bin/mars.mjs"
   },
   "scripts": {
+    "sync-claude-templates": "bash ./scripts/sync-claude-templates.sh",
+    "prebuild": "bash ./scripts/sync-claude-templates.sh",
+    "pretest": "bash ./scripts/sync-claude-templates.sh",
     "test": "vitest run",
     "dev": "mastra dev",
     "build": "mastra build",
