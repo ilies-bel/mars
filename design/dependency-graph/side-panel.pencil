@@ -1,0 +1,1057 @@
+{
+  "version": "2.11",
+  "children": [
+    {
+      "type": "frame",
+      "id": "sp-root",
+      "x": 0,
+      "y": 0,
+      "name": "Mars DS — Dependency graph: side-panel (slice 3/6)",
+      "width": 1440,
+      "fill": "$bg-light",
+      "layout": "vertical",
+      "gap": 32,
+      "padding": 48,
+      "children": [
+        {
+          "type": "frame",
+          "id": "sp-hdr",
+          "name": "Artboard Header",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 6,
+          "children": [
+            {
+              "type": "text",
+              "id": "sp-hdr-t",
+              "name": "title",
+              "fill": "$mars-night",
+              "content": "Side-panel — task-detail dependency graph",
+              "fontFamily": "Inter",
+              "fontSize": 32,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "sp-hdr-s",
+              "name": "sub",
+              "fill": "$muted-light",
+              "content": "Opens when operator clicks a node in the graph. Read-only. Shows the detail the node itself omits.",
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "sp-hdr-r",
+              "name": "rules",
+              "fill": "$muted-light",
+              "content": "No write controls (no Resolve / Retry / Unblock buttons). Inbox link is a navigation affordance — clicking it routes to /mars:inbox, never acts in place.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "sp-row",
+          "name": "Mocks row",
+          "width": "fill_container",
+          "layout": "horizontal",
+          "gap": 32,
+          "alignItems": "start",
+          "children": [
+
+            {
+              "type": "frame",
+              "id": "mockA",
+              "name": "Mock A — full detail",
+              "width": 480,
+              "layout": "vertical",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "mockA-cap",
+                  "name": "caption",
+                  "fill": "$mars-night",
+                  "content": "A. Node with every field populated",
+                  "fontFamily": "Inter",
+                  "fontSize": 16,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "mockA-cap-sub",
+                  "name": "captionSub",
+                  "fill": "$muted-light",
+                  "content": "Failed task that spawned a fix-task and produced an inbox item.",
+                  "fontFamily": "Inter",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+
+                {
+                  "type": "frame",
+                  "id": "panelA",
+                  "name": "side-panel",
+                  "width": "fill_container",
+                  "fill": "$surface-light",
+                  "cornerRadius": 8,
+                  "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                  "layout": "vertical",
+                  "gap": 0,
+                  "children": [
+
+                    {
+                      "type": "frame",
+                      "id": "panelA-hdr",
+                      "name": "panelHeader",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 20,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "panelA-hdr-row",
+                          "name": "panelHeaderRow",
+                          "width": "fill_container",
+                          "layout": "horizontal",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "panelA-status",
+                              "name": "statusChip — needs-attention",
+                              "fill": "$mars-rust",
+                              "cornerRadius": 4,
+                              "padding": 4,
+                              "gap": 0,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "panelA-status-t",
+                                  "name": "statusText",
+                                  "fill": "$surface-light",
+                                  "content": "needs-attention",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 10,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "panelA-id",
+                              "name": "taskId",
+                              "fill": "$muted-light",
+                              "content": "mars-7af3c2e1",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "panelA-title",
+                          "name": "taskTitle",
+                          "fill": "$mars-night",
+                          "content": "Add idempotency guard to task-claim transaction",
+                          "fontFamily": "Inter",
+                          "fontSize": 16,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+
+                    { "type": "frame", "id": "panelA-sep1", "name": "sep", "width": "fill_container", "height": 1, "fill": "$border-light" },
+
+                    {
+                      "type": "frame",
+                      "id": "panelA-body",
+                      "name": "panelBody",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 16,
+                      "padding": 20,
+                      "children": [
+
+                        {
+                          "type": "frame",
+                          "id": "panelA-f1",
+                          "name": "field: failure signature",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "panelA-f1-l",
+                              "name": "label",
+                              "fill": "$muted-light",
+                              "content": "FAILURE SIGNATURE",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            },
+                            {
+                              "type": "text",
+                              "id": "panelA-f1-v",
+                              "name": "value",
+                              "fill": "$mars-night",
+                              "content": "verify:typecheck-error",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+
+                        {
+                          "type": "frame",
+                          "id": "panelA-f2",
+                          "name": "field: fix-task link",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "panelA-f2-l",
+                              "name": "label",
+                              "fill": "$muted-light",
+                              "content": "FIX-TASK",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            },
+                            {
+                              "type": "text",
+                              "id": "panelA-f2-v",
+                              "name": "value (intra-graph link — selects the fix-task node, does not navigate away)",
+                              "fill": "$mars-night",
+                              "content": "mars-9b021ddc — Backfill missing type narrowings in claim.ts",
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+
+                        {
+                          "type": "frame",
+                          "id": "panelA-f3",
+                          "name": "field: worktree path",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "panelA-f3-l",
+                              "name": "label",
+                              "fill": "$muted-light",
+                              "content": "WORKTREE PATH",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            },
+                            {
+                              "type": "text",
+                              "id": "panelA-f3-v",
+                              "name": "value",
+                              "fill": "$mars-night",
+                              "content": ".mars/worktrees/mars-7af3c2e1/",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+
+                        {
+                          "type": "frame",
+                          "id": "panelA-f4",
+                          "name": "field: final commit",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "panelA-f4-l",
+                              "name": "label",
+                              "fill": "$muted-light",
+                              "content": "FINAL COMMIT",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            },
+                            {
+                              "type": "text",
+                              "id": "panelA-f4-v",
+                              "name": "value",
+                              "fill": "$mars-night",
+                              "content": "4a91c2b  wip: guard claim() against double-insert (verify failed)",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+
+                        {
+                          "type": "frame",
+                          "id": "panelA-f5",
+                          "name": "field: error text",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "panelA-f5-l",
+                              "name": "label",
+                              "fill": "$muted-light",
+                              "content": "ERROR TEXT",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "panelA-f5-box",
+                              "name": "code box",
+                              "width": "fill_container",
+                              "fill": "$bg-light",
+                              "cornerRadius": 4,
+                              "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                              "padding": 10,
+                              "gap": 2,
+                              "layout": "vertical",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "panelA-f5-1",
+                                  "name": "errLine1",
+                                  "fill": "$mars-night",
+                                  "content": "src/queue/claim.ts:42:18 - error TS2532: Object is possibly 'undefined'.",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "panelA-f5-2",
+                                  "name": "errLine2",
+                                  "fill": "$muted-light",
+                                  "content": "  42   return rows[0].id;",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "panelA-f5-3",
+                                  "name": "errLine3",
+                                  "fill": "$muted-light",
+                                  "content": "                ~~~~~~~~~~",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "panelA-f5-4",
+                                  "name": "errLine4",
+                                  "fill": "$muted-light",
+                                  "content": "Found 1 error in src/queue/claim.ts:42",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+
+                        {
+                          "type": "frame",
+                          "id": "panelA-f6",
+                          "name": "field: blocker list",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 6,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "panelA-f6-l",
+                              "name": "label",
+                              "fill": "$muted-light",
+                              "content": "BLOCKED BY (2)",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "panelA-f6-r1",
+                              "name": "blockerRow1",
+                              "width": "fill_container",
+                              "layout": "horizontal",
+                              "gap": 8,
+                              "padding": 8,
+                              "fill": "$bg-light",
+                              "cornerRadius": 4,
+                              "alignItems": "start",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "panelA-f6-r1-id",
+                                  "name": "blockerId",
+                                  "fill": "$muted-light",
+                                  "content": "mars-9b021ddc",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "panelA-f6-r1-col",
+                                  "name": "blockerCol",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "panelA-f6-r1-t",
+                                      "name": "blockerTitle",
+                                      "fill": "$mars-night",
+                                      "content": "Backfill missing type narrowings in claim.ts",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "panelA-f6-r1-r",
+                                      "name": "blockerReason",
+                                      "fill": "$muted-light",
+                                      "content": "reason: fix-task for verify:typecheck-error",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 11,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "panelA-f6-r2",
+                              "name": "blockerRow2",
+                              "width": "fill_container",
+                              "layout": "horizontal",
+                              "gap": 8,
+                              "padding": 8,
+                              "fill": "$bg-light",
+                              "cornerRadius": 4,
+                              "alignItems": "start",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "panelA-f6-r2-id",
+                                  "name": "blockerId",
+                                  "fill": "$muted-light",
+                                  "content": "mars-2c11fa44",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "panelA-f6-r2-col",
+                                  "name": "blockerCol",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "panelA-f6-r2-t",
+                                      "name": "blockerTitle",
+                                      "fill": "$mars-night",
+                                      "content": "Migrate task_claims to include attempt_id column",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "panelA-f6-r2-r",
+                                      "name": "blockerReason",
+                                      "fill": "$muted-light",
+                                      "content": "reason: prerequisite schema change",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 11,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+
+                        { "type": "frame", "id": "panelA-sep2", "name": "sep", "width": "fill_container", "height": 1, "fill": "$border-light" },
+
+                        {
+                          "type": "frame",
+                          "id": "panelA-f7",
+                          "name": "field: inbox deep-link",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "panelA-f7-l",
+                              "name": "label",
+                              "fill": "$muted-light",
+                              "content": "INBOX",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "panelA-f7-link",
+                              "name": "deepLink — styled as navigation affordance (link color, arrow, underline). NOT a button.",
+                              "width": "fill_container",
+                              "layout": "horizontal",
+                              "gap": 6,
+                              "padding": 10,
+                              "alignItems": "center",
+                              "fill": "$bg-light",
+                              "cornerRadius": 4,
+                              "stroke": { "align": "inside", "thickness": 1, "fill": "$mars-flame" },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "panelA-f7-icon",
+                                  "name": "arrowIcon",
+                                  "fill": "$mars-flame",
+                                  "content": "↗",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "panelA-f7-route",
+                                  "name": "linkRoute",
+                                  "fill": "$mars-flame",
+                                  "content": "Open in /mars:inbox  →  recovery-failed: verify:typecheck-error",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "600",
+                                  "textDecoration": "underline"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "panelA-f7-hint",
+                              "name": "linkHint",
+                              "fill": "$muted-light",
+                              "content": "Routes to /mars:inbox#item-d4f2 — does not resolve in place.",
+                              "fontFamily": "Inter",
+                              "fontSize": 11,
+                              "fontWeight": "normal",
+                              "fontStyle": "italic"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+
+                    { "type": "frame", "id": "panelA-sep3", "name": "sep", "width": "fill_container", "height": 1, "fill": "$border-light" },
+
+                    {
+                      "type": "frame",
+                      "id": "panelA-foot",
+                      "name": "panelFooter — read-only notice",
+                      "width": "fill_container",
+                      "padding": 12,
+                      "fill": "$bg-light",
+                      "layout": "horizontal",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "panelA-foot-i",
+                          "name": "lockIcon",
+                          "fill": "$muted-light",
+                          "content": "🔒",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "panelA-foot-t",
+                          "name": "footerText",
+                          "fill": "$muted-light",
+                          "content": "Read-only. Resolve / retry / unblock live in /mars:inbox and the CLI.",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+
+                {
+                  "type": "text",
+                  "id": "mockA-note",
+                  "name": "designNote",
+                  "fill": "$muted-light",
+                  "content": "Note: nothing in this panel is a write control. The single primary-color element is the inbox deep-link, which is a navigation affordance — arrow icon (↗), link-color stroke and text, underline. No 'Resolve', 'Retry', or 'Unblock' buttons appear anywhere.",
+                  "fontFamily": "Inter",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+
+            {
+              "type": "frame",
+              "id": "mockB",
+              "name": "Mock B — absent-field state",
+              "width": 480,
+              "layout": "vertical",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "mockB-cap",
+                  "name": "caption",
+                  "fill": "$mars-night",
+                  "content": "B. Node with no failure signature and no inbox item",
+                  "fontFamily": "Inter",
+                  "fontSize": 16,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "mockB-cap-sub",
+                  "name": "captionSub",
+                  "fill": "$muted-light",
+                  "content": "Healthy in-flight task — never failed, never produced an inbox item. Absent fields are removed from the panel, not shown as empty placeholders.",
+                  "fontFamily": "Inter",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+
+                {
+                  "type": "frame",
+                  "id": "panelB",
+                  "name": "side-panel",
+                  "width": "fill_container",
+                  "fill": "$surface-light",
+                  "cornerRadius": 8,
+                  "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                  "layout": "vertical",
+                  "gap": 0,
+                  "children": [
+
+                    {
+                      "type": "frame",
+                      "id": "panelB-hdr",
+                      "name": "panelHeader",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 20,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "panelB-hdr-row",
+                          "name": "panelHeaderRow",
+                          "width": "fill_container",
+                          "layout": "horizontal",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "panelB-status",
+                              "name": "statusChip — in-flight",
+                              "fill": "$mars-ochre",
+                              "cornerRadius": 4,
+                              "padding": 4,
+                              "gap": 0,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "panelB-status-t",
+                                  "name": "statusText",
+                                  "fill": "$mars-night",
+                                  "content": "in-flight",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 10,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "panelB-id",
+                              "name": "taskId",
+                              "fill": "$muted-light",
+                              "content": "mars-3e8e0f12",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "panelB-title",
+                          "name": "taskTitle",
+                          "fill": "$mars-night",
+                          "content": "Wire SSE stream from orchestrator to ui /api/runs",
+                          "fontFamily": "Inter",
+                          "fontSize": 16,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+
+                    { "type": "frame", "id": "panelB-sep1", "name": "sep", "width": "fill_container", "height": 1, "fill": "$border-light" },
+
+                    {
+                      "type": "frame",
+                      "id": "panelB-body",
+                      "name": "panelBody",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 16,
+                      "padding": 20,
+                      "children": [
+
+                        {
+                          "type": "text",
+                          "id": "panelB-omit-note",
+                          "name": "omitNote — explains absence (not a placeholder)",
+                          "fill": "$muted-light",
+                          "content": "Not shown for this task: FAILURE SIGNATURE, INBOX  ·  this task has not failed and has not produced an inbox item, so those sections are omitted entirely.",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal",
+                          "fontStyle": "italic"
+                        },
+
+                        { "type": "frame", "id": "panelB-sep-omit", "name": "sep", "width": "fill_container", "height": 1, "fill": "$border-light" },
+
+                        {
+                          "type": "frame",
+                          "id": "panelB-f2",
+                          "name": "field: fix-task link (absent — task spawned no fix-task)",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "panelB-f2-l",
+                              "name": "label",
+                              "fill": "$muted-light",
+                              "content": "FIX-TASK",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            },
+                            {
+                              "type": "text",
+                              "id": "panelB-f2-v",
+                              "name": "value — explicit absence wording, not '(none)' or empty box",
+                              "fill": "$muted-light",
+                              "content": "— this task has not spawned a fix-task",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal",
+                              "fontStyle": "italic"
+                            }
+                          ]
+                        },
+
+                        {
+                          "type": "frame",
+                          "id": "panelB-f3",
+                          "name": "field: worktree path",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "panelB-f3-l",
+                              "name": "label",
+                              "fill": "$muted-light",
+                              "content": "WORKTREE PATH",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            },
+                            {
+                              "type": "text",
+                              "id": "panelB-f3-v",
+                              "name": "value",
+                              "fill": "$mars-night",
+                              "content": ".mars/worktrees/mars-3e8e0f12/",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+
+                        {
+                          "type": "frame",
+                          "id": "panelB-f4",
+                          "name": "field: final commit (absent — task in flight, no final commit yet)",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "panelB-f4-l",
+                              "name": "label",
+                              "fill": "$muted-light",
+                              "content": "FINAL COMMIT",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            },
+                            {
+                              "type": "text",
+                              "id": "panelB-f4-v",
+                              "name": "value — explicit absence wording, scoped to status",
+                              "fill": "$muted-light",
+                              "content": "— task is still in flight; no final commit yet",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal",
+                              "fontStyle": "italic"
+                            }
+                          ]
+                        },
+
+                        {
+                          "type": "frame",
+                          "id": "panelB-f5",
+                          "name": "field: error text (absent — task has not errored)",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "panelB-f5-l",
+                              "name": "label",
+                              "fill": "$muted-light",
+                              "content": "ERROR TEXT",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            },
+                            {
+                              "type": "text",
+                              "id": "panelB-f5-v",
+                              "name": "value — explicit absence wording",
+                              "fill": "$muted-light",
+                              "content": "— task has not produced an error",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal",
+                              "fontStyle": "italic"
+                            }
+                          ]
+                        },
+
+                        {
+                          "type": "frame",
+                          "id": "panelB-f6",
+                          "name": "field: blocker list (empty — no blockers)",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "panelB-f6-l",
+                              "name": "label",
+                              "fill": "$muted-light",
+                              "content": "BLOCKED BY (0)",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            },
+                            {
+                              "type": "text",
+                              "id": "panelB-f6-v",
+                              "name": "value — explicit absence wording, not '(none)'",
+                              "fill": "$muted-light",
+                              "content": "— task is not waiting on anything",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal",
+                              "fontStyle": "italic"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+
+                    { "type": "frame", "id": "panelB-sep3", "name": "sep", "width": "fill_container", "height": 1, "fill": "$border-light" },
+
+                    {
+                      "type": "frame",
+                      "id": "panelB-foot",
+                      "name": "panelFooter — read-only notice",
+                      "width": "fill_container",
+                      "padding": 12,
+                      "fill": "$bg-light",
+                      "layout": "horizontal",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "panelB-foot-i",
+                          "name": "lockIcon",
+                          "fill": "$muted-light",
+                          "content": "🔒",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "panelB-foot-t",
+                          "name": "footerText",
+                          "fill": "$muted-light",
+                          "content": "Read-only. Resolve / retry / unblock live in /mars:inbox and the CLI.",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+
+                {
+                  "type": "text",
+                  "id": "mockB-note",
+                  "name": "designNote",
+                  "fill": "$muted-light",
+                  "content": "Absent-field rule: sections that cannot apply (FAILURE SIGNATURE, INBOX) are omitted from the panel entirely and called out once at the top. Sections that may apply but happen to be empty for this particular task (FIX-TASK, FINAL COMMIT, ERROR TEXT, BLOCKED BY) keep their label and replace the value with explicit italic prose — never '(none)', never an empty input.",
+                  "fontFamily": "Inter",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "legend",
+          "name": "Legend — acceptance criteria checklist",
+          "width": "fill_container",
+          "fill": "$surface-light",
+          "cornerRadius": 8,
+          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+          "padding": 20,
+          "layout": "vertical",
+          "gap": 8,
+          "children": [
+            {
+              "type": "text",
+              "id": "legend-t",
+              "name": "legendTitle",
+              "fill": "$mars-night",
+              "content": "Slice 3 acceptance criteria — where they show up in this draft",
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "legend-1",
+              "name": "ac1",
+              "fill": "$mars-night",
+              "content": "✓ All required fields labelled on Mock A: FAILURE SIGNATURE, FIX-TASK, WORKTREE PATH, FINAL COMMIT, ERROR TEXT, BLOCKED BY, INBOX.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "legend-2",
+              "name": "ac2",
+              "fill": "$mars-night",
+              "content": "✓ Mock B has no failure signature and no inbox item — both are removed from the panel and explained once at the top, not rendered as empty placeholders.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "legend-3",
+              "name": "ac3",
+              "fill": "$mars-night",
+              "content": "✓ Inbox deep-link styled as a navigation affordance: arrow icon (↗), link-color stroke + underlined link-color text, label reads 'Open in /mars:inbox'. Distinct from any button styling.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "legend-4",
+              "name": "ac4",
+              "fill": "$mars-night",
+              "content": "✓ No write controls (Resolve / Retry / Unblock) appear in either mock; footer reiterates that those actions live in /mars:inbox and the CLI.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
