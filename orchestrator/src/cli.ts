@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs'
 import { resolveContext } from './mastra/context'
+import { MARS_VERSION } from './version'
 
 interface ParsedArgs {
   repo?: string
@@ -303,6 +304,7 @@ Commands:
                                 (defaults: port 7777, host 127.0.0.1)
   where                         print resolved repo + state directory
   help                          show this message
+  --version, -v                 print mars version and exit
 
 Plan flags for 'task add' / 'add':
   --functional <text|@file>     functional plan text (or @path to read a file)
@@ -707,7 +709,17 @@ const printCommandHelp = (cmd: string): boolean => {
 }
 
 const main = async (): Promise<void> => {
-  const { repo, flags, multiFlags, positional } = parseArgs(process.argv.slice(2))
+  const rawArgv = process.argv.slice(2)
+
+  // --version / -v short-circuits BEFORE any subcommand parsing,
+  // context resolution, or other side effects. The constant is
+  // injected at build time from package.json.
+  if (rawArgv.includes('--version') || rawArgv.includes('-v')) {
+    console.log(MARS_VERSION)
+    return
+  }
+
+  const { repo, flags, multiFlags, positional } = parseArgs(rawArgv)
   const cmd = positional[0]
   const rest = positional.slice(1)
 
