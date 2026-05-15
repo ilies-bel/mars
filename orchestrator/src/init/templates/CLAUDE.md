@@ -67,8 +67,6 @@ per-change and must be re-confirmed, even within the same session.
 
 ## Key concepts
 
-- **`mars context search/tree`** — deterministic, no-network, no-LLM
-  codebase context (`rg --json` + filtered tree). Prefer over ad-hoc grep.
 - **Orchestrator workflow** — 4 steps: `setup` (worktree on `task/<id>` off
   `main`) → `code` (`claude -p`) → `verify` → `merge` (serialized via file
   lock; coding parallel).

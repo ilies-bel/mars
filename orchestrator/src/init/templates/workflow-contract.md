@@ -15,8 +15,7 @@ You are operating inside the Mars orchestrator. Every task you run obeys this co
 
 ## Codebase context
 
-- Prefer `mars context search` and `mars context tree` over ad-hoc `grep`/`find` when those commands are available — they return deterministic, structured output.
-- Otherwise use `rg` and `ls` directly. Avoid scanning `node_modules`, `.mars/`, `.worktrees/`, or build outputs.
+- Use `rg` and `ls` directly. Avoid scanning `node_modules`, `.mars/`, `.worktrees/`, or build outputs.
 
 ## Verification
 

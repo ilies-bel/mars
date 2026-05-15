@@ -243,14 +243,12 @@ Captured here so future-you doesn't trust either side blindly.
    and `.mars/state.db`. None of those exist in the orchestrator. Vision
    is DB-first; the skill needs to be rewritten to write directly into
    `queue.db` (`plan_functional` / `plan_technical`).
-2. **`framework/cli/main.ts` and `mars context search/tree`** advertised
-   in the top-level README — no code exists. Either build or remove.
-3. **`ready` status** is in the schema and CLI but redundant with
+2. **`ready` status** is in the schema and CLI but redundant with
    `queued` per the vision. Plan to remove.
-4. **`mars run`** (synchronous batch) overlaps with `mars daemon`. Vision
+3. **`mars run`** (synchronous batch) overlaps with `mars daemon`. Vision
    says watch is canonical.
-5. **`state.db`** exists in `.mars/` but no code reads or writes it.
-6. **README points to** `agents/` and `docs/CONTRACTS.md` — neither
+4. **`state.db`** exists in `.mars/` but no code reads or writes it.
+5. **README points to** `agents/` and `docs/CONTRACTS.md` — neither
    directory/file exists. The relevant agent definitions are in
    `.agents/` and `.claude/agents/`.
 

@@ -115,8 +115,7 @@ rows). For each blocker id, run `mars show <blocker-id>` so you see what
 the blocker actually says. If a blocker references a file or symbol, read
 the file so your proposals are grounded in the code rather than a guess.
 
-Use `Read` and `Grep` for file inspection. (`mars context search/tree` is
-referenced in older docs but isn't a current CLI verb — don't try it.)
+Use `Read` and `Grep` for file inspection.
 
 # Step 3 — Decide the unblock options
 
