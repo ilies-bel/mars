@@ -105,9 +105,6 @@ will be reconciled in subsequent passes.
   `.mars/state.db`). Vision is DB-first. The skill needs to be rewritten to
   edit `queue.db` directly via `mars set-functional` / `mars set-technical`
   (or equivalent), not write markdown files.
-- **`mars context search/tree`.** The top-level README advertises a
-  deterministic ripgrep wrapper for agents. No code exists. Decide: build it
-  as a subcommand of the orchestrator CLI, or drop the claim from the README.
 - **`mars run` vs `mars daemon`.** Current code has both: `run` is a
   one-shot batch dispatcher, `daemon` is the long-running dispatcher.
   Vision says the daemon is canonical. Decide whether to keep `run` as a
