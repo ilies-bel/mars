@@ -1,0 +1,122 @@
+name: Release
+
+# Triggered when a framework version tag is pushed (e.g. v0.1.0, v0.4.2-rc.1).
+# The job builds a Bundle tarball for the tagged commit and publishes it
+# as a GitHub Release asset, alongside a sha256 sidecar so consumers can
+# verify the tarball's integrity before extracting it.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Default to read-only at workflow scope so jobs added later do not
+# inherit write access to the repository.
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish Bundle
+    runs-on: ubuntu-latest
+    # contents:write is needed to create the Release and upload assets;
+    # scoped to this job only so it cannot leak to other jobs.
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if [ -z "$TAG" ]; then
+            echo "::error::GITHUB_REF_NAME is empty; cannot resolve version tag"
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "bundle=mars-bundle-${TAG}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "sidecar=mars-bundle-${TAG}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Build Bundle tarball
+        id: bundle
+        # Placeholder Bundle build. Other slices of this PRD replace this
+        # step with a manifest-driven packager that includes exactly
+        # manifest.json plus its owned[] and hybrid[] paths. The sha256
+        # sidecar contract below does not depend on the build internals —
+        # it only requires that this step produces ${{ steps.version.outputs.bundle }}.
+        run: |
+          set -euo pipefail
+          BUNDLE="${{ steps.version.outputs.bundle }}"
+          # Use `git archive` so the tarball reflects exactly the tagged
+          # tree (no untracked / generated junk). The prefix gives the
+          # tarball a single top-level directory matching the bundle name
+          # without the .tar.gz suffix.
+          PREFIX="mars-bundle-${{ steps.version.outputs.tag }}/"
+          git archive --format=tar --prefix="$PREFIX" HEAD | gzip -n > "$BUNDLE"
+          if [ ! -s "$BUNDLE" ]; then
+            echo "::error::Bundle tarball $BUNDLE is missing or empty after build"
+            exit 1
+          fi
+
+      - name: Compute sha256 digest and write sidecar
+        id: digest
+        # The sidecar uses the canonical `sha256sum` line format:
+        #   <64-hex-digest><two spaces><tarball basename><newline>
+        # Consumers can verify with `sha256sum -c <sidecar>` from the
+        # directory containing the tarball. The digest covers the tarball
+        # bytes as published (post-gzip); we compute it here, immediately
+        # before upload, so the sidecar always matches the asset bytes.
+        run: |
+          set -euo pipefail
+          BUNDLE="${{ steps.version.outputs.bundle }}"
+          SIDECAR="${{ steps.version.outputs.sidecar }}"
+
+          if [ ! -f "$BUNDLE" ]; then
+            echo "::error::Bundle tarball $BUNDLE not found; cannot compute sha256"
+            exit 1
+          fi
+
+          DIGEST="$(sha256sum "$BUNDLE" | awk '{print $1}')"
+          if [ -z "$DIGEST" ]; then
+            echo "::error::sha256 digest for $BUNDLE was empty"
+            exit 1
+          fi
+          # Defensive: sha256 hex is exactly 64 chars. If it is not,
+          # something corrupted the digest pipeline — refuse to publish.
+          if [ "${#DIGEST}" -ne 64 ]; then
+            echo "::error::sha256 digest for $BUNDLE has wrong length (${#DIGEST}, expected 64)"
+            exit 1
+          fi
+
+          printf '%s  %s\n' "$DIGEST" "$BUNDLE" > "$SIDECAR"
+
+          if [ ! -s "$SIDECAR" ]; then
+            echo "::error::sha256 sidecar $SIDECAR was not written or is empty"
+            exit 1
+          fi
+
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish Release with Bundle and sha256 sidecar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Both assets are uploaded in a single `gh release create` call so
+        # the Release is never finalized with only the tarball attached.
+        # If digest computation failed above, this step does not run and
+        # no Release is created.
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          BUNDLE="${{ steps.version.outputs.bundle }}"
+          SIDECAR="${{ steps.version.outputs.sidecar }}"
+
+          if [ ! -s "$BUNDLE" ] || [ ! -s "$SIDECAR" ]; then
+            echo "::error::Refusing to publish Release: missing or empty asset(s) ($BUNDLE, $SIDECAR)"
+            exit 1
+          fi
+
+          gh release create "$TAG" "$BUNDLE" "$SIDECAR" \
+            --title "$TAG" \
+            --notes "Bundle release ${TAG}. Verify integrity with: sha256sum -c ${SIDECAR}"
