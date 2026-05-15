@@ -1,0 +1,124 @@
+# Mars framework manifest
+#
+# Single source of truth for every framework-owned file that gets placed in
+# a consumer repo by `mars install`. Downstream install / uninstall /
+# version logic reads this file.
+#
+# Each entry has:
+#   source       — path inside the framework repo (relative to repo root)
+#   destination  — path inside the consumer repo (relative to consumer root)
+#   executable   — if true, chmod +x after placement (defaults to false)
+#
+# The manifest is validated by `bun run scripts/validate-manifest.ts`,
+# which is wired into the root `package.json`. Validation confirms the
+# file parses cleanly and that every `source` path exists on disk.
+
+version = 1
+
+# --- Project CLAUDE.md ---------------------------------------------------
+
+[[files]]
+source = "CLAUDE.md"
+destination = "CLAUDE.md"
+executable = false
+
+# --- Claude Code project settings ---------------------------------------
+
+[[files]]
+source = ".claude/settings.json"
+destination = ".claude/settings.json"
+executable = false
+
+# --- Hooks ---------------------------------------------------------------
+
+[[files]]
+source = ".claude/hooks/warn-raw-queue-sql.sh"
+destination = ".claude/hooks/warn-raw-queue-sql.sh"
+executable = true
+
+# --- Sub-agents ----------------------------------------------------------
+
+[[files]]
+source = ".claude/agents/vcs-supervisor.md"
+destination = ".claude/agents/vcs-supervisor.md"
+executable = false
+
+# --- Mars skills (slash commands) ---------------------------------------
+
+[[files]]
+source = ".claude/skills/mars:next/SKILL.md"
+destination = ".claude/skills/mars:next/SKILL.md"
+executable = false
+
+[[files]]
+source = ".claude/skills/mars:unblock/SKILL.md"
+destination = ".claude/skills/mars:unblock/SKILL.md"
+executable = false
+
+[[files]]
+source = ".claude/skills/mars:deep-reflect/SKILL.md"
+destination = ".claude/skills/mars:deep-reflect/SKILL.md"
+executable = false
+
+[[files]]
+source = ".claude/skills/mars:to-prd/SKILL.md"
+destination = ".claude/skills/mars:to-prd/SKILL.md"
+executable = false
+
+[[files]]
+source = ".claude/skills/mars:grill/SKILL.md"
+destination = ".claude/skills/mars:grill/SKILL.md"
+executable = false
+
+[[files]]
+source = ".claude/skills/mars:reflect/SKILL.md"
+destination = ".claude/skills/mars:reflect/SKILL.md"
+executable = false
+
+[[files]]
+source = ".claude/skills/mars:inbox/SKILL.md"
+destination = ".claude/skills/mars:inbox/SKILL.md"
+executable = false
+
+# --- Mastra skill --------------------------------------------------------
+#
+# In the framework repo this skill lives at `.agents/skills/mastra/` and is
+# exposed to Claude Code via a symlink at `.claude/skills/mastra`. In a
+# consumer repo there is no `.agents/` tree, so install places the files
+# directly under `.claude/skills/mastra/` (i.e. the symlink target is
+# materialised).
+
+[[files]]
+source = ".agents/skills/mastra/SKILL.md"
+destination = ".claude/skills/mastra/SKILL.md"
+executable = false
+
+[[files]]
+source = ".agents/skills/mastra/references/migration-guide.md"
+destination = ".claude/skills/mastra/references/migration-guide.md"
+executable = false
+
+[[files]]
+source = ".agents/skills/mastra/references/embedded-docs.md"
+destination = ".claude/skills/mastra/references/embedded-docs.md"
+executable = false
+
+[[files]]
+source = ".agents/skills/mastra/references/remote-docs.md"
+destination = ".claude/skills/mastra/references/remote-docs.md"
+executable = false
+
+[[files]]
+source = ".agents/skills/mastra/references/common-errors.md"
+destination = ".claude/skills/mastra/references/common-errors.md"
+executable = false
+
+[[files]]
+source = ".agents/skills/mastra/references/create-mastra.md"
+destination = ".claude/skills/mastra/references/create-mastra.md"
+executable = false
+
+[[files]]
+source = ".agents/skills/mastra/scripts/provider-registry.mjs"
+destination = ".claude/skills/mastra/scripts/provider-registry.mjs"
+executable = true
