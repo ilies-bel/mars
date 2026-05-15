@@ -209,3 +209,7 @@ _Avoid_: supervisor scope, project root, stack scope
 **Root verify scope**:
 The repo-root verify scope whose steps run on every task as a repo-wide invariant floor, with any narrower matched verify scopes layered on top.
 _Avoid_: default scope, dot scope, baseline scope
+
+**Self-unblock follow-up**:
+A Task filed by the Coder of the currently-running Task via 'mars task add --blocks $TASK_ID', creating a task_blockers edge in which the current Task waits on the new follow-up; the workflow short-circuits the current Task to blocked before verify and re-dispatches it once the follow-up reaches done.
+_Avoid_: self-block, unblock task, blocked-by self
