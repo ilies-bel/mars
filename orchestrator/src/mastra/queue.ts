@@ -957,6 +957,51 @@ export const unblockTask = async (
   return { taskId, outcome: 'unblocked', previousStatus }
 }
 
+/**
+ * List sibling task ids that share the same `origin_id` as the given task.
+ * Used by `mars show <task-id>` to surface other tasks sliced from the same
+ * originating idea (or related task arc). Excludes the task itself.
+ *
+ * Returns an empty array when `originId === excludeTaskId` (the task is its
+ * own origin and therefore has no siblings) or when no other rows match.
+ */
+export const listSiblings = async (
+  originId: string,
+  excludeTaskId: string,
+): Promise<string[]> => {
+  if (originId === excludeTaskId) return []
+  await initQueue()
+  const r = await getClient().execute({
+    sql: `SELECT id FROM tasks
+            WHERE origin_id = ? AND id != ?
+            ORDER BY created_at ASC`,
+    args: [originId, excludeTaskId],
+  })
+  return r.rows.map((row) => (row as unknown as { id: string }).id)
+}
+
+/**
+ * List tasks that reference the given idea as their `origin_id`. Used by
+ * `mars show <idea-id>` to surface the tasks sliced from that idea. Returns
+ * id and status, ordered by creation time so the display reflects the
+ * slicing order.
+ */
+export const listTasksForIdea = async (
+  ideaId: string,
+): Promise<Array<{ id: string; status: string }>> => {
+  await initQueue()
+  const r = await getClient().execute({
+    sql: `SELECT id, status FROM tasks
+            WHERE origin_id = ?
+            ORDER BY created_at ASC`,
+    args: [ideaId],
+  })
+  return r.rows.map((row) => {
+    const r = row as unknown as { id: string; status: string }
+    return { id: r.id, status: r.status }
+  })
+}
+
 export const listBlockers = async (taskId: string): Promise<string[]> => {
   await initQueue()
   const r = await getClient().execute({

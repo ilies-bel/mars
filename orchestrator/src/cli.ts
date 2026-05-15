@@ -1239,10 +1239,25 @@ const main = async (): Promise<void> => {
       if (task.failureSignature) {
         console.log(`failureSig: ${task.failureSignature}`)
       }
-      const { listBlockers } = await import('./mastra/queue')
+      const { listBlockers, listSiblings } = await import('./mastra/queue')
       const blockerTaskIds = await listBlockers(task.id)
       if (blockerTaskIds.length > 0) {
         console.log(`blockedBy:  ${blockerTaskIds.join(', ')}`)
+      }
+      if (task.originId && task.originId !== task.id) {
+        const { getIdea } = await import('./mastra/ideas')
+        const originIdea = await getIdea(task.originId).catch(() => null)
+        if (originIdea) {
+          const firstLine = originIdea.title.split('\n')[0]?.trim() ?? ''
+          const titleSuffix = firstLine.length > 0 ? ` ${firstLine}` : ''
+          console.log(`origin:     idea ${originIdea.id}${titleSuffix}`)
+        } else {
+          console.log(`origin:     task ${task.originId}`)
+        }
+        const siblings = await listSiblings(task.originId, task.id)
+        if (siblings.length > 0) {
+          console.log(`siblings:   ${siblings.join(', ')}`)
+        }
       }
       return
     }
@@ -1285,6 +1300,13 @@ const main = async (): Promise<void> => {
       if (idea.notes.trim().length > 0) {
         console.log(`notes:`)
         console.log(idea.notes)
+      }
+      const { listTasksForIdea } = await import('./mastra/queue')
+      const ideaTasks = await listTasksForIdea(idea.id)
+      if (ideaTasks.length > 0) {
+        console.log(
+          `tasks:      ${ideaTasks.map((t) => `${t.id} (${t.status})`).join(', ')}`,
+        )
       }
       return
     }
