@@ -109,6 +109,13 @@ Inspect runs at `http://localhost:4111` (`cd orchestrator && npm run dev`).
 - Register new Mastra agents/tools/workflows/scorers in
   `orchestrator/src/mastra/index.ts`.
 - Never commit `.env`, `.mars/`, or `node_modules`.
+- **Bash CWD persists across tool calls in a session.** A `cd
+  .mars/worktrees/<task-id>` to inspect a worktree leaves every later
+  `mars` invocation resolving `repoRoot()` from inside that (empty)
+  worktree — `mars inbox`/`list` will look like they were wiped. Either
+  prefix one-off inspections (`(cd .mars/worktrees/<id> && git status)`)
+  or re-anchor with `cd /Users/ib472e5l/project/perso/mars-framework`
+  before the next `mars` call.
 
 ## Loose ends
 
