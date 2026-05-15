@@ -11,6 +11,8 @@ export interface SupervisorSpec {
   scope: string
   detectedFrom: string[]
   externalSlugs: string[]
+  /** Sorted, deduplicated, flat list of technologies covering this supervisor's subtree. */
+  techs: string[]
 }
 
 export interface ManifestFinding {
@@ -102,6 +104,7 @@ const buildSpec = (
   scope,
   detectedFrom,
   externalSlugs,
+  techs: [],
 })
 
 interface DirAccumulator {
@@ -433,6 +436,15 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
         ['android-developer', 'mobile-developer'],
       ),
     )
+  }
+
+  // Finalize the per-supervisor tech list once the directory's accumulator is
+  // fully populated. The Set already deduplicates; sort yields a flat,
+  // alphabetical list. Each spec gets its own copy so a later consumer can't
+  // mutate a shared array.
+  const techList = Array.from(acc.techs).sort()
+  for (const spec of acc.supervisors) {
+    spec.techs = [...techList]
   }
 
   return acc

@@ -136,6 +136,67 @@ describe('detectStack (recursive)', () => {
     expect(reactSupervisors).toHaveLength(1)
   })
 
+  // NOTE: the PRD's manual-verification example ('./ -> ...' plus './ui -> ...')
+  // describes a root manifest with a *nested* subproject manifest. That layout
+  // is a hard NestedTechError under the walk-manifests layout contract
+  // (tech-bearing folders must be siblings, never nested). The supported
+  // multi-scope shape is sibling subprojects, so this fixture asserts the
+  // per-supervisor tech lists across two manifests at distinct scopes.
+  it('carries a sorted, deduped, flat per-supervisor tech list across two subproject manifests', () => {
+    make(root, {
+      'api/package.json': JSON.stringify({
+        name: 'api',
+        dependencies: { express: '*' },
+      }),
+      'ui/package.json': JSON.stringify({
+        name: 'ui',
+        dependencies: { react: '*', 'react-dom': '*' },
+        devDependencies: { vite: '*' },
+      }),
+    })
+
+    const detected = detectStack(root)
+
+    const node = detected.supervisors.find(
+      (s) => s.name === 'node-backend-supervisor',
+    )
+    const react = detected.supervisors.find(
+      (s) => s.name === 'react-supervisor',
+    )
+
+    expect(node?.techs).toEqual(['javascript', 'node', 'node-backend'])
+    expect(react?.techs).toEqual(['javascript', 'node', 'react', 'vite'])
+
+    for (const spec of detected.supervisors) {
+      // flat: every entry is a plain string, no nested groupings
+      expect(spec.techs.every((t) => typeof t === 'string')).toBe(true)
+      // sorted alphabetically
+      expect([...spec.techs].sort()).toEqual(spec.techs)
+      // deduplicated
+      expect(new Set(spec.techs).size).toBe(spec.techs.length)
+    }
+  })
+
+  it('resolves overlapping detections silently to the winning techs only', () => {
+    make(root, {
+      'a/package.json': JSON.stringify({
+        dependencies: { react: '*', 'react-dom': '*' },
+      }),
+      'b/package.json': JSON.stringify({
+        dependencies: { react: '*', 'react-dom': '*', vite: '*' },
+      }),
+    })
+
+    const detected = detectStack(root)
+    const reactSupervisors = detected.supervisors.filter(
+      (s) => s.name === 'react-supervisor',
+    )
+    expect(reactSupervisors).toHaveLength(1)
+    // The first (winning) detection's techs are kept; the losing
+    // detection's extra 'vite' is silently dropped, not merged.
+    expect(reactSupervisors[0]?.techs).toEqual(['javascript', 'node', 'react'])
+  })
+
   it('skips manifests under ignored directories', () => {
     make(root, {
       'node_modules/foo/package.json': '{"name":"x"}',
