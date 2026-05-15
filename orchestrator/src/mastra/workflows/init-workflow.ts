@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
 import { resolveContext } from '../context'
+import { initDatabases } from '../../init/databases'
 import {
   detectStack,
   type ManifestFinding,
@@ -17,8 +18,12 @@ import {
   minimalRenderInput,
   validateSupervisor,
 } from '../../init/render'
+import {
+  planClaudeConflicts,
+  scaffoldClaudeConfig,
+} from '../../init/scaffold'
 import { writeSlimInit, type VerifyStepEntry } from '../../init/writer'
-import { resolve } from 'node:path'
+import { relative, resolve } from 'node:path'
 
 const verifyStepSchema = z.object({
   name: z.string(),
@@ -279,6 +284,62 @@ const writeStep = createStep({
   },
 })
 
+/**
+ * Copy the framework's bundled Claude Code config (`.claude/**` + root
+ * `CLAUDE.md`) into the target repo. `runInit` pre-flights conflicts so by
+ * the time this step runs, the user has either accepted overwrite via
+ * `--force` or there is nothing to overwrite — we therefore call
+ * `scaffoldClaudeConfig` with `force: true` and treat any residual conflict
+ * (e.g. a file that appeared between pre-flight and now) as a hard error.
+ */
+const scaffoldClaudeStep = createStep({
+  id: 'scaffold-claude',
+  inputSchema: z.object({
+    written: z.array(z.string()),
+  }),
+  outputSchema: z.object({
+    written: z.array(z.string()),
+  }),
+  execute: async ({ inputData }) => {
+    const ctx = resolveContext()
+    const result = scaffoldClaudeConfig({
+      repoRoot: ctx.repoRoot,
+      force: true,
+    })
+    if (result.status === 'conflict') {
+      throw new Error(
+        `scaffold-claude: unexpected conflict after pre-flight: ${result.conflicts.join(', ')}`,
+      )
+    }
+    return { written: [...inputData.written, ...result.written] }
+  },
+})
+
+/**
+ * Materialise `.mars/queue.db` + `.mars/state.db` (tasks, ideas, inbox) so a
+ * freshly scaffolded repo is usable without waiting for the first daemon
+ * write to lazily create them. All three init paths are idempotent via
+ * `CREATE TABLE IF NOT EXISTS`.
+ */
+const initDatabasesStep = createStep({
+  id: 'init-databases',
+  inputSchema: z.object({
+    written: z.array(z.string()),
+  }),
+  outputSchema: z.object({
+    written: z.array(z.string()),
+  }),
+  execute: async ({ inputData }) => {
+    const ctx = resolveContext()
+    await initDatabases()
+    const dbWrites = [
+      relative(ctx.repoRoot, ctx.queueDbPath),
+      relative(ctx.repoRoot, ctx.stateDbPath),
+    ]
+    return { written: [...inputData.written, ...dbWrites] }
+  },
+})
+
 export const initWorkflow = createWorkflow({
   id: 'init',
   inputSchema: z.object({
@@ -292,6 +353,8 @@ export const initWorkflow = createWorkflow({
   .then(detectStep)
   .then(renderStep)
   .then(writeStep)
+  .then(scaffoldClaudeStep)
+  .then(initDatabasesStep)
   .commit()
 
 export interface RunInitOptions {
@@ -303,7 +366,7 @@ export interface RunInitOptions {
 }
 
 export interface RunInitResult {
-  status: 'ok' | 'aborted-existing' | 'dry-run'
+  status: 'ok' | 'aborted-existing' | 'aborted-conflict' | 'dry-run'
   message: string
   written?: string[]
 }
@@ -326,10 +389,31 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
     }
   }
 
-  if (existsSync(ctx.verifyConfigPath) && !opts.force) {
-    return {
-      status: 'aborted-existing',
-      message: `verify config already exists at ${ctx.verifyConfigPath}; pass --force to overwrite`,
+  // Pre-flight: aggregate every path that would be overwritten — the slim
+  // `verify.json` plus everything under `.claude/` plus root `CLAUDE.md` —
+  // so we can bail with a single message before the heavy detect/render
+  // steps spend time on a doomed run.
+  if (!opts.force) {
+    const conflicts: string[] = []
+    if (existsSync(ctx.verifyConfigPath)) {
+      conflicts.push(relative(ctx.repoRoot, ctx.verifyConfigPath))
+    }
+    conflicts.push(...planClaudeConflicts(ctx.repoRoot))
+    if (conflicts.length > 0) {
+      const list = conflicts.map((p) => `  - ${p}`).join('\n')
+      // Preserve `aborted-existing` for the verify-only path so existing
+      // callers / tests that special-case it keep working; promote to
+      // `aborted-conflict` only when scaffold targets are involved.
+      if (conflicts.length === 1 && conflicts[0] === relative(ctx.repoRoot, ctx.verifyConfigPath)) {
+        return {
+          status: 'aborted-existing',
+          message: `verify config already exists at ${ctx.verifyConfigPath}; pass --force to overwrite`,
+        }
+      }
+      return {
+        status: 'aborted-conflict',
+        message: `refusing to overwrite existing files (pass --force to replace):\n${list}`,
+      }
     }
   }
 
