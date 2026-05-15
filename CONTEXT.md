@@ -172,3 +172,6 @@ _Avoid_: short id, raw id, hex id
 
 **UI**:
 Local frontend for inspecting Mars runs (Topology / Runs / Run timeline views), served on port 7777. Lives in `ui/`.
+
+**Runtime**:
+A Worker attribute, valued either 'headless' (today's claude -p, the default) or 'tmux' (a window inside a per-repo tmux session the operator can attach to and type into), that says how that Worker's Sessions execute. Runtime is set on the Worker, not per Task: Tasks route to a Worker via tag matching and then inherit its Runtime.
