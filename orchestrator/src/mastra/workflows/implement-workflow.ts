@@ -9,7 +9,9 @@ import {
   createWorktree,
   removeWorktree,
   verifyChanges,
-  loadVerifySteps,
+  loadVerifyScopes,
+  selectVerifySteps,
+  getChangedFiles,
   mergeBranch,
   checkMergeTargetStatus,
 } from '../lib/git'
@@ -831,7 +833,17 @@ const verifyStep = createStep({
     })
     const verifyCwd = resolveVerifyCwd(inputData.path)
     const ctx = resolveContext()
-    const steps = await loadVerifySteps(ctx.supervisorsManifest)
+    // Scope-aware verify-step selection: look at the files the task
+    // actually changed between its branch and integration, then run the
+    // root scope's steps (the repo-wide floor) plus every narrower scope
+    // whose subtree a changed file falls in — each in its own directory.
+    const scopes = await loadVerifyScopes(ctx.supervisorsManifest)
+    const changedFiles = await getChangedFiles(
+      inputData.path,
+      inputData.integrationBranch,
+      inputData.branch,
+    )
+    const steps = selectVerifySteps(scopes, changedFiles)
     // Writer tasks land their changes on the integration branch via the
     // daemon's structured-write path, not on the task branch — so the
     // task branch is correctly 0 commits ahead of integration and the

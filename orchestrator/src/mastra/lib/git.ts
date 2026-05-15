@@ -692,6 +692,24 @@ export interface VerifyStepSpec {
   cmd: string
   args: readonly string[]
   required: boolean
+  /**
+   * The verify scope directory this step belongs to, relative to the
+   * verify root passed to {@link verifyChanges} as `cwd`. `'.'` (or
+   * omitted) is the repo-root scope and runs in the verify root itself;
+   * a narrower scope (e.g. `'apps/web'`) runs in that subdirectory.
+   */
+  dir?: string
+}
+
+/**
+ * One verify scope from the recipe: a repo subtree and the steps that
+ * apply to it. `scope` is normalised — `'.'` is the repo-root scope
+ * (the always-on floor); anything else is a path relative to the repo
+ * root, slash-separated, no leading `./` and no trailing `/`.
+ */
+export interface VerifyScope {
+  scope: string
+  steps: VerifyStepSpec[]
 }
 
 export interface VerifyArgs {
@@ -926,7 +944,12 @@ export const verifyChanges = async (
   let stoppedOnRequired = false
   for (const spec of args.steps) {
     if (stoppedOnRequired && spec.required) continue
-    const result = await runVerifyStep(spec.name, spec.cmd, spec.args, args.cwd)
+    // Each step runs in its own scope directory rather than from one
+    // flattened working directory: the root scope ('.' or unset) runs in
+    // the verify root; a narrower scope runs in its subdirectory.
+    const stepCwd =
+      spec.dir && spec.dir !== '.' ? resolve(args.cwd, spec.dir) : args.cwd
+    const result = await runVerifyStep(spec.name, spec.cmd, spec.args, stepCwd)
     results.push(result)
     if (!result.passed && spec.required) {
       stoppedOnRequired = true
@@ -961,20 +984,48 @@ interface SupervisorsManifest {
   supervisors?: ReadonlyArray<ManifestSupervisorEntry>
 }
 
-const scopeDepth = (scope: string | undefined): number => {
-  if (!scope || scope === '.' || scope === '') return 0
-  return scope.split('/').filter(Boolean).length
+// Normalise a recipe scope to the canonical form used as the scope key:
+// '.' is the repo-root scope; anything else is slash-separated, no
+// leading './', no trailing '/'. An absent/empty scope is the root.
+const normalizeScope = (scope: string | undefined): string => {
+  if (!scope) return '.'
+  const s = scope
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/\/+$/, '')
+  return s === '' || s === '.' ? '.' : s
 }
 
-export const loadVerifySteps = async (
+// Path-containment test: is `file` (a repo-root-relative path) inside the
+// subtree `scope`? The root scope contains every file.
+const fileInScope = (file: string, scope: string): boolean => {
+  if (scope === '.') return true
+  const f = file.replace(/\\/g, '/').replace(/^\.\//, '')
+  return f === scope || f.startsWith(`${scope}/`)
+}
+
+const rootScopeOnly = (): VerifyScope[] => [
+  { scope: '.', steps: DEFAULT_VERIFY_STEPS.map((s) => ({ ...s, dir: '.' })) },
+]
+
+/**
+ * Load the recipe's verify steps grouped by scope. Unlike the previous
+ * collapse-by-name behaviour, two scopes that declare a step with the
+ * same name are kept as distinct entries — each scope owns its steps and
+ * its directory. Within a single scope a repeated step name keeps the
+ * first occurrence. A missing, unparseable, or verify-less manifest
+ * degrades to a single root scope running the default steps.
+ */
+export const loadVerifyScopes = async (
   manifestPath: string,
-): Promise<VerifyStepSpec[]> => {
+): Promise<VerifyScope[]> => {
   let raw: string
   try {
     raw = await readFile(manifestPath, 'utf8')
   } catch (error: unknown) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [...DEFAULT_VERIFY_STEPS]
+      return rootScopeOnly()
     }
     throw error
   }
@@ -982,29 +1033,91 @@ export const loadVerifySteps = async (
   try {
     parsed = JSON.parse(raw) as SupervisorsManifest
   } catch {
-    return [...DEFAULT_VERIFY_STEPS]
+    return rootScopeOnly()
   }
   const supervisors = parsed.supervisors ?? []
-  const byName = new Map<string, { spec: VerifyStepSpec; depth: number }>()
+  const byScope = new Map<string, Map<string, VerifyStepSpec>>()
+  const order: string[] = []
   for (const sup of supervisors) {
     const verify = sup.verify
     if (!verify || verify.length === 0) continue
-    const depth = scopeDepth(sup.scope)
+    const scope = normalizeScope(sup.scope)
+    let steps = byScope.get(scope)
+    if (!steps) {
+      steps = new Map()
+      byScope.set(scope, steps)
+      order.push(scope)
+    }
     for (const v of verify) {
-      const spec: VerifyStepSpec = {
+      if (steps.has(v.name)) continue
+      steps.set(v.name, {
         name: v.name,
         cmd: v.cmd,
         args: [...v.args],
         required: v.required ?? true,
-      }
-      const existing = byName.get(v.name)
-      if (!existing || depth < existing.depth) {
-        byName.set(v.name, { spec, depth })
-      }
+        dir: scope,
+      })
     }
   }
-  if (byName.size === 0) return [...DEFAULT_VERIFY_STEPS]
-  return Array.from(byName.values()).map((e) => e.spec)
+  if (byScope.size === 0) return rootScopeOnly()
+  return order.map((scope) => ({
+    scope,
+    steps: Array.from(byScope.get(scope)!.values()),
+  }))
+}
+
+/**
+ * Select the verify steps to run for a task from the recipe scopes and
+ * the files the task actually changed. The root scope ('.') is an
+ * always-on floor; every narrower scope whose subtree contains at least
+ * one changed file is layered on top. Root steps come first, then the
+ * matched narrower scopes in declared order. Each returned step carries
+ * the `dir` of its scope so {@link verifyChanges} runs it where it
+ * belongs.
+ */
+export const selectVerifySteps = (
+  scopes: ReadonlyArray<VerifyScope>,
+  changedFiles: ReadonlyArray<string>,
+): VerifyStepSpec[] => {
+  const roots = scopes.filter((s) => s.scope === '.')
+  const rest = scopes.filter((s) => s.scope !== '.')
+  const selected: VerifyStepSpec[] = []
+  for (const sc of [...roots, ...rest]) {
+    const matched =
+      sc.scope === '.' ||
+      changedFiles.some((f) => fileInScope(f, sc.scope))
+    if (!matched) continue
+    for (const step of sc.steps) {
+      selected.push({ ...step, dir: sc.scope })
+    }
+  }
+  return selected
+}
+
+/**
+ * The files a task changed between the integration branch and its task
+ * branch, as repo-root-relative slash-separated paths. Empty on any git
+ * failure so verification still runs (the root floor) rather than
+ * crashing the verify step.
+ */
+export const getChangedFiles = async (
+  cwd: string,
+  integrationBranch: string,
+  branch: string,
+): Promise<string[]> => {
+  try {
+    const { stdout } = await exec(
+      'git',
+      ['diff', '--name-only', `${integrationBranch}..${branch}`],
+      { cwd },
+    )
+    return stdout
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0)
+  } catch {
+    return []
+  }
 }
 
 export const DEFAULT_VERIFY_STEPS_FALLBACK: ReadonlyArray<VerifyStepSpec> =
