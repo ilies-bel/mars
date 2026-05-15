@@ -162,7 +162,7 @@ describe('fix-recipes', () => {
       const recipe = getRecipe('verify:has-diff/no-commits-ahead')
       const prompt = recipe.buildPrompt(ctx)
       expect(prompt).toContain('STEP 2')
-      expect(prompt).toMatch(/commit-first checkpoint/i)
+      expect(prompt).toMatch(/commit immediately/i)
       expect(prompt).toContain('git add -A && git commit')
       expect(prompt).toContain(ctx.targetBranch)
       expect(prompt).toContain(ctx.integrationBranch)
@@ -202,6 +202,18 @@ describe('fix-recipes', () => {
       const promptWithout = recipe.buildPrompt(ctx)
       expect(promptWithout).not.toContain('rename foo to bar in src/baz.ts')
       expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
+    })
+
+    it('instructs the agent to inspect the failing worktree read-only and lift its diff when present', () => {
+      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+      const prompt = recipe.buildPrompt(ctx)
+      // The most common failure mode is staged-but-uncommitted work in the
+      // failing worktree. Recovery should prefer lifting that diff over
+      // re-doing from scratch — but read-only against the failing tree.
+      expect(prompt).toContain(`git -C ${ctx.targetPath} status --short`)
+      expect(prompt).toContain(`git -C ${ctx.targetPath} diff HEAD`)
+      expect(prompt).toMatch(/git apply/i)
+      expect(prompt).toMatch(/lift the existing diff/i)
     })
 
     it('warns the agent NOT to edit the failing task worktree', () => {
