@@ -994,7 +994,7 @@ export const checkMergeTargetStatus = async (
       { cwd: targetPath },
     ).then(
       () => null,
-      (err: NodeJS.ErrnoException & { code?: number | string }) => err,
+      (err: Error & { code?: number | string }) => err,
     )
     if (ancestryError !== null) {
       if (ancestryError.code === 1) {
