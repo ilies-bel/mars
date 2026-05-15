@@ -183,3 +183,6 @@ _Avoid_: named pipeline, workflow definition, pipeline, Mastra workflow
 **Workflow instance**:
 A single execution of a Workflow. In v1 a Workflow instance is one-to-one with a Task: the moment a Task is dispatched, the orchestrator resolves its tag plus task type to exactly one Workflow id and records it on the Task, and from that point on Task and Workflow instance are the same thing. The instance carries durable per-step state (last completed step, step input/output payloads, child-logger lineage) so a crashed Task can resume from the last completed step on retry.
 _Avoid_: workflow run, run, task run, workflow execution
+
+**Precondition (fix-task)**:
+An optional cheap, no-LLM check that a recovery recipe may declare so the dispatcher can evaluate the condition before spawning the fix-task agent. When the precondition already holds, the dispatcher marks the fix-task done with a skip_reason and never invokes the agent, avoiding no-op recoveries.
