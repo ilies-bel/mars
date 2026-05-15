@@ -169,6 +169,14 @@ Commands:
   restart <id>                  wipe worktree+branch and re-queue a failed/done
                                 task from setup (full pipeline re-run).
   purge <id>                    delete a failed/done task entirely (worktree+branch+row)
+  drop <id> [--force]           delete any task regardless of status: clears
+                                task_blockers edges (both directions), nulls
+                                sibling fix_for_task_id pointers, removes the
+                                worktree+branch+row. Use for queued recoveries
+                                whose parent is being purged, or any row that
+                                'mars purge' refuses. --force overrides the
+                                in-flight guard (does not kill the running
+                                claude subprocess).
   unblock <id>                  phantom-recovery: flip a 'blocked' or 'queued'
                                 task to 'failed' AND clear every
                                 task_blockers row for <id>. Use when a task
@@ -425,6 +433,32 @@ and branch first, then runs the full pipeline (setup -> code -> verify
 
 Delete a failed/done task entirely (worktree + branch + row). Refuses
 in-flight tasks.`,
+  drop: `mars drop <id> [--force]
+
+Universal deletion verb. Works regardless of status (draft, queued,
+blocked, running, verifying, merging, failed, done):
+  - Removes the worktree on disk (if present) and force-deletes the
+    task branch.
+  - Deletes every task_blockers row mentioning <id> on either side
+    so dependent rows don't dangle.
+  - Sets fix_for_task_id = NULL on any sibling row that pointed at
+    <id>, so the parent can be dropped independently of an orphan
+    auto-recovery (the inverse case is the original motivator).
+  - Deletes the tasks row itself.
+
+Refuses if the task is currently dispatched (status in
+running/verifying/merging, or the daemon's in-flight map still holds
+a worker-pool slot for it) unless --force is passed. --force does NOT
+kill the running claude subprocess — the workflow will continue to its
+natural end and its terminal transition will silently fail when it
+tries to write to the deleted row. The output reports what was
+killed so the caller is not surprised.
+
+Typical use: an auto-spawned recovery task is queued behind a parent
+that got duplicated or is otherwise obsolete; 'mars purge <parent>'
+fails with a FK error because the recovery still references it via
+fix_for_task_id. 'mars drop <recovery>' followed by 'mars purge
+<parent>' (or 'mars drop <parent>') clears both.`,
   worktree: `mars worktree clean [--dry-run] [--force] [--force-orphans]
 
 Walk .mars/worktrees/ (and legacy .worktrees/), classify each directory
@@ -1372,6 +1406,48 @@ const main = async (): Promise<void> => {
       blockerIds: blockerArgs,
     })) as { taskId: string; removed: string[] }
     console.log(`unblocked ${data.taskId} from: ${data.removed.join(', ')}`)
+    return
+  }
+
+  if (cmd === 'drop') {
+    const flags = new Set(rest.filter((a) => a.startsWith('--')))
+    const positionals = rest.filter((a) => !a.startsWith('--'))
+    const id = positionals[0]
+    if (!id) {
+      console.error(
+        `usage: mars drop <id> [--force]\n\n` +
+          `Delete any task entirely (worktree+branch+row) regardless of\n` +
+          `status. Clears every task_blockers row mentioning <id> on either\n` +
+          `side, and nulls out any sibling row's fix_for_task_id that\n` +
+          `pointed at <id> so the row can be deleted cleanly.\n\n` +
+          `Refuses if the task is currently dispatched (running, verifying,\n` +
+          `merging, or held by a live worker-pool slot) unless --force is\n` +
+          `passed. --force does NOT kill the underlying claude subprocess;\n` +
+          `the workflow will continue to its natural end, but the row, the\n` +
+          `worktree, and the branch are removed immediately.`,
+      )
+      process.exit(1)
+    }
+    const force = flags.has('--force')
+    const { sendRequest } = await import('./mastra/daemon/client')
+    const data = (await sendRequest({ op: 'drop', id, force })) as {
+      taskId: string
+      previousStatus: string
+      edgesRemoved: { incoming: number; outgoing: number }
+      fixForRefsCleared: string[]
+      worktreeRemoved: boolean
+      branchDeleted: boolean
+    }
+    const parts = [
+      `dropped ${data.taskId} (was ${data.previousStatus})`,
+      `worktree=${data.worktreeRemoved ? 'removed' : 'absent'}`,
+      `branch=${data.branchDeleted ? 'deleted' : 'absent'}`,
+      `edges=${data.edgesRemoved.incoming}in/${data.edgesRemoved.outgoing}out`,
+    ]
+    if (data.fixForRefsCleared.length > 0) {
+      parts.push(`fixForRefs cleared on: ${data.fixForRefsCleared.join(', ')}`)
+    }
+    console.log(parts.join('; '))
     return
   }
 
