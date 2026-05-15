@@ -14,6 +14,7 @@ import { resolveContext } from '../context'
 import {
   addBlockers,
   deleteTask,
+  dropTask,
   enqueueTask,
   getTask,
   hasIncompleteBlockers,
@@ -23,6 +24,7 @@ import {
   setTaskPriority,
   unblockTask,
   updateTask,
+  type DropTaskResult,
   type Task,
   type UnblockTaskResult,
 } from '../queue'
@@ -787,6 +789,80 @@ export const startDaemon = async (
     return unblockTask(id)
   }
 
+  const IN_FLIGHT_STATUSES = new Set<Task['status']>([
+    'running',
+    'verifying',
+    'merging',
+  ])
+
+  const handleDrop = async (
+    id: string,
+    force: boolean,
+  ): Promise<DropTaskResult & { worktreeRemoved: boolean; branchDeleted: boolean }> => {
+    const task = await getTask(id)
+    if (!task) throw new Error(`task ${id} not found`)
+
+    // Refuse to silently kill a worker-pool job. The daemon's inFlight
+    // map tracks ANY dispatched job (triage, implement, refine,
+    // structured-write); the row's status may still read 'queued' for
+    // the gap between dispatch and the first persisted transition, so
+    // the map is the source of truth, not status alone.
+    const liveStatus = IN_FLIGHT_STATUSES.has(task.status)
+    const liveInFlight = inFlight.has(id)
+    if ((liveStatus || liveInFlight) && !force) {
+      const kind = inFlight.get(id)?.kind
+      const detail = liveInFlight
+        ? `dispatched (kind=${kind ?? 'unknown'})`
+        : `status=${task.status}`
+      throw new Error(
+        `task ${id} is in flight (${detail}); pass force=true to drop anyway`,
+      )
+    }
+
+    const { existsSync: exists } = await import('node:fs')
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const exec = promisify(execFile)
+    const { removeWorktree } = await import('../lib/git')
+    const { getRepoRoot } = await import('../context')
+
+    const branch = task.branch ?? `task/${task.id}`
+    let worktreeRemoved = false
+    if (task.worktreePath && exists(task.worktreePath)) {
+      try {
+        await removeWorktree({ path: task.worktreePath, branch }, true)
+        worktreeRemoved = true
+      } catch {
+        // best-effort — the row still gets dropped; logged below
+      }
+    }
+    const branchDeleteResult = await exec('git', ['branch', '-D', branch], {
+      cwd: getRepoRoot(),
+    })
+      .then(() => true)
+      .catch(() => false)
+
+    const result = await dropTask(id)
+    log(
+      `[drop] ${id} (was ${result.previousStatus}; force=${force}, ` +
+        `incoming=${result.edgesRemoved.incoming}, outgoing=${result.edgesRemoved.outgoing}, ` +
+        `fixForRefs=${result.fixForRefsCleared.length}, worktree=${worktreeRemoved}, branch=${branchDeleteResult})`,
+    )
+    if (liveInFlight) {
+      // The worker still holds an inFlight slot; clearing it here lets
+      // drain() reclaim the semaphore even though the workflow run will
+      // continue to its natural end (we cannot reach in and kill the
+      // claude subprocess from here). Surfaced in the return payload so
+      // the caller knows.
+      inFlight.delete(id)
+    }
+    return {
+      ...result,
+      worktreeRemoved,
+      branchDeleted: branchDeleteResult,
+    }
+  }
+
   const handleRefine = async (id: string, refresh: boolean): Promise<void> => {
     const task = await getTask(id)
     if (!task) throw new Error(`task ${id} not found`)
@@ -983,6 +1059,10 @@ export const startDaemon = async (
         case 'purge': {
           await handlePurge(req.id)
           return { ok: true }
+        }
+        case 'drop': {
+          const result = await handleDrop(req.id, req.force ?? false)
+          return { ok: true, data: result }
         }
         case 'unblock': {
           const result = await handleUnblock(req.id)

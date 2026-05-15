@@ -845,6 +845,103 @@ export const deleteTask = async (id: string): Promise<void> => {
   })
 }
 
+export interface DropTaskResult {
+  taskId: string
+  previousStatus: TaskStatus
+  /**
+   * task_blockers edges deleted by the drop. `incoming` are edges where
+   * <id> appears as `blocker_task_id` (other tasks waiting on this one);
+   * `outgoing` are edges where <id> appears as `task_id` (this task
+   * waiting on others).
+   */
+  edgesRemoved: { incoming: number; outgoing: number }
+  /**
+   * Ids of tasks whose `fix_for_task_id` pointed at the dropped row.
+   * Cleared to NULL alongside the delete so the pointer doesn't dangle.
+   * The pointed-at column is not declared as a FK, but readers conflate
+   * a non-null pointer with "still has a parent" — null is the honest
+   * post-drop state.
+   */
+  fixForRefsCleared: string[]
+}
+
+/**
+ * Database-level drop. Works regardless of status — clears every
+ * task_blockers row mentioning <id> on either side, nulls out any
+ * `fix_for_task_id` pointer that referred to <id>, and deletes the
+ * task row. Caller is responsible for cancelling any in-flight workflow
+ * and removing the worktree+branch on disk before invoking this.
+ */
+export const dropTask = async (id: string): Promise<DropTaskResult> => {
+  await initQueue()
+  const c = getClient()
+  const before = await c.execute({
+    sql: `SELECT status FROM tasks WHERE id = ?`,
+    args: [id],
+  })
+  if (before.rows.length === 0) {
+    throw new Error(`task ${id} not found`)
+  }
+  const previousStatus = (before.rows[0] as unknown as { status: TaskStatus }).status
+
+  const incoming = await c.execute({
+    sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
+    args: [id],
+  })
+  const outgoing = await c.execute({
+    sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
+    args: [id],
+  })
+  const incomingCount = Number(
+    (incoming.rows[0] as unknown as { n: number | bigint }).n,
+  )
+  const outgoingCount = Number(
+    (outgoing.rows[0] as unknown as { n: number | bigint }).n,
+  )
+
+  const refRows = await c.execute({
+    sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+    args: [id],
+  })
+  const fixForRefsCleared = refRows.rows.map(
+    (row) => (row as unknown as { id: string }).id,
+  )
+
+  const tx = await c.transaction('write')
+  try {
+    await tx.execute({
+      sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
+      args: [id, id],
+    })
+    if (fixForRefsCleared.length > 0) {
+      // fix_for_task_id is not declared as a FK, but a dangling pointer
+      // confuses readers that conflate a non-null value with "parent
+      // exists". Set NULL is the honest post-drop state; the row's
+      // `kind = 'fix'` invariant is checked only on inserts, so legacy
+      // rows surviving a parent drop stay queryable without error.
+      await tx.execute({
+        sql: `UPDATE tasks SET fix_for_task_id = NULL, updated_at = ? WHERE fix_for_task_id = ?`,
+        args: [new Date().toISOString(), id],
+      })
+    }
+    await tx.execute({
+      sql: `DELETE FROM tasks WHERE id = ?`,
+      args: [id],
+    })
+    await tx.commit()
+  } catch (error: unknown) {
+    tx.close()
+    throw error
+  }
+
+  return {
+    taskId: id,
+    previousStatus,
+    edgesRemoved: { incoming: incomingCount, outgoing: outgoingCount },
+    fixForRefsCleared,
+  }
+}
+
 export const claimReadyTask = async (id: string): Promise<Task | null> => {
   await initQueue()
   const now = new Date().toISOString()
