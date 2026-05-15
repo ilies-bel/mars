@@ -193,3 +193,7 @@ The structured signal persisted on a fix-task that ended in done without invokin
 **Invalidator**:
 A declaration attached to an inbox item at raise-time stating which bus events close it and how to match them against the event payload. The inbox engine evaluates invalidators centrally; raisers commit up front to what closes their item.
 _Avoid_: auto-resolver, inbox-closer, close-rule
+
+**Bus event**:
+A past-tense, daemon-emitted fact about a state change Mars itself performed. Named '<noun>.<past-verb>' (e.g. 'task.unblocked', 'merge.preflight-passed'). Never derived from polling external state.
+_Avoid_: daemon event, bus message, emit
