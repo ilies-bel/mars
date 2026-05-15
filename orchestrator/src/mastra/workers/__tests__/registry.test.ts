@@ -73,11 +73,11 @@ describe('Planner / Slicer / Triager pinned config', () => {
   const readOnlyRoles: ReadonlyArray<WorkerName> = ['Planner', 'Slicer', 'Triager']
 
   for (const name of readOnlyRoles) {
-    it(`${name}: runs bare with --permission-mode default and denies Edit/Write/NotebookEdit at the Worker layer`, () => {
+    it(`${name}: runs with --permission-mode default and denies Edit/Write/NotebookEdit at the Worker layer`, () => {
       const args = argvFor(name)
       expect(valueAfter(args, '--permission-mode')).toBe('default')
       expect(args).not.toContain('--dangerously-skip-permissions')
-      expect(args).toContain('--bare')
+      expect(args).not.toContain('--bare')
       const denied = (valueAfter(args, '--disallowedTools') ?? '').split(',')
       for (const tool of READ_ONLY_DENIED_TOOLS) {
         expect(denied).toContain(tool)

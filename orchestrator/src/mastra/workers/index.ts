@@ -101,8 +101,11 @@ const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 // shares Coder's model and permission posture but layers backlog-mutation
 // denials so a no-commit Fixer Session cannot refile its task as a loose end.
 // Planner, Slicer, and Triager are read-only synthesis stages: default
-// permissions, bare mode for cache reuse, Edit/Write/NotebookEdit denied.
-// Triager additionally pins a 40-message cap (sonnet / medium effort).
+// permissions, Edit/Write/NotebookEdit denied. Triager additionally pins a
+// 40-message cap (sonnet / medium effort). Bare mode is disabled because
+// the locally installed claude CLI 2.1.142 fails authentication when --bare
+// is set (returns "Not logged in") even though keychain auth is valid in
+// non-bare invocations.
 export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Coder: {
     name: 'Coder',
@@ -119,7 +122,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     model: CLAUDE_OPUS_MODEL,
     effort: 'high',
     permissionMode: 'default',
-    bare: true,
+    bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     defaultTimeoutMs: 5 * 60 * 1000,
     maxMessages: 100,
@@ -129,7 +132,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     model: CLAUDE_OPUS_MODEL,
     effort: 'high',
     permissionMode: 'default',
-    bare: true,
+    bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     defaultTimeoutMs: 5 * 60 * 1000,
     maxMessages: 100,
@@ -139,7 +142,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     model: CLAUDE_SONNET_MODEL,
     effort: 'medium',
     permissionMode: 'default',
-    bare: true,
+    bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     defaultTimeoutMs: 2 * 60 * 1000,
     maxMessages: 40,
