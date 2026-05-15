@@ -16,6 +16,7 @@ export interface SupervisorSpec {
 export interface ManifestFinding {
   dir: string
   techs: string[]
+  supervisors: string[]
 }
 
 export interface StackDetection {
@@ -498,9 +499,13 @@ export const detectStack = (
       supervisors.push(spec)
     }
     if (acc.techs.size > 0 && discovered.some((m) => m.dir === dir)) {
+      const manifestSupervisors = Array.from(
+        new Set(acc.supervisors.map((s) => s.name)),
+      ).sort()
       const finding: ManifestFinding = {
         dir: relative(root, dir) || '.',
         techs: Array.from(acc.techs).sort(),
+        supervisors: manifestSupervisors,
       }
       findings.push(finding)
       if (options.onManifest) options.onManifest(finding)

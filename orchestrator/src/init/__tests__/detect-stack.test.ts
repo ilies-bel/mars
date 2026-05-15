@@ -113,6 +113,29 @@ describe('detectStack (recursive)', () => {
     expect(seen.sort()).toEqual(['a', 'b'])
   })
 
+  it('records the supervisors each manifest contributed, deduped, across a polyrepo fixture with two React manifests', () => {
+    const fixture = resolve(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      'test',
+      'fixtures',
+      'polyrepo-react',
+    )
+
+    const detected = detectStack(fixture)
+
+    const byDir = new Map(detected.manifests.map((m) => [m.dir, m]))
+    expect(byDir.get('web')?.supervisors).toEqual(['react-supervisor'])
+    expect(byDir.get('admin')?.supervisors).toEqual(['react-supervisor'])
+
+    const reactSupervisors = detected.supervisors.filter(
+      (s) => s.name === 'react-supervisor',
+    )
+    expect(reactSupervisors).toHaveLength(1)
+  })
+
   it('skips manifests under ignored directories', () => {
     make(root, {
       'node_modules/foo/package.json': '{"name":"x"}',
