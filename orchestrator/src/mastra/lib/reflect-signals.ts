@@ -33,7 +33,10 @@ export const recordSignals = async (
       totals.outputTokens,
       totals.cacheCreateTokens,
       totals.cacheReadTokens,
-      totals.totalCostUsd,
+      // PRD 1b7498f6: USD cost is dropped at the parser layer. The
+      // `total_cost_usd` column is kept for now so existing rows stay
+      // readable; a later slice removes the column and this argument.
+      0,
       totals.messageCount,
       now,
     ],
