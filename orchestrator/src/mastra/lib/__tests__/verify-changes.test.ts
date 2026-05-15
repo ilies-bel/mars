@@ -5,11 +5,19 @@ import {
   writeFileSync,
   rmSync,
   existsSync,
+  realpathSync,
 } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { verifyChanges, loadVerifySteps, checkBranchHasDiff } from '../git'
+import {
+  verifyChanges,
+  loadVerifyScopes,
+  selectVerifySteps,
+  getChangedFiles,
+  checkBranchHasDiff,
+  type VerifyScope,
+} from '../git'
 
 const truthyCmd = { cmd: 'node', args: ['-e', 'process.exit(0)'] }
 const falsyCmd = { cmd: 'node', args: ['-e', 'process.stderr.write("boom"); process.exit(1)'] }
@@ -152,7 +160,7 @@ describe('checkBranchHasDiff (empty-diff guard)', () => {
   })
 })
 
-describe('loadVerifySteps', () => {
+describe('loadVerifyScopes', () => {
   let workDir: string
 
   beforeAll(() => {
@@ -163,73 +171,242 @@ describe('loadVerifySteps', () => {
     rmSync(workDir, { recursive: true, force: true })
   })
 
-  it('returns defaults when manifest is missing', async () => {
-    const steps = await loadVerifySteps(resolve(workDir, 'nope.json'))
-    expect(steps.map((s) => s.name)).toEqual(['typecheck', 'test', 'lint'])
+  it('returns a single root scope with default steps when manifest is missing', async () => {
+    const scopes = await loadVerifyScopes(resolve(workDir, 'nope.json'))
+    expect(scopes.map((s) => s.scope)).toEqual(['.'])
+    expect(scopes[0].steps.map((s) => s.name)).toEqual([
+      'typecheck',
+      'test',
+      'lint',
+    ])
   })
 
-  it('returns defaults when manifest has no verify entries', async () => {
+  it('returns a single root scope with default steps when manifest has no verify entries', async () => {
     const path = resolve(workDir, 'no-verify.json')
     writeFileSync(
       path,
       JSON.stringify({ supervisors: [{ name: 'baseline-supervisor' }] }),
     )
-    const steps = await loadVerifySteps(path)
-    expect(steps.map((s) => s.name)).toEqual(['typecheck', 'test', 'lint'])
+    const scopes = await loadVerifyScopes(path)
+    expect(scopes.map((s) => s.scope)).toEqual(['.'])
+    expect(scopes[0].steps.map((s) => s.name)).toEqual([
+      'typecheck',
+      'test',
+      'lint',
+    ])
   })
 
-  it('returns the union of verify entries across supervisors, deduped by name', async () => {
-    const path = resolve(workDir, 'union.json')
+  it('keeps a step name declared by two different scopes as two distinct, scope-tagged steps', async () => {
+    const path = resolve(workDir, 'no-collapse.json')
     writeFileSync(
       path,
       JSON.stringify({
         supervisors: [
           {
-            name: 'node-backend-supervisor',
-            verify: [
-              { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
-              { name: 'test', cmd: 'npm', args: ['test'], required: true },
-            ],
+            name: 'web-supervisor',
+            scope: 'apps/web',
+            verify: [{ name: 'test', cmd: 'web-test', args: [], required: true }],
           },
+          {
+            name: 'api-supervisor',
+            scope: 'services/api',
+            verify: [{ name: 'test', cmd: 'api-test', args: [], required: true }],
+          },
+        ],
+      }),
+    )
+    const scopes = await loadVerifyScopes(path)
+    expect(scopes.map((s) => s.scope)).toEqual(['apps/web', 'services/api'])
+    const web = scopes.find((s) => s.scope === 'apps/web')
+    const api = scopes.find((s) => s.scope === 'services/api')
+    expect(web?.steps.map((s) => [s.name, s.cmd, s.dir])).toEqual([
+      ['test', 'web-test', 'apps/web'],
+    ])
+    expect(api?.steps.map((s) => [s.name, s.cmd, s.dir])).toEqual([
+      ['test', 'api-test', 'services/api'],
+    ])
+  })
+
+  it('keeps non-JavaScript scope commands verbatim and injects no typecheck/test step', async () => {
+    const path = resolve(workDir, 'non-js.json')
+    writeFileSync(
+      path,
+      JSON.stringify({
+        supervisors: [
           {
             name: 'go-supervisor',
+            scope: '.',
             verify: [
+              { name: 'go-vet', cmd: 'go', args: ['vet', './...'], required: true },
               { name: 'go-test', cmd: 'go', args: ['test', './...'], required: true },
-              { name: 'typecheck', cmd: 'NEVER-WINS', args: [], required: true },
             ],
           },
         ],
       }),
     )
-    const steps = await loadVerifySteps(path)
-    const byName = new Map(steps.map((s) => [s.name, s]))
-    expect(byName.size).toBe(steps.length)
-    expect(byName.has('typecheck')).toBe(true)
-    expect(byName.has('test')).toBe(true)
-    expect(byName.has('go-test')).toBe(true)
+    const scopes = await loadVerifyScopes(path)
+    expect(scopes).toHaveLength(1)
+    const steps = scopes[0].steps
+    expect(steps.map((s) => [s.cmd, ...s.args])).toEqual([
+      ['go', 'vet', './...'],
+      ['go', 'test', './...'],
+    ])
+    expect(steps.some((s) => s.name === 'typecheck')).toBe(false)
+    expect(steps.some((s) => s.cmd === 'npx' || s.cmd === 'npm')).toBe(false)
   })
 
-  it('prefers shallower scope when two supervisors disagree on the same step name', async () => {
-    const path = resolve(workDir, 'scope.json')
+  it('normalises root scope variants and dedupes a repeated step name within a scope', async () => {
+    const path = resolve(workDir, 'root-norm.json')
     writeFileSync(
       path,
       JSON.stringify({
         supervisors: [
           {
-            name: 'frontend-supervisor',
-            scope: 'apps/web/frontend',
-            verify: [{ name: 'test', cmd: 'deep', args: [], required: true }],
-          },
-          {
             name: 'root-supervisor',
-            scope: '.',
-            verify: [{ name: 'test', cmd: 'shallow', args: [], required: true }],
+            scope: './',
+            verify: [
+              { name: 'test', cmd: 'first', args: [], required: true },
+              { name: 'test', cmd: 'second', args: [], required: true },
+            ],
           },
         ],
       }),
     )
-    const steps = await loadVerifySteps(path)
-    const test = steps.find((s) => s.name === 'test')
-    expect(test?.cmd).toBe('shallow')
+    const scopes = await loadVerifyScopes(path)
+    expect(scopes.map((s) => s.scope)).toEqual(['.'])
+    expect(scopes[0].steps.map((s) => [s.name, s.cmd])).toEqual([
+      ['test', 'first'],
+    ])
+  })
+})
+
+describe('selectVerifySteps (scope-aware selection from the real diff)', () => {
+  const recipe: VerifyScope[] = [
+    {
+      scope: '.',
+      steps: [{ name: 'root-lint', cmd: 'rootcmd', args: [], required: true, dir: '.' }],
+    },
+    {
+      scope: 'apps/web',
+      steps: [{ name: 'test', cmd: 'web-test', args: [], required: true, dir: 'apps/web' }],
+    },
+    {
+      scope: 'services/api',
+      steps: [{ name: 'test', cmd: 'api-test', args: [], required: true, dir: 'services/api' }],
+    },
+  ]
+
+  it('runs the root scope plus both subtrees when changed files span two subtrees', () => {
+    const steps = selectVerifySteps(recipe, [
+      'apps/web/src/App.tsx',
+      'services/api/handlers/users.go',
+    ])
+    expect(steps.map((s) => [s.name, s.cmd, s.dir])).toEqual([
+      ['root-lint', 'rootcmd', '.'],
+      ['test', 'web-test', 'apps/web'],
+      ['test', 'api-test', 'services/api'],
+    ])
+  })
+
+  it('runs the root scope plus only the touched subtree, not the other', () => {
+    const steps = selectVerifySteps(recipe, ['apps/web/src/index.ts'])
+    expect(steps.map((s) => [s.name, s.dir])).toEqual([
+      ['root-lint', '.'],
+      ['test', 'apps/web'],
+    ])
+    expect(steps.some((s) => s.cmd === 'api-test')).toBe(false)
+  })
+
+  it('runs only the root scope when nothing but docs / root config changed', () => {
+    const steps = selectVerifySteps(recipe, ['README.md', 'package.json'])
+    expect(steps.map((s) => [s.name, s.dir])).toEqual([['root-lint', '.']])
+  })
+
+  it('contributes no steps for a scope whose subtree contains no changed file', () => {
+    const steps = selectVerifySteps(recipe, ['services/api/main.go'])
+    expect(steps.some((s) => s.dir === 'apps/web')).toBe(false)
+    expect(steps.map((s) => s.dir)).toEqual(['.', 'services/api'])
+  })
+
+  it('always runs the root floor even when the recipe declares it after narrower scopes', () => {
+    const reordered: VerifyScope[] = [recipe[1], recipe[2], recipe[0]]
+    const steps = selectVerifySteps(reordered, ['apps/web/x.ts'])
+    expect(steps[0].dir).toBe('.')
+    expect(steps.map((s) => s.dir)).toEqual(['.', 'apps/web'])
+  })
+})
+
+describe('verifyChanges runs each step in its own scope directory', () => {
+  let root: string
+
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(resolve(tmpdir(), 'mars-scopedir-')))
+    mkdirSync(resolve(root, 'apps/web'), { recursive: true })
+    mkdirSync(resolve(root, 'services/api'), { recursive: true })
+  })
+
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('executes a step with a scope dir in that subdirectory, not the verify root', async () => {
+    const pwdCmd = {
+      cmd: 'node',
+      args: ['-e', 'process.stdout.write(process.cwd())'],
+    }
+    const r = await verifyChanges({
+      cwd: root,
+      steps: [
+        { name: 'root-step', ...pwdCmd, required: true, dir: '.' },
+        { name: 'web-step', ...pwdCmd, required: true, dir: 'apps/web' },
+        { name: 'api-step', ...pwdCmd, required: true, dir: 'services/api' },
+      ],
+    })
+    expect(r.passed).toBe(true)
+    const byName = new Map(r.steps.map((s) => [s.name, s.output]))
+    expect(byName.get('root-step')).toBe(root)
+    expect(byName.get('web-step')).toBe(resolve(root, 'apps/web'))
+    expect(byName.get('api-step')).toBe(resolve(root, 'services/api'))
+  })
+})
+
+describe('getChangedFiles', () => {
+  let repo: string
+
+  beforeAll(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-changed-files-'))
+    const git = (...args: string[]) =>
+      execFileSync('git', args, { cwd: repo })
+    git('init', '-q', '-b', 'main')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'test')
+    writeFileSync(resolve(repo, 'README.md'), 'hello\n')
+    git('add', 'README.md')
+    git('commit', '-q', '-m', 'init')
+    git('checkout', '-q', '-b', 'task/multi', 'main')
+    mkdirSync(resolve(repo, 'apps/web'), { recursive: true })
+    mkdirSync(resolve(repo, 'services/api'), { recursive: true })
+    writeFileSync(resolve(repo, 'apps/web/App.tsx'), 'x\n')
+    writeFileSync(resolve(repo, 'services/api/main.go'), 'y\n')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'full-stack change')
+    git('checkout', '-q', 'main')
+  })
+
+  afterAll(() => {
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns the repo-relative paths a branch changed against integration', async () => {
+    const files = await getChangedFiles(repo, 'main', 'task/multi')
+    expect([...files].sort()).toEqual([
+      'apps/web/App.tsx',
+      'services/api/main.go',
+    ])
+  })
+
+  it('returns an empty list rather than throwing when git fails', async () => {
+    const files = await getChangedFiles(repo, 'main', 'no-such-branch')
+    expect(files).toEqual([])
   })
 })
