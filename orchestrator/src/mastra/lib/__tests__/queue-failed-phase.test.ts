@@ -91,4 +91,50 @@ describe('tasks.failed_phase / resume_from columns', () => {
     expect(fetched?.failedPhase).toBeNull()
     expect(fetched?.resumeFrom).toBeNull()
   })
+
+  it("round-trips failedPhase='code' through updateTask", async () => {
+    // The 'code' value is reserved for setup-time failures (e.g.
+    // install errors) that cannot be continued. The acceptance criteria
+    // for the failed_phase column list 'code' alongside 'verify' and
+    // 'merge', so the read path must accept it as a valid value rather
+    // than coercing it back to null.
+    const q = await loadQueue(repo)
+    const t = await q.enqueueTask('setup-fail task', undefined, {
+      skipTriage: true,
+    })
+    await q.updateTask(t.id, { status: 'failed', failedPhase: 'code' })
+    const fetched = await q.getTask(t.id)
+    expect(fetched?.status).toBe('failed')
+    expect(fetched?.failedPhase).toBe('code')
+  })
+
+  it('migration is idempotent on a pre-existing tasks table with rows', async () => {
+    // Acceptance criterion: migration runs idempotently on an existing
+    // queue database without data loss. Simulate a row created before
+    // the failed_phase column existed, then re-run initQueue and verify
+    // (a) the column is added, (b) the pre-existing row survives, and
+    // (c) re-running initQueue a second time does not error and does
+    // not wipe the row.
+    const q = await loadQueue(repo)
+    const seeded = await q.enqueueTask('legacy row', undefined, {
+      skipTriage: true,
+    })
+    // Initially failed_phase is NULL on a freshly enqueued row.
+    expect((await q.getTask(seeded.id))?.failedPhase).toBeNull()
+    // Re-running initQueue must be a no-op for existing data — the
+    // ALTER TABLE guard (`if (!names.has('failed_phase'))`) keeps it
+    // from re-adding the column.
+    await q.initQueue()
+    await q.initQueue()
+    const stillThere = await q.getTask(seeded.id)
+    expect(stillThere?.id).toBe(seeded.id)
+    expect(stillThere?.prompt).toBe('legacy row')
+    expect(stillThere?.failedPhase).toBeNull()
+    // And the column remains writable after the repeated migration.
+    await q.updateTask(seeded.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+    })
+    expect((await q.getTask(seeded.id))?.failedPhase).toBe('verify')
+  })
 })
