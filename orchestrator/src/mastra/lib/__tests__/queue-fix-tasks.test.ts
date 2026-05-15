@@ -86,6 +86,7 @@ describe('queue-fix-tasks', () => {
   afterEach(() => {
     delete process.env.MARS_REPO
     delete process.env.MARS_FIX_RETRY_BUDGET
+    delete process.env.MARS_MAX_FIX_ATTEMPTS
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -697,6 +698,238 @@ describe('queue-fix-tasks', () => {
     expect(prompt).toContain('Save your work')
     expect(prompt).toMatch(/vitest test/i)
     expect(prompt).toMatch(/catch-all/i)
+  })
+
+  it('fix-fail loop: caps fix-task inserts per (sourceTaskId, failureSignature) at MARS_MAX_FIX_ATTEMPTS (default 2) and escalates to a fix-fail-loop inbox item', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '10'
+    delete process.env.MARS_MAX_FIX_ATTEMPTS
+    const { q, ft, rc } = await loadModules(repo)
+    const sig = 'verify:typecheck/typecheck-cannot-find-name'
+    const cleanup = registerTestRecipe(rc, sig)
+    const inbox = (await import('../inbox')) as unknown as {
+      listInboxItems: typeof import('../inbox').listInboxItems
+      getInboxItem: typeof import('../inbox').getInboxItem
+    }
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+
+    // 1st dispatch on a fresh pair: blocked + new fix task inserted.
+    const r1 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(r1.outcome).toBe('blocked')
+    expect(r1.fixTaskId).toBeTruthy()
+    // Finish the first fix task so the second dispatch is not deduped by
+    // the existing-open-fix-task short-circuit.
+    await q.updateTask(r1.fixTaskId!, { status: 'done' })
+
+    // 2nd dispatch (prior attempt finished): still inserts a fix task.
+    const r2 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(r2.outcome).toBe('blocked')
+    expect(r2.fixTaskId).toBeTruthy()
+    expect(r2.fixTaskId).not.toBe(r1.fixTaskId)
+    await q.updateTask(r2.fixTaskId!, { status: 'done' })
+
+    const fixCountBefore = await q.getClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
+      args: [t.id, sig],
+    })
+    expect(
+      Number((fixCountBefore.rows[0] as unknown as { n: number }).n),
+    ).toBe(2)
+
+    // 3rd dispatch hits the cap: no new task row, raises a fix-fail-loop
+    // inbox item with the failure signature as its dedupe signature.
+    const r3 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(r3.outcome).toBe('fix-fail-loop')
+    expect(r3.fixTaskId).toBeUndefined()
+    expect(r3.failureSignature).toBe(sig)
+    expect(r3.inboxItemId).toBeTruthy()
+
+    const fixCountAfter = await q.getClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
+      args: [t.id, sig],
+    })
+    expect(
+      Number((fixCountAfter.rows[0] as unknown as { n: number }).n),
+    ).toBe(2)
+
+    const item3 = await inbox.getInboxItem(r3.inboxItemId!)
+    expect(item3?.kind).toBe('fix-fail-loop')
+    expect(item3?.category).toBe('orchestrator')
+    expect(item3?.priority).toBe('high')
+    expect(item3?.signature).toBe(sig)
+    expect(item3?.seenCount).toBe(1)
+    cleanup()
+  })
+
+  it('fix-fail loop: source task remains blocked with its prior error summary on escalation; not flipped back to queued', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '10'
+    delete process.env.MARS_MAX_FIX_ATTEMPTS
+    const { q, ft, rc } = await loadModules(repo)
+    const sig = 'verify:typecheck/typecheck-cannot-find-name'
+    const cleanup = registerTestRecipe(rc, sig)
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+
+    const r1 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    await q.updateTask(r1.fixTaskId!, { status: 'done' })
+
+    const r2 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    await q.updateTask(r2.fixTaskId!, { status: 'done' })
+
+    // Capture the source task's error summary right before escalation —
+    // it must survive the escalation untouched.
+    const beforeEscalation = await q.getTask(t.id)
+    expect(beforeEscalation?.status).toBe('blocked')
+    const priorError = beforeEscalation?.error
+    expect(priorError).toBeTruthy()
+
+    // Use a different message body but still classified to the same
+    // typecheck-cannot-find-name signature, so the cap check fires.
+    const r3 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name BAR (later, different output)',
+    })
+    expect(r3.outcome).toBe('fix-fail-loop')
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('blocked')
+    // The earlier error survives — the escalation must not overwrite it
+    // with the latest dispatch's error summary.
+    expect(reloaded?.error).toBe(priorError)
+    cleanup()
+  })
+
+  it('fix-fail loop: 4th and subsequent dispatches dedupe onto the same inbox row and bump seenCount, no new task or inbox row', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '10'
+    delete process.env.MARS_MAX_FIX_ATTEMPTS
+    const { q, ft, rc } = await loadModules(repo)
+    const sig = 'verify:typecheck/typecheck-cannot-find-name'
+    const cleanup = registerTestRecipe(rc, sig)
+    const inbox = (await import('../inbox')) as unknown as {
+      listInboxItems: typeof import('../inbox').listInboxItems
+      getInboxItem: typeof import('../inbox').getInboxItem
+    }
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+
+    const r1 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    await q.updateTask(r1.fixTaskId!, { status: 'done' })
+    const r2 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    await q.updateTask(r2.fixTaskId!, { status: 'done' })
+    const r3 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(r3.outcome).toBe('fix-fail-loop')
+
+    const r4 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(r4.outcome).toBe('fix-fail-loop')
+    // Same inbox row, no new fix-task row.
+    expect(r4.inboxItemId).toBe(r3.inboxItemId)
+    expect(r4.fixTaskId).toBeUndefined()
+
+    const r5 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(r5.outcome).toBe('fix-fail-loop')
+    expect(r5.inboxItemId).toBe(r3.inboxItemId)
+
+    // No new task rows beyond the original two fix-tasks.
+    const fixCount = await q.getClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
+      args: [t.id, sig],
+    })
+    expect(Number((fixCount.rows[0] as unknown as { n: number }).n)).toBe(2)
+
+    // Exactly one fix-fail-loop inbox row exists; seenCount tracks
+    // every escalation after the first (3 escalations -> seenCount 3).
+    const loopItems = (await inbox.listInboxItems('open')).filter(
+      (i) => i.kind === 'fix-fail-loop',
+    )
+    expect(loopItems).toHaveLength(1)
+    expect(loopItems[0].id).toBe(r3.inboxItemId)
+    expect(loopItems[0].seenCount).toBe(3)
+    cleanup()
+  })
+
+  it('fix-fail loop: MARS_MAX_FIX_ATTEMPTS overrides the default cap and the helper counts attempts across all task statuses', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '10'
+    process.env.MARS_MAX_FIX_ATTEMPTS = '1'
+    const { q, ft, rc } = await loadModules(repo)
+    const sig = 'verify:typecheck/typecheck-cannot-find-name'
+    const cleanup = registerTestRecipe(rc, sig)
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+
+    const r1 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(r1.outcome).toBe('blocked')
+    expect(r1.fixTaskId).toBeTruthy()
+
+    // Drive the fix-task into a terminal-but-non-open status. The cap
+    // counter MUST still see it — it counts every historical row
+    // regardless of status, not just open ones.
+    await q.updateTask(r1.fixTaskId!, { status: 'failed' })
+
+    // Helper-level check: counts across all statuses without a schema
+    // change.
+    const ftMod = (await import(
+      '../../queue-fix-tasks'
+    )) as unknown as {
+      countFixTaskAttempts: typeof import('../../queue-fix-tasks').countFixTaskAttempts
+      getMaxFixAttempts: typeof import('../../queue-fix-tasks').getMaxFixAttempts
+    }
+    expect(await ftMod.countFixTaskAttempts(t.id, sig)).toBe(1)
+    expect(ftMod.getMaxFixAttempts()).toBe(1)
+
+    const r2 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(r2.outcome).toBe('fix-fail-loop')
+    expect(r2.fixTaskId).toBeUndefined()
+    expect(r2.inboxItemId).toBeTruthy()
+
+    // The override took effect: cap=1 means the 2nd dispatch already
+    // escalates, even though only one fix-task was ever inserted.
+    delete process.env.MARS_MAX_FIX_ATTEMPTS
+    cleanup()
   })
 
   it('recoverBlockedTasks unblocks tasks whose blocker task was already done', async () => {
