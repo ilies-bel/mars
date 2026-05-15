@@ -480,6 +480,27 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_transcripts_recorded_at ON task_transcripts(recorded_at)
   `)
+  // self_heal_attempts: append-only ledger of fix-tasks the sweeper enqueues
+  // in response to a parent task's verify failure. Keyed by (parent_task_id,
+  // failure_signature) so the sweeper can dedupe — if a row already exists
+  // for the same parent+signature, the sweeper must not re-enqueue an
+  // identical fix-task. `fix_task_id` is the id of the spawned fix-task and
+  // `created_at` records when the attempt was recorded. CREATE TABLE IF NOT
+  // EXISTS is idempotent on existing databases; the composite index covers
+  // the dedup lookup path.
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS self_heal_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      parent_task_id TEXT NOT NULL,
+      failure_signature TEXT NOT NULL,
+      fix_task_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `)
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_self_heal_attempts_parent_signature
+       ON self_heal_attempts(parent_task_id, failure_signature)`,
+  )
   await healBlobPrompts(c)
 }
 
