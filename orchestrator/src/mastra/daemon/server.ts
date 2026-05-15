@@ -28,7 +28,7 @@ import {
   type Task,
   type UnblockTaskResult,
 } from '../queue'
-import { promoteIdea } from '../ideas'
+import { listIdeas, promoteIdea } from '../ideas'
 import {
   onBlockerTaskCompleted,
   recoverBlockedTasks,
@@ -892,6 +892,14 @@ export const startDaemon = async (
     ideaId: string,
   ): Promise<{ ideaId: string; status: string }> => {
     const idea = await promoteIdea(ideaId)
+    // Auto-slice: chain slicing fire-and-forget so the RPC stays fast and a
+    // slicer failure (e.g. malformed PRD) leaves the idea in prd-ready for the
+    // operator to inspect and re-promote without aborting the promote itself.
+    if (idea.status === 'prd-ready') {
+      void handleIdeaSlice(idea.id).catch((err) =>
+        log(`[auto-slice] idea ${idea.id} failed: ${(err as Error).message}`),
+      )
+    }
     return { ideaId: idea.id, status: idea.status }
   }
 
@@ -1007,6 +1015,20 @@ export const startDaemon = async (
           error: `daemon restart while task was ${status}`,
         }).catch(() => {})
       }
+    }
+
+    // Ideas promoted while the daemon was offline are still in prd-ready;
+    // pick them up and slice. Failures stay logged but don't abort reconcile.
+    try {
+      const stalled = await listIdeas({ status: 'prd-ready' })
+      for (const idea of stalled) {
+        log(`[reconcile-slice] idea ${idea.id} prd-ready on startup; slicing`)
+        void handleIdeaSlice(idea.id).catch((err) =>
+          log(`[reconcile-slice] idea ${idea.id} failed: ${(err as Error).message}`),
+        )
+      }
+    } catch (err) {
+      log(`[reconcile-slice] failed: ${(err as Error).message}`)
     }
   }
 
