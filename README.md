@@ -32,6 +32,27 @@ Verify:
 mars --version
 ```
 
+### Uninstall
+
+```sh
+mars uninstall           # prompts for confirmation
+mars uninstall --yes     # non-interactive, for scripted runs
+```
+
+Removes:
+
+- the `mars` wrapper binary (the symlink under `~/.local/bin/`, or
+  whatever `MARS_BIN_DIR` points at),
+- the source clone at `~/.mars` (or `MARS_HOME`).
+
+Leaves alone:
+
+- per-repo `.mars/` and `.worktrees/` directories inside your projects —
+  Mars never touches the working trees of repos it ran against.
+- the `PATH` export line the installer told you to add to your shell rc.
+  Remove that line from your `~/.bashrc` / `~/.zshrc` / equivalent
+  manually if you no longer want `~/.local/bin` on `PATH`.
+
 ### Requirements
 
 - **git** — Mars manages worktrees and merges.
