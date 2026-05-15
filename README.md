@@ -11,7 +11,7 @@ See [`VISION.md`](./VISION.md) for the target state and
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ilies-bel/mars/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ilies-bel/mars/main/install-dev.sh | bash
 ```
 
 The installer:
@@ -317,8 +317,8 @@ Environment variables:
 | Var | Default | Purpose |
 | --- | --- | --- |
 | `MARS_REPO` | (unset) | Target repo when `--repo` is not given. |
-| `MARS_HOME` | `~/.mars` | Where `install.sh` clones the framework. |
-| `MARS_BIN_DIR` | `~/.local/bin` | Where `install.sh` symlinks the `mars` binary. |
+| `MARS_HOME` | `~/.mars` | Where `install-dev.sh` clones the framework. |
+| `MARS_BIN_DIR` | `~/.local/bin` | Where `install-dev.sh` symlinks the `mars` binary. |
 | `INTEGRATION_BRANCH` | `main` | Merge target for the implement workflow. |
 | `MARS_MAX_TRIAGE` | `4` | Daemon concurrency cap for triage. |
 | `MARS_MAX_IMPLEMENT` | `4` | Daemon concurrency cap for implement. |
