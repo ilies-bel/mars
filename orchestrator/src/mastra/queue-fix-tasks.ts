@@ -778,6 +778,20 @@ export const handleTaskFailureWithFixTask = async (
     }
   }
 
+  // FUTURE: unrelated-flake short-circuit goes here, BEFORE the recipe
+  // lookup. When `input.failingStep === 'verify:test-failed'`, compare
+  // the failing test file paths against `task.spec?.files`; if there is
+  // zero overlap AND the same tests already fail on integrationBranch,
+  // park the source in a new `'flake-blocked'` status, raise an inbox
+  // item, and return without enqueueing a fix-task. Dependencies (file
+  // separately, then wire here):
+  //   - parser for failing test paths (idea 5710b256)
+  //   - 'flake-blocked' TaskStatus + plumbing (idea abfca8d8)
+  //   - integration-branch re-run helper (idea b4da8c0e)
+  //   - structured failure-context plumbing on this entrypoint
+  //     (idea adee06a6) — must extend HandleTaskFailureViaTaskInput
+  //     with spec.files + pre-computed integration re-run results,
+  //     since classifyError today only sees errorOutput.
   // No recipe for this signature — do NOT fall back to a generic prompt
   // (that's what produced the cascade). Park the source in 'blocked',
   // queue an Investigator task to propose a draft recipe, and raise an
