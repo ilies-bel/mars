@@ -88,7 +88,7 @@ jobs:
           exit $fail
 
   install-smoke:
-    name: install.sh smoke test
+    name: install-dev.sh smoke test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -101,12 +101,12 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Run install.sh against the checkout
+      - name: Run install-dev.sh against the checkout
         run: |
           set -euxo pipefail
           export HOME="$RUNNER_TEMP/home"
           mkdir -p "$HOME/.local/bin"
           export PATH="$HOME/.local/bin:$PATH"
-          bash ./install.sh
+          bash ./install-dev.sh
           command -v mars
           mars --help || mars help || true
