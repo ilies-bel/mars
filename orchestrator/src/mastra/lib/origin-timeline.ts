@@ -76,6 +76,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     priority: Number(row.priority ?? 0),
     failedPhase: coerceFailedPhase(row.failed_phase),
     resumeFrom: coerceFailedPhase(row.resume_from),
+    spec: null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }

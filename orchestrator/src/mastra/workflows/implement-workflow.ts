@@ -10,14 +10,27 @@ import {
   checkMergeTargetStatus,
 } from '../lib/git'
 import { getWorkerForTag } from '../workers'
-import { TASK_TAGS, isTaskTag, type TaskTag } from '../queue'
+import {
+  TASK_TAGS,
+  isTaskTag,
+  TASK_TYPES,
+  type TaskTag,
+  type TaskSpec,
+} from '../queue'
 import { resolveContext } from '../context'
 import {
   installWorktreeDeps,
   WorktreeInstallError,
 } from '../lib/worktree-install'
 import type { ClaudeEvent } from '../lib/claude-stream'
-import { getTask, hasIncompleteBlockers, updateTask, upsertTranscript } from '../queue'
+import {
+  getTask,
+  hasIncompleteBlockers,
+  updateTask,
+  upsertTranscript,
+  enqueueTask,
+  addBlockers,
+} from '../queue'
 import { handleTaskFailureWithFixTask } from '../queue-fix-tasks'
 import { resolveOriginIdForTask } from '../lib/origin'
 
@@ -28,11 +41,31 @@ export const isBlockersAbortError = (err: unknown): boolean => {
   const msg = err instanceof Error ? err.message : String(err)
   return msg.includes('has incomplete blockers; aborting dispatch')
 }
+
+// Thrown by codeStep when the read/grep span watcher trips. The codeStep
+// has already (a) marked the task `blocked` and (b) spawned a context-
+// gathering child task as its blocker, so the dispatcher must NOT route
+// this through the generic failure-handler — that would stamp `failed`
+// over `blocked` and double-enqueue a recovery fix-task. Same shape as
+// the blockers-abort sentinel.
+export const TOO_HARD_ABORT_MESSAGE = (taskId: string): string =>
+  `task ${taskId} aborted by read/grep span watcher; task parked in blocked`
+
+export const isTooHardAbortError = (err: unknown): boolean => {
+  const msg = err instanceof Error ? err.message : String(err)
+  return msg.includes('aborted by read/grep span watcher')
+}
 import { verifyPassedScorer } from '../scorers/verify-passed'
 import { mergeCleanScorer } from '../scorers/merge-clean'
 import { summarizeUsage } from '../lib/claude-usage'
 import { recordSignals, isReflectDisabled } from '../lib/reflect-signals'
 import { resolveVerifyCwd } from '../lib/derive-repro-command'
+import {
+  createReadSpanWatcher,
+  resolveReadSpanLimit,
+  type ReadSpanTrace,
+  type TripInfo,
+} from '../lib/read-span-watch'
 
 const planSchema = z
   .object({
@@ -51,6 +84,18 @@ const tagSchema: z.ZodType<TaskTag> = z.enum(TASK_TAGS as readonly [TaskTag, ...
 // in queue.ts but the workflow only ever resumes from a verify-or-later
 // failure: 'code' failures (setup:install) are non-resumable.
 const resumeFromSchema = z.enum(['verify', 'merge']).nullable().default(null)
+
+// Structured-task contract. Mirrors {@link TaskSpec} in queue.ts. Optional so
+// legacy free-prose rows still flow through composePrompt unchanged.
+const specSchema = z
+  .object({
+    files: z.array(z.string()),
+    verifyCmd: z.string().nullable(),
+    doneCriteria: z.array(z.string()),
+    taskType: z.enum(TASK_TYPES as readonly ['auto', 'checkpoint']),
+  })
+  .nullable()
+  .default(null)
 
 const STEP_ORDER = ['setup-worktree', 'run-claude-code', 'verify', 'merge'] as const
 
@@ -141,10 +186,109 @@ export const WRITER_SYSTEM_PROMPT = [
   'When every acceptance criterion is satisfied via the verbs above, exit cleanly. The daemon commits each verb on the integration branch on your behalf.',
 ].join('\n')
 
+// Deviation-rules brief appended to every Coder prompt. The rules are a
+// near-verbatim port of gsd-build/get-shit-done's gsd-executor contract —
+// they force the agent to reclassify off-plan findings into one of four
+// buckets (auto-fix bug, auto-add missing critical, auto-fix blocker,
+// surface architectural change as a follow-up task) instead of bailing.
+// Combined with the in-stream read/grep span guard in claude-stream-watch,
+// these are the primary anti-"agent quit early" levers — see #5 in the
+// PR description.
+export const DEVIATION_RULES = [
+  '## Deviation rules — do NOT quit silently',
+  '',
+  'You WILL discover work not in the brief. Apply these rules without asking. Bailing out without filing one of the artifacts below is not in the menu.',
+  '',
+  '**Rule 1 — Auto-fix bugs.** If the code you touched in scope doesn\'t work (wrong logic, type errors, null deref, broken validation, race), fix it inline. No permission needed. Log the fix in your final commit message.',
+  '',
+  '**Rule 2 — Auto-add missing critical functionality.** If correctness/security/operability is missing from your scope (error handling, input validation, auth on a protected route, an index on a hot query, error logging on a failure path), add it. These are correctness requirements, not features.',
+  '',
+  '**Rule 3 — Auto-fix blocking issues.** If something prevents completing the current task (broken import, missing env var, wrong type, missing referenced file, circular dep), fix it. Exception: a failed package install is NEVER auto-fixed — return a checkpoint and stop (see Rule 4).',
+  '',
+  '**Rule 4 — Surface architectural changes as new tasks.** When the brief\'s scope would require a new DB table, a new service layer, switching a library, changing auth, or any other architectural decision the user has not signed off on:',
+  '',
+  '  1. STOP. Do not silently expand scope.',
+  '  2. Run `mars task add "<self-contained prompt>" --blocked-by $TASK_ID` to create a follow-up. Set the parent (this task) as a blocker so the parent waits for the new work.',
+  '  3. For deferred refactors / observed cleanups that should NOT block this slice, run `mars idea add "<observation>"` so the loose end is captured but parked in the idea backlog.',
+  '  4. Commit whatever in-scope work is already complete, then exit. The orchestrator will re-dispatch this task once the new blocker resolves.',
+  '',
+  '**Scope boundary.** Only fix issues your changes touch. Pre-existing warnings, linting errors, or failures in unrelated files are out of scope — file them with `mars idea add "<observation>"` if interesting; do NOT fix them inline.',
+  '',
+  '**Fix-attempt cap.** If you have run the verify command 3 times on this task and it still fails for reasons you cannot explain, STOP. File a follow-up task via `mars task add --blocked-by $TASK_ID` describing the failing verify and what you tried, then exit. Do not loop.',
+  '',
+  '**Read/Grep budget.** You are watched. If you make 5+ consecutive Read/Grep/Glob calls without an Edit, Write, or Bash action, your session will be aborted with a `too_hard` failure. Read enough to act, then act. If you cannot act after that many reads, you do not have enough context — file a follow-up via `mars task add --blocked-by $TASK_ID` describing what you need to learn, then exit.',
+  '',
+  '`$TASK_ID` is the id of the task you are executing right now; the orchestrator passes it to you in the brief below.',
+].join('\n')
+
+const renderSpec = (spec: TaskSpec | null, taskId: string): string | null => {
+  if (!spec) return null
+  const parts: string[] = []
+  if (spec.taskType === 'checkpoint') {
+    parts.push(
+      `<task_type>checkpoint — pause for human verification before merge</task_type>`,
+    )
+  } else {
+    parts.push(`<task_type>auto — execute end-to-end and commit</task_type>`)
+  }
+  if (spec.files.length > 0) {
+    const lines = spec.files.map((f) => `  - ${f}`).join('\n')
+    parts.push(`<files>\n${lines}\n</files>`)
+  }
+  if (spec.verifyCmd && spec.verifyCmd.trim().length > 0) {
+    parts.push(`<verify>\n${spec.verifyCmd.trim()}\n</verify>`)
+  }
+  if (spec.doneCriteria.length > 0) {
+    const lines = spec.doneCriteria.map((c) => `  - [ ] ${c}`).join('\n')
+    parts.push(`<done>\n${lines}\n</done>`)
+  }
+  parts.push(`<task_id>${taskId}</task_id>`)
+  return `## Structured-task contract\n\n${parts.join('\n\n')}`
+}
+
+// Marker prefixed to the failure-reason and child-task prompt when the
+// read/grep span watcher trips. The dispatcher keys on this string so the
+// failure-handler does not also spawn a recovery fix-task — the watcher
+// already spawned a context-gathering follow-up, which is the right
+// next-step here, not a generic retry.
+export const TOO_HARD_PREFIX = 'too_hard:no-action-after-reads'
+
+const formatTrace = (trace: readonly ReadSpanTrace[]): string =>
+  trace
+    .map((t, i) => `  ${i + 1}. ${t.tool} ${t.target ? `→ ${t.target}` : ''}`)
+    .join('\n')
+
+const buildTooHardChildPrompt = (
+  parentTaskId: string,
+  parentPrompt: string,
+  trace: readonly ReadSpanTrace[],
+): string =>
+  [
+    `# Context-gathering for ${parentTaskId}`,
+    '',
+    `The implementor agent for ${parentTaskId} read ${trace.length} files/patterns without taking an action and was aborted with \`${TOO_HARD_PREFIX}\`. The task is now \`blocked\` on this follow-up.`,
+    '',
+    '## What this task must do',
+    '',
+    `Read the parent prompt below, walk the read trail, and either (a) produce a concise note in ${parentTaskId}'s repo describing the missing context the implementor needs, or (b) make the small surgical change that unblocks the implementor (e.g. a missing helper, type, or import).`,
+    '',
+    'If you discover the parent prompt is too broad to act on at all, file a `mars idea add "<scoped follow-up>"` for the smaller pieces and exit. Do NOT attempt to complete the parent task — your scope is unblocking it.',
+    '',
+    '## Parent prompt',
+    '',
+    parentPrompt.trim(),
+    '',
+    '## Read trail before abort',
+    '',
+    formatTrace(trace),
+  ].join('\n')
+
 export const composePrompt = (
   prompt: string,
   plan: z.infer<typeof planSchema>,
   tag: TaskTag = 'coder',
+  spec: TaskSpec | null = null,
+  taskId = '',
 ): string => {
   const sections: string[] = [prompt.trim()]
   if (plan?.functional?.trim()) {
@@ -153,6 +297,12 @@ export const composePrompt = (
   if (plan?.technical?.trim()) {
     sections.push(`## Technical plan\n\n${plan.technical.trim()}`)
   }
+  const specBlock = renderSpec(spec, taskId)
+  if (specBlock !== null) sections.push(specBlock)
+  // Coder gets the deviation rules; Writer's surface is too narrow for them
+  // (no task-add escape, structured-write only). Both tags still get their
+  // footer.
+  if (tag !== 'writer') sections.push(DEVIATION_RULES)
   sections.push(tag === 'writer' ? WRITER_FOOTER : COMMIT_FOOTER)
   return sections.join('\n\n')
 }
@@ -166,6 +316,7 @@ const setupStep = createStep({
     tag: tagSchema,
     integrationBranch: z.string().default('main'),
     resumeFrom: resumeFromSchema,
+    spec: specSchema,
   }),
   outputSchema: z.object({
     taskId: z.string(),
@@ -176,6 +327,7 @@ const setupStep = createStep({
     path: z.string(),
     branch: z.string(),
     resumeFrom: resumeFromSchema,
+    spec: specSchema,
   }),
   execute: async ({ inputData, tracingContext }) => {
     const originId = await resolveOriginIdForTask(inputData.taskId)
@@ -272,6 +424,7 @@ const codeStep = createStep({
     path: z.string(),
     branch: z.string(),
     resumeFrom: resumeFromSchema,
+    spec: specSchema,
   }),
   outputSchema: z.object({
     taskId: z.string(),
@@ -330,14 +483,42 @@ const codeStep = createStep({
 
     const originId = await resolveOriginIdForTask(inputData.taskId)
     const tag = isTaskTag(inputData.tag) ? inputData.tag : 'coder'
-    const fullPrompt = composePrompt(inputData.prompt, inputData.plan, tag)
+    const fullPrompt = composePrompt(
+      inputData.prompt,
+      inputData.plan,
+      tag,
+      inputData.spec ?? null,
+      inputData.taskId,
+    )
     const conversation: ClaudeEvent[] = []
     const worker = getWorkerForTag(tag)
+    // Read/Grep span watcher (gsd-style analysis-paralysis guard). Only
+    // applied to Coder runs — Writer's surface is too narrow to stall on
+    // reads (it just calls a few daemon verbs). When the watcher trips we
+    // SIGKILL the child via externalAbort and remember the trace so the
+    // post-run branch below can spawn a follow-up task.
+    const spanAbort = new AbortController()
+    let tooHardTrip: TripInfo | null = null
+    const watcher =
+      tag === 'coder'
+        ? createReadSpanWatcher({
+            limit: resolveReadSpanLimit(),
+            onTrip: (info) => {
+              tooHardTrip = info
+              console.log(
+                `[span] task ${inputData.taskId}: ${info.limit} consecutive Read/Grep/Glob calls without action — aborting.`,
+              )
+              spanAbort.abort()
+            },
+          })
+        : null
     const r = await worker.run(fullPrompt, {
       cwd: inputData.path,
       systemPrompt: tag === 'writer' ? WRITER_SYSTEM_PROMPT : undefined,
+      externalAbort: spanAbort.signal,
       onEvent: async (event) => {
         conversation.push(event)
+        watcher?.observe(event)
         await writer?.write({ type: 'claude-event', event })
       },
     })
@@ -356,6 +537,50 @@ const codeStep = createStep({
     await recordSignals(inputData.taskId, 'run-claude-code', usage).catch(() => {
       // signal capture must never fail the task
     })
+    // Too-hard branch: the watcher tripped. Stamp the parent as failed with
+    // a `too_hard` reason, spawn a context-gathering child task as a queued
+    // blocker, and re-block the parent on it. The parent will pick back up
+    // automatically when the child completes (see queue.ts:promoteDraftToQueued).
+    if (tooHardTrip !== null) {
+      const trip: TripInfo = tooHardTrip
+      const childPrompt = buildTooHardChildPrompt(
+        inputData.taskId,
+        inputData.prompt,
+        trip.trace,
+      )
+      const errorSummary = `${TOO_HARD_PREFIX}: ${trip.limit} reads without action; trace=${trip.trace.map((t) => t.tool).join('+')}`.slice(0, 1000)
+      try {
+        const child = await enqueueTask(childPrompt, undefined, {
+          skipTriage: true,
+          originId,
+        })
+        await updateTask(inputData.taskId, {
+          status: 'blocked',
+          error: errorSummary,
+          failedPhase: 'code',
+        })
+        await addBlockers(inputData.taskId, [child.id])
+        console.log(
+          `[span] task ${inputData.taskId}: spawned ${child.id} as blocker; parent → blocked`,
+        )
+      } catch (err) {
+        console.error(
+          `[span] task ${inputData.taskId}: failed to spawn too-hard child:`,
+          err,
+        )
+        // Fallback: still stamp failed so the queue doesn't show running.
+        await updateTask(inputData.taskId, {
+          status: 'failed',
+          error: errorSummary,
+          failedPhase: 'code',
+        }).catch(() => {})
+      }
+      // Short-circuit the rest of the workflow. Throwing the sentinel
+      // bypasses verify+merge and signals the dispatcher to leave the task
+      // parked in `blocked` instead of routing through the generic
+      // failure-handler.
+      throw new Error(TOO_HARD_ABORT_MESSAGE(inputData.taskId))
+    }
     if (!isReflectDisabled()) {
       await upsertTranscript({
         taskId: inputData.taskId,
@@ -708,6 +933,7 @@ export const implementWorkflow = createWorkflow({
     tag: tagSchema,
     integrationBranch: z.string().default('main'),
     resumeFrom: resumeFromSchema,
+    spec: specSchema,
   }),
   outputSchema: z.object({
     taskId: z.string(),

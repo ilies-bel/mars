@@ -93,11 +93,44 @@ a real trade-off.
 ## Enqueue example
 
 ```bash
-mars task add "implement X in src/foo.ts"   # auto-dispatched
+mars task add "implement X in src/foo.ts"   # auto-dispatched, free-prose
 mars list queued
 mars where
 mars --repo /path/to/repo task add "fix bug Y"
 ```
+
+## Structured tasks (gsd-style)
+
+`mars task add` accepts an optional structured-task contract. When any of
+`--files`, `--verify`, `--done`, or `--type` is passed, the row is stored
+with a typed spec and the implementor agent receives the prompt rendered
+as four explicit sections (`<files>`, `<verify>`, `<done>`, `<task_type>`)
+plus a `<task_id>` it can reference when filing follow-ups. Specs prevent
+the agent from quitting early because completion becomes a checklist.
+
+```bash
+mars task add "rename oldName to newName" \
+  --files src/foo.ts --files src/foo.test.ts \
+  --verify "pnpm test src/foo.test.ts" \
+  --done "test file references newName" \
+  --done "rg oldName returns 0 hits" \
+  --type auto
+```
+
+The slicer always emits structured tasks. Ad-hoc free-prose `mars task add`
+still works and degrades cleanly to the pre-existing prompt-only shape.
+
+## Implementor deviation rules
+
+Every dispatched Coder run receives a deviation-rules brief mirroring
+gsd-build/get-shit-done's `gsd-executor` contract. The agent is forbidden
+from bailing without filing one of: an auto-fix commit, a follow-up task
+via `mars task add "..." --blocked-by $TASK_ID`, or a deferred idea via
+`mars idea add "..."`. In-stream a watcher counts consecutive Read/Grep/
+Glob calls without an Edit/Write/Bash action; on the 5th the session is
+SIGKILLed, the task parks in `blocked`, and a context-gathering child
+task is auto-enqueued as its blocker. The threshold is `5` by default;
+override with `MARS_READ_SPAN_LIMIT`.
 
 Inspect runs at `http://localhost:4111` (`cd orchestrator && npm run dev`).
 

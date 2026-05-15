@@ -34,9 +34,13 @@ const FLAGS_WITH_VALUES = new Set([
   '--host',
   '--priority',
   '--tag',
+  '--files',
+  '--verify',
+  '--done',
+  '--type',
 ])
 
-const REPEATABLE_FLAGS = new Set(['--blocked-by'])
+const REPEATABLE_FLAGS = new Set(['--blocked-by', '--files', '--done'])
 
 const parseArgs = (argv: readonly string[]): ParsedArgs => {
   const positional: string[] = []
@@ -799,6 +803,12 @@ const main = async (): Promise<void> => {
     blockerIds?: readonly string[],
     priority?: number,
     tag?: 'coder' | 'writer',
+    spec?: {
+      files: readonly string[]
+      verifyCmd: string | null
+      doneCriteria: readonly string[]
+      taskType: 'auto' | 'checkpoint'
+    },
   ): Promise<void> => {
     const { detectNoCommitMarker } = await import('./mastra/lib/no-commit-marker')
     const marker = detectNoCommitMarker(prompt)
@@ -841,6 +851,7 @@ const main = async (): Promise<void> => {
         ...(blockerIds && blockerIds.length > 0 ? { blockerIds } : {}),
         ...(priority !== undefined ? { priority } : {}),
         ...(tag !== undefined ? { tag } : {}),
+        ...(spec !== undefined ? { spec } : {}),
       },
       {
         onSpawnNotice: (pid, log) =>
@@ -874,7 +885,7 @@ const main = async (): Promise<void> => {
       const prompt = rest.slice(1).join(' ')
       if (!prompt) {
         console.error(
-          'usage: mars task add "<prompt>" [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder|writer] [plan flags]',
+          'usage: mars task add "<prompt>" [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder|writer] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [plan flags]',
         )
         process.exit(1)
       }
@@ -898,7 +909,46 @@ const main = async (): Promise<void> => {
         }
         tag = tagRaw
       }
-      await enqueueViaDaemon(prompt, true, blockerIds, priority, tag)
+      // Structured-task spec (gsd-style). Any of --files/--verify/--done/--type
+      // promotes the row from free-prose to structured. If none are passed, the
+      // row keeps the legacy shape (spec column NULL) and the agent sees only
+      // `prompt` — preserving day-zero behaviour for ad-hoc `mars task add`.
+      const filesList = multiFlags['--files'] ?? []
+      const doneList = multiFlags['--done'] ?? []
+      const verifyRaw = flags['--verify']
+      const typeRaw = flags['--type']
+      let spec:
+        | {
+            files: readonly string[]
+            verifyCmd: string | null
+            doneCriteria: readonly string[]
+            taskType: 'auto' | 'checkpoint'
+          }
+        | undefined
+      const anySpec =
+        filesList.length > 0 ||
+        doneList.length > 0 ||
+        verifyRaw !== undefined ||
+        typeRaw !== undefined
+      if (anySpec) {
+        let taskType: 'auto' | 'checkpoint' = 'auto'
+        if (typeRaw !== undefined) {
+          if (typeRaw !== 'auto' && typeRaw !== 'checkpoint') {
+            console.error(
+              `type must be one of auto, checkpoint; got '${typeRaw}'`,
+            )
+            process.exit(1)
+          }
+          taskType = typeRaw
+        }
+        spec = {
+          files: filesList,
+          verifyCmd: verifyRaw ?? null,
+          doneCriteria: doneList,
+          taskType,
+        }
+      }
+      await enqueueViaDaemon(prompt, true, blockerIds, priority, tag, spec)
       return
     }
     if (sub === 'priority') {

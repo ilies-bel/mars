@@ -30,6 +30,13 @@ const slicerOutputSchema = z.object({
         whatToBuild: z.string(),
         acceptanceCriteria: z.array(z.string()).min(1),
         blockedBy: z.array(z.number().int().min(1)),
+        // gsd-style structured-task spec. The slicer now names the files
+        // it expects the implementor to touch, the command that verifies
+        // the slice, and an explicit task type. Defaults preserve forward
+        // compatibility with planner outputs that don't yet emit these.
+        files: z.array(z.string()).default([]),
+        verifyCmd: z.string().nullable().default(null),
+        taskType: z.enum(['auto', 'checkpoint']).default('auto'),
       }),
     )
     .min(1)
@@ -81,11 +88,24 @@ For each slice, produce:
   to be considered complete. Each item is a single concrete observable.
 - blockedBy — 1-based indices of other slices in the same response that
   this one must wait for. Use sparingly; most slices should parallelise.
+- files — array of relative file paths (or directory globs) the
+  implementor is allowed to touch for this slice. Be specific; broad
+  globs ("**") signal you have not narrowed the scope. Anything outside
+  this set the agent encounters becomes a deferred-idea or a follow-up
+  task, not in-scope work.
+- verifyCmd — a single shell command that the implementor must run to
+  prove the slice landed (e.g. "pnpm test src/foo.test.ts" or
+  "pnpm typecheck"). Empty string if the project's default verify is
+  sufficient.
+- taskType — "auto" for slices the implementor can drive end-to-end and
+  commit, or "checkpoint" for slices that need human verification before
+  merge. Default "auto"; reach for "checkpoint" only when a human must
+  visually confirm an output the verifier cannot.
 
 Return ONLY a single JSON object matching exactly this shape, with no
 surrounding prose, no code fences, and no commentary:
 
-{"slices":[{"title":"...","type":"AFK","whatToBuild":"...","acceptanceCriteria":["...","..."],"blockedBy":[]}]}
+{"slices":[{"title":"...","type":"AFK","whatToBuild":"...","acceptanceCriteria":["...","..."],"blockedBy":[],"files":["src/foo.ts"],"verifyCmd":"pnpm test src/foo.test.ts","taskType":"auto"}]}
 
 PRD to decompose
 ================
@@ -217,11 +237,21 @@ const generateStep = createStep({
       for (let i = 0; i < total; i += 1) {
         const slice = parsed.slices[i]
         const prompt = composeTaskPrompt(idea.title, idea.id, slice, i + 1, total)
+        const verifyCmd =
+          slice.verifyCmd !== null && slice.verifyCmd.trim().length > 0
+            ? slice.verifyCmd
+            : null
         const task = await enqueueTask(prompt, undefined, {
           author: idea.author ?? undefined,
           originId: idea.id,
           parentIdeaId: idea.id,
           sliceIndex: i + 1,
+          spec: {
+            files: slice.files,
+            verifyCmd,
+            doneCriteria: slice.acceptanceCriteria,
+            taskType: slice.taskType,
+          },
         })
         taskIds.push(task.id)
       }

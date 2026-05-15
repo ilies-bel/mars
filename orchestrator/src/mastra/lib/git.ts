@@ -317,6 +317,14 @@ export interface RunClaudeArgs {
   // Per-invocation override for the message cap enforced inside runClaudeCode.
   // Falls back to MARS_CLAUDE_MAX_MESSAGES, then to DEFAULT_CLAUDE_MAX_MESSAGES.
   maxMessages?: number
+  /**
+   * Optional caller-supplied abort signal. When fired, runClaudeCode
+   * SIGKILLs the child and returns a `exitCode: 137` result. Used by the
+   * read/grep span watcher to terminate sessions that have stalled on
+   * reads. The signal is ORed with the internal timeout + message-cap
+   * abort, so either side can trigger termination.
+   */
+  externalAbort?: AbortSignal
 }
 
 export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -541,6 +549,7 @@ export const runClaudeCode = async ({
   agent,
   disallowedTools,
   maxMessages,
+  externalAbort,
 }: RunClaudeArgs): Promise<RunClaudeResult> => {
   const conversation: ClaudeEvent[] = []
   const cap = resolveClaudeMessageCap(maxMessages)
@@ -548,7 +557,26 @@ export const runClaudeCode = async ({
   const warnAt = capEnabled ? Math.floor(cap * 0.6) : Number.POSITIVE_INFINITY
   let warned = false
   let capHit = false
+  let externalAborted = false
   const abort = new AbortController()
+  // Bridge a caller-supplied AbortSignal onto the internal controller so a
+  // single SIGKILL path covers timeout, cap, and external (read/grep span)
+  // abort causes.
+  if (externalAbort) {
+    if (externalAbort.aborted) {
+      externalAborted = true
+      abort.abort()
+    } else {
+      externalAbort.addEventListener(
+        'abort',
+        () => {
+          externalAborted = true
+          abort.abort()
+        },
+        { once: true },
+      )
+    }
+  }
 
   // Track whether the wall-clock timeout fired so we can synthesise the
   // 124/"timed out" result after the subprocess has actually died. We MUST
@@ -625,6 +653,15 @@ export const runClaudeCode = async ({
       exitCode: 124,
       stdout: result.stdout,
       stderr: `claude -p timed out after ${timeoutMs}ms`,
+      sessionId: detectedSessionId,
+      conversation,
+    }
+  }
+  if (externalAborted) {
+    return {
+      exitCode: 138,
+      stdout: result.stdout,
+      stderr: `claude -p aborted by caller (read/grep span watcher)`,
       sessionId: detectedSessionId,
       conversation,
     }
