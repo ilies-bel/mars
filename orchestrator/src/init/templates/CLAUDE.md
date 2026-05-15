@@ -2,44 +2,28 @@
 
 ## Mars Framework
 
-Modular AI coding agent team behind a single TypeScript CLI (`mars`).
-Bundles the framework, orchestrator (Claude Code in parallel git worktrees),
-read-only frontend (`ui/`), and design drafts (`design/`).
+TypeScript CLI (`mars`) + orchestrator running Claude Code in parallel
+git worktrees, read-only frontend (`ui/`), design drafts (`design/`).
 
-Install: `install.sh` clones into `~/.mars`, builds with Bun, symlinks
-`~/.local/bin/mars`.
+## Routing
 
-## Triage protocol
+Route silently between three actions: enqueue (`mars task add "..."`),
+grill conversationally, or edit directly. Never name the routes, narrate
+the decision, or ask the user to pick. Reads and searches are always
+direct.
 
-Pick a lane before touching files. Read the user's request through these
-tells:
+Enqueue by default. Grill instead when any of these hold:
 
-**Lane A — Direct enqueue.** `mars task add "..."` and stop. Tells:
-- A file, symbol, or command appears in the ask.
-- A symptom + a desired behaviour are both stated.
-- Imperative shape: "fix", "add", "rename", "remove", "wire up", "make
-  X do Y".
-- The change is local and doesn't introduce a new concept.
+- shape is exploratory or tentative ("should we…", "thinking about…");
+- introduces or redefines a term, or affects `CONTEXT.md` / ADRs;
+- cross-cutting or architectural trade-off (new seam, dependency, data
+  shape, hard-to-reverse choice);
+- acceptance criteria or scope are unclear;
+- conflicts with an existing ADR, invariant, or queued work.
 
-**Lane B — Grill first** (`/mars:grill`). Conversation only; no enqueue
-in this session. Tells:
-- Question-shaped or exploratory: "should we…?", "how do we…?", "what
-  about…?", "I'm thinking…".
-- Introduces a term not in the glossary, or redefines an existing one.
-- Cross-cutting: touches multiple modules, or the user can't point at
-  a file.
-- Architectural choice with real trade-offs (new seam, new dependency,
-  new data shape).
-- Explicit shape requests: "shape this", "grill this", "let's think
-  about", "I'm not sure how to".
-
-**Lane C — Direct edit** in this session. Opt-in only ("edit it here",
-"do it directly", "in this repo"). Reads/searches always stay direct.
-
-If signals from A and B both fire, default to B and ask **one** short
-question naming the fork ("sounds like a quick fix in `src/foo.ts` —
-or are you asking whether we should restructure X? grill or enqueue?").
-Don't enqueue a Lane B ask just because it's faster.
+If both signals fire, grill — by asking a sharpening question, not by
+asking the user to choose. Edit directly only when the user explicitly
+opts in for this session.
 
 ## Tasks
 
@@ -47,20 +31,17 @@ Tasks live in `.mars/queue.db`. Enqueue via `mars task add "..."`; the
 orchestrator dispatches automatically (worktree → code → verify → merge).
 Inspect via `mars list` or Mastra Studio.
 
-Default mutations route through the orchestrator. Direct `Edit`/`Write` on
-the working tree is Lane C only.
+Default mutations route through the orchestrator. Direct `Edit`/`Write`
+on the working tree only when the user has explicitly opted in for this
+session.
 
 ## Top-level directories
 
-| Path | Purpose |
-| --- | --- |
-| `orchestrator/` | Mastra-driven orchestrator. Claude Code headless in parallel worktrees → verify → fast-forward into `main`. Conflicts → bundled `vcs-supervisor` ("Vega"). Per-repo state at `.mars/`. Node `>=22.13.0`. |
-| `ui/` | Read-only frontend. Three views, SSE stream, port 7777. CLI is the only control surface. |
-| `design/` | v0 design drafts; not shipped at runtime. |
-| `.mars/` | Per-repo state: `state.db`, `queue.db`, `mastra.db`, `worktrees/<task-id>/`, `.merge.lock`. Gitignored. |
-| `.worktrees/` | Orchestrator-created git worktrees. |
-| `.agents/` | Agent skill definitions. |
-| `.claude/` | Claude Code project settings, hooks, slash commands. |
+- `orchestrator/` — Mastra-driven orchestrator. Headless Claude Code in
+  parallel worktrees → verify → fast-forward into `main`. Conflicts go
+  to `vcs-supervisor` ("Vega"). Node `>=22.13.0`.
+- `.mars/` — per-repo state (`state.db`, `queue.db`, `mastra.db`,
+  `worktrees/<task-id>/`, `.merge.lock`). Gitignored.
 
 ## Key concepts
 
@@ -74,65 +55,30 @@ the working tree is Lane C only.
 
 ## Glossary and ADRs
 
-Both written via the daemon's **structured-write** path (worktree off
-`main`, deterministic edit, commit, merge through the lock). No LLM in the
-edit itself.
+- `CONTEXT.md` — domain glossary. Edit only via `mars glossary
+  set/remove`; read via `mars glossary list/show`.
+- `docs/adr/NNNN-<slug>.md` — ADRs. Add via `mars adr add`; read via
+  `mars adr list/show`. ADR only when hard-to-reverse, surprising, and
+  embodying a real trade-off.
 
-- **`CONTEXT.md`** — domain glossary. Edit only via `mars glossary
-  set/remove`. Read via `mars glossary list/show`.
-- **`docs/adr/NNNN-<slug>.md`** — ADRs. Add via `mars adr add`. Read via
-  `mars adr list/show`.
+Never edit `CONTEXT.md` or `docs/adr/**` directly. Reads are fine.
 
-Direct edits to `CONTEXT.md` or `docs/adr/**` from coding worktrees are
-forbidden. Coding agents may **read** `CONTEXT.md` freely.
+## Structured tasks
 
-`/mars:chat` grills the user's plan against `CONTEXT.md`, curating
-terms inline. ADR only when hard-to-reverse, surprising, and embodying
-a real trade-off.
+`mars task add` accepts `--files`, `--verify`, `--done`, `--type`. Any of
+them stores a typed spec; the implementor receives `<files>`, `<verify>`,
+`<done>`, `<task_type>`, `<task_id>` sections so completion is a
+checklist. The slicer always emits structured tasks; free-prose still
+works and degrades to prompt-only.
 
-## Enqueue example
+## Orchestrator notes
 
-```bash
-mars task add "implement X in src/foo.ts"   # auto-dispatched, free-prose
-mars list queued
-mars where
-mars --repo /path/to/repo task add "fix bug Y"
-```
-
-## Structured tasks (gsd-style)
-
-`mars task add` accepts an optional structured-task contract. When any of
-`--files`, `--verify`, `--done`, or `--type` is passed, the row is stored
-with a typed spec and the implementor agent receives the prompt rendered
-as four explicit sections (`<files>`, `<verify>`, `<done>`, `<task_type>`)
-plus a `<task_id>` it can reference when filing follow-ups. Specs prevent
-the agent from quitting early because completion becomes a checklist.
-
-```bash
-mars task add "rename oldName to newName" \
-  --files src/foo.ts --files src/foo.test.ts \
-  --verify "pnpm test src/foo.test.ts" \
-  --done "test file references newName" \
-  --done "rg oldName returns 0 hits" \
-  --type auto
-```
-
-The slicer always emits structured tasks. Ad-hoc free-prose `mars task add`
-still works and degrades cleanly to the pre-existing prompt-only shape.
-
-## Implementor deviation rules
-
-Every dispatched Coder run receives a deviation-rules brief mirroring
-gsd-build/get-shit-done's `gsd-executor` contract. The agent is forbidden
-from bailing without filing one of: an auto-fix commit, a follow-up task
-via `mars task add "..." --blocked-by $TASK_ID`, or a deferred idea via
-`mars idea add "..."`. In-stream a watcher counts consecutive Read/Grep/
-Glob calls without an Edit/Write/Bash action; on the 5th the session is
-SIGKILLed, the task parks in `blocked`, and a context-gathering child
-task is auto-enqueued as its blocker. The threshold is `5` by default;
-override with `MARS_READ_SPAN_LIMIT`.
-
-Inspect runs at `http://localhost:4111` (`cd orchestrator && npm run dev`).
+- Coder runs get a deviation-rules brief: no bailing without an auto-fix
+  commit, a `--blocked-by $TASK_ID` follow-up, or a `mars idea add`. A
+  watcher SIGKILLs after 5 consecutive Read/Grep/Glob calls without an
+  Edit/Write/Bash (`MARS_READ_SPAN_LIMIT` to override) and parks the
+  task in `blocked` with a context-gathering child as blocker.
+- Inspect runs at `http://localhost:4111` (`cd orchestrator && npm run dev`).
 
 ## Conventions
 
@@ -142,13 +88,12 @@ Inspect runs at `http://localhost:4111` (`cd orchestrator && npm run dev`).
 - Register new Mastra agents/tools/workflows/scorers in
   `orchestrator/src/mastra/index.ts`.
 - Never commit `.env`, `.mars/`, or `node_modules`.
-- **Bash CWD persists across tool calls in a session.** A `cd
-  .mars/worktrees/<task-id>` to inspect a worktree leaves every later
-  `mars` invocation resolving `repoRoot()` from inside that (empty)
-  worktree — `mars inbox`/`list` will look like they were wiped. Either
-  prefix one-off inspections (`(cd .mars/worktrees/<id> && git status)`)
-  or re-anchor with `cd /Users/ib472e5l/project/perso/mars-framework`
-  before the next `mars` call.
+- Never `cd`. Bash CWD persists across tool calls, and `mars` resolves
+  the repo from CWD upward — once shifted into `.mars/worktrees/<id>/`,
+  every later `mars` call silently binds to that worktree's `.mars/` and
+  hits the wrong DB. Use `git -C <path>`, tool `--cwd` flags, absolute
+  paths, or `mars --repo <root> …`. If a one-off subshell is unavoidable,
+  spell it `(cd <abs-path> && …)` so the parent shell never moves.
 
 ## Loose ends
 
