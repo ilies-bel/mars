@@ -189,3 +189,7 @@ An optional cheap, no-LLM check that a recovery recipe may declare so the dispat
 
 **skip_reason**:
 The structured signal persisted on a fix-task that ended in done without invoking an agent. Set by the dispatcher when a recovery recipe precondition was already satisfied at dispatch time, recording why no agent run was needed so dirty-tree recovery stays idempotent and observable.
+
+**Invalidator**:
+A declaration attached to an inbox item at raise-time stating which bus events close it and how to match them against the event payload. The inbox engine evaluates invalidators centrally; raisers commit up front to what closes their item.
+_Avoid_: auto-resolver, inbox-closer, close-rule
