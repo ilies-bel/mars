@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { resolve, dirname, isAbsolute, join } from 'node:path'
-import { open, mkdir, readFile, rm, unlink } from 'node:fs/promises'
+import { access, open, mkdir, readFile, rm, stat, unlink } from 'node:fs/promises'
 import { statSync, constants as fsConstants, accessSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { getRepoRoot, getStateDir } from '../context'
@@ -73,9 +73,17 @@ const branchExists = async (branch: string): Promise<boolean> => {
   }
 }
 
-const pathExists = async (p: string): Promise<boolean> => {
+// Portable filesystem-level existence check. Replaces a prior shell-out to
+// `test -e <path>`, which is POSIX-only and would break on Windows where
+// `/bin/test` does not exist. `fs.access(p, F_OK)` resolves when any
+// directory entry (regular file, directory, symlink, fifo, socket, …)
+// is present at `p`, and rejects on ENOENT / ENOTDIR, matching the
+// semantics callers relied on for the previous `test -e` invocation.
+// Exported for unit-testing on every host OS.
+export const pathExists = async (p: string): Promise<boolean> => {
+  if (typeof p !== 'string' || p.length === 0) return false
   try {
-    await exec('test', ['-e', p])
+    await access(p, fsConstants.F_OK)
     return true
   } catch {
     return false
@@ -1265,6 +1273,19 @@ const invokeVcsSupervisor = async (
   return { ...result, conversation }
 }
 
+// Portable directory check. Replaces a prior shell-out to `test -d <path>`,
+// which is POSIX-only. `fs.stat(p).isDirectory()` works identically across
+// darwin/linux/windows and returns false (rather than throwing) when the
+// path is missing.
+const isDirectory = async (p: string): Promise<boolean> => {
+  try {
+    const s = await stat(p)
+    return s.isDirectory()
+  } catch {
+    return false
+  }
+}
+
 const isRebaseInProgress = async (cwd: string): Promise<boolean> => {
   try {
     const { stdout } = await exec('git', ['rev-parse', '--git-path', 'rebase-merge'], { cwd })
@@ -1272,8 +1293,8 @@ const isRebaseInProgress = async (cwd: string): Promise<boolean> => {
     const { stdout: applyStdout } = await exec('git', ['rev-parse', '--git-path', 'rebase-apply'], { cwd })
     const applyPath = applyStdout.trim()
     const checks = await Promise.all([
-      exec('test', ['-d', mergePath]).then(() => true).catch(() => false),
-      exec('test', ['-d', applyPath]).then(() => true).catch(() => false),
+      isDirectory(mergePath),
+      isDirectory(applyPath),
     ])
     return checks.some(Boolean)
   } catch {
