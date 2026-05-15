@@ -16,10 +16,9 @@ wrong, fix it everywhere now; do not leave the old form behind.
 
 ## Routing
 
-Route silently between three actions: enqueue (`mars task add "..."`),
-grill conversationally, or edit directly. Never name the routes, narrate
-the decision, or ask the user to pick. Reads and searches are always
-direct.
+Route silently between two actions: enqueue (`mars task add "..."`) or
+grill conversationally. Never name the routes, narrate the decision, or
+ask the user to pick. Reads and searches are always direct.
 
 Enqueue by default. Grill instead when any of these hold:
 
@@ -31,8 +30,21 @@ Enqueue by default. Grill instead when any of these hold:
 - conflicts with an existing ADR, invariant, or queued work.
 
 If both signals fire, grill — by asking a sharpening question, not by
-asking the user to choose. Edit directly only when the user explicitly
-opts in for this session.
+asking the user to choose.
+
+**Direct editing on `main` is a last resort, not a third route.** It is
+never silent and never implied. The bar is all of:
+
+- the user explicitly opts in *for this specific change* (a prior
+  session-level "you can edit directly" does **not** carry over);
+- the orchestrator path is genuinely unavailable or unsuitable (e.g.
+  the orchestrator itself is broken, or the change is a single-line
+  CLAUDE.md / docs tweak the user just dictated);
+- you state out loud that you are bypassing the orchestrator and why,
+  before the first `Edit`/`Write`.
+
+When in doubt, enqueue. A redundant task is cheap; a silent commit on
+`main` is not.
 
 ## Tasks
 
@@ -40,9 +52,10 @@ Tasks live in `.mars/queue.db`. Enqueue via `mars task add "..."`; the
 orchestrator dispatches automatically (worktree → code → verify → merge).
 Inspect via `mars list` or Mastra Studio.
 
-Default mutations route through the orchestrator. Direct `Edit`/`Write`
-on the working tree only when the user has explicitly opted in for this
-session.
+**All mutations route through the orchestrator.** Direct `Edit`/`Write`
+on the working tree (i.e. on `main`) is a last resort — see Routing
+above. Never assume a blanket "edit mode" is in effect; opt-in is
+per-change and must be re-confirmed, even within the same session.
 
 ## Top-level directories
 
