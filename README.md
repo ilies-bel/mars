@@ -216,7 +216,7 @@ dispatches into the workflows above. `reload` re-reads
 | Status | Meaning |
 | --- | --- |
 | `draft` | Created but not actionable yet. Cleared by `mars triage` or `mars set-functional/--technical`. |
-| `queued` | Ready for the daemon to pick up. |
+| `queued` | The claimable state — the daemon picks up tasks directly from `queued`. A task auto-promotes from `draft` to `queued` once its functional and technical plan sections are both non-empty. |
 | `blocked` | Has one or more open `task_blockers` edges. |
 | `running` / `verifying` / `merging` | In-flight inside the implement workflow. |
 | `done` | Merged into the integration branch. |
