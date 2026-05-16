@@ -19,5 +19,8 @@ dist/
 *.tsbuildinfo
 .vite/
 
-# Claude Code runtime
-.claude/scheduled_tasks.lock
+# Claude Code runtime — scheduled-tasks lock is a live runtime artifact
+# (pid/sessionId/timestamps), never a tracked template. Match it anywhere so
+# a leak (e.g. sync-claude-templates copying .claude/ into the template tree)
+# can never dirty the working tree.
+scheduled_tasks.lock
