@@ -39,6 +39,7 @@ const supervisorSpecSchema = z.object({
   scope: z.string(),
   detectedFrom: z.array(z.string()),
   externalSlugs: z.array(z.string()),
+  techs: z.array(z.string()),
 })
 
 const VERIFY_DEFAULTS_BY_SUPERVISOR: Record<string, VerifyStepEntry[]> = {
@@ -119,6 +120,7 @@ const BASELINE_SUPERVISOR: SupervisorSpec = {
   scope: '.',
   detectedFrom: ['baseline'],
   externalSlugs: ['code-reviewer', 'fullstack-developer'],
+  techs: [],
 }
 
 const ensureBaseline = (stack: {
