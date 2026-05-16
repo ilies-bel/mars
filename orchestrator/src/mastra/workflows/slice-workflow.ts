@@ -315,11 +315,87 @@ export interface RunSliceResult {
   taskIds: string[]
 }
 
+/** Bound on the synthesized failure message so it stays log-friendly even
+ * when a step error carries a giant stack or serialized payload. */
+const MAX_SLICE_FAILURE_CHARS = 1000
+
+/**
+ * Normalize an unknown error-ish value into a single human-readable line.
+ * Mastra's `result.error` / step `error` is an `Error` in-process but a
+ * serialized `{ name, message, stack }` object when the run is rehydrated
+ * from storage, and older/other versions surface a bare string — handle
+ * all three rather than assuming one shape.
+ */
+const stringifyErrorLike = (value: unknown): string => {
+  if (value == null) return ''
+  if (typeof value === 'string') return value.trim()
+  if (value instanceof Error) {
+    return value.message?.trim() || value.name || String(value)
+  }
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    if (typeof obj.message === 'string' && obj.message.trim().length > 0) {
+      return typeof obj.name === 'string' && obj.name.length > 0
+        ? `${obj.name}: ${obj.message.trim()}`
+        : obj.message.trim()
+    }
+    try {
+      const json = JSON.stringify(value)
+      if (json && json !== '{}') return json
+    } catch {
+      // circular / non-serializable — fall through to String()
+    }
+  }
+  return String(value)
+}
+
+/**
+ * Build a diagnostic message from a non-success slice workflow result.
+ * Surfaces Mastra's top-level `result.error` and the first failing step's
+ * error so a live slicer outage is diagnosable from the daemon log / CLI
+ * instead of the content-free status word. Exported for unit testing.
+ */
+export const describeSliceFailure = (result: unknown): string => {
+  const r = (result ?? {}) as {
+    status?: unknown
+    error?: unknown
+    steps?: unknown
+  }
+  const status = typeof r.status === 'string' ? r.status : 'failed'
+  const parts: string[] = [`slice workflow ${status}`]
+
+  const topError = stringifyErrorLike(r.error)
+  if (topError) parts.push(`error: ${topError}`)
+
+  if (r.steps && typeof r.steps === 'object') {
+    for (const [stepId, stepResult] of Object.entries(
+      r.steps as Record<string, unknown>,
+    )) {
+      if (
+        stepResult &&
+        typeof stepResult === 'object' &&
+        (stepResult as { status?: unknown }).status === 'failed'
+      ) {
+        const stepError = stringifyErrorLike(
+          (stepResult as { error?: unknown }).error,
+        )
+        parts.push(`step "${stepId}" failed${stepError ? `: ${stepError}` : ''}`)
+        break
+      }
+    }
+  }
+
+  const message = parts.join(' — ')
+  return message.length > MAX_SLICE_FAILURE_CHARS
+    ? `${message.slice(0, MAX_SLICE_FAILURE_CHARS)}…`
+    : message
+}
+
 export const runSlice = async (ideaId: string): Promise<RunSliceResult> => {
   const run = await sliceWorkflow.createRun()
   const result = await run.start({ inputData: { ideaId } })
   if (result.status !== 'success') {
-    throw new Error(`slice workflow ${result.status}`)
+    throw new Error(describeSliceFailure(result))
   }
   return result.result
 }
