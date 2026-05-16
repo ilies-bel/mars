@@ -8,6 +8,7 @@ import {
 } from '../queue'
 import { getIdea, type Idea } from '../ideas'
 import { resolveContext } from '../context'
+import { parseClaudeSessionIds } from './claude-session-ids'
 
 export interface OriginTimelineSpan {
   traceId: string
@@ -85,17 +86,6 @@ const rowToTask = (row: Record<string, unknown>): Task => {
 const coerceFailedPhase = (raw: unknown): 'code' | 'verify' | 'merge' | null => {
   if (raw === 'code' || raw === 'verify' || raw === 'merge') return raw
   return null
-}
-
-const parseClaudeSessionIds = (raw: unknown): string[] => {
-  if (typeof raw !== 'string' || raw.length === 0) return []
-  try {
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((v): v is string => typeof v === 'string')
-  } catch {
-    return []
-  }
 }
 
 const loadTasksByOrigin = async (originId: string): Promise<Task[]> => {
