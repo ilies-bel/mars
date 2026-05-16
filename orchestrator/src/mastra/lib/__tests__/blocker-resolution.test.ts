@@ -83,8 +83,10 @@ describe('blocker-resolution (task_blockers)', () => {
     )
   })
 
-  it('fails dependent when retry budget is exhausted at unblock time', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '1'
+  it('fails dependent that already burned a retry (retry_count=1, default budget=0) at unblock time', async () => {
+    // No MARS_FIX_RETRY_BUDGET => DEFAULT_RETRY_BUDGET (0). A dependent with
+    // retry_count=1 has burned a retry, so the guard (retryCount > budget,
+    // i.e. 1 > 0) must still fire and fail it.
     const { q, br } = await loadModules(repo)
     const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
     const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
@@ -112,6 +114,92 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(taskBlocked[0].kind).toBe(`task-blocked(${dep.id})`)
     expect(taskBlocked[0].signature).toBe(dep.id)
     expect(taskBlocked[0].payload.taskId).toBe(dep.id)
+  })
+
+  it('recoverBlockedTasks fails a dependent that already burned a retry (retry_count=1, default budget=0)', async () => {
+    // Negative path for the daemon-startup recovery entry point.
+    const { q, br } = await loadModules(repo)
+    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+    await blockTask(q, dep.id, fix.id, 1)
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [fix.id],
+    })
+
+    const recovered = await br.recoverBlockedTasks()
+    expect(recovered).toHaveLength(1)
+    expect(recovered[0].outcomes[0].outcome).toBe('failed')
+    const reloaded = await q.getTask(dep.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failureReason).toBe('retry_budget_exhausted_at_unblock')
+
+    const inbox = (await import('../inbox')) as unknown as {
+      listInboxItems: typeof import('../inbox').listInboxItems
+    }
+    const open = await inbox.listInboxItems('open')
+    const taskBlocked = open.filter((i) => i.kind.startsWith('task-blocked('))
+    expect(taskBlocked).toHaveLength(1)
+    expect(taskBlocked[0].kind).toBe(`task-blocked(${dep.id})`)
+  })
+
+  it('onBlockerTaskCompleted queues a never-run dependent (retry_count=0, default budget=0) instead of failing it', async () => {
+    // Regression: off-by-one in the retry-budget guard. With the default
+    // budget of 0 and the old `retryCount >= budget`, 0 >= 0 was true and
+    // every fresh dependent was wrongly failed at unblock. The guard must
+    // be `retryCount > budget` so a never-run task (retry_count=0) recovers.
+    const { q, br } = await loadModules(repo)
+    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+    await blockTask(q, dep.id, fix.id, 0)
+    // Bypass updateTask auto-promote so onBlockerTaskCompleted is exercised.
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [fix.id],
+    })
+
+    const r = await br.onBlockerTaskCompleted(fix.id)
+    expect(r.outcomes).toHaveLength(1)
+    expect(r.outcomes[0].outcome).toBe('queued')
+    expect(r.outcomes[0].retryCount).toBe(0)
+    const reloaded = await q.getTask(dep.id)
+    expect(reloaded?.status).toBe('queued')
+    expect(reloaded?.failureReason).toBeFalsy()
+
+    const inbox = (await import('../inbox')) as unknown as {
+      listInboxItems: typeof import('../inbox').listInboxItems
+    }
+    const open = await inbox.listInboxItems('open')
+    const taskBlocked = open.filter((i) => i.kind.startsWith('task-blocked('))
+    expect(taskBlocked).toHaveLength(0)
+  })
+
+  it('recoverBlockedTasks queues a never-run dependent (retry_count=0, default budget=0) instead of failing it', async () => {
+    // Same regression as above, exercised via the daemon-startup recovery
+    // entry point (a blocker completed while the daemon was down).
+    const { q, br } = await loadModules(repo)
+    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+    await blockTask(q, dep.id, fix.id, 0)
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [fix.id],
+    })
+
+    const recovered = await br.recoverBlockedTasks()
+    expect(recovered).toHaveLength(1)
+    expect(recovered[0].outcomes[0].outcome).toBe('queued')
+    expect(recovered[0].outcomes[0].retryCount).toBe(0)
+    const reloaded = await q.getTask(dep.id)
+    expect(reloaded?.status).toBe('queued')
+    expect(reloaded?.failureReason).toBeFalsy()
+
+    const inbox = (await import('../inbox')) as unknown as {
+      listInboxItems: typeof import('../inbox').listInboxItems
+    }
+    const open = await inbox.listInboxItems('open')
+    const taskBlocked = open.filter((i) => i.kind.startsWith('task-blocked('))
+    expect(taskBlocked).toHaveLength(0)
   })
 
   it('does not unblock when one of multiple blockers is still pending', async () => {
