@@ -60,6 +60,8 @@ Top-level files define how your Mastra project is configured, built, and connect
   investigations. Leaving an uncommitted `raise-*.ts` in a worktree
   dirties the merge target and has previously blocked unrelated tasks
   from merging.
+- Non-AI logic lives in `src/mastra/lib/` and is called from `createStep`
+  `execute`. Only wrap as `createTool` if an agent actually consumes it.
 
 ### Daemon worker pool
 
