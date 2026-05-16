@@ -135,7 +135,12 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     defaultTimeoutMs: 5 * 60 * 1000,
-    maxMessages: 100,
+    // Slicing is a read-heavy, one-shot analysis of a whole PRD against the
+    // codebase; the 100-message default (shared with Coder/Planner) is too
+    // tight — the slicer spends 60+ messages orienting and was SIGKILLed
+    // before it could emit the slice JSON. 250 gives ~4x headroom while
+    // keeping a hard ceiling so a looping slicer can't burn unbounded tokens.
+    maxMessages: 250,
   },
   Triager: {
     name: 'Triager',
