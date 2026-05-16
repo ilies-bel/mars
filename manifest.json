@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "_comment": "Install manifest for `mars install`. See docs/manifest.md for how to add an asset. `owned` files are overwritten unconditionally (ADR-0004); `hybrid` files are written only if absent and refuse on existence (ADR-0007). Validated by scripts/check-manifest.mjs.",
+  "owned": [
+    ".claude/hooks/warn-raw-queue-sql.sh",
+    ".claude/agents/vcs-supervisor.md",
+    ".claude/skills/mars:deep-reflect/SKILL.md",
+    ".claude/skills/mars:grill/SKILL.md",
+    ".claude/skills/mars:inbox/SKILL.md",
+    ".claude/skills/mars:reflect/SKILL.md",
+    ".claude/skills/mars:to-prd/SKILL.md",
+    ".claude/skills/mars:unblock/SKILL.md",
+    ".agents/skills/mastra/SKILL.md",
+    ".agents/skills/mastra/references/common-errors.md",
+    ".agents/skills/mastra/references/create-mastra.md",
+    ".agents/skills/mastra/references/embedded-docs.md",
+    ".agents/skills/mastra/references/migration-guide.md",
+    ".agents/skills/mastra/references/remote-docs.md",
+    ".agents/skills/mastra/scripts/provider-registry.mjs"
+  ],
+  "hybrid": [
+    "CLAUDE.md",
+    ".claude/settings.json"
+  ]
+}
