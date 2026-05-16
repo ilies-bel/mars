@@ -34,6 +34,14 @@ rm -rf "$DEST_CLAUDE"
 cp -RL "$SRC_CLAUDE" "$DEST_CLAUDE"
 cp "$SRC_CLAUDE_MD" "$DEST_CLAUDE_MD"
 
+# `cp -RL` copies the *entire* live `.claude/` tree, which includes Claude
+# Code runtime artifacts the harness writes there at run time — notably
+# `scheduled_tasks.lock` (a live pid/sessionId/timestamp lock, NOT a seed
+# template). Letting it land in the committed template source tree dirties
+# the integration working tree and fails `merge:preflight`. Prune any such
+# runtime locks from the destination so only real template assets ship.
+find "$DEST_CLAUDE" -type f -name 'scheduled_tasks.lock' -delete
+
 # `cp -RL` preserves source modes; force hooks executable for the case where
 # the source bit was somehow stripped (e.g. on a Windows-mounted checkout).
 if [ -d "$DEST_CLAUDE/hooks" ]; then
