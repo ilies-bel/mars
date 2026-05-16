@@ -409,24 +409,24 @@ const buildRecoveryEscalationBody = (input: {
   truncatedError: string
 }): string => {
   return [
-    `Recovery task ${input.recoveryTaskId} failed and the orchestrator did NOT enqueue another recovery (recovery has retry budget 0 by design — see ADR 0002).`,
-    `Original task: ${input.originTaskId} (still in 'blocked' status).`,
+    'Do one of these now:',
+    `  - Fix the underlying issue in the worktree, then run 'mars retry ${input.recoveryTaskId}'.`,
+    `  - Abandon the original task: run 'mars unblock ${input.originTaskId}'.`,
+    `Then close this item: 'mars inbox resolve <item-id>'.`,
     '',
-    `Failing step: ${input.failingStep}`,
-    `Failure signature: ${input.failureSignature}`,
-    input.branch ? `Branch: ${input.branch}` : null,
-    input.worktreePath ? `Worktree: ${input.worktreePath}` : null,
-    input.claudeSessionId ? `Claude session: ${input.claudeSessionId}` : null,
+    `Why you're seeing this: recovery task ${input.recoveryTaskId} failed and the orchestrator will not retry it (recovery budget is 0 by design — see ADR 0002). Task ${input.originTaskId} stays 'blocked' until you act.`,
+    '',
+    'Context:',
+    `  Failing step: ${input.failingStep}`,
+    `  Failure signature: ${input.failureSignature}`,
+    input.branch ? `  Branch: ${input.branch}` : null,
+    input.worktreePath ? `  Worktree: ${input.worktreePath}` : null,
+    input.claudeSessionId ? `  Claude session: ${input.claudeSessionId}` : null,
     '',
     'First error output (truncated):',
     '```',
     input.truncatedError,
     '```',
-    '',
-    'Resolve options:',
-    `  - inspect the worktree, fix the underlying issue, then 'mars retry ${input.recoveryTaskId}' to re-attempt`,
-    `  - 'mars unblock ${input.originTaskId}' to abandon the original task`,
-    `  - 'mars inbox resolve <item-id>' once handled`,
   ]
     .filter((line) => line !== null)
     .join('\n')
@@ -442,22 +442,22 @@ const buildNoRecipeBody = (input: {
   truncatedError: string
 }): string => {
   return [
-    `Task ${input.sourceTaskId} (origin ${input.originTaskId}) failed with signature \`${input.failureSignature}\`, which has no registered recovery recipe.`,
-    `An Investigator task (${input.investigatorTaskId}) has been queued to propose a draft recipe; it does NOT fix the failing task.`,
-    `The failing task is parked in 'blocked' until a recipe lands and you decide what to do.`,
+    `Wait for investigator task ${input.investigatorTaskId} to merge a draft recipe, then do one of these:`,
+    `  - Re-attempt with the new recipe: run 'mars retry ${input.sourceTaskId}'.`,
+    `  - Decide the failure is unrecoverable: run 'mars unblock ${input.originTaskId}'.`,
+    `Then close this item: 'mars inbox resolve <item-id>'.`,
     '',
-    `Failing step: ${input.failingStep}`,
-    `Failure signature: ${input.failureSignature}`,
-    input.branch ? `Branch: ${input.branch}` : null,
+    `Why you're seeing this: task ${input.sourceTaskId} (origin ${input.originTaskId}) failed with signature \`${input.failureSignature}\` and no recovery recipe is registered for it. Investigator ${input.investigatorTaskId} is queued to propose one — it does not fix the failing task. Task ${input.sourceTaskId} stays 'blocked' until you act.`,
+    '',
+    'Context:',
+    `  Failing step: ${input.failingStep}`,
+    `  Failure signature: ${input.failureSignature}`,
+    input.branch ? `  Branch: ${input.branch}` : null,
     '',
     'First error output (truncated):',
     '```',
     input.truncatedError,
     '```',
-    '',
-    'Once the investigator has merged its draft recipe:',
-    `  - 'mars retry ${input.sourceTaskId}' to re-attempt the original task with the new recipe in scope`,
-    `  - 'mars unblock ${input.originTaskId}' if you decide the failure is unrecoverable`,
   ]
     .filter((line) => line !== null)
     .join('\n')
@@ -474,25 +474,24 @@ const buildFixFailLoopBody = (input: {
   cap: number
 }): string => {
   return [
-    `Task ${input.sourceTaskId} (origin ${input.originTaskId}) has hit the fix-fail retry cap of ${input.cap} for signature \`${input.failureSignature}\`.`,
-    `The orchestrator stopped enqueuing new fix tasks for this pair after ${input.attempts} attempt(s) and is escalating to the inbox instead.`,
-    `The source task remains in 'blocked' status with its existing error summary; resolve manually via 'mars retry' or 'mars unblock'.`,
+    'Do one of these now:',
+    `  - Diagnose the root cause from the source task and its recovery history, then run 'mars retry ${input.sourceTaskId}'.`,
+    `  - Abandon the source task: run 'mars unblock ${input.sourceTaskId}'.`,
+    `Then close this item: 'mars inbox resolve <item-id>'.`,
     '',
-    `Failing step: ${input.failingStep}`,
-    `Failure signature: ${input.failureSignature}`,
-    input.branch ? `Branch: ${input.branch}` : null,
-    `Prior fix-task attempts: ${input.attempts}`,
-    `Cap (MARS_MAX_FIX_ATTEMPTS): ${input.cap}`,
+    `Why you're seeing this: task ${input.sourceTaskId} (origin ${input.originTaskId}) hit the fix-fail retry cap of ${input.cap} for signature \`${input.failureSignature}\` after ${input.attempts} attempt(s). The orchestrator has stopped auto-retrying this pair. Task ${input.sourceTaskId} stays 'blocked' until you act.`,
+    '',
+    'Context:',
+    `  Failing step: ${input.failingStep}`,
+    `  Failure signature: ${input.failureSignature}`,
+    input.branch ? `  Branch: ${input.branch}` : null,
+    `  Prior fix-task attempts: ${input.attempts}`,
+    `  Cap (MARS_MAX_FIX_ATTEMPTS): ${input.cap}`,
     '',
     'Last error output (truncated):',
     '```',
     input.truncatedError,
     '```',
-    '',
-    'Resolve options:',
-    `  - inspect the source task and its recovery history, then 'mars retry ${input.sourceTaskId}' to re-attempt once the underlying issue is understood`,
-    `  - 'mars unblock ${input.sourceTaskId}' to abandon the source task`,
-    `  - 'mars inbox resolve <item-id>' once handled`,
   ]
     .filter((line) => line !== null)
     .join('\n')
@@ -585,7 +584,7 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
     kind: NO_RECIPE_INBOX_KIND,
     category: 'orchestrator',
     priority: 'high',
-    title: `no recovery recipe for ${input.failureSignature}`,
+    title: `Retry or abandon ${input.sourceTask.id}: no recovery recipe for ${input.failureSignature}`,
     body: buildNoRecipeBody({
       sourceTaskId: input.sourceTask.id,
       originTaskId: input.sourceTask.originId,
@@ -715,7 +714,7 @@ export const handleTaskFailureWithFixTask = async (
       kind: RECOVERY_FAILED_INBOX_KIND,
       category: 'orchestrator',
       priority: 'high',
-      title: `recovery for ${originId} failed (${input.failingStep})`,
+      title: `Fix and retry ${input.taskId}, or abandon ${originId}: recovery failed at ${input.failingStep}`,
       body: buildRecoveryEscalationBody({
         recoveryTaskId: input.taskId,
         originTaskId: originId,
@@ -840,7 +839,7 @@ export const handleTaskFailureWithFixTask = async (
       kind: FIX_FAIL_LOOP_INBOX_KIND,
       category: 'orchestrator',
       priority: 'high',
-      title: `fix-fail loop: ${failureSignature} on task ${input.taskId}`,
+      title: `Diagnose and retry, or abandon ${input.taskId}: fix-fail loop on ${failureSignature}`,
       body: buildFixFailLoopBody({
         sourceTaskId: input.taskId,
         originTaskId: task.originId,
