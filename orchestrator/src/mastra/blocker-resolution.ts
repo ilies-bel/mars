@@ -70,7 +70,11 @@ export const onBlockerTaskCompleted = async (
 
   for (const row of r.rows as unknown as BlockedDependentRow[]) {
     const retryCount = Number(row.retry_count ?? 0)
-    if (retryCount >= budget) {
+    // Guard fires only for dependents that actually BURNED a retry
+    // (retry_count >= 1). A never-run blocked task has retry_count=0 and
+    // must pass through to `queued`; `>=` would fail every fresh dependent
+    // because DEFAULT_RETRY_BUDGET is 0 (0 >= 0).
+    if (retryCount > budget) {
       await raiseInboxForBlockedTask(row.id)
       await markTaskFailed(row.id, RETRY_BUDGET_FAILURE_REASON)
       outcomes.push({
@@ -138,7 +142,10 @@ export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
   for (const row of r.rows as unknown as BlockedDependentRow[]) {
     const retryCount = Number(row.retry_count ?? 0)
     const outcomes: UnblockOutcome[] = []
-    if (retryCount >= budget) {
+    // Same guard as onBlockerTaskCompleted: only a dependent that already
+    // burned a retry (retry_count >= 1) is failed here. retry_count=0 must
+    // recover to `queued`.
+    if (retryCount > budget) {
       await raiseInboxForBlockedTask(row.id)
       await markTaskFailed(row.id, RETRY_BUDGET_FAILURE_REASON)
       outcomes.push({
