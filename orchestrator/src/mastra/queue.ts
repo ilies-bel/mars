@@ -1,4 +1,4 @@
-import { createClient, type Client } from '@libsql/client'
+import { createClient, type Client, type InStatement } from '@libsql/client'
 import { randomUUID } from 'node:crypto'
 import { resolveContext } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
@@ -1333,7 +1333,7 @@ export const transferProposalBlockerToTask = async (
     throw new Error(`blocker task ${newBlockerTaskId} not found`)
   }
   const now = new Date().toISOString()
-  const stmts: { sql: string; args: unknown[] }[] = []
+  const stmts: InStatement[] = []
   for (const taskId of dependents) {
     // Insert the new task_blockers row BEFORE deleting the
     // task_proposal_blockers row so that, even though `batch` is already a
