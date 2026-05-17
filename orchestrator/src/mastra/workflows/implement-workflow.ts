@@ -262,15 +262,22 @@ const renderSpec = (spec: TaskSpec | null, taskId: string): string | null => {
 export const TOO_HARD_PREFIX = 'too_hard:no-action-after-reads'
 
 // Test runners (vitest) print passing tests first and the failing
-// assertion + final summary LAST. Keeping the head of a failing step's
-// output discards the only diagnostic signal — the run preamble is never
-// the root cause. Capture the tail so the persisted `error` excerpt and
-// the fix-recipe classifier both see the real failure. The full output
-// is still persisted verbatim to the transcript.
-export const failureExcerpt = (output: string, max = 2000): string =>
-  output.length <= max
-    ? output
-    : '…(truncated head)…\n' + output.slice(-max)
+// assertion + final summary LAST, so the tail carries the real signal.
+// But an early spawn/import crash aborts *before* any test runs and its
+// only signal is at the very TOP of the output. Keeping the tail alone
+// would discard that. So we retain a small head (catches early crashes)
+// AND the tail (catches the assertion diff + final FAIL summary), joined
+// by an elision marker so triage knows the middle was dropped. The full
+// output is still persisted verbatim to the transcript.
+export const failureExcerpt = (
+  output: string,
+  tailMax = 2000,
+  headMax = 1000,
+): string => {
+  // No point eliding when head+tail would already cover everything.
+  if (output.length <= tailMax + headMax) return output
+  return `${output.slice(0, headMax)}\n…[middle elided]…\n${output.slice(-tailMax)}`
+}
 
 const formatTrace = (trace: readonly ReadSpanTrace[]): string =>
   trace
