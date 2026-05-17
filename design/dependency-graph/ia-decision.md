@@ -106,3 +106,17 @@ Retrying tasks, unblocking, editing blockers, and resolving the
 underlying recovery state all remain CLI operations. The graph is a
 read view with one well-defined exit toward the one place writes
 already happen.
+
+## Acceptance-criteria coverage (HITL checkpoint)
+
+This section maps each acceptance criterion of slice 6/6 to the
+section of this record that satisfies it, so a human verifier can
+audit the decision without re-reading the whole document.
+
+| Acceptance criterion | Section that satisfies it |
+| -------------------- | ------------------------- |
+| Graph appears on every task-detail page without conditional gating | "Decision" — bulleted list of *no* gates (tab, route, status, closure size). |
+| Defines 'dependency closure' and contrasts it with 'Arc' and 'recovery chain' | "Vocabulary boundary" — table comparing all three terms plus the "no siblings / includes blockers" follow-ups. |
+| Lists v1 scope exclusions: siblings, time-as-axis, per-status color, in-view writes | "v1 scope exclusions" — one bullet per excluded concern. |
+| References ADR-0002 and ADR-0008 as storage/escalation context | "Storage and escalation context" — ADR-0008 for the two-junction storage shape, ADR-0002 for the badge / escalation semantics. |
+| Names the inbox deep-link as the sole write affordance and points it at /mars:inbox | "Write affordance" — single deep-link to `/mars:inbox`; all other state changes remain CLI. |
