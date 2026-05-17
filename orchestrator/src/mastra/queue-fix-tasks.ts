@@ -6,6 +6,7 @@ import {
   type FixRecipeContext,
 } from './lib/fix-recipes'
 import { raiseInboxItem } from './lib/inbox'
+import { truncateFailure } from './lib/truncate-failure'
 import { internalBus } from '../internal-bus'
 import {
   getClient,
@@ -689,7 +690,7 @@ export const handleTaskFailureWithFixTask = async (
     input.failingStep,
     input.errorOutput,
   )
-  const truncatedError = input.errorOutput.slice(0, 2000)
+  const truncatedError = truncateFailure(input.errorOutput)
   const branch = input.branch ?? task.branch
   const reproCommand = deriveReproCommand(input.failingStep, task.worktreePath)
 
