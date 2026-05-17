@@ -399,16 +399,19 @@ describe('checkMergeTargetStatus', () => {
     }
   })
 
-  it('reports dirty when task branch is not a fast-forward of integration', async () => {
+  it('reports needs-rebase when task branch is not a fast-forward of integration', async () => {
     // Force divergence: add a main-only commit so task/x is no longer an
-    // ancestor of main from main's POV.
+    // ancestor of main from main's POV. This is recoverable (mergeBranch
+    // rebases before the ff), so it must NOT be classified as a blocking
+    // 'dirty' — that conflation dead-looped lapped branches.
     writeFileSync(resolve(repo, 'C'), 'c0\n')
     execFileSync('git', ['add', 'C'], { cwd: repo })
     execFileSync('git', ['commit', '-q', '-m', 'main-only commit'], { cwd: repo })
     const { checkMergeTargetStatus } = await import('../git')
     const status = await checkMergeTargetStatus(args)
-    expect(status.kind).toBe('dirty')
-    if (status.kind === 'dirty') {
+    expect(status.kind).toBe('needs-rebase')
+    if (status.kind === 'needs-rebase') {
+      expect(status.targetPath).toBe(repo)
       expect(status.statusOutput).toMatch(/is not a fast-forward of/i)
     }
   })

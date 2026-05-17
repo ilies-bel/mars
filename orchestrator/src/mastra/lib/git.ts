@@ -1183,6 +1183,13 @@ export const acquireLock = async (
 
 export type MergeTargetStatus =
   | { kind: 'clean' }
+  // The task branch has diverged from / fallen behind integration, so a
+  // bare `--ff-only` would fail. This is NOT a blocking failure: mergeBranch
+  // Step 1 rebases the task branch onto integration (escalating to the
+  // vcs-supervisor on conflict) before the ff. Preflight must let these
+  // through, not park the task — conflating this with `dirty` is what made
+  // every lapped branch dead-loop the retry budget.
+  | { kind: 'needs-rebase'; targetPath: string; statusOutput: string }
   | { kind: 'dirty'; targetPath: string; statusOutput: string }
   | { kind: 'error'; error: Error }
 
@@ -1191,14 +1198,16 @@ export interface CheckMergeTargetArgs {
   taskBranch: string
 }
 
-// A fast-forward of integrationBranch -> taskBranch is feasible when:
-//   1. both refs resolve,
-//   2. integrationBranch is an ancestor of taskBranch (topological ff),
-//   3. no tracked, uncommitted change in the merge target sits on a path
-//      the ff would update (untracked files are irrelevant to git merge --ff-only).
-// We deliberately ignore untracked files: an untracked .idea/ or editor scratch
-// file in the merge target cannot block a fast-forward, but the previous
-// `git status --porcelain` check treated any such file as dirty.
+// Classifies the merge target ahead of mergeBranch:
+//   - 'error'        : a ref does not resolve / git failed unexpectedly.
+//   - 'needs-rebase' : integrationBranch is NOT an ancestor of taskBranch
+//                      (diverged or behind). Recoverable — mergeBranch
+//                      Step 1 rebases before the ff. Preflight proceeds.
+//   - 'dirty'        : a tracked, uncommitted change in the merge target
+//                      sits on a path the ff would update. Blocking.
+//   - 'clean'        : ff is feasible and the target is pristine.
+// Untracked files are deliberately ignored: an untracked .idea/ or editor
+// scratch file in the merge target cannot block `git merge --ff-only`.
 export const checkMergeTargetStatus = async (
   args: CheckMergeTargetArgs,
 ): Promise<MergeTargetStatus> => {
@@ -1225,8 +1234,10 @@ export const checkMergeTargetStatus = async (
     )
     if (ancestryError !== null) {
       if (ancestryError.code === 1) {
+        // Diverged or behind: a rebase candidate, NOT a dirty-target failure.
+        // mergeBranch Step 1 rebases onto integration before the ff merge.
         return {
-          kind: 'dirty',
+          kind: 'needs-rebase',
           targetPath,
           statusOutput: `task branch ${taskBranch} is not a fast-forward of ${integrationBranch} (diverged or behind)`,
         }
