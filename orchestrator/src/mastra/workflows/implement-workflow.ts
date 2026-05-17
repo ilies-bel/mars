@@ -71,6 +71,7 @@ import { relative } from 'node:path'
 import {
   createReadSpanWatcher,
   resolveReadSpanLimit,
+  summarizeReadCause,
   type ReadSpanTrace,
   type TripInfo,
 } from '../lib/read-span-watch'
@@ -310,9 +311,17 @@ const buildTooHardChildPrompt = (
   parentTaskId: string,
   parentPrompt: string,
   trace: readonly ReadSpanTrace[],
-): string =>
-  [
-    `# Context-gathering for ${parentTaskId}`,
+): string => {
+  // First line names the cause within the ~60 chars `mars list` shows
+  // (cli.ts:1752 renders `prompt.slice(0, 60)`). Keep the
+  // `Context-gathering for <id>` stem verbatim — downstream/log greps
+  // and the failure docs key on that phrase — and only APPEND the
+  // cause. Empty trace / all-blank targets → generic line, no suffix.
+  const cause = summarizeReadCause(trace)
+  const stem = `# Context-gathering for ${parentTaskId}`
+  const titleLine = cause ? `${stem}: stuck reading ${cause}` : stem
+  return [
+    titleLine,
     '',
     `The implementor agent for ${parentTaskId} read ${trace.length} files/patterns without taking an action and was aborted with \`${TOO_HARD_PREFIX}\`. The task is now \`blocked\` on this follow-up.`,
     '',
@@ -330,6 +339,7 @@ const buildTooHardChildPrompt = (
     '',
     formatTrace(trace),
   ].join('\n')
+}
 
 // Build the "## Worktree orientation" preamble. Disclosing the resolved
 // verify cwd up-front kills the recurring 2-3 read tax we used to see
