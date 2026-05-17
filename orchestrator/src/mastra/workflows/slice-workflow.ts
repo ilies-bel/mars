@@ -21,7 +21,7 @@ const sliceOutputSchema = z.object({
   taskIds: z.array(z.string()),
 })
 
-const slicerOutputSchema = z.object({
+export const slicerOutputSchema = z.object({
   slices: z
     .array(
       z.object({
@@ -30,11 +30,17 @@ const slicerOutputSchema = z.object({
         whatToBuild: z.string(),
         acceptanceCriteria: z.array(z.string()).min(1),
         blockedBy: z.array(z.number().int().min(1)),
-        // gsd-style structured-task spec. The slicer now names the files
-        // it expects the implementor to touch, the command that verifies
-        // the slice, and an explicit task type. Defaults preserve forward
-        // compatibility with planner outputs that don't yet emit these.
-        files: z.array(z.string()).default([]),
+        // gsd-style structured-task spec. The slicer names the files it
+        // expects the implementor to touch — split into two arrays so the
+        // slicer must consciously distinguish files it knows already exist
+        // (modifies) from files it intends to create (creates). The split
+        // exists to curb path hallucination: a guessed path inside a
+        // module that doesn't exist had been silently landing in `files`
+        // and blocking slices. Both default to []; they are concatenated
+        // into the queue's `files_json` column at persist time so the
+        // implementor brief stays one flat list.
+        modifies: z.array(z.string()).default([]),
+        creates: z.array(z.string()).default([]),
         verifyCmd: z.string().nullable().default(null),
         taskType: z.enum(['auto', 'checkpoint']).default('auto'),
       }),
@@ -44,6 +50,21 @@ const slicerOutputSchema = z.object({
 })
 
 type SliceSpec = z.infer<typeof slicerOutputSchema>['slices'][number]
+
+/**
+ * Concatenate a slice's `modifies` + `creates` into the single flat
+ * `files` list the queue persists into `tasks.files_json`. The slicer
+ * schema splits the two so the prompt can discipline path hallucination
+ * separately for "edit this existing file" vs "create this new file";
+ * downstream (the implementor brief, the `files_json` column, the rest
+ * of the orchestrator) still sees one array, so no other call site
+ * needs to change shape. Exported for unit tests that round-trip a
+ * slicer output through the persistence path.
+ */
+export const sliceFilesForPersistence = (slice: {
+  modifies: readonly string[]
+  creates: readonly string[]
+}): string[] => [...slice.modifies, ...slice.creates]
 
 const renderUserStories = (stories: readonly string[]): string => {
   if (stories.length === 0) return '(none)'
@@ -59,16 +80,8 @@ export const buildSlicerPrompt = (idea: {
   notes: string
   userStories: string[]
 }): string => `Break this PRD into independently-grabbable issues using vertical
-slices (tracer bullets). Each issue is a thin vertical slice that cuts
-through ALL integration layers end-to-end, NOT a horizontal slice of one
-layer.
-
-Vertical-slice rules
---------------------
-- Each slice delivers a narrow but COMPLETE path through every layer
-  (schema, API, UI, tests where relevant).
-- A completed slice is demoable or verifiable on its own.
-- Prefer many thin slices over few thick ones.
+slices (tracer bullets). Each slice is a thin vertical tracer cutting
+end-to-end through every layer. Prefer many thin slices over few thick ones.
 
 HITL vs AFK
 -----------
@@ -105,15 +118,22 @@ For each slice, produce:
   to be considered complete. Each item is a single concrete observable.
 - blockedBy — 1-based indices of other slices in the same response that
   this one must wait for. Use sparingly; most slices should parallelise.
-- files — array of relative file paths (or directory globs) the
-  implementor is allowed to touch for this slice. Be specific; broad
-  globs ("**") signal you have not narrowed the scope. Anything outside
-  this set the agent encounters becomes a deferred-idea or a follow-up
-  task, not in-scope work.
+- modifies — array of paths to files that ALREADY EXIST in the
+  project and this slice edits. Cite real paths only. If you are
+  unsure whether a file exists, OMIT it — the implementor will
+  discover the right file rather than be misled by your guess.
+- creates — array of paths to files this slice will create. Prefer
+  new files under existing directories. If you propose a NEW
+  directory (a path whose parent doesn't already exist in the
+  project), prefix the path with 'NEW: ' so the implementor knows
+  it is a deliberate structural choice and not a misremembered
+  location. Example: 'NEW: orchestrator/src/manifest/load.ts'.
 - verifyCmd — a single shell command that the implementor must run to
-  prove the slice landed (e.g. "pnpm test src/foo.test.ts" or
-  "pnpm typecheck"). Empty string if the project's default verify is
-  sufficient.
+  prove the slice landed (e.g. "npx vitest run src/foo.test.ts" or
+  "npx tsc --noEmit"). When the project lives in a subdirectory, the
+  command MUST cd into that subdirectory first, e.g.
+  "cd orchestrator && npx vitest run src/foo.test.ts". Empty string
+  if the project's default verify is sufficient.
 - taskType — "auto" for slices the implementor can drive end-to-end and
   commit, or "checkpoint" for slices that need human verification before
   merge. Default "auto"; reach for "checkpoint" only when a human must
@@ -122,7 +142,7 @@ For each slice, produce:
 Return ONLY a single JSON object matching exactly this shape, with no
 surrounding prose, no code fences, and no commentary:
 
-{"slices":[{"title":"...","type":"AFK","whatToBuild":"...","acceptanceCriteria":["...","..."],"blockedBy":[],"files":["src/foo.ts"],"verifyCmd":"pnpm test src/foo.test.ts","taskType":"auto"}]}
+{"slices":[{"title":"...","type":"AFK","whatToBuild":"...","acceptanceCriteria":["..."],"blockedBy":[],"modifies":["src/foo.ts"],"creates":["src/foo.test.ts"],"verifyCmd":"cd src && npx vitest run foo.test.ts","taskType":"auto"}]}
 
 PRD to decompose
 ================
@@ -258,13 +278,14 @@ const generateStep = createStep({
           slice.verifyCmd !== null && slice.verifyCmd.trim().length > 0
             ? slice.verifyCmd
             : null
+        const files = sliceFilesForPersistence(slice)
         const task = await enqueueTask(prompt, undefined, {
           author: idea.author ?? undefined,
           originId: idea.id,
           parentProposalId: idea.id,
           sliceIndex: i + 1,
           spec: {
-            files: slice.files,
+            files,
             verifyCmd,
             doneCriteria: slice.acceptanceCriteria,
             taskType: slice.taskType,
