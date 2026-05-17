@@ -263,6 +263,192 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
   })
 })
 
+describe('runSlice failure compensation: a failed slice must not strand the idea', () => {
+  let repo: string
+
+  const setupRepo = (): string => {
+    const r = mkdtempSync(resolve(tmpdir(), 'mars-slice-compensate-'))
+    execFileSync('git', ['init', '-q'], { cwd: r })
+    mkdirSync(resolve(r, '.mars'), { recursive: true })
+    return r
+  }
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+    vi.doUnmock('../../lib/git')
+    vi.doUnmock('../../queue')
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  const envelope = (jsonResult: unknown): string =>
+    JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
+
+  const validSlicerOutput = {
+    slices: [
+      {
+        title: 't',
+        type: 'AFK' as const,
+        whatToBuild: 'x',
+        acceptanceCriteria: ['a'],
+        blockedBy: [] as number[],
+        modifies: [] as string[],
+        creates: [] as string[],
+        verifyCmd: null,
+        taskType: 'auto' as const,
+      },
+    ],
+  }
+
+  // Seed a fresh idea in 'prd-ready' status (the precondition `generateStep`
+  // checks) and return its id.
+  const seedPrdReadyIdea = async (): Promise<string> => {
+    const proposals = await import('../../proposals')
+    await proposals.initProposals()
+    const idea = await proposals.createProposal('t', {
+      problem: 'p',
+      solution: 's',
+    })
+    await proposals.addProposalUserStory(idea.id, 'as a user, I want X')
+    const promoted = await proposals.promoteProposal(idea.id)
+    expect(promoted.status).toBe('prd-ready')
+    return idea.id
+  }
+
+  const countTasksForIdea = async (ideaId: string): Promise<number> => {
+    const queue = await vi.importActual<typeof import('../../queue')>(
+      '../../queue',
+    )
+    await queue.initQueue()
+    const rows = await queue.getClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE parent_proposal_id = ?`,
+      args: [ideaId],
+    })
+    return Number((rows.rows[0] as unknown as { n: number | bigint }).n ?? 0)
+  }
+
+  it('leaves the idea at prd-ready when slicer parse fails (zero-slice / invalid output)', async () => {
+    // claude -p succeeds at the process level but emits something that is
+    // NOT a valid slicerOutput JSON. parseSlicerOutput throws — that
+    // throw lands BEFORE Phase 4 flips the idea, so the idea must still
+    // be prd-ready and no tasks must have been inserted.
+    vi.doMock('../../lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../lib/git')>(
+        '../../lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope({ slices: [] }), // schema requires min(1) → parse fails
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const slice = await import('../slice-workflow')
+    await expect(slice.runSlice(ideaId)).rejects.toThrow()
+
+    const proposals = await import('../../proposals')
+    const after = await proposals.getProposal(ideaId)
+    expect(after?.status).toBe('prd-ready')
+    expect(await countTasksForIdea(ideaId)).toBe(0)
+  })
+
+  it('reverts the idea back to prd-ready and deletes inserted tasks when a failure fires AFTER Phase 4', async () => {
+    // Phase 4 is the LAST write that flips the idea to 'sliced'. A
+    // failure in Phase 5 (the proposal→task blocker transfer) used to
+    // leave the idea wedged at 'sliced' with zero surviving tasks
+    // because the catch block only deleted the tasks and re-threw.
+    // We simulate that exact shape by stubbing the slicer to emit a
+    // valid one-slice output AND forcing transferProposalBlockerToTask
+    // to throw — the catch must now revert the idea AND clean tasks.
+    vi.doMock('../../lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../lib/git')>(
+        '../../lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(validSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.doMock('../../queue', async () => {
+      const actual = await vi.importActual<typeof import('../../queue')>(
+        '../../queue',
+      )
+      return {
+        ...actual,
+        transferProposalBlockerToTask: vi.fn(async () => {
+          throw new Error('phase 5 injected failure')
+        }),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const slice = await import('../slice-workflow')
+    await expect(slice.runSlice(ideaId)).rejects.toThrow(
+      /phase 5 injected failure/,
+    )
+
+    const proposals = await import('../../proposals')
+    const after = await proposals.getProposal(ideaId)
+    // The whole point of the compensating revert: a Phase 5 failure
+    // must not strand the idea at 'sliced'.
+    expect(after?.status).toBe('prd-ready')
+    // And no tasks must survive — the cleanup loop should have deleted
+    // every row Phase 1 inserted.
+    expect(await countTasksForIdea(ideaId)).toBe(0)
+  })
+
+  it('leaves the idea at prd-ready when claude -p exits non-zero (slicer outage)', async () => {
+    // A genuine slicer outage: claude exits non-zero before any DB
+    // write fires. The idea must remain prd-ready so the daemon's
+    // auto-slice loop (which only picks up prd-ready ideas) can
+    // retry once the slicer is healthy.
+    vi.doMock('../../lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../lib/git')>(
+        '../../lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 1,
+          stdout: '',
+          stderr: 'slicer agent crashed',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const slice = await import('../slice-workflow')
+    await expect(slice.runSlice(ideaId)).rejects.toThrow()
+
+    const proposals = await import('../../proposals')
+    const after = await proposals.getProposal(ideaId)
+    expect(after?.status).toBe('prd-ready')
+    expect(await countTasksForIdea(ideaId)).toBe(0)
+  })
+})
+
 describe('describeSliceFailure', () => {
   it('includes the failing step error text, not just the status word', () => {
     const result = {
