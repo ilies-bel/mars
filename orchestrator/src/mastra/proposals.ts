@@ -3,9 +3,9 @@ import { randomBytes } from 'node:crypto'
 import { resolveContext } from './context'
 import type { Author, AuthorKind } from './author'
 
-export type IdeaSource = 'reflection' | 'human' | 'planner'
+export type ProposalSource = 'reflection' | 'human' | 'planner'
 
-export interface Idea {
+export interface Proposal {
   id: string
   title: string
   problem: string
@@ -13,7 +13,7 @@ export interface Idea {
   outOfScope: string
   notes: string
   status: string
-  source: IdeaSource
+  source: ProposalSource
   author: Author | null
   createdAt: number
   updatedAt: number
@@ -30,23 +30,54 @@ const getClient = (): Client => {
 }
 
 /**
- * Direct access to the ideas DB client. Most callers should use the typed
- * helpers (`getIdea`, `setIdeaField`, etc.); this is a low-level escape
- * hatch for workflows that need to coordinate cross-table writes (e.g. the
- * slicer flipping an idea's status alongside per-slice task inserts in
- * queue.db).
+ * Direct access to the proposals DB client. Most callers should use the
+ * typed helpers (`getProposal`, `setProposalField`, etc.); this is a
+ * low-level escape hatch for workflows that need to coordinate cross-table
+ * writes (e.g. the slicer flipping a proposal's status alongside per-slice
+ * task inserts in queue.db).
  */
-export const getIdeasClient = (): Client => {
+export const getProposalsClient = (): Client => {
   return getClient()
 }
 
 let initialised = false
 
-export const initIdeas = async (): Promise<void> => {
+export const initProposals = async (): Promise<void> => {
   if (initialised) return
   const c = getClient()
+  // One-shot rename: a pre-existing state.db has an `ideas` table (and
+  // possibly `idea_user_stories`). Flip them to the proposal vocabulary
+  // before any CREATE/ALTER runs. This is a pure DDL rename with no
+  // compatibility view; per ADR-0010, in-flight worktrees at migration
+  // time may be orphaned.
+  const tables = await c.execute(
+    `SELECT name FROM sqlite_master WHERE type='table'`,
+  )
+  const tableSet = new Set(
+    (tables.rows as unknown as Array<{ name: string }>).map((r) => r.name),
+  )
+  if (tableSet.has('ideas') && !tableSet.has('proposals')) {
+    await c.execute(`ALTER TABLE ideas RENAME TO proposals`)
+  }
+  if (
+    tableSet.has('idea_user_stories') &&
+    !tableSet.has('proposal_user_stories')
+  ) {
+    await c.execute(
+      `ALTER TABLE idea_user_stories RENAME TO proposal_user_stories`,
+    )
+    const usCols = await c.execute(`PRAGMA table_info(proposal_user_stories)`)
+    const usColNames = new Set(
+      (usCols.rows as unknown as Array<{ name: string }>).map((r) => r.name),
+    )
+    if (usColNames.has('idea_id') && !usColNames.has('proposal_id')) {
+      await c.execute(
+        `ALTER TABLE proposal_user_stories RENAME COLUMN idea_id TO proposal_id`,
+      )
+    }
+  }
   await c.execute(`
-    CREATE TABLE IF NOT EXISTS ideas (
+    CREATE TABLE IF NOT EXISTS proposals (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT '',
       problem TEXT NOT NULL DEFAULT '',
@@ -62,58 +93,66 @@ export const initIdeas = async (): Promise<void> => {
   // The PRD-shaped user-stories list. New name; pre-existing databases keep
   // their `idea_acceptance` rows and get migrated below.
   await c.execute(`
-    CREATE TABLE IF NOT EXISTS idea_user_stories (
-      idea_id TEXT NOT NULL,
+    CREATE TABLE IF NOT EXISTS proposal_user_stories (
+      proposal_id TEXT NOT NULL,
       position INTEGER NOT NULL,
       text TEXT NOT NULL,
-      PRIMARY KEY(idea_id, position),
-      FOREIGN KEY(idea_id) REFERENCES ideas(id) ON DELETE CASCADE
+      PRIMARY KEY(proposal_id, position),
+      FOREIGN KEY(proposal_id) REFERENCES proposals(id) ON DELETE CASCADE
     )
   `)
-  const cols = await c.execute(`PRAGMA table_info(ideas)`)
+  const cols = await c.execute(`PRAGMA table_info(proposals)`)
   const colNames = new Set(
     cols.rows.map((r) => (r as unknown as { name: string }).name),
   )
   if (!colNames.has('author_kind')) {
-    await c.execute(`ALTER TABLE ideas ADD COLUMN author_kind TEXT`)
+    await c.execute(`ALTER TABLE proposals ADD COLUMN author_kind TEXT`)
   }
   if (!colNames.has('author_name')) {
-    await c.execute(`ALTER TABLE ideas ADD COLUMN author_name TEXT`)
+    await c.execute(`ALTER TABLE proposals ADD COLUMN author_name TEXT`)
   }
   // PRD-shape columns. Add idempotently for repos with the old shape.
   if (!colNames.has('title')) {
-    await c.execute(`ALTER TABLE ideas ADD COLUMN title TEXT NOT NULL DEFAULT ''`)
+    await c.execute(
+      `ALTER TABLE proposals ADD COLUMN title TEXT NOT NULL DEFAULT ''`,
+    )
   }
   if (!colNames.has('problem')) {
-    await c.execute(`ALTER TABLE ideas ADD COLUMN problem TEXT NOT NULL DEFAULT ''`)
+    await c.execute(
+      `ALTER TABLE proposals ADD COLUMN problem TEXT NOT NULL DEFAULT ''`,
+    )
   }
   if (!colNames.has('solution')) {
-    await c.execute(`ALTER TABLE ideas ADD COLUMN solution TEXT NOT NULL DEFAULT ''`)
+    await c.execute(
+      `ALTER TABLE proposals ADD COLUMN solution TEXT NOT NULL DEFAULT ''`,
+    )
   }
   if (!colNames.has('out_of_scope')) {
     await c.execute(
-      `ALTER TABLE ideas ADD COLUMN out_of_scope TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE proposals ADD COLUMN out_of_scope TEXT NOT NULL DEFAULT ''`,
     )
   }
   if (!colNames.has('notes')) {
-    await c.execute(`ALTER TABLE ideas ADD COLUMN notes TEXT NOT NULL DEFAULT ''`)
+    await c.execute(
+      `ALTER TABLE proposals ADD COLUMN notes TEXT NOT NULL DEFAULT ''`,
+    )
   }
   // One-shot backfill from the legacy goal/story/technical columns. Runs
   // only when the new columns are still empty for the row, so re-running
-  // initIdeas after manual edits never clobbers user data.
+  // initProposals after manual edits never clobbers user data.
   if (colNames.has('goal')) {
     await c.execute(
-      `UPDATE ideas SET title = goal WHERE (title IS NULL OR title = '')`,
+      `UPDATE proposals SET title = goal WHERE (title IS NULL OR title = '')`,
     )
   }
   if (colNames.has('story')) {
     await c.execute(
-      `UPDATE ideas SET solution = story WHERE (solution IS NULL OR solution = '')`,
+      `UPDATE proposals SET solution = story WHERE (solution IS NULL OR solution = '')`,
     )
   }
   if (colNames.has('technical')) {
     await c.execute(
-      `UPDATE ideas SET notes = technical WHERE (notes IS NULL OR notes = '')`,
+      `UPDATE proposals SET notes = technical WHERE (notes IS NULL OR notes = '')`,
     )
   }
   // Migrate legacy `origin` column (values 'user' | 'agent') into `source`
@@ -121,42 +160,42 @@ export const initIdeas = async (): Promise<void> => {
   // dropped after the values are copied across.
   if (colNames.has('origin') && !colNames.has('source')) {
     await c.execute(
-      `ALTER TABLE ideas ADD COLUMN source TEXT NOT NULL DEFAULT 'human'`,
+      `ALTER TABLE proposals ADD COLUMN source TEXT NOT NULL DEFAULT 'human'`,
     )
     await c.execute(
-      `UPDATE ideas
+      `UPDATE proposals
           SET source = CASE
             WHEN author_kind = 'agent' THEN 'planner'
             WHEN origin = 'agent'      THEN 'planner'
             ELSE 'human'
           END`,
     )
-    await c.execute(`ALTER TABLE ideas DROP COLUMN origin`)
+    await c.execute(`ALTER TABLE proposals DROP COLUMN origin`)
   } else if (!colNames.has('source')) {
     await c.execute(
-      `ALTER TABLE ideas ADD COLUMN source TEXT NOT NULL DEFAULT 'human'`,
+      `ALTER TABLE proposals ADD COLUMN source TEXT NOT NULL DEFAULT 'human'`,
     )
     // Backfill from author_kind: rows authored by an agent (i.e. whose
     // rendered author starts with 'agent:') become 'planner'; everything
     // else stays at the 'human' default. Runs only at column-add time —
-    // a subsequent initIdeas() won't re-enter this branch, so the
+    // a subsequent initProposals() won't re-enter this branch, so the
     // backfill is naturally idempotent.
     if (colNames.has('author_kind')) {
       await c.execute(
-        `UPDATE ideas SET source = 'planner' WHERE author_kind = 'agent'`,
+        `UPDATE proposals SET source = 'planner' WHERE author_kind = 'agent'`,
       )
     }
   }
-  // Migrate idea_acceptance rows into idea_user_stories. Idempotent — runs
-  // only if the legacy table still exists. Rows are copied; the legacy
-  // table is dropped after.
+  // Migrate idea_acceptance rows into proposal_user_stories. Idempotent —
+  // runs only if the legacy table still exists. Rows are copied; the
+  // legacy table is dropped after.
   const accCheck = await c.execute({
     sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='idea_acceptance'`,
     args: [],
   })
   if (accCheck.rows.length > 0) {
     await c.execute(
-      `INSERT OR IGNORE INTO idea_user_stories (idea_id, position, text)
+      `INSERT OR IGNORE INTO proposal_user_stories (proposal_id, position, text)
          SELECT idea_id, position, text FROM idea_acceptance`,
     )
     await c.execute(`DROP TABLE idea_acceptance`)
@@ -188,7 +227,8 @@ const migrateLegacyFeatures = async (c: Client): Promise<void> => {
       const goal = (r.goal as string | null) ?? ''
       const status = (r.status as string | null) ?? 'draft'
       const legacyOrigin = (r.origin as string | null) ?? 'user'
-      const source: IdeaSource = legacyOrigin === 'agent' ? 'planner' : 'human'
+      const source: ProposalSource =
+        legacyOrigin === 'agent' ? 'planner' : 'human'
       const createdMs = Date.parse((r.created_at as string | null) ?? '')
       const updatedMs = Date.parse((r.updated_at as string | null) ?? '')
       const now = Date.now()
@@ -196,16 +236,17 @@ const migrateLegacyFeatures = async (c: Client): Promise<void> => {
       const updatedAt = Number.isFinite(updatedMs) ? updatedMs : now
 
       // legacy `features` migration always runs against a DB that still has
-      // legacy `ideas` columns (otherwise `features` would already be gone).
+      // legacy `proposals` columns (otherwise `features` would already be
+      // gone).
       const result = await tx.execute({
-        sql: `INSERT OR IGNORE INTO ideas
+        sql: `INSERT OR IGNORE INTO proposals
                 (id, goal, story, technical, title, status, source, created_at, updated_at)
               VALUES (?, ?, '', '', ?, ?, ?, ?, ?)`,
         args: [id, goal, goal, status, source, createdAt, updatedAt],
       })
       if (result.rowsAffected === 0) {
         console.warn(
-          `[ideas] migrate: skipped legacy features row ${id} — id already present in ideas`,
+          `[proposals] migrate: skipped legacy features row ${id} — id already present in proposals`,
         )
       }
     }
@@ -222,10 +263,10 @@ const migrateLegacyFeatures = async (c: Client): Promise<void> => {
 
 /**
  * One-shot migration: copy any reflection-origin rows out of the legacy
- * `task_suggestions` table (in queue.db) into `ideas` with
+ * `task_suggestions` table (in queue.db) into `proposals` with
  * `source='reflection'`. Runs idempotently — rows whose id already exists
- * in ideas are skipped. The actual DROP of task_suggestions happens during
- * queue init, after this migration has copied the rows out.
+ * in proposals are skipped. The actual DROP of task_suggestions happens
+ * during queue init, after this migration has copied the rows out.
  */
 const migrateTaskSuggestions = async (c: Client): Promise<void> => {
   const { queueDbPath } = resolveContext()
@@ -282,13 +323,13 @@ const migrateTaskSuggestions = async (c: Client): Promise<void> => {
         const createdAt = Number.isFinite(createdMs) ? createdMs : now
         // Detect whether the legacy `goal` column is still present (and
         // therefore NOT NULL) on this DB. New repos have only `title`.
-        const ideaCols = await tx.execute(`PRAGMA table_info(ideas)`)
+        const proposalCols = await tx.execute(`PRAGMA table_info(proposals)`)
         const hasLegacyGoal = (
-          ideaCols.rows as unknown as Array<{ name: string }>
+          proposalCols.rows as unknown as Array<{ name: string }>
         ).some((rr) => rr.name === 'goal')
         if (hasLegacyGoal) {
           await tx.execute({
-            sql: `INSERT OR IGNORE INTO ideas
+            sql: `INSERT OR IGNORE INTO proposals
                     (id, goal, story, technical, title, solution, notes,
                      status, source, author_kind, author_name,
                      created_at, updated_at)
@@ -310,7 +351,7 @@ const migrateTaskSuggestions = async (c: Client): Promise<void> => {
           })
         } else {
           await tx.execute({
-            sql: `INSERT OR IGNORE INTO ideas
+            sql: `INSERT OR IGNORE INTO proposals
                     (id, title, solution, notes, status, source,
                      author_kind, author_name,
                      created_at, updated_at)
@@ -356,35 +397,39 @@ const slugify = (title: string): string => {
     .replace(/^-+|-+$/g, '')
     .slice(0, 40)
     .replace(/-+$/g, '')
-  return slug || 'idea'
+  return slug || 'proposal'
 }
 
-export const generateIdeaId = (title: string): string => {
+export const generateProposalId = (title: string): string => {
   const prefix = randomBytes(4).toString('hex')
   return `${prefix}-${slugify(title)}`
 }
 
-const VALID_SOURCES: readonly IdeaSource[] = ['reflection', 'human', 'planner']
+const VALID_SOURCES: readonly ProposalSource[] = [
+  'reflection',
+  'human',
+  'planner',
+]
 
-const isValidSource = (raw: unknown): raw is IdeaSource =>
+const isValidSource = (raw: unknown): raw is ProposalSource =>
   raw === 'reflection' || raw === 'planner' || raw === 'human'
 
-const normaliseSource = (raw: unknown): IdeaSource => {
+const normaliseSource = (raw: unknown): ProposalSource => {
   if (isValidSource(raw)) return raw
   return 'human'
 }
 
-const assertValidSource = (raw: unknown): IdeaSource => {
+const assertValidSource = (raw: unknown): ProposalSource => {
   if (isValidSource(raw)) return raw
   throw new Error(
-    `invalid idea source '${String(raw)}'; expected one of ${VALID_SOURCES.join(', ')}`,
+    `invalid proposal source '${String(raw)}'; expected one of ${VALID_SOURCES.join(', ')}`,
   )
 }
 
-const rowToIdea = (
+const rowToProposal = (
   row: Record<string, unknown>,
   userStories: string[],
-): Idea => {
+): Proposal => {
   const authorKindRaw = (row.author_kind as string | null) ?? null
   const authorName = (row.author_name as string | null) ?? null
   const author: Author | null =
@@ -409,33 +454,33 @@ const rowToIdea = (
 
 const loadUserStories = async (
   c: Client,
-  ideaId: string,
+  proposalId: string,
 ): Promise<string[]> => {
   const r = await c.execute({
-    sql: `SELECT text FROM idea_user_stories WHERE idea_id = ? ORDER BY position ASC`,
-    args: [ideaId],
+    sql: `SELECT text FROM proposal_user_stories WHERE proposal_id = ? ORDER BY position ASC`,
+    args: [proposalId],
   })
   return r.rows.map((row) => (row as unknown as { text: string }).text)
 }
 
-export interface CreateIdeaOptions {
+export interface CreateProposalOptions {
   author?: Author
-  source?: IdeaSource
+  source?: ProposalSource
   problem?: string
   solution?: string
   outOfScope?: string
   notes?: string
 }
 
-export const createIdea = async (
+export const createProposal = async (
   title: string,
-  opts?: CreateIdeaOptions,
-): Promise<Idea> => {
-  await initIdeas()
+  opts?: CreateProposalOptions,
+): Promise<Proposal> => {
+  await initProposals()
   const c = getClient()
-  const id = generateIdeaId(title)
+  const id = generateProposalId(title)
   const now = Date.now()
-  const source: IdeaSource =
+  const source: ProposalSource =
     opts?.source !== undefined
       ? assertValidSource(opts.source)
       : opts?.author?.kind === 'agent'
@@ -450,13 +495,13 @@ export const createIdea = async (
   // Detect whether the legacy goal/story/technical columns still exist as
   // NOT NULL — pre-existing repos do, fresh repos don't. Write to both
   // sets when present so the legacy NOT NULL constraint is satisfied.
-  const ideaCols = await c.execute(`PRAGMA table_info(ideas)`)
+  const proposalCols = await c.execute(`PRAGMA table_info(proposals)`)
   const hasLegacyGoal = (
-    ideaCols.rows as unknown as Array<{ name: string }>
+    proposalCols.rows as unknown as Array<{ name: string }>
   ).some((rr) => rr.name === 'goal')
   if (hasLegacyGoal) {
     await c.execute({
-      sql: `INSERT INTO ideas
+      sql: `INSERT INTO proposals
               (id, goal, story, technical,
                title, problem, solution, out_of_scope, notes,
                status, source, author_kind, author_name,
@@ -481,7 +526,7 @@ export const createIdea = async (
     })
   } else {
     await c.execute({
-      sql: `INSERT INTO ideas
+      sql: `INSERT INTO proposals
               (id, title, problem, solution, out_of_scope, notes,
                status, source, author_kind, author_name,
                created_at, updated_at)
@@ -517,25 +562,25 @@ export const createIdea = async (
   }
 }
 
-export interface ListIdeasFilter {
-  source?: IdeaSource
+export interface ListProposalsFilter {
+  source?: ProposalSource
   status?: string
 }
 
-export type IdeaIdResolution =
+export type ProposalIdResolution =
   | { kind: 'unique'; id: string }
   | { kind: 'ambiguous'; count: number }
   | { kind: 'none' }
 
 const MIN_PREFIX_LENGTH = 4
 
-export const resolveIdeaId = async (
+export const resolveProposalId = async (
   idOrPrefix: string,
-): Promise<IdeaIdResolution> => {
-  await initIdeas()
+): Promise<ProposalIdResolution> => {
+  await initProposals()
   const c = getClient()
   const exact = await c.execute({
-    sql: `SELECT id FROM ideas WHERE id = ?`,
+    sql: `SELECT id FROM proposals WHERE id = ?`,
     args: [idOrPrefix],
   })
   if (exact.rows.length === 1) {
@@ -543,7 +588,7 @@ export const resolveIdeaId = async (
   }
   if (idOrPrefix.length < MIN_PREFIX_LENGTH) return { kind: 'none' }
   const prefixMatch = await c.execute({
-    sql: `SELECT id FROM ideas WHERE id LIKE ? || '%' LIMIT 2`,
+    sql: `SELECT id FROM proposals WHERE id LIKE ? || '%' LIMIT 2`,
     args: [idOrPrefix],
   })
   if (prefixMatch.rows.length === 0) return { kind: 'none' }
@@ -554,7 +599,7 @@ export const resolveIdeaId = async (
     }
   }
   const total = await c.execute({
-    sql: `SELECT COUNT(*) AS n FROM ideas WHERE id LIKE ? || '%'`,
+    sql: `SELECT COUNT(*) AS n FROM proposals WHERE id LIKE ? || '%'`,
     args: [idOrPrefix],
   })
   const count = Number(
@@ -563,21 +608,28 @@ export const resolveIdeaId = async (
   return { kind: 'ambiguous', count }
 }
 
-export const getIdea = async (idOrPrefix: string): Promise<Idea | null> => {
-  const resolved = await resolveIdeaId(idOrPrefix)
+export const getProposal = async (
+  idOrPrefix: string,
+): Promise<Proposal | null> => {
+  const resolved = await resolveProposalId(idOrPrefix)
   if (resolved.kind !== 'unique') return null
   const c = getClient()
   const r = await c.execute({
-    sql: `SELECT * FROM ideas WHERE id = ?`,
+    sql: `SELECT * FROM proposals WHERE id = ?`,
     args: [resolved.id],
   })
   if (r.rows.length === 0) return null
   const userStories = await loadUserStories(c, resolved.id)
-  return rowToIdea(r.rows[0] as unknown as Record<string, unknown>, userStories)
+  return rowToProposal(
+    r.rows[0] as unknown as Record<string, unknown>,
+    userStories,
+  )
 }
 
-export const listIdeas = async (filter?: ListIdeasFilter): Promise<Idea[]> => {
-  await initIdeas()
+export const listProposals = async (
+  filter?: ListProposalsFilter,
+): Promise<Proposal[]> => {
+  await initProposals()
   const c = getClient()
   const where: string[] = []
   const args: unknown[] = []
@@ -589,23 +641,23 @@ export const listIdeas = async (filter?: ListIdeasFilter): Promise<Idea[]> => {
     where.push('status = ?')
     args.push(filter.status)
   }
-  const sql = `SELECT * FROM ideas${
+  const sql = `SELECT * FROM proposals${
     where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''
   } ORDER BY created_at DESC`
   const r =
     args.length > 0
       ? await c.execute({ sql, args: args as never })
       : await c.execute(sql)
-  const ideas: Idea[] = []
+  const proposals: Proposal[] = []
   for (const row of r.rows) {
     const r2 = row as unknown as Record<string, unknown>
     const userStories = await loadUserStories(c, r2.id as string)
-    ideas.push(rowToIdea(r2, userStories))
+    proposals.push(rowToProposal(r2, userStories))
   }
-  return ideas
+  return proposals
 }
 
-export type IdeaField =
+export type ProposalField =
   | 'title'
   | 'problem'
   | 'solution'
@@ -613,7 +665,7 @@ export type IdeaField =
   | 'notes'
   | 'status'
 
-const fieldColumn: Record<IdeaField, string> = {
+const fieldColumn: Record<ProposalField, string> = {
   title: 'title',
   problem: 'problem',
   solution: 'solution',
@@ -622,53 +674,53 @@ const fieldColumn: Record<IdeaField, string> = {
   status: 'status',
 }
 
-export const setIdeaField = async (
+export const setProposalField = async (
   idOrPrefix: string,
-  field: IdeaField,
+  field: ProposalField,
   value: string,
-): Promise<Idea> => {
-  await initIdeas()
-  const resolved = await resolveIdeaId(idOrPrefix)
+): Promise<Proposal> => {
+  await initProposals()
+  const resolved = await resolveProposalId(idOrPrefix)
   if (resolved.kind === 'ambiguous') {
     throw new Error(
-      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} ideas`,
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} proposals`,
     )
   }
   if (resolved.kind === 'none') {
-    throw new Error(`idea ${idOrPrefix} not found`)
+    throw new Error(`proposal ${idOrPrefix} not found`)
   }
   const id = resolved.id
   const c = getClient()
   const now = Date.now()
   await c.execute({
-    sql: `UPDATE ideas SET ${fieldColumn[field]} = ?, updated_at = ? WHERE id = ?`,
+    sql: `UPDATE proposals SET ${fieldColumn[field]} = ?, updated_at = ? WHERE id = ?`,
     args: [value, now, id],
   })
-  const updated = await getIdea(id)
+  const updated = await getProposal(id)
   if (!updated) {
-    throw new Error(`idea ${id} disappeared after update`)
+    throw new Error(`proposal ${id} disappeared after update`)
   }
   return updated
 }
 
-export const addIdeaUserStory = async (
+export const addProposalUserStory = async (
   idOrPrefix: string,
   story: string,
-): Promise<Idea> => {
-  await initIdeas()
-  const resolved = await resolveIdeaId(idOrPrefix)
+): Promise<Proposal> => {
+  await initProposals()
+  const resolved = await resolveProposalId(idOrPrefix)
   if (resolved.kind === 'ambiguous') {
     throw new Error(
-      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} ideas`,
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} proposals`,
     )
   }
   if (resolved.kind === 'none') {
-    throw new Error(`idea ${idOrPrefix} not found`)
+    throw new Error(`proposal ${idOrPrefix} not found`)
   }
   const id = resolved.id
   const c = getClient()
   const positionRow = await c.execute({
-    sql: `SELECT COALESCE(MAX(position), -1) AS max_pos FROM idea_user_stories WHERE idea_id = ?`,
+    sql: `SELECT COALESCE(MAX(position), -1) AS max_pos FROM proposal_user_stories WHERE proposal_id = ?`,
     args: [id],
   })
   const maxPos = Number(
@@ -678,33 +730,33 @@ export const addIdeaUserStory = async (
   const next = Number.isFinite(maxPos) ? maxPos + 1 : 0
   const now = Date.now()
   await c.execute({
-    sql: `INSERT INTO idea_user_stories (idea_id, position, text) VALUES (?, ?, ?)`,
+    sql: `INSERT INTO proposal_user_stories (proposal_id, position, text) VALUES (?, ?, ?)`,
     args: [id, next, story],
   })
   await c.execute({
-    sql: `UPDATE ideas SET updated_at = ? WHERE id = ?`,
+    sql: `UPDATE proposals SET updated_at = ? WHERE id = ?`,
     args: [now, id],
   })
-  const updated = await getIdea(id)
+  const updated = await getProposal(id)
   if (!updated) {
-    throw new Error(`idea ${id} disappeared after update`)
+    throw new Error(`proposal ${id} disappeared after update`)
   }
   return updated
 }
 
-export const removeIdeaUserStory = async (
+export const removeProposalUserStory = async (
   idOrPrefix: string,
   index: number,
-): Promise<Idea> => {
-  await initIdeas()
-  const resolved = await resolveIdeaId(idOrPrefix)
+): Promise<Proposal> => {
+  await initProposals()
+  const resolved = await resolveProposalId(idOrPrefix)
   if (resolved.kind === 'ambiguous') {
     throw new Error(
-      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} ideas`,
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} proposals`,
     )
   }
   if (resolved.kind === 'none') {
-    throw new Error(`idea ${idOrPrefix} not found`)
+    throw new Error(`proposal ${idOrPrefix} not found`)
   }
   const id = resolved.id
   const c = getClient()
@@ -714,28 +766,26 @@ export const removeIdeaUserStory = async (
   const tx = await c.transaction('write')
   try {
     const target = await tx.execute({
-      sql: `SELECT position FROM idea_user_stories WHERE idea_id = ? AND position = ?`,
+      sql: `SELECT position FROM proposal_user_stories WHERE proposal_id = ? AND position = ?`,
       args: [id, index],
     })
     if (target.rows.length === 0) {
       tx.close()
-      throw new Error(
-        `idea ${id} has no user story at index ${index}`,
-      )
+      throw new Error(`proposal ${id} has no user story at index ${index}`)
     }
     await tx.execute({
-      sql: `DELETE FROM idea_user_stories WHERE idea_id = ? AND position = ?`,
+      sql: `DELETE FROM proposal_user_stories WHERE proposal_id = ? AND position = ?`,
       args: [id, index],
     })
     await tx.execute({
-      sql: `UPDATE idea_user_stories
+      sql: `UPDATE proposal_user_stories
             SET position = position - 1
-            WHERE idea_id = ? AND position > ?`,
+            WHERE proposal_id = ? AND position > ?`,
       args: [id, index],
     })
     const now = Date.now()
     await tx.execute({
-      sql: `UPDATE ideas SET updated_at = ? WHERE id = ?`,
+      sql: `UPDATE proposals SET updated_at = ? WHERE id = ?`,
       args: [now, id],
     })
     await tx.commit()
@@ -743,129 +793,133 @@ export const removeIdeaUserStory = async (
     tx.close()
     throw error
   }
-  const updated = await getIdea(id)
+  const updated = await getProposal(id)
   if (!updated) {
-    throw new Error(`idea ${id} disappeared after update`)
+    throw new Error(`proposal ${id} disappeared after update`)
   }
   return updated
 }
 
-export const validateIdeaShaped = (idea: Idea): string[] => {
+export const validateProposalShaped = (proposal: Proposal): string[] => {
   const missing: string[] = []
-  if (idea.title.trim().length === 0) missing.push('title')
-  if (idea.problem.trim().length === 0) missing.push('problem')
-  if (idea.solution.trim().length === 0) missing.push('solution')
-  if (idea.userStories.length === 0) missing.push('user stories (>=1)')
+  if (proposal.title.trim().length === 0) missing.push('title')
+  if (proposal.problem.trim().length === 0) missing.push('problem')
+  if (proposal.solution.trim().length === 0) missing.push('solution')
+  if (proposal.userStories.length === 0) missing.push('user stories (>=1)')
   return missing
 }
 
 /**
- * Mark a draft idea as PRD-ready. The idea row stays alive as the PRD;
- * tasks get created separately (one per slice) with parent_idea_id set.
- * No tasks are inserted here — that's the slicer's job.
+ * Mark a draft proposal as PRD-ready. The proposal row stays alive as the
+ * PRD; tasks get created separately (one per slice) with
+ * parent_proposal_id set. No tasks are inserted here — that's the slicer's
+ * job.
  */
-export const promoteIdea = async (idOrPrefix: string): Promise<Idea> => {
-  await initIdeas()
-  const resolved = await resolveIdeaId(idOrPrefix)
+export const promoteProposal = async (
+  idOrPrefix: string,
+): Promise<Proposal> => {
+  await initProposals()
+  const resolved = await resolveProposalId(idOrPrefix)
   if (resolved.kind === 'ambiguous') {
     throw new Error(
-      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} ideas`,
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} proposals`,
     )
   }
   if (resolved.kind === 'none') {
-    throw new Error(`idea ${idOrPrefix} not found`)
+    throw new Error(`proposal ${idOrPrefix} not found`)
   }
-  const idea = await getIdea(resolved.id)
-  if (!idea) {
-    throw new Error(`idea ${resolved.id} not found`)
+  const proposal = await getProposal(resolved.id)
+  if (!proposal) {
+    throw new Error(`proposal ${resolved.id} not found`)
   }
-  if (idea.status !== 'draft') {
+  if (proposal.status !== 'draft') {
     throw new Error(
-      `idea ${idea.id} is '${idea.status}'; only draft ideas can be promoted`,
+      `proposal ${proposal.id} is '${proposal.status}'; only draft proposals can be promoted`,
     )
   }
-  const missing = validateIdeaShaped(idea)
+  const missing = validateProposalShaped(proposal)
   if (missing.length > 0) {
     throw new Error(
-      `idea ${idea.id} is not fully shaped; missing: ${missing.join(', ')}`,
+      `proposal ${proposal.id} is not fully shaped; missing: ${missing.join(', ')}`,
     )
   }
   const c = getClient()
   const now = Date.now()
   await c.execute({
-    sql: `UPDATE ideas SET status = 'prd-ready', updated_at = ? WHERE id = ?`,
-    args: [now, idea.id],
+    sql: `UPDATE proposals SET status = 'prd-ready', updated_at = ? WHERE id = ?`,
+    args: [now, proposal.id],
   })
-  const updated = await getIdea(idea.id)
+  const updated = await getProposal(proposal.id)
   if (!updated) {
-    throw new Error(`idea ${idea.id} disappeared after promotion`)
+    throw new Error(`proposal ${proposal.id} disappeared after promotion`)
   }
   return updated
 }
 
 // Direct DB write — deletion has no worktree/merge side effects. Removes
-// the row from `ideas`; `idea_user_stories` rows cascade away via the
-// FK declared in initIdeas.
-export const deleteIdea = async (idOrPrefix: string): Promise<string> => {
-  await initIdeas()
-  const resolved = await resolveIdeaId(idOrPrefix)
+// the row from `proposals`; `proposal_user_stories` rows cascade away via
+// the FK declared in initProposals.
+export const deleteProposal = async (idOrPrefix: string): Promise<string> => {
+  await initProposals()
+  const resolved = await resolveProposalId(idOrPrefix)
   if (resolved.kind === 'ambiguous') {
     throw new Error(
-      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} ideas`,
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} proposals`,
     )
   }
   if (resolved.kind === 'none') {
-    throw new Error(`idea ${idOrPrefix} not found`)
+    throw new Error(`proposal ${idOrPrefix} not found`)
   }
   const id = resolved.id
   const c = getClient()
   // Older DBs were created before the FK existed, so wipe the children
   // explicitly to keep cleanup deterministic across schema vintages.
   await c.execute({
-    sql: `DELETE FROM idea_user_stories WHERE idea_id = ?`,
+    sql: `DELETE FROM proposal_user_stories WHERE proposal_id = ?`,
     args: [id],
   })
   const r = await c.execute({
-    sql: `DELETE FROM ideas WHERE id = ?`,
+    sql: `DELETE FROM proposals WHERE id = ?`,
     args: [id],
   })
   if (r.rowsAffected === 0) {
-    throw new Error(`idea ${id} not found`)
+    throw new Error(`proposal ${id} not found`)
   }
   return id
 }
 
 // Direct DB write — rejection is a pure status flip with no side effects
 // (no worktree, no merge), so it does not need to go through the daemon.
-export const rejectIdea = async (idOrPrefix: string): Promise<Idea> => {
-  await initIdeas()
-  const resolved = await resolveIdeaId(idOrPrefix)
+export const rejectProposal = async (
+  idOrPrefix: string,
+): Promise<Proposal> => {
+  await initProposals()
+  const resolved = await resolveProposalId(idOrPrefix)
   if (resolved.kind === 'ambiguous') {
     throw new Error(
-      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} ideas`,
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} proposals`,
     )
   }
   if (resolved.kind === 'none') {
-    throw new Error(`idea ${idOrPrefix} not found`)
+    throw new Error(`proposal ${idOrPrefix} not found`)
   }
   const id = resolved.id
   const c = getClient()
   const now = Date.now()
   const r = await c.execute({
-    sql: `UPDATE ideas SET status = 'dismissed', updated_at = ? WHERE id = ? AND status = 'draft'`,
+    sql: `UPDATE proposals SET status = 'dismissed', updated_at = ? WHERE id = ? AND status = 'draft'`,
     args: [now, id],
   })
   if (r.rowsAffected === 0) {
-    const current = await getIdea(id)
-    if (!current) throw new Error(`idea ${id} not found`)
+    const current = await getProposal(id)
+    if (!current) throw new Error(`proposal ${id} not found`)
     throw new Error(
-      `idea ${id} is '${current.status}'; only draft ideas can be rejected`,
+      `proposal ${id} is '${current.status}'; only draft proposals can be rejected`,
     )
   }
-  const updated = await getIdea(id)
+  const updated = await getProposal(id)
   if (!updated) {
-    throw new Error(`idea ${id} disappeared after rejection`)
+    throw new Error(`proposal ${id} disappeared after rejection`)
   }
   return updated
 }
-
