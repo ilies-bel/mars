@@ -205,10 +205,17 @@ jobs:
             exit 1
           fi
 
+          # Semver-correct prerelease detection: scripts/is-prerelease.mjs
+          # prints "prerelease" or "stable" for a v-prefixed semver tag,
+          # and exits non-zero on a malformed tag so we refuse to publish
+          # rather than guess. Asset names and contents (BUNDLE, SIDECAR)
+          # are identical in both cases — only the Release's prerelease
+          # flag differs.
+          KIND="$(node scripts/is-prerelease.mjs "$TAG")"
           PRERELEASE_FLAG=""
-          case "$TAG" in
-            *-*) PRERELEASE_FLAG="--prerelease" ;;
-          esac
+          if [ "$KIND" = "prerelease" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
 
           gh release create "$TAG" "$BUNDLE" "$SIDECAR" \
             $PRERELEASE_FLAG \
