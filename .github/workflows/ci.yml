@@ -110,3 +110,29 @@ jobs:
           bash ./install-dev.sh
           command -v mars
           mars --help || mars help || true
+
+  templates-sync:
+    # `orchestrator/src/init/templates/CLAUDE.md` and
+    # `orchestrator/src/init/templates/claude/**` are tracked files
+    # mechanically derived from the root `CLAUDE.md` + `.claude/` by
+    # `scripts/sync-claude-templates.sh` (the npm prebuild/pretest hook).
+    # If the committed copy drifts from source, every task that runs
+    # `npm run build`/`npm test` in its worktree regenerates them, dirties
+    # the merge target, and fails `merge:preflight/uncommitted-changes`.
+    # This job fails LOUDLY at PR time so the staleness can never silently
+    # recur: re-run the sync and commit the regenerated files.
+    name: Init templates in sync with source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate templates and assert no drift
+        run: |
+          set -euo pipefail
+          bash orchestrator/scripts/sync-claude-templates.sh
+          if ! git diff --quiet -- orchestrator/src/init/templates; then
+            echo "::error::orchestrator/src/init/templates is stale relative to root CLAUDE.md / .claude/. Run 'npm --prefix orchestrator run sync-claude-templates' and commit the regenerated files."
+            git --no-pager diff --stat -- orchestrator/src/init/templates
+            exit 1
+          fi
+          echo "init templates are in sync with source."
