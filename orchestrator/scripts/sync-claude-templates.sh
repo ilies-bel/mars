@@ -14,6 +14,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 FRAMEWORK_ROOT="$(cd "$ORCH_ROOT/.." && pwd)"
 
+# Guard: skip when running inside a git worktree (e.g. an orchestrator task
+# worktree). In a worktree, `git rev-parse --git-dir` returns the per-worktree
+# path under `.git/worktrees/<name>`, while `--git-common-dir` always points to
+# the main repo's `.git`. When the two differ we are in a worktree and MUST NOT
+# sync templates — the current CLAUDE.md is the live project file, not the
+# canonical framework template source, and overwriting the bundled template would
+# dirty the worktree tree and block the subsequent rebase-based merge.
+_git_dir="$(git -C "$FRAMEWORK_ROOT" rev-parse --git-dir 2>/dev/null || echo '')"
+_git_common="$(git -C "$FRAMEWORK_ROOT" rev-parse --git-common-dir 2>/dev/null || echo '')"
+if [ -n "$_git_dir" ] && [ "$_git_dir" != "$_git_common" ]; then
+  echo "sync-claude-templates: inside a git worktree — skipping template sync (run from project root to update templates)" >&2
+  exit 0
+fi
+
 SRC_CLAUDE="$FRAMEWORK_ROOT/.claude"
 SRC_CLAUDE_MD="$FRAMEWORK_ROOT/CLAUDE.md"
 DEST_DIR="$ORCH_ROOT/src/init/templates"
