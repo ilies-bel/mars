@@ -43,10 +43,29 @@ import { resolveOriginIdForTask } from '../lib/origin'
 export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} has incomplete blockers; aborting dispatch (task remains queued)`
 
-export const isBlockersAbortError = (err: unknown): boolean => {
-  const msg = err instanceof Error ? err.message : String(err)
-  return msg.includes('has incomplete blockers; aborting dispatch')
+// Mastra's workflow runner wraps a step-thrown error before it surfaces on
+// `run.start()`'s result (e.g. `new Error("Step <id> failed: <original>")`
+// with the original on `.cause`). Matching only `err.message` therefore
+// misses the sentinel once it's wrapped. Flatten the message + the entire
+// `cause` chain (depth-bounded against cycles) into one haystack so a
+// wrapped sentinel is still recognised.
+const errorHaystack = (err: unknown): string => {
+  const parts: string[] = []
+  let cur: unknown = err
+  for (let depth = 0; cur != null && depth < 10; depth += 1) {
+    if (cur instanceof Error) {
+      parts.push(cur.message)
+      cur = cur.cause
+    } else {
+      parts.push(String(cur))
+      break
+    }
+  }
+  return parts.join(' :: ')
 }
+
+export const isBlockersAbortError = (err: unknown): boolean =>
+  errorHaystack(err).includes('has incomplete blockers; aborting dispatch')
 
 // Thrown by codeStep when the read/grep span watcher trips. The codeStep
 // has already (a) marked the task `blocked` and (b) spawned a context-
@@ -57,9 +76,23 @@ export const isBlockersAbortError = (err: unknown): boolean => {
 export const TOO_HARD_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} aborted by read/grep span watcher; task parked in blocked`
 
+// Two distinct strings signal the same too-hard outcome and BOTH must be
+// recognised here, or the dispatcher mislabels the run:
+//   1. The throw path uses TOO_HARD_ABORT_MESSAGE ("aborted by read/grep
+//      span watcher") — codeStep throws this sentinel.
+//   2. The return path stamps the failure summary with TOO_HARD_PREFIX
+//      ("too_hard:no-action-after-reads: N reads without action; …",
+//      see codeStep ~line 780) onto the result/DB row.
+// server.ts only had the throw-path string, so when the workflow RETURNED
+// a too-hard result the guard missed it and the run was logged
+// `[implement] <id> -> failed` even though the task was correctly parked
+// `blocked`. Match either marker.
 export const isTooHardAbortError = (err: unknown): boolean => {
-  const msg = err instanceof Error ? err.message : String(err)
-  return msg.includes('aborted by read/grep span watcher')
+  const hay = errorHaystack(err)
+  return (
+    hay.includes('aborted by read/grep span watcher') ||
+    hay.includes(TOO_HARD_PREFIX)
+  )
 }
 import { verifyPassedScorer } from '../scorers/verify-passed'
 import { mergeCleanScorer } from '../scorers/merge-clean'
