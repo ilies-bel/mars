@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, isAbsolute, resolve, sep } from 'node:path'
 
 export interface OrchestratorContext {
   repoRoot: string
@@ -15,9 +15,31 @@ export interface OrchestratorContext {
   cacheDir: string
 }
 
+/**
+ * Resolve the repo root from a cwd inside any git working tree.
+ *
+ * Plain `git rev-parse --show-toplevel` returns the *worktree* root,
+ * which for a linked worktree under `.mars/worktrees/<id>` is the
+ * worktree itself — not the real repo. That is exactly the situation
+ * dispatched coders run in: cwd = `<repo>/.mars/worktrees/<id>` (the
+ * worker keeps spawn cwd at the worktree root so Mars CLI commands
+ * resolve `repoRoot()` correctly, per `lib/resolve-task-cwd.ts`).
+ *
+ * To recover the real repo root from inside a linked worktree, we ask
+ * git for `--git-common-dir`. For the primary worktree this is the same
+ * `.git` directory as `--show-toplevel` implies, so `dirname` of it
+ * matches the toplevel — no-op. For a linked worktree it points at
+ * `<real-repo>/.git`, so `dirname` is the real repo root.
+ *
+ * A path-shape sanity check ("does the toplevel sit inside
+ * `.../.mars/worktrees/<id>`?") is layered on as a defensive fallback
+ * for environments where `--git-common-dir` is unavailable or returns
+ * something unexpected.
+ */
 const detectRepoRoot = (start: string): string => {
+  let topLevel: string
   try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    topLevel = execFileSync('git', ['rev-parse', '--show-toplevel'], {
       cwd: start,
       encoding: 'utf8',
     }).trim()
@@ -26,6 +48,39 @@ const detectRepoRoot = (start: string): string => {
       `Not inside a git repository: ${start}\nUse --repo <path> or run from inside a git repo.`,
     )
   }
+
+  // Primary path: ask git for the shared git dir. For a linked worktree
+  // this resolves to the real repo's `.git`, regardless of layout.
+  try {
+    const gitCommonDir = execFileSync(
+      'git',
+      ['rev-parse', '--git-common-dir'],
+      { cwd: start, encoding: 'utf8' },
+    ).trim()
+    if (gitCommonDir) {
+      const absCommonDir = isAbsolute(gitCommonDir)
+        ? gitCommonDir
+        : resolve(start, gitCommonDir)
+      const realRoot = dirname(absCommonDir)
+      if (realRoot && realRoot !== topLevel) {
+        return realRoot
+      }
+    }
+  } catch {
+    // fall through to path-shape fallback
+  }
+
+  // Defensive fallback: if the toplevel sits inside the Mars layout
+  // `.../.mars/worktrees/<id>`, strip back to the path before
+  // `.mars/worktrees`. Only used if --git-common-dir didn't already
+  // identify a different real root.
+  const marsSegment = `${sep}.mars${sep}worktrees${sep}`
+  const idx = topLevel.indexOf(marsSegment)
+  if (idx !== -1) {
+    return topLevel.slice(0, idx)
+  }
+
+  return topLevel
 }
 
 let cached: OrchestratorContext | null = null
@@ -54,6 +109,16 @@ export const resolveContext = (override?: string): OrchestratorContext => {
     cacheDir,
   }
   return cached
+}
+
+/**
+ * Test-only: clear the memoized context so a subsequent
+ * `resolveContext()` re-detects the repo root from the current cwd.
+ * Production code never needs this — the cache is process-wide on
+ * purpose.
+ */
+export const __resetContextCacheForTests = (): void => {
+  cached = null
 }
 
 export const getRepoRoot = (): string => resolveContext().repoRoot
