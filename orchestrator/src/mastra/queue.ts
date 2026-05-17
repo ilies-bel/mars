@@ -421,6 +421,41 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_blockers_blocker ON task_blockers(blocker_task_id)
   `)
+  // ADR-0015 (amends ADR-0008): a Task MAY be blocked by an Idea, encoding
+  // "this work is queued but cannot dispatch until that idea has been shaped
+  // and promoted." This is the ONE allowed cross-graph direction; Task->Idea
+  // reuse of `task_blockers` is forbidden (it would force a polymorphic
+  // blocker_kind column and reintroduce the disambiguation ADR-0008
+  // rejected), so this is a third, narrow junction with fixed endpoint
+  // types. The ADR names it `idea_task_blockers`; the codebase renamed the
+  // `idea_*` vocabulary to `proposal_*`, so we name it
+  // `task_proposal_blockers` (columns: task_id waits on proposal_id).
+  //
+  // DB placement: this table conceptually GATES DISPATCH — the dispatcher
+  // must not run a task while a row here references an un-promoted proposal.
+  // The dispatch gate (`task_blockers`) lives in queue.db, so co-locating
+  // here keeps the gate check a single-db read and, critically, lets the
+  // ADR-0015 promote transfer (delete this row + insert the `task_blockers`
+  // row) execute as ONE libSQL write transaction — both writes are in
+  // queue.db. `proposals` lives in the SEPARATE state.db, so a SQL FK on
+  // `proposal_id` is impossible across databases; it is a plain TEXT column
+  // and proposal existence is validated in application code at edge-add
+  // time. `task_id` keeps a real FK to local `tasks(id)`.
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS task_proposal_blockers (
+      task_id TEXT NOT NULL,
+      proposal_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (task_id, proposal_id),
+      FOREIGN KEY (task_id) REFERENCES tasks(id)
+    )
+  `)
+  await c.execute(`
+    CREATE INDEX IF NOT EXISTS idx_task_proposal_blockers_task ON task_proposal_blockers(task_id)
+  `)
+  await c.execute(`
+    CREATE INDEX IF NOT EXISTS idx_task_proposal_blockers_proposal ON task_proposal_blockers(proposal_id)
+  `)
   // Migrate legacy `tasks.blocker_id` -> `task_blockers` rows. blocker_id used
   // to point into task_suggestions; the fix task itself is reachable via the
   // suggestion's created_task_id. Where the suggestion no longer exists or
@@ -1156,6 +1191,168 @@ export const clearBlockers = async (taskId: string): Promise<void> => {
     sql: `DELETE FROM task_blockers WHERE task_id = ?`,
     args: [taskId],
   })
+}
+
+/**
+ * ADR-0015 cross-graph edge writer. Adds `task_proposal_blockers` rows so
+ * `taskId` waits on each `proposalId` (a queued task that cannot dispatch
+ * until that idea has been shaped and promoted). Mirrors `addBlockers`: the
+ * task must exist and duplicates/no-ops are handled via `INSERT OR IGNORE`.
+ *
+ * `proposalId` lives in the SEPARATE state.db, so it cannot be FK-validated
+ * here; existence is checked by the caller against `proposals` before this
+ * runs (the CLI verb resolves it via `resolveProposalId`). A self-edge is
+ * impossible by construction here — endpoints are different kinds (task vs
+ * proposal) and id namespaces do not overlap — so no self-edge guard is
+ * needed (contrast `addBlockers`, where both endpoints are tasks).
+ */
+export const addProposalBlockers = async (
+  taskId: string,
+  proposalIds: readonly string[],
+): Promise<void> => {
+  if (proposalIds.length === 0) return
+  await initQueue()
+  const c = getClient()
+
+  const taskRow = await c.execute({
+    sql: `SELECT 1 FROM tasks WHERE id = ?`,
+    args: [taskId],
+  })
+  if (taskRow.rows.length === 0) {
+    throw new Error(`task ${taskId} not found`)
+  }
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const id of proposalIds) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    unique.push(id)
+  }
+  if (unique.length === 0) return
+  const now = new Date().toISOString()
+  const stmts = unique.map((proposalId) => ({
+    sql: `INSERT OR IGNORE INTO task_proposal_blockers (task_id, proposal_id, created_at) VALUES (?, ?, ?)`,
+    args: [taskId, proposalId, now],
+  }))
+  await c.batch(stmts, 'write')
+}
+
+/**
+ * List proposal ids that `taskId` is blocked by in `task_proposal_blockers`,
+ * ordered by edge creation time. No status filter: proposal status lives in
+ * the separate state.db and the dispatch gate only cares whether ANY row
+ * still references an un-promoted proposal — that join is the dispatcher's
+ * concern, not this reader's.
+ */
+export const listProposalBlockers = async (
+  taskId: string,
+): Promise<string[]> => {
+  await initQueue()
+  const r = await getClient().execute({
+    sql: `SELECT proposal_id AS id
+            FROM task_proposal_blockers
+           WHERE task_id = ?
+           ORDER BY created_at ASC`,
+    args: [taskId],
+  })
+  return r.rows.map((row) => (row as unknown as { id: string }).id)
+}
+
+/**
+ * Remove a single `task_proposal_blockers` edge. Mirrors `removeBlocker`:
+ * reports `removed:false` when the (task, proposal) pair did not exist.
+ */
+export const removeProposalBlocker = async (
+  taskId: string,
+  proposalId: string,
+): Promise<{ removed: boolean }> => {
+  await initQueue()
+  const r = await getClient().execute({
+    sql: `DELETE FROM task_proposal_blockers WHERE task_id = ? AND proposal_id = ?`,
+    args: [taskId, proposalId],
+  })
+  return { removed: r.rowsAffected > 0 }
+}
+
+/**
+ * List task ids that are blocked by `proposalId` in
+ * `task_proposal_blockers`. Used by the ADR-0015 dismiss-refusal path: the
+ * dismiss is refused while ANY task still depends on the idea, and the
+ * dependents must be surfaced to the user so they explicitly redirect or
+ * drop them (no auto-cascade).
+ */
+export const listTasksBlockedByProposal = async (
+  proposalId: string,
+): Promise<string[]> => {
+  await initQueue()
+  const r = await getClient().execute({
+    sql: `SELECT task_id AS id
+            FROM task_proposal_blockers
+           WHERE proposal_id = ?
+           ORDER BY created_at ASC`,
+    args: [proposalId],
+  })
+  return r.rows.map((row) => (row as unknown as { id: string }).id)
+}
+
+/**
+ * ADR-0015 promote transfer, executed as a SINGLE libSQL write transaction.
+ * For every task that is blocked by `proposalId` in
+ * `task_proposal_blockers`, this deletes that (task_id, proposal_id) row and
+ * inserts (task_id, newBlockerTaskId) into `task_blockers` in the SAME
+ * `batch(..., 'write')`. Because both tables live in queue.db this is a
+ * genuine atomic transaction — no dispatcher tick can observe a dependent
+ * task with zero blockers between the two writes. (The proposal status flip
+ * to 'prd-ready' happens in state.db and is independent of this invariant:
+ * a status flip without the blocker transfer would still leave the task
+ * gated by the surviving `task_proposal_blockers` row, never zero-blocked.)
+ *
+ * Returns the task ids whose blocker was transferred.
+ *
+ * TODO(ADR-0015 fan-out): ADR-0015 only pins the single new_blocker_task_id
+ * case ("inserts (task_id, new_blocker_task_id)"). When an idea is promoted
+ * and later sliced into N tasks, the dependent should arguably end up
+ * blocked by all N resulting tasks. The ADR is SILENT on this multi-slice
+ * fan-out, so per the task brief this implements the single-new-blocker
+ * case verbatim and does NOT invent fan-out semantics. Re-promote/slice
+ * wiring for the N-task case is deferred and called out in the report.
+ */
+export const transferProposalBlockerToTask = async (
+  proposalId: string,
+  newBlockerTaskId: string,
+): Promise<{ transferred: string[] }> => {
+  await initQueue()
+  const c = getClient()
+  const dependents = await listTasksBlockedByProposal(proposalId)
+  if (dependents.length === 0) return { transferred: [] }
+  const blockerRow = await c.execute({
+    sql: `SELECT 1 FROM tasks WHERE id = ?`,
+    args: [newBlockerTaskId],
+  })
+  if (blockerRow.rows.length === 0) {
+    throw new Error(`blocker task ${newBlockerTaskId} not found`)
+  }
+  const now = new Date().toISOString()
+  const stmts: { sql: string; args: unknown[] }[] = []
+  for (const taskId of dependents) {
+    // Insert the new task_blockers row BEFORE deleting the
+    // task_proposal_blockers row so that, even though `batch` is already a
+    // single transaction, the intra-transaction statement order also
+    // preserves the never-observably-zero-blockers invariant. Self-edges
+    // (a slice blocked by itself) are skipped, mirroring addBlockers.
+    if (taskId !== newBlockerTaskId) {
+      stmts.push({
+        sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
+        args: [taskId, newBlockerTaskId, now],
+      })
+    }
+    stmts.push({
+      sql: `DELETE FROM task_proposal_blockers WHERE task_id = ? AND proposal_id = ?`,
+      args: [taskId, proposalId],
+    })
+  }
+  await c.batch(stmts, 'write')
+  return { transferred: dependents }
 }
 
 export interface UnblockTaskResult {
