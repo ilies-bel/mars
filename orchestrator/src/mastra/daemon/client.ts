@@ -10,6 +10,7 @@ import {
 } from './paths'
 import { readLines, writeLine, type DaemonRequest, type DaemonResponse } from './protocol'
 import { resolveContext } from '../context'
+import { mapDaemonError } from './stale-detection'
 
 const CONNECT_RETRY_INTERVAL_MS = 50
 const CONNECT_TIMEOUT_MS = 5_000
@@ -111,7 +112,14 @@ export const sendRequest = async (
           if (res.ok) {
             resolve(res.data)
           } else {
-            const e = new Error(res.error) as Error & { code?: string }
+            // Rewrite stale-table SQLite failures (e.g. a daemon that
+            // predates the ideas->proposals rename and still references the
+            // legacy `ideas` table) into an actionable restart hint, so
+            // operators are never left staring at a raw libsql message.
+            // Non-matching errors pass through unchanged.
+            const e = new Error(mapDaemonError(res.error)) as Error & {
+              code?: string
+            }
             if (res.errorCode) e.code = res.errorCode
             reject(e)
           }

@@ -38,6 +38,11 @@ import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './
 import { loadDaemonConfig } from './config'
 import { probeDuckDBLock } from './duckdb-lock'
 import {
+  assertProposalsSourceFresh,
+  captureProposalsStamp,
+  mapDaemonError,
+} from './stale-detection'
+import {
   readLines,
   writeLine,
   type DaemonRequest,
@@ -193,6 +198,22 @@ export const startDaemon = async (
   }
 
   await initQueue()
+
+  // Source-stamp guard for the ideas->proposals rename (and any future
+  // schema-rename that lands in proposals.ts). Captured before any RPC is
+  // served; checked by proposal-mutating handlers. See stale-detection.ts.
+  const proposalsStamp = captureProposalsStamp()
+  if (proposalsStamp.mtimeMs !== null) {
+    log(
+      `[stale-guard] proposals source stamp: ${proposalsStamp.path} @ ${new Date(
+        proposalsStamp.mtimeMs,
+      ).toISOString()}`,
+    )
+  } else {
+    log(
+      `[stale-guard] proposals source not on disk (${proposalsStamp.path}); guard disabled, relying on error-rewrite fallback`,
+    )
+  }
 
   const bus = new EventEmitter()
   bus.setMaxListeners(50)
@@ -891,6 +912,7 @@ export const startDaemon = async (
   const handleIdeaPromote = async (
     ideaId: string,
   ): Promise<{ ideaId: string; status: string }> => {
+    assertProposalsSourceFresh(proposalsStamp)
     const idea = await promoteProposal(ideaId)
     // Auto-slice: chain slicing fire-and-forget so the RPC stays fast and a
     // slicer failure (e.g. malformed PRD) leaves the idea in prd-ready for the
@@ -906,6 +928,7 @@ export const startDaemon = async (
   const handleIdeaSlice = async (
     ideaId: string,
   ): Promise<{ ideaId: string; status: string; taskIds: string[] }> => {
+    assertProposalsSourceFresh(proposalsStamp)
     const { runSlice } = await import('../workflows/slice-workflow')
     const result = await runSlice(ideaId)
     // Newly-queued slice tasks need to enter the implement pool. Emit one
@@ -1363,7 +1386,7 @@ export const startDaemon = async (
         }
       }
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return { ok: false, error: mapDaemonError((err as Error).message) }
     }
   }
 
