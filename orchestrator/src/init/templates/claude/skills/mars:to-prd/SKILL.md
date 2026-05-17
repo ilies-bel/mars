@@ -162,8 +162,8 @@ one sentence and stop — do not retry silently.
 - Do not re-interview the user. Synthesise from context. One short
   clarifying question is fine if a field is genuinely missing; full
   grilling is not.
-- Do not edit `features/<id>.md`, `ideas/<id>.md`, or any markdown
-  scaffold. PRD lives in the DB.
+- Do not edit `ideas/<id>.md` or any markdown scaffold. PRD lives in
+  the DB.
 - Do not append to `.mars/inbox.jsonl`.
 - Do not edit `CONTEXT.md` or `docs/adr/*.md` directly. If grilling
   surfaced a missing term or ADR you forgot to capture, route through
