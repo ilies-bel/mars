@@ -225,7 +225,6 @@ export const initProposals = async (): Promise<void> => {
     )
     await c.execute(`DROP TABLE idea_acceptance`)
   }
-  await migrateLegacyFeatures(c)
   // Run after `initQueue` has had a chance to migrate `tasks.blocker_id`
   // out into `task_blockers` rows, since that migration reads
   // `task_suggestions` and we are about to drop it.
@@ -233,57 +232,6 @@ export const initProposals = async (): Promise<void> => {
   await initQueue()
   await migrateTaskSuggestions(c)
   initialised = true
-}
-
-const migrateLegacyFeatures = async (c: Client): Promise<void> => {
-  const tableCheck = await c.execute({
-    sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='features'`,
-    args: [],
-  })
-  if (tableCheck.rows.length === 0) return
-
-  const legacy = await c.execute(`SELECT * FROM features`)
-
-  const tx = await c.transaction('write')
-  try {
-    for (const row of legacy.rows) {
-      const r = row as unknown as Record<string, unknown>
-      const id = r.id as string
-      const goal = (r.goal as string | null) ?? ''
-      const status = (r.status as string | null) ?? 'draft'
-      const legacyOrigin = (r.origin as string | null) ?? 'user'
-      const source: ProposalSource =
-        legacyOrigin === 'agent' ? 'planner' : 'human'
-      const createdMs = Date.parse((r.created_at as string | null) ?? '')
-      const updatedMs = Date.parse((r.updated_at as string | null) ?? '')
-      const now = Date.now()
-      const createdAt = Number.isFinite(createdMs) ? createdMs : now
-      const updatedAt = Number.isFinite(updatedMs) ? updatedMs : now
-
-      // legacy `features` migration always runs against a DB that still has
-      // legacy `proposals` columns (otherwise `features` would already be
-      // gone).
-      const result = await tx.execute({
-        sql: `INSERT OR IGNORE INTO proposals
-                (id, goal, story, technical, title, status, source, created_at, updated_at)
-              VALUES (?, ?, '', '', ?, ?, ?, ?, ?)`,
-        args: [id, goal, goal, status, source, createdAt, updatedAt],
-      })
-      if (result.rowsAffected === 0) {
-        console.warn(
-          `[proposals] migrate: skipped legacy features row ${id} — id already present in proposals`,
-        )
-      }
-    }
-    await tx.execute(`DROP INDEX IF EXISTS idx_features_status`)
-    await tx.execute(`DROP INDEX IF EXISTS idx_features_parent`)
-    await tx.execute(`DROP TABLE IF EXISTS feature_deps`)
-    await tx.execute(`DROP TABLE features`)
-    await tx.commit()
-  } catch (error: unknown) {
-    tx.close()
-    throw error
-  }
 }
 
 /**
