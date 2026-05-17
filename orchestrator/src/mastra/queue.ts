@@ -323,19 +323,27 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created ON tasks(priority DESC, created_at ASC)`,
   )
-  // origin_id: stable id of the originating row (idea or self-task) for an
-  // arc of work. @libsql/client does not honour `DEFAULT (id)` self-reference
-  // reliably, so the column is added without a default and back/forward-filled
-  // explicitly: backfill old rows below, populate new rows in enqueueTask.
+  // origin_id: stable id of the originating row (proposal or self-task) for
+  // an arc of work. @libsql/client does not honour `DEFAULT (id)`
+  // self-reference reliably, so the column is added without a default and
+  // back/forward-filled explicitly: backfill old rows below, populate new
+  // rows in enqueueTask.
   if (!names.has('origin_id')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN origin_id TEXT`)
     await c.execute(`UPDATE tasks SET origin_id = id WHERE origin_id IS NULL`)
   }
-  // parent_idea_id: link from a task to the PRD it slices. NULL for direct
-  // `mars task add` rows. slice_index records which slice this is within
-  // the PRD (1..N), again NULL for direct tasks.
-  if (!names.has('parent_idea_id')) {
-    await c.execute(`ALTER TABLE tasks ADD COLUMN parent_idea_id TEXT`)
+  // parent_proposal_id: link from a task to the PRD it slices. NULL for
+  // direct `mars task add` rows. slice_index records which slice this is
+  // within the PRD (1..N), again NULL for direct tasks. Legacy DBs carry
+  // this column as `parent_idea_id`; rename it in place (pure DDL, no data
+  // move) before the add-column guard runs.
+  if (names.has('parent_idea_id') && !names.has('parent_proposal_id')) {
+    await c.execute(
+      `ALTER TABLE tasks RENAME COLUMN parent_idea_id TO parent_proposal_id`,
+    )
+  }
+  if (!names.has('parent_proposal_id') && !names.has('parent_idea_id')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN parent_proposal_id TEXT`)
   }
   if (!names.has('slice_index')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN slice_index INTEGER`)
@@ -376,8 +384,9 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_origin_id ON tasks(origin_id)`,
   )
+  await c.execute(`DROP INDEX IF EXISTS idx_tasks_parent_idea_id`)
   await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_tasks_parent_idea_id ON tasks(parent_idea_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_tasks_parent_proposal_id ON tasks(parent_proposal_id)`,
   )
   await c.execute(`
     CREATE TABLE IF NOT EXISTS task_signals (
@@ -700,7 +709,7 @@ export interface EnqueueTaskOptions {
   author?: Author
   originId?: string
   priority?: number
-  parentIdeaId?: string
+  parentProposalId?: string
   sliceIndex?: number
   /**
    * Worker-routing hint. Defaults to `'coder'` when omitted, matching the
@@ -739,7 +748,7 @@ export const enqueueTask = async (
   const authorName = opts?.author?.name ?? null
   const originId = opts?.originId ?? id
   const priority = opts?.priority ?? 0
-  const parentIdeaId = opts?.parentIdeaId ?? null
+  const parentProposalId = opts?.parentProposalId ?? null
   const sliceIndex = opts?.sliceIndex ?? null
   const tag: TaskTag = opts?.tag ?? 'coder'
   const spec = opts?.spec ?? null
@@ -753,7 +762,7 @@ export const enqueueTask = async (
   const doneCriteriaJson = spec ? JSON.stringify(spec.doneCriteria) : null
   const taskType = spec ? spec.taskType : null
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_idea_id, slice_index, tag, files_json, verify_cmd, done_criteria_json, task_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tag, files_json, verify_cmd, done_criteria_json, task_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       promptText,
@@ -764,7 +773,7 @@ export const enqueueTask = async (
       authorName,
       originId,
       priority,
-      parentIdeaId,
+      parentProposalId,
       sliceIndex,
       tag,
       filesJson,
@@ -1199,7 +1208,7 @@ export const unblockTask = async (
 /**
  * List sibling task ids that share the same `origin_id` as the given task.
  * Used by `mars show <task-id>` to surface other tasks sliced from the same
- * originating idea (or related task arc). Excludes the task itself.
+ * originating proposal (or related task arc). Excludes the task itself.
  *
  * Returns an empty array when `originId === excludeTaskId` (the task is its
  * own origin and therefore has no siblings) or when no other rows match.
@@ -1220,20 +1229,20 @@ export const listSiblings = async (
 }
 
 /**
- * List tasks that reference the given idea as their `origin_id`. Used by
- * `mars show <idea-id>` to surface the tasks sliced from that idea. Returns
- * id and status, ordered by creation time so the display reflects the
- * slicing order.
+ * List tasks that reference the given proposal as their `origin_id`. Used
+ * by `mars show <proposal-id>` to surface the tasks sliced from that
+ * proposal. Returns id and status, ordered by creation time so the display
+ * reflects the slicing order.
  */
-export const listTasksForIdea = async (
-  ideaId: string,
+export const listTasksForProposal = async (
+  proposalId: string,
 ): Promise<Array<{ id: string; status: string }>> => {
   await initQueue()
   const r = await getClient().execute({
     sql: `SELECT id, status FROM tasks
             WHERE origin_id = ?
             ORDER BY created_at ASC`,
-    args: [ideaId],
+    args: [proposalId],
   })
   return r.rows.map((row) => {
     const r = row as unknown as { id: string; status: string }
