@@ -94,7 +94,7 @@ describe('queue.listSiblings / queue.listTasksForIdea', () => {
       originId: 'idea-other-cafebabe',
     })
 
-    const tasks = await q.listTasksForIdea(ideaId)
+    const tasks = await q.listTasksForProposal(ideaId)
     const ids = tasks.map((t) => t.id)
     expect(ids).toHaveLength(3)
     expect(ids).toEqual(expect.arrayContaining([a.id, b.id, c.id]))
@@ -105,9 +105,9 @@ describe('queue.listSiblings / queue.listTasksForIdea', () => {
     }
   })
 
-  it('listTasksForIdea returns [] for an idea with no slices', async () => {
+  it('listTasksForProposal returns [] for an idea with no slices', async () => {
     const q = await loadQueue(repo)
-    const tasks = await q.listTasksForIdea('idea-empty-00000000')
+    const tasks = await q.listTasksForProposal('idea-empty-00000000')
     expect(tasks).toEqual([])
   })
 })

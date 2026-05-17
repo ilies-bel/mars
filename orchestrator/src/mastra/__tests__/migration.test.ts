@@ -85,9 +85,9 @@ describe('schema migration: drop blocker_id + task_suggestions, rename origin->s
     q.close()
     s.close()
 
-    // Trigger the migration via initIdeas (which calls initQueue first).
-    const { initIdeas } = await import('../ideas')
-    await initIdeas()
+    // Trigger the migration via initProposals (which calls initQueue first).
+    const { initProposals } = await import('../proposals')
+    await initProposals()
 
     // Re-open with fresh clients.
     const q2 = createClient({ url: queueDb })
@@ -113,7 +113,7 @@ describe('schema migration: drop blocker_id + task_suggestions, rename origin->s
       blocker_task_id: 'fix-task',
     })
 
-    const ideaCols = await s2.execute(`PRAGMA table_info(ideas)`)
+    const ideaCols = await s2.execute(`PRAGMA table_info(proposals)`)
     const ideaColNames = (ideaCols.rows as unknown as Array<{ name: string }>).map(
       (r) => r.name,
     )
@@ -121,7 +121,7 @@ describe('schema migration: drop blocker_id + task_suggestions, rename origin->s
     expect(ideaColNames).not.toContain('origin')
 
     const ideaRows = await s2.execute(
-      `SELECT id, title, source FROM ideas ORDER BY id`,
+      `SELECT id, title, source FROM proposals ORDER BY id`,
     )
     const idMap = new Map(
       (
