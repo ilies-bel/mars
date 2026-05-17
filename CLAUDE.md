@@ -95,10 +95,19 @@ works and degrades to prompt-only.
 
 Blocker edges live in the `task_blockers` junction table (`task_id` waits
 on `blocker_task_id`). A task in `blocked` only flips to `queued` once
-**every** one of its blockers reaches `done`; the daemon's
-`onBlockerTaskCompleted` runs on each completion, and `recoverBlockedTasks`
-re-checks at daemon startup so a crash between completion and unblock
-doesn't strand work.
+**every** one of its blockers reaches `done` — and a successful recovery
+counts as its origin reaching `done`, so a recovered blocker unblocks the
+whole chain. The daemon's `onBlockerTaskCompleted` runs on each
+completion, and `recoverBlockedTasks` re-checks at daemon startup so a
+crash between completion and unblock doesn't strand work.
+
+When a task fails, the orchestrator spawns exactly **one** recovery task
+per origin failure to finish or fix the work. A recovery task is itself
+non-recoverable: if it fails for any reason — the same failure, a
+different one, or a watchdog kill — the origin goes to `failed` with one
+actionable inbox item and the operator resolves it explicitly (e.g.
+`mars restart`). There is no retry budget, retry count, or tunable knob —
+exactly one recovery attempt per origin failure, full stop.
 
 - Create edges at enqueue with `mars task add ... --blocked-by <id>`
   (repeatable; each id must already exist) or after the fact with
@@ -107,8 +116,9 @@ doesn't strand work.
   unchanged). `mars unblock <id>` with no blocker ids is phantom-recovery:
   it clears all edges and flips the task to `failed` so it can be
   `mars purge`d or `mars restart`ed.
-- Dependents whose retry budget is already exhausted at unblock time go
-  to `failed` with an inbox item rather than `queued`.
+- A blocker that ends in `failed` leaves its dependents waiting in
+  `blocked`; resolve the chain via the inbox item on the failed blocker
+  (the failure does not cascade down the chain — behaviour unchanged).
 - Coders that can't make progress should emit a `--blocked-by $TASK_ID`
   follow-up instead of bailing; the deviation-rules brief in the
   orchestrator notes spells this out.
