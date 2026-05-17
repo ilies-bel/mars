@@ -25,9 +25,11 @@ Run `mars inbox show <argument>`:
   Step 3 (skip listing).
 - **Draft redirect** (`mars inbox show` exits 1 with "is a draft idea,
   not an inbox item …") → the id belongs to a draft, which `mars inbox
-  list` surfaces but doesn't own. Skip Step 3, run `mars idea show
-  <id>` and **print its full output verbatim** the same way, then
-  offer the draft actions per Step 3b.
+  list` surfaces but doesn't own. Skip the listing (Step 2). Run
+  `mars idea show <id>` and **print its full output verbatim** in a
+  fenced block — no summarising, no paraphrasing — exactly as the
+  inbox-item Hit path does. Only after the details are printed, offer
+  the draft-side actions per Step 3b.
 - **No hit** → tell the user the id didn't match and stop. Do not
   fall through to listing — the user named something specific.
 
@@ -99,9 +101,12 @@ verbatim. Stop after the dispatch.
 
 ## 3b — Draft idea
 
-The inbox list surfaces drafts but doesn't own their lifecycle. After
-running `mars idea show <id>` for a draft, offer the draft-side
-actions via **one** `AskUserQuestion`:
+The inbox list surfaces drafts but doesn't own their lifecycle. The
+`mars idea show <id>` output MUST already have been printed verbatim
+in this turn before this menu is shown; if it has not been printed
+yet, print it first in a fenced block — no summarising, no
+paraphrasing — then offer the draft-side actions via **one**
+`AskUserQuestion`:
 
 - **Grill** — invoke the `mars:grill` skill on `<id>` to shape it
   into a PRD.
