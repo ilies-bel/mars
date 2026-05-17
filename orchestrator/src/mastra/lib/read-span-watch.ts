@@ -109,6 +109,79 @@ export interface ReadSpanWatcher {
   readonly trace: readonly ReadSpanTrace[]
 }
 
+/**
+ * Max width of the cause fragment summarised into the context-gathering
+ * child task title. `mars list` renders `prompt.slice(0, 60)`; the
+ * parent-id stem (`# Context-gathering for mars-xxxxxxxx`) eats most of
+ * that, so the fragment is capped tight and the strongest-signal target
+ * is placed first (see {@link summarizeReadCause}) so it survives the
+ * 60-char truncation even when the full first line is longer.
+ */
+export const CAUSE_BUDGET = 48
+
+const displayTarget = (t: ReadSpanTrace): string => {
+  const raw = t.target.trim()
+  if (raw.length === 0) return ''
+  // Path-like (Read/Glob file paths, Grep with a path target): basename
+  // it to save width. Grep patterns / bare names / clipped Bash commands
+  // have no slash and are shown verbatim.
+  if (raw.includes('/')) {
+    const base = raw.slice(raw.lastIndexOf('/') + 1)
+    return base.length > 0 ? base : raw
+  }
+  return raw
+}
+
+/**
+ * Summarise *why* the implementor stalled into a short cause fragment
+ * for the context-gathering child task title, so `mars list` shows the
+ * looped-on files/patterns instead of a wall of identical generic rows.
+ *
+ * - de-dups on the displayed token (so `/a/x.ts` and `/b/x.ts` collapse),
+ * - orders newest → oldest (the tail of the read loop is the strongest
+ *   signal and is what survives `mars list`'s 60-char truncation),
+ * - basenames path-like targets, shows Grep patterns verbatim,
+ * - drops blank targets; returns `''` when nothing usable remains so the
+ *   caller can fall back to the generic title with no colon suffix,
+ * - caps the joined fragment to {@link CAUSE_BUDGET} chars, appending an
+ *   ellipsis if targets were dropped or a lone head token was truncated.
+ */
+export const summarizeReadCause = (
+  trace: readonly ReadSpanTrace[],
+): string => {
+  const seen = new Set<string>()
+  const distinct: string[] = []
+  for (let i = trace.length - 1; i >= 0; i--) {
+    const token = displayTarget(trace[i])
+    if (token.length === 0 || seen.has(token)) continue
+    seen.add(token)
+    distinct.push(token)
+  }
+  if (distinct.length === 0) return ''
+
+  // A lone head token wider than the whole budget: hard-truncate it.
+  // The trailing ellipsis already signals truncation, so any further
+  // dropped targets need no second marker.
+  if (distinct[0].length > CAUSE_BUDGET) {
+    return `${distinct[0].slice(0, CAUSE_BUDGET - 1)}…`
+  }
+
+  const out: string[] = []
+  let used = 0
+  let dropped = false
+  for (const token of distinct) {
+    const sep = out.length === 0 ? 0 : 2 // ", "
+    if (used + sep + token.length > CAUSE_BUDGET) {
+      dropped = true
+      break
+    }
+    out.push(token)
+    used += sep + token.length
+  }
+  const joined = out.join(', ')
+  return dropped ? `${joined}…` : joined
+}
+
 export const createReadSpanWatcher = (
   config: ReadSpanWatcherConfig,
 ): ReadSpanWatcher => {
