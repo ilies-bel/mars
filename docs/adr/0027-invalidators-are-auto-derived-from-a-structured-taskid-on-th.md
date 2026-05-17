@@ -1,0 +1,3 @@
+# Invalidators are auto-derived from a structured taskId on the raise interface
+
+The Invalidator glossary term says raisers 'commit up front' to what closes their item. We deliberately diverge for the task-terminal kind: rather than every raise call site declaring an invalidator (the failure mode that produced the staleness draft — a new raiser forgets), the inbox engine auto-attaches a task-terminal invalidator whenever a raised item carries a structured taskId. This adds taskId to the RaiseInboxItem interface as the single chokepoint. Trade-off: less literal to 'raisers commit up front', but enforcement is centralised and cannot be forgotten.
