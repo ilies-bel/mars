@@ -31,6 +31,18 @@ describe('slicing brief: structured-write constraint', () => {
     expect(brief).toMatch(/grill/i)
     expect(brief).toMatch(/before[\s\S]*?promot/i)
   })
+
+  it('names the codified "structured-write" concept so the constraint is keyed to settled vocabulary', () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+
+    // The constraint must be expressed in the settled glossary term (ADR
+    // 0019 / glossary "Structured-write"), not only as a generic
+    // "glossary/ADR change", so a PRD author and the slicer both see the
+    // exact vocabulary the grill step recorded.
+    expect(brief).toMatch(/structured-write/i)
+    // And it must say that structured-writes are settled at grill time.
+    expect(brief).toMatch(/structured-write[\s\S]*?grill/i)
+  })
 })
 
 describe('describeSliceFailure', () => {
