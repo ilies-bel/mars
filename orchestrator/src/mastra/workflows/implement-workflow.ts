@@ -74,6 +74,7 @@ import {
   type ReadSpanTrace,
   type TripInfo,
 } from '../lib/read-span-watch'
+import { TDD_WORKER_BRIEF } from './tdd-brief'
 
 const planSchema = z
   .object({
@@ -193,6 +194,27 @@ export const WRITER_SYSTEM_PROMPT = [
   '',
   'When every acceptance criterion is satisfied via the verbs above, exit cleanly. The daemon commits each verb on the integration branch on your behalf.',
 ].join('\n')
+
+// Standing Session instructions for the Coder Worker. The test-driven-
+// development operating philosophy used to be prepended to every per-Task
+// prompt the slicer emitted (see slice-workflow's composeTaskPrompt), which
+// meant the Coder re-absorbed ~150 lines of boilerplate at the top of every
+// Task and a retry replayed it verbatim — burning the read-span budget on
+// orientation it was then aborted for. The philosophy is now passed once, as
+// the Worker's Session-level system prompt, so it is present for the whole
+// Session and never re-sent inside the per-Task prompt. Wording is unchanged
+// — this is a relocation, not a rewrite.
+export const CODER_SYSTEM_PROMPT = TDD_WORKER_BRIEF
+
+// Resolve the standing Session instructions a dispatched Worker is launched
+// with, by routing tag. Coder carries the TDD operating philosophy; Writer
+// keeps its structured-write mental model (unchanged). Centralised here so
+// codeStep does not assemble the system prompt inline and the per-tag
+// surface is a single auditable seam.
+export const resolveWorkerSystemPrompt = (
+  tag: TaskTag,
+): string | undefined =>
+  tag === 'writer' ? WRITER_SYSTEM_PROMPT : CODER_SYSTEM_PROMPT
 
 // Deviation-rules brief appended to every Coder prompt. The rules are a
 // near-verbatim port of gsd-build/get-shit-done's gsd-executor contract —
@@ -684,7 +706,7 @@ const codeStep = createStep({
         : null
     const r = await worker.run(fullPrompt, {
       cwd: inputData.path,
-      systemPrompt: tag === 'writer' ? WRITER_SYSTEM_PROMPT : undefined,
+      systemPrompt: resolveWorkerSystemPrompt(tag),
       externalAbort: spanAbort.signal,
       onEvent: async (event) => {
         conversation.push(event)

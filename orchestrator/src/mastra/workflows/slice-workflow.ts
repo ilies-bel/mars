@@ -9,7 +9,6 @@ import {
 import { Workers } from '../workers'
 import { parseClaudeJsonResult } from '../lib/claude-json'
 import { getRepoRoot } from '../context'
-import { TDD_WORKER_BRIEF } from './tdd-brief'
 
 const sliceInputSchema = z.object({
   ideaId: z.string(),
@@ -309,11 +308,7 @@ export const composeTaskPrompt = (
   const acceptance = slice.acceptanceCriteria
     .map((c) => `- [ ] ${c}`)
     .join('\n')
-  return `${TDD_WORKER_BRIEF}
-
----
-
-# ${slice.title}
+  return `# ${slice.title}
 
 Slice ${index} of ${total} for PRD ${idea.id}: ${idea.title}
 Type: ${slice.type}

@@ -1,17 +1,20 @@
 /**
- * TDD brief prepended to every per-slice task prompt the slicer emits.
+ * The coder Worker's test-driven-development operating philosophy.
  *
- * This is the *worker's* operating philosophy when implementing a tracer-
- * bullet slice — distilled from mattpocock/skills' engineering/tdd skill
+ * This is carried as the coder Worker's standing Session instructions (see
+ * `CODER_SYSTEM_PROMPT` / `resolveWorkerSystemPrompt` in
+ * implement-workflow.ts) — present once per Session, NOT prepended to each
+ * per-Task prompt the slicer emits. It used to be prepended to every slice
+ * prompt, which made the Worker re-absorb it on every Task and replay it
+ * verbatim on every retry, burning the read-span budget on boilerplate.
+ *
+ * Distilled from mattpocock/skills' engineering/tdd skill
  * (https://github.com/mattpocock/skills/tree/main/skills/engineering/tdd)
- * and adapted for an orchestrator-dispatched headless worker that does
- * not have a human in the loop.
- *
- * Keep it short — the worker reads this in front of the slice spec and we
- * don't want to drown the actual task. The detail-heavy sub-pages of
- * mattpocock's skill (deep-modules, interface-design, mocking, tests,
- * refactoring) are summarised inline rather than linked, since the worker
- * cannot follow links.
+ * and adapted for an orchestrator-dispatched headless worker that does not
+ * have a human in the loop. The detail-heavy sub-pages of mattpocock's
+ * skill (deep-modules, interface-design, mocking, tests, refactoring) are
+ * summarised inline rather than linked, since the worker cannot follow
+ * links.
  */
 export const TDD_WORKER_BRIEF = `# How to implement this slice
 
