@@ -11,7 +11,7 @@ See [`VISION.md`](./VISION.md) for the target state and
 ## Install
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/ilies-bel/mars/main/get-mars.sh | bash
+curl -sSL https://github.com/ilies-bel/mars/releases/latest/download/get-mars.sh | bash
 ```
 
 Bootstraps the `mars` CLI for your OS/arch (`darwin`/`linux` ×
