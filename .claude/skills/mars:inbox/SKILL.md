@@ -56,12 +56,40 @@ them for skim-ability:
 2. **Drafts last**, in a separate section. Order by `createdAt` (FIFO,
    oldest first) so stale shaping work doesn't get buried.
 3. For each row show: 8-hex id, priority (or `draft`), seen_count
-   (`×N` only when N > 1), kind summary, message. One line per item.
-   Truncate the message at ~90 chars if needed.
+   (`×N` only when N > 1), kind summary, message. Truncate the message
+   at ~90 chars if needed.
+
+Render the items as a **GitHub-flavored markdown table using exactly
+this template every time** — same columns, same order, same headers,
+regardless of which resolution mode (1b/1c) led here or how many rows
+there are:
+
+```
+| Id       | Pri    | Seen | Kind                   | Message                                  |
+| -------- | ------ | ---- | ---------------------- | ---------------------------------------- |
+| 1a2b3c4d | high   | ×3   | recovery-failed(merge) | Fast-forward into main rejected; …       |
+| 9f8e7d6c | normal |      | stale-worktree         | Worktree for task/55 has no live run     |
+| 4d5e6f7a | draft  |      | draft(reflection)      | Consider caching the slicer's vocab read |
+```
+
+Column rules, applied identically on every invocation:
+
+- **Id** — 8-hex prefix.
+- **Pri** — `high` / `normal` / `low` for inbox rows; `draft` for
+  drafts. Never blank for a real row.
+- **Seen** — `×N` only when N > 1; otherwise leave the cell empty.
+- **Kind** — the kind summary (with its `(...)` qualifier if present).
+- **Message** — truncated at ~90 chars.
+
+Keep the priority and draft grouping from rules 1–2 by emitting the
+rows in that order *within the single table* (high → normal → low
+inbox rows, then drafts). Do not split into multiple tables and do not
+add or reorder columns. If a section has no rows, simply omit those
+rows — the table and its header still render.
 
 If items naturally cluster by `kind` prefix (e.g. many
 `recovery-failed(...)` or `stale-worktree(...)` rows), collapse the
-cluster into one summary line at the end:
+cluster into one summary line **below the table** (not as a table row):
 
 > `… plus 12 more stale-worktree items (use mars inbox list to expand)`
 
