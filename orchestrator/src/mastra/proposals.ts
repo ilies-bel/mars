@@ -101,6 +101,31 @@ export const initProposals = async (): Promise<void> => {
       FOREIGN KEY(proposal_id) REFERENCES proposals(id) ON DELETE CASCADE
     )
   `)
+  // ADR-0008: the planning graph (Ideas blocking Ideas, traversed by the
+  // recursive planner to decide what to grill next) is stored in its own
+  // junction, separate from the dispatch graph's `task_blockers`. No
+  // polymorphic (kind,id) table. Both endpoints are proposals so the table
+  // lives here in state.db alongside `proposals`. Shape mirrors
+  // `task_blockers` in queue.ts: (subject) waits on (blocker), composite PK,
+  // FK on both endpoints, an index per endpoint. The ADR text names this
+  // `idea_dependencies`; the codebase renamed the `idea_*` vocabulary to
+  // `proposal_*`, so we follow the current convention.
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS proposal_dependencies (
+      proposal_id TEXT NOT NULL,
+      blocker_proposal_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (proposal_id, blocker_proposal_id),
+      FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE,
+      FOREIGN KEY (blocker_proposal_id) REFERENCES proposals(id) ON DELETE CASCADE
+    )
+  `)
+  await c.execute(`
+    CREATE INDEX IF NOT EXISTS idx_proposal_dependencies_proposal ON proposal_dependencies(proposal_id)
+  `)
+  await c.execute(`
+    CREATE INDEX IF NOT EXISTS idx_proposal_dependencies_blocker ON proposal_dependencies(blocker_proposal_id)
+  `)
   const cols = await c.execute(`PRAGMA table_info(proposals)`)
   const colNames = new Set(
     cols.rows.map((r) => (r as unknown as { name: string }).name),
@@ -626,6 +651,131 @@ export const getProposal = async (
   )
 }
 
+/**
+ * ADR-0008 planning-graph edge writer. Adds `proposal_dependencies` rows so
+ * `proposalId` waits on each `blockerId`. Mirrors `addBlockers` in queue.ts:
+ * the subject and every blocker id must already exist, self-edges are
+ * rejected (an idea cannot block itself), duplicates are de-duped, and the
+ * insert is `INSERT OR IGNORE` so re-adding an existing edge is a no-op.
+ * Ids are resolved through `resolveProposalId` so prefixes work like every
+ * other proposal verb.
+ */
+export const addProposalDependencies = async (
+  proposalIdOrPrefix: string,
+  blockerIdsOrPrefixes: readonly string[],
+): Promise<void> => {
+  if (blockerIdsOrPrefixes.length === 0) return
+  await initProposals()
+  const c = getClient()
+
+  const subject = await resolveProposalId(proposalIdOrPrefix)
+  if (subject.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${proposalIdOrPrefix}' matches ${subject.count} proposals`,
+    )
+  }
+  if (subject.kind === 'none') {
+    throw new Error(`proposal ${proposalIdOrPrefix} not found`)
+  }
+  const proposalId = subject.id
+
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const raw of blockerIdsOrPrefixes) {
+    const resolved = await resolveProposalId(raw)
+    if (resolved.kind === 'ambiguous') {
+      throw new Error(
+        `ambiguous prefix '${raw}' matches ${resolved.count} proposals`,
+      )
+    }
+    if (resolved.kind === 'none') {
+      throw new Error(`blocker ${raw} not found`)
+    }
+    const id = resolved.id
+    if (id === proposalId) {
+      throw new Error(`proposal ${proposalId} cannot block itself`)
+    }
+    if (seen.has(id)) continue
+    seen.add(id)
+    unique.push(id)
+  }
+
+  if (unique.length === 0) return
+  const now = new Date().toISOString()
+  const stmts = unique.map((blockerId) => ({
+    sql: `INSERT OR IGNORE INTO proposal_dependencies (proposal_id, blocker_proposal_id, created_at) VALUES (?, ?, ?)`,
+    args: [proposalId, blockerId, now],
+  }))
+  await c.batch(stmts, 'write')
+}
+
+/**
+ * List the proposal ids that `proposalIdOrPrefix` is blocked by (its
+ * `proposal_dependencies` blockers). Returns blocker ids ordered by edge
+ * creation time. Unlike `listBlockers` in queue.ts this does not filter on
+ * blocker status — the planning graph wants every declared edge; status
+ * filtering is the planner's concern, not this reader's.
+ */
+export const listProposalDependencies = async (
+  proposalIdOrPrefix: string,
+): Promise<string[]> => {
+  await initProposals()
+  const resolved = await resolveProposalId(proposalIdOrPrefix)
+  if (resolved.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${proposalIdOrPrefix}' matches ${resolved.count} proposals`,
+    )
+  }
+  if (resolved.kind === 'none') {
+    throw new Error(`proposal ${proposalIdOrPrefix} not found`)
+  }
+  const c = getClient()
+  const r = await c.execute({
+    sql: `SELECT blocker_proposal_id AS id
+            FROM proposal_dependencies
+           WHERE proposal_id = ?
+           ORDER BY created_at ASC`,
+    args: [resolved.id],
+  })
+  return r.rows.map((row) => (row as unknown as { id: string }).id)
+}
+
+/**
+ * Remove a single `proposal_dependencies` edge. Mirrors `removeBlocker` in
+ * queue.ts: reports `removed:false` when the (proposal, blocker) pair did
+ * not exist. Both ids are resolved through `resolveProposalId`.
+ */
+export const removeProposalDependency = async (
+  proposalIdOrPrefix: string,
+  blockerIdOrPrefix: string,
+): Promise<{ removed: boolean }> => {
+  await initProposals()
+  const subject = await resolveProposalId(proposalIdOrPrefix)
+  if (subject.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${proposalIdOrPrefix}' matches ${subject.count} proposals`,
+    )
+  }
+  if (subject.kind === 'none') {
+    throw new Error(`proposal ${proposalIdOrPrefix} not found`)
+  }
+  const blocker = await resolveProposalId(blockerIdOrPrefix)
+  if (blocker.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${blockerIdOrPrefix}' matches ${blocker.count} proposals`,
+    )
+  }
+  if (blocker.kind === 'none') {
+    throw new Error(`blocker ${blockerIdOrPrefix} not found`)
+  }
+  const c = getClient()
+  const r = await c.execute({
+    sql: `DELETE FROM proposal_dependencies WHERE proposal_id = ? AND blocker_proposal_id = ?`,
+    args: [subject.id, blocker.id],
+  })
+  return { removed: r.rowsAffected > 0 }
+}
+
 export const listProposals = async (
   filter?: ListProposalsFilter,
 ): Promise<Proposal[]> => {
@@ -871,12 +1021,32 @@ export const deleteProposal = async (idOrPrefix: string): Promise<string> => {
     throw new Error(`proposal ${idOrPrefix} not found`)
   }
   const id = resolved.id
+  // ADR-0015 dismiss-refusal also applies to outright deletion: a deleted
+  // proposal still referenced by task_proposal_blockers would strand the
+  // dependent task on a gate that can never resolve. Same no-auto-cascade
+  // rule — surface the dependents so the user redirects/drops them first.
+  const { listTasksBlockedByProposal } = await import('./queue')
+  const dependents = await listTasksBlockedByProposal(id)
+  if (dependents.length > 0) {
+    throw new Error(
+      `proposal ${id} cannot be deleted: ${dependents.length} task(s) are blocked by it: ${dependents.join(', ')}. ` +
+        `Redirect or drop those tasks first (e.g. 'mars unblock <task-id> ${id}' or 'mars drop <task-id>').`,
+    )
+  }
   const c = getClient()
   // Older DBs were created before the FK existed, so wipe the children
   // explicitly to keep cleanup deterministic across schema vintages.
   await c.execute({
     sql: `DELETE FROM proposal_user_stories WHERE proposal_id = ?`,
     args: [id],
+  })
+  // proposal_dependencies (ADR-0008 planning-graph edges) has an
+  // ON DELETE CASCADE FK on both endpoints, but older DBs predate the FK,
+  // so wipe edges on either side explicitly for deterministic cleanup
+  // across schema vintages — mirrors the proposal_user_stories handling.
+  await c.execute({
+    sql: `DELETE FROM proposal_dependencies WHERE proposal_id = ? OR blocker_proposal_id = ?`,
+    args: [id, id],
   })
   const r = await c.execute({
     sql: `DELETE FROM proposals WHERE id = ?`,
@@ -904,6 +1074,20 @@ export const rejectProposal = async (
     throw new Error(`proposal ${idOrPrefix} not found`)
   }
   const id = resolved.id
+  // ADR-0015: refuse the dismiss while ANY task still depends on this idea
+  // via task_proposal_blockers. Do NOT auto-cascade — surface the dependent
+  // task ids so the user explicitly redirects or drops them. This check
+  // runs BEFORE the status flip so a refused dismiss leaves the proposal
+  // untouched (still 'draft'). task_proposal_blockers lives in the separate
+  // queue.db, hence the cross-module read.
+  const { listTasksBlockedByProposal } = await import('./queue')
+  const dependents = await listTasksBlockedByProposal(id)
+  if (dependents.length > 0) {
+    throw new Error(
+      `proposal ${id} cannot be dismissed: ${dependents.length} task(s) are blocked by it: ${dependents.join(', ')}. ` +
+        `Redirect or drop those tasks first (e.g. 'mars unblock <task-id> ${id}' or 'mars drop <task-id>').`,
+    )
+  }
   const c = getClient()
   const now = Date.now()
   const r = await c.execute({
