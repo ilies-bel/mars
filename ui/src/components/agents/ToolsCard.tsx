@@ -1,4 +1,4 @@
-import type { Agent } from '../../lib/schemas'
+import type { Agent } from '@/shared/schemas'
 
 interface ToolsCardProps {
   agent: Agent
