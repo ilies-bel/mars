@@ -459,6 +459,14 @@ const DEFAULT_CLAUDE_MAX_MESSAGES = 100
 
 // Default search path for the `claude` binary when it is not on the daemon's
 // PATH (e.g. detached / launchd contexts strip everything but a minimal PATH).
+//
+// POSIX-portability audit (slice 2 of PRD 1bf05375, multi-OS mars binaries):
+// the directories below, the `claude` bare-name lookup, and the colon
+// PATH split in `resolveClaudeBin` are POSIX-only environment assumptions
+// that break on Windows. They are not shell invocations, so they do not
+// block this slice's no-POSIX-shell-out gate, but they will need to be
+// addressed before the windows-x64 binary can locate claude. Tracked as
+// idea f6a9df36; expected to land alongside the Windows smoke-test slice.
 const FALLBACK_CLAUDE_PATH_DIRS = [
   '/opt/homebrew/bin',
   '/usr/local/bin',
