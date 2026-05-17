@@ -1,9 +1,17 @@
 # Knip cleanup plan (transient)
 
 Pre-curated working notes for the orchestrator knip-cleanup task
-(parent: mars-e95b5ee0). Earlier implementor stalled cross-checking
-~60 findings against Mastra registrations within the read budget; this
-file front-loads that analysis so the next pass can act.
+(parent: mars-e95b5ee0). The first two implementors stalled
+cross-checking ~60 findings against Mastra registrations within the
+read budget; this file front-loads that analysis so the next pass
+can act.
+
+**Read this file BEFORE running knip yourself.** It pre-triages every
+finding against `src/mastra/index.ts` and `AGENTS.md` so you don't
+have to redo the cross-check from scratch. Re-confirmed 2026-05-17:
+running `npm --prefix orchestrator run knip` produces exactly the
+findings this plan triages — 8 unused files, 4 unused deps, 23
+unused exports, 26 unused exported types.
 
 **Delete this file in the final cleanup commit.**
 
