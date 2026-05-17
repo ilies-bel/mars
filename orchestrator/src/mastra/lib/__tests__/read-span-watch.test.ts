@@ -145,6 +145,119 @@ describe('createReadSpanWatcher', () => {
   })
 })
 
+describe('genuine analysis-paralysis still trips after PRD f1c48e7b', () => {
+  // Slice 5 of PRD f1c48e7b: removing orientation-driven false trips must
+  // NOT weaken the guard against a Worker that piles up reads with no
+  // plausible intervening action. These tests pin the behaviour the PRD
+  // commits to preserving.
+
+  it('trips exactly once on a run of read-class actions exceeding the limit with no intervening action', () => {
+    const tripped: TripInfo[] = []
+    const w = createReadSpanWatcher({
+      limit: 5,
+      onTrip: (info) => {
+        tripped.push(info)
+      },
+    })
+    // Eight strictly-consecutive read-class actions, no Edit/Write/Bash
+    // between them — classic analysis-paralysis shape.
+    for (let i = 0; i < 8; i += 1) {
+      w.observe(
+        assistant([{ name: 'Read', input: { file_path: `src/file${i}.ts` } }]),
+      )
+    }
+    expect(w.tripped).toBe(true)
+    expect(tripped).toHaveLength(1)
+  })
+
+  it('an intervening action resets the streak so a later read run must again exceed the limit to trip', () => {
+    const tripped: TripInfo[] = []
+    const w = createReadSpanWatcher({
+      limit: 3,
+      onTrip: (info) => {
+        tripped.push(info)
+      },
+    })
+    // First read run sits one below the limit.
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'a' } }]))
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'b' } }]))
+    expect(w.streak).toBe(2)
+    // An action lands and the streak (and trace) must reset.
+    w.observe(assistant([{ name: 'Edit', input: { file_path: 'a' } }]))
+    expect(w.streak).toBe(0)
+    expect(w.trace).toHaveLength(0)
+    // Two more reads alone must not trip — the reset means the new run
+    // starts from zero, not from the prior count.
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'c' } }]))
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'd' } }]))
+    expect(w.tripped).toBe(false)
+    expect(tripped).toHaveLength(0)
+    // A third consecutive read in this new run pushes back to the limit
+    // and only now does the guard trip.
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'e' } }]))
+    expect(w.tripped).toBe(true)
+    expect(tripped).toHaveLength(1)
+  })
+
+  it('unrelated tools neither extend nor reset the streak', () => {
+    const tripped: TripInfo[] = []
+    const w = createReadSpanWatcher({
+      limit: 3,
+      onTrip: (info) => {
+        tripped.push(info)
+      },
+    })
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'a' } }]))
+    expect(w.streak).toBe(1)
+    // Unrelated tools must not bump the streak…
+    w.observe(assistant([{ name: 'TodoWrite' }]))
+    expect(w.streak).toBe(1)
+    w.observe(assistant([{ name: 'WebFetch' }]))
+    expect(w.streak).toBe(1)
+    w.observe(assistant([{ name: 'TaskCreate' }]))
+    expect(w.streak).toBe(1)
+    // …nor clear it. Two more reads (with unrelated tools sprinkled in)
+    // must still reach the limit because the original Read still counts.
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'b' } }]))
+    expect(w.streak).toBe(2)
+    w.observe(assistant([{ name: 'TodoWrite' }]))
+    expect(w.streak).toBe(2)
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'c' } }]))
+    expect(w.tripped).toBe(true)
+    expect(tripped).toHaveLength(1)
+  })
+
+  it('the trip still reports the configured limit and the full read trace', () => {
+    const tripped: TripInfo[] = []
+    const w = createReadSpanWatcher({
+      limit: 4,
+      onTrip: (info) => {
+        tripped.push(info)
+      },
+    })
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'src/a.ts' } }]))
+    w.observe(assistant([{ name: 'Grep', input: { pattern: 'foo' } }]))
+    w.observe(assistant([{ name: 'Glob', input: { pattern: '**/*.ts' } }]))
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'src/b.ts' } }]))
+    expect(tripped).toHaveLength(1)
+    const info = tripped[0]
+    expect(info.limit).toBe(4)
+    expect(info.trace).toHaveLength(4)
+    expect(info.trace.map((t) => t.tool)).toEqual([
+      'Read',
+      'Grep',
+      'Glob',
+      'Read',
+    ])
+    expect(info.trace.map((t) => t.target)).toEqual([
+      'src/a.ts',
+      'foo',
+      '**/*.ts',
+      'src/b.ts',
+    ])
+  })
+})
+
 describe('resolveReadSpanLimit', () => {
   it('defaults to 5', () => {
     delete process.env.MARS_READ_SPAN_LIMIT
