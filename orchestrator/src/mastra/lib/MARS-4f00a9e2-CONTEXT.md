@@ -96,6 +96,64 @@ cd orchestrator && npm test -- reflect-signals
 cd orchestrator && npx tsc --noEmit
 ```
 
-The typecheck must pass — `reflect-query.ts` and `deep-reflect-query.ts`
-do not import from `reflect-signals.ts`, so removing `totalCostUsd`
-from `TaskSignalRow` is a local change.
+## Correction — recipe above is incomplete (mars-4abb0540)
+
+The claim "reflect-query.ts and deep-reflect-query.ts do not import from
+reflect-signals.ts" is **wrong**. Both modules import `TaskSignalRow`
+and dereference `.totalCostUsd`:
+
+- `orchestrator/src/mastra/lib/reflect-query.ts:4` —
+  `import type { TaskSignalRow } from './reflect-signals'`,
+  plus reads via `s.totalCostUsd` in the step-bucket aggregator
+  (lines ~215–237).
+- `orchestrator/src/mastra/lib/deep-reflect-query.ts:3` —
+  `import { listTaskSignals, type TaskSignalRow } from './reflect-signals'`,
+  plus reads at lines 169, 178 (mapping `listTaskSignals` rows into the
+  module's output type).
+
+So step 1's bullet "Remove `totalCostUsd: number` from the
+`TaskSignalRow` interface" **breaks `npx tsc --noEmit`** unless the two
+reader modules are touched in the same commit. This is what makes the
+slice's AC #3 ("read shape type has no totalCostUsd field") incompatible
+with the slice's stated scope.
+
+### Recommended path for the next implementor
+
+Pick exactly one of these — do not improvise a third:
+
+**Option A — land a partial slice now (recommended).**
+
+Implement only ACs #1 (column list in this module's `INSERT`/`SELECT`
+omits `total_cost_usd`) and #2 (insert/update statements omit it) and
+#4 (new test file). Keep `totalCostUsd: number` on `TaskSignalRow` —
+the field is still readable from the existing column. Commit, then
+immediately:
+
+```
+mars task add "Drop totalCostUsd from TaskSignalRow and rewrite the two readers (reflect-query.ts, deep-reflect-query.ts) that dereference it in one hard cut" --blocked-by <slice3-task-id>
+```
+
+This honours the tracer-bullet rule: ACs #1/#2/#4 form a coherent
+vertical slice through the writes; AC #3 is genuinely a different cut
+that the PRD's later slices must absorb.
+
+**Option B — extend the slice to satisfy AC #3 cleanly.**
+
+In the same commit:
+
+1. Apply every edit listed in step 1 above (interface + INSERT + SELECT
+   + mapper).
+2. In `reflect-query.ts`: at every site that reads `s.totalCostUsd`
+   from a `TaskSignalRow`, substitute `0`. Do not touch the module's
+   own output interface — its consumers still expect `totalCostUsd:
+   number`; a later slice will strip it.
+3. In `deep-reflect-query.ts`: same substitution at lines 169, 178.
+   Line 514's `row.total_cost_usd` comes from a *different* raw query
+   in `summariseDeepReflect` and is not typed by `TaskSignalRow`; leave
+   it for the column-drop slice.
+
+This stays inside the slice's intent ("storage layer no longer exposes
+USD") without breaking the readers' downstream contracts.
+
+Either way, the typecheck must pass at exit. Don't enter a fourth round
+of reads to decide — pick A if in doubt.
