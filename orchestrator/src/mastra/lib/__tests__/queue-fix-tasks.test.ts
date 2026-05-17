@@ -1,5 +1,20 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -32,6 +47,33 @@ const setupRepo = (): string => {
   execFileSync('git', ['init', '-q'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
+}
+
+/**
+ * Pre-migrated database snapshots, captured once in `beforeAll` and
+ * cloned into each test's repo via `copyFileSync`. Running the full
+ * `initQueue` (and inbox) migration set from scratch on every `it`
+ * (24+ tests) used to push individual tests close to or past vitest's
+ * default 5s `testTimeout` — observed as `'upsertFixTask creates a
+ * queued task' timed out at 5000ms` in isolation. Hoisting the
+ * migrations into a single `beforeAll` keeps the per-test cost to:
+ *   - copy two small SQLite files,
+ *   - vi.resetModules() (still required: the queue module holds a
+ *     singleton DB client we want a fresh handle for each test),
+ *   - re-enter initQueue/initInbox, which now short-circuits every
+ *     ALTER guard and only runs idempotent CREATE INDEX IF NOT EXISTS
+ *     against pre-migrated tables.
+ */
+let templateRepo: string
+
+const TEMPLATE_DB_FILES = ['queue.db', 'state.db'] as const
+
+const cloneTemplateDbs = (destRepo: string): void => {
+  for (const file of TEMPLATE_DB_FILES) {
+    const src = resolve(templateRepo, '.mars', file)
+    if (!existsSync(src)) continue
+    copyFileSync(src, resolve(destRepo, '.mars', file))
+  }
 }
 
 const loadModules = async (
@@ -79,8 +121,32 @@ const registerTestRecipe = (
 describe('queue-fix-tasks', () => {
   let repo: string
 
+  beforeAll(async () => {
+    // Build a fully-migrated template repo once. Every per-test repo
+    // copies these files instead of re-running `initQueue` and
+    // `initInbox` from a blank DB.
+    templateRepo = setupRepo()
+    vi.resetModules()
+    process.env.MARS_REPO = templateRepo
+    const q = (await import('../../queue')) as unknown as QueueModule
+    await q.initQueue()
+    // initInbox lazily seeds state.db; touch it now so the template
+    // also carries the inbox schema for tests that exercise it.
+    const inbox = (await import('../inbox')) as unknown as {
+      initInbox: typeof import('../inbox').initInbox
+    }
+    await inbox.initInbox()
+    delete process.env.MARS_REPO
+    vi.resetModules()
+  })
+
+  afterAll(() => {
+    rmSync(templateRepo, { recursive: true, force: true })
+  })
+
   beforeEach(() => {
     repo = setupRepo()
+    cloneTemplateDbs(repo)
   })
 
   afterEach(() => {
