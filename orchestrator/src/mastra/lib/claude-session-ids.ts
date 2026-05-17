@@ -7,8 +7,8 @@
  * non-array payloads without throwing.
  *
  * This is the single importable home for the parse pattern that was
- * previously duplicated as a private `const` in `queue.ts` and
- * `lib/origin-timeline.ts`. Import it here instead of re-implementing.
+ * previously duplicated as a private `const` in `queue.ts`. Import it
+ * here instead of re-implementing.
  */
 export const parseClaudeSessionIds = (raw: unknown): string[] => {
   if (typeof raw !== 'string' || raw.length === 0) return []
