@@ -15,7 +15,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "bun test server src",
-    "start": "node bin/mars-ui.mjs"
+    "start": "node bin/mars-ui.mjs",
+    "knip": "knip --no-exit-code"
   },
   "dependencies": {
     "@fontsource/inter": "^5.1.0",
@@ -33,6 +34,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "knip": "^6.14.0",
     "tailwindcss": "^4.1.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
