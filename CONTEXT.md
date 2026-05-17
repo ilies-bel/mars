@@ -250,3 +250,7 @@ _Avoid_: idea, suggestion
 **task-terminal invalidator**:
 The first concrete Invalidator kind: auto-attached to any inbox item raised with a structured taskId, it closes that item when a task.terminal bus event reports its task reached done or dropped (failed is excluded — the operator owns failed-task items).
 _Avoid_: stale-closer, task-done invalidator, terminal sweep
+
+**task.terminal**:
+A bus event emitted at the single TaskStore status-write chokepoint whenever a task reaches a terminal state (done, dropped, or failed), carrying { taskId, state }. Distinct from task.completed, which fires per workflow run rather than per task-state transition.
+_Avoid_: task.done, terminal event, task-state event
