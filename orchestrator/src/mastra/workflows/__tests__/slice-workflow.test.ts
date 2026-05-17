@@ -8,6 +8,7 @@ import {
   buildSlicerPrompt,
   slicerOutputSchema,
   sliceFilesForPersistence,
+  injectSchemaDropBlockers,
 } from '../slice-workflow'
 
 describe('slicing brief: structured-write constraint', () => {
@@ -446,6 +447,341 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     const after = await proposals.getProposal(ideaId)
     expect(after?.status).toBe('prd-ready')
     expect(await countTasksForIdea(ideaId)).toBe(0)
+  })
+})
+
+describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
+  // Mirrors the concrete failure from PRD
+  // 1b7498f6-remove-all-usd-cost-usd-mentions-from-th: a "Drop
+  // total_cost_usd column from queue.db schema (hard cut, no migration)"
+  // slice was emitted with ZERO blocker edges even though three sibling
+  // slices removed the read-side of the same column. The drop dispatched
+  // first and burned its full retry budget on
+  // `SQLITE_ERROR: no such column: s.total_cost_usd`. Six inbox items
+  // later (final one 496b528e), the operator manually wired the edges.
+  // This test pins the injection so the regression cannot recur silently.
+  it('blocks a schema-drop slice on every consumer slice that mentions the dropped column (1b7498f6 shape)', () => {
+    const slices = [
+      {
+        title: 'Update README to drop mentions of total_cost_usd from cost docs',
+        whatToBuild: 'Edit README to remove the total_cost_usd column from cost docs',
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Remove total_cost_usd from claude-usage parser',
+        whatToBuild: 'Stop reading total_cost_usd from the parser output',
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Remove total_cost_usd from reflect-signals storage layer',
+        whatToBuild: 'Stop writing total_cost_usd through the storage layer',
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Remove total_cost_usd from reflect-query aggregation',
+        whatToBuild: 'Stop summing total_cost_usd in the aggregation query',
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Drop total_cost_usd column from queue.db schema (hard cut, no migration)',
+        whatToBuild: 'Drop the total_cost_usd column from the tasks table',
+        blockedBy: [] as number[],
+      },
+    ]
+
+    injectSchemaDropBlockers(slices)
+
+    // Schema-drop (slice 5, 1-based) must wait on every consumer slice
+    // (1..4) that mentions total_cost_usd.
+    expect(slices[4].blockedBy).toEqual([1, 2, 3, 4])
+    // Consumer slices must NOT acquire reverse edges — only the drop is
+    // repaired.
+    expect(slices[0].blockedBy).toEqual([])
+    expect(slices[1].blockedBy).toEqual([])
+    expect(slices[2].blockedBy).toEqual([])
+    expect(slices[3].blockedBy).toEqual([])
+  })
+
+  it('preserves consumer-slice upstream blockers — does not flatten the dependency tree', () => {
+    const slices = [
+      {
+        title: 'Remove foo_bar from parser',
+        whatToBuild: '',
+        blockedBy: [] as number[],
+      },
+      {
+        // Consumer slice 2 was sliced with an existing dependency on
+        // slice 1 — e.g. parser tests must pass before the aggregator
+        // update can land. That edge must survive the injection.
+        title: 'Remove foo_bar from aggregator',
+        whatToBuild: '',
+        blockedBy: [1],
+      },
+      {
+        title: 'Drop foo_bar column from schema',
+        whatToBuild: '',
+        blockedBy: [] as number[],
+      },
+    ]
+
+    injectSchemaDropBlockers(slices)
+
+    expect(slices[0].blockedBy).toEqual([])
+    expect(slices[1].blockedBy).toEqual([1])
+    expect(slices[2].blockedBy).toEqual([1, 2])
+  })
+
+  it('is a no-op when the PRD contains no schema-drop slice', () => {
+    const slices = [
+      {
+        title: 'Add caching to the parser',
+        whatToBuild: 'Memoize parser output',
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Add caching to the aggregator',
+        whatToBuild: 'Memoize aggregator output',
+        blockedBy: [] as number[],
+      },
+    ]
+
+    injectSchemaDropBlockers(slices)
+
+    expect(slices[0].blockedBy).toEqual([])
+    expect(slices[1].blockedBy).toEqual([])
+  })
+
+  it('avoids cycles when a consumer slice already declares the schema-drop as its upstream', () => {
+    const slices = [
+      {
+        // Inverted slicer ordering: consumer says it waits on the drop.
+        // Adding the reverse edge would produce a 1↔2 cycle.
+        title: 'Remove total_cost_usd from parser',
+        whatToBuild: '',
+        blockedBy: [2],
+      },
+      {
+        title: 'Drop total_cost_usd column from schema',
+        whatToBuild: '',
+        blockedBy: [] as number[],
+      },
+    ]
+
+    injectSchemaDropBlockers(slices)
+
+    expect(slices[0].blockedBy).toEqual([2])
+    expect(slices[1].blockedBy).toEqual([])
+  })
+
+  it('does not link slices that share no snake_case identifier with the drop', () => {
+    const slices = [
+      {
+        title: 'Tweak unrelated docs',
+        whatToBuild: 'Update README front matter',
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Drop total_cost_usd column from queue.db schema',
+        whatToBuild: '',
+        blockedBy: [] as number[],
+      },
+    ]
+
+    injectSchemaDropBlockers(slices)
+
+    expect(slices[1].blockedBy).toEqual([])
+  })
+
+  it('is idempotent — re-running over already-injected slices produces no duplicates', () => {
+    const slices = [
+      {
+        title: 'Remove total_cost_usd from parser',
+        whatToBuild: '',
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Drop total_cost_usd column from schema',
+        whatToBuild: '',
+        blockedBy: [] as number[],
+      },
+    ]
+
+    injectSchemaDropBlockers(slices)
+    injectSchemaDropBlockers(slices)
+
+    expect(slices[1].blockedBy).toEqual([1])
+  })
+})
+
+describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
+  // Integration-level pin for the 1b7498f6 regression. The
+  // injectSchemaDropBlockers unit tests above prove the helper
+  // computes the right edges; this one proves the helper is actually
+  // invoked from generateStep — removing the call from generateStep
+  // (while leaving the helper exported) must break this test.
+  let repo: string
+
+  const setupRepo = (): string => {
+    const r = mkdtempSync(resolve(tmpdir(), 'mars-slice-blockers-'))
+    execFileSync('git', ['init', '-q'], { cwd: r })
+    mkdirSync(resolve(r, '.mars'), { recursive: true })
+    return r
+  }
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+    vi.doUnmock('../../lib/git')
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  const envelope = (jsonResult: unknown): string =>
+    JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
+
+  const seedPrdReadyIdea = async (): Promise<string> => {
+    const proposals = await import('../../proposals')
+    await proposals.initProposals()
+    const idea = await proposals.createProposal('Remove total_cost_usd', {
+      problem: 'p',
+      solution: 's',
+    })
+    await proposals.addProposalUserStory(idea.id, 'as a user, I want X')
+    const promoted = await proposals.promoteProposal(idea.id)
+    expect(promoted.status).toBe('prd-ready')
+    return idea.id
+  }
+
+  // Mirrors the 8-slice / no-blockers shape that PRD
+  // 1b7498f6-remove-all-usd-cost-usd-mentions-from-th emitted: a
+  // schema-drop slice plus four consumer slices that mention
+  // total_cost_usd, every slice's `blockedBy` empty. After runSlice
+  // lands, the schema-drop task must have task_blocker rows pointing
+  // at each consumer.
+  const slicer1b7498f6Shape = {
+    slices: [
+      {
+        title: 'Update README to drop mentions of total_cost_usd from cost docs',
+        type: 'AFK' as const,
+        whatToBuild: 'Edit the README to drop mentions of total_cost_usd',
+        acceptanceCriteria: ['README updated'],
+        blockedBy: [] as number[],
+        modifies: [] as string[],
+        creates: [] as string[],
+        verifyCmd: null,
+        taskType: 'auto' as const,
+      },
+      {
+        title: 'Remove total_cost_usd from claude-usage parser',
+        type: 'AFK' as const,
+        whatToBuild: 'Stop reading total_cost_usd from the parser output',
+        acceptanceCriteria: ['parser no longer references total_cost_usd'],
+        blockedBy: [] as number[],
+        modifies: [] as string[],
+        creates: [] as string[],
+        verifyCmd: null,
+        taskType: 'auto' as const,
+      },
+      {
+        title: 'Remove total_cost_usd from reflect-signals storage layer',
+        type: 'AFK' as const,
+        whatToBuild: 'Stop writing total_cost_usd through the storage layer',
+        acceptanceCriteria: ['storage layer no longer writes total_cost_usd'],
+        blockedBy: [] as number[],
+        modifies: [] as string[],
+        creates: [] as string[],
+        verifyCmd: null,
+        taskType: 'auto' as const,
+      },
+      {
+        title: 'Remove total_cost_usd from reflect-query aggregation',
+        type: 'AFK' as const,
+        whatToBuild: 'Stop summing total_cost_usd in the aggregation query',
+        acceptanceCriteria: ['aggregation no longer references total_cost_usd'],
+        blockedBy: [] as number[],
+        modifies: [] as string[],
+        creates: [] as string[],
+        verifyCmd: null,
+        taskType: 'auto' as const,
+      },
+      {
+        title:
+          'Drop total_cost_usd column from queue.db schema (hard cut, no migration)',
+        type: 'AFK' as const,
+        whatToBuild: 'Drop the total_cost_usd column from the tasks table',
+        acceptanceCriteria: ['total_cost_usd column dropped'],
+        blockedBy: [] as number[],
+        modifies: [] as string[],
+        creates: [] as string[],
+        verifyCmd: null,
+        taskType: 'auto' as const,
+      },
+    ],
+  }
+
+  it('persists blocker edges from the schema-drop slice onto every consumer slice', async () => {
+    vi.doMock('../../lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../lib/git')>(
+        '../../lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(slicer1b7498f6Shape),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const slice = await import('../slice-workflow')
+    const result = await slice.runSlice(ideaId)
+    expect(result.taskIds).toHaveLength(5)
+    const [readmeId, parserId, storageId, aggregationId, dropId] = result.taskIds
+
+    const queue = await import('../../queue')
+    await queue.initQueue()
+    const rows = await queue.getClient().execute({
+      sql: `SELECT task_id, blocker_task_id FROM task_blockers
+            WHERE task_id = ? ORDER BY blocker_task_id`,
+      args: [dropId],
+    })
+    const blockerIds = rows.rows
+      .map(
+        (r) =>
+          (r as unknown as { blocker_task_id: string }).blocker_task_id,
+      )
+      .sort()
+    expect(blockerIds).toEqual(
+      [readmeId, parserId, storageId, aggregationId].sort(),
+    )
+
+    // The drop task must be in 'blocked' status (it has blockers); the
+    // consumer tasks must be in 'queued' (they have none). This is the
+    // whole point — the drop cannot dispatch and burn retry budget on
+    // verify:test until every consumer has landed.
+    const dropRow = await queue.getClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [dropId],
+    })
+    expect(
+      (dropRow.rows[0] as unknown as { status: string }).status,
+    ).toBe('blocked')
+    const parserRow = await queue.getClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [parserId],
+    })
+    expect(
+      (parserRow.rows[0] as unknown as { status: string }).status,
+    ).toBe('queued')
   })
 })
 
