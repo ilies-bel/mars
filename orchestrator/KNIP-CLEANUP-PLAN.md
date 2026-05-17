@@ -47,27 +47,29 @@ Watch for these that **look** internal but might be CLI-surface:
 - `DEVIATION_RULES`, `BLOCKERS_ABORT_MESSAGE`, `TOO_HARD_ABORT_MESSAGE`,
   `TOO_HARD_PREFIX` in `implement-workflow.ts` — verify no test or
   daemon path matches the literal strings.
-- `planWorkflow` in `plan-workflow.ts` — confirm it isn't lazy-loaded
-  by an experimental code path before removing.
+- `planWorkflow` / `runPlan` in `plan-workflow.ts` — **CONFIRMED LIVE,
+  do NOT delete.** `runPlan` is dynamically imported at
+  `src/mastra/daemon/server.ts:460` inside `dispatchRefine`, which is
+  invoked from a bus-event handler at `server.ts:566`. A literal-string
+  `rg "plan-workflow|planWorkflow" orchestrator/src` catches it; a
+  type-only static analysis like knip will miss the `await import()`.
+  Whether the refine bus-event path is itself reachable in practice is
+  a separate question — parked as a mars idea, not in scope here.
 
 Commit as one slice (or split workflows / lib / init if diff is large).
 
-### Slice 2 — `src/mastra/lib/origin-timeline.ts`
+### Slice 2 — `src/mastra/lib/origin-timeline.ts` ✅ DONE
 
-Only reference is a **stale comment** in
-`src/mastra/lib/claude-session-ids.ts:11` ("Import it here instead of
-re-implementing"). No actual import. Verify with:
+Deleted in commit `813da93` ("remove dead origin-timeline and
+load-manifest modules"). The stale JSDoc comment in
+`claude-session-ids.ts` was also resolved by the same commit (verify
+with `rg "origin-timeline|OriginTimeline" orchestrator/src` — should
+return zero hits in `.ts` files).
 
-    rg "origin-timeline|originTimeline" orchestrator/src orchestrator/tests
+### Slice 3 — `src/init/load-manifest.ts` ✅ DONE
 
-If zero non-comment hits: delete the file and update the comment in
-`claude-session-ids.ts` so future readers don't go hunting for a
-deleted module.
-
-### Slice 3 — `src/init/load-manifest.ts`
-
-Knip flags as unused. Verify with `rg "load-manifest|loadManifest"
-orchestrator/src orchestrator/tests` before deleting.
+Deleted in commit `813da93`. Verify with `rg "load-manifest|loadManifest"
+orchestrator/src` — zero hits expected.
 
 ### Slice 4 — Bus subsystem (largest, do last, separate commit)
 
