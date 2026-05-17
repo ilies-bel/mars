@@ -118,7 +118,7 @@ interface DraftDetailProps {
 }
 
 const DraftDetail = ({ draft }: DraftDetailProps) => {
-  const refineCommand = `/mars:next ${draft.id}`
+  const refineCommand = `/mars:inbox`
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
@@ -394,11 +394,11 @@ export const TodoPage = () => {
               <code className="rounded bg-iron/20 px-1">
                 mars idea add "&lt;goal&gt;"
               </code>{' '}
-              or run{' '}
+              or open the inbox with{' '}
               <code className="rounded bg-iron/20 px-1">
-                /mars:next
-              </code>{' '}
-              to start one from scratch.
+                /mars:inbox
+              </code>
+              .
             </div>
           </div>
         ) : selected?.kind === 'draft' ? (
