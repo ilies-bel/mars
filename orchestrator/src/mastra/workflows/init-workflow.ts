@@ -23,6 +23,7 @@ import {
   scaffoldClaudeConfig,
 } from '../../init/scaffold'
 import { writeSlimInit, type VerifyStepEntry } from '../../init/writer'
+import { writeDetectionReport } from '../../init/write-detection-report'
 import { relative, resolve } from 'node:path'
 
 const verifyStepSchema = z.object({
@@ -376,19 +377,34 @@ export interface RunInitResult {
 export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
   const ctx = resolveContext()
 
-  if (opts.verbose) {
-    detectStack(ctx.repoRoot, {
-      onManifest: (m: ManifestFinding) => {
-        process.stderr.write(`[mars init] ${m.dir}: ${m.techs.join(', ')}\n`)
-      },
-    })
-  }
+  const detectedForReport = detectStack(ctx.repoRoot, {
+    onManifest: opts.verbose
+      ? (m: ManifestFinding) => {
+          process.stderr.write(`[mars init] ${m.dir}: ${m.techs.join(', ')}\n`)
+        }
+      : undefined,
+  })
 
   if (opts.dryRun) {
     return {
       status: 'dry-run',
       message: 'dry run; no files written',
     }
+  }
+
+  // Emit a best-effort diagnostic detection report. Failures here must not
+  // block init — we surface a warning on stderr and continue. The report is
+  // written before pre-flight conflict checks so it always reflects what the
+  // detector saw on this run, regardless of whether init proceeds.
+  const reportResult = writeDetectionReport({
+    reportPath: resolve(ctx.supervisorsDir, 'detection-report.json'),
+    manifests: detectedForReport.manifests,
+    warnings: detectedForReport.warnings,
+  })
+  if (reportResult.status === 'error') {
+    process.stderr.write(
+      `[mars init] warning: failed to write detection report: ${reportResult.error}\n`,
+    )
   }
 
   // Pre-flight: aggregate every path that would be overwritten — the slim
