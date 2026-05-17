@@ -193,4 +193,76 @@ describe('GET /api/inbox', () => {
     expect(body.failed).toEqual([])
     expect(body.blocked.length).toBe(1)
   })
+
+  it('returns a single object with exactly the keys drafts, blocked, failed', async () => {
+    // Populate every bucket plus a dropped task so the keys assertion is
+    // exercised against a non-trivial payload.
+    const qc = createClient({ url: `file:${resolve(repo, '.mars/queue.db')}` })
+    await insertTask(qc, 'task-b', 'blocked')
+    await insertTask(qc, 'task-f', 'failed')
+    await insertTask(qc, 'task-d', 'dropped')
+    qc.close()
+    const sc = createClient({ url: `file:${resolve(repo, '.mars/state.db')}` })
+    await insertIdea(sc, 'idea-d', 'draft')
+    sc.close()
+
+    const res = await fetch(`${baseUrl}/api/inbox`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(Object.keys(body).sort()).toEqual(['blocked', 'drafts', 'failed'])
+  })
+
+  it('does not place dropped tasks in any bucket', async () => {
+    const qc = createClient({ url: `file:${resolve(repo, '.mars/queue.db')}` })
+    // A dropped task alongside populated blocked + failed buckets — dropped
+    // is superseded/cancelled work, never operator-review, so it must not
+    // surface here.
+    await insertTask(qc, 'task-blocked-live', 'blocked')
+    await insertTask(qc, 'task-failed-live', 'failed')
+    await insertTask(qc, 'task-dropped-superseded', 'dropped')
+    await insertTask(qc, 'task-dropped-cancelled', 'dropped')
+    qc.close()
+
+    const res = await fetch(`${baseUrl}/api/inbox`)
+    const body = (await res.json()) as InboxBody
+    const allIds = [
+      ...body.drafts.map((d) => d.id),
+      ...body.blocked.map((t) => t.id),
+      ...body.failed.map((t) => t.id),
+    ]
+    expect(allIds).not.toContain('task-dropped-superseded')
+    expect(allIds).not.toContain('task-dropped-cancelled')
+    // Sanity: the live buckets still surface their entries.
+    expect(body.blocked.map((t) => t.id)).toEqual(['task-blocked-live'])
+    expect(body.failed.map((t) => t.id)).toEqual(['task-failed-live'])
+  })
+
+  it('ignores a source query argument and returns the same grouped object', async () => {
+    // Populate ideas with mixed sources to make a hypothetical server-side
+    // filter visibly wrong if it ever leaked in.
+    const sc = createClient({ url: `file:${resolve(repo, '.mars/state.db')}` })
+    await sc.execute({
+      sql: `INSERT INTO ideas (id, goal, status, source, created_at, updated_at)
+            VALUES (?, ?, 'draft', 'human', ?, ?)`,
+      args: ['idea-human', 'human goal', Date.now(), Date.now()],
+    })
+    await sc.execute({
+      sql: `INSERT INTO ideas (id, goal, status, source, created_at, updated_at)
+            VALUES (?, ?, 'draft', 'reflection', ?, ?)`,
+      args: ['idea-reflection', 'reflection goal', Date.now(), Date.now()],
+    })
+    sc.close()
+
+    const plain = await fetch(`${baseUrl}/api/inbox`)
+    const filtered = await fetch(`${baseUrl}/api/inbox?source=human`)
+    expect(plain.status).toBe(200)
+    expect(filtered.status).toBe(200)
+    const plainBody = (await plain.json()) as InboxBody
+    const filteredBody = (await filtered.json()) as InboxBody
+    // Identical payload — filtering is the client's job.
+    expect(filteredBody).toEqual(plainBody)
+    // And both contain BOTH sources, proving no server-side source filter.
+    const ids = plainBody.drafts.map((d) => d.id).sort()
+    expect(ids).toEqual(['idea-human', 'idea-reflection'])
+  })
 })
