@@ -532,40 +532,59 @@ export const startDaemon = async (
     try {
       do {
         drainAgain = false
-        // Triage: pick a candidate that isn't already claimed/in-flight,
-        // mark it claimed BEFORE the dispatchTriage call so the next drain
-        // pass can't pick it again.
-        while (sems.triage.inUse < sems.triage.limit) {
-          let pickedTriage: string | null = null
-          for (const id of pendingTriage) {
-            if (claimedTriage.has(id) || inFlight.has(id)) continue
-            pickedTriage = id
-            break
+        // A throw from any await below (getTask / hasIncompleteBlockers
+        // hitting SQLITE_BUSY or a LibSQL client error under a large
+        // queue.db) must not escape: drain() is invoked fire-and-forget
+        // (`void drain()`), so an uncaught rejection silently kills the
+        // loop with no log line and the daemon stops claiming work while
+        // staying alive. Catch per-pass, log, and let the do/while exit
+        // cleanly — the poll-fallback tick (or the next bus event) retries.
+        try {
+          // Triage: pick a candidate that isn't already claimed/in-flight,
+          // mark it claimed BEFORE the dispatchTriage call so the next drain
+          // pass can't pick it again.
+          while (sems.triage.inUse < sems.triage.limit) {
+            let pickedTriage: string | null = null
+            for (const id of pendingTriage) {
+              if (claimedTriage.has(id) || inFlight.has(id)) continue
+              pickedTriage = id
+              break
+            }
+            if (pickedTriage === null) break
+            claimedTriage.add(pickedTriage)
+            pendingTriage.delete(pickedTriage)
+            void dispatchTriage(pickedTriage)
           }
-          if (pickedTriage === null) break
-          claimedTriage.add(pickedTriage)
-          pendingTriage.delete(pickedTriage)
-          void dispatchTriage(pickedTriage)
-        }
-        // Implement: same guarantee but priority-ordered.
-        while (sems.implement.inUse < sems.implement.limit) {
-          const id = await pickNextImplement(pendingImplement)
-          if (id === null) break
-          // Mark claimed BEFORE any further await so concurrent drains
-          // (which we've gated, but belt-and-suspenders) can't double-pick.
-          claimedImplement.add(id)
-          pendingImplement.delete(id)
-          const t = await getTask(id)
-          if (!t || t.status !== 'queued') {
-            claimedImplement.delete(id)
-            continue
+          // Implement: same guarantee but priority-ordered.
+          while (sems.implement.inUse < sems.implement.limit) {
+            const id = await pickNextImplement(pendingImplement)
+            if (id === null) break
+            // Mark claimed BEFORE any further await so concurrent drains
+            // (which we've gated, but belt-and-suspenders) can't double-pick.
+            claimedImplement.add(id)
+            pendingImplement.delete(id)
+            const t = await getTask(id)
+            if (!t || t.status !== 'queued') {
+              claimedImplement.delete(id)
+              continue
+            }
+            if (await hasIncompleteBlockers(id)) {
+              log(`[dispatch] ${id} blocked; deferring until blockers complete`)
+              claimedImplement.delete(id)
+              continue
+            }
+            void dispatchImplement(t)
           }
-          if (await hasIncompleteBlockers(id)) {
-            log(`[dispatch] ${id} blocked; deferring until blockers complete`)
-            claimedImplement.delete(id)
-            continue
-          }
-          void dispatchImplement(t)
+        } catch (err) {
+          // Log and stop this drain. drainAgain is left as-is so a pending
+          // re-entry request still re-runs; otherwise the poll-fallback
+          // tick picks the queue back up on its next interval.
+          log(
+            `[dispatch] drain pass errored (will retry): ${
+              (err as Error).message
+            }`,
+          )
+          break
         }
       } while (drainAgain)
     } finally {
@@ -1438,11 +1457,49 @@ export const startDaemon = async (
   // is fully wired) — fire-and-forget; errors logged inside.
   void reconcile().catch((err) => log(`[reconcile] failed: ${(err as Error).message}`))
 
+  // ── Poll-fallback tick ────────────────────────────────────────────────────
+  // drain() is otherwise purely event-driven (bus 'task.added'/'task.queued'
+  // and dispatcher finally-blocks). If a drain pass throws and exits, or a
+  // bus emit is missed, nothing re-arms it and the daemon sits idle with a
+  // full queue while staying alive — the failure mode this fixes. This timer
+  // is a safety net: only when the daemon is accepting work, not draining,
+  // and has nothing in flight (i.e. genuinely wedged, not just busy) does it
+  // re-seed the pending sets from the DB and kick drain(). During healthy
+  // operation it is a no-op. .unref() so it never keeps the process alive.
+  const POLL_FALLBACK_MS = Number(process.env.MARS_DRAIN_POLL_MS ?? 30_000)
+  const pollFallback = setInterval(() => {
+    if (!acceptingWork || drainRunning || inFlight.size > 0) return
+    void (async () => {
+      try {
+        const [drafts, queued] = await Promise.all([
+          listTasks('draft'),
+          listTasks('queued'),
+        ])
+        const seedable = drafts.length + queued.length
+        if (seedable === 0) return
+        for (const t of drafts) {
+          if (!inFlight.has(t.id)) pendingTriage.add(t.id)
+        }
+        for (const t of queued) {
+          if (!inFlight.has(t.id)) pendingImplement.add(t.id)
+        }
+        log(
+          `[dispatch] poll-fallback re-seeding ${seedable} task(s) (idle with non-empty queue)`,
+        )
+        await drain()
+      } catch (err) {
+        log(`[dispatch] poll-fallback errored: ${(err as Error).message}`)
+      }
+    })()
+  }, POLL_FALLBACK_MS)
+  pollFallback.unref()
+
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
+    clearInterval(pollFallback)
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.
