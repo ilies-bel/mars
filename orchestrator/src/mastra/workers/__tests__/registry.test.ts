@@ -57,8 +57,8 @@ describe('Worker registry', () => {
 describe('Coder pinned config', () => {
   const args = argvFor('Coder')
 
-  it('runs opus on high effort with bypassPermissions and no read-only denials', () => {
-    expect(valueAfter(args, '--model')).toBe('claude-opus-4-7')
+  it('runs sonnet on high effort with bypassPermissions and no read-only denials', () => {
+    expect(valueAfter(args, '--model')).toBe('claude-sonnet-4-6')
     expect(valueAfter(args, '--effort')).toBe('high')
     expect(args).toContain('--dangerously-skip-permissions')
     expect(args).not.toContain('--bare')
