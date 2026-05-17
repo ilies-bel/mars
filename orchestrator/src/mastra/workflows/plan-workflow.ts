@@ -1,7 +1,7 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
 import { getTask } from '../queue'
-import { createIdea } from '../ideas'
+import { createProposal } from '../proposals'
 import { Workers } from '../workers'
 import { parseClaudeJsonResult } from '../lib/claude-json'
 import { getRepoRoot } from '../context'
@@ -76,7 +76,7 @@ const generateStep = createStep({
     const parsed = parsePlannerOutput(r.stdout)
 
     for (const s of parsed.suggestions) {
-      await createIdea(s.title, {
+      await createProposal(s.title, {
         source: 'planner',
         author: { kind: 'agent', name: 'planner' },
         solution: s.prompt,

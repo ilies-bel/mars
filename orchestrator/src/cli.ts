@@ -991,9 +991,9 @@ const main = async (): Promise<void> => {
       }
       const { resolveAuthor, formatAuthor } = await import('./mastra/author')
       const author = resolveAuthor(flags['--author'])
-      const { createIdea } = await import('./mastra/ideas')
+      const { createProposal } = await import('./mastra/proposals')
       try {
-        const idea = await createIdea(goal, { author })
+        const idea = await createProposal(goal, { author })
         console.log(`${idea.id} (author: ${formatAuthor(author)})`)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
@@ -1007,9 +1007,9 @@ const main = async (): Promise<void> => {
         console.error('usage: mars idea new "<goal>"')
         process.exit(1)
       }
-      const { createIdea } = await import('./mastra/ideas')
+      const { createProposal } = await import('./mastra/proposals')
       try {
-        const idea = await createIdea(goal)
+        const idea = await createProposal(goal)
         console.log(idea.id)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
@@ -1023,16 +1023,19 @@ const main = async (): Promise<void> => {
         console.error('usage: mars idea show <id>')
         process.exit(1)
       }
-      const { getIdea, resolveIdeaId } = await import('./mastra/ideas')
+      const { getProposal, resolveProposalId } = await import(
+        './mastra/proposals'
+      )
       const { formatAuthor } = await import('./mastra/author')
-      const resolved = await resolveIdeaId(id)
+      const resolved = await resolveProposalId(id)
       if (resolved.kind === 'ambiguous') {
         console.error(
           `ambiguous prefix '${id}' matches ${resolved.count} ideas`,
         )
         process.exit(1)
       }
-      const idea = resolved.kind === 'unique' ? await getIdea(resolved.id) : null
+      const idea =
+        resolved.kind === 'unique' ? await getProposal(resolved.id) : null
       if (!idea) {
         console.error(`idea ${id} not found`)
         process.exit(1)
@@ -1090,9 +1093,9 @@ const main = async (): Promise<void> => {
         )
         process.exit(1)
       }
-      const { setIdeaField } = await import('./mastra/ideas')
+      const { setProposalField } = await import('./mastra/proposals')
       try {
-        await setIdeaField(id, field, value)
+        await setProposalField(id, field, value)
         console.log(`updated ${id}`)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
@@ -1107,9 +1110,9 @@ const main = async (): Promise<void> => {
         console.error('usage: mars idea add-user-story <id> "<text>"')
         process.exit(1)
       }
-      const { addIdeaUserStory } = await import('./mastra/ideas')
+      const { addProposalUserStory } = await import('./mastra/proposals')
       try {
-        const idea = await addIdeaUserStory(id, story)
+        const idea = await addProposalUserStory(id, story)
         console.log(`added user story [${idea.userStories.length - 1}] to ${id}`)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
@@ -1129,9 +1132,9 @@ const main = async (): Promise<void> => {
         console.error(`index must be a non-negative integer; got '${idxRaw}'`)
         process.exit(1)
       }
-      const { removeIdeaUserStory } = await import('./mastra/ideas')
+      const { removeProposalUserStory } = await import('./mastra/proposals')
       try {
-        await removeIdeaUserStory(id, idx)
+        await removeProposalUserStory(id, idx)
         console.log(`removed user story [${idx}] from ${id}`)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
@@ -1192,9 +1195,9 @@ const main = async (): Promise<void> => {
         console.error('usage: mars idea reject <id>')
         process.exit(1)
       }
-      const { rejectIdea } = await import('./mastra/ideas')
+      const { rejectProposal } = await import('./mastra/proposals')
       try {
-        const idea = await rejectIdea(id)
+        const idea = await rejectProposal(id)
         console.log(`rejected ${idea.id}`)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
@@ -1208,9 +1211,9 @@ const main = async (): Promise<void> => {
         console.error('usage: mars idea delete <id>')
         process.exit(1)
       }
-      const { deleteIdea } = await import('./mastra/ideas')
+      const { deleteProposal } = await import('./mastra/proposals')
       try {
-        const deletedId = await deleteIdea(id)
+        const deletedId = await deleteProposal(id)
         console.log(`deleted ${deletedId}`)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
@@ -1228,11 +1231,11 @@ const main = async (): Promise<void> => {
         )
         process.exit(1)
       }
-      const { listIdeas } = await import('./mastra/ideas')
+      const { listProposals } = await import('./mastra/proposals')
       const filter: { source?: 'reflection' | 'human' | 'planner'; status?: string } = {}
       if (sourceFlag) filter.source = sourceFlag as 'reflection' | 'human' | 'planner'
       if (statusFlag) filter.status = statusFlag
-      const ideas = await listIdeas(filter)
+      const ideas = await listProposals(filter)
       if (ideas.length === 0) {
         console.log('no ideas')
         return
@@ -1332,8 +1335,8 @@ const main = async (): Promise<void> => {
         console.log(`blockedBy:  ${blockerTaskIds.join(', ')}`)
       }
       if (task.originId && task.originId !== task.id) {
-        const { getIdea } = await import('./mastra/ideas')
-        const originIdea = await getIdea(task.originId).catch(() => null)
+        const { getProposal } = await import('./mastra/proposals')
+        const originIdea = await getProposal(task.originId).catch(() => null)
         if (originIdea) {
           const firstLine = originIdea.title.split('\n')[0]?.trim() ?? ''
           const titleSuffix = firstLine.length > 0 ? ` ${firstLine}` : ''
@@ -1348,8 +1351,10 @@ const main = async (): Promise<void> => {
       }
       return
     }
-    const { getIdea, resolveIdeaId } = await import('./mastra/ideas')
-    const ideaResolved = await resolveIdeaId(id)
+    const { getProposal, resolveProposalId } = await import(
+      './mastra/proposals'
+    )
+    const ideaResolved = await resolveProposalId(id)
     if (ideaResolved.kind === 'ambiguous') {
       console.error(
         `ambiguous prefix '${id}' matches ${ideaResolved.count} ideas`,
@@ -1357,7 +1362,9 @@ const main = async (): Promise<void> => {
       process.exit(1)
     }
     const idea =
-      ideaResolved.kind === 'unique' ? await getIdea(ideaResolved.id) : null
+      ideaResolved.kind === 'unique'
+        ? await getProposal(ideaResolved.id)
+        : null
     if (idea) {
       console.log(`kind:       idea`)
       console.log(`id:         ${idea.id}`)
@@ -1388,8 +1395,8 @@ const main = async (): Promise<void> => {
         console.log(`notes:`)
         console.log(idea.notes)
       }
-      const { listTasksForIdea } = await import('./mastra/queue')
-      const ideaTasks = await listTasksForIdea(idea.id)
+      const { listTasksForProposal } = await import('./mastra/queue')
+      const ideaTasks = await listTasksForProposal(idea.id)
       if (ideaTasks.length > 0) {
         console.log(
           `tasks:      ${ideaTasks.map((t) => `${t.id} (${t.status})`).join(', ')}`,
@@ -2545,11 +2552,11 @@ const main = async (): Promise<void> => {
         draftStatusForState === null
           ? []
           : await (async () => {
-              const { listIdeas } = await import('./mastra/ideas')
-              return listIdeas({ status: draftStatusForState })
+              const { listProposals } = await import('./mastra/proposals')
+              return listProposals({ status: draftStatusForState })
             })()
       if (lean) {
-        // listIdeas returns newest first; reverse for FIFO (oldest first).
+        // listProposals returns newest first; reverse for FIFO (oldest first).
         const drafts: LeanDraft[] = [...draftIdeas].reverse().map((i) => ({
           id: i.id,
           title: i.title.replace(/\s+/g, ' ').trim() || '(no title)',
@@ -2572,8 +2579,8 @@ const main = async (): Promise<void> => {
     // their lifecycle — point the caller at `mars idea ...` instead of
     // failing with a generic "no inbox item" message.
     const isDraftId = async (id: string): Promise<boolean> => {
-      const { resolveIdeaId } = await import('./mastra/ideas')
-      const resolved = await resolveIdeaId(id)
+      const { resolveProposalId } = await import('./mastra/proposals')
+      const resolved = await resolveProposalId(id)
       return resolved.kind === 'unique'
     }
 

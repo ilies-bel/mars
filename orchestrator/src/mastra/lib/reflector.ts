@@ -1,6 +1,6 @@
 import { runClaudeCode } from './git'
 import { getRepoRoot } from '../context'
-import { createIdea } from '../ideas'
+import { createProposal } from '../proposals'
 import type { ReflectCorpus } from './reflect-query'
 
 export interface ReflectionSuggestion {
@@ -302,7 +302,7 @@ export const persistSuggestions = async (
   _sourceTaskId: string,
 ): Promise<void> => {
   for (const s of suggestions) {
-    await createIdea(s.title, {
+    await createProposal(s.title, {
       source: 'reflection',
       author: { kind: 'agent', name: 'reflector' },
       solution: s.prompt,
@@ -353,7 +353,7 @@ export const applyVerdicts = async (
       absorbed += 1
       continue
     }
-    await createIdea(s.title, {
+    await createProposal(s.title, {
       source: 'reflection',
       author: { kind: 'agent', name: 'reflector' },
       solution: s.prompt,
