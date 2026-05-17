@@ -277,9 +277,31 @@ export const injectSchemaDropBlockers = (
   }
 }
 
-const composeTaskPrompt = (
-  ideaTitle: string,
-  ideaId: string,
+/**
+ * Build the dispatched-coder prompt for a single slice. The parent PRD's
+ * intent (title, problem, solution, user stories, out-of-scope, notes) is
+ * inlined verbatim into the prompt at slice-build time so the implementor
+ * does NOT need to run `mars idea show <id>` to obtain context.
+ *
+ * Rationale: dispatched coders execute from `.mars/worktrees/<id>/`, where
+ * `mars` resolves the repo upward from CWD and silently binds to the
+ * worktree's own (empty) `.mars/`. A bare `mars idea show <id>` returns
+ * 'not found' and burns the implementor's read/grep budget reverse-
+ * engineering scope. Inlining the PRD removes the lookup entirely — no
+ * DB access, no `--repo` flag plumbing, no worktree-vs-main DB confusion.
+ *
+ * Exported for unit testing.
+ */
+export const composeTaskPrompt = (
+  idea: {
+    id: string
+    title: string
+    problem: string
+    solution: string
+    outOfScope: string
+    notes: string
+    userStories: readonly string[]
+  },
   slice: SliceSpec,
   index: number,
   total: number,
@@ -293,7 +315,7 @@ const composeTaskPrompt = (
 
 # ${slice.title}
 
-Slice ${index} of ${total} for PRD ${ideaId}: ${ideaTitle}
+Slice ${index} of ${total} for PRD ${idea.id}: ${idea.title}
 Type: ${slice.type}
 
 ## What to build
@@ -310,9 +332,35 @@ This is a tracer-bullet vertical slice — implement the thinnest path through
 every layer needed to satisfy the acceptance criteria, then stop. Other
 slices in the same PRD will thicken this work; do not pre-build for them.
 
-Read the parent PRD with \`mars idea show ${ideaId}\` to see the full intent
-and the other slices' scope. Match the project's existing testing and
-naming conventions.
+Match the project's existing testing and naming conventions.
+
+## Parent PRD (inlined — no DB lookup required)
+
+The full PRD intent is reproduced verbatim below so you do not need to
+query the ideas DB. You are running from a git worktree whose own
+\`.mars/\` is empty, so a bare lookup would silently miss the parent.
+
+Title: ${idea.title}
+
+Problem
+-------
+${idea.problem || '(not specified)'}
+
+Solution
+--------
+${idea.solution || '(not specified)'}
+
+User stories
+------------
+${renderUserStories(idea.userStories)}
+
+Out of scope
+------------
+${idea.outOfScope || '(not specified)'}
+
+Notes
+-----
+${idea.notes || '(not specified)'}
 
 Save your work: stage and commit when verify passes.
 `
@@ -393,7 +441,7 @@ const generateStep = createStep({
       // and slice_index. We transition status in Phase 3.
       for (let i = 0; i < total; i += 1) {
         const slice = parsed.slices[i]
-        const prompt = composeTaskPrompt(idea.title, idea.id, slice, i + 1, total)
+        const prompt = composeTaskPrompt(idea, slice, i + 1, total)
         const verifyCmd =
           slice.verifyCmd !== null && slice.verifyCmd.trim().length > 0
             ? slice.verifyCmd
