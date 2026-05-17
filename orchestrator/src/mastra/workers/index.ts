@@ -96,7 +96,7 @@ const CLAUDE_SONNET_MODEL = 'claude-sonnet-4-6'
 const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 
 // Day-one defaults agreed in the grill for PRD 948691d0. The Coder runs on
-// opus / high effort / bypassPermissions with the full tool surface (no
+// sonnet / high effort / bypassPermissions with the full tool surface (no
 // per-Worker disallows beyond the wrapper-layer agent-to-user ban). Fixer
 // shares Coder's model and permission posture but layers backlog-mutation
 // denials so a no-commit Fixer Session cannot refile its task as a loose end.
@@ -109,7 +109,7 @@ const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Coder: {
     name: 'Coder',
-    model: CLAUDE_OPUS_MODEL,
+    model: CLAUDE_SONNET_MODEL,
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,
