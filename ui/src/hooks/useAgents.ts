@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchAgents } from '../lib/api'
-import type { Agent } from '../lib/schemas'
+import { fetchAgents } from '@/shared/api'
+import type { Agent } from '@/shared/schemas'
 
 interface State {
   agents: Agent[] | null

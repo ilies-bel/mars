@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTodo } from '@/hooks/useTodo'
-import type { StaleWorktree } from '@/lib/api'
-import { formatRelativeAgeFromHours } from '@/lib/time'
-import type { DraftFeature } from '@/lib/types'
+import type { StaleWorktree } from '@/shared/api'
+import { formatRelativeAgeFromHours } from '@/shared/time'
+import type { DraftFeature } from '@/shared/types'
 
 const shortId = (id: string): string => id.slice(0, 8)
 

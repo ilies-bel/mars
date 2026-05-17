@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchTasks } from '@/lib/api'
-import { groupTasks } from '@/lib/group'
-import { useSseConnected } from '@/lib/sseStatus'
-import type { Snapshot } from '@/lib/types'
+import { fetchTasks } from '@/shared/api'
+import { groupTasks } from '@/shared/group'
+import { useSseConnected } from '@/shared/sseStatus'
+import type { Snapshot } from '@/shared/types'
 
 interface State {
   snapshot: Snapshot | null

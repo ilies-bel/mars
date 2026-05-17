@@ -1,5 +1,5 @@
-import type { UITask } from '@/lib/types'
-import { relativeTime } from '@/lib/time'
+import type { UITask } from '@/shared/types'
+import { relativeTime } from '@/shared/time'
 import { RoleTag } from './RoleTag'
 import { StatusChip } from './StatusChip'
 
