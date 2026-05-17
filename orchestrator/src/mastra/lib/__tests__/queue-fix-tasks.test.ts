@@ -932,6 +932,82 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
+  it('records a self_heal_attempts row on successful fix-task enqueue with parent id, signature, fix-task id, and fresh timestamp', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft, rc } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'sig-attempt')
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+
+    const before = new Date().toISOString()
+    const r = await ft.upsertFixTask({
+      sourceTaskId: t.id,
+      failureSignature: 'sig-attempt',
+      failingStep: 'verify:typecheck',
+      truncatedError: 'errA',
+      branch: null,
+      recipeContext: {
+        targetPath: '/tmp/x',
+        statusOutput: 'errA',
+        targetBranch: '',
+        originalPrompt: '',
+      },
+    })
+    expect(r.created).toBe(true)
+
+    const rows = await q.getClient().execute({
+      sql: `SELECT parent_task_id, failure_signature, fix_task_id, created_at
+              FROM self_heal_attempts
+             WHERE parent_task_id = ?
+               AND failure_signature = ?`,
+      args: [t.id, 'sig-attempt'],
+    })
+    expect(rows.rows).toHaveLength(1)
+    const row = rows.rows[0] as unknown as {
+      parent_task_id: string
+      failure_signature: string
+      fix_task_id: string
+      created_at: string
+    }
+    expect(row.parent_task_id).toBe(t.id)
+    expect(row.failure_signature).toBe('sig-attempt')
+    expect(row.fix_task_id).toBe(r.fixTaskId)
+    expect(row.created_at >= before).toBe(true)
+    cleanup()
+  })
+
+  it('does not leave a self_heal_attempts row when fix-task enqueue fails', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft, rc } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'sig-fail')
+
+    // upsertFixTask requires the source task row to exist; passing a
+    // bogus id makes it throw before any row is written. Any attempt
+    // row left behind would be a leak.
+    await expect(
+      ft.upsertFixTask({
+        sourceTaskId: 'no-such-task',
+        failureSignature: 'sig-fail',
+        failingStep: 'verify:typecheck',
+        truncatedError: 'errA',
+        branch: null,
+        recipeContext: {
+          targetPath: '/tmp/x',
+          statusOutput: 'errA',
+          targetBranch: '',
+          originalPrompt: '',
+        },
+      }),
+    ).rejects.toThrow(/no-such-task/)
+
+    const rows = await q.getClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM self_heal_attempts
+             WHERE failure_signature = ?`,
+      args: ['sig-fail'],
+    })
+    expect(Number((rows.rows[0] as unknown as { n: number }).n)).toBe(0)
+    cleanup()
+  })
+
   it('recoverBlockedTasks unblocks tasks whose blocker task was already done', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft, br, rc } = await loadModules(repo)

@@ -257,6 +257,15 @@ export const upsertFixTask = async (
              WHERE id = ?`,
       args: [nextRetryCount, errorSummary, now, input.sourceTaskId],
     })
+    // Append-only ledger row for the sweeper's per-(parent,signature)
+    // dedup + budget logic. Lives inside the same transaction as the
+    // fix-task INSERT so a rollback leaves no stray attempt row.
+    await tx.execute({
+      sql: `INSERT INTO self_heal_attempts (
+              parent_task_id, failure_signature, fix_task_id, created_at
+            ) VALUES (?, ?, ?, ?)`,
+      args: [input.sourceTaskId, input.failureSignature, fixTaskId, now],
+    })
     await tx.commit()
   } catch (error: unknown) {
     tx.close()
