@@ -405,6 +405,20 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_signals_task_id ON task_signals(task_id)
   `)
+  // Migrate pre-existing task_signals tables: `total_cost_usd` was added to
+  // the CREATE TABLE above after the table already shipped, so databases
+  // that created task_signals before that column never gained it (CREATE
+  // TABLE IF NOT EXISTS is a no-op once the table exists). Backfill it the
+  // same way the `tasks` columns above are backfilled.
+  const sigCols = await c.execute(`PRAGMA table_info(task_signals)`)
+  const sigNames = new Set(
+    sigCols.rows.map((r) => (r as unknown as { name: string }).name),
+  )
+  if (!sigNames.has('total_cost_usd')) {
+    await c.execute(
+      `ALTER TABLE task_signals ADD COLUMN total_cost_usd REAL NOT NULL DEFAULT 0`,
+    )
+  }
   await c.execute(`
     CREATE TABLE IF NOT EXISTS task_blockers (
       task_id TEXT NOT NULL,
