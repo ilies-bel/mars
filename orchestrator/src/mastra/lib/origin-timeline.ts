@@ -6,7 +6,7 @@ import {
   type Task,
   type TaskKind,
 } from '../queue'
-import { getIdea, type Idea } from '../ideas'
+import { getProposal, type Proposal } from '../proposals'
 import { resolveContext } from '../context'
 import { parseClaudeSessionIds } from './claude-session-ids'
 
@@ -23,7 +23,7 @@ export interface OriginTimelineSpan {
 }
 
 export interface OriginTimeline {
-  origin: { kind: 'idea' | 'task'; id: string; row: Idea | Task | null }
+  origin: { kind: 'proposal' | 'task'; id: string; row: Proposal | Task | null }
   tasks: Task[]
   spans: OriginTimelineSpan[]
 }
@@ -146,15 +146,15 @@ const loadSpans = async (originId: string): Promise<OriginTimelineSpan[]> => {
 export const loadOriginTimeline = async (
   originId: string,
 ): Promise<OriginTimeline> => {
-  const [idea, tasks, spans] = await Promise.all([
-    getIdea(originId).catch(() => null),
+  const [proposal, tasks, spans] = await Promise.all([
+    getProposal(originId).catch(() => null),
     loadTasksByOrigin(originId),
     loadSpans(originId),
   ])
 
   let origin: OriginTimeline['origin']
-  if (idea) {
-    origin = { kind: 'idea', id: originId, row: idea }
+  if (proposal) {
+    origin = { kind: 'proposal', id: originId, row: proposal }
   } else {
     const selfTask = tasks.find((t) => t.id === originId) ?? null
     origin = { kind: 'task', id: originId, row: selfTask }
