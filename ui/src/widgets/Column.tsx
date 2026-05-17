@@ -1,5 +1,5 @@
-import type { UITask } from '@/lib/types'
-import { TaskCard } from './TaskCard'
+import type { UITask } from '@/shared/types'
+import { TaskCard } from '@/components/TaskCard'
 
 interface Props {
   label: string

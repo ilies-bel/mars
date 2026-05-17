@@ -1,4 +1,4 @@
-import type { Role } from '@/lib/types'
+import type { Role } from '@/shared/types'
 
 const COLOR: Record<Role, string> = {
   planner: 'text-ochre',

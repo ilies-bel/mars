@@ -1,10 +1,10 @@
-import { NavBar } from '@/components/NavBar'
-import { useHashRoute } from '@/hooks/useHashRoute'
+import { NavBar } from '@/widgets/NavBar'
+import { useHashRoute } from '@/shared/useHashRoute'
 import { AgentsPage } from '@/pages/AgentsPage'
 import { KanbanPage } from '@/pages/KanbanPage'
 import { TodoPage } from '@/pages/TodoPage'
 
-export const App = () => {
+const App = () => {
   const hash = useHashRoute()
   const onKanban = hash.startsWith('#/kanban')
   const onAgents = hash.startsWith('#/agents')
@@ -23,3 +23,5 @@ export const App = () => {
     </div>
   )
 }
+
+export default App

@@ -3,7 +3,7 @@ import { HeaderCard } from '../components/agents/HeaderCard'
 import { PromptCard } from '../components/agents/PromptCard'
 import { ToolsCard } from '../components/agents/ToolsCard'
 import { useAgents } from '../hooks/useAgents'
-import type { Agent } from '../lib/schemas'
+import type { Agent } from '@/shared/schemas'
 
 interface TopBarProps {
   title: string
