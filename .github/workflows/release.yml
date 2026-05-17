@@ -1,13 +1,26 @@
 name: Release
 
 # Triggered when a framework version tag is pushed (e.g. v0.1.0, v0.4.2-rc.1).
-# The job builds a Bundle tarball for the tagged commit and publishes it
-# as a GitHub Release asset, alongside a sha256 sidecar so consumers can
-# verify the tarball's integrity before extracting it.
+# The job validates manifest.json at the tagged commit, builds a Bundle
+# tarball containing exactly manifest.json plus the union of its owned[]
+# and hybrid[] paths, and publishes it as a GitHub Release asset alongside
+# a sha256 sidecar so consumers can verify integrity before extracting.
+#
+# Dry-run / validation path: trigger this workflow manually via
+# "Run workflow" (workflow_dispatch). It runs the full validate + package
+# pipeline end to end but never creates a GitHub Release — proving the
+# packaging and validation logic without shipping anything. Releases are
+# only ever created on a real `push` of a v* tag.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate + package the Bundle without creating a GitHub Release"
+        type: boolean
+        default: true
 
 # Default to read-only at workflow scope so jobs added later do not
 # inherit write access to the repository.
@@ -26,39 +39,107 @@ jobs:
       - name: Checkout tagged commit
         uses: actions/checkout@v4
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Resolve version
         id: version
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          if [ -z "$TAG" ]; then
-            echo "::error::GITHUB_REF_NAME is empty; cannot resolve version tag"
+          REF_NAME="${GITHUB_REF_NAME:-}"
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && printf '%s' "$REF_NAME" | grep -Eq '^v'; then
+            TAG="$REF_NAME"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual dry-run from a branch: synthesize a non-publishing
+            # version so the validate + package pipeline still runs end to
+            # end. The publish step is gated to push events only, so this
+            # synthetic tag never reaches a real Release.
+            TAG="v0.0.0-dryrun"
+          else
+            echo "::error::Refusing to run: expected a v* tag ref, got ref_type='${GITHUB_REF_TYPE:-}' ref_name='${REF_NAME}'"
             exit 1
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "bundle=mars-bundle-${TAG}.tar.gz" >> "$GITHUB_OUTPUT"
           echo "sidecar=mars-bundle-${TAG}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
 
+      - name: Validate manifest against tagged commit
+        # Canonical manifest checker (scripts/check-manifest.mjs, landed by
+        # the manifest-schema slice). It exits non-zero — BEFORE any Release
+        # is created — if manifest.json is missing/malformed or any owned[]
+        # or hybrid[] path does not resolve to a real regular file in the
+        # tagged checkout. This is the gate that stops a half-empty Bundle
+        # from ever being published.
+        run: |
+          set -euo pipefail
+          if [ ! -f manifest.json ]; then
+            echo "::error::manifest.json not found at the tagged commit"
+            exit 1
+          fi
+          node scripts/check-manifest.mjs
+
       - name: Build Bundle tarball
         id: bundle
-        # Placeholder Bundle build. Other slices of this PRD replace this
-        # step with a manifest-driven packager that includes exactly
-        # manifest.json plus its owned[] and hybrid[] paths. The sha256
-        # sidecar contract below does not depend on the build internals —
-        # it only requires that this step produces ${{ steps.version.outputs.bundle }}.
+        # The Bundle is exactly manifest.json plus the union of the paths
+        # listed in its owned[] and hybrid[] arrays — nothing else. The
+        # validate step above already guarantees every listed path exists;
+        # this step re-asserts presence per file as defense in depth (still
+        # before any Release), then verifies the produced archive contains
+        # exactly the intended set and no other files.
         run: |
           set -euo pipefail
           BUNDLE="${{ steps.version.outputs.bundle }}"
-          # Use `git archive` so the tarball reflects exactly the tagged
-          # tree (no untracked / generated junk). The prefix gives the
-          # tarball a single top-level directory matching the bundle name
-          # without the .tar.gz suffix.
-          PREFIX="mars-bundle-${{ steps.version.outputs.tag }}/"
-          git archive --format=tar --prefix="$PREFIX" HEAD | gzip -n > "$BUNDLE"
+
+          # Enumerate the exact file set: manifest.json + owned[] + hybrid[],
+          # sorted and de-duplicated for a deterministic archive.
+          {
+            printf '%s\n' "manifest.json"
+            jq -r '(.owned // []) + (.hybrid // []) | .[]' manifest.json
+          } | sort -u > bundle-files.txt
+
+          # Defense in depth: every listed path must be a real file.
+          MISSING=0
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            if [ ! -f "$f" ]; then
+              echo "::error::Bundle path missing from tagged commit: $f"
+              MISSING=1
+            fi
+          done < bundle-files.txt
+          if [ "$MISSING" -ne 0 ]; then
+            echo "::error::Refusing to build Bundle: one or more manifest paths are missing"
+            exit 1
+          fi
+
+          # Deterministic tar: sorted entries, fixed owner/mtime, gzip -n so
+          # the published bytes (and thus the sha256 sidecar) are
+          # reproducible for a given tagged tree.
+          tar --create \
+              --sort=name \
+              --owner=0 --group=0 --numeric-owner \
+              --mtime='UTC 2020-01-01' \
+              --files-from=bundle-files.txt \
+              --file=- \
+            | gzip -n > "$BUNDLE"
+
           if [ ! -s "$BUNDLE" ]; then
             echo "::error::Bundle tarball $BUNDLE is missing or empty after build"
             exit 1
           fi
+
+          # Assert the archive contains EXACTLY the intended set — no more,
+          # no fewer. Any drift fails the run before publish.
+          EXPECTED="$(mktemp)"
+          ACTUAL="$(mktemp)"
+          cp bundle-files.txt "$EXPECTED"
+          tar -tzf "$BUNDLE" | sort -u > "$ACTUAL"
+          if ! diff -u "$EXPECTED" "$ACTUAL"; then
+            echo "::error::Bundle contents do not match manifest.json exactly (see diff above)"
+            exit 1
+          fi
+          rm -f "$EXPECTED" "$ACTUAL" bundle-files.txt
 
       - name: Compute sha256 digest and write sidecar
         id: digest
@@ -100,12 +181,19 @@ jobs:
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Publish Release with Bundle and sha256 sidecar
+        # Only a real tag push publishes. workflow_dispatch (the dry-run /
+        # validation path) runs every step above but never reaches here, so
+        # it proves the packaging + validation logic without creating a
+        # Release. inputs.dry_run is honored too: a dispatch with dry_run
+        # set never publishes (it is not a push event anyway).
+        if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
         env:
           GH_TOKEN: ${{ github.token }}
         # Both assets are uploaded in a single `gh release create` call so
         # the Release is never finalized with only the tarball attached.
-        # If digest computation failed above, this step does not run and
-        # no Release is created.
+        # If validation or digest computation failed above, this step does
+        # not run and no Release is created. Auth is the auto-provisioned
+        # GITHUB_TOKEN only — no PAT or external secret is referenced.
         run: |
           set -euo pipefail
           TAG="${{ steps.version.outputs.tag }}"
@@ -117,6 +205,21 @@ jobs:
             exit 1
           fi
 
+          PRERELEASE_FLAG=""
+          case "$TAG" in
+            *-*) PRERELEASE_FLAG="--prerelease" ;;
+          esac
+
           gh release create "$TAG" "$BUNDLE" "$SIDECAR" \
+            $PRERELEASE_FLAG \
             --title "$TAG" \
             --notes "Bundle release ${TAG}. Verify integrity with: sha256sum -c ${SIDECAR}"
+
+      - name: Dry-run summary (no Release created)
+        if: ${{ github.event_name != 'push' || github.ref_type != 'tag' }}
+        run: |
+          set -euo pipefail
+          BUNDLE="${{ steps.version.outputs.bundle }}"
+          echo "Dry run: validated manifest.json and built ${BUNDLE} without creating a GitHub Release."
+          echo "Bundle contents:"
+          tar -tzf "$BUNDLE" | sort
