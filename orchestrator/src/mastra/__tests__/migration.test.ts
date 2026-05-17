@@ -147,3 +147,48 @@ describe('schema migration: drop blocker_id + task_suggestions, rename origin->s
     s2.close()
   })
 })
+
+describe('schema bootstrap: task_proposal_blockers table + indexes', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('creates task_proposal_blockers with task_id/proposal_id/created_at and proposal-side index', async () => {
+    const { initQueue } = await import('../queue')
+    await initQueue()
+
+    const q = createClient({ url: `file:${repo}/.mars/queue.db` })
+
+    // Table exists
+    const tableRow = await q.execute(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='task_proposal_blockers'`,
+    )
+    expect(tableRow.rows).toHaveLength(1)
+
+    // Correct columns
+    const cols = await q.execute(`PRAGMA table_info(task_proposal_blockers)`)
+    const colNames = (cols.rows as unknown as Array<{ name: string }>).map(
+      (r) => r.name,
+    )
+    expect(colNames).toContain('task_id')
+    expect(colNames).toContain('proposal_id')
+    expect(colNames).toContain('created_at')
+
+    // Index on proposal_id for the "which tasks are blocked by this proposal" lookup
+    const idx = await q.execute(
+      `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_task_proposal_blockers_proposal'`,
+    )
+    expect(idx.rows).toHaveLength(1)
+
+    q.close()
+  })
+})
