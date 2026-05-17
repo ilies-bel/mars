@@ -246,3 +246,7 @@ _Avoid_: read-only task, readonly task, diagnostic task, context-gathering task,
 **Proposal**:
 A draft of work to do, persisted in .mars/state.db, regardless of who proposed it; every Proposal carries a source — reflection (synthesized by mars reflect / deep-reflect from past task signals), human (created by the user), or planner (raised by the planner agent when it spots a gap while refining another Proposal).
 _Avoid_: idea, suggestion
+
+**task-terminal invalidator**:
+The first concrete Invalidator kind: auto-attached to any inbox item raised with a structured taskId, it closes that item when a task.terminal bus event reports its task reached done or dropped (failed is excluded — the operator owns failed-task items).
+_Avoid_: stale-closer, task-done invalidator, terminal sweep
