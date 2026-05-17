@@ -246,3 +246,7 @@ _Avoid_: slot pool, worker pool, dispatch pool, daemon pool
 **Context-gathering chain**:
 The sequence of tasks spawned when a coder trips too-hard and the framework parks the parent behind a context-gathering child as a blocker.
 _Avoid_: too-hard chain, context chain, blocker chain
+
+**Probe**:
+A read-only Mars work unit that gathers information for a parent task and writes its findings to a notes file, without entering the code/verify/merge workflow.
+_Avoid_: read-only task, readonly task, diagnostic task, context-gathering task, inquiry
