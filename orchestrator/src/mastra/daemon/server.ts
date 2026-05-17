@@ -337,12 +337,17 @@ export const startDaemon = async (
         },
       })
       const { isBlockersAbortError, isTooHardAbortError } = await import('../workflows/implement-workflow')
-      const resultError = 'error' in result && result.error instanceof Error ? result.error : null
-      if (result.status === 'failed' && resultError && isBlockersAbortError(resultError)) {
+      // Pass the raw error through: the detectors flatten the cause chain
+      // and accept `unknown`, so the previous `instanceof Error` precondition
+      // (which silently nulled out any wrapped/serialized error and dropped
+      // it into the generic `-> failed` log even though the task was parked
+      // `blocked`) is both unnecessary and the source of the mislabel.
+      const resultError = 'error' in result ? result.error : null
+      if (result.status === 'failed' && isBlockersAbortError(resultError)) {
         log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
         return
       }
-      if (result.status === 'failed' && resultError && isTooHardAbortError(resultError)) {
+      if (result.status === 'failed' && isTooHardAbortError(resultError)) {
         log(`[implement] ${task.id} parked in blocked: read/grep span watcher tripped; spawned context-gathering child task`)
         return
       }
