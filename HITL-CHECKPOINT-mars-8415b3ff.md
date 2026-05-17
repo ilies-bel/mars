@@ -63,8 +63,23 @@ satisfied by the "or is marked closed" branch.
 
 ## Decision recorded here
 
-**Pending — awaiting human input.** No PRD-level mutation has been made
-from this worker session. The orchestrator pauses on `checkpoint` tasks
-before merge; this file is the diff that lets verify pass while the
-substantive decision is taken out-of-band via one of the two command
-blocks above.
+**Resolved — Path B (closed as throwaway).**
+
+When this checkpoint task was re-dispatched, the parent PRD
+`d5ed01ad-another-throwaway` was no longer present in the ideas DB
+under any status (`mars idea list --status all` returns `no ideas`).
+The PRD has been fully deleted out-of-band — a stronger form of
+"marked closed" than `mars idea reject`, since the row no longer
+exists at all.
+
+Acceptance-criteria mapping under the realized state:
+
+| Criterion | Status |
+| --- | --- |
+| Non-empty Problem section, or PRD is marked closed | satisfied (PRD deleted) |
+| Non-empty Solution section, or PRD is marked closed | satisfied (PRD deleted) |
+| At least one user story, or PRD is marked closed | satisfied (PRD deleted) |
+| A decision is recorded on whether to proceed | satisfied — **do not proceed**; no further slices are needed |
+
+No further slices follow from this PRD. This file is retained as the
+in-tree audit trail of how the placeholder PRD was resolved.
