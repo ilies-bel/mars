@@ -11,6 +11,11 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { writeSlimInit, type VerifyStepEntry } from '../writer'
+import {
+  compileVerifyStepsFromScopes,
+  validateScopes,
+  type ScopeManifestEntry,
+} from '../render'
 
 const SAMPLE_STEPS: VerifyStepEntry[] = [
   { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
@@ -87,5 +92,104 @@ describe('writeSlimInit', () => {
       )
       expect(briefings).toEqual([])
     }
+  })
+
+  it('persists each compiled scope-kind step into verify.json with its cwd', () => {
+    const scopes: ScopeManifestEntry[] = [
+      {
+        path: '.',
+        stack: 'node',
+        verify: { typecheck: 'tsc --noEmit', test: 'npm test --silent' },
+      },
+      {
+        path: 'web',
+        stack: 'react',
+        verify: { test: 'vitest run' },
+      },
+    ]
+    const compiled = compileVerifyStepsFromScopes(scopes)
+
+    writeSlimInit({
+      ...slimInputFor(root),
+      verifySteps: compiled,
+    })
+
+    const parsed = JSON.parse(
+      readFileSync(resolve(root, '.mars', 'verify.json'), 'utf8'),
+    ) as { verifySteps: Array<{ name: string; cwd: string }> }
+
+    expect(parsed.verifySteps.map((s) => ({ name: s.name, cwd: s.cwd }))).toEqual([
+      { name: '.:typecheck', cwd: '.' },
+      { name: '.:test', cwd: '.' },
+      { name: 'web:test', cwd: 'web' },
+    ])
+  })
+})
+
+describe('compileVerifyStepsFromScopes', () => {
+  it('emits one step per scope-kind pair, in scope-declared order', () => {
+    const scopes: ScopeManifestEntry[] = [
+      {
+        path: '.',
+        stack: 'node',
+        verify: { typecheck: 'tsc --noEmit', test: 'npm test' },
+      },
+      {
+        path: 'web',
+        stack: 'react',
+        verify: { build: 'vite build' },
+      },
+    ]
+    const steps = compileVerifyStepsFromScopes(scopes)
+    expect(steps).toHaveLength(3)
+    expect(steps[0].cwd).toBe('.')
+    expect(steps[1].cwd).toBe('.')
+    expect(steps[2].cwd).toBe('web')
+  })
+
+  it('uses "." as cwd for the root scope', () => {
+    const steps = compileVerifyStepsFromScopes([
+      { path: '.', stack: 'node', verify: { test: 'npm test' } },
+    ])
+    expect(steps[0].cwd).toBe('.')
+  })
+
+  it('returns an empty list when given no scopes', () => {
+    expect(compileVerifyStepsFromScopes([])).toEqual([])
+  })
+})
+
+describe('validateScopes', () => {
+  it('returns an empty list when scopes is missing or empty', () => {
+    expect(validateScopes(undefined)).toEqual([])
+    expect(validateScopes(null)).toEqual([])
+    expect(validateScopes([])).toEqual([])
+  })
+
+  it('rejects a scope entry missing path', () => {
+    expect(() =>
+      validateScopes([{ stack: 'node', verify: { test: 'npm test' } }]),
+    ).toThrow(/path/)
+  })
+
+  it('rejects a scope entry missing stack', () => {
+    expect(() =>
+      validateScopes([{ path: '.', verify: { test: 'npm test' } }]),
+    ).toThrow(/stack/)
+  })
+
+  it('rejects a scope entry missing verify map', () => {
+    expect(() => validateScopes([{ path: '.', stack: 'node' }])).toThrow(
+      /verify/,
+    )
+  })
+
+  it('accepts a well-formed scope entry', () => {
+    const scopes = validateScopes([
+      { path: 'web', stack: 'react', verify: { test: 'vitest run' } },
+    ])
+    expect(scopes).toEqual([
+      { path: 'web', stack: 'react', verify: { test: 'vitest run' } },
+    ])
   })
 })
