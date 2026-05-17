@@ -10,7 +10,17 @@ source of truth for the install verb (built in sibling slices of this PRD).
 {
   "schemaVersion": 1,        // bumped only on an incompatible shape change
   "owned":  ["<repo-relative path>", ...],
-  "hybrid": ["<repo-relative path>", ...]
+  "hybrid": ["<repo-relative path>", ...],
+  "scopes": [                // optional; empty/absent = no verify steps
+    {
+      "path": ".",                       // '.' for the root scope
+      "stack": "node",                   // free-form tag
+      "verify": {                        // kind → shell command
+        "typecheck": "tsc --noEmit",
+        "test": "npm test --silent"
+      }
+    }
+  ]
 }
 ```
 
@@ -24,6 +34,21 @@ source of truth for the install verb (built in sibling slices of this PRD).
   file already exists it refuses with a back-up-and-remove message
   (ADR-0007). These are files a consumer is expected to customise, e.g.
   project-level `CLAUDE.md` and `.claude/settings.json`.
+- **`scopes[]`** — operator-declared list of "where the code lives" entries
+  for verify routing. Each entry has:
+    - `path` — repo-relative directory the verify commands run in. Use
+      `"."` for the root scope.
+    - `stack` — free-form tag (e.g. `"node"`, `"react"`, `"go"`). Used
+      only for human-readable labels at this layer.
+    - `verify` — a map of verify *kind* (`build`, `test`, `typecheck`, …)
+      to the shell command for that kind in that scope.
+
+  The generator (`compileVerifyStepsFromScopes` in
+  `orchestrator/src/init/render.ts`) turns this table into the cartesian
+  product of scope × kind: one step per pair, in scope-declared order,
+  with the scope's `path` set as the step's `cwd`. An empty or absent
+  `scopes[]` yields an empty `verify.json` — there is *no implicit stack
+  detection at this layer*; the operator hand-edits this table.
 
 Paths are relative to the framework repo root and must point at real,
 regular files. A path may not appear in both sections.

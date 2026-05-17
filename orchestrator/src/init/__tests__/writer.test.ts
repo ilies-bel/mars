@@ -12,7 +12,12 @@ import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { detectStack, type SupervisorSpec } from '../detect-stack'
 import { renderSupervisor, minimalRenderInput } from '../render'
-import { writeSupervisors, type RenderedSupervisor } from '../writer'
+import {
+  writeSlimInit,
+  writeSupervisors,
+  type RenderedSupervisor,
+  type VerifyStepEntry,
+} from '../writer'
 
 const make = (root: string, files: Record<string, string>): void => {
   for (const [rel, body] of Object.entries(files)) {
@@ -183,6 +188,26 @@ describe('mars init AGENTS.md writer', () => {
     const supervisorsDir = resolve(root, '.mars', 'supervisors')
     const entries = readdirSync(supervisorsDir).sort()
     expect(entries).toEqual(['README.md', 'manifest.json'])
+  })
+
+  it('persists `cwd` on each verify step when present, and omits it otherwise', () => {
+    const steps: VerifyStepEntry[] = [
+      { name: 'root:test', cmd: 'sh', args: ['-c', 'npm test'], required: true, cwd: '.' },
+      { name: 'legacy', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
+    ]
+    writeSlimInit({
+      repoRoot: root,
+      verifyConfigPath: resolve(root, '.mars', 'verify.json'),
+      contextPath: resolve(root, 'CONTEXT.md'),
+      adrDir: resolve(root, 'docs', 'adr'),
+      verifySteps: steps,
+      now: () => '2026-05-10T00:00:00.000Z',
+    })
+    const parsed = JSON.parse(
+      readFileSync(resolve(root, '.mars', 'verify.json'), 'utf8'),
+    ) as { verifySteps: Array<Record<string, unknown>> }
+    expect(parsed.verifySteps[0].cwd).toBe('.')
+    expect(parsed.verifySteps[1]).not.toHaveProperty('cwd')
   })
 
   it('reports removed paths in the result and updates the manifest', () => {

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { SupervisorSpec } from './detect-stack'
+import type { VerifyStepEntry } from './writer'
 
 const moduleDir = (): string => dirname(fileURLToPath(import.meta.url))
 
@@ -77,6 +78,83 @@ export const minimalRenderInput = (spec: SupervisorSpec): RenderInput => ({
   specialistBody: null,
   source: null,
 })
+
+/**
+ * A single entry in `manifest.json`'s `scopes[]` array. Declares where a
+ * stack lives in the repo (`path`, '.' for the root), what tag identifies
+ * the stack, and the shell command for each verify kind (build, test,
+ * typecheck, …) that belongs to that scope. This is the only input
+ * `compileVerifyStepsFromScopes` accepts — no implicit stack detection
+ * happens at this layer.
+ */
+export interface ScopeManifestEntry {
+  path: string
+  stack: string
+  verify: Record<string, string>
+}
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/**
+ * Validate a raw `scopes` value (typically `JSON.parse(manifest.json).scopes`)
+ * and return a typed `ScopeManifestEntry[]`. `undefined`, `null`, and an
+ * empty array all yield `[]` — there is no implicit detection at this
+ * layer. Throws if any entry is missing `path`, `stack`, or `verify`, or
+ * if a verify value is not a string.
+ */
+export const validateScopes = (raw: unknown): ScopeManifestEntry[] => {
+  if (raw === undefined || raw === null) return []
+  if (!Array.isArray(raw)) {
+    throw new Error('manifest.json `scopes` must be an array')
+  }
+  return raw.map((entry, i) => {
+    if (!isPlainObject(entry)) {
+      throw new Error(`manifest.json scopes[${i}] must be an object`)
+    }
+    const { path, stack, verify } = entry
+    if (typeof path !== 'string' || path.length === 0) {
+      throw new Error(`manifest.json scopes[${i}] is missing required field \`path\``)
+    }
+    if (typeof stack !== 'string' || stack.length === 0) {
+      throw new Error(`manifest.json scopes[${i}] is missing required field \`stack\``)
+    }
+    if (!isPlainObject(verify)) {
+      throw new Error(`manifest.json scopes[${i}] is missing required field \`verify\``)
+    }
+    const verifyMap: Record<string, string> = {}
+    for (const [kind, cmd] of Object.entries(verify)) {
+      if (typeof cmd !== 'string' || cmd.length === 0) {
+        throw new Error(
+          `manifest.json scopes[${i}].verify.${kind} must be a non-empty shell command string`,
+        )
+      }
+      verifyMap[kind] = cmd
+    }
+    return { path, stack, verify: verifyMap }
+  })
+}
+
+/**
+ * Compile the `scopes[]` declared in `manifest.json` into the verify steps
+ * that get persisted as `.mars/verify.json`. Emits exactly one step per
+ * scope-kind pair, in scope-declared order; each step carries the scope's
+ * `path` as its `cwd` ('.' for the root scope). An empty input yields an
+ * empty list — implicit stack detection lives elsewhere.
+ */
+export const compileVerifyStepsFromScopes = (
+  scopes: ReadonlyArray<ScopeManifestEntry>,
+): VerifyStepEntry[] => {
+  return scopes.flatMap((scope) =>
+    Object.entries(scope.verify).map(([kind, shellCmd]) => ({
+      name: `${scope.path}:${kind}`,
+      cmd: 'sh',
+      args: ['-c', shellCmd],
+      required: true,
+      cwd: scope.path,
+    })),
+  )
+}
 
 export interface ValidationIssue {
   reason: string
