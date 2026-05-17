@@ -14,6 +14,12 @@ export interface VerifyStepEntry {
   cmd: string
   args: string[]
   required: boolean
+  /**
+   * Working directory for the step, relative to the repo root. '.' for the
+   * root scope. Optional for legacy supervisor-default steps; required for
+   * steps compiled from a manifest.json `scopes[]` entry.
+   */
+  cwd?: string
 }
 
 export interface SlimInitInput {
@@ -49,6 +55,7 @@ export const writeSlimInit = (input: SlimInitInput): SlimInitResult => {
       cmd: s.cmd,
       args: [...s.args],
       required: s.required,
+      ...(s.cwd !== undefined ? { cwd: s.cwd } : {}),
     })),
   }
   writeFileSync(
