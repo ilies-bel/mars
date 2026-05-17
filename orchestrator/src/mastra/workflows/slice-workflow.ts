@@ -295,6 +295,28 @@ const generateStep = createStep({
         sql: `UPDATE proposals SET status = 'sliced', updated_at = ? WHERE id = ?`,
         args: [Date.now(), idea.id],
       })
+      // Phase 5 (ADR-0015 promote transfer): any task that was blocked by
+      // THIS idea via task_proposal_blockers must now be re-pointed at the
+      // resulting work, atomically, so no dispatcher tick observes the
+      // dependent with zero blockers between the delete and the insert.
+      // transferProposalBlockerToTask does both writes (delete the
+      // task_proposal_blockers row, insert the task_blockers row) in ONE
+      // queue.db `batch(..., 'write')` transaction — both tables are in
+      // queue.db, so this is genuinely atomic, not merely ordered.
+      //
+      // TODO(ADR-0015 fan-out): the ADR pins only the single
+      // new_blocker_task_id case. A slice produces N tasks; ADR-0015 is
+      // SILENT on whether the dependent should then wait on all N. Per the
+      // task brief we implement the single-new-blocker case verbatim and
+      // re-point dependents at the FIRST slice task (taskIds[0]) rather than
+      // inventing fan-out semantics. taskIds[0] is the natural single
+      // anchor: with the slicer's intra-slice blockers, completing the
+      // whole arc still gates on it transitively in the common chained
+      // shape. True N-fan-out is deferred and called out in the report.
+      if (taskIds.length > 0) {
+        const { transferProposalBlockerToTask } = await import('../queue')
+        await transferProposalBlockerToTask(idea.id, taskIds[0])
+      }
     } catch (error: unknown) {
       for (const id of taskIds) {
         await queueClient

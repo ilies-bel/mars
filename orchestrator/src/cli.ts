@@ -155,6 +155,25 @@ Commands:
                                 user-observable behaviour) and queue them with
                                 blockers wired between dependent slices. Flips
                                 the idea's status to 'sliced'.
+  idea block <idea-id> <blocker-id> [<blocker-id> ...]
+                                ADR-0008 planning-graph edge: <idea-id> waits
+                                on each <blocker-id>. Both endpoints must
+                                exist; self-blocking is rejected. Stored in
+                                proposal_dependencies (.mars/state.db).
+  idea unblock <idea-id> <blocker-id> [<blocker-id> ...]
+                                remove the listed planning-graph edges only;
+                                the idea's status is left untouched.
+  idea blockers <idea-id>       list the ideas <idea-id> is blocked by.
+  idea block-task <task-id> <idea-id> [<idea-id> ...]
+                                ADR-0015 cross-graph edge: <task-id> cannot
+                                dispatch until each <idea-id> is promoted.
+                                Stored in task_proposal_blockers
+                                (.mars/queue.db). Transferred onto a real
+                                task_blockers edge atomically when the idea
+                                is sliced.
+  idea unblock-task <task-id> <idea-id> [<idea-id> ...]
+                                remove the listed task->idea edges only.
+  idea task-blockers <task-id>  list the ideas <task-id> is blocked by.
   add "<prompt>" [plan flags]   (deprecated) draft a task; lands in 'draft' state
                                 so triage can promote to 'queued'. Prefer
                                 'mars task add' or 'mars idea add'.
@@ -1248,8 +1267,170 @@ const main = async (): Promise<void> => {
       }
       return
     }
+    if (sub === 'block') {
+      // ADR-0008 planning-graph edge: <idea-id> waits on each <blocker-id>.
+      // Mirrors the top-level `mars block` task->task verb shape.
+      const id = rest[1]
+      const blockerArgs = rest.slice(2)
+      if (!id || blockerArgs.length === 0) {
+        console.error(
+          'usage: mars idea block <idea-id> <blocker-id> [<blocker-id> ...]',
+        )
+        process.exit(1)
+      }
+      if (blockerArgs.some((b) => b === id)) {
+        console.error(`idea ${id} cannot block itself`)
+        process.exit(1)
+      }
+      const { addProposalDependencies } = await import('./mastra/proposals')
+      try {
+        await addProposalDependencies(id, blockerArgs)
+        console.log(`blocked ${id} by: ${blockerArgs.join(', ')}`)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
+    if (sub === 'unblock') {
+      // Edge-removal for ADR-0008 planning-graph edges. Each (idea, blocker)
+      // pair given is removed; the idea's status is unchanged.
+      const id = rest[1]
+      const blockerArgs = rest.slice(2)
+      if (!id || blockerArgs.length === 0) {
+        console.error(
+          'usage: mars idea unblock <idea-id> <blocker-id> [<blocker-id> ...]',
+        )
+        process.exit(1)
+      }
+      const { removeProposalDependency } = await import('./mastra/proposals')
+      try {
+        const removed: string[] = []
+        for (const b of blockerArgs) {
+          const r = await removeProposalDependency(id, b)
+          if (r.removed) removed.push(b)
+        }
+        console.log(
+          removed.length > 0
+            ? `unblocked ${id} from: ${removed.join(', ')}`
+            : `no matching edges removed for ${id}`,
+        )
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
+    if (sub === 'blockers') {
+      const id = rest[1]
+      if (!id) {
+        console.error('usage: mars idea blockers <idea-id>')
+        process.exit(1)
+      }
+      const { listProposalDependencies } = await import('./mastra/proposals')
+      try {
+        const blockers = await listProposalDependencies(id)
+        if (blockers.length === 0) {
+          console.log(`no blockers on ${id}`)
+          return
+        }
+        for (const b of blockers) console.log(b)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
+    if (sub === 'block-task') {
+      // ADR-0015 cross-graph edge: <task-id> waits on each <idea-id>. The
+      // proposal endpoint is validated to exist (resolved via prefix);
+      // task->idea edges live in queue.db's task_proposal_blockers.
+      const taskId = rest[1]
+      const ideaArgs = rest.slice(2)
+      if (!taskId || ideaArgs.length === 0) {
+        console.error(
+          'usage: mars idea block-task <task-id> <idea-id> [<idea-id> ...]',
+        )
+        process.exit(1)
+      }
+      const { resolveProposalId } = await import('./mastra/proposals')
+      const { addProposalBlockers } = await import('./mastra/queue')
+      try {
+        const resolvedIds: string[] = []
+        for (const raw of ideaArgs) {
+          const resolved = await resolveProposalId(raw)
+          if (resolved.kind === 'ambiguous') {
+            console.error(
+              `ambiguous prefix '${raw}' matches ${resolved.count} ideas`,
+            )
+            process.exit(1)
+          }
+          if (resolved.kind === 'none') {
+            console.error(`idea ${raw} not found`)
+            process.exit(1)
+          }
+          resolvedIds.push(resolved.id)
+        }
+        await addProposalBlockers(taskId, resolvedIds)
+        console.log(`blocked ${taskId} by idea(s): ${resolvedIds.join(', ')}`)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
+    if (sub === 'unblock-task') {
+      const taskId = rest[1]
+      const ideaArgs = rest.slice(2)
+      if (!taskId || ideaArgs.length === 0) {
+        console.error(
+          'usage: mars idea unblock-task <task-id> <idea-id> [<idea-id> ...]',
+        )
+        process.exit(1)
+      }
+      const { resolveProposalId } = await import('./mastra/proposals')
+      const { removeProposalBlocker } = await import('./mastra/queue')
+      try {
+        const removed: string[] = []
+        for (const raw of ideaArgs) {
+          const resolved = await resolveProposalId(raw)
+          const idToRemove = resolved.kind === 'unique' ? resolved.id : raw
+          const r = await removeProposalBlocker(taskId, idToRemove)
+          if (r.removed) removed.push(idToRemove)
+        }
+        console.log(
+          removed.length > 0
+            ? `unblocked ${taskId} from idea(s): ${removed.join(', ')}`
+            : `no matching idea edges removed for ${taskId}`,
+        )
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
+    if (sub === 'task-blockers') {
+      const taskId = rest[1]
+      if (!taskId) {
+        console.error('usage: mars idea task-blockers <task-id>')
+        process.exit(1)
+      }
+      const { listProposalBlockers } = await import('./mastra/queue')
+      try {
+        const blockers = await listProposalBlockers(taskId)
+        if (blockers.length === 0) {
+          console.log(`no idea blockers on ${taskId}`)
+          return
+        }
+        for (const b of blockers) console.log(b)
+      } catch (error: unknown) {
+        console.error(error instanceof Error ? error.message : String(error))
+        process.exit(1)
+      }
+      return
+    }
     console.error(
-      'usage: mars idea <add|new|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete> ...',
+      'usage: mars idea <add|new|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers> ...',
     )
     process.exit(1)
   }
