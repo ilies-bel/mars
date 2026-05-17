@@ -1,6 +1,6 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
-import { getIdea, getIdeasClient } from '../ideas'
+import { getProposal, getProposalsClient } from '../proposals'
 import {
   getClient as getQueueClient,
   enqueueTask,
@@ -197,7 +197,7 @@ const generateStep = createStep({
   inputSchema: sliceInputSchema,
   outputSchema: sliceOutputSchema,
   execute: async ({ inputData, tracingContext }) => {
-    const idea = await getIdea(inputData.ideaId)
+    const idea = await getProposal(inputData.ideaId)
     if (!idea) throw new Error(`idea ${inputData.ideaId} not found`)
     if (idea.status !== 'prd-ready') {
       throw new Error(
@@ -237,7 +237,7 @@ const generateStep = createStep({
 
     await initQueue()
     const queueClient = getQueueClient()
-    const ideasClient = getIdeasClient()
+    const ideasClient = getProposalsClient()
     const taskIds: string[] = []
 
     // The writes span two DBs (queue.db for tasks/blockers, state.db for
@@ -257,7 +257,7 @@ const generateStep = createStep({
         const task = await enqueueTask(prompt, undefined, {
           author: idea.author ?? undefined,
           originId: idea.id,
-          parentIdeaId: idea.id,
+          parentProposalId: idea.id,
           sliceIndex: i + 1,
           spec: {
             files: slice.files,
@@ -292,7 +292,7 @@ const generateStep = createStep({
       // Phase 4: flip the idea row to 'sliced' so subsequent invocations
       // refuse to re-slice (the precondition above checks 'prd-ready').
       await ideasClient.execute({
-        sql: `UPDATE ideas SET status = 'sliced', updated_at = ? WHERE id = ?`,
+        sql: `UPDATE proposals SET status = 'sliced', updated_at = ? WHERE id = ?`,
         args: [Date.now(), idea.id],
       })
     } catch (error: unknown) {
