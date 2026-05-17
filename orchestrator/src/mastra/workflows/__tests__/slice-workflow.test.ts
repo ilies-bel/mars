@@ -1,5 +1,37 @@
 import { describe, it, expect } from 'vitest'
-import { describeSliceFailure } from '../slice-workflow'
+import { describeSliceFailure, buildSlicerPrompt } from '../slice-workflow'
+
+describe('slicing brief: structured-write constraint', () => {
+  const sampleIdea = {
+    id: 'idea-1',
+    title: 'Some PRD',
+    problem: 'a problem',
+    solution: 'a solution',
+    outOfScope: '',
+    notes: '',
+    userStories: [],
+  }
+
+  it('forbids a slice whose sole deliverable is a glossary or ADR change', () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+
+    // The constraint is stated as explicit guidance to the slicer:
+    // never emit a slice whose sole deliverable is a glossary/ADR change.
+    expect(brief).toMatch(/glossary/i)
+    expect(brief).toMatch(/ADR/)
+    expect(brief).toMatch(/never\s+produce\s+a\s+slice/i)
+    expect(brief).toMatch(/sole\s+deliverable/i)
+  })
+
+  it('frames such PRD content as an upstream process violation, not a branch to handle', () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+
+    expect(brief).toMatch(/upstream\s+process\s+violation/i)
+    // It is settled during grilling, before the PRD is promoted.
+    expect(brief).toMatch(/grill/i)
+    expect(brief).toMatch(/before[\s\S]*?promot/i)
+  })
+})
 
 describe('describeSliceFailure', () => {
   it('includes the failing step error text, not just the status word', () => {

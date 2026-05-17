@@ -50,7 +50,7 @@ const renderUserStories = (stories: readonly string[]): string => {
   return stories.map((s, i) => `${i + 1}. ${s}`).join('\n')
 }
 
-const buildSlicerPrompt = (idea: {
+export const buildSlicerPrompt = (idea: {
   id: string
   title: string
   problem: string
@@ -75,6 +75,19 @@ HITL vs AFK
 Slices may be 'HITL' or 'AFK'. HITL slices require human interaction
 (architectural decision, design review). AFK slices can be implemented
 and merged without human interaction. Prefer AFK over HITL where possible.
+
+Vocabulary is settled at grill time — never slice it
+----------------------------------------------------
+Glossary terms and ADRs are decided and recorded during GRILLING, before
+a PRD is ever promoted. By the time a PRD reaches you it is already
+settled vocabulary. Therefore: NEVER produce a slice whose sole
+deliverable is a glossary change or an ADR change. If this PRD still
+describes such work as its own deliverable, treat that as an upstream
+process violation — a PRD that was promoted before its vocabulary was
+settled — not a case to accommodate. Do not add a slice for it, do not
+branch your output around it, do not "detect" it: this is guidance only.
+Just decompose the remaining real work and leave the vocabulary change
+out, because it should already have happened during grilling.
 
 Output shape
 ------------
