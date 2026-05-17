@@ -9,6 +9,7 @@ import {
   WRITER_SYSTEM_PROMPT,
   composePrompt,
   detectPostCoderState,
+  failureExcerpt,
 } from '../implement-workflow'
 
 describe('composePrompt — coder default', () => {
@@ -222,5 +223,47 @@ describe('detectPostCoderState', () => {
         expect.arrayContaining(['untracked.ts', 'src/also-untracked.ts']),
       )
     }
+  })
+})
+
+describe('failureExcerpt — verify:test triage excerpt', () => {
+  // Mimics a real vitest run: a long preamble of passing ✓ lines, then
+  // the failure block + summary LAST. The persisted excerpt must surface
+  // the tail (the actual signal), not the useless head.
+  const preamble =
+    'test: synced MARS_VERSION = 0.1.0\n RUN v2.1.9\n' +
+    Array.from({ length: 200 }, (_, i) => ` ✓ src/foo-${i}.test.ts (3 tests)`).join('\n')
+  const failureBlock =
+    '\n FAIL src/bar.test.ts > does the thing\n' +
+    'AssertionError: expected A to be B\n' +
+    '- Expected\n+ Received\n' +
+    '\nTest Files  1 failed | 200 passed (201)\n     Tests  1 failed | 600 passed (601)'
+  const fullOutput = preamble + failureBlock
+
+  it('keeps the failing assertion / FAIL marker, not just the run preamble', () => {
+    const excerpt = failureExcerpt(fullOutput)
+    expect(excerpt).toContain('FAIL src/bar.test.ts')
+    expect(excerpt).toContain('AssertionError: expected A to be B')
+    expect(excerpt).toContain('1 failed')
+    // The head-only behaviour (slice(0, 500)) would have kept this and
+    // dropped everything above; the tail must NOT start at the preamble.
+    expect(excerpt).not.toContain('synced MARS_VERSION = 0.1.0')
+  })
+
+  it('marks the dropped head so triage knows the excerpt is a tail', () => {
+    const excerpt = failureExcerpt(fullOutput)
+    expect(excerpt.startsWith('…(truncated head)…\n')).toBe(true)
+  })
+
+  it('returns short output verbatim (no truncation marker)', () => {
+    const short = 'FAIL src/x.test.ts\nAssertionError: nope'
+    expect(failureExcerpt(short)).toBe(short)
+  })
+
+  it('caps the excerpt near the configured max (default ~2000 chars)', () => {
+    const excerpt = failureExcerpt(fullOutput)
+    expect(fullOutput.length).toBeGreaterThan(2000)
+    // truncation marker + at most `max` tail chars
+    expect(excerpt.length).toBeLessThanOrEqual(2000 + '…(truncated head)…\n'.length)
   })
 })

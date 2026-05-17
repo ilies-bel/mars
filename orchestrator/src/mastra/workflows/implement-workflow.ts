@@ -261,6 +261,17 @@ const renderSpec = (spec: TaskSpec | null, taskId: string): string | null => {
 // next-step here, not a generic retry.
 export const TOO_HARD_PREFIX = 'too_hard:no-action-after-reads'
 
+// Test runners (vitest) print passing tests first and the failing
+// assertion + final summary LAST. Keeping the head of a failing step's
+// output discards the only diagnostic signal — the run preamble is never
+// the root cause. Capture the tail so the persisted `error` excerpt and
+// the fix-recipe classifier both see the real failure. The full output
+// is still persisted verbatim to the transcript.
+export const failureExcerpt = (output: string, max = 2000): string =>
+  output.length <= max
+    ? output
+    : '…(truncated head)…\n' + output.slice(-max)
+
 const formatTrace = (trace: readonly ReadSpanTrace[]): string =>
   trace
     .map((t, i) => `  ${i + 1}. ${t.tool} ${t.target ? `→ ${t.target}` : ''}`)
@@ -872,10 +883,12 @@ const verifyStep = createStep({
     if (!r.passed) {
       const failed = r.steps.filter((s) => !s.passed)
       const summary = failed
-        .map((s) => `${s.name}: ${s.output.slice(0, 500)}`)
-        .join('\n')
+        .map((s) => `${s.name}:\n${failureExcerpt(s.output)}`)
+        .join('\n\n')
       const firstFailedName = failed[0]?.name ?? 'verify'
-      const firstFailedOutput = failed[0]?.output ?? summary
+      const firstFailedOutput = failed[0]
+        ? failureExcerpt(failed[0].output)
+        : summary
       await updateTask(inputData.taskId, {
         status: 'failed',
         error: summary,
