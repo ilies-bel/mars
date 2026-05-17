@@ -11,6 +11,13 @@ import {
   injectSchemaDropBlockers,
   composeTaskPrompt,
 } from '../slice-workflow'
+import {
+  composePrompt,
+  resolveWorkerSystemPrompt,
+  CODER_SYSTEM_PROMPT,
+  WRITER_SYSTEM_PROMPT,
+} from '../implement-workflow'
+import { TDD_WORKER_BRIEF } from '../tdd-brief'
 
 describe('slicing brief: structured-write constraint', () => {
   const sampleIdea = {
@@ -938,5 +945,86 @@ describe('describeSliceFailure', () => {
 
     expect(msg).toContain('first failure')
     expect(msg).not.toContain('second failure')
+  })
+})
+
+describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Task text', () => {
+  // The coder Worker used to re-absorb the ~150-line TDD brief at the top
+  // of every per-Task prompt, and a retry replayed it verbatim — burning
+  // the read-span budget on boilerplate. It now arrives once, as the
+  // Worker's standing Session instructions, and never inside the per-Task
+  // prompt.
+  const idea = {
+    id: 'idea-tdd',
+    title: 'Move the TDD brief out of per-task prompts',
+    problem: 'The brief is replayed verbatim on every retry.',
+    solution: 'Carry it in the Session standing instructions instead.',
+    outOfScope: 'Retuning the read budget.',
+    notes: 'Slice 1 of the read-span PRD.',
+    userStories: ['As a coder I do not re-absorb the brief each task.'],
+  }
+  const slice = {
+    title: 'Drop the brief from the per-task prompt',
+    type: 'AFK' as const,
+    whatToBuild: 'Stop prepending the TDD brief to the slice prompt.',
+    acceptanceCriteria: ['per-task prompt has zero copies of the brief'],
+    blockedBy: [] as number[],
+    modifies: [] as string[],
+    creates: [] as string[],
+    verifyCmd: null,
+    taskType: 'auto' as const,
+  }
+  const spec = {
+    files: [] as string[],
+    verifyCmd: null,
+    doneCriteria: ['a'],
+    taskType: 'auto' as const,
+  }
+  // A sentence that appears verbatim only in the TDD operating philosophy.
+  const TDD_SIGNATURE =
+    'using test-driven development with vertical tracer bullets'
+
+  it('composes a coder per-Task prompt with zero copies of the TDD philosophy', () => {
+    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    expect(prompt).not.toContain(TDD_WORKER_BRIEF)
+    expect(prompt).not.toContain(TDD_SIGNATURE)
+    expect(prompt).not.toContain('Anti-pattern: horizontal slices')
+
+    // It also stays out of the fully-composed dispatched prompt.
+    const dispatched = composePrompt(prompt, null, 'coder', spec, 'mars-x')
+    expect(dispatched).not.toContain(TDD_WORKER_BRIEF)
+    expect(dispatched).not.toContain(TDD_SIGNATURE)
+  })
+
+  it('gives a dispatched coder Worker the TDD philosophy in its standing Session instructions', () => {
+    expect(resolveWorkerSystemPrompt('coder')).toContain(TDD_WORKER_BRIEF)
+    expect(CODER_SYSTEM_PROMPT).toContain(TDD_WORKER_BRIEF)
+  })
+
+  it('produces a byte-identical, brief-free per-Task prompt when a coder Task is retried', () => {
+    const original = composeTaskPrompt(idea, slice, 1, 1)
+    const retried = composeTaskPrompt(idea, slice, 1, 1)
+    expect(retried).toBe(original)
+    expect(retried).not.toContain(TDD_WORKER_BRIEF)
+
+    // A re-dispatch wraps the stored prompt through composePrompt again;
+    // that surface must also be stable and brief-free.
+    const first = composePrompt(original, null, 'coder', spec, 'mars-x')
+    const second = composePrompt(original, null, 'coder', spec, 'mars-x')
+    expect(second).toBe(first)
+    expect(second).not.toContain(TDD_WORKER_BRIEF)
+  })
+
+  it('leaves the Writer Worker untouched — same standing instructions, same per-Task surface', () => {
+    // Writer standing instructions are unchanged and never carried the brief.
+    expect(resolveWorkerSystemPrompt('writer')).toBe(WRITER_SYSTEM_PROMPT)
+    expect(WRITER_SYSTEM_PROMPT).not.toContain(TDD_WORKER_BRIEF)
+
+    // Writer per-Task prompt gains/loses nothing: no brief, stable across
+    // a re-dispatch.
+    const w1 = composePrompt('writer task body', null, 'writer', spec, 'mars-w')
+    const w2 = composePrompt('writer task body', null, 'writer', spec, 'mars-w')
+    expect(w2).toBe(w1)
+    expect(w1).not.toContain(TDD_WORKER_BRIEF)
   })
 })
