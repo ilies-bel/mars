@@ -56,8 +56,8 @@ A read-only aggregate health number derived from completed task arcs over a roll
 _Avoid_: metric, stat, gauge
 
 **Chore**:
-A queued unit of work where the prompt is the source of truth: it may or may not produce commits. Skips the verify:has-diff gate (and its recovery recipe) but still runs the project's verify.json steps. If commits exist, they are merged into the integration branch; if not, the chore completes without merging.
-_Avoid_: fix, fix-task, side-effect task
+A Mars work unit whose purpose is a side-effecting repair (a fix or follow-up after a failure) rather than feature work; goes through the same code/verify/merge workflow as a Task.
+_Avoid_: fix, fix-task, side-effect task, recovery task
 
 **Task**:
 A queued unit of work expected to produce one or more commits on a task/<id> branch, which the orchestrator verifies (verify:has-diff + .mars/verify.json) and fast-forwards into the integration branch.
