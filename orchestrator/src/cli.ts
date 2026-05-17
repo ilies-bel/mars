@@ -3,6 +3,27 @@ import { readFileSync } from 'node:fs'
 import { resolveContext } from './mastra/context'
 import { MARS_VERSION } from './version'
 
+// Silently swallow broken-pipe ('EPIPE') errors on stdout/stderr.
+//
+// When mars output is piped to a reader that closes early (e.g.
+// `mars adr list | head -1` or `... | grep -qi merge`), Node's
+// default unhandled-error behaviour prints a `write EPIPE` stack
+// trace to stderr and exits non-zero, masking the real verdict.
+//
+// We absorb EPIPE on both standard streams without forcing any
+// particular exit code: the rest of the program runs to its natural
+// completion and its real success/failure status reaches the caller.
+// Subsequent writes after the pipe closes will continue to emit
+// 'error' events, which this same handler will silently consume.
+const swallowEpipe = (err: NodeJS.ErrnoException): void => {
+  if (err.code === 'EPIPE') return
+  // Non-EPIPE write errors on the standard streams are rare. Re-emitting
+  // them would itself crash the process via 'Unhandled error event',
+  // which is exactly what this handler exists to avoid. Drop them.
+}
+process.stdout.on('error', swallowEpipe)
+process.stderr.on('error', swallowEpipe)
+
 interface ParsedArgs {
   repo?: string
   flags: Record<string, string>
