@@ -24,3 +24,6 @@ dist/
 # a leak (e.g. sync-claude-templates copying .claude/ into the template tree)
 # can never dirty the working tree.
 scheduled_tasks.lock
+
+# Claude Code agent worktrees — live runtime artifacts, never tracked.
+.claude/worktrees/
