@@ -137,6 +137,23 @@ doesn't strand work.
   paths, or `mars --repo <root> …`. If a one-off subshell is unavoidable,
   spell it `(cd <abs-path> && …)` so the parent shell never moves.
 
+## Installation
+
+There are two install routes, for two different audiences:
+
+- **Prod consumers** install the `mars` CLI with a one-liner
+  curl-pipe-bash bootstrap — `curl -sSL
+  https://github.com/<org>/mars-framework/releases/latest/download/get-mars.sh
+  | bash`. It detects OS/arch, downloads the matching prebuilt binary
+  from the latest GitHub Release, verifies its sha256, and drops `mars`
+  onto PATH. This is the route to point users at; it needs no clone and
+  no dev toolchain.
+- **Dev consumers** run `install.sh` from a clone of this repo. It does
+  *not* produce a compiled Bun binary — it writes a small tsx wrapper
+  that runs the CLI from source and symlinks that tsx wrapper onto PATH,
+  so source edits go live immediately. This is a dev-only flow; prod
+  consumers should use the bootstrap above instead.
+
 ## Loose ends
 
 Enqueue the moment you spot one — **one `mars task add` per item**, no
