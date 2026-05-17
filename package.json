@@ -1,6 +1,6 @@
 {
 	"scripts": {
-		"validate-manifest": "bun run scripts/validate-manifest.ts",
+		"validate-manifest": "node scripts/check-manifest.mjs",
 		"knip": "knip --no-progress --no-exit-code"
 	},
 	"dependencies": {
