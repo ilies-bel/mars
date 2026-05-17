@@ -175,6 +175,108 @@ const parseSlicerOutput = (
 ): z.infer<typeof slicerOutputSchema> =>
   slicerOutputSchema.parse(parseClaudeJsonResult(claudeStdout))
 
+/**
+ * Schema-drop / breaking-shape signal in a slice title or whatToBuild.
+ * Keyed to vocabulary already used by the slicer for this case ("Drop
+ * <ident> column from <db> schema (hard cut, no migration)") rather
+ * than inferred semantics — see the matching tests in
+ * __tests__/slice-workflow.test.ts for the canonical shapes.
+ */
+const SCHEMA_DROP_PATTERNS: readonly RegExp[] = [
+  /\bdrop\b[^.\n]*\b(column|schema|table|field)\b/i,
+  /\bhard\s+cut\b/i,
+]
+
+const sliceText = (s: { title: string; whatToBuild: string }): string =>
+  `${s.title}\n${s.whatToBuild}`
+
+const isSchemaDropSlice = (s: {
+  title: string
+  whatToBuild: string
+}): boolean => {
+  const hay = sliceText(s)
+  return SCHEMA_DROP_PATTERNS.some((p) => p.test(hay))
+}
+
+/**
+ * Extract snake_case identifiers (one or more underscore-joined lowercase
+ * segments) from a slice's title/whatToBuild. These are the textual
+ * stand-ins for column/field names the slicer used when describing the
+ * drop — e.g. `total_cost_usd`. Identifiers without an underscore are
+ * intentionally ignored: bare words like `tasks` or `queue` are too
+ * generic and would over-match other slices.
+ */
+const extractSchemaIdentifiers = (text: string): string[] => {
+  const matches = text.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? []
+  return Array.from(new Set(matches))
+}
+
+const sliceMentions = (
+  s: { title: string; whatToBuild: string },
+  ident: string,
+): boolean => new RegExp(`\\b${ident}\\b`).test(sliceText(s))
+
+/**
+ * Post-process the slicer's output so a schema-drop / breaking-shape
+ * slice is forced to wait on every consumer-update slice in the same
+ * PRD that mentions the dropped identifier.
+ *
+ * Rationale (concrete failure that motivated this): PRD
+ * 1b7498f6-remove-all-usd-cost-usd-mentions-from-th sliced into a
+ * "Drop total_cost_usd column" slice plus three "Remove total_cost_usd
+ * from <consumer>" slices. The slicer LLM emitted ZERO blocker edges,
+ * so the schema-drop slice dispatched first and burned its full retry
+ * budget on `SQLITE_ERROR: no such column: s.total_cost_usd` inside
+ * consumer tests that still read the column. This pass injects the
+ * edges the LLM forgot, from the textual signal already in the slice
+ * titles (no new heuristics — the language is there). The injection
+ * is idempotent, preserves any blockedBy the slicer declared, skips
+ * other schema-drop slices to avoid drop↔drop cycles, and skips
+ * candidates that already declare the drop as their upstream so the
+ * tree stays acyclic.
+ *
+ * Mutates `slices` in place; exported for unit testing.
+ */
+export const injectSchemaDropBlockers = (
+  slices: Array<{
+    title: string
+    whatToBuild: string
+    blockedBy: number[]
+  }>,
+): void => {
+  const schemaDropIndices: number[] = []
+  for (let i = 0; i < slices.length; i += 1) {
+    if (isSchemaDropSlice(slices[i])) schemaDropIndices.push(i)
+  }
+  if (schemaDropIndices.length === 0) return
+
+  for (const dropIdx of schemaDropIndices) {
+    const drop = slices[dropIdx]
+    const idents = extractSchemaIdentifiers(sliceText(drop))
+    if (idents.length === 0) continue
+
+    const dropOneBased = dropIdx + 1
+    const merged = new Set<number>(drop.blockedBy)
+    for (let j = 0; j < slices.length; j += 1) {
+      if (j === dropIdx) continue
+      const cand = slices[j]
+      // Only consumer (non-drop) slices are valid blockers — skipping
+      // other drops also avoids drop↔drop cycles if a PRD ever splits a
+      // multi-column drop.
+      if (isSchemaDropSlice(cand)) continue
+      // Cycle guard: if the candidate already declares this drop as a
+      // blocker (an inverted slicer ordering), don't add the reverse
+      // edge.
+      if (cand.blockedBy.includes(dropOneBased)) continue
+      // Textual link: candidate must mention at least one snake_case
+      // identifier the drop names.
+      if (!idents.some((ident) => sliceMentions(cand, ident))) continue
+      merged.add(j + 1)
+    }
+    drop.blockedBy = Array.from(merged).sort((a, b) => a - b)
+  }
+}
+
 const composeTaskPrompt = (
   ideaTitle: string,
   ideaId: string,
@@ -243,6 +345,13 @@ const generateStep = createStep({
     }
 
     const parsed = parseSlicerOutput(r.stdout)
+    // Repair: the slicer LLM routinely forgets to wire schema-drop ↔
+    // consumer-update edges, sending a "Drop <col>" slice to dispatch
+    // before the slices that remove reads of <col> land. Inject those
+    // edges here from the textual signal already in slice titles, before
+    // the validation loop runs (the injected indices are always in
+    // range, so validation still passes).
+    injectSchemaDropBlockers(parsed.slices)
     const total = parsed.slices.length
 
     // Validate dependency indices before any DB writes.
