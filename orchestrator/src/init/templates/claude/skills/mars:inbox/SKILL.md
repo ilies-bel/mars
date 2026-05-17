@@ -1,14 +1,19 @@
 ---
 name: mars:inbox
-description: Show the Mars inbox grouped by priority and category, then resolve one item at the user's direction. Use when the user says "mars inbox", "show my inbox", "what's in the inbox", or invokes `/mars:inbox`.
+description: Show Mars inbox items only (drafts are excluded) and resolve one item at the user's direction. If the inbox is empty, point the user at `/mars:drafts` and stop. Use when the user says "mars inbox", "show my inbox", "what's in the inbox", or invokes `/mars:inbox`.
 ---
 
 # Mars: inbox router
 
-You are the Mars **inbox router**. Your job is to surface open inbox
-items, let the user pick one, and dispatch the appropriate action
-(`ack` / `resolve` / `dismiss`). You do **not** investigate or fix the
-underlying issue — that's the user's call after they read the item.
+You are the Mars **inbox router**. Your job is strictly inbox items —
+listing them, letting the user pick one, and dispatching the chosen
+terminal action (`ack` / `resolve` / `dismiss`). You do **not** show
+drafts, shape drafts, or investigate the underlying issue.
+
+Drafts live in their own skill: `/mars:drafts`. If a draft surfaces in
+this skill (via the id-redirect path in Step 1a, or as a row in the raw
+`mars inbox list` output in Step 2), point the user at `/mars:drafts`
+and stop.
 
 # Step 1 — Resolve the target
 
@@ -24,12 +29,13 @@ Run `mars inbox show <argument>`:
   sections. The user needs the raw content to decide. Then go to
   Step 3 (skip listing).
 - **Draft redirect** (`mars inbox show` exits 1 with "is a draft idea,
-  not an inbox item …") → the id belongs to a draft, which `mars inbox
-  list` surfaces but doesn't own. Skip the listing (Step 2). Run `mars
-  idea show <id>` and **print its full output verbatim** in a fenced
-  block — no summarising, no paraphrasing — exactly as the inbox-item
-  Hit path does. Only after the details are printed, offer the
-  draft-side actions per Step 3b.
+  not an inbox item …") → the id belongs to a draft. This skill does
+  not handle drafts. Print one line:
+
+  > `<id> is a draft idea. Use /mars:drafts <id> to view or refine it.`
+
+  Then stop. Do not call `mars idea show`, do not offer draft actions,
+  do not fall through to listing.
 - **No hit** → tell the user the id didn't match and stop. Do not
   fall through to listing — the user named something specific.
 
@@ -42,22 +48,29 @@ Default state when no argument is given is `open`.
 
 Run `mars inbox list open` and present the result per Step 2.
 
-# Step 2 — Present the list
+# Step 2 — Present the list (inbox rows only)
 
-Print the items directly to the user — **no `AskUserQuestion`
-menu**. The CLI returns one row per item, and **drafts surface
-alongside inbox rows** for `state=open|all` (look for
-`kind='draft(<source>)'` and priority shown as `-`). Group and order
-them for skim-ability:
+Run the listing command from 1b/1c, then **drop every row whose `kind`
+column starts with `draft(`** before rendering. The CLI mixes drafts
+into `inbox list` output for state=`open|all|dismissed`; this skill
+does not surface them.
 
-1. **Inbox rows first**, grouped by priority (high → normal → low).
-   Within a priority, order by `seen_count` descending (recurring
-   pain first), then most-recent `last_seen_at`.
-2. **Drafts last**, in a separate section. Order by `createdAt` (FIFO,
-   oldest first) so stale shaping work doesn't get buried.
-3. For each row show: 8-hex id, priority (or `draft`), seen_count
-   (`×N` only when N > 1), kind summary, message. Truncate the message
-   at ~90 chars if needed.
+If after filtering there are **no inbox rows left**, print exactly one
+line and stop:
+
+> `Inbox is empty. Try /mars:drafts to refine a draft idea.`
+
+Do not list drafts, do not offer a menu, do not run any other command.
+
+Otherwise, print the remaining inbox rows directly to the user — **no
+`AskUserQuestion` menu**. Group and order them for skim-ability:
+
+1. Grouped by priority (high → normal → low).
+2. Within a priority, order by `seen_count` descending (recurring pain
+   first), then most-recent `last_seen_at`.
+3. For each row show: 8-hex id, priority, seen_count (`×N` only when
+   N > 1), kind summary, message. Truncate the message at ~90 chars
+   if needed.
 
 Render the items as a **GitHub-flavored markdown table using exactly
 this template every time** — same columns, same order, same headers,
@@ -69,31 +82,21 @@ there are:
 | -------- | ------ | ---- | ---------------------- | ---------------------------------------- |
 | 1a2b3c4d | high   | ×3   | recovery-failed(merge) | Fast-forward into main rejected; …       |
 | 9f8e7d6c | normal |      | stale-worktree         | Worktree for task/55 has no live run     |
-| 4d5e6f7a | draft  |      | draft(reflection)      | Consider caching the slicer's vocab read |
 ```
 
 Column rules, applied identically on every invocation:
 
 - **Id** — 8-hex prefix.
-- **Pri** — `high` / `normal` / `low` for inbox rows; `draft` for
-  drafts. Never blank for a real row.
+- **Pri** — `high` / `normal` / `low`. Never blank.
 - **Seen** — `×N` only when N > 1; otherwise leave the cell empty.
 - **Kind** — the kind summary (with its `(...)` qualifier if present).
 - **Message** — truncated at ~90 chars.
-
-Keep the priority and draft grouping from rules 1–2 by emitting the
-rows in that order *within the single table* (high → normal → low
-inbox rows, then drafts). Do not split into multiple tables and do not
-add or reorder columns. If a section has no rows, simply omit those
-rows — the table and its header still render.
 
 If items naturally cluster by `kind` prefix (e.g. many
 `recovery-failed(...)` or `stale-worktree(...)` rows), collapse the
 cluster into one summary line **below the table** (not as a table row):
 
 > `… plus 12 more stale-worktree items (use mars inbox list to expand)`
-
-If the list is empty, say so in one line and stop.
 
 After printing, **stop and wait**. Do not ask a follow-up question.
 The user's next message is expected to be one of:
@@ -103,11 +106,9 @@ The user's next message is expected to be one of:
 - Free text describing what they want to do next → handle inline; this
   skill's contract ends at "user picked an item" or "user moved on".
 
-# Step 3 — Act on a single item
+# Step 3 — Act on a single inbox item
 
-## 3a — Inbox item
-
-When the user has resolved a specific inbox item (Step 1a or by
+When the user has resolved a specific inbox item (Step 1a hit, or by
 replying with an id after Step 2), you've already printed `mars inbox
 show <id>`. Now offer the three terminal actions via **one**
 `AskUserQuestion`:
@@ -127,27 +128,9 @@ show <id>`. Now offer the three terminal actions via **one**
 Run the chosen verb via Bash; print whatever the CLI reports
 verbatim. Stop after the dispatch.
 
-## 3b — Draft idea
-
-The inbox list surfaces drafts but doesn't own their lifecycle. The
-`mars idea show <id>` output MUST already have been printed verbatim
-in this turn before this menu is shown; if it has not been printed
-yet, print it first in a fenced block — no summarising, no
-paraphrasing — then offer the draft-side actions via **one**
-`AskUserQuestion`:
-
-- **Grill** — invoke the `mars:grill` skill on `<id>` to shape it
-  into a PRD.
-- **Promote** — `mars idea promote <id>` (idea must already be
-  shaped). Slicing creates the underlying tasks.
-- **Reject** — `mars idea reject <id>` (flips status to dismissed).
-- **Delete** — `mars idea delete <id>` (hard delete; for noise).
-- **Skip** — do nothing and stop.
-
-Stop after dispatch.
-
 # What you do NOT do
 
+- Do not show, list, or act on drafts. Drafts go to `/mars:drafts`.
 - Do not investigate the underlying issue. The inbox item already
   contains the investigation; the user reads it and decides.
 - Do not call `mars inbox raise`. That's for self-heal and dispatched
@@ -156,9 +139,7 @@ Stop after dispatch.
   If the user wants to clear a cluster, they ask explicitly; treat
   each id as a separate Step 3.
 - Do not load `mars list` or other queue surfaces — this skill is
-  inbox-only (drafts already arrive via `mars inbox list`; you only
-  call `mars idea show/promote/reject/delete` on the specific id the
-  user picked).
+  inbox-only.
 
 # Argument
 

@@ -240,30 +240,37 @@ describe('failureExcerpt — verify:test triage excerpt', () => {
     '\nTest Files  1 failed | 200 passed (201)\n     Tests  1 failed | 600 passed (601)'
   const fullOutput = preamble + failureBlock
 
-  it('keeps the failing assertion / FAIL marker, not just the run preamble', () => {
+  it('keeps the failing assertion / FAIL summary tail, not solely the preamble', () => {
     const excerpt = failureExcerpt(fullOutput)
     expect(excerpt).toContain('FAIL src/bar.test.ts')
     expect(excerpt).toContain('AssertionError: expected A to be B')
     expect(excerpt).toContain('1 failed')
-    // The head-only behaviour (slice(0, 500)) would have kept this and
-    // dropped everything above; the tail must NOT start at the preamble.
-    expect(excerpt).not.toContain('synced MARS_VERSION = 0.1.0')
+    // Regression guard (mars-fce65d26): the persisted excerpt must NOT
+    // consist solely of the passing preamble — the failure block is the
+    // whole point of triage.
+    expect(excerpt).not.toBe(preamble)
   })
 
-  it('marks the dropped head so triage knows the excerpt is a tail', () => {
+  it('also retains a small head so early spawn/import crashes survive', () => {
     const excerpt = failureExcerpt(fullOutput)
-    expect(excerpt.startsWith('…(truncated head)…\n')).toBe(true)
+    // The early-crash signal lives at the very top of the run; the
+    // head+tail mitigation must preserve it alongside the failure tail.
+    expect(excerpt).toContain('synced MARS_VERSION = 0.1.0')
+    expect(excerpt).toContain('…[middle elided]…')
   })
 
-  it('returns short output verbatim (no truncation marker)', () => {
+  it('returns short output verbatim (no elision marker)', () => {
     const short = 'FAIL src/x.test.ts\nAssertionError: nope'
     expect(failureExcerpt(short)).toBe(short)
+    expect(failureExcerpt(short)).not.toContain('…[middle elided]…')
   })
 
-  it('caps the excerpt near the configured max (default ~2000 chars)', () => {
+  it('caps the excerpt near head+tail max (default ~3000 chars)', () => {
     const excerpt = failureExcerpt(fullOutput)
-    expect(fullOutput.length).toBeGreaterThan(2000)
-    // truncation marker + at most `max` tail chars
-    expect(excerpt.length).toBeLessThanOrEqual(2000 + '…(truncated head)…\n'.length)
+    expect(fullOutput.length).toBeGreaterThan(2000 + 1000)
+    // head (≤1000) + tail (≤2000) + the elision marker
+    expect(excerpt.length).toBeLessThanOrEqual(
+      1000 + 2000 + '\n…[middle elided]…\n'.length,
+    )
   })
 })
