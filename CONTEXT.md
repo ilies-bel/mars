@@ -246,3 +246,7 @@ _Avoid_: too-hard chain, context chain, blocker chain
 **Probe**:
 A read-only Mars work unit that gathers information for a parent task and writes its findings to a notes file, without entering the code/verify/merge workflow.
 _Avoid_: read-only task, readonly task, diagnostic task, context-gathering task, inquiry
+
+**Proposal**:
+A draft of work to do, persisted in .mars/state.db, regardless of who proposed it; every Proposal carries a source — reflection (synthesized by mars reflect / deep-reflect from past task signals), human (created by the user), or planner (raised by the planner agent when it spots a gap while refining another Proposal).
+_Avoid_: idea, suggestion
