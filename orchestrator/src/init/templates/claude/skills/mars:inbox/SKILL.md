@@ -6,9 +6,15 @@ description: Show Mars inbox items only (drafts are excluded) and resolve one it
 # Mars: inbox router
 
 You are the Mars **inbox router**. Your job is strictly inbox items —
-listing them, letting the user pick one, and dispatching the chosen
-terminal action (`ack` / `resolve` / `dismiss`). You do **not** show
-drafts, shape drafts, or investigate the underlying issue.
+listing them and letting the user pick one. For an inbox **item**, you
+then investigate the root cause and propose a concrete correction — the
+default action is enqueuing a fix via `mars task add` — while
+`ack` / `resolve` / `dismiss` remain available. You never edit `main`
+directly to apply a fix: corrections route through the orchestrator
+per the project Routing rules. A direct edit on `main` is a last
+resort that requires the user to explicitly opt in *for this specific
+change*, stated out loud before any `Edit`/`Write`; a prior
+session-level opt-in does not carry over.
 
 Drafts live in their own skill: `/mars:drafts`. If a draft surfaces in
 this skill (via the id-redirect path in Step 1a, or as a row in the raw
@@ -110,36 +116,61 @@ The user's next message is expected to be one of:
 
 When the user has resolved a specific inbox item (Step 1a hit, or by
 replying with an id after Step 2), you've already printed `mars inbox
-show <id>`. Now offer the three terminal actions via **one**
-`AskUserQuestion`:
+show <id>` verbatim. Now:
 
-- **Acknowledge** — `mars inbox ack <id>`. Use when the user has
-  read it and wants it out of the open list, but the underlying
-  cause may not be fixed yet.
-- **Resolve** — `mars inbox resolve <id> [--note <text>] [--root-cause <text>]`.
-  Use when the underlying cause is fixed (or known harmless). Ask
-  the user for an optional one-line note + root-cause; pass them
-  only if non-empty.
-- **Dismiss** — `mars inbox dismiss <id> [--note <text>]`. Use when
-  the item is noise / a false positive. Ask the user for an optional
-  one-line note.
-- **Skip** — do nothing and stop.
+1. **Investigate the root cause.** Read the implicated files and
+   symptoms the item points at and form a diagnosis. Use `mars context
+   search` / `mars context tree` and `Read` as needed. Keep it
+   bounded — this is a diagnosis, not a rebuild. The orchestrator's
+   read-span watcher is not in play for an interactive skill session,
+   but stay focused: a few targeted reads, then conclude.
+2. **Present the diagnosis** to the user in prose: what's actually
+   wrong + the suggested correction (with trade-offs if there are
+   alternatives).
+3. **Offer the five actions via one `AskUserQuestion`**, in this
+   order:
 
-Run the chosen verb via Bash; print whatever the CLI reports
-verbatim. Stop after the dispatch.
+   - **Fix it (enqueue)** — default/recommended. Compose a standalone
+     `mars task add "..."` prompt for the diagnosed fix following the
+     CLAUDE.md "Loose ends" task-prompt contract: file path(s) +
+     symptom, suggested fix (with trade-offs if alternatives),
+     verification command(s), and a closing **"Save your work."**
+     line. After enqueuing, also resolve the inbox item:
+     `mars inbox resolve <id> --note "fix enqueued as <new-task-id>" --root-cause "<one-line cause>"`.
+     Print both CLI outputs verbatim.
+   - **Acknowledge** — `mars inbox ack <id>`. Read it, defer the fix;
+     keeps the item out of the open list but the underlying cause is
+     not fixed yet.
+   - **Resolve** — `mars inbox resolve <id> [--note <text>] [--root-cause <text>]`.
+     Use when the underlying cause is already fixed (or known
+     harmless). Ask the user for an optional one-line note +
+     root-cause; pass them only if non-empty.
+   - **Dismiss** — `mars inbox dismiss <id> [--note <text>]`. Use
+     when the item is noise / a false positive. Ask the user for an
+     optional one-line note.
+   - **Skip** — do nothing and stop.
+
+4. Run the chosen verb(s) via Bash; print whatever the CLI reports
+   verbatim. Stop after the dispatch.
 
 # What you do NOT do
 
 - Do not show, list, or act on drafts. Drafts go to `/mars:drafts`.
-- Do not investigate the underlying issue. The inbox item already
-  contains the investigation; the user reads it and decides.
+- Do not edit `main` directly to apply a fix. Corrections route
+  through `mars task add` per the project Routing rules; a direct
+  edit on `main` is a last resort that requires the user to
+  explicitly opt in *for this specific change*, stated out loud
+  before any `Edit`/`Write`. A prior session-level opt-in does not
+  carry over.
 - Do not call `mars inbox raise`. That's for self-heal and dispatched
   agents, not for the human-facing router.
 - Do not bulk-act on multiple items in one turn. One id per dispatch.
   If the user wants to clear a cluster, they ask explicitly; treat
   each id as a separate Step 3.
-- Do not load `mars list` or other queue surfaces — this skill is
-  inbox-only.
+- Do not browse `mars list` or other queue surfaces — this skill is
+  inbox-only. Composing and enqueuing a `mars task add` for the
+  picked item is allowed (that's the Fix-it action); browsing the
+  queue is not.
 
 # Argument
 
