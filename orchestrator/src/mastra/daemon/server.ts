@@ -595,9 +595,20 @@ export const startDaemon = async (
   })
 
   // Mirror internal-bus signals onto the daemon's local bus so existing
-  // subscribers (logs, future UI/CLI bridges) see a unified stream. The
-  // retry-on-unblock effect is already handled by handleUpdate's
-  // onBlockerTaskCompleted path — these events are purely observational.
+  // subscribers (logs, future UI/CLI bridges) see a unified stream.
+  //
+  // 'task.blocked' is purely observational. 'task.unblocked' is NOT: it is
+  // the dispatch trigger for unblocks that arrive via updateTask() from
+  // outside handleUpdate. The implement workflow marks a task done with a
+  // direct updateTask(id, { status: 'done' }) (implement-workflow.ts:970,
+  // 1102), which auto-promotes its dependents in the DB and emits
+  // 'task.unblocked' on the internal bus (blocker-resolution.ts), but never
+  // routes through handleUpdate — so without this handler the freshly
+  // queued dependent never enters pendingImplement and only gets picked up
+  // on the next daemon restart's reconcile(). This path and handleUpdate's
+  // own task.queued emit are complementary: handleUpdate covers ops the
+  // daemon routes through itself; this mirror covers ops that go straight
+  // through updateTask.
   internalBus().on('task.blocked', (e) => {
     log(
       `[blocked] ${e.taskId} signature=${e.failureSignature} step=${e.failingStep} fix=${e.fixTaskId ?? '(none)'}`,
@@ -607,6 +618,10 @@ export const startDaemon = async (
   internalBus().on('task.unblocked', (e) => {
     log(`[unblocked] ${e.taskId} via blocker ${e.blockerTaskId}`)
     bus.emit('task.unblocked', e)
+    if (!acceptingWork) return
+    if (inFlight.has(e.taskId)) return
+    pendingImplement.add(e.taskId)
+    void drain()
   })
 
   // ── Wrappers around queue ops that emit the right events ──────────────────
