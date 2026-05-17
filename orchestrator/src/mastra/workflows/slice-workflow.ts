@@ -263,11 +263,22 @@ const generateStep = createStep({
     const queueClient = getQueueClient()
     const ideasClient = getProposalsClient()
     const taskIds: string[] = []
+    // Tracks whether Phase 4 successfully flipped the idea row to 'sliced'.
+    // The catch block uses this to compensate (revert to 'prd-ready') when
+    // a failure after the flip would otherwise strand the idea as 'sliced'
+    // with no surviving tasks — wedging it permanently, since the
+    // precondition above refuses to re-slice anything that is not
+    // 'prd-ready' and the daemon's auto-slice loop only picks up
+    // 'prd-ready' ideas.
+    let ideaFlipped = false
 
     // The writes span two DBs (queue.db for tasks/blockers, state.db for
     // the idea row), so we cannot wrap them in a single transaction. We
     // do best-effort with cleanup on error: if anything fails after task
-    // inserts begin, delete the inserted slice tasks before re-throwing.
+    // inserts begin, delete the inserted slice tasks AND revert the
+    // idea's status back to 'prd-ready' if we already flipped it, before
+    // re-throwing — so a failed slice is fully undone and the idea is
+    // re-sliceable.
     try {
       // Phase 1: insert each slice as a 'draft' task carrying parent_idea_id
       // and slice_index. We transition status in Phase 3.
@@ -314,12 +325,25 @@ const generateStep = createStep({
           args: [status, now, taskIds[i]],
         })
       }
+      // Defensive: never mark an idea 'sliced' with zero tasks. The
+      // slicerOutputSchema already enforces `slices.min(1)` and Phase 1
+      // pushes every successfully-enqueued task into `taskIds`, so this
+      // branch only fires if some upstream path silently committed an
+      // empty parse result. Throwing here lets the catch block revert
+      // any partial state and surface the bug instead of stranding the
+      // idea as 'sliced' with no work to do.
+      if (taskIds.length === 0) {
+        throw new Error(
+          `slicer produced 0 tasks for idea ${idea.id}; refusing to mark idea 'sliced' with no surviving tasks`,
+        )
+      }
       // Phase 4: flip the idea row to 'sliced' so subsequent invocations
       // refuse to re-slice (the precondition above checks 'prd-ready').
       await ideasClient.execute({
         sql: `UPDATE proposals SET status = 'sliced', updated_at = ? WHERE id = ?`,
         args: [Date.now(), idea.id],
       })
+      ideaFlipped = true
       // Phase 5 (ADR-0015 promote transfer): any task that was blocked by
       // THIS idea via task_proposal_blockers must now be re-pointed at the
       // resulting work, atomically, so no dispatcher tick observes the
@@ -351,6 +375,22 @@ const generateStep = createStep({
           .execute({
             sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
             args: [id, id],
+          })
+          .catch(() => {})
+      }
+      // Compensating revert: the writes that mutate state.db (the idea
+      // status flip in Phase 4) live outside the queue.db cleanup above
+      // and cannot be wrapped in a single transaction with the task
+      // inserts. If we already flipped the idea to 'sliced' before
+      // failing later (e.g. in Phase 5's blocker-transfer), revert it
+      // back to 'prd-ready' so the daemon auto-slice loop and
+      // `mars idea slice` can pick it up again. Best-effort — a revert
+      // failure should not mask the original cause.
+      if (ideaFlipped) {
+        await ideasClient
+          .execute({
+            sql: `UPDATE proposals SET status = 'prd-ready', updated_at = ? WHERE id = ?`,
+            args: [Date.now(), idea.id],
           })
           .catch(() => {})
       }
