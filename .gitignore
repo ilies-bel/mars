@@ -26,4 +26,7 @@ dist/
 scheduled_tasks.lock
 
 # Claude Code agent worktrees — live runtime artifacts, never tracked.
+# Match anywhere (not just root) so a sync-claude-templates leak into the
+# template tree can never dirty the working tree, same as the lock above.
 .claude/worktrees/
+**/templates/claude/worktrees/
