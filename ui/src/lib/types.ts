@@ -24,6 +24,7 @@ export interface UITask {
   retryCount: number
   blockerTaskId: string | null
   createdAt: string
+  updatedAt: string
 }
 
 export interface Snapshot {

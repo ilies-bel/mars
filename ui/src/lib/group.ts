@@ -55,6 +55,7 @@ const toUI = (t: Task): UITask => ({
   retryCount: t.retryCount ?? 0,
   blockerTaskId: t.blockerTaskId ?? null,
   createdAt: t.createdAt,
+  updatedAt: t.updatedAt,
 })
 
 export const groupTasks = (tasks: Task[]): Snapshot => {
@@ -75,5 +76,10 @@ export const groupTasks = (tasks: Task[]): Snapshot => {
     else if (key === 'done') done++
     else todo++
   }
+  const byUpdatedDesc = (a: UITask, b: UITask): number =>
+    b.updatedAt.localeCompare(a.updatedAt)
+  columns.backlog.sort(byUpdatedDesc)
+  columns.in_progress.sort(byUpdatedDesc)
+  columns.done.sort(byUpdatedDesc)
   return { columns, counts: { inProgress, todo, done } }
 }
