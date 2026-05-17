@@ -9,6 +9,7 @@ import {
   slicerOutputSchema,
   sliceFilesForPersistence,
   injectSchemaDropBlockers,
+  composeTaskPrompt,
 } from '../slice-workflow'
 
 describe('slicing brief: structured-write constraint', () => {
@@ -782,6 +783,74 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
     expect(
       (parserRow.rows[0] as unknown as { status: string }).status,
     ).toBe('queued')
+  })
+})
+
+describe('composeTaskPrompt: inlines the parent PRD so no DB lookup is needed', () => {
+  // Dispatched coders run from .mars/worktrees/<id>/ where `mars` walks up
+  // from CWD and binds to the worktree's own (empty) .mars/. A bare
+  // `mars idea show <id>` therefore returns 'not found' and silently
+  // strands the implementor. The slice prompt MUST inline the PRD body so
+  // the implementor never has to look it up. Regression pin for the
+  // mars-45d9abd8 too_hard arc.
+  const sampleIdea = {
+    id: 'idea-xyz',
+    title: 'Inline the PRD into slice prompts',
+    problem: 'Coders cannot read the PRD from a worktree.',
+    solution: 'Inline title/solution/user stories/notes at build time.',
+    outOfScope: 'Changing how the ideas DB lookup resolves repos.',
+    notes: 'Observed in task mars-45d9abd8.',
+    userStories: [
+      'As a dispatched coder I have the PRD body in my brief.',
+      'As an orchestrator author I do not plumb --repo through prompts.',
+    ],
+  }
+  const sampleSlice = {
+    title: 'Inline PRD body',
+    type: 'AFK' as const,
+    whatToBuild: 'Inline the PRD fields into the slice prompt.',
+    acceptanceCriteria: ['prompt contains the PRD body'],
+    blockedBy: [] as number[],
+    modifies: [] as string[],
+    creates: [] as string[],
+    verifyCmd: null,
+    taskType: 'auto' as const,
+  }
+
+  it('inlines title, problem, solution, user stories, out-of-scope, and notes', () => {
+    const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
+    expect(prompt).toContain(sampleIdea.title)
+    expect(prompt).toContain(sampleIdea.problem)
+    expect(prompt).toContain(sampleIdea.solution)
+    expect(prompt).toContain(sampleIdea.outOfScope)
+    expect(prompt).toContain(sampleIdea.notes)
+    for (const story of sampleIdea.userStories) {
+      expect(prompt).toContain(story)
+    }
+  })
+
+  it('does NOT instruct the implementor to run `mars idea show` (worktree DB is empty)', () => {
+    const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
+    // Either form would silently fail from a worktree CWD; both are banned.
+    expect(prompt).not.toMatch(/mars idea show/i)
+    expect(prompt).not.toMatch(/mars\s+--repo\s+\S+\s+idea\s+show/i)
+  })
+
+  it('renders an idea with empty optional fields without leaking `undefined`', () => {
+    const minimal = {
+      id: 'idea-min',
+      title: 'Minimal PRD',
+      problem: '',
+      solution: '',
+      outOfScope: '',
+      notes: '',
+      userStories: [] as string[],
+    }
+    const prompt = composeTaskPrompt(minimal, sampleSlice, 1, 1)
+    expect(prompt).not.toContain('undefined')
+    // Empty fields render as a clear placeholder rather than blank.
+    expect(prompt).toContain('(not specified)')
+    expect(prompt).toContain('(none)')
   })
 })
 
