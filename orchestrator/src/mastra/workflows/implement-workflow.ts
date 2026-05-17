@@ -991,6 +991,16 @@ const mergeStep = createStep({
         integrationBranch: inputData.integrationBranch,
         taskBranch: inputData.branch,
       })
+      if (targetStatus.kind === 'needs-rebase') {
+        // Diverged / behind integration — recoverable, NOT a failure.
+        // mergeBranch Step 1 rebases the task branch onto integration
+        // (escalating to the vcs-supervisor on conflict) before the
+        // --ff-only merge. Parking here is the bug that dead-looped every
+        // lapped branch through the retry budget. Fall through to merge.
+        console.log(
+          `[merge:preflight] task ${inputData.taskId} ${targetStatus.statusOutput}; proceeding to rebase-before-ff`,
+        )
+      }
       if (targetStatus.kind === 'dirty') {
         const errorMsg = `merge target has uncommitted changes; cannot fast-forward into ${inputData.integrationBranch}`
         await updateTask(inputData.taskId, {
