@@ -45,4 +45,21 @@ export const fetchAgents = async (): Promise<Agent[]> => {
 
 export const eventsUrl = (): string => `${BASE}/events`
 
+export const dismissTodoItem = async (
+  id: string,
+  kind: 'draft' | 'stale',
+): Promise<void> => {
+  const r = await fetch(`${BASE}/api/todo/dismiss`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, kind }),
+  })
+  if (!r.ok) {
+    const text = await r.text().catch(() => '')
+    throw new Error(
+      `POST /api/todo/dismiss → ${r.status}${text ? `: ${text}` : ''}`,
+    )
+  }
+}
+
 export type { Agent, StaleWorktree, TodoPayload } from './schemas'

@@ -95,7 +95,7 @@ export const startServer = async (
           status: 204,
           headers: {
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type',
           },
         })
@@ -146,8 +146,30 @@ export const startServer = async (
         try {
           const ideasExist = await stateDb.ideasTableExists()
           const drafts = ideasExist ? await stateDb.listDraftFeatures() : []
-          const staleWorktrees = await listStaleWorktrees(db, ctx.repoRoot)
+          const dismissedIds = await stateDb.listDismissedStaleWorktreeIds()
+          const staleWorktrees = await listStaleWorktrees(db, ctx.repoRoot, dismissedIds)
           return jsonResponse(200, { drafts, staleWorktrees })
+        } catch (err) {
+          return jsonResponse(500, { error: (err as Error).message })
+        }
+      }
+
+      if (path === '/api/todo/dismiss' && req.method === 'POST') {
+        try {
+          const body = await req.json() as { id?: unknown; kind?: unknown }
+          const { id, kind } = body
+          if (!id || typeof id !== 'string') {
+            return jsonResponse(400, { error: 'id is required and must be a string' })
+          }
+          if (kind !== 'draft' && kind !== 'stale') {
+            return jsonResponse(400, { error: 'kind must be "draft" or "stale"' })
+          }
+          if (kind === 'draft') {
+            await stateDb.dismissDraftFeature(id)
+          } else {
+            await stateDb.dismissStaleWorktree(id)
+          }
+          return jsonResponse(200, { ok: true })
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }

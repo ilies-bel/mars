@@ -174,6 +174,46 @@ export class StateDb {
     return r.rows.length > 0
   }
 
+  async ensureDismissalsTable(): Promise<void> {
+    await this.client.execute(`
+      CREATE TABLE IF NOT EXISTS stale_worktree_dismissals (
+        task_id TEXT PRIMARY KEY,
+        dismissed_at INTEGER NOT NULL
+      )
+    `)
+  }
+
+  async dismissStaleWorktree(taskId: string): Promise<void> {
+    await this.ensureDismissalsTable()
+    await this.client.execute({
+      sql: `INSERT OR IGNORE INTO stale_worktree_dismissals (task_id, dismissed_at) VALUES (?, ?)`,
+      args: [taskId, Date.now()],
+    })
+  }
+
+  async listDismissedStaleWorktreeIds(): Promise<Set<string>> {
+    try {
+      await this.ensureDismissalsTable()
+      const r = await this.client.execute(
+        `SELECT task_id FROM stale_worktree_dismissals`,
+      )
+      return new Set(
+        r.rows.map((row) => (row as unknown as { task_id: string }).task_id),
+      )
+    } catch {
+      return new Set()
+    }
+  }
+
+  async dismissDraftFeature(id: string): Promise<void> {
+    const exists = await this.ideasTableExists()
+    if (!exists) return
+    await this.client.execute({
+      sql: `UPDATE ideas SET status = 'dismissed', updated_at = ? WHERE id = ? AND status = 'draft'`,
+      args: [Date.now(), id],
+    })
+  }
+
   async listDraftFeatures(): Promise<DraftFeature[]> {
     const cols = await this.client.execute(`PRAGMA table_info(ideas)`)
     const colNames = new Set(

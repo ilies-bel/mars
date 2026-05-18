@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTodo } from '@/hooks/useTodo'
-import type { StaleWorktree } from '@/shared/api'
+import { dismissTodoItem, type StaleWorktree, type TodoPayload } from '@/shared/api'
 import { formatRelativeAgeFromHours } from '@/shared/time'
 import type { DraftFeature } from '@/shared/types'
 
@@ -58,15 +59,21 @@ interface InboxRowProps {
   item: InboxItem
   active: boolean
   onSelect: () => void
+  onDismiss: () => void
 }
 
-const InboxRow = ({ item, active, onSelect }: InboxRowProps) => {
+const InboxRow = ({ item, active, onSelect, onDismiss }: InboxRowProps) => {
   const baseClass = [
     'cursor-pointer border-l-2 px-3 py-2 transition-colors',
     active
       ? 'border-fg bg-iron/20'
       : 'border-transparent hover:bg-iron/10',
   ].join(' ')
+
+  const handleDismiss = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onDismiss()
+  }
 
   if (item.kind === 'draft') {
     const d = item.draft
@@ -83,8 +90,15 @@ const InboxRow = ({ item, active, onSelect }: InboxRowProps) => {
         <div className="mt-1 truncate font-mono text-[12px] text-fg">
           {draftLabel(d)}
         </div>
-        <div className="mt-1 font-mono text-[9px] uppercase text-iron/80">
-          draft · acceptance {d.acceptanceCount}
+        <div className="mt-1 flex items-center justify-between font-mono text-[9px] uppercase text-iron/80">
+          <span>draft · acceptance {d.acceptanceCount}</span>
+          <button
+            type="button"
+            onClick={handleDismiss}
+            className="shrink-0 text-iron/50 transition-colors hover:text-iron"
+          >
+            dismiss
+          </button>
         </div>
       </li>
     )
@@ -104,8 +118,15 @@ const InboxRow = ({ item, active, onSelect }: InboxRowProps) => {
       <div className="mt-1 truncate font-mono text-[12px] text-fg">
         Stale worktree
       </div>
-      <div className="mt-1 font-mono text-[9px] uppercase text-iron/80">
-        stale · {w.status}
+      <div className="mt-1 flex items-center justify-between font-mono text-[9px] uppercase text-iron/80">
+        <span>stale · {w.status}</span>
+        <button
+          type="button"
+          onClick={handleDismiss}
+          className="shrink-0 text-iron/50 transition-colors hover:text-iron"
+        >
+          dismiss
+        </button>
       </div>
     </li>
   )
@@ -258,6 +279,36 @@ const StaleDetail = ({ worktree }: StaleDetailProps) => (
 
 export const TodoPage = () => {
   const { drafts, staleWorktrees, error } = useTodo()
+  const queryClient = useQueryClient()
+
+  const dismissMutation = useMutation({
+    mutationFn: ({ id, kind }: { id: string; kind: 'draft' | 'stale' }) =>
+      dismissTodoItem(id, kind),
+    onMutate: async ({ id, kind }) => {
+      await queryClient.cancelQueries({ queryKey: ['todo'] })
+      const prev = queryClient.getQueryData<TodoPayload>(['todo'])
+      if (prev) {
+        queryClient.setQueryData<TodoPayload>(['todo'], {
+          ...prev,
+          drafts:
+            kind === 'draft'
+              ? prev.drafts.filter((d) => d.id !== id)
+              : prev.drafts,
+          staleWorktrees:
+            kind === 'stale'
+              ? prev.staleWorktrees.filter((w) => w.taskId !== id)
+              : prev.staleWorktrees,
+        })
+      }
+      return { prev }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData<TodoPayload>(['todo'], ctx.prev)
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['todo'] })
+    },
+  })
 
   const items = useMemo<InboxItem[]>(() => {
     const draftItems: InboxItem[] = drafts.map((d) => ({
@@ -369,6 +420,12 @@ export const TodoPage = () => {
                         item={item}
                         active={itemKey(item) === selectedKey}
                         onSelect={() => setSelectedKey(itemKey(item))}
+                        onDismiss={() =>
+                          dismissMutation.mutate({
+                            id: item.id,
+                            kind: item.kind,
+                          })
+                        }
                       />
                     ))}
                   </ul>
