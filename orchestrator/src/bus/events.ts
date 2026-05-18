@@ -30,6 +30,32 @@ export const EventMap = {
     taskId: z.string(),
     blockerTaskId: z.string(),
   }),
+  'task.queued': z.object({
+    taskId: z.string(),
+  }),
+  'task.added': z.object({
+    taskId: z.string(),
+  }),
+  'task.refine': z.object({
+    taskId: z.string(),
+    refresh: z.boolean(),
+  }),
+  'task.dropped': z.object({
+    taskId: z.string(),
+    dropReason: z.string(),
+  }),
+  'task.priority_changed': z.object({
+    taskId: z.string(),
+    priority: z.number(),
+  }),
+  'task.blocker_added': z.object({
+    taskId: z.string(),
+    blockerTaskId: z.string(),
+  }),
+  'task.blocker_removed': z.object({
+    taskId: z.string(),
+    blockerTaskId: z.string(),
+  }),
 } as const;
 
 /** Union of every registered event type name. */
