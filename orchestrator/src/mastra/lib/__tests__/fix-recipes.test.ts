@@ -378,6 +378,22 @@ describe('fix-recipes', () => {
       // process). Operator fix: confirm no active git process, then mars restart.
       expect(hasRecipe('merge:vcs-supervisor-aborted/index-lock-contention')).toBe(false)
     })
+
+    it('merge:preflight/template-leakage/template-paths-detected has no recipe — task prompt conflict; human must update template on main', () => {
+      // Investigated 2026-05-18 (task mars-77844c1f). Root cause: PRD 208a283c
+      // Slice 3a explicitly instructed the agent to edit
+      // orchestrator/src/init/templates/CLAUDE.md. The template-leakage
+      // preflight categorically blocks ALL orchestrator edits to that subtree
+      // (git.ts: "humans edit it directly on main"). A recipe is wrong because:
+      // (a) any recovery agent hits the same preflight block if it tries to
+      // update the template; (b) a recovery that skips the template edit fails
+      // the task's own verify criteria (the verify rg command checks the
+      // template path). Root cause is a task prompt asking for the impossible
+      // — resolution requires a human to update the template directly on main.
+      // Repro: git diff --name-only ${integrationBranch}..task/mars-77844c1f
+      //        | grep 'orchestrator/src/init/templates/'
+      expect(hasRecipe('merge:preflight/template-leakage/template-paths-detected')).toBe(false)
+    })
   })
 })
 
