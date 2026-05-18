@@ -602,6 +602,22 @@ const setupStep = createStep({
       worktreePath: ref.path,
     })
 
+    // Capture the integration HEAD SHA at setup time so the task row records
+    // which commit the worktree branched from. Non-fatal: a missed capture
+    // (e.g. the branch does not exist yet in a fresh repo) is better than a
+    // failed setup. The column is nullable for exactly this case.
+    try {
+      const { repoRoot } = resolveContext()
+      const { stdout } = await execFileAsync(
+        'git',
+        ['rev-parse', inputData.integrationBranch],
+        { cwd: repoRoot },
+      )
+      await updateTask(inputData.taskId, { integrationHeadSha: stdout.trim() })
+    } catch {
+      // Non-fatal: leave integration_head_sha as null.
+    }
+
     try {
       const summary = await installWorktreeDeps({
         worktreeRoot: ref.path,
