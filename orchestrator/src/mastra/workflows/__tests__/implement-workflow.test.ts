@@ -10,11 +10,13 @@ import {
   WRITER_FOOTER,
   WRITER_SYSTEM_PROMPT,
   BLOCKERS_ABORT_MESSAGE,
+  DIRTY_MAIN_ABORT_MESSAGE,
   DEVIATION_RULES,
   composePrompt,
   detectPostCoderState,
   failureExcerpt,
   isBlockersAbortError,
+  isDirtyMainAbortError,
   isTooHardAbortError,
   resolveWorkerSystemPrompt,
 } from '../implement-workflow'
@@ -370,5 +372,37 @@ describe('isTooHardAbortError / isBlockersAbortError — cause-chain robustness'
     ;(a as { cause?: unknown }).cause = b
     expect(() => isTooHardAbortError(a)).not.toThrow()
     expect(isTooHardAbortError(a)).toBe(false)
+  })
+})
+
+describe('isDirtyMainAbortError', () => {
+  it('matches the bare dirty-main abort sentinel', () => {
+    expect(
+      isDirtyMainAbortError(new Error(DIRTY_MAIN_ABORT_MESSAGE('mars-abc'))),
+    ).toBe(true)
+  })
+
+  it('does not false-positive on unrelated errors', () => {
+    expect(isDirtyMainAbortError(new Error('tsc failed: TS2304'))).toBe(false)
+    expect(isDirtyMainAbortError(new Error('verify command exited 1'))).toBe(false)
+    expect(isDirtyMainAbortError(null)).toBe(false)
+    expect(isDirtyMainAbortError(undefined)).toBe(false)
+  })
+
+  it('matches when Mastra wraps the sentinel on the cause chain', () => {
+    const wrapped = new Error('Step setup-worktree failed', {
+      cause: new Error(DIRTY_MAIN_ABORT_MESSAGE('mars-xyz')),
+    })
+    expect(isDirtyMainAbortError(wrapped)).toBe(true)
+  })
+
+  it('does not match blockers or too-hard sentinels', () => {
+    expect(isDirtyMainAbortError(new Error(BLOCKERS_ABORT_MESSAGE('mars-abc')))).toBe(false)
+    expect(isDirtyMainAbortError(new Error(TOO_HARD_ABORT_MESSAGE('mars-abc')))).toBe(false)
+  })
+
+  it('DIRTY_MAIN_ABORT_MESSAGE contains the task id', () => {
+    const msg = DIRTY_MAIN_ABORT_MESSAGE('mars-test-123')
+    expect(msg).toContain('mars-test-123')
   })
 })
