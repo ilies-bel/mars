@@ -10,11 +10,13 @@ import {
   WRITER_FOOTER,
   WRITER_SYSTEM_PROMPT,
   BLOCKERS_ABORT_MESSAGE,
+  DEVIATION_RULES,
   composePrompt,
   detectPostCoderState,
   failureExcerpt,
   isBlockersAbortError,
   isTooHardAbortError,
+  resolveWorkerSystemPrompt,
 } from '../implement-workflow'
 
 describe('composePrompt — coder default', () => {
@@ -65,6 +67,11 @@ describe('composePrompt — coder default', () => {
     expect(out).toContain('git add')
     expect(out).not.toContain('mars glossary set')
   })
+
+  it('does NOT include the deviation-rules text in the coder task prompt', () => {
+    const out = composePrompt('do the thing', null)
+    expect(out).not.toContain('## Deviation rules')
+  })
 })
 
 describe('composePrompt — writer routing', () => {
@@ -92,6 +99,28 @@ describe('composePrompt — writer routing', () => {
     expect(WRITER_SYSTEM_PROMPT).toContain('mars glossary set')
     expect(WRITER_SYSTEM_PROMPT).toContain('mars glossary remove')
     expect(WRITER_SYSTEM_PROMPT).toContain('mars adr add')
+  })
+
+  it('writer task prompt does NOT contain deviation-rules text', () => {
+    const out = composePrompt('add glossary terms', null, 'writer')
+    expect(out).not.toContain('## Deviation rules')
+  })
+})
+
+describe('resolveWorkerSystemPrompt — deviation rules in coder standing instructions', () => {
+  it('coder standing instructions contain the full deviation-rules text', () => {
+    const prompt = resolveWorkerSystemPrompt('coder')
+    expect(prompt).toContain('## Deviation rules')
+    expect(prompt).toContain('do NOT quit silently')
+  })
+
+  it('writer standing instructions are byte-identical to WRITER_SYSTEM_PROMPT', () => {
+    expect(resolveWorkerSystemPrompt('writer')).toBe(WRITER_SYSTEM_PROMPT)
+  })
+
+  it('DEVIATION_RULES is not injected as a standalone section — it is embedded in CODER_SYSTEM_PROMPT', () => {
+    const coderPrompt = resolveWorkerSystemPrompt('coder')
+    expect(coderPrompt).toContain(DEVIATION_RULES)
   })
 })
 
