@@ -35,9 +35,8 @@ import {
   hasIncompleteBlockers,
   updateTask,
   upsertTranscript,
-  enqueueTask,
-  addBlockers,
 } from '../queue'
+import { raiseInboxItem } from '../lib/inbox'
 import { handleTaskFailureWithFixTask } from '../queue-fix-tasks'
 import { resolveOriginIdForTask } from '../lib/origin'
 
@@ -343,40 +342,6 @@ const formatTrace = (trace: readonly ReadSpanTrace[]): string =>
   trace
     .map((t, i) => `  ${i + 1}. ${t.tool} ${t.target ? `→ ${t.target}` : ''}`)
     .join('\n')
-
-const buildTooHardChildPrompt = (
-  parentTaskId: string,
-  parentPrompt: string,
-  trace: readonly ReadSpanTrace[],
-): string => {
-  // First line names the cause within the ~60 chars `mars list` shows
-  // (cli.ts:1752 renders `prompt.slice(0, 60)`). Keep the
-  // `Context-gathering for <id>` stem verbatim — downstream/log greps
-  // and the failure docs key on that phrase — and only APPEND the
-  // cause. Empty trace / all-blank targets → generic line, no suffix.
-  const cause = summarizeReadCause(trace)
-  const stem = `# Context-gathering for ${parentTaskId}`
-  const titleLine = cause ? `${stem}: stuck reading ${cause}` : stem
-  return [
-    titleLine,
-    '',
-    `The implementor agent for ${parentTaskId} read ${trace.length} files/patterns without taking an action and was aborted with \`${TOO_HARD_PREFIX}\`. The task is now \`blocked\` on this follow-up.`,
-    '',
-    '## What this task must do',
-    '',
-    `Read the parent prompt below, walk the read trail, and either (a) produce a concise note in ${parentTaskId}'s repo describing the missing context the implementor needs, or (b) make the small surgical change that unblocks the implementor (e.g. a missing helper, type, or import).`,
-    '',
-    'If you discover the parent prompt is too broad to act on at all, file a `mars idea add "<scoped follow-up>"` for the smaller pieces and exit. Do NOT attempt to complete the parent task — your scope is unblocking it.',
-    '',
-    '## Parent prompt',
-    '',
-    parentPrompt.trim(),
-    '',
-    '## Read trail before abort',
-    '',
-    formatTrace(trace),
-  ].join('\n')
-}
 
 // Build the "## Worktree orientation" preamble. Disclosing the resolved
 // verify cwd up-front kills the recurring 2-3 read tax we used to see
@@ -818,47 +783,54 @@ const codeStep = createStep({
     await recordSignals(inputData.taskId, 'run-claude-code', usage).catch(() => {
       // signal capture must never fail the task
     })
-    // Too-hard branch: the watcher tripped. Stamp the parent as failed with
-    // a `too_hard` reason, spawn a context-gathering child task as a queued
-    // blocker, and re-block the parent on it. The parent will pick back up
-    // automatically when the child completes (see queue.ts:promoteDraftToQueued).
+    // Too-hard branch: the watcher tripped. Fail the parent task to the
+    // inbox — no child task, no blocker edge. The human decides whether to
+    // restart (`mars restart <id>`) or re-slice the work.
     if (tooHardTrip !== null) {
       const trip: TripInfo = tooHardTrip
-      const childPrompt = buildTooHardChildPrompt(
-        inputData.taskId,
-        inputData.prompt,
-        trip.trace,
-      )
       const errorSummary = `${TOO_HARD_PREFIX}: ${trip.limit} reads without action; trace=${trip.trace.map((t) => t.tool).join('+')}`.slice(0, 1000)
-      try {
-        const child = await enqueueTask(childPrompt, undefined, {
-          skipTriage: true,
-          originId,
-        })
-        await updateTask(inputData.taskId, {
-          status: 'blocked',
-          error: errorSummary,
-          failedPhase: 'code',
-        })
-        await addBlockers(inputData.taskId, [child.id])
-        console.log(
-          `[span] task ${inputData.taskId}: spawned ${child.id} as blocker; parent → blocked`,
-        )
-      } catch (err) {
+      await updateTask(inputData.taskId, {
+        status: 'failed',
+        error: errorSummary,
+        failedPhase: 'code',
+      })
+      const cause = summarizeReadCause(trip.trace)
+      const inboxTitle = cause
+        ? `Coder stalled on ${inputData.taskId}: stuck reading ${cause}`
+        : `Coder stalled on ${inputData.taskId}: no action after ${trip.trace.length} reads`
+      const inboxBody = [
+        `Coder stalled gathering context (${trip.trace.length} reads, no action); restart with \`mars restart ${inputData.taskId}\` or re-slice if the scope was wrong.`,
+        '',
+        '## Read trace',
+        '',
+        formatTrace(trip.trace),
+      ].join('\n')
+      await raiseInboxItem({
+        kind: 'too-hard-abort',
+        category: 'orchestrator',
+        priority: 'high',
+        title: inboxTitle,
+        body: inboxBody,
+        payload: {
+          taskId: inputData.taskId,
+          trace: trip.trace as unknown as Record<string, unknown>[],
+          readCount: trip.trace.length,
+        },
+        context: {},
+        raisedBy: 'implement-workflow',
+        signature: inputData.taskId,
+      }).catch((err) => {
         console.error(
-          `[span] task ${inputData.taskId}: failed to spawn too-hard child:`,
+          `[span] task ${inputData.taskId}: failed to raise inbox item:`,
           err,
         )
-        // Fallback: still stamp failed so the queue doesn't show running.
-        await updateTask(inputData.taskId, {
-          status: 'failed',
-          error: errorSummary,
-          failedPhase: 'code',
-        }).catch(() => {})
-      }
+      })
+      console.log(
+        `[span] task ${inputData.taskId}: too-hard abort; parent → failed, inbox item raised`,
+      )
       // Short-circuit the rest of the workflow. Throwing the sentinel
       // bypasses verify+merge and signals the dispatcher to leave the task
-      // parked in `blocked` instead of routing through the generic
+      // parked in `failed` instead of routing through the generic
       // failure-handler.
       throw new Error(TOO_HARD_ABORT_MESSAGE(inputData.taskId))
     }
