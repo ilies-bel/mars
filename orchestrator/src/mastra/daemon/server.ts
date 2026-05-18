@@ -737,6 +737,37 @@ export const startDaemon = async (
         bus.emit('task.queued', { taskId: id })
       }
       if (after.status === 'done') {
+        // Diagnose Chore completion takes the PRD 06e677fb verdict-driven
+        // branch — read the structured verdict, dispatch exactly one fix
+        // attempt OR raise exactly one inbox item, and re-park the parent
+        // accordingly. The generic on-blocker-completed path is skipped
+        // for diagnose Chores: their job is to redirect the parent's
+        // blocker chain, not to unblock it directly.
+        if (after.kind === 'diagnose') {
+          try {
+            const { runDiagnoseFollowup } = await import(
+              '../lib/diagnose-followup'
+            )
+            const outcome = await runDiagnoseFollowup(id)
+            if (outcome.action === 'fix-dispatched' && outcome.fixTaskId) {
+              log(
+                `[diagnose] chore ${id}: root-cause verdict; dispatched fix ${outcome.fixTaskId}; parent ${outcome.parentTaskId} parked behind it`,
+              )
+              bus.emit('task.queued', { taskId: outcome.fixTaskId })
+            } else if (outcome.action === 'inbox-raised') {
+              log(
+                `[diagnose] chore ${id}: ${outcome.verdictKind} verdict; parent ${outcome.parentTaskId} parked failed, inbox item ${outcome.inboxItemId} raised`,
+              )
+            } else {
+              log(`[diagnose] chore ${id}: no-op (parent ${outcome.parentTaskId})`)
+            }
+          } catch (err) {
+            log(
+              `[diagnose] chore ${id}: follow-up errored: ${(err as Error).message}`,
+            )
+          }
+          return
+        }
         try {
           const blockerResolved = await onBlockerTaskCompleted(id)
           for (const o of blockerResolved.outcomes) {
