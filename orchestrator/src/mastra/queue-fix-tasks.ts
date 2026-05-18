@@ -766,7 +766,7 @@ export const handleTaskFailureWithFixTask = async (
 
   const budget = getRetryBudget()
 
-  if (task.retryCount >= budget) {
+  if (task.retryCount > budget) {
     await markTaskFailed(
       input.taskId,
       `retry_budget_exhausted:${failureSignature}`,

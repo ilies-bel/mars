@@ -263,11 +263,17 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
-  it('fails source task and creates no fix task when retry_count >= MARS_FIX_RETRY_BUDGET', async () => {
+  it('fails source task and creates no fix task when retry_count > MARS_FIX_RETRY_BUDGET (post-recovery failure)', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '0'
     const { q, ft } = await loadModules(repo)
-    process.env.MARS_FIX_RETRY_BUDGET = '0'
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+    // Simulate a prior recovery attempt having already incremented retryCount to 1.
+    // With budget=0, retryCount=1 → 1 > 0 = true → mark failed (budget reached).
+    const now = new Date().toISOString()
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET retry_count = 1, updated_at = ? WHERE id = ?`,
+      args: [now, t.id],
+    })
 
     const r = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
@@ -284,6 +290,34 @@ describe('queue-fix-tasks', () => {
       args: [t.id],
     })
     expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
+  it('first failure with default budget (env unset) and a registered recipe spawns a fix-task, not a failed outcome', async () => {
+    delete process.env.MARS_FIX_RETRY_BUDGET
+    const { q, ft } = await loadModules(repo)
+    // merge:preflight/uncommitted-changes is a real shared recipe built into fix-recipes.ts.
+    // The classifier maps "has uncommitted changes" → merge:preflight/uncommitted-changes.
+    const sig = 'merge:preflight/uncommitted-changes'
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+
+    // First failure: retry_count=0, budget=0 (default). With ">": 0 > 0 = false → recipe path.
+    // Regression guard for the 20-task pile-up where >= short-circuited to 'failed' on first try.
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'merge:preflight',
+      errorOutput: 'merge target /repo has uncommitted changes blocking fast-forward',
+    })
+    expect(r.outcome).toBe('blocked')
+    expect(r.fixTaskId).toBeTruthy()
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('blocked')
+
+    const fixTasks = await q.getClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
+      args: [t.id, sig],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(1)
   })
 
   it('daemon trigger: when a fix task lands done, the source task it blocks transitions back to queued', async () => {
@@ -438,7 +472,7 @@ describe('queue-fix-tasks', () => {
   })
 
   it('drop on retry-budget exhausted removes all task_blockers rows for the task', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '1'
+    process.env.MARS_FIX_RETRY_BUDGET = '0'
     const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('merge into dirty target', undefined, {
       skipTriage: true,
@@ -466,7 +500,7 @@ describe('queue-fix-tasks', () => {
     let reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
 
-    // Second failure: retry_count=1 >= budget=1 -> dropped. The drop must
+    // Second failure: retry_count=1 > budget=0 -> failed. The failure must
     // remove every task_blockers row pointing from this task.
     const second = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
@@ -499,7 +533,7 @@ describe('queue-fix-tasks', () => {
   })
 
   it('raises a task-blocked(<id>) inbox row when retry budget is exhausted, deduped by task id', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '1'
+    process.env.MARS_FIX_RETRY_BUDGET = '0'
     const { q, ft } = await loadModules(repo)
     const inbox = (await import('../inbox')) as unknown as {
       listInboxItems: typeof import('../inbox').listInboxItems
