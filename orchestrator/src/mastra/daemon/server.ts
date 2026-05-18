@@ -1066,16 +1066,87 @@ export const startDaemon = async (
     const queued = await listTasks('queued')
     for (const t of queued) bus.emit('task.queued', { taskId: t.id })
 
-    // Stale in-flight rows: the previous daemon died mid-work. Mark failed
-    // so the user sees them; retry is a manual decision.
-    for (const status of ['running', 'verifying', 'merging'] as const) {
-      const stuck = await listTasks(status)
-      for (const t of stuck) {
-        log(`[reconcile] task ${t.id} was ${status} on prior daemon; marking failed`)
+    // Stale in-flight rows: the previous daemon died mid-work.
+    // Per-status recovery logic:
+    //   running  → mark failed (claude -p child is gone, no recovery possible)
+    //   verifying → auto-resume if worktree intact; else mark failed
+    //   merging  → decide by git state: FF landed → done; else requeue from setup
+
+    const { existsSync: exists } = await import('node:fs')
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const exec = promisify(execFile)
+    const { removeWorktree, isBranchMergedIntoMain } = await import('../lib/git')
+    const { getRepoRoot } = await import('../context')
+
+    const running = await listTasks('running')
+    for (const t of running) {
+      log(`[reconcile] task ${t.id} was running on prior daemon; marking failed`)
+      await updateTask(t.id, {
+        status: 'failed',
+        error: 'daemon restart while task was running',
+      }).catch(() => {})
+    }
+
+    const verifying = await listTasks('verifying')
+    for (const t of verifying) {
+      if (t.branch && t.worktreePath && exists(t.worktreePath)) {
+        log(
+          `[reconcile] task ${t.id} was verifying; worktree intact, re-queuing at verify`,
+        )
+        await updateTask(t.id, {
+          status: 'queued',
+          resumeFrom: 'verify',
+          error: null,
+          failedPhase: null,
+        }).catch(() => {})
+        bus.emit('task.queued', { taskId: t.id })
+      } else {
+        log(
+          `[reconcile] task ${t.id} was verifying; worktree missing, marking failed`,
+        )
         await updateTask(t.id, {
           status: 'failed',
-          error: `daemon restart while task was ${status}`,
+          error: 'daemon restart while task was verifying; worktree missing',
+          failedPhase: 'verify',
         }).catch(() => {})
+      }
+    }
+
+    const merging = await listTasks('merging')
+    for (const t of merging) {
+      const branch = t.branch ?? `task/${t.id}`
+      const landed = await isBranchMergedIntoMain(branch, getRepoRoot()).catch(() => false)
+      if (landed) {
+        log(
+          `[reconcile] task ${t.id} was merging; FF already landed, finalized to done`,
+        )
+        if (t.worktreePath && exists(t.worktreePath)) {
+          await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
+        }
+        await updateTask(t.id, {
+          status: 'done',
+          failedPhase: null,
+          error: null,
+        }).catch(() => {})
+      } else {
+        log(
+          `[reconcile] task ${t.id} was merging; FF not landed, requeued from setup`,
+        )
+        if (t.worktreePath && exists(t.worktreePath)) {
+          await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
+        }
+        await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
+        await updateTask(t.id, {
+          status: 'queued',
+          branch: null,
+          worktreePath: null,
+          claudeSessionId: null,
+          error: null,
+          failedPhase: null,
+          resumeFrom: null,
+        }).catch(() => {})
+        bus.emit('task.queued', { taskId: t.id })
       }
     }
 
