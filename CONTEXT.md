@@ -275,3 +275,7 @@ _Avoid_: inbox row, inbox entry, stuck-task notification
 **Outbox**:
 The single append-only log in .mars/queue.db where every Bus event is durably persisted in the same transaction as its triggering state mutation, and from which all Subscribers pull.
 _Avoid_: event log, event store, event queue, bus table, outbox_events
+
+**Subscriber**:
+A code-declared, named consumer of the Outbox with a durable cursor, a handler, and a bootstrap mode (replay or tail). One Subscriber's cursor is independent of every other's.
+_Avoid_: listener, consumer, handler, bus listener
