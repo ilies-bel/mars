@@ -271,24 +271,49 @@ export const DEVIATION_RULES = [
   '`$TASK_ID` is the id of the task you are executing right now; the orchestrator passes it to you in the brief below.',
 ].join('\n')
 
+// Build the Coder Worker's standing Session instructions for a given
+// read-span limit. The limit is threaded in so the stated budget in the
+// instructions always equals the value the guard actually enforces — there
+// is no second hardcoded number. Call `buildCoderSystemPrompt(resolveReadSpanLimit())`
+// at dispatch time so `MARS_READ_SPAN_LIMIT` overrides are reflected without
+// restarting the daemon.
+//
+// The read-span guard section tells the Coder how many consecutive
+// Read/Grep/Glob calls without an action trigger the advisory log line.
+// Phrasing mirrors the watcher's own invariant: log-only, no abort.
+export const buildCoderSystemPrompt = (readSpanLimit: number): string => {
+  const readSpanGuard = [
+    '## Read-span guard',
+    '',
+    `A watcher observes consecutive Read/Grep/Glob tool calls without an interleaving action-class call (Edit/Write/Bash/NotebookEdit). When your streak first reaches **${readSpanLimit}**, the watcher logs one advisory warning. It does not abort your run or kill the process. Override the threshold with \`MARS_READ_SPAN_LIMIT=<n>\`.`,
+  ].join('\n')
+  return [TDD_WORKER_BRIEF, readSpanGuard, DEVIATION_RULES].join('\n\n')
+}
+
 // Standing Session instructions for the Coder Worker. The test-driven-
-// development operating philosophy and the deviation rules are both passed
-// once, as the Worker's Session-level system prompt, so they are present for
-// the whole Session and never re-sent inside the per-Task prompt. This means
-// the Coder does not re-absorb ~150+ lines of boilerplate at the top of every
-// Task and a retry does not replay it verbatim — keeping the per-task
-// prompt focused on the actual work.
-export const CODER_SYSTEM_PROMPT = [TDD_WORKER_BRIEF, DEVIATION_RULES].join('\n\n')
+// development operating philosophy, the read-span guard budget, and the
+// deviation rules are all passed once, as the Worker's Session-level system
+// prompt, so they are present for the whole Session and never re-sent inside
+// the per-Task prompt. This means the Coder does not re-absorb ~150+ lines
+// of boilerplate at the top of every Task and a retry does not replay it
+// verbatim — keeping the per-task prompt focused on the actual work.
+//
+// This export is computed at module-load time using the current env so it
+// stays usable as a static reference. Production dispatch uses
+// `resolveWorkerSystemPrompt` which re-calls `buildCoderSystemPrompt` at
+// call time so live `MARS_READ_SPAN_LIMIT` overrides take effect immediately.
+export const CODER_SYSTEM_PROMPT = buildCoderSystemPrompt(resolveReadSpanLimit())
 
 // Resolve the standing Session instructions a dispatched Worker is launched
-// with, by routing tag. Coder carries the TDD operating philosophy and
+// with, by routing tag. Coder carries the TDD operating philosophy, the
+// read-span guard budget (dynamic — read from env at call time), and the
 // deviation rules; Writer keeps its structured-write mental model (unchanged).
 // Centralised here so codeStep does not assemble the system prompt inline and
 // the per-tag surface is a single auditable seam.
 export const resolveWorkerSystemPrompt = (
   tag: TaskTag,
 ): string | undefined =>
-  tag === 'writer' ? WRITER_SYSTEM_PROMPT : CODER_SYSTEM_PROMPT
+  tag === 'writer' ? WRITER_SYSTEM_PROMPT : buildCoderSystemPrompt(resolveReadSpanLimit())
 
 const renderSpec = (spec: TaskSpec | null, taskId: string): string | null => {
   if (!spec) return null
