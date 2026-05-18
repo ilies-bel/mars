@@ -254,3 +254,7 @@ _Avoid_: stale-closer, task-done invalidator, terminal sweep
 **task.terminal**:
 A bus event emitted at the single TaskStore status-write chokepoint whenever a task reaches a terminal state (done, dropped, or failed), carrying { taskId, state }. Distinct from task.completed, which fires per workflow run rather than per task-state transition.
 _Avoid_: task.done, terminal event, task-state event
+
+**Step span**:
+A persisted record of one Workflow-instance step's execution (started_at, ended_at, outcome); the steps are setup, code, verify, merge and recovery steps. A Step span whose step is a claude -p execution is a Session and additionally carries a Worker and a Claude session id; non-LLM steps have neither.
+_Avoid_: step record, step run, span, workflow step, phase
