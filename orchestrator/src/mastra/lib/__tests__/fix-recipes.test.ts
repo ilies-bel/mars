@@ -265,6 +265,17 @@ describe('fix-recipes', () => {
       // process). Operator fix: confirm no active git process, then mars restart.
       expect(hasRecipe('merge:crashed/index-lock-contention')).toBe(false)
     })
+
+    it('merge:vcs-supervisor-aborted/index-lock-contention has no recipe — same environmental transient failure via a different code path', () => {
+      // Investigated 2026-05-18 (task mars-6348aec4). Root cause: vcs-supervisor
+      // ran `git merge --ff-only task/mars-6348aec4` and got "Unable to create
+      // .git/index.lock: File exists", causing aborted=true. The task's coding
+      // work was already committed (commit 31933fe on task/mars-6348aec4).
+      // The lock was gone by the time the investigator ran — confirming transient.
+      // A recipe that deletes index.lock is dangerous (may be held by an active
+      // process). Operator fix: confirm no active git process, then mars restart.
+      expect(hasRecipe('merge:vcs-supervisor-aborted/index-lock-contention')).toBe(false)
+    })
   })
 })
 
