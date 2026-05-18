@@ -424,7 +424,7 @@ const buildRecoveryEscalationBody = (input: {
 }): string => {
   return [
     'Do one of these now:',
-    `  - Fix the underlying issue in the worktree, then run 'mars retry ${input.recoveryTaskId}'.`,
+    `  - Fix the underlying issue in the worktree, then run 'mars continue ${input.recoveryTaskId}' to resume on the existing worktree, or 'mars restart ${input.recoveryTaskId}' to wipe and re-run from setup.`,
     `  - Abandon the original task: run 'mars unblock ${input.originTaskId}'.`,
     `Then close this item: 'mars inbox resolve <item-id>'.`,
     '',
@@ -457,7 +457,7 @@ const buildNoRecipeBody = (input: {
 }): string => {
   return [
     `Wait for investigator task ${input.investigatorTaskId} to merge a draft recipe, then do one of these:`,
-    `  - Re-attempt with the new recipe: run 'mars retry ${input.sourceTaskId}'.`,
+    `  - Re-attempt with the new recipe: run 'mars continue ${input.sourceTaskId}' to resume on the existing worktree, or 'mars restart ${input.sourceTaskId}' to wipe and re-run from setup.`,
     `  - Decide the failure is unrecoverable: run 'mars unblock ${input.originTaskId}'.`,
     `Then close this item: 'mars inbox resolve <item-id>'.`,
     '',
@@ -489,7 +489,7 @@ const buildFixFailLoopBody = (input: {
 }): string => {
   return [
     'Do one of these now:',
-    `  - Diagnose the root cause from the source task and its recovery history, then run 'mars retry ${input.sourceTaskId}'.`,
+    `  - Diagnose the root cause from the source task and its recovery history, then run 'mars continue ${input.sourceTaskId}' to resume on the existing worktree, or 'mars restart ${input.sourceTaskId}' to wipe and re-run from setup.`,
     `  - Abandon the source task: run 'mars unblock ${input.sourceTaskId}'.`,
     `Then close this item: 'mars inbox resolve <item-id>'.`,
     '',
@@ -579,7 +579,7 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
     // below. Tracked as a follow-up; see lib/blocker-invariant.ts.
     //
     // Source task: park it in blocked. No task_blockers row — there is
-    // nothing to unblock against. Human resolves via mars retry/unblock.
+    // nothing to unblock against. Human resolves via mars continue/restart/unblock.
     await tx.execute({
       sql: `UPDATE tasks
                SET status = 'blocked',
