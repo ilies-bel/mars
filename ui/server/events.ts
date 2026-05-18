@@ -1,6 +1,6 @@
 import type { Task, TaskDb } from './db.ts'
 
-export type EventKind = 'completed' | 'failed' | 'dropped'
+type EventKind = 'completed' | 'failed' | 'dropped'
 
 export interface TerminalEvent {
   taskId: string
@@ -14,7 +14,7 @@ export interface TerminalEvent {
  * Hard cap on entries returned by the events feed. Keeps responses
  * bounded for situational-awareness UIs that don't paginate yet.
  */
-export const EVENT_FEED_LIMIT = 200
+const EVENT_FEED_LIMIT = 200
 
 const SUMMARY_MAX = 120
 

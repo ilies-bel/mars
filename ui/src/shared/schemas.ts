@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const taskStatusSchema = z.enum([
+const taskStatusSchema = z.enum([
   'draft',
   'queued',
   'running',
@@ -12,9 +12,9 @@ export const taskStatusSchema = z.enum([
   'blocked',
 ])
 
-export const ideaSourceSchema = z.enum(['reflection', 'human', 'planner'])
+const ideaSourceSchema = z.enum(['reflection', 'human', 'planner'])
 
-export const draftFeatureSchema = z.object({
+const draftFeatureSchema = z.object({
   id: z.string(),
   goal: z.string(),
   story: z.string(),
@@ -26,14 +26,14 @@ export const draftFeatureSchema = z.object({
   acceptanceCount: z.number(),
 })
 
-export const taskPlanSchema = z
+const taskPlanSchema = z
   .object({
     functional: z.string(),
     technical: z.string(),
   })
   .nullable()
 
-export const taskSchema = z.object({
+const taskSchema = z.object({
   id: z.string(),
   prompt: z.string(),
   status: taskStatusSchema,
@@ -48,7 +48,7 @@ export const taskSchema = z.object({
   updatedAt: z.string(),
 })
 
-export const staleWorktreeSchema = z.object({
+const staleWorktreeSchema = z.object({
   taskId: z.string(),
   status: z.string(),
   ageHours: z.number(),
