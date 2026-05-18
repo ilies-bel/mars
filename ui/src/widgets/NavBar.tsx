@@ -1,6 +1,7 @@
 import { useAgents } from '@/hooks/useAgents'
 import { useTasks } from '@/hooks/useTasks'
 import { useTodo } from '@/hooks/useTodo'
+import { detectRoute, actionQueueCount, proposalsCount } from '@/shared/routing'
 
 interface NavBarProps {
   hash: string
@@ -24,15 +25,14 @@ const CountBadge = ({ count }: CountBadgeProps) =>
   )
 
 export const NavBar = ({ hash }: NavBarProps) => {
-  const onKanban = hash.startsWith('#/kanban')
-  const onAgents = hash.startsWith('#/agents')
-  const onInbox = !onKanban && !onAgents
+  const route = detectRoute(hash)
 
-  const { drafts, staleWorktrees } = useTodo()
+  const todo = useTodo()
   const { snapshot } = useTasks()
   const { agents } = useAgents()
 
-  const inboxCount = drafts.length + staleWorktrees.length
+  const actionCount = actionQueueCount({ drafts: todo.drafts, staleWorktrees: todo.staleWorktrees })
+  const proposalCount = proposalsCount({ drafts: todo.drafts, staleWorktrees: todo.staleWorktrees })
   const kanbanCount = snapshot
     ? snapshot.columns.backlog.length +
       snapshot.columns.in_progress.length +
@@ -43,20 +43,26 @@ export const NavBar = ({ hash }: NavBarProps) => {
   return (
     <nav className="flex items-center gap-2 border-b border-iron/30 bg-bg px-4 py-1.5">
       <span className="relative">
-        <CountBadge count={inboxCount} />
-        <a className={linkClass(onInbox)} href="#/todo">
-          Inbox
+        <CountBadge count={actionCount} />
+        <a className={linkClass(route === 'action-queue')} href="#/action-queue">
+          Action queue
+        </a>
+      </span>
+      <span className="relative">
+        <CountBadge count={proposalCount} />
+        <a className={linkClass(route === 'proposals')} href="#/proposals">
+          Proposals
         </a>
       </span>
       <span className="relative">
         <CountBadge count={kanbanCount} />
-        <a className={linkClass(onKanban)} href="#/kanban">
+        <a className={linkClass(route === 'kanban')} href="#/kanban">
           Kanban
         </a>
       </span>
       <span className="relative">
         <CountBadge count={agentsCount} />
-        <a className={linkClass(onAgents)} href="#/agents">
+        <a className={linkClass(route === 'agents')} href="#/agents">
           Agents
         </a>
       </span>
