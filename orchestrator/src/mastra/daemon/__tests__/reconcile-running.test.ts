@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -94,6 +94,48 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.branch).toBeNull()
     expect(reloaded?.worktreePath).toBeNull()
+  })
+
+  it('removes the worktree directory from disk when the path exists', async () => {
+    // This test exercises the removeWorktree code path in reconcile-running.ts
+    // by creating a real registered git worktree, then verifying reconcile
+    // removes both the directory and the git registration.
+
+    // git worktree add requires at least one commit in the repo.
+    const gitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'test',
+      GIT_AUTHOR_EMAIL: 'test@test.com',
+      GIT_COMMITTER_NAME: 'test',
+      GIT_COMMITTER_EMAIL: 'test@test.com',
+    }
+    execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo, env: gitEnv })
+
+    const { q, rr } = await loadModules(repo)
+    const t = await q.enqueueTask('work with disk worktree', undefined, { skipTriage: true })
+
+    const branch = `task/${t.id}`
+    const worktreePath = resolve(tmpdir(), `mars-wt-${t.id}`)
+
+    // Register a real git worktree so existsSync returns true and removeWorktree
+    // has an actual registration to tear down.
+    execFileSync('git', ['worktree', 'add', '-b', branch, worktreePath, 'HEAD'], { cwd: repo })
+
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = 'running', branch = ?, worktree_path = ? WHERE id = ?`,
+      args: [branch, worktreePath, t.id],
+    })
+
+    await rr.requeueRunningTasksFromPriorDaemon(repo)
+
+    // Observable behaviour: the worktree directory must be gone from disk.
+    expect(existsSync(worktreePath)).toBe(false)
+
+    // Task is requeued with cleared in-flight fields.
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('queued')
+    expect(reloaded?.worktreePath).toBeNull()
+    expect(reloaded?.branch).toBeNull()
   })
 
   it('returns an empty array when no tasks are running', async () => {
