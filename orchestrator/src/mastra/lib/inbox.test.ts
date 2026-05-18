@@ -10,6 +10,7 @@ interface InboxModule {
   getInboxItem: typeof import('./inbox').getInboxItem
   setInboxState: typeof import('./inbox').setInboxState
   setRecoveryFindings: typeof import('./inbox').setRecoveryFindings
+  supersedeInboxItemsForOrigin: typeof import('./inbox').supersedeInboxItemsForOrigin
 }
 
 const setupRepo = (): string => {
@@ -354,6 +355,115 @@ describe('inbox', () => {
       const open = await inbox.listInboxItems('open')
       expect(open).toHaveLength(0)
     })
+  })
+
+  it('supersedeInboxItemsForOrigin closes the open item when the origin task transitions to done', async () => {
+    const inbox = await loadModule(repo)
+    const originId = 'origin-done-1'
+    const id = await inbox.raiseInboxItem(
+      baseItem({
+        kind: 'recovery-failed',
+        signature: 'sig-x',
+        originTaskId: originId,
+      }),
+    )
+    const openBefore = await inbox.listInboxItems('open')
+    expect(openBefore.some((it) => it.id === id)).toBe(true)
+
+    const closed = await inbox.supersedeInboxItemsForOrigin(
+      originId,
+      'origin-done',
+    )
+    expect(closed).toEqual([id])
+
+    const openAfter = await inbox.listInboxItems('open')
+    expect(openAfter.some((it) => it.id === id)).toBe(false)
+    const item = await inbox.getInboxItem(id)
+    expect(item!.state).toBe('resolved')
+    expect(item!.resolution).toBe('superseded')
+    expect(item!.resolutionNote).toBe('superseded: origin-done')
+  })
+
+  it('supersedeInboxItemsForOrigin closes the open item when the origin task is dropped', async () => {
+    const inbox = await loadModule(repo)
+    const originId = 'origin-dropped-1'
+    const id = await inbox.raiseInboxItem(
+      baseItem({
+        kind: 'recovery-failed',
+        signature: 'sig-y',
+        originTaskId: originId,
+      }),
+    )
+
+    const closed = await inbox.supersedeInboxItemsForOrigin(
+      originId,
+      'origin-dropped',
+    )
+    expect(closed).toEqual([id])
+
+    const openAfter = await inbox.listInboxItems('open')
+    expect(openAfter.some((it) => it.id === id)).toBe(false)
+    const item = await inbox.getInboxItem(id)
+    expect(item!.resolutionNote).toBe('superseded: origin-dropped')
+  })
+
+  it('supersedeInboxItemsForOrigin closes the open item when the origin task is purged', async () => {
+    const inbox = await loadModule(repo)
+    const originId = 'origin-purged-1'
+    const id = await inbox.raiseInboxItem(
+      baseItem({
+        kind: 'no-recipe',
+        signature: 'sig-z',
+        originTaskId: originId,
+      }),
+    )
+
+    const closed = await inbox.supersedeInboxItemsForOrigin(
+      originId,
+      'origin-purged',
+    )
+    expect(closed).toEqual([id])
+
+    const openAfter = await inbox.listInboxItems('open')
+    expect(openAfter.some((it) => it.id === id)).toBe(false)
+    const item = await inbox.getInboxItem(id)
+    expect(item!.resolutionNote).toBe('superseded: origin-purged')
+  })
+
+  it('supersedeInboxItemsForOrigin is a no-op when there is no matching open row', async () => {
+    const inbox = await loadModule(repo)
+    const closed = await inbox.supersedeInboxItemsForOrigin(
+      'no-such-origin',
+      'origin-done',
+    )
+    expect(closed).toEqual([])
+  })
+
+  it('supersedeInboxItemsForOrigin only touches rows keyed to the given origin', async () => {
+    const inbox = await loadModule(repo)
+    const a = await inbox.raiseInboxItem(
+      baseItem({
+        kind: 'recovery-failed',
+        signature: 'sig-a',
+        originTaskId: 'origin-A',
+      }),
+    )
+    const b = await inbox.raiseInboxItem(
+      baseItem({
+        kind: 'recovery-failed',
+        signature: 'sig-b',
+        originTaskId: 'origin-B',
+      }),
+    )
+
+    const closed = await inbox.supersedeInboxItemsForOrigin(
+      'origin-A',
+      'origin-done',
+    )
+    expect(closed).toEqual([a])
+
+    const open = await inbox.listInboxItems('open')
+    expect(open.map((it) => it.id)).toEqual([b])
   })
 
   it('after resolving an item, raising the same fingerprint creates a new open item (only open is dedup target)', async () => {
