@@ -271,3 +271,7 @@ _Avoid_: verb log, command audit, invocation log, verb.invoked
 **Inbox item**:
 A row in inbox_items representing one stuck origin task; updates in place as recovery attempts fail and auto-resolves when the origin reaches done/dropped or any recovery succeeds.
 _Avoid_: inbox row, inbox entry, stuck-task notification
+
+**Outbox**:
+The single append-only log in .mars/queue.db where every Bus event is durably persisted in the same transaction as its triggering state mutation, and from which all Subscribers pull.
+_Avoid_: event log, event store, event queue, bus table, outbox_events
