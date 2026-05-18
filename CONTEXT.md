@@ -258,3 +258,7 @@ _Avoid_: task.done, terminal event, task-state event
 **Step span**:
 A persisted record of one Workflow-instance step's execution (started_at, ended_at, outcome); the steps are setup, code, verify, merge and recovery steps. A Step span whose step is a claude -p execution is a Session and additionally carries a Worker and a Claude session id; non-LLM steps have neither.
 _Avoid_: step record, step run, span, workflow step, phase
+
+**Authorization profile**:
+The declared, registry-keyed set of capabilities a Worker forfeits, in two dimensions (claude tools it may not use; mars verbs it may not invoke) that both compile to the single claude --disallowedTools denylist string.
+_Avoid_: denylist, disallowed tools, tool ban, permission set
