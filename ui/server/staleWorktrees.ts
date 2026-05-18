@@ -40,6 +40,7 @@ const worktreeExists = async (path: string): Promise<boolean> => {
 export const listStaleWorktrees = async (
   db: TaskDb,
   repoRoot: string,
+  dismissedIds: Set<string> = new Set(),
 ): Promise<StaleWorktree[]> => {
   const exists = await db.tableExists()
   if (!exists) return []
@@ -50,6 +51,7 @@ export const listStaleWorktrees = async (
   const out: StaleWorktree[] = []
   for (const task of tasks) {
     if (task.status === 'done') continue
+    if (dismissedIds.has(task.id)) continue
     const updatedMs = Date.parse(task.updatedAt)
     if (!Number.isFinite(updatedMs)) continue
     const ageMs = now - updatedMs
