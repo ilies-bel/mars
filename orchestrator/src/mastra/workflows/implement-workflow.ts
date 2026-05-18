@@ -231,28 +231,7 @@ export const WRITER_SYSTEM_PROMPT = [
   'When every acceptance criterion is satisfied via the verbs above, exit cleanly. The daemon commits each verb on the integration branch on your behalf.',
 ].join('\n')
 
-// Standing Session instructions for the Coder Worker. The test-driven-
-// development operating philosophy used to be prepended to every per-Task
-// prompt the slicer emitted (see slice-workflow's composeTaskPrompt), which
-// meant the Coder re-absorbed ~150 lines of boilerplate at the top of every
-// Task and a retry replayed it verbatim — burning the read-span budget on
-// orientation it was then aborted for. The philosophy is now passed once, as
-// the Worker's Session-level system prompt, so it is present for the whole
-// Session and never re-sent inside the per-Task prompt. Wording is unchanged
-// — this is a relocation, not a rewrite.
-export const CODER_SYSTEM_PROMPT = TDD_WORKER_BRIEF
-
-// Resolve the standing Session instructions a dispatched Worker is launched
-// with, by routing tag. Coder carries the TDD operating philosophy; Writer
-// keeps its structured-write mental model (unchanged). Centralised here so
-// codeStep does not assemble the system prompt inline and the per-tag
-// surface is a single auditable seam.
-export const resolveWorkerSystemPrompt = (
-  tag: TaskTag,
-): string | undefined =>
-  tag === 'writer' ? WRITER_SYSTEM_PROMPT : CODER_SYSTEM_PROMPT
-
-// Deviation-rules brief appended to every Coder prompt. The rules are a
+// Deviation-rules brief delivered to every Coder session. The rules are a
 // near-verbatim port of gsd-build/get-shit-done's gsd-executor contract —
 // they force the agent to reclassify off-plan findings into one of four
 // buckets (auto-fix bug, auto-add missing critical, auto-fix blocker,
@@ -260,6 +239,9 @@ export const resolveWorkerSystemPrompt = (
 // Combined with the in-stream read/grep span guard in claude-stream-watch,
 // these are the primary anti-"agent quit early" levers — see #5 in the
 // PR description.
+//
+// IMPORTANT: these are now part of CODER_SYSTEM_PROMPT (standing Session
+// instructions), NOT the per-Task prompt. composePrompt must NOT include them.
 export const DEVIATION_RULES = [
   '## Deviation rules — do NOT quit silently',
   '',
@@ -286,6 +268,25 @@ export const DEVIATION_RULES = [
   '',
   '`$TASK_ID` is the id of the task you are executing right now; the orchestrator passes it to you in the brief below.',
 ].join('\n')
+
+// Standing Session instructions for the Coder Worker. The test-driven-
+// development operating philosophy and the deviation rules are both passed
+// once, as the Worker's Session-level system prompt, so they are present for
+// the whole Session and never re-sent inside the per-Task prompt. This means
+// the Coder does not re-absorb ~150+ lines of boilerplate at the top of every
+// Task and a retry does not replay it verbatim — avoiding burning the
+// read-span budget on orientation before the agent can act.
+export const CODER_SYSTEM_PROMPT = [TDD_WORKER_BRIEF, DEVIATION_RULES].join('\n\n')
+
+// Resolve the standing Session instructions a dispatched Worker is launched
+// with, by routing tag. Coder carries the TDD operating philosophy and
+// deviation rules; Writer keeps its structured-write mental model (unchanged).
+// Centralised here so codeStep does not assemble the system prompt inline and
+// the per-tag surface is a single auditable seam.
+export const resolveWorkerSystemPrompt = (
+  tag: TaskTag,
+): string | undefined =>
+  tag === 'writer' ? WRITER_SYSTEM_PROMPT : CODER_SYSTEM_PROMPT
 
 const renderSpec = (spec: TaskSpec | null, taskId: string): string | null => {
   if (!spec) return null
@@ -438,10 +439,9 @@ export const composePrompt = (
   }
   const specBlock = renderSpec(spec, taskId)
   if (specBlock !== null) sections.push(specBlock)
-  // Coder gets the deviation rules; Writer's surface is too narrow for them
-  // (no task-add escape, structured-write only). Both tags still get their
-  // footer.
-  if (tag !== 'writer') sections.push(DEVIATION_RULES)
+  // Both tags get their footer. Deviation rules are NOT included here — they
+  // are part of CODER_SYSTEM_PROMPT (standing Session instructions) and must
+  // not appear in the per-Task prompt.
   sections.push(tag === 'writer' ? WRITER_FOOTER : COMMIT_FOOTER)
   return sections.join('\n\n')
 }
