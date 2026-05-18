@@ -270,3 +270,7 @@ _Avoid_: audit tuple, trace tuple, attribution triple, worker provenance
 **Verb-invocation audit event**:
 A bus event emitted whenever a dispatched Worker Session invokes a mars verb, carrying the resolved Command path, argument shape, and the provenance triple; not emitted for non-Session (human-terminal) callers.
 _Avoid_: verb log, command audit, invocation log, verb.invoked
+
+**Inbox item**:
+A row in inbox_items representing one stuck origin task; updates in place as recovery attempts fail and auto-resolves when the origin reaches done/dropped or any recovery succeeds.
+_Avoid_: inbox row, inbox entry, stuck-task notification
