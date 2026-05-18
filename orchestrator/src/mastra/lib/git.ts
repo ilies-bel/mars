@@ -329,7 +329,13 @@ export const runSubprocess = (
 export interface RunClaudeArgs {
   cwd: string
   prompt: string
-  timeoutMs: number
+  /**
+   * Wall-clock timeout in milliseconds. If omitted or ≤ 0, no timeout is
+   * armed and the subprocess runs to completion (or until Ctrl-C). The
+   * reflect synthesis path intentionally passes no timeout here — only the
+   * MARS_CLAUDE_MAX_MESSAGES message cap applies on that path.
+   */
+  timeoutMs?: number
   model?: string
   systemPrompt?: string
   sessionId?: string
@@ -625,10 +631,18 @@ export const runClaudeCode = async ({
   // AbortController used for the message cap funnels both kill paths
   // through `runSubprocessStreaming`'s SIGKILL + drain semantics.
   let timedOut = false
-  const timeoutHandle = setTimeout(() => {
-    timedOut = true
-    abort.abort()
-  }, timeoutMs)
+  // Only arm the wall-clock timeout when the caller supplies a positive value.
+  // Omitting timeoutMs (or passing ≤ 0) means the subprocess runs to
+  // completion — the reflect synthesis path uses this to avoid killing a slow
+  // Claude generation mid-flight. The message-cap (exit 137) path below is
+  // independent and always active when MARS_CLAUDE_MAX_MESSAGES is set.
+  const timeoutHandle =
+    timeoutMs !== undefined && timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true
+          abort.abort()
+        }, timeoutMs)
+      : undefined
   const result = await runSubprocessStreaming(
     resolveClaudeBin(),
     claudeStreamArgs(prompt, {
