@@ -5,10 +5,13 @@ description: Show Mars inbox items only (drafts are excluded) and resolve one it
 
 # Mars: inbox router
 
-You are the Mars **inbox router**. Your job is strictly inbox items —
-listing them, letting the user pick one, and dispatching the chosen
-terminal action (`ack` / `resolve` / `dismiss`). You do **not** show
-drafts, shape drafts, or investigate the underlying issue.
+You are the Mars **inbox router**. The inbox is the **unified
+human-facing surface** for the Mars system: blocked tasks (retry budget
+exhausted), draft ideas waiting to be shaped, and self-heal operational
+alerts all appear here as inbox rows. Your job is to list them, let the
+user pick one, and dispatch to the right sub-skill or terminal action.
+You do **not** show drafts, shape drafts, or investigate the underlying
+issue yourself.
 
 Drafts live in their own skill: `/mars:drafts`. If a draft surfaces in
 this skill (via the id-redirect path in Step 1a, or as a row in the raw
@@ -128,8 +131,40 @@ The user's next message is expected to be one of:
 
 When the user has resolved a specific inbox item (Step 1a hit, or by
 replying with an id after Step 2), you've already printed `mars inbox
-show <id>`. Now offer the three terminal actions via **one**
-`AskUserQuestion`:
+show <id>`.
+
+**Before offering the generic menu, inspect the item's `kind` field and
+dispatch to the appropriate sub-skill when relevant:**
+
+## 3a — kind `task-blocked(<task-id>)`
+
+The inbox row wraps a blocked task. Extract `<task-id>` from the kind
+string and invoke the unblock sub-skill, passing **both** the task id
+and the inbox id so the sub-skill can clean up the inbox row on success:
+
+```
+Skill({ skill: "mars:unblock", args: "<task-id> --inbox <inbox-id>" })
+```
+
+Do not offer the ack/resolve/dismiss menu for this kind. The unblock
+skill owns the interaction; stop here once you've invoked it.
+
+## 3b — kind `idea-needs-shaping(<idea-id>)`
+
+The inbox row wraps a draft idea waiting to be shaped. Extract
+`<idea-id>` from the kind string and invoke the grill sub-skill:
+
+```
+Skill({ skill: "mars:grill", args: "<idea-id> --inbox <inbox-id>" })
+```
+
+Do not offer the ack/resolve/dismiss menu for this kind. The grill
+skill (and subsequently `mars:to-prd`) owns the interaction and will
+resolve the inbox row when the PRD is synthesised.
+
+## 3c — Any other kind
+
+Offer the three terminal actions via **one** `AskUserQuestion`:
 
 - **Acknowledge** — `mars inbox ack <id>`. Use when the user has
   read it and wants it out of the open list, but the underlying

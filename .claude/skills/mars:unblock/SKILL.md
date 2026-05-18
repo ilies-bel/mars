@@ -14,22 +14,16 @@ execute their decision through the right `mars` verb.
 You do **not** shape ideas, curate the glossary, or offer ADRs. If the
 unblock decision turns out to need a new task, enqueue it and stop.
 
-# Step 0 — No argument? Show the blocked list and stop.
+# Step 0 — No argument? Point to the inbox and stop.
 
-If `$ARGUMENTS` is empty, the user doesn't yet know which task they want
-to unblock. Run:
+If `$ARGUMENTS` is empty (after stripping any `--inbox` token — see
+"Argument" section at the end), the user doesn't yet know which task
+they want to unblock. Do **not** run `mars list blocked`. Instead, tell
+the user:
 
-```bash
-mars list blocked
-```
+> "Run `/mars:inbox` and pick a `task-blocked` row to continue here."
 
-Print the output verbatim (or a tight summary if it's long) and ask the
-user which id to work on. Do not guess and do not pick one yourself.
-Stop here until they reply with an id — then re-enter the skill with that
-id as the argument.
-
-If `mars list blocked` returns no rows, say so plainly ("nothing is
-blocked right now") and stop.
+Stop here. Do not guess and do not pick one yourself.
 
 # Step 1 — Identify whether the id is a task or an inbox item
 
@@ -188,6 +182,23 @@ After the verb runs, print one short confirmation line — what changed,
 and (if relevant) what the user should expect next ("orchestrator will
 pick up <new-id> automatically" or "<id> is back on the queue").
 
+## Inbox resolution on success
+
+If an `--inbox <inbox-id>` was passed in `$ARGUMENTS` **and** the
+chosen option fully clears the block (the task is now re-queued,
+restarted, continued, or dropped — i.e. it is no longer `blocked`),
+run:
+
+```bash
+mars inbox resolve <inbox-id> --note "<one-line summary of what was done>"
+```
+
+**Only resolve when the underlying condition is gone.** If the user
+chose "split into a new task" and the original task still has open
+blockers (status remains `blocked`), do **not** resolve the inbox row —
+it stays open until the chain clears. When in doubt, check the task's
+status with `mars show <task-id>` before resolving.
+
 # What you do NOT do
 
 - Do not call any `mars idea` write verb (`add`, `set`, `promote`, etc.).
@@ -208,5 +219,14 @@ pick up <new-id> automatically" or "<id> is back on the queue").
 
 The user passed: `$ARGUMENTS`
 
-If empty, go to **Step 0** (list blocked tasks and ask which one). If an
-id is present, start at **Step 1** (resolve task vs. inbox item first).
+**Parse `$ARGUMENTS` as follows before doing anything else:**
+
+1. Look for a `--inbox <inbox-id>` token anywhere in the string. Extract
+   `<inbox-id>` and strip the `--inbox <inbox-id>` token from the string.
+   If absent, `inbox-id` is empty.
+2. Treat the remainder (trimmed) as `<task-id>`.
+
+If `<task-id>` is empty after parsing, go to **Step 0** (point to the
+inbox). If `<task-id>` is present, start at **Step 1** (resolve task vs.
+inbox item first). Carry `inbox-id` through to **Step 4** for the inbox
+resolution logic.
