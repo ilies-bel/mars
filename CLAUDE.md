@@ -48,6 +48,10 @@ When in doubt, enqueue. A redundant task is cheap; a silent commit on
 
 ## Tasks
 
+Prefer `/mars:task <prompt>` from a Claude Code session for a
+light-shaping wrapper that checks terminology against the glossary
+before enqueueing.
+
 Tasks live in `.mars/queue.db`. Enqueue via `mars task add "..."`; the
 orchestrator dispatches automatically (worktree → code → verify → merge).
 Inspect via `mars list` or Mastra Studio.
@@ -73,6 +77,17 @@ per-change and must be re-confirmed, even within the same session.
 - **Merge target** — `main`. Override per-invocation with
   `INTEGRATION_BRANCH=<branch>`.
 
+## The inbox
+
+The Mars inbox is the single human-facing work surface. Everything that
+needs the user — operational alerts from self-heal, tasks the orchestrator
+stopped on after exhausting retries (kind `task-blocked`), and draft ideas
+waiting to be shaped (kind `idea-needs-shaping`) — appears as an inbox
+message. Pick one via `mars inbox list` or `/mars:inbox`; the inbox
+dispatches to the right resolver (`/mars:unblock`, `/mars:grill`, or
+ack/resolve/dismiss). A `SessionStart` hook runs `mars inbox --lean` so
+the current inbox state primes every Claude Code session.
+
 ## Glossary and ADRs
 
 - `CONTEXT.md` — domain glossary. Edit only via `mars glossary
@@ -82,6 +97,14 @@ per-change and must be re-confirmed, even within the same session.
   embodying a real trade-off.
 
 Never edit `CONTEXT.md` or `docs/adr/**` directly. Reads are fine.
+
+The `/mars:chat` slash command is the conversational entry point.
+It classifies the user's input (an id, free text, or empty) and
+dispatches to the right sub-skill: `/mars:inbox` for triage,
+`/mars:task` for quick enqueues, `/mars:grill` for ideas that need
+PRD-shaping, `/mars:unblock` for stuck tasks. Sub-skills update the
+glossary and ADRs inline as decisions crystallise — `/mars:chat`
+itself writes nothing to those files.
 
 ## Structured tasks
 
