@@ -17,6 +17,14 @@ export interface RaiseInboxItem {
   raisedBy: string
   signature: string
   occurrence?: Record<string, unknown>
+  /**
+   * When set, the inbox row is deduped on this origin task id alone —
+   * kind- and signature-agnostic. Any failure on a recovery descendant
+   * (or repeated failures on the origin) collapses into the SAME row.
+   * Yields exactly one inbox_items row per stuck origin task regardless
+   * of how many recovery attempts have failed against it.
+   */
+  originTaskId?: string
 }
 
 export interface InboxResolution {
@@ -286,12 +294,21 @@ const rowToInboxItem = (
   }
 }
 
+/**
+ * Origin-keyed fingerprint: independent of kind/signature, so any
+ * failure path that names the same origin upserts the same row.
+ */
+const computeOriginFingerprint = (originTaskId: string): string =>
+  sha1Hex(`origin:${originTaskId}`)
+
 export const raiseInboxItem = async (
   item: RaiseInboxItem,
 ): Promise<string> => {
   await initInbox()
   const c = getClient()
-  const fingerprint = computeFingerprint(item.kind, item.signature)
+  const fingerprint = item.originTaskId
+    ? computeOriginFingerprint(item.originTaskId)
+    : computeFingerprint(item.kind, item.signature)
   const now = new Date().toISOString()
 
   const existing = await c.execute({

@@ -217,6 +217,86 @@ describe('inbox', () => {
     ).resolves.toBeUndefined()
   })
 
+  it('originTaskId collapses N failures across kinds/signatures into exactly one open row', async () => {
+    const inbox = await loadModule(repo)
+    const originId = 'origin-1'
+
+    // Simulate 11 failures on the same origin, across kinds and
+    // signatures (no-recipe on first failure, recovery-failed on each
+    // subsequent recovery attempt, eventually a fix-fail-loop).
+    const ids = [
+      await inbox.raiseInboxItem(
+        baseItem({
+          kind: 'no-recipe',
+          signature: 'sig-A',
+          originTaskId: originId,
+          occurrence: { attempt: 1 },
+        }),
+      ),
+    ]
+    for (let i = 2; i <= 10; i += 1) {
+      ids.push(
+        await inbox.raiseInboxItem(
+          baseItem({
+            kind: 'recovery-failed',
+            signature: `origin-1:sig-${i}`,
+            originTaskId: originId,
+            occurrence: { attempt: i },
+          }),
+        ),
+      )
+    }
+    ids.push(
+      await inbox.raiseInboxItem(
+        baseItem({
+          kind: 'fix-fail-loop',
+          signature: 'sig-Z',
+          originTaskId: originId,
+          occurrence: { attempt: 11 },
+        }),
+      ),
+    )
+
+    // Every raise returns the SAME row id.
+    for (const id of ids) {
+      expect(id).toBe(ids[0])
+    }
+
+    const open = await inbox.listInboxItems('open')
+    expect(open).toHaveLength(1)
+    expect(open[0].id).toBe(ids[0])
+    expect(open[0].seenCount).toBe(11)
+    expect(open[0].payload.occurrences).toHaveLength(11)
+  })
+
+  it('originTaskId is independent of fingerprint: a different origin still produces a distinct row', async () => {
+    const inbox = await loadModule(repo)
+    const a = await inbox.raiseInboxItem(
+      baseItem({
+        kind: 'recovery-failed',
+        signature: 'shared-sig',
+        originTaskId: 'origin-A',
+      }),
+    )
+    const b = await inbox.raiseInboxItem(
+      baseItem({
+        kind: 'recovery-failed',
+        signature: 'shared-sig',
+        originTaskId: 'origin-B',
+      }),
+    )
+    expect(a).not.toBe(b)
+    const open = await inbox.listInboxItems('open')
+    expect(open).toHaveLength(2)
+  })
+
+  it('omitting originTaskId falls back to (kind, signature) dedup', async () => {
+    const inbox = await loadModule(repo)
+    const a = await inbox.raiseInboxItem(baseItem({ signature: 'legacy' }))
+    const b = await inbox.raiseInboxItem(baseItem({ signature: 'legacy' }))
+    expect(b).toBe(a)
+  })
+
   it('after resolving an item, raising the same fingerprint creates a new open item (only open is dedup target)', async () => {
     const inbox = await loadModule(repo)
     const a = await inbox.raiseInboxItem(baseItem())
