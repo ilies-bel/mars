@@ -16,6 +16,7 @@ interface QueueModule {
 interface DeepQueryModule {
   pickDeepReflectCandidate: typeof import('../deep-reflect-query').pickDeepReflectCandidate
   loadDeepReflectSession: typeof import('../deep-reflect-query').loadDeepReflectSession
+  listDeepReflectArcCandidates: typeof import('../deep-reflect-query').listDeepReflectArcCandidates
 }
 
 const setupRepo = (): string => {
@@ -150,6 +151,101 @@ describe('pickDeepReflectCandidate', () => {
     // Most recent created -> b
     expect(r?.taskId).toBe(b.id)
     expect(r?.reason.reason).toMatch(/most recent done/i)
+  })
+})
+
+describe('listDeepReflectArcCandidates', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns empty array when DB is empty', async () => {
+    const { dq } = await loadModules(repo)
+    const result = await dq.listDeepReflectArcCandidates({
+      withTranscriptOnly: false,
+    })
+    expect(result).toEqual([])
+  })
+
+  it('withTranscriptOnly: false returns arcs without transcripts', async () => {
+    const { q, dq } = await loadModules(repo)
+    // Task with no transcript
+    const noTranscript = await q.enqueueTask('no transcript task', undefined, {
+      skipTriage: true,
+    })
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = ? WHERE id = ?`,
+      args: ['done', noTranscript.id],
+    })
+
+    // withTranscriptOnly: true (default) should exclude it
+    const withOnly = await dq.listDeepReflectArcCandidates({
+      withTranscriptOnly: true,
+    })
+    expect(withOnly.find((a) => a.originId === noTranscript.id)).toBeUndefined()
+
+    // withTranscriptOnly: false should include it
+    const withAll = await dq.listDeepReflectArcCandidates({
+      withTranscriptOnly: false,
+    })
+    const found = withAll.find((a) => a.originId === noTranscript.id)
+    expect(found).toBeDefined()
+    expect(found?.taskCount).toBe(1)
+    expect(found?.statusMix.done).toBe(1)
+  })
+
+  it('withTranscriptOnly: false includes ad-hoc single-task arcs alongside transcript arcs', async () => {
+    const { q, dq } = await loadModules(repo)
+
+    // Arc with transcript
+    const withTx = await q.enqueueTask('task with transcript', undefined, {
+      skipTriage: true,
+    })
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = ? WHERE id = ?`,
+      args: ['done', withTx.id],
+    })
+    await q.upsertTranscript({ taskId: withTx.id, conversationJson: '[]' })
+
+    // Arc without transcript (ad-hoc)
+    const noTx = await q.enqueueTask('ad-hoc task no transcript', undefined, {
+      skipTriage: true,
+    })
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = ? WHERE id = ?`,
+      args: ['done', noTx.id],
+    })
+
+    const all = await dq.listDeepReflectArcCandidates({
+      limit: 100,
+      withTranscriptOnly: false,
+    })
+    const ids = all.map((a) => a.originId)
+    expect(ids).toContain(withTx.id)
+    expect(ids).toContain(noTx.id)
+  })
+
+  it('limit is respected', async () => {
+    const { q, dq } = await loadModules(repo)
+    for (let i = 0; i < 5; i++) {
+      const t = await q.enqueueTask(`task ${i}`, undefined, { skipTriage: true })
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = ? WHERE id = ?`,
+        args: ['done', t.id],
+      })
+    }
+    const result = await dq.listDeepReflectArcCandidates({
+      limit: 3,
+      withTranscriptOnly: false,
+    })
+    expect(result.length).toBeLessThanOrEqual(3)
   })
 })
 
