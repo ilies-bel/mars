@@ -705,7 +705,7 @@ describe('queue-fix-tasks', () => {
     expect(recoveryRow?.status).toBe('failed')
 
     // The original task stays blocked — the human resolves via
-    // mars retry / mars unblock.
+    // mars continue / mars restart / mars unblock.
     const origin = await q.getTask(t.id)
     expect(origin?.status).toBe('blocked')
 
