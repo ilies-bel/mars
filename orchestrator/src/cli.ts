@@ -1063,6 +1063,76 @@ const main = async (): Promise<void> => {
       await enqueueViaDaemon(prompt, true, blockerIds, priority, tag, spec)
       return
     }
+    if (sub === 'show') {
+      const id = rest[1]
+      if (!id) {
+        console.error('usage: mars task show <id>')
+        process.exit(1)
+      }
+      const { formatAuthor } = await import('./mastra/author')
+      const { getTask, listBlockers, listSiblings } = await import(
+        './mastra/queue'
+      )
+      const task = await getTask(id)
+      if (!task) {
+        console.error(`no task matching ${id}`)
+        process.exit(1)
+      }
+      console.log(`kind:       task`)
+      console.log(`id:         ${task.id}`)
+      console.log(`Status:     ${task.status}`)
+      console.log(`tag:        ${task.tag ?? 'coder'}`)
+      console.log(`author:     ${formatAuthor(task.author)}`)
+      console.log(`branch:     ${task.branch ?? '-'}`)
+      console.log(`worktree:   ${task.worktreePath ?? '-'}`)
+      console.log(`createdAt:  ${task.createdAt}`)
+      console.log(`updatedAt:  ${task.updatedAt}`)
+      console.log(`prompt:`)
+      console.log(task.prompt)
+      console.log(`functional:`)
+      console.log(task.plan?.functional ?? '(empty)')
+      console.log(`technical:`)
+      console.log(task.plan?.technical ?? '(empty)')
+      if (task.error) {
+        console.log(`error:`)
+        console.log(task.error)
+      }
+      if (task.dropReason) {
+        console.log(`dropReason: ${task.dropReason}`)
+      }
+      if (task.failureReason) {
+        console.log(`failureReason: ${task.failureReason}`)
+      }
+      if (task.retryCount > 0) {
+        console.log(`retryCount: ${task.retryCount}`)
+      }
+      if (task.fixForTaskId) {
+        console.log(`fixForTask: ${task.fixForTaskId}`)
+      }
+      if (task.failureSignature) {
+        console.log(`failureSig: ${task.failureSignature}`)
+      }
+      const blockerTaskIds = await listBlockers(task.id)
+      if (blockerTaskIds.length > 0) {
+        console.log(`blockedBy:  ${blockerTaskIds.join(', ')}`)
+      }
+      if (task.originId && task.originId !== task.id) {
+        const { getProposal } = await import('./mastra/proposals')
+        const originIdea = await getProposal(task.originId).catch(() => null)
+        if (originIdea) {
+          const firstLine = originIdea.title.split('\n')[0]?.trim() ?? ''
+          const titleSuffix = firstLine.length > 0 ? ` ${firstLine}` : ''
+          console.log(`origin:     idea ${originIdea.id}${titleSuffix}`)
+        } else {
+          console.log(`origin:     task ${task.originId}`)
+        }
+        const siblings = await listSiblings(task.originId, task.id)
+        if (siblings.length > 0) {
+          console.log(`siblings:   ${siblings.join(', ')}`)
+        }
+      }
+      return
+    }
     if (sub === 'priority') {
       const id = rest[1]
       const valueRaw = rest[2]
@@ -1089,7 +1159,7 @@ const main = async (): Promise<void> => {
       }
       return
     }
-    console.error('usage: mars task <add|priority> ...')
+    console.error('usage: mars task <add|show|priority> ...')
     process.exit(1)
   }
 
@@ -1571,7 +1641,7 @@ const main = async (): Promise<void> => {
     if (task) {
       console.log(`kind:       task`)
       console.log(`id:         ${task.id}`)
-      console.log(`status:     ${task.status}`)
+      console.log(`Status:     ${task.status}`)
       console.log(`tag:        ${task.tag ?? 'coder'}`)
       console.log(`author:     ${formatAuthor(task.author)}`)
       console.log(`branch:     ${task.branch ?? '-'}`)
