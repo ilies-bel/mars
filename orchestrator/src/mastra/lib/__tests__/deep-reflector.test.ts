@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { parseDeepReflectionReport } from '../deep-reflector'
+import { parseDeepReflectionReport, runDeepReflectorArc } from '../deep-reflector'
+import type { DeepReflectArc } from '../deep-reflect-query'
 
 describe('parseDeepReflectionReport', () => {
   it('parses a well-formed reflector output', () => {
@@ -156,5 +157,94 @@ describe('parseDeepReflectionReport', () => {
     const report = parseDeepReflectionReport(text)
     expect(report?.suggestions).toHaveLength(1)
     expect(report?.suggestions[0].verdict).toBe('save')
+  })
+
+  it('parses arc-level report with verifyMismatches array', () => {
+    const text = JSON.stringify({
+      summary: 'arc of 2 tasks: origin failed, recovery succeeded',
+      toolCallStats: { total: 24, byName: { Edit: 8, Bash: 6, Read: 10 } },
+      dissonantCalls: [
+        {
+          task_id: 'mars-aaaa1111',
+          eventIndex: 5,
+          tool: 'Bash',
+          stated_intent: 'commit changes',
+          actual_outcome: 'nothing to commit',
+          severity: 'high',
+          evidence: '"nothing to commit, working tree clean"',
+        },
+      ],
+      verifyMismatches: [
+        {
+          task_id: 'mars-aaaa1111',
+          claimed: 'build passes',
+          actual: 'tsc error TS2345',
+          severity: 'high',
+        },
+        {
+          task_id: 'mars-bbbb2222',
+          claimed: 'tests pass',
+          actual: '1 test skipped',
+          severity: 'medium',
+        },
+      ],
+      thrashingPatterns: [
+        {
+          pattern: 'same file edited across tasks with no convergence',
+          occurrences: 3,
+          evidence: 'task mars-aaaa1111 event 2; task mars-bbbb2222 event 4',
+        },
+      ],
+      rootCause: 'the origin task left main dirty, causing the recovery task to conflict',
+      suggestions: [
+        {
+          title: 'Guard commit step',
+          prompt: 'Add a pre-commit check. Save your work.',
+          rationale: 'event 5 in mars-aaaa1111',
+          verdict: 'save',
+          target_id: null,
+          dup_of: null,
+        },
+      ],
+    })
+    const report = parseDeepReflectionReport(text)
+    expect(report).not.toBeNull()
+    expect(report?.summary).toMatch(/arc of 2 tasks/)
+    expect(report?.toolCallStats.total).toBe(24)
+    // verifyMismatches (plural) are exposed
+    expect(report?.verifyMismatches).toHaveLength(2)
+    expect(report?.verifyMismatches?.[0].taskId).toBe('mars-aaaa1111')
+    expect(report?.verifyMismatches?.[1].severity).toBe('medium')
+    // verifyMismatch (singular) normalised to first entry
+    expect(report?.verifyMismatch?.taskId).toBe('mars-aaaa1111')
+    // dissonantCalls include task_id
+    expect(report?.dissonantCalls).toHaveLength(1)
+    expect(report?.dissonantCalls[0].taskId).toBe('mars-aaaa1111')
+    expect(report?.thrashingPatterns).toHaveLength(1)
+    expect(report?.suggestions).toHaveLength(1)
+    expect(report?.suggestions[0].verdict).toBe('save')
+  })
+
+  it('normalises singular verifyMismatch into verifyMismatches array', () => {
+    const text = JSON.stringify({
+      summary: 'single-task output',
+      toolCallStats: { total: 5, byName: {} },
+      dissonantCalls: [],
+      verifyMismatch: { claimed: 'ok', actual: 'fail', severity: 'low' },
+      thrashingPatterns: [],
+      rootCause: 'typo',
+      suggestions: [],
+    })
+    const report = parseDeepReflectionReport(text)
+    expect(report?.verifyMismatch?.severity).toBe('low')
+    expect(report?.verifyMismatches).toHaveLength(1)
+    expect(report?.verifyMismatches?.[0].severity).toBe('low')
+  })
+})
+
+describe('runDeepReflectorArc', () => {
+  it('is exported and callable', () => {
+    // Structural check: the function is exported from deep-reflector
+    expect(typeof runDeepReflectorArc).toBe('function')
   })
 })

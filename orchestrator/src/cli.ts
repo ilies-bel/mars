@@ -312,6 +312,9 @@ Commands:
                                 --json emits the raw ArcCandidate[] as a JSON array.
                                 --with-transcript-only restricts to arcs that have
                                 at least one stored transcript.
+  arc reflect <id>              deep, arc-level post-mortem. Accepts an originId
+                                or any task id in the arc (resolved automatically).
+                                Writes report to .mars/deep-reflections/arc-<id>-<iso>.json.
   inbox                         alias for 'inbox list open'
   inbox list [state] [--kind <kind>] [--lean]
                                 list inbox items. state one of:
@@ -646,7 +649,24 @@ Subcommands:
       Flags:
         --limit N              max arcs to return (default 10, clamped to [1, 100])
         --json                 emit a JSON array of ArcCandidate objects
-        --with-transcript-only only include arcs with at least one stored transcript`,
+        --with-transcript-only only include arcs with at least one stored transcript
+
+  reflect <originId-or-task-id>
+      Deep, arc-level post-mortem across every task in a single Mars arc.
+      Accepts either an originId or any task id that belongs to the arc;
+      the origin is resolved automatically via COALESCE(origin_id, id).
+
+      Walks every stored transcript event-by-event and reasons across tasks
+      to surface cross-task patterns (recovery tasks that repeated a failing
+      strategy, work undone across tasks, etc.). Identical findings to
+      'mars deep-reflect' but scoped to the full arc instead of a single session.
+
+      Output: findings printed to stdout, full JSON report persisted to
+      .mars/deep-reflections/arc-<originId>-<iso>.json.
+
+      Requires at least one stored transcript in the arc. Disabled by
+      MARS_REFLECT_DISABLED=1. Model defaults to opus; override with
+      MARS_DEEP_REFLECT_MODEL.`,
   reflect: `mars reflect [--since <iso>] [--limit <n>]
 
 Synthesize draft task suggestions from recent completed tasks. Reads
@@ -2493,8 +2513,108 @@ const main = async (): Promise<void> => {
 
   if (cmd === 'arc') {
     const sub = rest[0]
+
+    if (sub === 'reflect') {
+      if (process.env.MARS_REFLECT_DISABLED === '1') {
+        console.log('reflection disabled via MARS_REFLECT_DISABLED=1')
+        return
+      }
+      const inputId = rest[1]
+      if (!inputId || inputId.startsWith('--')) {
+        console.error('usage: mars arc reflect <originId-or-task-id>')
+        process.exit(1)
+      }
+      const {
+        loadDeepReflectArc,
+        resolveOriginIdForTaskOrSelf,
+      } = await import('./mastra/lib/deep-reflect-query')
+      const { runDeepReflectorArc } = await import('./mastra/lib/deep-reflector')
+      const { applyVerdicts } = await import('./mastra/lib/reflector')
+      const { insertReflectionTask } = await import('./mastra/queue')
+
+      const originId = await resolveOriginIdForTaskOrSelf(inputId)
+      const arc = await loadDeepReflectArc(originId)
+      if (!arc) {
+        console.error(`no arc found for ${originId}`)
+        process.exit(1)
+      }
+
+      const statusMixStr = Object.entries(arc.statusMix)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(', ')
+      console.log(
+        `arc ${originId}: ${arc.taskCount} task(s) [${statusMixStr}], ${arc.totals.eventCount} event(s), $${arc.totals.totalCostUsd.toFixed(4)} total`,
+      )
+
+      const result = await runDeepReflectorArc(arc)
+      const report = result.report
+
+      const sourceTaskId = await insertReflectionTask(1)
+      const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
+
+      const { mkdir, writeFile } = await import('node:fs/promises')
+      const { resolve: resolvePath } = await import('node:path')
+      const { getStateDir } = await import('./mastra/context')
+      const outDir = resolvePath(getStateDir(), 'deep-reflections')
+      await mkdir(outDir, { recursive: true })
+      const isoStamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const outPath = resolvePath(outDir, `arc-${originId}-${isoStamp}.json`)
+      const fullDoc = {
+        originId,
+        recordedAt: new Date().toISOString(),
+        report,
+        sourceTaskId,
+        verdictResult: {
+          saved: verdictResult.saved,
+          absorbed: verdictResult.absorbed,
+          dropped: verdictResult.dropped,
+        },
+        rawOutput: result.rawOutput,
+      }
+      await writeFile(outPath, JSON.stringify(fullDoc, null, 2), 'utf8')
+
+      console.log('')
+      if (report.summary) console.log(`Summary: ${report.summary}`)
+      console.log(
+        `Tool calls: ${report.toolCallStats.total} total — ${
+          Object.entries(report.toolCallStats.byName)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(', ') || 'none'
+        }`,
+      )
+      const mismatchCount =
+        (report.verifyMismatches?.length ?? 0) > 0
+          ? report.verifyMismatches!.length
+          : report.verifyMismatch
+            ? 1
+            : 0
+      console.log(
+        `Dissonant calls: ${report.dissonantCalls.length}${
+          mismatchCount > 0 ? ` | verify mismatches: ${mismatchCount}` : ''
+        }`,
+      )
+      if (report.dissonantCalls.length > 0) {
+        console.log('Top dissonant calls:')
+        for (const d of report.dissonantCalls.slice(0, 3)) {
+          const taskRef = d.taskId ? ` [${d.taskId}]` : ''
+          console.log(
+            `  [${d.severity}] event ${d.eventIndex}${taskRef} ${d.tool}: ${d.statedIntent} → ${d.actualOutcome}`,
+          )
+        }
+      }
+      if (report.rootCause) console.log(`Root cause: ${report.rootCause}`)
+      console.log(
+        `Suggestions: ${verdictResult.saved} saved, ${verdictResult.absorbed} absorbed, ${verdictResult.dropped} dropped`,
+      )
+      console.log(`Full report: ${outPath}`)
+      if (result.exitCode !== 0) {
+        console.error(`deep-reflector exit code ${result.exitCode}`)
+      }
+      return
+    }
+
     if (sub !== 'list') {
-      console.error('usage: mars arc list [--limit N] [--json] [--with-transcript-only]')
+      console.error('usage: mars arc <list|reflect> ...')
       process.exit(1)
     }
     const { listDeepReflectArcCandidates } = await import(
