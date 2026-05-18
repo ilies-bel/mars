@@ -72,6 +72,17 @@ Otherwise, print the remaining inbox rows directly to the user — **no
    N > 1), kind summary, message. Truncate the message at ~90 chars
    if needed.
 
+**Default row cap — render at most 30 inbox rows.** The CLI has no
+`--limit` flag and inbox volume routinely runs into the hundreds, so
+the cap is enforced *here*, not by the command. After ordering by the
+rules above, take the top 30 rows for the table; everything past row
+30 is dropped from the table and accounted for by a single overflow
+line below it (see the cluster-collapse rule). If the user wants the
+full unbounded list they can run `mars inbox list <state>` themselves —
+say so in the overflow line. This cap is the primary defense against
+context bloat; apply it on every 1b/1c invocation regardless of state
+filter.
+
 Render the items as a **GitHub-flavored markdown table using exactly
 this template every time** — same columns, same order, same headers,
 regardless of which resolution mode (1b/1c) led here or how many rows
@@ -92,11 +103,18 @@ Column rules, applied identically on every invocation:
 - **Kind** — the kind summary (with its `(...)` qualifier if present).
 - **Message** — truncated at ~90 chars.
 
-If items naturally cluster by `kind` prefix (e.g. many
-`recovery-failed(...)` or `stale-worktree(...)` rows), collapse the
-cluster into one summary line **below the table** (not as a table row):
+Whenever rows are withheld from the table — either the 30-row cap
+fired or items naturally cluster by `kind` prefix (e.g. many
+`recovery-failed(...)` or `stale-worktree(...)` rows) — collapse the
+remainder into **one** summary line **below the table** (not as a
+table row), with the exact withheld count:
 
-> `… plus 12 more stale-worktree items (use mars inbox list to expand)`
+> `… plus 82 more open items not shown (cap 30; run \`mars inbox list open\` for the full list)`
+
+When the overflow is one dominant `kind`, name it instead of the
+generic "items":
+
+> `… plus 12 more stale-worktree items (use \`mars inbox list\` to expand)`
 
 After printing, **stop and wait**. Do not ask a follow-up question.
 The user's next message is expected to be one of:
