@@ -1,9 +1,11 @@
 import type { ZodType } from 'zod'
 import {
   agentsResponseSchema,
+  inboxResponseSchema,
   tasksResponseSchema,
   todoResponseSchema,
   type Agent,
+  type InboxPayload,
   type Task,
   type TodoPayload,
 } from './schemas'
@@ -38,6 +40,10 @@ export const fetchTodo = async (): Promise<TodoPayload> => {
   return fetchJson('/api/todo', todoResponseSchema)
 }
 
+export const fetchInbox = async (): Promise<InboxPayload> => {
+  return fetchJson('/api/inbox', inboxResponseSchema)
+}
+
 export const fetchAgents = async (): Promise<Agent[]> => {
   const json = await fetchJson('/api/agents', agentsResponseSchema)
   return json.agents
@@ -62,4 +68,4 @@ export const dismissTodoItem = async (
   }
 }
 
-export type { Agent, StaleWorktree, TodoPayload } from './schemas'
+export type { Agent, InboxPayload, StaleWorktree, TodoPayload } from './schemas'
