@@ -53,6 +53,10 @@ export const staleWorktreeSchema = z.object({
   status: z.string(),
   ageHours: z.number(),
   updatedAt: z.string(),
+  prompt: z.string(),
+  error: z.string().nullable(),
+  branch: z.string().nullable(),
+  blockerTaskId: z.string().nullable(),
 })
 
 export const tasksResponseSchema = z.object({
