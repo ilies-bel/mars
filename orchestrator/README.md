@@ -175,6 +175,11 @@ writes and (b) the synthesis CLI.
 **Cost.** The reflector uses Haiku at roughly $0.005–$0.02 per call. It is
 deliberately on-demand, not auto-run per task.
 
+**Timeout.** `mars reflect` is unbounded — the synthesis runs to completion or
+until the user hits Ctrl-C. There is no wall-clock timeout and no
+`MARS_REFLECT_TIMEOUT` knob. Only the `MARS_CLAUDE_MAX_MESSAGES` message cap
+(exit 137) applies on this path.
+
 **Deep, single-session post-mortem.** `mars deep-reflect [<task-id>]`
 runs a transcript-aware analysis on one task instead of an aggregate
 window. The implement workflow persists the full trimmed

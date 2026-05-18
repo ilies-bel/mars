@@ -2404,6 +2404,7 @@ const main = async (): Promise<void> => {
       console.log('\nno suggestions produced')
       if (result.exitCode !== 0) {
         console.error(`reflector exit code ${result.exitCode}`)
+        process.exit(1)
       }
       return
     }

@@ -253,16 +253,17 @@ export const collectAssistantText = (
 
 export const runReflector = async (
   corpus: ReflectCorpus,
-  timeoutMs: number = 180 * 1000,
 ): Promise<ReflectionResult> => {
   if (corpus.entries.length === 0) {
     return { costAnalysis: null, suggestions: [], rawOutput: '', exitCode: 0 }
   }
 
+  // No wall-clock timeout: reflect synthesis must run to completion.
+  // The only way to stop it is Ctrl-C. The MARS_CLAUDE_MAX_MESSAGES message
+  // cap (exit 137) still applies via runClaudeCode's internal logic.
   const r = await runClaudeCode({
     cwd: getRepoRoot(),
     prompt: buildPrompt(corpus),
-    timeoutMs,
     model: 'sonnet',
   })
 
