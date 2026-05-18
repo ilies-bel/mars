@@ -5,6 +5,8 @@ import { resolve } from 'node:path'
 import {
   deriveReproCommand,
   resolveVerifyCwd,
+  buildVerifyReproHint,
+  type RanVerifyStep,
 } from '../derive-repro-command'
 
 describe('deriveReproCommand', () => {
@@ -163,5 +165,72 @@ describe('deriveReproCommand', () => {
     it('returns the worktree root unchanged when no project layout is found', () => {
       expect(resolveVerifyCwd(worktree)).toBe(worktree)
     })
+  })
+})
+
+describe('buildVerifyReproHint', () => {
+  it('returns null for an empty steps array', () => {
+    expect(buildVerifyReproHint([])).toBeNull()
+  })
+
+  it('shows the command and directory for a single failing non-JavaScript step', () => {
+    const steps: RanVerifyStep[] = [
+      { name: 'test', cmd: 'pytest', args: ['src/'], stepDir: '/repo/api', passed: false },
+    ]
+    expect(buildVerifyReproHint(steps)).toBe(
+      'cd /repo/api && pytest src/  # test (FAILED)',
+    )
+  })
+
+  it('lists all steps that actually ran, annotating each as passed or FAILED', () => {
+    const steps: RanVerifyStep[] = [
+      {
+        name: 'typecheck',
+        cmd: 'npx',
+        args: ['tsc', '--noEmit'],
+        stepDir: '/repo/frontend',
+        passed: true,
+      },
+      { name: 'test', cmd: 'pytest', args: [], stepDir: '/repo/api', passed: false },
+    ]
+    expect(buildVerifyReproHint(steps)).toBe(
+      'cd /repo/frontend && npx tsc --noEmit  # typecheck (passed)\n' +
+        'cd /repo/api && pytest  # test (FAILED)',
+    )
+  })
+
+  it('keeps the failing step identifiable via the FAILED annotation', () => {
+    const steps: RanVerifyStep[] = [
+      { name: 'build', cmd: 'cargo', args: ['build'], stepDir: '/repo', passed: false },
+    ]
+    const hint = buildVerifyReproHint(steps)
+    expect(hint).toContain('FAILED')
+    expect(hint).toContain('build')
+    expect(hint).toContain('cargo build')
+  })
+
+  it('uses no hardcoded JavaScript commands when the declared steps use a different toolchain', () => {
+    const steps: RanVerifyStep[] = [
+      { name: 'test', cmd: 'pytest', args: ['tests/'], stepDir: '/repo', passed: false },
+    ]
+    const hint = buildVerifyReproHint(steps)
+    expect(hint).not.toContain('npx')
+    expect(hint).not.toContain('vitest')
+    expect(hint).not.toContain('tsc')
+    expect(hint).not.toContain('npm')
+  })
+
+  it('uses the scope directory declared in the failing step, not a hardcoded cwd', () => {
+    const steps: RanVerifyStep[] = [
+      {
+        name: 'test',
+        cmd: 'pytest',
+        args: [],
+        stepDir: '/worktree/apps/api',
+        passed: false,
+      },
+    ]
+    const hint = buildVerifyReproHint(steps)
+    expect(hint).toContain('cd /worktree/apps/api')
   })
 })

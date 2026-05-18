@@ -709,6 +709,15 @@ export interface VerifyStep {
   name: string
   passed: boolean
   output: string
+  /**
+   * The command that was run. Populated by {@link verifyChanges} so callers
+   * can build accurate reproduce hints from `r.steps` without re-correlating
+   * them against the original step specs.
+   */
+  cmd?: string
+  args?: readonly string[]
+  /** Absolute directory the step ran in. */
+  stepDir?: string
 }
 
 export interface VerifyStepSpec {
@@ -761,13 +770,16 @@ const runVerifyStep = async (
       cwd,
       maxBuffer: 10 * 1024 * 1024,
     })
-    return { name, passed: true, output: stdout + stderr }
+    return { name, passed: true, output: stdout + stderr, cmd, args, stepDir: cwd }
   } catch (error: unknown) {
     const e = error as { stdout?: string; stderr?: string; message?: string }
     return {
       name,
       passed: false,
       output: (e.stdout ?? '') + (e.stderr ?? '') + (e.message ?? ''),
+      cmd,
+      args,
+      stepDir: cwd,
     }
   }
 }
