@@ -283,3 +283,7 @@ _Avoid_: listener, consumer, handler, bus listener
 **Progress tab**:
 The ui/ tab that renders all non-terminal work plus recent failures as a live monitoring surface, with a DAG default view and a kanban alternative view; replaces the legacy Kanban tab.
 _Avoid_: Kanban tab, Runs tab, live tab
+
+**Cluster**:
+An operator-meaningful grouping of task statuses (or proposals) used by the Progress tab: Proposal, In progress (queued + running + verifying + merging), Blocked, Failed.
+_Avoid_: bucket, group, status group, Graph bucket
