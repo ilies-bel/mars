@@ -9,6 +9,7 @@ interface InboxModule {
   listInboxItems: typeof import('./inbox').listInboxItems
   getInboxItem: typeof import('./inbox').getInboxItem
   setInboxState: typeof import('./inbox').setInboxState
+  setRecoveryFindings: typeof import('./inbox').setRecoveryFindings
 }
 
 const setupRepo = (): string => {
@@ -295,6 +296,64 @@ describe('inbox', () => {
     const a = await inbox.raiseInboxItem(baseItem({ signature: 'legacy' }))
     const b = await inbox.raiseInboxItem(baseItem({ signature: 'legacy' }))
     expect(b).toBe(a)
+  })
+
+  describe('setRecoveryFindings (slice 3)', () => {
+    it('overwrites the existing open row body in place without creating a new row, and re-runs overwrite the same row', async () => {
+      const inbox = await loadModule(repo)
+      const originId = 'origin-recovery-1'
+      const created = await inbox.raiseInboxItem(
+        baseItem({
+          kind: 'task-blocked',
+          signature: 'sig-initial',
+          originTaskId: originId,
+          body: 'GENERIC kind-template body — run /mars:unblock to inspect.',
+        }),
+      )
+      const before = await inbox.getInboxItem(created)
+      expect(before!.body).toContain('GENERIC kind-template')
+
+      const updatedId = await inbox.setRecoveryFindings(
+        originId,
+        'Recovery findings v1: the failing test asserts foo === 1; suggest updating foo to 1.',
+      )
+
+      // No new row, same id, body differs.
+      expect(updatedId).toBe(created)
+      const afterFirst = await inbox.getInboxItem(created)
+      expect(afterFirst!.id).toBe(before!.id)
+      expect(afterFirst!.body).not.toBe(before!.body)
+      expect(afterFirst!.body).toContain('Recovery findings v1')
+
+      const openAfterFirst = await inbox.listInboxItems('open')
+      expect(openAfterFirst).toHaveLength(1)
+      expect(openAfterFirst[0].id).toBe(created)
+
+      // Re-running recovery overwrites the previous findings on the same row.
+      const updatedAgain = await inbox.setRecoveryFindings(
+        originId,
+        'Recovery findings v2: actually, the regression is in bar(); patch bar.',
+      )
+      expect(updatedAgain).toBe(created)
+      const afterSecond = await inbox.getInboxItem(created)
+      expect(afterSecond!.id).toBe(created)
+      expect(afterSecond!.body).toContain('Recovery findings v2')
+      expect(afterSecond!.body).not.toContain('Recovery findings v1')
+
+      const openAfterSecond = await inbox.listInboxItems('open')
+      expect(openAfterSecond).toHaveLength(1)
+    })
+
+    it('returns null and inserts nothing when no open row exists for the origin (generic template stays in charge)', async () => {
+      const inbox = await loadModule(repo)
+      const result = await inbox.setRecoveryFindings(
+        'unknown-origin',
+        'findings text',
+      )
+      expect(result).toBeNull()
+      const open = await inbox.listInboxItems('open')
+      expect(open).toHaveLength(0)
+    })
   })
 
   it('after resolving an item, raising the same fingerprint creates a new open item (only open is dedup target)', async () => {
