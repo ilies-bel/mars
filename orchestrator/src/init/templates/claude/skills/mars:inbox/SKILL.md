@@ -41,12 +41,12 @@ Run `mars inbox show <argument>`:
 
 ## 1b — Argument is a state filter (`open`, `acknowledged`, `resolved`, `dismissed`, `all`)
 
-Run `mars inbox list <state>` and present the result per Step 2.
+Run `mars inbox list <state> | head -n 20` and present the result per Step 2.
 Default state when no argument is given is `open`.
 
 ## 1c — No argument: show open items
 
-Run `mars inbox list open` and present the result per Step 2.
+Run `mars inbox list open | head -n 20` and present the result per Step 2.
 
 # Step 2 — Present the list (inbox rows only)
 
@@ -97,6 +97,12 @@ If items naturally cluster by `kind` prefix (e.g. many
 cluster into one summary line **below the table** (not as a table row):
 
 > `… plus 12 more stale-worktree items (use mars inbox list to expand)`
+
+If the raw listing from Step 1b/1c was truncated by `head` (i.e. exactly
+20 inbox rows were returned before draft filtering), append one overflow
+line below the table (after any kind-cluster summary):
+
+> `… plus more open inbox items (run \`mars inbox list open\` to see the full list).`
 
 After printing, **stop and wait**. Do not ask a follow-up question.
 The user's next message is expected to be one of:
