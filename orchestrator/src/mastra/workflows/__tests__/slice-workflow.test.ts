@@ -456,6 +456,85 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     expect(after?.status).toBe('prd-ready')
     expect(await countTasksForIdea(ideaId)).toBe(0)
   })
+
+  it('leaves the idea at prd-ready when generate-slices times out (exit 124)', async () => {
+    // Regression test for the original bug: `mars idea slice 06e677fb`
+    // failed when the slicer hit the 300s wall (claude -p exited 124),
+    // yet the idea's status was left as 'sliced' with zero tasks.
+    //
+    // The exitCode=124 throw fires OUTSIDE the try-catch block (before any
+    // Phase 1-4 DB write), so `ideaFlipped` is never set and no compensation
+    // is needed. This test pins that: a timeout must NOT set the idea to
+    // 'sliced', and `mars idea slice` must be re-runnable without a manual
+    // `mars idea set <id> status prd-ready` poke.
+    vi.doMock('../../lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../lib/git')>(
+        '../../lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 124,
+          stdout: '',
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const slice = await import('../slice-workflow')
+    await expect(slice.runSlice(ideaId)).rejects.toThrow(/124/)
+
+    const proposals = await import('../../proposals')
+    const after = await proposals.getProposal(ideaId)
+    // Must remain prd-ready — `mars idea slice` must be directly re-runnable.
+    expect(after?.status).toBe('prd-ready')
+    // Zero tasks: no partial state was committed to the queue.
+    expect(await countTasksForIdea(ideaId)).toBe(0)
+  })
+
+  it('on success: atomically flips idea to sliced AND inserts the expected slice tasks', async () => {
+    // The idea→sliced status transition must be atomic with successful
+    // slice-task creation. This test verifies the "happy path" invariant:
+    // a successful runSlice must produce BOTH idea.status='sliced' AND
+    // the expected tasks in the queue — not one without the other.
+    vi.doMock('../../lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../lib/git')>(
+        '../../lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(validSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const slice = await import('../slice-workflow')
+    const result = await slice.runSlice(ideaId)
+
+    // Status flip: the idea must now be 'sliced'.
+    const proposals = await import('../../proposals')
+    const after = await proposals.getProposal(ideaId)
+    expect(after?.status).toBe('sliced')
+
+    // Task creation: the returned taskIds must match what was inserted.
+    expect(result.taskIds).toHaveLength(1)
+    expect(await countTasksForIdea(ideaId)).toBe(1)
+
+    // The returned ideaId must match, and status must be the settled string.
+    expect(result.ideaId).toBe(ideaId)
+    expect(result.status).toBe('sliced')
+  })
 })
 
 describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
