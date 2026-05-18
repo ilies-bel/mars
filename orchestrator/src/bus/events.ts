@@ -56,6 +56,68 @@ export const EventMap = {
     taskId: z.string(),
     blockerTaskId: z.string(),
   }),
+  // --- Phase 3 outbox events ---
+  // Schemas land ahead of writer conversion. Writers in queue.ts / inbox.ts /
+  // ideas.ts / reflect-signals.ts must be wrapped in tx + publish() before
+  // these become observable; tracked in a follow-up task.
+  'transcript.appended': z.object({
+    taskId: z.string(),
+    role: z.string(),
+    contentLength: z.number().int().nonnegative(),
+  }),
+  'inbox.raised': z.object({
+    itemId: z.string(),
+    kind: z.string(),
+    category: z.string(),
+    priority: z.string(),
+    signature: z.string().nullable(),
+  }),
+  'inbox.resolved': z.object({
+    itemId: z.string(),
+    fromState: z.string(),
+    toState: z.string(),
+    by: z.string(),
+  }),
+  'idea.created': z.object({
+    ideaId: z.string(),
+    source: z.string(),
+  }),
+  'idea.updated': z.object({
+    ideaId: z.string(),
+    field: z.string(),
+  }),
+  'idea.dismissed': z.object({
+    ideaId: z.string(),
+  }),
+  'idea.prd_ready': z.object({
+    ideaId: z.string(),
+  }),
+  'idea.sliced': z.object({
+    ideaId: z.string(),
+  }),
+  'idea.deleted': z.object({
+    ideaId: z.string(),
+  }),
+  'idea.story_added': z.object({
+    ideaId: z.string(),
+    position: z.number().int().nonnegative(),
+  }),
+  'idea.story_removed': z.object({
+    ideaId: z.string(),
+    position: z.number().int().nonnegative(),
+  }),
+  'signal.recorded': z.object({
+    taskId: z.string(),
+    kind: z.string(),
+  }),
+  'question.raised': z.object({
+    questionId: z.string(),
+    taskId: z.string(),
+    category: z.string(),
+  }),
+  'question.answered': z.object({
+    taskId: z.string(),
+  }),
 } as const;
 
 /** Union of every registered event type name. */
