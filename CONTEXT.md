@@ -279,3 +279,7 @@ _Avoid_: event log, event store, event queue, bus table, outbox_events
 **Subscriber**:
 A code-declared, named consumer of the Outbox with a durable cursor, a handler, and a bootstrap mode (replay or tail). One Subscriber's cursor is independent of every other's.
 _Avoid_: listener, consumer, handler, bus listener
+
+**Progress tab**:
+The ui/ tab that renders all non-terminal work plus recent failures as a live monitoring surface, with a DAG default view and a kanban alternative view; replaces the legacy Kanban tab.
+_Avoid_: Kanban tab, Runs tab, live tab
