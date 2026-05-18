@@ -16,18 +16,25 @@ export type TaskStatus =
   | 'blocked'
 
 /**
- * Distinguishes ordinary user/agent tasks from orchestrator-spawned recovery
- * fix-tasks. The value is mirrored by, and must agree with, the
- * `fixForTaskId` pointer:
+ * Distinguishes the different roles a row can play in the queue. The value
+ * is mirrored by, and must agree with, the `fixForTaskId` pointer (only
+ * `'fix'` may carry a non-null pointer):
  *
- *   - `'task'` → ordinary work; `fixForTaskId` MUST be null
- *   - `'fix'`  → recovery fix-task; `fixForTaskId` MUST be non-null
+ *   - `'task'`     → ordinary work; `fixForTaskId` MUST be null
+ *   - `'fix'`      → recovery fix-task; `fixForTaskId` MUST be non-null
+ *   - `'diagnose'` → terminal investigate-only Chore spawned when a coder
+ *                    trips the read-span guard. Reads heavily without acting,
+ *                    records a verdict through `mars diagnose set`, and
+ *                    parks the original task behind itself. Never spawns
+ *                    another diagnose Chore (see PRD 06e677fb / ADR).
+ *                    `fixForTaskId` MUST be null; the link to the origin
+ *                    stuck task is via `origin_id`.
  *
  * The field is declared optional on the TypeScript type for backwards
  * compatibility with existing `Task` literals in tests and fixtures; every
  * persistence path defaults `undefined` to `'task'`.
  */
-export type TaskKind = 'task' | 'fix'
+export type TaskKind = 'task' | 'fix' | 'diagnose'
 
 /**
  * Routing hint that selects which Worker implements a Task. Authored by the
@@ -201,6 +208,11 @@ export const assertTaskKindInvariant = (
   if (kind === 'task' && fixForTaskId !== null) {
     throw new Error(
       `task kind 'task' requires a null fix-for pointer; got ${fixForTaskId}`,
+    )
+  }
+  if (kind === 'diagnose' && fixForTaskId !== null) {
+    throw new Error(
+      `task kind 'diagnose' requires a null fix-for pointer; got ${fixForTaskId}`,
     )
   }
 }
@@ -717,7 +729,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
   const fixForTaskId = (row.fix_for_task_id as string | null) ?? null
   const rawKind = (row.kind as string | null) ?? null
   const kind: TaskKind =
-    rawKind === 'fix' || rawKind === 'task'
+    rawKind === 'fix' || rawKind === 'task' || rawKind === 'diagnose'
       ? rawKind
       : deriveTaskKind(fixForTaskId)
   const rawTag = (row.tag as string | null) ?? null
@@ -798,6 +810,13 @@ export interface EnqueueTaskOptions {
    */
   tag?: TaskTag
   /**
+   * Marker for the task's role. Defaults to `'task'`. `'fix'` is set by the
+   * recovery dispatcher (must come with a non-null `fixForTaskId`).
+   * `'diagnose'` is set when the orchestrator spawns a diagnose Chore to
+   * investigate a stuck origin task — see PRD 06e677fb.
+   */
+  kind?: TaskKind
+  /**
    * Structured-task contract. When omitted the row is stored with the
    * legacy free-prose shape (every spec column NULL) and the implementor
    * agent sees only `prompt`. When set, the spec is persisted alongside
@@ -830,6 +849,16 @@ export const enqueueTask = async (
   const parentProposalId = opts?.parentProposalId ?? null
   const sliceIndex = opts?.sliceIndex ?? null
   const tag: TaskTag = opts?.tag ?? 'coder'
+  const kind: TaskKind = opts?.kind ?? 'task'
+  // enqueueTask never sets fix_for_task_id (fix-tasks go through their own
+  // recovery path), so the invariant collapses to: only 'task' and
+  // 'diagnose' kinds are valid here.
+  assertTaskKindInvariant(kind, null)
+  if (kind === 'fix') {
+    throw new Error(
+      `enqueueTask cannot create kind='fix'; use the recovery fix-task path`,
+    )
+  }
   const spec = opts?.spec ?? null
   if (spec !== null && !isTaskType(spec.taskType)) {
     throw new Error(
@@ -841,7 +870,7 @@ export const enqueueTask = async (
   const doneCriteriaJson = spec ? JSON.stringify(spec.doneCriteria) : null
   const taskType = spec ? spec.taskType : null
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tag, files_json, verify_cmd, done_criteria_json, task_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tag, kind, files_json, verify_cmd, done_criteria_json, task_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       promptText,
@@ -855,6 +884,7 @@ export const enqueueTask = async (
       parentProposalId,
       sliceIndex,
       tag,
+      kind,
       filesJson,
       verifyCmd,
       doneCriteriaJson,

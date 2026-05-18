@@ -106,6 +106,27 @@ const planSchema = z
 const tagSchema: z.ZodType<TaskTag> = z.enum(TASK_TAGS as readonly [TaskTag, ...TaskTag[]])
   .default('coder')
 
+// Task role, mirroring {@link TaskKind}. Defaults to 'task' when the
+// dispatcher omits it (legacy rows). 'diagnose' marks a diagnose-only
+// Chore — exempt from the read-span guard, never commits, short-circuits
+// out of verify+merge after recording its verdict.
+const kindSchema = z.enum(['task', 'fix', 'diagnose']).default('task')
+
+/**
+ * Predicate that the codeStep consults to decide whether to wire the
+ * read-span watcher around a Worker run. Exported so the rule is testable
+ * in isolation — the actual call site reproduces this expression literally.
+ *
+ * - Writer runs are exempt: Writer's tool surface is too narrow to stall
+ *   on reads, and wiring the watcher there would only add false positives.
+ * - Diagnose Chores are exempt: their whole job is reading (PRD 06e677fb).
+ *   Their backstop is the Worker harness's existing time/turn cap.
+ */
+export const shouldWireReadSpanWatcher = (
+  tag: TaskTag,
+  kind: 'task' | 'fix' | 'diagnose',
+): boolean => tag === 'coder' && kind !== 'diagnose'
+
 // Phases that the workflow can be resumed from. Mirrors {@link FailedPhase}
 // in queue.ts but the workflow only ever resumes from a verify-or-later
 // failure: 'code' failures (setup:install) are non-resumable.
@@ -356,7 +377,15 @@ export const composePrompt = (
   spec: TaskSpec | null = null,
   taskId = '',
   worktreeRoot = '',
+  kind: 'task' | 'fix' | 'diagnose' = 'task',
 ): string => {
+  // Diagnose Chore short-circuit: the prompt arrives fully composed from
+  // buildDiagnoseChorePrompt (forbids commits, requires a `mars diagnose
+  // set` recording). Passing it through plan/orientation/spec/commit-
+  // footer assembly would (a) re-inject COMMIT_FOOTER, contradicting the
+  // Chore's "do not commit" contract, and (b) bolt on a spec block the
+  // Chore has no use for. Hand the prompt back verbatim.
+  if (kind === 'diagnose') return prompt.trim()
   const sections: string[] = [prompt.trim()]
   if (plan?.functional?.trim()) {
     sections.push(`## Functional plan\n\n${plan.functional.trim()}`)
@@ -478,6 +507,7 @@ const setupStep = createStep({
     prompt: z.string(),
     plan: planSchema.default(null),
     tag: tagSchema,
+    kind: kindSchema,
     integrationBranch: z.string().default('main'),
     resumeFrom: resumeFromSchema,
     spec: specSchema,
@@ -487,6 +517,7 @@ const setupStep = createStep({
     prompt: z.string(),
     plan: planSchema,
     tag: tagSchema,
+    kind: kindSchema,
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
@@ -663,6 +694,7 @@ const codeStep = createStep({
     prompt: z.string(),
     plan: planSchema,
     tag: tagSchema,
+    kind: kindSchema,
     integrationBranch: z.string(),
     path: z.string(),
     branch: z.string(),
@@ -675,6 +707,7 @@ const codeStep = createStep({
     path: z.string(),
     branch: z.string(),
     tag: tagSchema,
+    kind: kindSchema,
     claudeExitCode: z.number(),
     resumeFrom: resumeFromSchema,
   }),
@@ -689,6 +722,7 @@ const codeStep = createStep({
         path: inputData.path,
         branch: inputData.branch,
         tag: inputData.tag,
+        kind: inputData.kind,
         claudeExitCode: 0,
         resumeFrom: inputData.resumeFrom,
       }
@@ -733,24 +767,28 @@ const codeStep = createStep({
       inputData.spec ?? null,
       inputData.taskId,
       inputData.path,
+      inputData.kind,
     )
     const conversation: ClaudeEvent[] = []
     const worker = getWorkerForTag(tag)
-    // Read/Grep span watcher (gsd-style analysis-paralysis signal). Only
-    // applied to Coder runs — Writer's surface is too narrow to stall on
-    // reads. Log-only: when the streak first crosses the limit we emit
-    // one diagnostic line and otherwise let the run proceed.
-    const watcher =
-      tag === 'coder'
-        ? createReadSpanWatcher({
-            limit: resolveReadSpanLimit(),
-            onThreshold: (info) => {
-              console.log(
-                `[span] task ${inputData.taskId}: ${info.limit} consecutive Read/Grep/Glob calls without action (trace=${info.trace.map((t) => t.tool).join('+')}).`,
-              )
-            },
-          })
-        : null
+    // Read/Grep span watcher (gsd-style analysis-paralysis signal). Log-
+    // only on threshold breach (no SIGKILL, no child spawn — see commit
+    // 48bb929). Skipped for Writer runs (surface too narrow to stall on
+    // reads) and for diagnose Chores (whose job IS heavy reading; PRD
+    // 06e677fb). The diagnose-Chore exemption is dormant today because
+    // the watcher no longer fires any branch, but it remains correct: if
+    // a future trigger ever runs a diagnose Chore through this workflow,
+    // the watcher should not even observe its read pattern.
+    const watcher = shouldWireReadSpanWatcher(tag, inputData.kind)
+      ? createReadSpanWatcher({
+          limit: resolveReadSpanLimit(),
+          onThreshold: (info) => {
+            console.log(
+              `[span] task ${inputData.taskId}: ${info.limit} consecutive Read/Grep/Glob calls without action (trace=${info.trace.map((t) => t.tool).join('+')}).`,
+            )
+          },
+        })
+      : null
     const r = await worker.run(fullPrompt, {
       cwd: inputData.path,
       systemPrompt: resolveWorkerSystemPrompt(tag),
@@ -816,6 +854,7 @@ const codeStep = createStep({
       path: inputData.path,
       branch: inputData.branch,
       tag,
+      kind: inputData.kind,
       claudeExitCode: r.exitCode,
       resumeFrom: inputData.resumeFrom,
     }
@@ -830,6 +869,7 @@ const verifyStep = createStep({
     path: z.string(),
     branch: z.string(),
     tag: tagSchema,
+    kind: kindSchema,
     claudeExitCode: z.number(),
     resumeFrom: resumeFromSchema,
   }),
@@ -839,6 +879,7 @@ const verifyStep = createStep({
     path: z.string(),
     branch: z.string(),
     tag: tagSchema,
+    kind: kindSchema,
     verified: z.boolean(),
   }),
   scorers: {
@@ -862,6 +903,24 @@ const verifyStep = createStep({
         path: inputData.path,
         branch: inputData.branch,
         tag: inputData.tag,
+        kind: inputData.kind,
+        verified: true,
+      }
+    }
+
+    // Diagnose Chore short-circuit: the Chore never commits and never
+    // produces a verifiable artefact. Its deliverable is the structured
+    // verdict in the diagnoses table; the merge step then cleans up the
+    // empty worktree and the post-completion branch in the daemon reads
+    // the verdict and either dispatches one fix or raises an inbox item.
+    if (inputData.kind === 'diagnose') {
+      return {
+        taskId: inputData.taskId,
+        integrationBranch: inputData.integrationBranch,
+        path: inputData.path,
+        branch: inputData.branch,
+        tag: inputData.tag,
+        kind: inputData.kind,
         verified: true,
       }
     }
@@ -969,6 +1028,7 @@ const verifyStep = createStep({
       path: inputData.path,
       branch: inputData.branch,
       tag: inputData.tag,
+      kind: inputData.kind,
       verified: r.passed,
     }
   },
@@ -982,6 +1042,7 @@ const mergeStep = createStep({
     path: z.string(),
     branch: z.string(),
     tag: tagSchema,
+    kind: kindSchema,
     verified: z.boolean(),
   }),
   outputSchema: z.object({
@@ -1020,6 +1081,22 @@ const mergeStep = createStep({
         taskId: inputData.taskId,
         success: true,
         message: 'writer task: changes landed on integration via structured-write daemon',
+      }
+    }
+
+    // Diagnose Chore short-circuit: the Chore never commits and therefore
+    // has nothing to merge. Its deliverable is the structured verdict in
+    // the diagnoses table, which the daemon reads via the post-completion
+    // branch (see PRD 06e677fb). Clean up the worktree and mark done; the
+    // verdict-driven follow-up (one fix, or one inbox item) runs from the
+    // task.completed event in daemon/server.ts.
+    if (inputData.kind === 'diagnose') {
+      await removeWorktree({ path: inputData.path, branch: inputData.branch }, true)
+      await updateTask(inputData.taskId, { status: 'done', failedPhase: null })
+      return {
+        taskId: inputData.taskId,
+        success: true,
+        message: 'diagnose Chore complete; verdict-driven branch runs in daemon',
       }
     }
 
@@ -1239,6 +1316,7 @@ export const implementWorkflow = createWorkflow({
     prompt: z.string(),
     plan: planSchema.default(null),
     tag: tagSchema,
+    kind: kindSchema,
     integrationBranch: z.string().default('main'),
     resumeFrom: resumeFromSchema,
     spec: specSchema,
