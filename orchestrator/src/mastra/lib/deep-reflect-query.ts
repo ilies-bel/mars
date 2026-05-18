@@ -487,8 +487,11 @@ const fetchArcAggregateRows = async (): Promise<ArcAggregateRow[]> => {
 }
 
 export const listDeepReflectArcCandidates = async (
-  limit: number = 5,
+  opts: { limit?: number; withTranscriptOnly?: boolean } = {},
 ): Promise<ArcCandidate[]> => {
+  const limit = opts.limit ?? 5
+  const withTranscriptOnly = opts.withTranscriptOnly ?? true
+
   await initQueue()
   const rows = await fetchArcAggregateRows()
   if (rows.length === 0) return []
@@ -522,10 +525,10 @@ export const listDeepReflectArcCandidates = async (
     byOrigin.set(row.origin_id, entry)
   }
 
-  // Restrict to arcs with at least one stored transcript.
+  // Optionally restrict to arcs with at least one stored transcript.
   const eligible: ArcCandidate[] = []
   for (const arc of byOrigin.values()) {
-    if (arc.rankScore !== 1) continue
+    if (withTranscriptOnly && arc.rankScore !== 1) continue
     // Failures dominate; ties broken by token spend, then by recency.
     arc.rankScore = arc.failureCount * 1_000_000_000 + arc.totalTokens
     eligible.push(arc)
