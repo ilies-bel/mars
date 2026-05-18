@@ -398,7 +398,7 @@ export const ActionQueuePage = () => {
           <p className="mt-1 font-mono text-[10px] text-iron">
             {staleWorktrees.length} alert
             {staleWorktrees.length === 1 ? '' : 's'} ·{' '}
-            {drafts.length} idea{drafts.length === 1 ? '' : 's'}
+            {drafts.length} proposal{drafts.length === 1 ? '' : 's'}
           </p>
         </header>
 
@@ -423,11 +423,11 @@ export const ActionQueuePage = () => {
             </ul>
           )}
 
-          {/* Ideas section */}
-          <SectionHeader label="Ideas" count={ideaItems.length} />
+          {/* Proposals section */}
+          <SectionHeader label="Proposals" count={ideaItems.length} />
           {ideaItems.length === 0 ? (
             <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
-              No ideas.
+              No proposals.
             </p>
           ) : (
             <ul>
@@ -455,7 +455,7 @@ export const ActionQueuePage = () => {
         {empty ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div className="font-mono text-[12px] text-iron">
-              No items. Alerts appear when worktrees go stale; ideas appear
+              No items. Alerts appear when worktrees go stale; proposals appear
               when drafts are added.
             </div>
           </div>

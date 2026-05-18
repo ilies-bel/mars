@@ -5,7 +5,6 @@ import { detectRoute, parseTaskRoute } from '@/shared/routing'
 import { AgentsPage } from '@/pages/AgentsPage'
 import { KanbanPage } from '@/pages/KanbanPage'
 import { ActionQueuePage } from '@/pages/TodoPage'
-import { ProposalsPage } from '@/pages/ProposalsPage'
 
 const clearTaskHash = (): void => {
   if (typeof window === 'undefined') return
@@ -28,8 +27,6 @@ const App = () => {
           <AgentsPage />
         ) : route === 'kanban' ? (
           <KanbanPage />
-        ) : route === 'proposals' ? (
-          <ProposalsPage />
         ) : (
           <ActionQueuePage />
         )}
