@@ -60,6 +60,17 @@ export interface ErrorClassRule {
  * Each rule's `errorClass` must be a stable slug (kebab-case, no spaces).
  * The Investigator agent proposes additions to this list when it sees an
  * unclassified error worth recovering automatically.
+ *
+ * ## Intentionally unclassified failure steps
+ *
+ * `verify:test` failures produce `verify:test/unclassified` and route to
+ * the inbox/Investigator pattern **by design** — no rule is registered here
+ * for them. Each test failure has a unique root cause (wrong assertion,
+ * null deref, API mismatch, logic error, newly introduced test bug, etc.)
+ * and a single mechanical recipe cannot give correct guidance across all
+ * occurrences. Investigated: 2026-05-18 (inbox item 7eaf941e, task
+ * mars-eaad74d8); confirmed that the right resolution is a targeted
+ * follow-up task rather than a generic recipe entry.
  */
 export const errorClassRules: readonly ErrorClassRule[] = [
   {
