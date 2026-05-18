@@ -305,6 +305,13 @@ Commands:
                                 intent), verify-claim mismatches, and thrashing
                                 patterns. Auto-picks a candidate when no id is
                                 given. Requires a stored transcript.
+  arc list [--limit N] [--json] [--with-transcript-only]
+                                list task arcs grouped by COALESCE(origin_id, id).
+                                Each arc covers an origin task plus any recovery
+                                tasks. --limit N (default 10, clamped to [1, 100]).
+                                --json emits the raw ArcCandidate[] as a JSON array.
+                                --with-transcript-only restricts to arcs that have
+                                at least one stored transcript.
   inbox                         alias for 'inbox list open'
   inbox list [state] [--kind <kind>] [--lean]
                                 list inbox items. state one of:
@@ -626,6 +633,20 @@ Subcommands:
       List all ADRs in docs/adr/.
   show <NNNN|filename>
       Print one ADR's contents. Number prefix is matched after zero-padding.`,
+  arc: `mars arc <subcommand> ...
+
+Subcommands:
+  list [--limit N] [--json] [--with-transcript-only]
+      List task arcs grouped by COALESCE(origin_id, id) so ad-hoc tasks
+      without an idea still appear as one-task arcs.
+
+      Text output: header row, then one tab-separated row per arc:
+        originId  tasks  done  failed  tokens  costUsd  lastActivity
+
+      Flags:
+        --limit N              max arcs to return (default 10, clamped to [1, 100])
+        --json                 emit a JSON array of ArcCandidate objects
+        --with-transcript-only only include arcs with at least one stored transcript`,
   reflect: `mars reflect [--since <iso>] [--limit <n>]
 
 Synthesize draft task suggestions from recent completed tasks. Reads
@@ -2447,6 +2468,53 @@ const main = async (): Promise<void> => {
     console.log(`Full report: ${outPath}`)
     if (result.exitCode !== 0) {
       console.error(`deep-reflector exit code ${result.exitCode}`)
+    }
+    return
+  }
+
+  if (cmd === 'arc') {
+    const sub = rest[0]
+    if (sub !== 'list') {
+      console.error('usage: mars arc list [--limit N] [--json] [--with-transcript-only]')
+      process.exit(1)
+    }
+    const { listDeepReflectArcCandidates } = await import(
+      './mastra/lib/deep-reflect-query'
+    )
+    const emitJson = rest.includes('--json')
+    const withTranscriptOnly = rest.includes('--with-transcript-only')
+
+    let limit = 10
+    const limitRaw = flags['--limit']
+    if (limitRaw !== undefined) {
+      const parsed = Number(limitRaw)
+      if (!Number.isInteger(parsed) || Number.isNaN(parsed)) {
+        console.error(`--limit must be an integer; got '${limitRaw}'`)
+        process.exit(1)
+      }
+      limit = Math.min(100, Math.max(1, parsed))
+    }
+
+    const candidates = await listDeepReflectArcCandidates({
+      limit,
+      withTranscriptOnly,
+    })
+
+    if (emitJson) {
+      console.log(JSON.stringify(candidates, null, 2))
+      return
+    }
+
+    // Text output: header + rows
+    console.log('originId\ttasks\tdone\tfailed\ttokens\tcostUsd\tlastActivity')
+    for (const arc of candidates) {
+      const done = arc.statusMix.done ?? 0
+      const failed = arc.statusMix.failed ?? 0
+      const tokens = arc.totalTokens.toLocaleString('en-US')
+      const costUsd = `$${arc.totalCostUsd.toFixed(4)}`
+      console.log(
+        `${arc.originId}\t${arc.taskCount}\t${done}\t${failed}\t${tokens}\t${costUsd}\t${arc.lastActivity}`,
+      )
     }
     return
   }
