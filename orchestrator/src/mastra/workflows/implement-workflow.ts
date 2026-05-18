@@ -5,6 +5,7 @@ import { z } from 'zod'
 
 const execFileAsync = promisify(execFile)
 import {
+  checkSetupPreflight,
   cleanWorktreeIfNoCommitsAhead,
   createWorktree,
   removeWorktree,
@@ -577,13 +578,9 @@ const setupStep = createStep({
     // untracked/ignored files cannot block `git merge --ff-only`.
     try {
       const { repoRoot: preflightRoot } = resolveContext()
-      const { stdout: dirtyStatus } = await execFileAsync(
-        'git',
-        ['status', '--porcelain', '--untracked-files=no'],
-        { cwd: preflightRoot },
-      )
-      if (dirtyStatus.trim().length > 0) {
-        const dirtyFiles = dirtyStatus.split('\n').filter((l) => l.length > 0)
+      const preflight = await checkSetupPreflight(preflightRoot)
+      if (preflight.dirty) {
+        const dirtyFiles = preflight.dirtyLines
         const errorMsg = `setup:preflight/dirty-main: ${inputData.integrationBranch} has uncommitted changes; task parked blocked`
         await updateTask(inputData.taskId, { status: 'blocked', error: errorMsg })
         await raiseInboxItem({
