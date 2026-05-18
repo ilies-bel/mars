@@ -561,6 +561,22 @@ export const initQueue = async (): Promise<void> => {
        ON self_heal_attempts(parent_task_id, failure_signature)`,
   )
   await healBlobPrompts(c)
+  // Wire-bus outbox: events published by library code land atomically with the
+  // state writes they describe (same queue.db, same libsql transaction).
+  // Cursor-based fan-out consumers poll for id > cursor.
+  // TODO(retention): rows grow unbounded; a future pass should cap by age or
+  // per-subscriber MIN(cursor) once subscriber cursors are tracked.
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS events (
+      id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      type    TEXT    NOT NULL,
+      payload TEXT    NOT NULL,
+      ts      INTEGER NOT NULL DEFAULT (unixepoch())
+    )
+  `)
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_events_id ON events(id)`,
+  )
 }
 
 const MAX_CONVERSATION_BYTES = 2 * 1024 * 1024

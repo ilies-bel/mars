@@ -1,5 +1,5 @@
 import { WebSocketServer, type WebSocket } from 'ws';
-import { openDb } from './db.js';
+import { getClient } from '../mastra/queue.js';
 import { isEventName, type EventName } from './events.js';
 import { log } from './log.js';
 
@@ -7,8 +7,6 @@ import { log } from './log.js';
  * Configuration for {@link startDaemon}.
  */
 export interface DaemonOptions {
-  /** Path to the bus SQLite file. Defaults to BUS_DB or ./app.db. */
-  dbPath?: string;
   /** WebSocket port. Defaults to BUS_PORT or 7777. */
   port?: number;
   /** If true, deliver every historical event to clients. Default: cursor = MAX(id). */
@@ -41,42 +39,39 @@ interface RawEventRow {
 export interface DaemonHandle {
   /** Actual port the WS server bound to. */
   port: number;
-  /** Stop polling, close all sockets, close DB. Resolves once done. */
+  /** Stop polling, close all sockets. Resolves once done. */
   stop: () => Promise<void>;
 }
 
 /**
  * Start the single-process fan-out daemon.
  *
- * Tails the `events` outbox via short polling and pushes each new row to
- * connected WebSocket clients that are subscribed to its type (or `'*'`).
+ * Tails the `events` outbox in queue.db via short polling and pushes each
+ * new row to connected WebSocket clients that are subscribed to its type
+ * (or `'*'`). Uses the shared libsql client singleton — no second connection.
  *
  * TODO(security): no auth/TLS — bind only to localhost in production until
  * we add a token or move to a Unix domain socket.
  *
- * TODO(perf): replace `setInterval` polling with `sqlite3_update_hook`
- * once better-sqlite3 exposes it; would drop tail latency from ~50ms p50
- * to sub-millisecond on the same process boundary.
+ * TODO(perf): replace `setInterval` polling with a change notification hook
+ * once libsql exposes one; would drop tail latency from ~50ms p50 to near
+ * zero on the same process boundary.
  */
-export function startDaemon(opts: DaemonOptions = {}): DaemonHandle {
+export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle> {
   const port = opts.port ?? (Number(process.env.BUS_PORT) || 7777);
   const pollIntervalMs = opts.pollIntervalMs ?? 50;
   const batchSize = opts.batchSize ?? 500;
 
-  const db = openDb(opts.dbPath);
-  const selectStmt = db.prepare(
-    'SELECT id, type, payload, ts FROM events WHERE id > ? ORDER BY id LIMIT ?',
-  );
-  const replayStmt = db.prepare(
-    'SELECT id, type, payload, ts FROM events WHERE id > ? ORDER BY id',
-  );
+  const client = getClient();
 
   let cursor = 0;
   if (!opts.fromStart) {
-    const row = db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM events').get() as
-      | { m: number }
-      | undefined;
-    cursor = row?.m ?? 0;
+    const result = await client.execute(
+      'SELECT COALESCE(MAX(id), 0) AS m FROM events',
+    );
+    cursor = Number(
+      (result.rows[0] as unknown as { m: number | bigint }).m ?? 0,
+    );
   }
 
   const wss = new WebSocketServer({ port });
@@ -129,7 +124,9 @@ export function startDaemon(opts: DaemonOptions = {}): DaemonHandle {
       }
       case 'replay': {
         const fromId = typeof m.fromId === 'number' ? m.fromId : 0;
-        replayTo(state, fromId);
+        replayTo(state, fromId).catch((err) => {
+          log('error', 'replay failed', { err: String(err) });
+        });
         return;
       }
       default:
@@ -137,9 +134,12 @@ export function startDaemon(opts: DaemonOptions = {}): DaemonHandle {
     }
   }
 
-  function replayTo(state: ClientState, fromId: number): void {
-    const rows = replayStmt.all(fromId) as RawEventRow[];
-    for (const row of rows) {
+  async function replayTo(state: ClientState, fromId: number): Promise<void> {
+    const result = await client.execute({
+      sql: 'SELECT id, type, payload, ts FROM events WHERE id > ? ORDER BY id',
+      args: [fromId],
+    });
+    for (const row of result.rows as unknown as RawEventRow[]) {
       sendIfSubscribed(state, row);
     }
   }
@@ -165,21 +165,34 @@ export function startDaemon(opts: DaemonOptions = {}): DaemonHandle {
   }
 
   let stopped = false;
+  // Guard against overlapping async polls.
+  let polling = false;
+
   const timer: NodeJS.Timeout = setInterval(() => {
-    if (stopped) return;
-    try {
-      const rows = selectStmt.all(cursor, batchSize) as RawEventRow[];
-      if (rows.length === 0) return;
-      for (const row of rows) {
-        for (const state of clients) {
-          sendIfSubscribed(state, row);
+    if (stopped || polling) return;
+    polling = true;
+    client
+      .execute({
+        sql: 'SELECT id, type, payload, ts FROM events WHERE id > ? ORDER BY id LIMIT ?',
+        args: [cursor, batchSize],
+      })
+      .then((result) => {
+        const rows = result.rows as unknown as RawEventRow[];
+        if (rows.length === 0) return;
+        for (const row of rows) {
+          for (const state of clients) {
+            sendIfSubscribed(state, row);
+          }
         }
-      }
-      cursor = rows[rows.length - 1]!.id;
-      log('debug', 'fan-out batch', { count: rows.length, maxId: cursor });
-    } catch (err) {
-      log('error', 'poll failed', { err: String(err) });
-    }
+        cursor = rows[rows.length - 1]!.id;
+        log('debug', 'fan-out batch', { count: rows.length, maxId: cursor });
+      })
+      .catch((err) => {
+        log('error', 'poll failed', { err: String(err) });
+      })
+      .finally(() => {
+        polling = false;
+      });
   }, pollIntervalMs);
 
   function installSignalHandlers(handle: DaemonHandle): void {
@@ -212,11 +225,6 @@ export function startDaemon(opts: DaemonOptions = {}): DaemonHandle {
       }
       clients.clear();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
-      try {
-        db.close();
-      } catch {
-        /* ignore */
-      }
       log('info', 'daemon stopped');
     },
   };
