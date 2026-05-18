@@ -65,10 +65,14 @@ export interface RetryBudgetExhaustedInboxInput {
 const buildTaskBlockedBody = (
   input: RetryBudgetExhaustedInboxInput,
 ): string => {
+  const isNeverRun = input.lastStep === 'blocked-dependent'
+  const whyLine = isNeverRun
+    ? `Why you're seeing this: task ${input.taskId} never ran — it was a blocked dependent whose retry budget (${input.retryCount}) has been reached. The orchestrator will not retry it again. It stays blocked until you act.`
+    : `Why you're seeing this: task ${input.taskId} failed at step \`${input.lastStep}\` and the retry budget (${input.retryCount}) has been reached — the orchestrator will not retry it again. It stays blocked until you act.`
   const lines: Array<string | null> = [
     `Unblock task ${input.taskId} now: run /mars:unblock ${input.taskId}, or resolve it from the mars inbox.`,
     '',
-    `Why you're seeing this: task ${input.taskId} failed at step \`${input.lastStep}\` and the retry budget (${input.retryCount}) has been reached — the orchestrator will not retry it again. It stays blocked until you act.`,
+    whyLine,
     '',
     'Context:',
     input.lastErrorSignature
@@ -92,11 +96,15 @@ const buildTaskBlockedBody = (
 export const raiseRetryBudgetExhaustedInbox = async (
   input: RetryBudgetExhaustedInboxInput,
 ): Promise<string> => {
+  const title =
+    input.lastStep === 'blocked-dependent'
+      ? `Unblock ${input.taskId}: never ran — blocked dependent exhausted retry budget`
+      : `Unblock ${input.taskId}: retry budget exhausted at ${input.lastStep}`
   return raiseInboxItem({
     kind: `${TASK_BLOCKED_INBOX_KIND_PREFIX}(${input.taskId})`,
     category: 'orchestrator',
     priority: 'high',
-    title: `Unblock ${input.taskId}: retry budget exhausted at ${input.lastStep}`,
+    title,
     body: buildTaskBlockedBody(input),
     payload: {
       taskId: input.taskId,
