@@ -18,6 +18,22 @@ export const detectRoute = (hash: string): RouteName => {
 }
 
 /**
+ * Parses an optional `#/task/<id>` overlay route. The task drawer is layered
+ * on top of whatever the underlying `detectRoute(...)` route resolves to —
+ * Kanban or otherwise — so this function returns the id alone (or `null` when
+ * the hash carries no task fragment).
+ *
+ * Trailing slashes and empty ids are normalised to `null` so a stray
+ * `#/task/` never opens an empty drawer.
+ */
+export const parseTaskRoute = (hash: string): string | null => {
+  const m = /^#\/task\/([^/?#]+)/.exec(hash)
+  if (!m) return null
+  const id = decodeURIComponent(m[1])
+  return id.length > 0 ? id : null
+}
+
+/**
  * Badge count for the Action queue nav entry — stale worktrees only.
  * Drafts are proposals-domain and must not appear here.
  */
