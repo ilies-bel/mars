@@ -250,6 +250,18 @@ const noCommitsAheadRecipe: FixRecipe = {
 //     blindly deletes index.lock is dangerous (it may be held by an active
 //     process). Operator fix: confirm no active git process holds the lock,
 //     then `mars restart <task-id>` to re-run the merge step.
+//
+// • merge:vcs-supervisor-aborted/index-lock-contention
+//     The vcs-supervisor ran `git merge --ff-only <branch>` and it failed with
+//     "Unable to create .git/index.lock: File exists", causing the supervisor
+//     to return aborted=true. The task's coding work was already committed on
+//     its branch — only the merge step failed. Root cause is identical to
+//     merge:crashed/index-lock-contention: a stale lock from a crashed or
+//     concurrent git process. This is environmental and transient; the lock is
+//     typically gone by the time the investigator runs. Investigated 2026-05-18
+//     (task mars-6348aec4, commit 31933fe on task/mars-6348aec4 confirmed
+//     complete). Operator fix: confirm no active git process holds the lock,
+//     then `mars restart <task-id>` to re-run the merge step.
 
 const recipeList: readonly FixRecipe[] = [
   dirtyMergeTargetRecipe,
