@@ -126,7 +126,7 @@ describe('createReadSpanWatcher', () => {
     expect(w.streak).toBe(0)
   })
 
-  it('Bash counts as an action and resets the streak', () => {
+  it('action-class Bash resets the streak', () => {
     const w = createReadSpanWatcher({
       limit: 5,
       onThreshold: () => {
@@ -135,7 +135,56 @@ describe('createReadSpanWatcher', () => {
     })
     w.observe(assistant([{ name: 'Read' }]))
     w.observe(assistant([{ name: 'Read' }]))
-    w.observe(assistant([{ name: 'Bash', input: { command: 'ls' } }]))
+    w.observe(assistant([{ name: 'Bash', input: { command: 'git add -A' } }]))
+    expect(w.streak).toBe(0)
+  })
+
+  it('5 consecutive read-only Bash calls trip the watcher', () => {
+    let fired: ThresholdInfo | null = null
+    const w = createReadSpanWatcher({
+      limit: 5,
+      onThreshold: (info) => {
+        fired = info
+      },
+    })
+    for (let i = 0; i < 5; i += 1) {
+      w.observe(assistant([{ name: 'Bash', input: { command: 'git log --oneline -10' } }]))
+    }
+    expect(w.thresholdReached).toBe(true)
+    expect(fired).not.toBeNull()
+    const info = fired as unknown as ThresholdInfo
+    expect(info.trace).toHaveLength(5)
+    expect(info.trace[0].tool).toBe('Bash')
+    expect(info.trace[0].target).toBe('git log --oneline -10')
+  })
+
+  it('git add -A mid-sequence resets the streak', () => {
+    let fired: ThresholdInfo | null = null
+    const w = createReadSpanWatcher({
+      limit: 5,
+      onThreshold: (info) => {
+        fired = info
+      },
+    })
+    w.observe(assistant([{ name: 'Bash', input: { command: 'git log' } }]))
+    w.observe(assistant([{ name: 'Bash', input: { command: 'git log' } }]))
+    w.observe(assistant([{ name: 'Bash', input: { command: 'git log' } }]))
+    expect(w.streak).toBe(3)
+    w.observe(assistant([{ name: 'Bash', input: { command: 'git add -A' } }]))
+    expect(w.streak).toBe(0)
+    expect(w.thresholdReached).toBe(false)
+    expect(fired).toBeNull()
+  })
+
+  it('cat package.json counts as read-class but cat > foo.txt does not', () => {
+    const w = createReadSpanWatcher({
+      limit: 5,
+      onThreshold: () => {},
+    })
+    w.observe(assistant([{ name: 'Bash', input: { command: 'cat package.json' } }]))
+    expect(w.streak).toBe(1)
+    // cat with an output redirect is a write — resets the streak
+    w.observe(assistant([{ name: 'Bash', input: { command: 'cat > foo.txt' } }]))
     expect(w.streak).toBe(0)
   })
 
