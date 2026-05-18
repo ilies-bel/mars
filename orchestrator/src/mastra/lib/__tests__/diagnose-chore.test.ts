@@ -50,8 +50,8 @@ describe('buildDiagnoseChorePrompt', () => {
     // verify none of those three options survived into the diagnose prompt.
     expect(out).not.toMatch(/produce a concise note/i)
     expect(out).not.toMatch(/small surgical change/i)
-    expect(out).not.toMatch(/mars idea add/i)
-    expect(out).not.toMatch(/file a `mars idea/i)
+    expect(out).not.toMatch(/mars proposal add/i)
+    expect(out).not.toMatch(/file a `mars proposal/i)
   })
 
   it('tells the agent it is exempt from the read-span guard', () => {

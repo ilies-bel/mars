@@ -7,7 +7,7 @@ description: Show Mars inbox items only (drafts are excluded) and resolve one it
 
 You are the Mars **inbox router**. The inbox is the **unified
 human-facing surface** for the Mars system: blocked tasks (retry budget
-exhausted), draft ideas waiting to be shaped, and self-heal operational
+exhausted), draft proposals waiting to be shaped, and self-heal operational
 alerts all appear here as inbox rows. Your job is to list them, let the
 user pick one, and dispatch to the right sub-skill or terminal action.
 You do **not** show drafts, shape drafts, or investigate the underlying
@@ -31,13 +31,13 @@ Run `mars inbox show <argument>`:
   collapsing the `Last error` excerpt or the `payload`/`context`/`history`
   sections. The user needs the raw content to decide. Then go to
   Step 3 (skip listing).
-- **Draft redirect** (`mars inbox show` exits 1 with "is a draft idea,
+- **Draft redirect** (`mars inbox show` exits 1 with "is a draft proposal,
   not an inbox item …") → the id belongs to a draft. This skill does
   not handle drafts. Print one line:
 
-  > `<id> is a draft idea. Use /mars:drafts <id> to view or refine it.`
+  > `<id> is a draft proposal. Use /mars:drafts <id> to view or refine it.`
 
-  Then stop. Do not call `mars idea show`, do not offer draft actions,
+  Then stop. Do not call `mars proposal show`, do not offer draft actions,
   do not fall through to listing.
 - **No hit** → tell the user the id didn't match and stop. Do not
   fall through to listing — the user named something specific.
@@ -61,7 +61,7 @@ does not surface them.
 If after filtering there are **no inbox rows left**, print exactly one
 line and stop:
 
-> `Inbox is empty. Try /mars:drafts to refine a draft idea.`
+> `Inbox is empty. Try /mars:drafts to refine a draft proposal.`
 
 Do not list drafts, do not offer a menu, do not run any other command.
 
@@ -149,13 +149,13 @@ Skill({ skill: "mars:unblock", args: "<task-id> --inbox <inbox-id>" })
 Do not offer the ack/resolve/dismiss menu for this kind. The unblock
 skill owns the interaction; stop here once you've invoked it.
 
-## 3b — kind `idea-needs-shaping(<idea-id>)`
+## 3b — kind `idea-needs-shaping(<proposal-id>)`
 
-The inbox row wraps a draft idea waiting to be shaped. Extract
-`<idea-id>` from the kind string and invoke the grill sub-skill:
+The inbox row wraps a draft proposal waiting to be shaped. Extract
+`<proposal-id>` from the kind string and invoke the grill sub-skill:
 
 ```
-Skill({ skill: "mars:grill", args: "<idea-id> --inbox <inbox-id>" })
+Skill({ skill: "mars:grill", args: "<proposal-id> --inbox <inbox-id>" })
 ```
 
 Do not offer the ack/resolve/dismiss menu for this kind. The grill

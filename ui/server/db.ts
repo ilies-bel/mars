@@ -11,7 +11,7 @@ export type TaskStatus =
   | 'dropped'
   | 'blocked'
 
-type IdeaSource = 'reflection' | 'human' | 'planner'
+type ProposalSource = 'reflection' | 'human' | 'planner'
 
 export interface DraftFeature {
   id: string
@@ -19,7 +19,7 @@ export interface DraftFeature {
   story: string
   technical: string
   status: string
-  source: IdeaSource
+  source: ProposalSource
   createdAt: number
   updatedAt: number
   acceptanceCount: number
@@ -76,7 +76,7 @@ const rowToTask = (row: TaskRow): Task => {
   }
 }
 
-const normaliseSource = (raw: unknown): IdeaSource => {
+const normaliseSource = (raw: unknown): ProposalSource => {
   if (raw === 'reflection' || raw === 'planner' || raw === 'human') return raw
   return 'human'
 }

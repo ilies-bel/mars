@@ -150,60 +150,62 @@ Commands:
                                 (default) edits the worktree; 'writer' lands
                                 glossary/ADR changes via the structured-write
                                 daemon (no in-worktree edits).
-  idea add "<goal>" [--author kind:name]
-                                create an idea/plan in .mars/state.db. Author is
-                                detected from env/git when omitted: human if
+  proposal add "<goal>" [--author kind:name]
+                                create a proposal/plan in .mars/state.db. Author
+                                is detected from env/git when omitted: human if
                                 running interactively, agent if MARS_AGENT_NAME
                                 or CLAUDE_CODE/CLAUDECODE is set.
-  idea list [--source reflection|human|planner] [--status <status>]
-                                list ideas; filter by source and/or status
-  idea show <id>                show an idea from .mars/state.db
-  idea delete <id>              remove an idea row from .mars/state.db
-                                (cascades idea_user_stories rows). No
+  proposal list [--source reflection|human|planner] [--status <status>]
+                                list proposals; filter by source and/or status
+  proposal show <id>            show a proposal from .mars/state.db
+  proposal delete <id>          remove a proposal row from .mars/state.db
+                                (cascades proposal_user_stories rows). No
                                 worktree, no merge — pure local DB write.
-  idea set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"
-                                update a single field on a PRD-shaped idea
-  idea add-user-story <id> "<text>"
-                                append a user story to the idea's PRD
-  idea remove-user-story <id> <index>
+  proposal set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"
+                                update a single field on a PRD-shaped proposal
+  proposal add-user-story <id> "<text>"
+                                append a user story to the proposal's PRD
+  proposal remove-user-story <id> <index>
                                 remove the 0-based user story; positions repack
-  idea promote <id>             mark a shaped draft idea as PRD-ready. Flips
-                                the idea's status from 'draft' to 'prd-ready'.
+  proposal promote <id>         mark a shaped draft proposal as PRD-ready. Flips
+                                the proposal's status from 'draft' to 'prd-ready'.
                                 The slicer creates one task per vertical slice
                                 separately; this verb does NOT enqueue a task.
-  idea slice <id>               decompose a 'prd-ready' idea into N
+  proposal slice <id>           decompose a 'prd-ready' proposal into N
                                 tracer-bullet vertical-slice tasks (one per
                                 user-observable behaviour) and queue them with
                                 blockers wired between dependent slices. Flips
-                                the idea's status to 'sliced'.
-  idea block <idea-id> <blocker-id> [<blocker-id> ...]
-                                ADR-0008 planning-graph edge: <idea-id> waits
+                                the proposal's status to 'sliced'.
+  proposal block <proposal-id> <blocker-id> [<blocker-id> ...]
+                                ADR-0008 planning-graph edge: <proposal-id> waits
                                 on each <blocker-id>. Both endpoints must
                                 exist; self-blocking is rejected. Stored in
                                 proposal_dependencies (.mars/state.db).
-  idea unblock <idea-id> <blocker-id> [<blocker-id> ...]
+  proposal unblock <proposal-id> <blocker-id> [<blocker-id> ...]
                                 remove the listed planning-graph edges only;
-                                the idea's status is left untouched.
-  idea blockers <idea-id>       list the ideas <idea-id> is blocked by.
-  idea block-task <task-id> <idea-id> [<idea-id> ...]
+                                the proposal's status is left untouched.
+  proposal blockers <proposal-id>
+                                list the proposals <proposal-id> is blocked by.
+  proposal block-task <task-id> <proposal-id> [<proposal-id> ...]
                                 ADR-0015 cross-graph edge: <task-id> cannot
-                                dispatch until each <idea-id> is promoted.
+                                dispatch until each <proposal-id> is promoted.
                                 Stored in task_proposal_blockers
                                 (.mars/queue.db). Transferred onto a real
-                                task_blockers edge atomically when the idea
+                                task_blockers edge atomically when the proposal
                                 is sliced.
-  idea unblock-task <task-id> <idea-id> [<idea-id> ...]
-                                remove the listed task->idea edges only.
-  idea task-blockers <task-id>  list the ideas <task-id> is blocked by.
+  proposal unblock-task <task-id> <proposal-id> [<proposal-id> ...]
+                                remove the listed task->proposal edges only.
+  proposal task-blockers <task-id>
+                                list the proposals <task-id> is blocked by.
   add "<prompt>" [plan flags]   (deprecated) draft a task; lands in 'draft' state
                                 so triage can promote to 'queued'. Prefer
-                                'mars task add' or 'mars idea add'.
+                                'mars task add' or 'mars proposal add'.
   set-functional <id> <text|@file>
                                 set the functional plan on a draft/queued task
   set-technical <id> <text|@file>
                                 set the technical plan on a draft/queued task
   show <id>                     print full detail for an id; tries tasks
-                                (.mars/queue.db), then ideas (.mars/state.db)
+                                (.mars/queue.db), then proposals (.mars/state.db)
   list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed|dropped)
   continue <id> [<id> ...]      resume failed task(s) on their existing
                                 worktree+branch, jumping straight into the
@@ -291,10 +293,10 @@ Commands:
   adr list                      list ADRs in docs/adr/ (local read)
   adr show <NNNN|filename>      print one ADR (number prefix is zero-padded)
   reflect [--since <iso>] [--limit <n>]
-                                synthesize draft ideas (source='reflection') from
+                                synthesize draft proposals (source='reflection') from
                                 recent completed tasks. Reads token + scorer
                                 signals from .mars/queue.db and .mars/mastra.db.
-                                Default: last 10 completed tasks. Ideas are
+                                Default: last 10 completed tasks. Proposals are
                                 inserted as drafts — never auto-run. Disable
                                 signal capture entirely with the env var
                                 MARS_REFLECT_DISABLED=1.
@@ -321,11 +323,11 @@ Commands:
                                 open|acknowledged|resolved|dismissed|all
                                 (default: open). --kind filters by item
                                 kind, e.g. recovery-failed, no-recipe.
-                                Draft ideas (status='draft') surface
+                                Draft proposals (status='draft') surface
                                 alongside inbox rows for state=open|all
                                 with kind='draft(<source>)'; dismissed
                                 drafts surface for state=dismissed. Use
-                                'mars idea ...' for the draft lifecycle.
+                                'mars proposal ...' for the draft lifecycle.
                                 --kind suppresses draft rows. --lean
                                 prints a compact summary (counts per
                                 priority, then up to 3 oldest blockers
@@ -372,7 +374,7 @@ Plan flags for 'task add' / 'add':
   --functional-file <path>      read functional plan from a file
   --technical-file <path>       read technical plan from a file
 
-Author flag for 'task add' / 'idea add' / 'add':
+Author flag for 'task add' / 'proposal add' / 'add':
   --author <kind:name>          override detected author. kind is human|agent
                                 (e.g. --author agent:vega, --author human:alice).
                                 When omitted, detected from env: agent if any of
@@ -412,7 +414,7 @@ Flags:
 
 (deprecated) Draft a task. Lands in 'draft' state; triage promotes it to
 'queued' once actionable. Prefer 'mars task add' (skip refinement) or
-'mars idea add' (plan only).
+'mars proposal add' (plan only).
 
 Plan flags:
   --functional <text|@file>   functional plan text (or @path to read a file)
@@ -431,34 +433,34 @@ Subcommands:
       orchestrator. Plan flags and --author behave like 'mars add'.
       --blocked-by <id> may be repeated; each <id> must already exist.
       The new task will not dispatch until every blocker reaches 'done'.`,
-  idea: `mars idea <subcommand> ...
+  proposal: `mars proposal <subcommand> ...
 
 Subcommands:
   add "<goal>" [--author kind:name]
-      Create a plan/idea in .mars/state.db. Author is detected from env
+      Create a plan/proposal in .mars/state.db. Author is detected from env
       and git when omitted (agent if MARS_AGENT_NAME/CLAUDE_CODE is set,
       otherwise human with git user.email). Use --author to override,
       e.g. --author agent:vega.
   list [--source reflection|human|planner] [--status <status>]
-      List ideas. Filter by source and/or status.
+      List proposals. Filter by source and/or status.
   show <id>
-      Show an idea from .mars/state.db. <id> must be the full idea slug.
+      Show a proposal from .mars/state.db. <id> must be the full proposal slug.
   set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"
-      Update a single field on an existing idea. Replaces the field; does
+      Update a single field on an existing proposal. Replaces the field; does
       not append.
   add-user-story <id> "<text>"
-      Append a user story to the idea's PRD (positions auto-assigned).
+      Append a user story to the proposal's PRD (positions auto-assigned).
   remove-user-story <id> <index>
       Remove the 0-based user story; remaining positions repack.
   promote <id>
-      Mark a fully-shaped draft idea as PRD-ready. Does not enqueue a task —
+      Mark a fully-shaped draft proposal as PRD-ready. Does not enqueue a task —
       slicing into runnable tasks happens separately.
   slice <id>
-      Decompose a 'prd-ready' idea into N tracer-bullet vertical-slice tasks
+      Decompose a 'prd-ready' proposal into N tracer-bullet vertical-slice tasks
       and queue them with blockers wired between dependent slices. Flips the
-      idea's status to 'sliced'.
+      proposal's status to 'sliced'.
   reject <id>
-      Mark a draft idea as 'dismissed' so it stops surfacing in reflection
+      Mark a draft proposal as 'dismissed' so it stops surfacing in reflection
       follow-ups.`,
   'set-functional': `mars set-functional <id> <text|@file>
 
@@ -471,7 +473,7 @@ file.`,
   show: `mars show <id>
 
 Print full detail for an id. Looks up tasks first (.mars/queue.db),
-then ideas (.mars/state.db).`,
+then proposals (.mars/state.db).`,
   list: `mars list [status]
 
 List tasks. Status one of: draft, queued, running, verifying, merging,
@@ -653,7 +655,7 @@ Subcommands:
 Subcommands:
   list [--limit N] [--json] [--with-transcript-only]
       List task arcs grouped by COALESCE(origin_id, id) so ad-hoc tasks
-      without an idea still appear as one-task arcs.
+      without a proposal still appear as one-task arcs.
 
       Text output: header row, then one tab-separated row per arc:
         originId  tasks  done  failed  tokens  costUsd  lastActivity
@@ -706,7 +708,7 @@ Edit-and-revert pairs, repeated identical Bash invocations).
 Output: structured findings printed to stdout, full JSON report
 persisted to .mars/deep-reflections/<task-id>-<iso>.json (gitignored).
 Suggestions are filtered through save|absorb|drop verdicts and only
-"save" verdicts land as draft ideas with source='reflection'.
+"save" verdicts land as draft proposals with source='reflection'.
 
 When no <task-id> is given, the candidate is auto-picked:
   1. most recent failed task with a stored transcript;
@@ -980,7 +982,7 @@ const main = async (): Promise<void> => {
 
   if (cmd === 'add') {
     console.error(
-      `[mars] 'mars add' is deprecated; use 'mars task add' (skip refinement) or 'mars idea add' (plan with author).`,
+      `[mars] 'mars add' is deprecated; use 'mars task add' (skip refinement) or 'mars proposal add' (plan with author).`,
     )
     const prompt = rest.join(' ')
     if (!prompt) {
@@ -1122,7 +1124,7 @@ const main = async (): Promise<void> => {
         if (originIdea) {
           const firstLine = originIdea.title.split('\n')[0]?.trim() ?? ''
           const titleSuffix = firstLine.length > 0 ? ` ${firstLine}` : ''
-          console.log(`origin:     idea ${originIdea.id}${titleSuffix}`)
+          console.log(`origin:     proposal ${originIdea.id}${titleSuffix}`)
         } else {
           console.log(`origin:     task ${task.originId}`)
         }
@@ -1163,12 +1165,12 @@ const main = async (): Promise<void> => {
     process.exit(1)
   }
 
-  if (cmd === 'idea') {
+  if (cmd === 'proposal') {
     const sub = rest[0]
     if (sub === 'add') {
       const goal = rest.slice(1).join(' ')
       if (!goal) {
-        console.error('usage: mars idea add "<goal>" [--author kind:name]')
+        console.error('usage: mars proposal add "<goal>" [--author kind:name]')
         process.exit(1)
       }
       const { resolveAuthor, formatAuthor } = await import('./mastra/author')
@@ -1186,7 +1188,7 @@ const main = async (): Promise<void> => {
     if (sub === 'new') {
       const goal = rest.slice(1).join(' ')
       if (!goal) {
-        console.error('usage: mars idea new "<goal>"')
+        console.error('usage: mars proposal new "<goal>"')
         process.exit(1)
       }
       const { createProposal } = await import('./mastra/proposals')
@@ -1202,7 +1204,7 @@ const main = async (): Promise<void> => {
     if (sub === 'show') {
       const id = rest[1]
       if (!id) {
-        console.error('usage: mars idea show <id>')
+        console.error('usage: mars proposal show <id>')
         process.exit(1)
       }
       const { getProposal, resolveProposalId } = await import(
@@ -1212,14 +1214,14 @@ const main = async (): Promise<void> => {
       const resolved = await resolveProposalId(id)
       if (resolved.kind === 'ambiguous') {
         console.error(
-          `ambiguous prefix '${id}' matches ${resolved.count} ideas`,
+          `ambiguous prefix '${id}' matches ${resolved.count} proposals`,
         )
         process.exit(1)
       }
       const idea =
         resolved.kind === 'unique' ? await getProposal(resolved.id) : null
       if (!idea) {
-        console.error(`idea ${id} not found`)
+        console.error(`proposal ${id} not found`)
         process.exit(1)
       }
       console.log(`id:         ${idea.id}`)
@@ -1258,7 +1260,7 @@ const main = async (): Promise<void> => {
       const value = rest.slice(3).join(' ')
       if (!id || !field || value.length === 0) {
         console.error(
-          'usage: mars idea set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"',
+          'usage: mars proposal set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"',
         )
         process.exit(1)
       }
@@ -1289,7 +1291,7 @@ const main = async (): Promise<void> => {
       const id = rest[1]
       const story = rest.slice(2).join(' ')
       if (!id || story.length === 0) {
-        console.error('usage: mars idea add-user-story <id> "<text>"')
+        console.error('usage: mars proposal add-user-story <id> "<text>"')
         process.exit(1)
       }
       const { addProposalUserStory } = await import('./mastra/proposals')
@@ -1306,7 +1308,7 @@ const main = async (): Promise<void> => {
       const id = rest[1]
       const idxRaw = rest[2]
       if (!id || idxRaw === undefined) {
-        console.error('usage: mars idea remove-user-story <id> <index>')
+        console.error('usage: mars proposal remove-user-story <id> <index>')
         process.exit(1)
       }
       const idx = Number(idxRaw)
@@ -1327,7 +1329,7 @@ const main = async (): Promise<void> => {
     if (sub === 'promote') {
       const id = rest[1]
       if (!id) {
-        console.error('usage: mars idea promote <id>')
+        console.error('usage: mars proposal promote <id>')
         process.exit(1)
       }
       const { sendRequest } = await import('./mastra/daemon/client')
@@ -1339,7 +1341,7 @@ const main = async (): Promise<void> => {
               console.log(`[mars] started daemon (pid ${pid}, log: ${log})`),
           },
         )) as { ideaId: string; status: string }
-        console.log(`idea ${r.ideaId} marked ${r.status}`)
+        console.log(`proposal ${r.ideaId} marked ${r.status}`)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
         process.exit(1)
@@ -1349,7 +1351,7 @@ const main = async (): Promise<void> => {
     if (sub === 'slice') {
       const id = rest[1]
       if (!id) {
-        console.error('usage: mars idea slice <id>')
+        console.error('usage: mars proposal slice <id>')
         process.exit(1)
       }
       const { sendRequest } = await import('./mastra/daemon/client')
@@ -1362,7 +1364,7 @@ const main = async (): Promise<void> => {
           },
         )) as { ideaId: string; status: string; taskIds: string[] }
         console.log(
-          `idea ${r.ideaId} ${r.status} into ${r.taskIds.length} task(s):`,
+          `proposal ${r.ideaId} ${r.status} into ${r.taskIds.length} task(s):`,
         )
         for (const t of r.taskIds) console.log(`  ${t}`)
       } catch (error: unknown) {
@@ -1374,7 +1376,7 @@ const main = async (): Promise<void> => {
     if (sub === 'reject') {
       const id = rest[1]
       if (!id) {
-        console.error('usage: mars idea reject <id>')
+        console.error('usage: mars proposal reject <id>')
         process.exit(1)
       }
       const { rejectProposal } = await import('./mastra/proposals')
@@ -1390,7 +1392,7 @@ const main = async (): Promise<void> => {
     if (sub === 'delete') {
       const id = rest[1]
       if (!id) {
-        console.error('usage: mars idea delete <id>')
+        console.error('usage: mars proposal delete <id>')
         process.exit(1)
       }
       const { deleteProposal } = await import('./mastra/proposals')
@@ -1419,7 +1421,7 @@ const main = async (): Promise<void> => {
       if (statusFlag) filter.status = statusFlag
       const ideas = await listProposals(filter)
       if (ideas.length === 0) {
-        console.log('no ideas')
+        console.log('no proposals')
         return
       }
       for (const i of ideas) {
@@ -1437,12 +1439,12 @@ const main = async (): Promise<void> => {
       const blockerArgs = rest.slice(2)
       if (!id || blockerArgs.length === 0) {
         console.error(
-          'usage: mars idea block <idea-id> <blocker-id> [<blocker-id> ...]',
+          'usage: mars proposal block <idea-id> <blocker-id> [<blocker-id> ...]',
         )
         process.exit(1)
       }
       if (blockerArgs.some((b) => b === id)) {
-        console.error(`idea ${id} cannot block itself`)
+        console.error(`proposal ${id} cannot block itself`)
         process.exit(1)
       }
       const { addProposalDependencies } = await import('./mastra/proposals')
@@ -1462,7 +1464,7 @@ const main = async (): Promise<void> => {
       const blockerArgs = rest.slice(2)
       if (!id || blockerArgs.length === 0) {
         console.error(
-          'usage: mars idea unblock <idea-id> <blocker-id> [<blocker-id> ...]',
+          'usage: mars proposal unblock <idea-id> <blocker-id> [<blocker-id> ...]',
         )
         process.exit(1)
       }
@@ -1487,7 +1489,7 @@ const main = async (): Promise<void> => {
     if (sub === 'blockers') {
       const id = rest[1]
       if (!id) {
-        console.error('usage: mars idea blockers <idea-id>')
+        console.error('usage: mars proposal blockers <idea-id>')
         process.exit(1)
       }
       const { listProposalDependencies } = await import('./mastra/proposals')
@@ -1512,7 +1514,7 @@ const main = async (): Promise<void> => {
       const ideaArgs = rest.slice(2)
       if (!taskId || ideaArgs.length === 0) {
         console.error(
-          'usage: mars idea block-task <task-id> <idea-id> [<idea-id> ...]',
+          'usage: mars proposal block-task <task-id> <idea-id> [<idea-id> ...]',
         )
         process.exit(1)
       }
@@ -1524,18 +1526,18 @@ const main = async (): Promise<void> => {
           const resolved = await resolveProposalId(raw)
           if (resolved.kind === 'ambiguous') {
             console.error(
-              `ambiguous prefix '${raw}' matches ${resolved.count} ideas`,
+              `ambiguous prefix '${raw}' matches ${resolved.count} proposals`,
             )
             process.exit(1)
           }
           if (resolved.kind === 'none') {
-            console.error(`idea ${raw} not found`)
+            console.error(`proposal ${raw} not found`)
             process.exit(1)
           }
           resolvedIds.push(resolved.id)
         }
         await addProposalBlockers(taskId, resolvedIds)
-        console.log(`blocked ${taskId} by idea(s): ${resolvedIds.join(', ')}`)
+        console.log(`blocked ${taskId} by proposal(s): ${resolvedIds.join(', ')}`)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
         process.exit(1)
@@ -1547,7 +1549,7 @@ const main = async (): Promise<void> => {
       const ideaArgs = rest.slice(2)
       if (!taskId || ideaArgs.length === 0) {
         console.error(
-          'usage: mars idea unblock-task <task-id> <idea-id> [<idea-id> ...]',
+          'usage: mars proposal unblock-task <task-id> <idea-id> [<idea-id> ...]',
         )
         process.exit(1)
       }
@@ -1563,8 +1565,8 @@ const main = async (): Promise<void> => {
         }
         console.log(
           removed.length > 0
-            ? `unblocked ${taskId} from idea(s): ${removed.join(', ')}`
-            : `no matching idea edges removed for ${taskId}`,
+            ? `unblocked ${taskId} from proposal(s): ${removed.join(', ')}`
+            : `no matching proposal edges removed for ${taskId}`,
         )
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
@@ -1575,14 +1577,14 @@ const main = async (): Promise<void> => {
     if (sub === 'task-blockers') {
       const taskId = rest[1]
       if (!taskId) {
-        console.error('usage: mars idea task-blockers <task-id>')
+        console.error('usage: mars proposal task-blockers <task-id>')
         process.exit(1)
       }
       const { listProposalBlockers } = await import('./mastra/queue')
       try {
         const blockers = await listProposalBlockers(taskId)
         if (blockers.length === 0) {
-          console.log(`no idea blockers on ${taskId}`)
+          console.log(`no proposal blockers on ${taskId}`)
           return
         }
         for (const b of blockers) console.log(b)
@@ -1593,7 +1595,7 @@ const main = async (): Promise<void> => {
       return
     }
     console.error(
-      'usage: mars idea <add|new|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers> ...',
+      'usage: mars proposal <add|new|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers> ...',
     )
     process.exit(1)
   }
@@ -1684,7 +1686,7 @@ const main = async (): Promise<void> => {
         if (originIdea) {
           const firstLine = originIdea.title.split('\n')[0]?.trim() ?? ''
           const titleSuffix = firstLine.length > 0 ? ` ${firstLine}` : ''
-          console.log(`origin:     idea ${originIdea.id}${titleSuffix}`)
+          console.log(`origin:     proposal ${originIdea.id}${titleSuffix}`)
         } else {
           console.log(`origin:     task ${task.originId}`)
         }
@@ -1701,7 +1703,7 @@ const main = async (): Promise<void> => {
     const ideaResolved = await resolveProposalId(id)
     if (ideaResolved.kind === 'ambiguous') {
       console.error(
-        `ambiguous prefix '${id}' matches ${ideaResolved.count} ideas`,
+        `ambiguous prefix '${id}' matches ${ideaResolved.count} proposals`,
       )
       process.exit(1)
     }
@@ -1710,7 +1712,7 @@ const main = async (): Promise<void> => {
         ? await getProposal(ideaResolved.id)
         : null
     if (idea) {
-      console.log(`kind:       idea`)
+      console.log(`kind:       proposal`)
       console.log(`id:         ${idea.id}`)
       console.log(`status:     ${idea.status}`)
       console.log(`source:     ${idea.source}`)
@@ -1748,7 +1750,7 @@ const main = async (): Promise<void> => {
       }
       return
     }
-    console.error(`no task or idea matching ${id}`)
+    console.error(`no task or proposal matching ${id}`)
     process.exit(1)
   }
 
@@ -2487,7 +2489,7 @@ const main = async (): Promise<void> => {
       if (s.rationale) console.log(`    ${s.rationale}`)
     }
     console.log(
-      `\n${result.suggestions.length} suggestion(s) saved as draft ideas (source='reflection'). Review with 'mars idea list --source reflection' and promote with 'mars idea promote <id>'.`,
+      `\n${result.suggestions.length} suggestion(s) saved as draft proposals (source='reflection'). Review with 'mars proposal list --source reflection' and promote with 'mars proposal promote <id>'.`,
     )
     return
   }
@@ -3068,7 +3070,7 @@ const main = async (): Promise<void> => {
     }
 
     // Drafts surface in `mars inbox list`, but the inbox verbs don't own
-    // their lifecycle — point the caller at `mars idea ...` instead of
+    // their lifecycle — point the caller at `mars proposal ...` instead of
     // failing with a generic "no inbox item" message.
     const isDraftId = async (id: string): Promise<boolean> => {
       const { resolveProposalId } = await import('./mastra/proposals')
@@ -3086,7 +3088,7 @@ const main = async (): Promise<void> => {
       if (!item) {
         if (await isDraftId(id)) {
           console.error(
-            `${id} is a draft idea, not an inbox item. Use \`mars idea show ${id}\`.`,
+            `${id} is a draft proposal, not an inbox item. Use \`mars proposal show ${id}\`.`,
           )
         } else {
           console.error(`no inbox item matching ${id}`)
@@ -3116,12 +3118,12 @@ const main = async (): Promise<void> => {
         if (await isDraftId(id)) {
           const hint =
             sub === 'dismiss'
-              ? `Use \`mars idea reject ${id}\` or \`mars idea delete ${id}\`.`
+              ? `Use \`mars proposal reject ${id}\` or \`mars proposal delete ${id}\`.`
               : sub === 'resolve'
-                ? `Promote it with \`mars idea promote ${id}\` or enqueue via \`mars task add\`.`
-                : `Shape it with \`/mars:grill ${id}\` or promote via \`mars idea promote\`.`
+                ? `Promote it with \`mars proposal promote ${id}\` or enqueue via \`mars task add\`.`
+                : `Shape it with \`/mars:grill ${id}\` or promote via \`mars proposal promote\`.`
           console.error(
-            `${id} is a draft idea, not an inbox item. ${hint}`,
+            `${id} is a draft proposal, not an inbox item. ${hint}`,
           )
         } else {
           console.error(`no inbox item matching ${id}`)

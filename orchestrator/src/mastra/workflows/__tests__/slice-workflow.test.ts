@@ -458,15 +458,15 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
   })
 
   it('leaves the idea at prd-ready when generate-slices times out (exit 124)', async () => {
-    // Regression test for the original bug: `mars idea slice 06e677fb`
+    // Regression test for the original bug: `mars proposal slice 06e677fb`
     // failed when the slicer hit the 300s wall (claude -p exited 124),
-    // yet the idea's status was left as 'sliced' with zero tasks.
+    // yet the proposal's status was left as 'sliced' with zero tasks.
     //
     // The exitCode=124 throw fires OUTSIDE the try-catch block (before any
     // Phase 1-4 DB write), so `ideaFlipped` is never set and no compensation
-    // is needed. This test pins that: a timeout must NOT set the idea to
-    // 'sliced', and `mars idea slice` must be re-runnable without a manual
-    // `mars idea set <id> status prd-ready` poke.
+    // is needed. This test pins that: a timeout must NOT set the proposal to
+    // 'sliced', and `mars proposal slice` must be re-runnable without a manual
+    // `mars proposal set <id> status prd-ready` poke.
     vi.doMock('../../lib/git', async () => {
       const actual = await vi.importActual<typeof import('../../lib/git')>(
         '../../lib/git',
@@ -490,7 +490,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
 
     const proposals = await import('../../proposals')
     const after = await proposals.getProposal(ideaId)
-    // Must remain prd-ready — `mars idea slice` must be directly re-runnable.
+    // Must remain prd-ready — `mars proposal slice` must be directly re-runnable.
     expect(after?.status).toBe('prd-ready')
     // Zero tasks: no partial state was committed to the queue.
     expect(await countTasksForIdea(ideaId)).toBe(0)
@@ -1028,11 +1028,11 @@ describe('composeTaskPrompt: parent digest replaces full PRD dump', () => {
     }
   })
 
-  it('does NOT instruct the implementor to run `mars idea show` (worktree DB is empty)', () => {
+  it('does NOT instruct the implementor to run `mars proposal show` (worktree DB is empty)', () => {
     const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
     // Either form would silently fail from a worktree CWD; both are banned.
-    expect(prompt).not.toMatch(/mars idea show/i)
-    expect(prompt).not.toMatch(/mars\s+--repo\s+\S+\s+idea\s+show/i)
+    expect(prompt).not.toMatch(/mars proposal show/i)
+    expect(prompt).not.toMatch(/mars\s+--repo\s+\S+\s+proposal\s+show/i)
   })
 
   it('a slice with no blockers and no out-of-scope produces a coherent digest', () => {

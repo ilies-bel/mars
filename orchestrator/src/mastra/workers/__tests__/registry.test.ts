@@ -212,9 +212,9 @@ describe('Fixer denial set — backlog-mutation guard', () => {
     }
   })
 
-  it('WORKER_CONFIGS.Fixer.disallowedTools blocks mars task add, mars idea, and mars draft CLI paths', () => {
+  it('WORKER_CONFIGS.Fixer.disallowedTools blocks mars task add, mars proposal, and mars draft CLI paths', () => {
     expect(WORKER_CONFIGS.Fixer.disallowedTools).toContain('Bash(mars task add*)')
-    expect(WORKER_CONFIGS.Fixer.disallowedTools).toContain('Bash(mars idea*)')
+    expect(WORKER_CONFIGS.Fixer.disallowedTools).toContain('Bash(mars proposal*)')
     expect(WORKER_CONFIGS.Fixer.disallowedTools).toContain('Bash(mars draft*)')
   })
 })
