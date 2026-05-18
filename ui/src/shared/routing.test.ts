@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { detectRoute, actionQueueCount, proposalsCount } from './routing'
+import { detectRoute, actionQueueCount, proposalsCount, parseTaskRoute } from './routing'
 import type { TodoPayload } from './schemas'
 
 const emptyTodo = (): TodoPayload => ({ drafts: [], staleWorktrees: [] })
@@ -98,6 +98,26 @@ describe('actionQueueCount', () => {
 // ---------------------------------------------------------------------------
 // proposalsCount — only counts drafts
 // ---------------------------------------------------------------------------
+
+describe('parseTaskRoute', () => {
+  it('returns null when the hash has no task fragment', () => {
+    expect(parseTaskRoute('')).toBeNull()
+    expect(parseTaskRoute('#/')).toBeNull()
+    expect(parseTaskRoute('#/kanban')).toBeNull()
+  })
+
+  it('returns the id from #/task/<id>', () => {
+    expect(parseTaskRoute('#/task/abc-123')).toBe('abc-123')
+  })
+
+  it('strips trailing slash and treats empty id as null', () => {
+    expect(parseTaskRoute('#/task/')).toBeNull()
+  })
+
+  it('decodes percent-encoded ids', () => {
+    expect(parseTaskRoute('#/task/mars%2D123')).toBe('mars-123')
+  })
+})
 
 describe('proposalsCount', () => {
   it('returns 0 when there are no drafts', () => {
