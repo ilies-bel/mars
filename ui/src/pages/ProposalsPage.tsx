@@ -1,12 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTodo } from '@/hooks/useTodo'
-import { dismissTodoItem, type StaleWorktree, type TodoPayload } from '@/shared/api'
-import { formatRelativeAgeFromHours } from '@/shared/time'
+import { dismissTodoItem, type TodoPayload } from '@/shared/api'
+import type { DraftFeature } from '@/shared/types'
 
-type ActionItem = { kind: 'stale'; id: string; worktree: StaleWorktree }
+type ProposalItem = { kind: 'draft'; id: string; draft: DraftFeature }
 
-const itemKey = (item: ActionItem): string => `stale:${item.id}`
+const itemKey = (item: ProposalItem): string => `draft:${item.id}`
+
+const draftLabel = (d: DraftFeature): string => d.goal.trim() || '(no goal)'
+
+const formatTime = (ts: number): string => {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return d.toLocaleString()
+}
 
 type BucketKey = 'today' | 'yesterday' | 'this_week' | 'older'
 
@@ -19,10 +27,7 @@ const BUCKET_LABEL: Record<BucketKey, string> = {
   older: 'Older',
 }
 
-const itemTimestamp = (item: ActionItem): number => {
-  const t = Date.parse(item.worktree.updatedAt)
-  return Number.isNaN(t) ? 0 : t
-}
+const itemTimestamp = (item: ProposalItem): number => item.draft.updatedAt
 
 const startOfDay = (ms: number): number => {
   const d = new Date(ms)
@@ -41,14 +46,14 @@ const bucketFor = (ts: number, now: number): BucketKey => {
   return 'older'
 }
 
-interface ActionRowProps {
-  item: ActionItem
+interface ProposalRowProps {
+  item: ProposalItem
   active: boolean
   onSelect: () => void
   onDismiss: () => void
 }
 
-const ActionRow = ({ item, active, onSelect, onDismiss }: ActionRowProps) => {
+const ProposalRow = ({ item, active, onSelect, onDismiss }: ProposalRowProps) => {
   const baseClass = [
     'cursor-pointer border-l-2 px-3 py-2 transition-colors',
     active
@@ -61,22 +66,22 @@ const ActionRow = ({ item, active, onSelect, onDismiss }: ActionRowProps) => {
     onDismiss()
   }
 
-  const w = item.worktree
+  const d = item.draft
   return (
     <li className={baseClass} onClick={onSelect}>
       <div className="flex items-baseline gap-2">
         <span className="break-all font-mono text-[10px] uppercase text-iron">
-          {w.taskId}
+          {d.id}
         </span>
         <span className="ml-auto shrink-0 font-mono text-[9px] uppercase text-iron/80">
-          {formatRelativeAgeFromHours(w.ageHours)}
+          {d.source}
         </span>
       </div>
       <div className="mt-1 truncate font-mono text-[12px] text-fg">
-        {w.prompt.trim() || 'Stale worktree'}
+        {draftLabel(d)}
       </div>
       <div className="mt-1 flex items-center justify-between font-mono text-[9px] uppercase text-iron/80">
-        <span>stale · {w.status}</span>
+        <span>proposal · acceptance {d.acceptanceCount}</span>
         <button
           type="button"
           onClick={handleDismiss}
@@ -89,105 +94,110 @@ const ActionRow = ({ item, active, onSelect, onDismiss }: ActionRowProps) => {
   )
 }
 
-interface StaleDetailProps {
-  worktree: StaleWorktree
+interface ProposalDetailProps {
+  draft: DraftFeature
 }
 
-const StaleDetail = ({ worktree }: StaleDetailProps) => (
-  <div className="flex h-full flex-col overflow-auto">
-    <header className="border-b border-iron/30 px-6 py-4">
-      <div className="flex items-baseline gap-3">
-        <span className="break-all font-mono text-[11px] uppercase text-iron">
-          {worktree.taskId}
-        </span>
-        <span className="shrink-0 font-mono text-[10px] uppercase text-iron/80">
-          stale worktree
-        </span>
-        <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
-          {formatRelativeAgeFromHours(worktree.ageHours)} old
-        </span>
-      </div>
-      <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
-        Stale worktree {worktree.taskId}
-      </h2>
-    </header>
+const ProposalDetail = ({ draft }: ProposalDetailProps) => {
+  const refineCommand = `/mars:drafts`
+  const [copied, setCopied] = useState(false)
 
-    <main className="flex-1 px-6 py-4">
-      <dl className="flex flex-col gap-4 font-mono text-[12px]">
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Task
-          </dt>
-          <dd className="whitespace-pre-wrap text-fg">
-            {worktree.prompt.trim() || (
-              <span className="text-iron/70">(empty)</span>
-            )}
-          </dd>
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(refineCommand)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-auto">
+      <header className="border-b border-iron/30 px-6 py-4">
+        <div className="flex items-baseline gap-3">
+          <span className="break-all font-mono text-[11px] uppercase text-iron">
+            {draft.id}
+          </span>
+          <span className="shrink-0 font-mono text-[10px] uppercase text-iron/80">
+            {draft.source}
+          </span>
+          <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
+            updated {formatTime(draft.updatedAt)}
+          </span>
         </div>
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Task id
-          </dt>
-          <dd className="text-fg">{worktree.taskId}</dd>
+        <h2 className="mt-2 font-mono text-[15px] text-fg">
+          {draftLabel(draft)}
+        </h2>
+        <div className="mt-2 font-mono text-[11px] text-iron">
+          Refine:{' '}
+          <button
+            type="button"
+            onClick={handleCopy}
+            title={copied ? 'Copied!' : 'Copy to clipboard'}
+            className="cursor-pointer rounded bg-iron/20 px-1 font-mono text-[11px] text-iron transition-colors hover:bg-iron/30"
+          >
+            <code>{refineCommand}</code>
+            <span className="ml-1 text-[9px] uppercase text-iron/70">
+              {copied ? 'copied' : 'copy'}
+            </span>
+          </button>
         </div>
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Status
-          </dt>
-          <dd className="text-fg">{worktree.status}</dd>
-        </div>
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Branch
-          </dt>
-          <dd className="text-fg">{worktree.branch ?? '—'}</dd>
-        </div>
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Age
-          </dt>
-          <dd className="text-fg">{worktree.ageHours}h</dd>
-        </div>
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Updated at
-          </dt>
-          <dd className="text-fg">{worktree.updatedAt}</dd>
-        </div>
-        {worktree.blockerTaskId !== null ? (
+      </header>
+
+      <main className="flex-1 px-6 py-4">
+        <dl className="flex flex-col gap-4 font-mono text-[12px]">
           <div>
             <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Blocked by
+              Story
             </dt>
-            <dd className="text-fg">{worktree.blockerTaskId}</dd>
+            <dd className="whitespace-pre-wrap text-fg">
+              {draft.story.trim() || (
+                <span className="text-iron/70">(empty)</span>
+              )}
+            </dd>
           </div>
-        ) : null}
-        {worktree.error !== null ? (
           <div>
             <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Error
+              Technical
             </dt>
-            <dd className="whitespace-pre-wrap text-fg">{worktree.error}</dd>
+            <dd className="whitespace-pre-wrap text-fg">
+              {draft.technical.trim() || (
+                <span className="text-iron/70">(empty)</span>
+              )}
+            </dd>
           </div>
-        ) : null}
-      </dl>
-    </main>
-  </div>
-)
+          <div>
+            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+              Acceptance
+            </dt>
+            <dd className="text-fg">{draft.acceptanceCount}</dd>
+          </div>
+          <div>
+            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+              Status
+            </dt>
+            <dd className="text-fg">{draft.status}</dd>
+          </div>
+        </dl>
+      </main>
+    </div>
+  )
+}
 
-export const ActionQueuePage = () => {
-  const { staleWorktrees, error } = useTodo()
+export const ProposalsPage = () => {
+  const { drafts, error } = useTodo()
   const queryClient = useQueryClient()
 
   const dismissMutation = useMutation({
-    mutationFn: ({ id }: { id: string }) => dismissTodoItem(id, 'stale'),
+    mutationFn: ({ id }: { id: string }) => dismissTodoItem(id, 'draft'),
     onMutate: async ({ id }) => {
       await queryClient.cancelQueries({ queryKey: ['todo'] })
       const prev = queryClient.getQueryData<TodoPayload>(['todo'])
       if (prev) {
         queryClient.setQueryData<TodoPayload>(['todo'], {
           ...prev,
-          staleWorktrees: prev.staleWorktrees.filter((w) => w.taskId !== id),
+          drafts: prev.drafts.filter((d) => d.id !== id),
         })
       }
       return { prev }
@@ -200,10 +210,9 @@ export const ActionQueuePage = () => {
     },
   })
 
-  const items = useMemo<ActionItem[]>(
-    () =>
-      staleWorktrees.map((w) => ({ kind: 'stale', id: w.taskId, worktree: w })),
-    [staleWorktrees],
+  const items = useMemo<ProposalItem[]>(
+    () => drafts.map((d) => ({ kind: 'draft', id: d.id, draft: d })),
+    [drafts],
   )
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
@@ -213,7 +222,7 @@ export const ActionQueuePage = () => {
 
   const groupedBuckets = useMemo(() => {
     const now = Date.now()
-    const map = new Map<BucketKey, ActionItem[]>()
+    const map = new Map<BucketKey, ProposalItem[]>()
     for (const item of items) {
       const b = bucketFor(itemTimestamp(item), now)
       const arr = map.get(b) ?? []
@@ -256,11 +265,10 @@ export const ActionQueuePage = () => {
       <aside className="flex w-80 shrink-0 flex-col border-r border-iron/30">
         <header className="border-b border-iron/30 px-4 py-3">
           <h1 className="font-mono text-sm uppercase tracking-wide text-fg">
-            Action queue
+            Proposals
           </h1>
           <p className="mt-1 font-mono text-[10px] text-iron">
-            {staleWorktrees.length} stale worktree
-            {staleWorktrees.length === 1 ? '' : 's'}
+            {drafts.length} proposal{drafts.length === 1 ? '' : 's'}
           </p>
         </header>
         <ul className="flex-1 overflow-auto">
@@ -285,7 +293,7 @@ export const ActionQueuePage = () => {
                 {collapsed ? null : (
                   <ul>
                     {bucketItems.map((item) => (
-                      <ActionRow
+                      <ProposalRow
                         key={itemKey(item)}
                         item={item}
                         active={itemKey(item) === selectedKey}
@@ -312,14 +320,22 @@ export const ActionQueuePage = () => {
         {empty ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div className="font-mono text-[12px] text-iron">
-              No system-raised items. Stale worktrees appear here automatically.
+              No proposals yet. Shape a draft with{' '}
+              <code className="rounded bg-iron/20 px-1">
+                mars idea add "&lt;goal&gt;"
+              </code>{' '}
+              or refine via{' '}
+              <code className="rounded bg-iron/20 px-1">
+                /mars:drafts
+              </code>
+              .
             </div>
           </div>
         ) : selected ? (
-          <StaleDetail worktree={selected.worktree} />
+          <ProposalDetail draft={selected.draft} />
         ) : (
           <div className="flex h-full items-center justify-center font-mono text-[12px] text-iron">
-            Select an item
+            Select a proposal
           </div>
         )}
       </section>
