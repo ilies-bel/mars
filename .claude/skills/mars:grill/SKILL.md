@@ -34,11 +34,18 @@ codebase instead of asking the user.
 
 <supporting-info>
 
-## Step 0 — Sanity-check the argument
+## Step 0 — Parse arguments and sanity-check the idea id
 
-`$ARGUMENTS` should be a draft idea id. If it is missing or empty, stop
-immediately and tell the user to pass an id — picking a target is not
-this skill's job.
+**Parse `$ARGUMENTS` before doing anything else:**
+
+1. Look for a `--inbox <inbox-id>` token anywhere in the string. Extract
+   `<inbox-id>` and strip the `--inbox <inbox-id>` token from the string.
+   If absent, `inbox-id` is empty.
+2. Treat the remainder (trimmed) as the `<idea-id>`.
+
+`<idea-id>` should be a draft idea id. If it is missing or empty after
+parsing, stop immediately and tell the user to pass an id — picking a
+target is not this skill's job.
 
 Verify the id resolves to a draft:
 
@@ -210,13 +217,21 @@ producing new branches, and the language has stabilised.
 
 When you're there, announce the handoff in one short line and **invoke
 the `mars:to-prd` skill via the Skill tool yourself**, passing the idea
-id as `args`:
+id as `args`. If an `--inbox <inbox-id>` was parsed from `$ARGUMENTS`,
+forward it in the args so `mars:to-prd` can resolve the inbox row after
+the PRD is synthesised:
 
 > *"I think we have a shared understanding — synthesising the PRD now."*
 
 ```
+// No inbox id:
 Skill({ skill: "mars:to-prd", args: "<id>" })
+
+// With inbox id (inbox resolution is handled by to-prd after synthesis):
+Skill({ skill: "mars:to-prd", args: "<id> --inbox <inbox-id>" })
 ```
+
+<!-- TODO: to-prd handles inbox resolution when --inbox is passed; see follow-up task -->
 
 Do not ask the user to type `/mars:to-prd` — invoke it for them. The
 user's next interaction should be confirming the synthesised PRD inside
@@ -255,4 +270,9 @@ Those are `to-prd`'s job. The only writes you may issue here are
 
 # Argument
 
-The user passed: `$ARGUMENTS`  (must be a draft idea id)
+The user passed: `$ARGUMENTS`
+
+Parse as described in Step 0: strip any `--inbox <inbox-id>` token
+first; the remainder is the draft idea id. Both are carried through the
+full skill — the idea id for the grill conversation, the inbox id for
+forwarding to `mars:to-prd` at handoff.
