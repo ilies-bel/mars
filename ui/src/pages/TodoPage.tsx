@@ -4,8 +4,6 @@ import type { StaleWorktree } from '@/shared/api'
 import { formatRelativeAgeFromHours } from '@/shared/time'
 import type { DraftFeature } from '@/shared/types'
 
-const shortId = (id: string): string => id.slice(0, 8)
-
 const draftLabel = (d: DraftFeature): string =>
   d.goal.trim() || '(no goal)'
 
@@ -75,10 +73,10 @@ const InboxRow = ({ item, active, onSelect }: InboxRowProps) => {
     return (
       <li className={baseClass} onClick={onSelect}>
         <div className="flex items-baseline gap-2">
-          <span className="font-mono text-[10px] uppercase text-iron">
-            {shortId(d.id)}
+          <span className="break-all font-mono text-[10px] uppercase text-iron">
+            {d.id}
           </span>
-          <span className="ml-auto font-mono text-[9px] uppercase text-iron/80">
+          <span className="ml-auto shrink-0 font-mono text-[9px] uppercase text-iron/80">
             {d.source}
           </span>
         </div>
@@ -96,10 +94,10 @@ const InboxRow = ({ item, active, onSelect }: InboxRowProps) => {
   return (
     <li className={baseClass} onClick={onSelect}>
       <div className="flex items-baseline gap-2">
-        <span className="font-mono text-[10px] uppercase text-iron">
-          {shortId(w.taskId)}
+        <span className="break-all font-mono text-[10px] uppercase text-iron">
+          {w.taskId}
         </span>
-        <span className="ml-auto font-mono text-[9px] uppercase text-iron/80">
+        <span className="ml-auto shrink-0 font-mono text-[9px] uppercase text-iron/80">
           {formatRelativeAgeFromHours(w.ageHours)}
         </span>
       </div>
@@ -135,10 +133,10 @@ const DraftDetail = ({ draft }: DraftDetailProps) => {
   <div className="flex h-full flex-col overflow-auto">
     <header className="border-b border-iron/30 px-6 py-4">
       <div className="flex items-baseline gap-3">
-        <span className="font-mono text-[11px] uppercase text-iron">
-          {shortId(draft.id)}
+        <span className="break-all font-mono text-[11px] uppercase text-iron">
+          {draft.id}
         </span>
-        <span className="font-mono text-[10px] uppercase text-iron/80">
+        <span className="shrink-0 font-mono text-[10px] uppercase text-iron/80">
           {draft.source}
         </span>
         <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
@@ -212,18 +210,18 @@ const StaleDetail = ({ worktree }: StaleDetailProps) => (
   <div className="flex h-full flex-col overflow-auto">
     <header className="border-b border-iron/30 px-6 py-4">
       <div className="flex items-baseline gap-3">
-        <span className="font-mono text-[11px] uppercase text-iron">
-          {shortId(worktree.taskId)}
+        <span className="break-all font-mono text-[11px] uppercase text-iron">
+          {worktree.taskId}
         </span>
-        <span className="font-mono text-[10px] uppercase text-iron/80">
+        <span className="shrink-0 font-mono text-[10px] uppercase text-iron/80">
           stale worktree
         </span>
         <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
           {formatRelativeAgeFromHours(worktree.ageHours)} old
         </span>
       </div>
-      <h2 className="mt-2 font-mono text-[15px] text-fg">
-        Stale worktree {shortId(worktree.taskId)}
+      <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
+        Stale worktree {worktree.taskId}
       </h2>
     </header>
 
