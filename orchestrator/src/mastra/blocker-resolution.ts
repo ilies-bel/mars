@@ -109,6 +109,7 @@ export const onBlockerTaskCompleted = async (
               FROM task_blockers b
               JOIN tasks t ON t.id = b.blocker_task_id
              WHERE b.task_id = ? AND t.status != 'done'
+               AND b.state IN ('confirmed', 'pending-review')
              LIMIT 1`,
       args: [row.id],
     })
@@ -153,6 +154,7 @@ export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
          SELECT 1 FROM task_blockers b
          JOIN tasks bt ON bt.id = b.blocker_task_id
          WHERE b.task_id = t.id AND bt.status != 'done'
+           AND b.state IN ('confirmed', 'pending-review')
        )
   `)
   const results: UnblockByTaskResult[] = []

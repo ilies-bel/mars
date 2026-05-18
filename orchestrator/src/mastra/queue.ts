@@ -6,6 +6,7 @@ import type { Author, AuthorKind } from './author'
 
 export type TaskStatus =
   | 'draft'
+  | 'triaging'
   | 'queued'
   | 'running'
   | 'verifying'
@@ -14,6 +15,64 @@ export type TaskStatus =
   | 'failed'
   | 'dropped'
   | 'blocked'
+
+/**
+ * Transient lifecycle phase between a freshly-promoted task (draft → triaging)
+ * and dispatch-eligible (`'queued'`). Triaging tasks are visible to readers
+ * but the dispatcher MUST NOT dispatch them — they are awaiting deterministic
+ * linker analysis that may attach `pending-review` Blocker rows. See PRD
+ * 2be831da-replace-the-llm-based-triage-linker-with.
+ */
+export const NON_DISPATCHABLE_STATUSES: readonly TaskStatus[] = [
+  'draft',
+  'triaging',
+  'blocked',
+  'running',
+  'verifying',
+  'merging',
+  'done',
+  'failed',
+  'dropped',
+] as const
+
+export const isDispatchableStatus = (status: TaskStatus): boolean =>
+  status === 'queued'
+
+/**
+ * State of a {@link Blocker} row. The Linker writes `'pending-review'` for
+ * keyword-overlap candidates; causal writers (manual blocks, fix-task wiring)
+ * write `'confirmed'`. `'rejected'` records that a candidate has been ruled
+ * out and must not gate dispatch. The dispatcher's eligibility query treats
+ * a task as dispatchable iff its status is `'queued'` AND it has zero rows
+ * in `('confirmed', 'pending-review')` state.
+ */
+export type BlockerState = 'confirmed' | 'pending-review' | 'rejected'
+
+export const BLOCKER_STATES: readonly BlockerState[] = [
+  'confirmed',
+  'pending-review',
+  'rejected',
+] as const
+
+export const isBlockerState = (value: unknown): value is BlockerState =>
+  value === 'confirmed' || value === 'pending-review' || value === 'rejected'
+
+/**
+ * Polymorphic target kind for a Blocker row. The legacy `task_blockers` table
+ * is task→task only; the new shape lets a Blocker row name either a Task or
+ * an Idea (proposal) as its cause. `'idea'` rows are stored in the
+ * `task_proposal_blockers` junction; the read-time {@link listAllBlockers}
+ * folds both kinds into one uniform list keyed by `causeKind`.
+ */
+export type BlockerCauseKind = 'task' | 'idea'
+
+export interface Blocker {
+  taskId: string
+  causeKind: BlockerCauseKind
+  causeId: string
+  state: BlockerState
+  createdAt: string
+}
 
 /**
  * Distinguishes the different roles a row can play in the queue. The value
@@ -448,17 +507,37 @@ export const initQueue = async (): Promise<void> => {
     CREATE TABLE IF NOT EXISTS task_blockers (
       task_id TEXT NOT NULL,
       blocker_task_id TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'confirmed',
       created_at TEXT NOT NULL,
       PRIMARY KEY (task_id, blocker_task_id),
       FOREIGN KEY (task_id) REFERENCES tasks(id),
       FOREIGN KEY (blocker_task_id) REFERENCES tasks(id)
     )
   `)
+  // PRD 2be831da: Blocker rows gain a `state` column that distinguishes
+  // confirmed (default for causal writers) from pending-review (Linker
+  // candidates) from rejected. Existing rows are preserved as 'confirmed'
+  // so previously-gated dispatch is not silently released.
+  const tbCols = await c.execute(`PRAGMA table_info(task_blockers)`)
+  const tbNames = new Set(
+    tbCols.rows.map((r) => (r as unknown as { name: string }).name),
+  )
+  if (!tbNames.has('state')) {
+    await c.execute(
+      `ALTER TABLE task_blockers ADD COLUMN state TEXT NOT NULL DEFAULT 'confirmed'`,
+    )
+    await c.execute(
+      `UPDATE task_blockers SET state = 'confirmed' WHERE state IS NULL OR state = ''`,
+    )
+  }
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_blockers_task ON task_blockers(task_id)
   `)
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_blockers_blocker ON task_blockers(blocker_task_id)
+  `)
+  await c.execute(`
+    CREATE INDEX IF NOT EXISTS idx_task_blockers_task_state ON task_blockers(task_id, state)
   `)
   // ADR-0015 (amends ADR-0008): a Task MAY be blocked by an Idea, encoding
   // "this work is queued but cannot dispatch until that idea has been shaped
@@ -1229,8 +1308,56 @@ export const addBlockers = async (
 
   if (unique.length === 0) return
   const now = new Date().toISOString()
+  // Causal writers default to 'confirmed' state. The Linker writes
+  // 'pending-review' rows via a separate entry point (TODO: linker writer).
   const stmts = unique.map((blockerId) => ({
-    sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
+    sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+    args: [taskId, blockerId, now],
+  }))
+  await c.batch(stmts, 'write')
+}
+
+/**
+ * Write a batch of Linker candidate Blocker rows in `'pending-review'` state.
+ * Mirrors {@link addBlockers} but stamps `state='pending-review'` so the
+ * dispatcher still gates on the row even though it has not been confirmed.
+ * Used by the deterministic Linker added by PRD 2be831da; tests exercise it
+ * directly until the Linker landing slice wires the call site.
+ */
+export const addPendingReviewBlockers = async (
+  taskId: string,
+  blockerIds: readonly string[],
+): Promise<void> => {
+  if (blockerIds.length === 0) return
+  await initQueue()
+  const c = getClient()
+
+  const taskRow = await c.execute({
+    sql: `SELECT 1 FROM tasks WHERE id = ?`,
+    args: [taskId],
+  })
+  if (taskRow.rows.length === 0) {
+    throw new Error(`task ${taskId} not found`)
+  }
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const id of blockerIds) {
+    if (id === taskId) continue
+    if (seen.has(id)) continue
+    seen.add(id)
+    const r = await c.execute({
+      sql: `SELECT 1 FROM tasks WHERE id = ?`,
+      args: [id],
+    })
+    if (r.rows.length === 0) {
+      throw new Error(`blocker ${id} not found`)
+    }
+    unique.push(id)
+  }
+  if (unique.length === 0) return
+  const now = new Date().toISOString()
+  const stmts = unique.map((blockerId) => ({
+    sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'pending-review', ?)`,
     args: [taskId, blockerId, now],
   }))
   await c.batch(stmts, 'write')
@@ -1512,11 +1639,14 @@ export const listTasksForProposal = async (
 
 export const listBlockers = async (taskId: string): Promise<string[]> => {
   await initQueue()
+  // Only confirmed-or-pending-review rows gate dispatch; rejected rows are
+  // historical/audit and must not appear here.
   const r = await getClient().execute({
     sql: `SELECT b.blocker_task_id AS id
             FROM task_blockers b
             JOIN tasks t ON t.id = b.blocker_task_id
-           WHERE b.task_id = ? AND t.status != 'done'`,
+           WHERE b.task_id = ? AND t.status != 'done'
+             AND b.state IN ('confirmed', 'pending-review')`,
     args: [taskId],
   })
   return r.rows.map((row) => (row as unknown as { id: string }).id)
@@ -1529,10 +1659,73 @@ export const hasIncompleteBlockers = async (taskId: string): Promise<boolean> =>
             FROM task_blockers b
             JOIN tasks t ON t.id = b.blocker_task_id
            WHERE b.task_id = ? AND t.status != 'done'
+             AND b.state IN ('confirmed', 'pending-review')
            LIMIT 1`,
     args: [taskId],
   })
   return r.rows.length > 0
+}
+
+/**
+ * Polymorphic Blocker reader: returns every Blocker row that gates `taskId`,
+ * folding `task_blockers` (cause=task) and `task_proposal_blockers`
+ * (cause=idea) into a single uniform list. Rejected rows are excluded.
+ * Order: confirmed first, then pending-review, then by createdAt ascending.
+ */
+export const listAllBlockers = async (taskId: string): Promise<Blocker[]> => {
+  await initQueue()
+  const c = getClient()
+  const taskRows = await c.execute({
+    sql: `SELECT blocker_task_id AS cause_id, state, created_at
+            FROM task_blockers
+           WHERE task_id = ?
+             AND state IN ('confirmed', 'pending-review')`,
+    args: [taskId],
+  })
+  const ideaRows = await c.execute({
+    sql: `SELECT proposal_id AS cause_id, created_at
+            FROM task_proposal_blockers
+           WHERE task_id = ?`,
+    args: [taskId],
+  })
+  const blockers: Blocker[] = [
+    ...taskRows.rows.map((row) => {
+      const r = row as unknown as {
+        cause_id: string
+        state: string
+        created_at: string
+      }
+      return {
+        taskId,
+        causeKind: 'task' as const,
+        causeId: r.cause_id,
+        state: (isBlockerState(r.state) ? r.state : 'confirmed') as BlockerState,
+        createdAt: r.created_at,
+      }
+    }),
+    ...ideaRows.rows.map((row) => {
+      const r = row as unknown as { cause_id: string; created_at: string }
+      // Proposal blockers are always treated as confirmed gates — the
+      // ADR-0015 cross-graph edge has no per-row state column yet (a future
+      // slice may add one alongside the Linker for ideas).
+      return {
+        taskId,
+        causeKind: 'idea' as const,
+        causeId: r.cause_id,
+        state: 'confirmed' as BlockerState,
+        createdAt: r.created_at,
+      }
+    }),
+  ]
+  blockers.sort((a, b) => {
+    const stateRank = (s: BlockerState): number =>
+      s === 'confirmed' ? 0 : s === 'pending-review' ? 1 : 2
+    const sa = stateRank(a.state)
+    const sb = stateRank(b.state)
+    if (sa !== sb) return sa - sb
+    return a.createdAt.localeCompare(b.createdAt)
+  })
+  return blockers
 }
 
 export const promoteDraftToQueued = async (
@@ -1540,15 +1733,18 @@ export const promoteDraftToQueued = async (
 ): Promise<Task | null> => {
   await initQueue()
   const now = new Date().toISOString()
+  // PRD 2be831da: 'queued' requires zero confirmed-or-pending-review rows;
+  // rejected rows are historical and must not gate the promote.
   const upd = await getClient().execute({
     sql: `UPDATE tasks
              SET status = 'queued', updated_at = ?
            WHERE id = ?
-             AND status = 'draft'
+             AND status IN ('draft', 'triaging')
              AND NOT EXISTS (
                SELECT 1 FROM task_blockers b
                JOIN tasks t ON t.id = b.blocker_task_id
                WHERE b.task_id = ? AND t.status != 'done'
+                 AND b.state IN ('confirmed', 'pending-review')
              )`,
     args: [now, taskId, taskId],
   })
