@@ -67,6 +67,18 @@ const errorHaystack = (err: unknown): string => {
 export const isBlockersAbortError = (err: unknown): boolean =>
   errorHaystack(err).includes('has incomplete blockers; aborting dispatch')
 
+// Thrown by setupStep when the merge target (integration branch) has
+// uncommitted tracked changes at the moment the worktree would be created.
+// The task is parked as `blocked` and an inbox item is raised so the
+// operator can clean up. The sentinel keeps the dispatcher from routing
+// this through the generic failure-handler (which would spawn a fix-task
+// and stamp `failed`, masking the blocked state).
+export const DIRTY_MAIN_ABORT_MESSAGE = (taskId: string): string =>
+  `task ${taskId} setup aborted: merge target has uncommitted changes; task parked blocked`
+
+export const isDirtyMainAbortError = (err: unknown): boolean =>
+  errorHaystack(err).includes('setup aborted: merge target has uncommitted changes')
+
 // Thrown by codeStep when the read/grep span watcher trips. The codeStep
 // has already (a) marked the task `blocked` and (b) spawned a context-
 // gathering child task as its blocker, so the dispatcher must NOT route
@@ -555,6 +567,67 @@ const setupStep = createStep({
         path: persisted.worktreePath,
         branch: persisted.branch,
       }
+    }
+
+    // Setup-time pre-flight: abort before creating the worktree or dispatching
+    // the coding agent when the merge target already has uncommitted changes on
+    // tracked paths. This is the same condition that checkMergeTargetStatus
+    // catches at merge time — detecting it here prevents the full coding cost
+    // (historically ~$1–2 per occurrence). Only tracked files matter:
+    // untracked/ignored files cannot block `git merge --ff-only`.
+    try {
+      const { repoRoot: preflightRoot } = resolveContext()
+      const { stdout: dirtyStatus } = await execFileAsync(
+        'git',
+        ['status', '--porcelain', '--untracked-files=no'],
+        { cwd: preflightRoot },
+      )
+      if (dirtyStatus.trim().length > 0) {
+        const dirtyFiles = dirtyStatus.split('\n').filter((l) => l.length > 0)
+        const errorMsg = `setup:preflight/dirty-main: ${inputData.integrationBranch} has uncommitted changes; task parked blocked`
+        await updateTask(inputData.taskId, { status: 'blocked', error: errorMsg })
+        await raiseInboxItem({
+          kind: 'dirty-main-at-setup',
+          category: 'orchestrator',
+          priority: 'high',
+          title: `Task ${inputData.taskId} blocked: merge target has uncommitted changes before coding`,
+          body: [
+            `The merge target (\`${inputData.integrationBranch}\`) has uncommitted changes. The coding agent was NOT dispatched — no compute cost was incurred.`,
+            '',
+            '## Dirty files',
+            '',
+            dirtyFiles.join('\n'),
+            '',
+            `Resolve the uncommitted changes on \`${inputData.integrationBranch}\`, then restart with:`,
+            '```',
+            `mars restart ${inputData.taskId}`,
+            '```',
+          ].join('\n'),
+          payload: {
+            taskId: inputData.taskId,
+            dirtyFiles,
+            integrationBranch: inputData.integrationBranch,
+          },
+          context: {},
+          raisedBy: 'implement-workflow',
+          signature: `dirty-main-at-setup:${inputData.taskId}`,
+        }).catch((err) => {
+          console.error(
+            `[setup:preflight] task ${inputData.taskId} failed to raise inbox item:`,
+            err,
+          )
+        })
+        throw new Error(DIRTY_MAIN_ABORT_MESSAGE(inputData.taskId))
+      }
+    } catch (gitErr) {
+      // Re-throw only our own dirty-main sentinel. Git/IO failures are swallowed:
+      // the pre-flight is best-effort — if we cannot determine the target's state
+      // we proceed and let the merge-time check catch it.
+      if (gitErr instanceof Error && isDirtyMainAbortError(gitErr)) throw gitErr
+      console.warn(
+        `[setup:preflight] task ${inputData.taskId} dirty-main pre-flight threw, continuing:`,
+        gitErr,
+      )
     }
 
     await updateTask(inputData.taskId, { status: 'running' })
