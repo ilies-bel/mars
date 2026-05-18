@@ -238,6 +238,19 @@ const noCommitsAheadRecipe: FixRecipe = {
   },
 }
 
+// NOTE — intentionally absent entries (documented so future investigators don't
+// re-open these):
+//
+// • merge:crashed/index-lock-contention
+//     git checkout <integration> failed because .git/index.lock already exists
+//     (another git process was running, or a previous process crashed and left
+//     a stale lock). The task's coding work is already committed on its branch
+//     — only the merge step crashed. This is environmental and transient; the
+//     lock is typically gone by the time the investigator runs. A recipe that
+//     blindly deletes index.lock is dangerous (it may be held by an active
+//     process). Operator fix: confirm no active git process holds the lock,
+//     then `mars restart <task-id>` to re-run the merge step.
+
 const recipeList: readonly FixRecipe[] = [
   dirtyMergeTargetRecipe,
   worktreeInstallFrozenLockfileRecipe,

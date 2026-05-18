@@ -123,6 +123,40 @@ describe('classifyError', () => {
     expect(classifyError('')).toBe(UNCLASSIFIED_ERROR_CLASS)
     expect(classifyError('   \n\n  ')).toBe(UNCLASSIFIED_ERROR_CLASS)
   })
+
+  it('classifies index.lock contention errors using full-output match even when the first line is a generic Command failed lead', () => {
+    // The actual error emitted by the git exec wrapper when `git checkout main`
+    // hits a stale index.lock:
+    const indexLockError = [
+      "Command failed: git checkout main",
+      "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+      '',
+      'Another git process seems to be running in this repository',
+    ].join('\n')
+    expect(classifyError(indexLockError)).toBe('index-lock-contention')
+  })
+
+  it('does NOT classify a generic Command failed error as index-lock-contention when the body has no index.lock mention', () => {
+    expect(classifyError('Command failed: git checkout main\nnot found')).toBe(
+      UNCLASSIFIED_ERROR_CLASS,
+    )
+  })
+})
+
+describe('matchFull rules are checked against full output', () => {
+  it('computeFailureSignature produces merge:crashed/index-lock-contention for the real error shape', () => {
+    const errorOutput = [
+      "Command failed: git checkout main",
+      "fatal: Unable to create '/Users/dev/repo/.git/index.lock': File exists.",
+      '',
+      "Another git process seems to be running in this repository, e.g.",
+      "an editor opened by 'git commit'. Please make sure all processes",
+      "are terminated then try again.",
+    ].join('\n')
+    expect(computeFailureSignature('merge:crashed', errorOutput)).toBe(
+      'merge:crashed/index-lock-contention',
+    )
+  })
 })
 
 describe('errorClassRules registry', () => {
