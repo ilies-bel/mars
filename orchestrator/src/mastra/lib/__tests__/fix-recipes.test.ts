@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { getRecipe, recipes } from '../fix-recipes'
+import { getRecipe, hasRecipe, recipes } from '../fix-recipes'
 
 describe('fix-recipes', () => {
   describe('merge:preflight/uncommitted-changes recipe', () => {
@@ -253,6 +253,17 @@ describe('fix-recipes', () => {
       const recipe = getRecipe('merge:preflight/uncommitted-changes')
       expect(recipe.signature).toBe('merge:preflight/uncommitted-changes')
       expect(recipes['merge:preflight/uncommitted-changes']).toBe(recipe)
+    })
+  })
+
+  describe('intentionally absent recipes (documented investigation outcomes)', () => {
+    it('merge:crashed/index-lock-contention has no recipe — environmental transient failure; operator restarts with `mars restart`', () => {
+      // Investigated 2026-05-18 (task 5c15a8e1). Root cause: git checkout main
+      // crashed because .git/index.lock existed (stale or concurrent process).
+      // Task coding work was already committed on branch task/mars-cea7a89f.
+      // A recipe that deletes index.lock is dangerous (may be held by an active
+      // process). Operator fix: confirm no active git process, then mars restart.
+      expect(hasRecipe('merge:crashed/index-lock-contention')).toBe(false)
     })
   })
 })
