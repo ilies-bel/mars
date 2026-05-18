@@ -5,33 +5,29 @@ import type { ClaudeEvent } from './claude-stream'
  *
  * Counts consecutive read-class tool calls (Read/Grep/Glob) emitted by the
  * agent without an interleaving action-class call (Edit/Write/Bash/
- * NotebookEdit/MultiEdit). When the streak crosses the configured limit,
- * the watcher fires an abort callback so the workflow can SIGKILL the
- * claude-code child and surface a `too_hard` failure plus an auto-spawned
- * follow-up task.
+ * NotebookEdit/MultiEdit). When the streak first crosses the configured
+ * limit, the watcher fires `onThreshold` exactly once so the caller can
+ * emit a log line. The watcher does not abort, kill, or otherwise
+ * interfere with the run — it is observational only.
  *
  * Tools outside both classes (TaskCreate, TodoWrite, WebFetch, etc.) are
  * ignored — they neither extend nor reset the streak. The watcher is
- * advisory and pure: it never mutates the conversation or queue. The
- * caller wires the abort effect through to the runClaudeCode wrapper's
- * AbortController.
+ * advisory and pure: it never mutates the conversation or queue.
  */
 export interface ReadSpanWatcherConfig {
   /**
-   * Maximum allowed consecutive read-class calls without an action. Default
-   * 5, matching gsd-build/get-shit-done's analysis-paralysis guard.
-   * Overridable per-call by the workflow; CLI/env tuning is exposed via
-   * `MARS_READ_SPAN_LIMIT`.
+   * Streak length at which `onThreshold` fires. Default 5; overridable
+   * per-call by the workflow. CLI/env tuning is exposed via
+   * `MARS_READ_SPAN_LIMIT` (see {@link resolveReadSpanLimit}).
    */
   readonly limit: number
   /**
    * Invoked exactly once when the streak first reaches the limit. The
-   * caller aborts the claude child and stamps a `too_hard` failure on
-   * the task. Subsequent events after firing are still inspected so we
-   * can record the full read trail for diagnostics, but onTrip is not
-   * called again.
+   * watcher keeps observing afterwards so the streak/trace stay current
+   * for diagnostics, but `onThreshold` is not called again on the same
+   * run (the streak must reset via an action-class call to re-arm).
    */
-  onTrip: (info: TripInfo) => void
+  onThreshold: (info: ThresholdInfo) => void
 }
 
 export interface ReadSpanTrace {
@@ -39,7 +35,7 @@ export interface ReadSpanTrace {
   readonly target: string
 }
 
-export interface TripInfo {
+export interface ThresholdInfo {
   readonly limit: number
   readonly trace: readonly ReadSpanTrace[]
 }
@@ -103,90 +99,17 @@ export interface ReadSpanWatcher {
   observe(event: ClaudeEvent): void
   /** Current consecutive read-class streak. Resets on every action call. */
   readonly streak: number
-  /** Has the watcher already fired onTrip? */
-  readonly tripped: boolean
+  /** Has the watcher already fired `onThreshold` for the current streak? */
+  readonly thresholdReached: boolean
   /** Full read trace since the last action call. */
   readonly trace: readonly ReadSpanTrace[]
-}
-
-/**
- * Max width of the cause fragment summarised into the context-gathering
- * child task title. `mars list` renders `prompt.slice(0, 60)`; the
- * parent-id stem (`# Context-gathering for mars-xxxxxxxx`) eats most of
- * that, so the fragment is capped tight and the strongest-signal target
- * is placed first (see {@link summarizeReadCause}) so it survives the
- * 60-char truncation even when the full first line is longer.
- */
-export const CAUSE_BUDGET = 48
-
-const displayTarget = (t: ReadSpanTrace): string => {
-  const raw = t.target.trim()
-  if (raw.length === 0) return ''
-  // Path-like (Read/Glob file paths, Grep with a path target): basename
-  // it to save width. Grep patterns / bare names / clipped Bash commands
-  // have no slash and are shown verbatim.
-  if (raw.includes('/')) {
-    const base = raw.slice(raw.lastIndexOf('/') + 1)
-    return base.length > 0 ? base : raw
-  }
-  return raw
-}
-
-/**
- * Summarise *why* the implementor stalled into a short cause fragment
- * for the context-gathering child task title, so `mars list` shows the
- * looped-on files/patterns instead of a wall of identical generic rows.
- *
- * - de-dups on the displayed token (so `/a/x.ts` and `/b/x.ts` collapse),
- * - orders newest → oldest (the tail of the read loop is the strongest
- *   signal and is what survives `mars list`'s 60-char truncation),
- * - basenames path-like targets, shows Grep patterns verbatim,
- * - drops blank targets; returns `''` when nothing usable remains so the
- *   caller can fall back to the generic title with no colon suffix,
- * - caps the joined fragment to {@link CAUSE_BUDGET} chars, appending an
- *   ellipsis if targets were dropped or a lone head token was truncated.
- */
-export const summarizeReadCause = (
-  trace: readonly ReadSpanTrace[],
-): string => {
-  const seen = new Set<string>()
-  const distinct: string[] = []
-  for (let i = trace.length - 1; i >= 0; i--) {
-    const token = displayTarget(trace[i])
-    if (token.length === 0 || seen.has(token)) continue
-    seen.add(token)
-    distinct.push(token)
-  }
-  if (distinct.length === 0) return ''
-
-  // A lone head token wider than the whole budget: hard-truncate it.
-  // The trailing ellipsis already signals truncation, so any further
-  // dropped targets need no second marker.
-  if (distinct[0].length > CAUSE_BUDGET) {
-    return `${distinct[0].slice(0, CAUSE_BUDGET - 1)}…`
-  }
-
-  const out: string[] = []
-  let used = 0
-  let dropped = false
-  for (const token of distinct) {
-    const sep = out.length === 0 ? 0 : 2 // ", "
-    if (used + sep + token.length > CAUSE_BUDGET) {
-      dropped = true
-      break
-    }
-    out.push(token)
-    used += sep + token.length
-  }
-  const joined = out.join(', ')
-  return dropped ? `${joined}…` : joined
 }
 
 export const createReadSpanWatcher = (
   config: ReadSpanWatcherConfig,
 ): ReadSpanWatcher => {
   let streak = 0
-  let tripped = false
+  let thresholdReached = false
   let trace: ReadSpanTrace[] = []
   const limit = config.limit
 
@@ -194,14 +117,13 @@ export const createReadSpanWatcher = (
     get streak() {
       return streak
     },
-    get tripped() {
-      return tripped
+    get thresholdReached() {
+      return thresholdReached
     },
     get trace() {
       return trace
     },
     observe(event) {
-      if (tripped) return
       const uses = extractToolUses(event)
       if (uses.length === 0) return
       for (const use of uses) {
@@ -211,13 +133,13 @@ export const createReadSpanWatcher = (
             tool: use.name as 'Read' | 'Grep' | 'Glob',
             target: targetFromInput(use.input),
           })
-          if (streak >= limit && !tripped) {
-            tripped = true
-            config.onTrip({ limit, trace: [...trace] })
-            return
+          if (streak >= limit && !thresholdReached) {
+            thresholdReached = true
+            config.onThreshold({ limit, trace: [...trace] })
           }
         } else if (ACTION_TOOLS.has(use.name)) {
           streak = 0
+          thresholdReached = false
           trace = []
         }
         // Other tools (TaskCreate, WebFetch, TodoWrite, etc.) are ignored

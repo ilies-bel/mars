@@ -127,9 +127,9 @@ exactly one recovery attempt per origin failure, full stop.
 
 - Coder runs get a deviation-rules brief: no bailing without an auto-fix
   commit, a `--blocked-by $TASK_ID` follow-up, or a `mars idea add`. A
-  watcher SIGKILLs after 5 consecutive Read/Grep/Glob calls without an
-  Edit/Write/Bash (`MARS_READ_SPAN_LIMIT` to override) and parks the
-  task in `blocked` with a context-gathering child as blocker.
+  watcher logs (but does not abort) once a coder makes 5+ consecutive
+  Read/Grep/Glob calls without an Edit/Write/Bash; override the threshold
+  via `MARS_READ_SPAN_LIMIT`.
 - **Worker models (defaults):** Coder → `claude-sonnet-4-6`, Fixer →
   `claude-opus-4-7` (recovery resilience), Writer → `claude-haiku-4-5-20251001`,
   Planner/Slicer → `claude-opus-4-7` (architectural reasoning), Triager →

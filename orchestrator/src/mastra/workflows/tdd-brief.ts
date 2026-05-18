@@ -6,7 +6,7 @@
  * implement-workflow.ts) — present once per Session, NOT prepended to each
  * per-Task prompt the slicer emits. It used to be prepended to every slice
  * prompt, which made the Worker re-absorb it on every Task and replay it
- * verbatim on every retry, burning the read-span budget on boilerplate.
+ * verbatim on every retry, bloating the per-task prompt with boilerplate.
  *
  * Distilled from mattpocock/skills' engineering/tdd skill
  * (https://github.com/mattpocock/skills/tree/main/skills/engineering/tdd)

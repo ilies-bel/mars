@@ -3,7 +3,7 @@ import type { ClaudeEvent } from '../claude-stream'
 import {
   createReadSpanWatcher,
   resolveReadSpanLimit,
-  type TripInfo,
+  type ThresholdInfo,
 } from '../read-span-watch'
 
 const assistant = (tools: Array<{ name: string; input?: unknown }>): ClaudeEvent => ({
@@ -20,36 +20,36 @@ const assistant = (tools: Array<{ name: string; input?: unknown }>): ClaudeEvent
 })
 
 describe('createReadSpanWatcher', () => {
-  it('does not trip below the limit', () => {
-    let tripped: TripInfo | null = null
+  it('does not fire below the limit', () => {
+    let fired: ThresholdInfo | null = null
     const w = createReadSpanWatcher({
       limit: 5,
-      onTrip: (info) => {
-        tripped = info
+      onThreshold: (info) => {
+        fired = info
       },
     })
     for (let i = 0; i < 4; i += 1) {
       w.observe(assistant([{ name: 'Read', input: { file_path: `src/foo${i}.ts` } }]))
     }
     expect(w.streak).toBe(4)
-    expect(w.tripped).toBe(false)
-    expect(tripped).toBeNull()
+    expect(w.thresholdReached).toBe(false)
+    expect(fired).toBeNull()
   })
 
-  it('trips exactly at the configured limit', () => {
-    let tripped: TripInfo | null = null
+  it('fires exactly at the configured limit', () => {
+    let fired: ThresholdInfo | null = null
     const w = createReadSpanWatcher({
       limit: 3,
-      onTrip: (info) => {
-        tripped = info
+      onThreshold: (info) => {
+        fired = info
       },
     })
     w.observe(assistant([{ name: 'Read', input: { file_path: 'a' } }]))
     w.observe(assistant([{ name: 'Grep', input: { pattern: 'foo' } }]))
     w.observe(assistant([{ name: 'Glob', input: { pattern: '**/*.ts' } }]))
-    expect(w.tripped).toBe(true)
-    expect(tripped).not.toBeNull()
-    const info = tripped as unknown as TripInfo
+    expect(w.thresholdReached).toBe(true)
+    expect(fired).not.toBeNull()
+    const info = fired as unknown as ThresholdInfo
     expect(info.limit).toBe(3)
     expect(info.trace).toHaveLength(3)
     expect(info.trace[0].tool).toBe('Read')
@@ -57,43 +57,52 @@ describe('createReadSpanWatcher', () => {
     expect(info.trace[2].tool).toBe('Glob')
   })
 
-  it('only fires onTrip once even when more events arrive', () => {
+  it('only fires onThreshold once per streak even when more reads arrive', () => {
     let calls = 0
     const w = createReadSpanWatcher({
       limit: 2,
-      onTrip: () => {
+      onThreshold: () => {
         calls += 1
       },
     })
     w.observe(assistant([{ name: 'Read', input: { file_path: 'a' } }]))
     w.observe(assistant([{ name: 'Read', input: { file_path: 'b' } }]))
     w.observe(assistant([{ name: 'Read', input: { file_path: 'c' } }]))
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'd' } }]))
     expect(calls).toBe(1)
+    // The streak keeps growing past the threshold — the watcher is
+    // observational and does not freeze its counters.
+    expect(w.streak).toBe(4)
   })
 
-  it('resets the streak on an action-class call', () => {
-    let tripped: TripInfo | null = null
+  it('resets the streak on an action-class call and re-arms onThreshold', () => {
+    let calls = 0
     const w = createReadSpanWatcher({
       limit: 3,
-      onTrip: (info) => {
-        tripped = info
+      onThreshold: () => {
+        calls += 1
       },
     })
     w.observe(assistant([{ name: 'Read' }, { name: 'Read' }]))
     expect(w.streak).toBe(2)
     w.observe(assistant([{ name: 'Edit', input: { file_path: 'a' } }]))
     expect(w.streak).toBe(0)
-    expect(tripped).toBeNull()
+    expect(w.thresholdReached).toBe(false)
+    expect(calls).toBe(0)
+    // New streak after the reset must reach the limit on its own to fire.
     w.observe(assistant([{ name: 'Read' }, { name: 'Read' }]))
-    expect(tripped).toBeNull()
+    expect(calls).toBe(0)
+    w.observe(assistant([{ name: 'Read' }]))
+    expect(calls).toBe(1)
+    expect(w.thresholdReached).toBe(true)
   })
 
   it('ignores tools that are neither read nor action class', () => {
-    let tripped: TripInfo | null = null
+    let fired: ThresholdInfo | null = null
     const w = createReadSpanWatcher({
       limit: 3,
-      onTrip: (info) => {
-        tripped = info
+      onThreshold: (info) => {
+        fired = info
       },
     })
     w.observe(assistant([{ name: 'Read' }]))
@@ -101,15 +110,15 @@ describe('createReadSpanWatcher', () => {
     w.observe(assistant([{ name: 'Read' }]))
     w.observe(assistant([{ name: 'WebFetch' }]))
     w.observe(assistant([{ name: 'Read' }]))
-    expect(w.tripped).toBe(true)
-    expect(tripped).not.toBeNull()
+    expect(w.thresholdReached).toBe(true)
+    expect(fired).not.toBeNull()
   })
 
   it('ignores non-assistant events', () => {
     const w = createReadSpanWatcher({
       limit: 2,
-      onTrip: () => {
-        throw new Error('should not trip on non-assistant events')
+      onThreshold: () => {
+        throw new Error('should not fire on non-assistant events')
       },
     })
     w.observe({ type: 'user', message: { content: [{ type: 'text', text: 'hi' }] } })
@@ -120,8 +129,8 @@ describe('createReadSpanWatcher', () => {
   it('Bash counts as an action and resets the streak', () => {
     const w = createReadSpanWatcher({
       limit: 5,
-      onTrip: () => {
-        throw new Error('should not trip')
+      onThreshold: () => {
+        throw new Error('should not fire')
       },
     })
     w.observe(assistant([{ name: 'Read' }]))
@@ -131,130 +140,39 @@ describe('createReadSpanWatcher', () => {
   })
 
   it('multiple read tool_uses in one event each count toward the streak', () => {
-    let tripped: TripInfo | null = null
+    let fired: ThresholdInfo | null = null
     const w = createReadSpanWatcher({
       limit: 3,
-      onTrip: (info) => {
-        tripped = info
+      onThreshold: (info) => {
+        fired = info
       },
     })
     w.observe(assistant([{ name: 'Read' }, { name: 'Read' }, { name: 'Grep' }]))
-    expect(w.tripped).toBe(true)
-    expect(tripped).not.toBeNull()
-    expect((tripped as unknown as TripInfo).trace).toHaveLength(3)
-  })
-})
-
-describe('genuine analysis-paralysis still trips after PRD f1c48e7b', () => {
-  // Slice 5 of PRD f1c48e7b: removing orientation-driven false trips must
-  // NOT weaken the guard against a Worker that piles up reads with no
-  // plausible intervening action. These tests pin the behaviour the PRD
-  // commits to preserving.
-
-  it('trips exactly once on a run of read-class actions exceeding the limit with no intervening action', () => {
-    const tripped: TripInfo[] = []
-    const w = createReadSpanWatcher({
-      limit: 5,
-      onTrip: (info) => {
-        tripped.push(info)
-      },
-    })
-    // Eight strictly-consecutive read-class actions, no Edit/Write/Bash
-    // between them — classic analysis-paralysis shape.
-    for (let i = 0; i < 8; i += 1) {
-      w.observe(
-        assistant([{ name: 'Read', input: { file_path: `src/file${i}.ts` } }]),
-      )
-    }
-    expect(w.tripped).toBe(true)
-    expect(tripped).toHaveLength(1)
+    expect(w.thresholdReached).toBe(true)
+    expect(fired).not.toBeNull()
+    expect((fired as unknown as ThresholdInfo).trace).toHaveLength(3)
   })
 
-  it('an intervening action resets the streak so a later read run must again exceed the limit to trip', () => {
-    const tripped: TripInfo[] = []
+  it('does not kill or interfere — observation is the only side effect', () => {
+    // Pinned behaviour: the watcher hands back a ThresholdInfo and that's
+    // it. It does not throw, does not call an abort signal, and does not
+    // mutate the event stream. The caller decides what (if anything) to
+    // do with the signal.
+    let fired: ThresholdInfo | null = null
     const w = createReadSpanWatcher({
-      limit: 3,
-      onTrip: (info) => {
-        tripped.push(info)
+      limit: 2,
+      onThreshold: (info) => {
+        fired = info
       },
     })
-    // First read run sits one below the limit.
-    w.observe(assistant([{ name: 'Read', input: { file_path: 'a' } }]))
-    w.observe(assistant([{ name: 'Read', input: { file_path: 'b' } }]))
-    expect(w.streak).toBe(2)
-    // An action lands and the streak (and trace) must reset.
-    w.observe(assistant([{ name: 'Edit', input: { file_path: 'a' } }]))
-    expect(w.streak).toBe(0)
-    expect(w.trace).toHaveLength(0)
-    // Two more reads alone must not trip — the reset means the new run
-    // starts from zero, not from the prior count.
-    w.observe(assistant([{ name: 'Read', input: { file_path: 'c' } }]))
-    w.observe(assistant([{ name: 'Read', input: { file_path: 'd' } }]))
-    expect(w.tripped).toBe(false)
-    expect(tripped).toHaveLength(0)
-    // A third consecutive read in this new run pushes back to the limit
-    // and only now does the guard trip.
-    w.observe(assistant([{ name: 'Read', input: { file_path: 'e' } }]))
-    expect(w.tripped).toBe(true)
-    expect(tripped).toHaveLength(1)
-  })
-
-  it('unrelated tools neither extend nor reset the streak', () => {
-    const tripped: TripInfo[] = []
-    const w = createReadSpanWatcher({
-      limit: 3,
-      onTrip: (info) => {
-        tripped.push(info)
-      },
-    })
-    w.observe(assistant([{ name: 'Read', input: { file_path: 'a' } }]))
-    expect(w.streak).toBe(1)
-    // Unrelated tools must not bump the streak…
-    w.observe(assistant([{ name: 'TodoWrite' }]))
-    expect(w.streak).toBe(1)
-    w.observe(assistant([{ name: 'WebFetch' }]))
-    expect(w.streak).toBe(1)
-    w.observe(assistant([{ name: 'TaskCreate' }]))
-    expect(w.streak).toBe(1)
-    // …nor clear it. Two more reads (with unrelated tools sprinkled in)
-    // must still reach the limit because the original Read still counts.
-    w.observe(assistant([{ name: 'Read', input: { file_path: 'b' } }]))
-    expect(w.streak).toBe(2)
-    w.observe(assistant([{ name: 'TodoWrite' }]))
-    expect(w.streak).toBe(2)
-    w.observe(assistant([{ name: 'Read', input: { file_path: 'c' } }]))
-    expect(w.tripped).toBe(true)
-    expect(tripped).toHaveLength(1)
-  })
-
-  it('the trip still reports the configured limit and the full read trace', () => {
-    const tripped: TripInfo[] = []
-    const w = createReadSpanWatcher({
-      limit: 4,
-      onTrip: (info) => {
-        tripped.push(info)
-      },
-    })
-    w.observe(assistant([{ name: 'Read', input: { file_path: 'src/a.ts' } }]))
-    w.observe(assistant([{ name: 'Grep', input: { pattern: 'foo' } }]))
-    w.observe(assistant([{ name: 'Glob', input: { pattern: '**/*.ts' } }]))
-    w.observe(assistant([{ name: 'Read', input: { file_path: 'src/b.ts' } }]))
-    expect(tripped).toHaveLength(1)
-    const info = tripped[0]
-    expect(info.limit).toBe(4)
-    expect(info.trace).toHaveLength(4)
-    expect(info.trace.map((t) => t.tool)).toEqual([
-      'Read',
-      'Grep',
-      'Glob',
-      'Read',
-    ])
-    expect(info.trace.map((t) => t.target)).toEqual([
-      'src/a.ts',
-      'foo',
-      '**/*.ts',
-      'src/b.ts',
-    ])
+    // No abort controller, no externalAbort wiring — the watcher does not
+    // ask for one. Hitting the threshold simply returns the info object.
+    w.observe(assistant([{ name: 'Read' }, { name: 'Read' }]))
+    expect(fired).not.toBeNull()
+    // Further events keep flowing through — the watcher does not "stop".
+    w.observe(assistant([{ name: 'Read' }]))
+    w.observe(assistant([{ name: 'Read' }]))
+    expect(w.streak).toBe(4)
   })
 })
 
