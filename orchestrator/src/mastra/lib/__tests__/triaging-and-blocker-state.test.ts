@@ -1,0 +1,228 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createClient } from '@libsql/client'
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
+
+/**
+ * PRD 2be831da slice 1 — Triaging status, polymorphic Blocker rows with
+ * `state`, and removal of `actionable`/`reason` from the Task record.
+ *
+ * Tests stay on the public queue interface; they assert observable
+ * behaviour through the surface that the dispatcher / linker / writers see.
+ */
+
+const setupRepo = (): string => {
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-triaging-test-'))
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  mkdirSync(resolve(repo, '.mars'), { recursive: true })
+  return repo
+}
+
+describe('Triaging status + Blocker state schema', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('initialises the tasks schema with no `actionable` column and no `reason` column', async () => {
+    const { initQueue } = await import('../../queue')
+    await initQueue()
+
+    const c = createClient({ url: `file:${repo}/.mars/queue.db` })
+    try {
+      const cols = await c.execute(`PRAGMA table_info(tasks)`)
+      const names = new Set(
+        cols.rows.map((row) => (row as unknown as { name: string }).name),
+      )
+      expect(names.has('actionable')).toBe(false)
+      expect(names.has('reason')).toBe(false)
+    } finally {
+      c.close()
+    }
+  })
+
+  it('treats `triaging` as a valid status that is NOT dispatchable', async () => {
+    const { isDispatchableStatus } = await import('../../queue')
+    expect(isDispatchableStatus('triaging')).toBe(false)
+    expect(isDispatchableStatus('queued')).toBe(true)
+    expect(isDispatchableStatus('draft')).toBe(false)
+  })
+
+  it('persists a freshly-promoted Task with status=triaging', async () => {
+    const { initQueue, getClient } = await import('../../queue')
+    await initQueue()
+    const now = new Date().toISOString()
+    const c = getClient()
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
+            VALUES (?, ?, 'triaging', ?, 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      args: ['t-triaging', 'do thing', 't-triaging', now, now],
+    })
+    const r = await c.execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: ['t-triaging'],
+    })
+    expect((r.rows[0] as unknown as { status: string }).status).toBe('triaging')
+  })
+
+  it('defaults causal addBlockers writes to state=confirmed', async () => {
+    const { initQueue, addBlockers, getClient } = await import('../../queue')
+    await initQueue()
+    const now = new Date().toISOString()
+    const c = getClient()
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
+            VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      args: [now, now],
+    })
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
+            VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      args: [now, now],
+    })
+    await addBlockers('a', ['b'])
+    const r = await c.execute({
+      sql: `SELECT state FROM task_blockers WHERE task_id = 'a' AND blocker_task_id = 'b'`,
+    })
+    expect((r.rows[0] as unknown as { state: string }).state).toBe('confirmed')
+  })
+
+  it('records pending-review state via addPendingReviewBlockers', async () => {
+    const { initQueue, addPendingReviewBlockers, getClient } = await import(
+      '../../queue'
+    )
+    await initQueue()
+    const now = new Date().toISOString()
+    const c = getClient()
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
+            VALUES ('a', 'a', 'triaging', 'a', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      args: [now, now],
+    })
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
+            VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      args: [now, now],
+    })
+    await addPendingReviewBlockers('a', ['b'])
+    const r = await c.execute({
+      sql: `SELECT state FROM task_blockers WHERE task_id = 'a' AND blocker_task_id = 'b'`,
+    })
+    expect((r.rows[0] as unknown as { state: string }).state).toBe(
+      'pending-review',
+    )
+  })
+
+  it('rejected Blocker rows do NOT gate the dispatcher', async () => {
+    const { initQueue, addBlockers, listBlockers, hasIncompleteBlockers, getClient } =
+      await import('../../queue')
+    await initQueue()
+    const now = new Date().toISOString()
+    const c = getClient()
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
+            VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      args: [now, now],
+    })
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
+            VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      args: [now, now],
+    })
+    await addBlockers('a', ['b'])
+    // Manually mark the blocker rejected — the deterministic Linker will
+    // own this transition in a later slice; tests exercise it directly here.
+    await c.execute({
+      sql: `UPDATE task_blockers SET state = 'rejected' WHERE task_id = 'a' AND blocker_task_id = 'b'`,
+    })
+    expect(await listBlockers('a')).toEqual([])
+    expect(await hasIncompleteBlockers('a')).toBe(false)
+  })
+
+  it('returns task-cause and idea-cause Blocker rows uniformly from listAllBlockers', async () => {
+    const { initQueue, addBlockers, addProposalBlockers, listAllBlockers, getClient } =
+      await import('../../queue')
+    await initQueue()
+    const now = new Date().toISOString()
+    const c = getClient()
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
+            VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      args: [now, now],
+    })
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
+            VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      args: [now, now],
+    })
+    await addBlockers('a', ['b'])
+    await addProposalBlockers('a', ['idea-xyz'])
+
+    const blockers = await listAllBlockers('a')
+    expect(blockers).toHaveLength(2)
+    const kinds = blockers.map((b) => b.causeKind).sort()
+    expect(kinds).toEqual(['idea', 'task'])
+    const taskBlocker = blockers.find((b) => b.causeKind === 'task')
+    const ideaBlocker = blockers.find((b) => b.causeKind === 'idea')
+    expect(taskBlocker?.causeId).toBe('b')
+    expect(taskBlocker?.state).toBe('confirmed')
+    expect(ideaBlocker?.causeId).toBe('idea-xyz')
+    expect(ideaBlocker?.state).toBe('confirmed')
+  })
+
+  it('migrates a legacy task_blockers row (no state column) into state=confirmed', async () => {
+    // Set up a legacy queue.db that predates the `state` column.
+    const queueDb = `file:${repo}/.mars/queue.db`
+    const q = createClient({ url: queueDb })
+    await q.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
+      retry_count INTEGER NOT NULL DEFAULT 0, origin_id TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`)
+    await q.execute(`CREATE TABLE task_blockers (
+      task_id TEXT NOT NULL,
+      blocker_task_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (task_id, blocker_task_id)
+    )`)
+    const now = new Date().toISOString()
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at) VALUES ('a', 'a', 'blocked', 'a', ?, ?)`,
+      args: [now, now],
+    })
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at) VALUES ('b', 'b', 'queued', 'b', ?, ?)`,
+      args: [now, now],
+    })
+    await q.execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at) VALUES ('a', 'b', ?)`,
+      args: [now],
+    })
+    q.close()
+
+    const { initQueue } = await import('../../queue')
+    await initQueue()
+
+    const c = createClient({ url: queueDb })
+    try {
+      const r = await c.execute(
+        `SELECT state FROM task_blockers WHERE task_id = 'a' AND blocker_task_id = 'b'`,
+      )
+      expect((r.rows[0] as unknown as { state: string }).state).toBe(
+        'confirmed',
+      )
+    } finally {
+      c.close()
+    }
+  })
+})
