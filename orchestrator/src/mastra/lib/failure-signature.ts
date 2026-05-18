@@ -76,7 +76,14 @@ export const errorClassRules: readonly ErrorClassRule[] = [
   },
   {
     errorClass: 'not-fast-forward',
+    // Matches the pre-flight message emitted when the task branch has diverged
+    // from integration before the VCS supervisor even runs (first-line match).
+    // Also matches the `git merge --ff-only` fatal that surfaces when main
+    // advances AFTER the VCS supervisor rebases but BEFORE the fast-forward
+    // completes — a race condition where the distinguishing signal appears in
+    // the body rather than the first line (hence the matchFull guard too).
     match: /is not a fast-forward of/i,
+    matchFull: /Not possible to fast-forward/i,
   },
   {
     // SIGKILL from the wall-clock timeout (exit 137) or an explicit SIGKILL

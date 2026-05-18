@@ -256,6 +256,108 @@ describe('fix-recipes', () => {
     })
   })
 
+  describe('merge:vcs-supervisor-aborted/not-fast-forward recipe', () => {
+    const ctx = {
+      targetPath: '/tmp/worktrees/task-abc',
+      statusOutput: '',
+      targetBranch: 'task/abc',
+      integrationBranch: 'main',
+      originalPrompt: '',
+    }
+
+    it('produces a stable title that names the branch and integration branch', () => {
+      const recipe = getRecipe(
+        'merge:vcs-supervisor-aborted/not-fast-forward',
+      )
+      expect(recipe.title(ctx)).toBe(
+        'Re-land task/abc onto current main (diverged after VCS supervisor rebased)',
+      )
+    })
+
+    it('falls back to `main` when integrationBranch is absent', () => {
+      const recipe = getRecipe(
+        'merge:vcs-supervisor-aborted/not-fast-forward',
+      )
+      const prompt = recipe.buildPrompt({
+        targetPath: ctx.targetPath,
+        statusOutput: ctx.statusOutput,
+        targetBranch: ctx.targetBranch,
+        originalPrompt: '',
+      })
+      expect(prompt).toContain('git rev-list --count main..HEAD')
+    })
+
+    it('embeds the failing path, branch, integration branch, and key instructions', () => {
+      const recipe = getRecipe(
+        'merge:vcs-supervisor-aborted/not-fast-forward',
+      )
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(ctx.targetPath)
+      expect(prompt).toContain(ctx.targetBranch)
+      expect(prompt).toContain(ctx.integrationBranch)
+      expect(prompt).toContain('Save your work')
+    })
+
+    it('instructs the recovery agent to read from the failing worktree using git -C and never edit there', () => {
+      const recipe = getRecipe(
+        'merge:vcs-supervisor-aborted/not-fast-forward',
+      )
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(`git -C ${ctx.targetPath} log`)
+      expect(prompt).toContain(`git -C ${ctx.targetPath} diff`)
+      expect(prompt).toMatch(/do not edit/i)
+      expect(prompt).toMatch(/FRESH recovery worktree/i)
+      expect(prompt).toMatch(/never edit there/i)
+    })
+
+    it('gates the exit-successfully escape hatch on a non-zero rev-list count', () => {
+      const recipe = getRecipe(
+        'merge:vcs-supervisor-aborted/not-fast-forward',
+      )
+      const prompt = recipe.buildPrompt(ctx)
+      const exitLine = prompt
+        .split('\n')
+        .find((line) => /exit successfully/i.test(line))
+      expect(exitLine).toBeDefined()
+      expect(exitLine).toMatch(/non-zero/i)
+    })
+
+    it('orders the commit-immediately step before the iterate step', () => {
+      const recipe = getRecipe(
+        'merge:vcs-supervisor-aborted/not-fast-forward',
+      )
+      const prompt = recipe.buildPrompt(ctx)
+      const commitIdx = prompt.search(/commit immediately/i)
+      const iterateIdx = prompt.search(/may you iterate/i)
+      expect(commitIdx).toBeGreaterThan(0)
+      expect(iterateIdx).toBeGreaterThan(commitIdx)
+    })
+
+    it('uses git apply to land the diff in the recovery worktree', () => {
+      const recipe = getRecipe(
+        'merge:vcs-supervisor-aborted/not-fast-forward',
+      )
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/git apply/i)
+      expect(prompt).toContain('git add -A && git commit')
+    })
+
+    it('inlines the original task prompt when provided', () => {
+      const recipe = getRecipe(
+        'merge:vcs-supervisor-aborted/not-fast-forward',
+      )
+      const promptWithSource = recipe.buildPrompt({
+        ...ctx,
+        originalPrompt: 'add the nudge link in TodoPage.tsx',
+      })
+      expect(promptWithSource).toContain('add the nudge link in TodoPage.tsx')
+      expect(promptWithSource).toMatch(/inlined/i)
+      const promptWithout = recipe.buildPrompt(ctx)
+      expect(promptWithout).not.toContain('add the nudge link in TodoPage.tsx')
+      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
+    })
+  })
+
   describe('intentionally absent recipes (documented investigation outcomes)', () => {
     it('merge:crashed/index-lock-contention has no recipe — environmental transient failure; operator restarts with `mars restart`', () => {
       // Investigated 2026-05-18 (task 5c15a8e1). Root cause: git checkout main

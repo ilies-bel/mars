@@ -238,6 +238,66 @@ const noCommitsAheadRecipe: FixRecipe = {
   },
 }
 
+const vcsAbortedNotFastForwardRecipe: FixRecipe = {
+  signature: 'merge:vcs-supervisor-aborted/not-fast-forward',
+  title: (ctx) => {
+    const integration = ctx.integrationBranch ?? 'main'
+    return `Re-land ${ctx.targetBranch} onto current ${integration} (diverged after VCS supervisor rebased)`
+  },
+  buildPrompt: (ctx) => {
+    const integration = ctx.integrationBranch ?? 'main'
+    const countCmd = `git rev-list --count ${integration}..HEAD`
+    const sanitizedBranch = ctx.targetBranch.replace(/[^a-zA-Z0-9-]/g, '-')
+    const patchFile = `/tmp/recover-${sanitizedBranch}.patch`
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `Branch ${ctx.targetBranch} has committed work, but ${integration} advanced in the window between the VCS supervisor's rebase and the final fast-forward merge attempt. The coding work is fully committed on the branch — it just needs to be re-applied on top of the current ${integration}.`,
+      '',
+      `You are running in a FRESH recovery worktree on a FRESH branch (not ${ctx.targetBranch}). Your job is to re-apply the failing branch's changes HERE — in your own cwd, on your own branch. Do NOT \`cd\` into ${ctx.targetPath} and do NOT edit files there: that is the failing tree, never the right merge source for this recovery.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `STEP 1 — sanity-check first. From your current working directory, run \`${countCmd}\` to count commits on your recovery branch not yet on ${integration}. The output is a plain integer.`,
+      ` - If it prints a non-zero integer, your recovery branch already has commits: this is a false positive — do NOT modify files, exit successfully.`,
+      ` - If it prints \`0\`, your branch is genuinely empty: proceed to STEP 2.`,
+      '',
+      `Do not use \`git log\` or any other command to make this decision — only the integer from \`rev-list --count\` is authoritative.`,
+      '',
+      `STEP 2 — Lift the committed diff from the failing branch and apply it in YOUR worktree. Only enter this step when \`${countCmd}\` printed \`0\`.`,
+      '',
+      `Run these read-only checks against the failing worktree to see what was committed:`,
+      '',
+      '```',
+      `git -C ${ctx.targetPath} log ${integration}..HEAD --oneline`,
+      `git -C ${ctx.targetPath} diff ${integration}..HEAD --stat`,
+      `git -C ${ctx.targetPath} diff ${integration}..HEAD   # full diff; pipe to a file if large`,
+      '```',
+      '',
+      `Apply the diff in YOUR current worktree:`,
+      '',
+      ` 1. Capture: \`git -C ${ctx.targetPath} diff ${integration}..HEAD > ${patchFile}\``,
+      ` 2. Apply: \`git apply --3way ${patchFile}\` (or \`git apply --reject\` and resolve any \`.rej\` files by hand if there are conflicts).`,
+      ` 3. **Commit immediately**: \`git add -A && git commit -m "recover: re-land <summary> onto ${integration}"\`. Do this BEFORE running tests, BEFORE refactoring, BEFORE refining the message.`,
+      ` 4. Re-run \`${countCmd}\`. It MUST now print a non-zero integer. If it still prints \`0\`, your commit did not land — fix that before anything else.`,
+      ` 5. Only after step 4 prints non-zero may you iterate: run the original verify commands, fix any issues, and polish the commit message via \`git commit --amend\`.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (for context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only — \`git -C ${ctx.targetPath} ...\` for inspection only, never edit there): ${ctx.targetPath}`,
+      `Integration branch: ${integration}`,
+      '',
+      `Save your work. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 // NOTE — intentionally absent entries (documented so future investigators don't
 // re-open these):
 //
@@ -268,6 +328,7 @@ const recipeList: readonly FixRecipe[] = [
   worktreeInstallFrozenLockfileRecipe,
   worktreeInstallTimeoutRecipe,
   noCommitsAheadRecipe,
+  vcsAbortedNotFastForwardRecipe,
 ]
 
 /**
