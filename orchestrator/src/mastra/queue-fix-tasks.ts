@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { deriveReproCommand } from './lib/derive-repro-command'
+import {
+  deriveReproCommand,
+  buildVerifyReproHint,
+  type RanVerifyStep,
+} from './lib/derive-repro-command'
 import {
   getRecipe,
   hasRecipe,
@@ -640,6 +644,15 @@ export interface HandleTaskFailureViaTaskInput {
    * those fields work either way.
    */
   recipeContext?: FixRecipeContext
+  /**
+   * All verify steps that actually ran for this task, in order, carrying
+   * their exact commands and directories. When present, the reproduce
+   * command is derived from these records via {@link buildVerifyReproHint}
+   * rather than the hardcoded JavaScript-specific mapping in
+   * {@link deriveReproCommand}. Pass this from the verify step so
+   * multi-language and full-stack failures produce accurate repro hints.
+   */
+  ranVerifySteps?: readonly RanVerifyStep[]
 }
 
 export interface HandleTaskFailureViaTaskResult {
@@ -692,7 +705,10 @@ export const handleTaskFailureWithFixTask = async (
   )
   const truncatedError = truncateFailure(input.errorOutput)
   const branch = input.branch ?? task.branch
-  const reproCommand = deriveReproCommand(input.failingStep, task.worktreePath)
+  const reproCommand =
+    input.ranVerifySteps && input.ranVerifySteps.length > 0
+      ? buildVerifyReproHint(input.ranVerifySteps)
+      : deriveReproCommand(input.failingStep, task.worktreePath)
 
   // Kill-switch: when MARS_RECOVERY_DISABLED=1, never spawn fix-tasks or
   // Investigators. Mark the failing task failed and stop. Recovery (fix-

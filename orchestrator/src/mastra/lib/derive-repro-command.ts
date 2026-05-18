@@ -2,6 +2,20 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 /**
+ * A verify step that actually ran during the verify phase, carrying enough
+ * information to build a precise reproduce command without guessing the
+ * toolchain from the step name.
+ */
+export interface RanVerifyStep {
+  name: string
+  cmd: string
+  args: readonly string[]
+  /** Absolute directory the step ran in. */
+  stepDir: string
+  passed: boolean
+}
+
+/**
  * Mirror of `resolveVerifyCwd` in `workflows/implement-workflow.ts`. The
  * verify step doesn't always run at the worktree root: if the project
  * lives in a subdirectory (e.g. `orchestrator/` in this repo), verify
@@ -24,6 +38,32 @@ export const resolveVerifyCwd = (worktreeRoot: string): string => {
   const orchestrator = resolve(worktreeRoot, 'orchestrator')
   if (hasProject(orchestrator)) return orchestrator
   return worktreeRoot
+}
+
+/**
+ * Build a reproduce hint from the full set of verify steps that actually ran.
+ * Lists every step in order with its exact command and working directory,
+ * annotating passing steps as `(passed)` and failing steps as `(FAILED)`.
+ *
+ * Unlike {@link deriveReproCommand}, this function uses only the declared
+ * commands — there are no hardcoded JavaScript assumptions. A Python repo
+ * running `pytest`, a Rust repo running `cargo test`, or a full-stack task
+ * spanning multiple directories all produce accurate reproduce lines.
+ *
+ * Returns null when the steps array is empty so callers can decide whether
+ * to include a reproduce section.
+ */
+export const buildVerifyReproHint = (
+  ranSteps: readonly RanVerifyStep[],
+): string | null => {
+  if (ranSteps.length === 0) return null
+  return ranSteps
+    .map((step) => {
+      const cmdLine = [step.cmd, ...step.args].join(' ')
+      const status = step.passed ? 'passed' : 'FAILED'
+      return `cd ${step.stepDir} && ${cmdLine}  # ${step.name} (${status})`
+    })
+    .join('\n')
 }
 
 /**
