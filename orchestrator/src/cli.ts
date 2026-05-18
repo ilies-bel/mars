@@ -345,6 +345,18 @@ Commands:
                                 deprecated pattern of writing one-shot
                                 .ts scripts under orchestrator/scripts/.
   inbox watch                   live terminal UI for the inbox (ink TUI)
+  diagnose set <task-id> --from <-|path>
+                                record a diagnose Chore's verdict against a
+                                stuck task. Input is a JSON object with kind
+                                = "root-cause-found" (evidence,
+                                involvedFiles, fixDirection) or
+                                "inconclusive" (whatChecked, whyUnscoped).
+                                Overwrites any prior verdict for the same id.
+  diagnose show <task-id> [--json]
+                                read a recorded verdict. Prints structured
+                                fields by default; --json emits the raw
+                                StoredDiagnosis object. An unrecorded task
+                                surfaces as kind="no-verdict".
   ui [--repo <path>] [--port <n>] [--host <h>]
                                 launch the read-only Kanban viewer
                                 (defaults: port 7777, host 127.0.0.1)
@@ -3073,6 +3085,104 @@ const main = async (): Promise<void> => {
 
     console.error(
       'usage: mars inbox [list [state] [--lean] | show <id> | ack <id> | resolve <id> [--note <text>] [--root-cause <text>] | dismiss <id> [--note <text>] | raise --from <-|path> | watch]',
+    )
+    process.exit(1)
+  }
+
+  if (cmd === 'diagnose') {
+    const sub = rest[0]
+    const { setDiagnosis, getDiagnosis, DIAGNOSIS_KINDS } = await import(
+      './mastra/lib/diagnose'
+    )
+
+    if (sub === 'set') {
+      const taskId = rest[1]
+      if (!taskId) {
+        console.error(
+          'usage: mars diagnose set <task-id> --from <-|path>',
+        )
+        process.exit(2)
+      }
+      const from = flags['--from']
+      if (!from) {
+        console.error(
+          'usage: mars diagnose set <task-id> --from <-|path>',
+        )
+        process.exit(2)
+      }
+      let raw: string
+      try {
+        if (from === '-') {
+          const chunks: Buffer[] = []
+          for await (const chunk of process.stdin) {
+            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+          }
+          raw = Buffer.concat(chunks).toString('utf8')
+        } else {
+          raw = readFileSync(from, 'utf8')
+        }
+      } catch (err) {
+        console.error(`failed to read input: ${(err as Error).message}`)
+        process.exit(2)
+      }
+      let json: unknown
+      try {
+        json = JSON.parse(raw)
+      } catch (err) {
+        console.error(`invalid JSON: ${(err as Error).message}`)
+        process.exit(2)
+      }
+      if (typeof json !== 'object' || json === null) {
+        console.error(
+          `diagnose set: input must be a JSON object with a 'kind' field (${DIAGNOSIS_KINDS.join(', ')})`,
+        )
+        process.exit(2)
+      }
+      try {
+        await setDiagnosis(taskId, json as Parameters<typeof setDiagnosis>[1])
+        console.log(`diagnosis recorded for ${taskId}`)
+      } catch (err) {
+        console.error(`diagnose set: ${(err as Error).message}`)
+        process.exit(1)
+      }
+      return
+    }
+
+    if (sub === 'show') {
+      const taskId = rest[1]
+      if (!taskId) {
+        console.error('usage: mars diagnose show <task-id> [--json]')
+        process.exit(2)
+      }
+      const verdict = await getDiagnosis(taskId)
+      if (rest.includes('--json')) {
+        console.log(JSON.stringify(verdict, null, 2))
+        return
+      }
+      console.log(`task: ${verdict.taskId}`)
+      console.log(`kind: ${verdict.kind}`)
+      if (verdict.kind === 'root-cause-found') {
+        console.log(`recorded-at: ${verdict.recordedAt}`)
+        console.log(`evidence:`)
+        console.log(`  ${verdict.evidence}`)
+        console.log(`involved-files:`)
+        for (const f of verdict.involvedFiles) console.log(`  ${f}`)
+        console.log(`fix-direction:`)
+        console.log(`  ${verdict.fixDirection}`)
+      } else if (verdict.kind === 'inconclusive') {
+        console.log(`recorded-at: ${verdict.recordedAt}`)
+        console.log(`what-checked:`)
+        console.log(`  ${verdict.whatChecked}`)
+        console.log(`why-unscoped:`)
+        console.log(`  ${verdict.whyUnscoped}`)
+      } else {
+        console.log('(no verdict recorded for this task)')
+      }
+      return
+    }
+
+    console.error(
+      'usage: mars diagnose <set <task-id> --from <-|path> | show <task-id> [--json]>',
     )
     process.exit(1)
   }
