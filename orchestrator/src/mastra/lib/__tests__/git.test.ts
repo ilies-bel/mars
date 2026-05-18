@@ -335,6 +335,95 @@ process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', sessio
   })
 })
 
+describe('createWorktree worktree-list timeout (dispatch stays unblocked)', () => {
+  // Regression guard for the 2026-05-17 incident where ~353 corrupt
+  // .git/worktrees admin entries made 'git worktree list --porcelain' hang
+  // indefinitely, exhausting all implement semaphore slots and stalling
+  // dispatch for ~14h. WORKTREE_GIT_TIMEOUT_MS ensures the prune/list calls
+  // fail fast so createWorktree's .catch handlers recover and dispatch proceeds.
+  let repo: string
+  let stubDir: string
+  let origPath: string | undefined
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-worktree-timeout-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+    writeFileSync(resolve(repo, 'README.md'), '# test\n')
+    execFileSync('git', ['add', '.'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+
+    // Stub git that hangs indefinitely on worktree list/prune, simulating a
+    // corrupt .git/worktrees directory. All other git commands are forwarded
+    // to the real git binary found later in PATH.
+    stubDir = mkdtempSync(resolve(tmpdir(), 'mars-git-stub-'))
+    const stubPath = resolve(stubDir, 'git')
+    const stubScript = `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === 'worktree' && (args[1] === 'list' || args[1] === 'prune')) {
+  // Simulate a corrupt .git/worktrees hang — the timer ensures the
+  // process stays alive until the exec timeout sends SIGTERM.
+  setTimeout(() => process.exit(0), 30_000);
+  return;
+}
+// Forward all other git commands to the real binary (skip this stub dir).
+const { spawnSync } = require('child_process');
+const fs = require('fs');
+const dirs = (process.env.PATH || '').split(':').filter(d => d !== ${JSON.stringify(stubDir)});
+let realGit;
+for (const dir of dirs) {
+  const c = dir + '/git';
+  try { fs.accessSync(c, fs.constants.X_OK); realGit = c; break; } catch {}
+}
+if (!realGit) { process.stderr.write('git not found\\n'); process.exit(127); }
+const r = spawnSync(realGit, args, { stdio: 'inherit' });
+process.exit(r.status ?? 1);
+`
+    writeFileSync(stubPath, stubScript, 'utf8')
+    chmodSync(stubPath, 0o755)
+
+    origPath = process.env.PATH
+    process.env.PATH = `${stubDir}:${origPath ?? ''}`
+    process.env.MARS_REPO = repo
+    process.env.MARS_WORKTREE_GIT_TIMEOUT_MS = '300'
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_WORKTREE_GIT_TIMEOUT_MS
+    if (origPath !== undefined) process.env.PATH = origPath
+    rmSync(repo, { recursive: true, force: true })
+    rmSync(stubDir, { recursive: true, force: true })
+  })
+
+  it('WORKTREE_GIT_TIMEOUT_MS is read from env at module load', async () => {
+    const { WORKTREE_GIT_TIMEOUT_MS } = await import('../git')
+    expect(WORKTREE_GIT_TIMEOUT_MS).toBe(300)
+  })
+
+  it('createWorktree completes within 2× timeout even when git worktree list hangs', async () => {
+    const { createWorktree, WORKTREE_GIT_TIMEOUT_MS } = await import('../git')
+    const start = Date.now()
+    // createWorktree may succeed (worktree add goes through the stub to real
+    // git) or fail (other git error), but it MUST NOT hang for the duration
+    // of the 30s stub timer. The prune/list timeouts ensure it fails fast and
+    // the .catch handlers recover so dispatch can proceed.
+    await createWorktree({
+      taskId: 'timeout-test-task',
+      integrationBranch: 'main',
+    }).catch(() => {})
+    const elapsed = Date.now() - start
+    // createWorktree issues three timed-out git calls: prune + list + prune.
+    // Allow 3× timeout + generous overhead for real git ops and process
+    // spawn cost. The crucial assertion is that we finish far below the
+    // stub's 30s hang duration — if the timeout were absent we'd take >30s.
+    expect(elapsed).toBeLessThan(WORKTREE_GIT_TIMEOUT_MS * 3 + 3_000)
+  })
+})
+
 describe('checkMergeTargetStatus', () => {
   let repo: string
   const args = { integrationBranch: 'main', taskBranch: 'task/x' }

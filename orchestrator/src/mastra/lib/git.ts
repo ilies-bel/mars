@@ -9,6 +9,17 @@ import { parseClaudeStreamLine, type ClaudeEvent } from './claude-stream'
 
 const exec = promisify(execFile)
 
+// Hard timeout for git worktree list/prune calls. A corrupt .git/worktrees
+// directory with many admin entries can make 'git worktree list --porcelain'
+// and 'git worktree prune' hang indefinitely, which consumed every implement
+// semaphore slot and stalled dispatch for hours (observed 2026-05-17 with
+// ~353 corrupt entries). The timeout ensures these calls fail fast so
+// createWorktree's .catch handlers can recover and dispatch proceeds.
+// Override via MARS_WORKTREE_GIT_TIMEOUT_MS.
+export const WORKTREE_GIT_TIMEOUT_MS = Number(
+  process.env.MARS_WORKTREE_GIT_TIMEOUT_MS ?? 10_000,
+)
+
 const repoRoot = (): string => getRepoRoot()
 const moduleDir = (): string => dirname(fileURLToPath(import.meta.url))
 
@@ -32,6 +43,7 @@ interface RegisteredWorktree {
 const listRegisteredWorktrees = async (): Promise<RegisteredWorktree[]> => {
   const { stdout } = await exec('git', ['worktree', 'list', '--porcelain'], {
     cwd: repoRoot(),
+    timeout: WORKTREE_GIT_TIMEOUT_MS,
   })
   const entries: RegisteredWorktree[] = []
   let current: { path?: string; branch?: string | null } = {}
@@ -106,8 +118,12 @@ export const createWorktree = async ({
   await mkdir(resolve(path, '..'), { recursive: true })
 
   // Prune any stale worktree registrations (paths recorded in .git/worktrees
-  // that no longer exist on disk) before inspecting state.
-  await exec('git', ['worktree', 'prune'], { cwd }).catch(() => {})
+  // that no longer exist on disk) before inspecting state. Both prune and
+  // list are time-boxed: a corrupt .git/worktrees directory with many
+  // entries can make these commands hang indefinitely, stalling every
+  // implement dispatch until slots exhaust. Errors and timeouts fall through
+  // to .catch below so createWorktree proceeds with an empty registration list.
+  await exec('git', ['worktree', 'prune'], { cwd, timeout: WORKTREE_GIT_TIMEOUT_MS }).catch(() => {})
 
   const registered = await listRegisteredWorktrees().catch(
     () => [] as RegisteredWorktree[],
@@ -147,7 +163,7 @@ export const createWorktree = async ({
   }
 
   // Re-prune in case the removes above left dangling refs.
-  await exec('git', ['worktree', 'prune'], { cwd }).catch(() => {})
+  await exec('git', ['worktree', 'prune'], { cwd, timeout: WORKTREE_GIT_TIMEOUT_MS }).catch(() => {})
 
   // If a directory still exists at our target path with no live worktree
   // registration, it's leftover filesystem state — wipe it.
