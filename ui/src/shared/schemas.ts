@@ -12,7 +12,7 @@ const taskStatusSchema = z.enum([
   'blocked',
 ])
 
-const ideaSourceSchema = z.enum(['reflection', 'human', 'planner'])
+const proposalSourceSchema = z.enum(['reflection', 'human', 'planner'])
 
 const draftFeatureSchema = z.object({
   id: z.string(),
@@ -20,7 +20,7 @@ const draftFeatureSchema = z.object({
   story: z.string(),
   technical: z.string(),
   status: z.string(),
-  source: ideaSourceSchema,
+  source: proposalSourceSchema,
   createdAt: z.number(),
   updatedAt: z.number(),
   acceptanceCount: z.number(),
@@ -91,7 +91,7 @@ export const agentsResponseSchema = z.object({
 
 export type InboxPayload = z.infer<typeof inboxResponseSchema>
 export type TaskStatus = z.infer<typeof taskStatusSchema>
-export type IdeaSource = z.infer<typeof ideaSourceSchema>
+export type ProposalSource = z.infer<typeof proposalSourceSchema>
 export type DraftFeature = z.infer<typeof draftFeatureSchema>
 export type Task = z.infer<typeof taskSchema>
 export type StaleWorktree = z.infer<typeof staleWorktreeSchema>

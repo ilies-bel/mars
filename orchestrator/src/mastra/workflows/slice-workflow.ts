@@ -305,12 +305,12 @@ const truncateAtWord = (text: string, maxLen: number): string => {
  * Build the dispatched-coder prompt for a single slice. A short, bounded
  * parent digest is inlined — covering the parent goal (1–2 sentences),
  * this slice's blockers, and the PRD's non-goals — so the implementor does
- * NOT need to run `mars idea show <id>` to obtain context and does NOT
+ * NOT need to run `mars proposal show <id>` to obtain context and does NOT
  * receive a multi-KB verbatim PRD body that bloats every slice prompt.
  *
  * Rationale: dispatched coders execute from `.mars/worktrees/<id>/`, where
  * `mars` resolves the repo upward from CWD and silently binds to the
- * worktree's own (empty) `.mars/`. A bare `mars idea show <id>` returns
+ * worktree's own (empty) `.mars/`. A bare `mars proposal show <id>` returns
  * 'not found' and burns the implementor's read/grep budget reverse-
  * engineering scope. The digest removes the lookup entirely while keeping
  * per-slice prompts lean.
@@ -580,7 +580,7 @@ const generateStep = createStep({
       // inserts. If we already flipped the idea to 'sliced' before
       // failing later (e.g. in Phase 5's blocker-transfer), revert it
       // back to 'prd-ready' so the daemon auto-slice loop and
-      // `mars idea slice` can pick it up again. Best-effort — a revert
+      // `mars proposal slice` can pick it up again. Best-effort — a revert
       // failure should not mask the original cause.
       if (ideaFlipped) {
         await ideasClient

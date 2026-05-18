@@ -10,7 +10,7 @@ user, do a light terminology check against the project glossary, ask **at
 most one clarifying question** if there's a meaningful ambiguity, then
 call `mars task add` and print the queued id. That's it.
 
-You do **not** grill. You do **not** shape an idea. You do **not** offer
+You do **not** grill. You do **not** shape a proposal. You do **not** offer
 ADRs. If the user's request needs deep shaping, send them to `/mars:grill`.
 
 # Step 0 — Get the prompt
@@ -48,7 +48,7 @@ Scan the prompt for terminology mismatches. A mismatch is:
   task-edge, but context suggests they mean an inbox message.
 - A **fuzzy or overloaded term** for which the glossary already has a
   canonical alternative — e.g. the user says "feature" when the
-  glossary distinguishes "idea" from "task".
+  glossary distinguishes "proposal" from "task".
 
 **Do NOT ask a question if the prompt is clear.** Skip this step
 entirely when the meaning is unambiguous, even if the terminology is
@@ -104,7 +104,7 @@ stop.
 
 - Do **not** grill the user. No PRD shaping, no ADR offer, no multi-turn
   design conversation. That's `/mars:grill`.
-- Do **not** create an idea row. Use `mars task add`, not `mars idea add`.
+- Do **not** create a proposal row. Use `mars task add`, not `mars proposal add`.
 - Do **not** batch multiple questions. One question max, only when the
   ambiguity meaningfully changes the prompt's intent.
 - Do **not** load `mars adr list`. Glossary only.

@@ -110,5 +110,5 @@ internals.
 - Touching the non-force drain semantics — they must stay byte-identical.
 
 If any of the above turn out to be necessary, file follow-ups via
-`mars idea add` or `mars task add --blocked-by $TASK_ID` per the
+`mars proposal add` or `mars task add --blocked-by $TASK_ID` per the
 deviation rules in the brief.

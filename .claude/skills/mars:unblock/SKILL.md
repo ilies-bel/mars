@@ -1,6 +1,6 @@
 ---
 name: mars:unblock
-description: Help unblock a Mars task that the orchestrator stopped on. Loads the task and its blockers, reads implicated files, and proposes 2–3 concrete unblock options via AskUserQuestion. No idea-shaping, no glossary curation, no ADR offers. Use when the user says "unblock <id>", "why is this blocked", "help with <id>", or invokes `/mars:unblock`.
+description: Help unblock a Mars task that the orchestrator stopped on. Loads the task and its blockers, reads implicated files, and proposes 2–3 concrete unblock options via AskUserQuestion. No proposal-shaping, no glossary curation, no ADR offers. Use when the user says "unblock <id>", "why is this blocked", "help with <id>", or invokes `/mars:unblock`.
 ---
 
 # Mars: unblock a stuck task
@@ -11,7 +11,7 @@ upstream task, or a decision that needs an ADR. Your job is to surface
 **why** it's blocked, give the user enough context to decide, and then
 execute their decision through the right `mars` verb.
 
-You do **not** shape ideas, curate the glossary, or offer ADRs. If the
+You do **not** shape proposals, curate the glossary, or offer ADRs. If the
 unblock decision turns out to need a new task, enqueue it and stop.
 
 # Step 0 — No argument? Point to the inbox and stop.
@@ -37,7 +37,7 @@ blockers (69):
 
 Those ids under "blockers" are **inbox item ids, not task ids**, and they
 are not what `mars blockers <task-id>` operates on. If you pass one to
-`mars show`, you'll get `no task or idea matching <id>` and waste a turn.
+`mars show`, you'll get `no task or proposal matching <id>` and waste a turn.
 
 Resolve the id **once, up front**, before doing anything else:
 
@@ -45,9 +45,9 @@ Resolve the id **once, up front**, before doing anything else:
 mars show <id> 2>&1 | head -1
 ```
 
-- If it prints `kind: task` (or `kind: idea`) → it's a task/idea id, this
-  skill applies as written. Continue to Step 2.
-- If it prints `no task or idea matching <id>` → try
+- If it prints `kind: task` (or `kind: proposal`) → it's a task/proposal id,
+  this skill applies as written. Continue to Step 2.
+- If it prints `no task or proposal matching <id>` → try
   `mars inbox show <id>`. If that succeeds, the id is an **inbox item**.
   STOP and hand off — see "Inbox-item ids" below.
 - If both fail → tell the user the id doesn't resolve and ask them to
@@ -94,8 +94,8 @@ Print the recap in plain prose, in this shape:
 > to `<observable outcome>`. The orchestrator stopped on it at `<step>`."*
 
 Pull the goal from the task's prompt/title (the first sentence of the
-prompt body usually carries it). Origin candidates: a parent idea
-(`fromIdea: <idea-id>`), a sibling task that blocked it, or "user-queued
+prompt body usually carries it). Origin candidates: a parent proposal
+(`fromIdea: <proposal-id>`), a sibling task that blocked it, or "user-queued
 via `mars task add`". The step is whichever workflow stage flipped it to
 blocked (`code`, `verify`, `merge`).
 
@@ -201,11 +201,11 @@ status with `mars show <task-id>` before resolving.
 
 # What you do NOT do
 
-- Do not call any `mars idea` write verb (`add`, `set`, `promote`, etc.).
-  This skill operates on tasks, not ideas. If the unblock requires
+- Do not call any `mars proposal` write verb (`add`, `set`, `promote`, etc.).
+  This skill operates on tasks, not proposals. If the unblock requires
   shaping a new feature, enqueue it as a `mars task add` prompt with
   enough self-contained context, or send the user to `/mars:grill` for
-  idea-shaping.
+  proposal-shaping.
 - Do not run `mars glossary set/remove` or `mars adr add`. Domain-language
   curation belongs to `mars:grill`.
 - Do not invent flag combinations not shown above. If `mars unblock`,
