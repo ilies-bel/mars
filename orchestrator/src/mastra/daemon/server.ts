@@ -33,6 +33,7 @@ import {
   onBlockerTaskCompleted,
   recoverBlockedTasks,
 } from '../blocker-resolution'
+import { supersedeInboxItemsForOrigin } from '../lib/inbox'
 import { internalBus } from '../../internal-bus'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
 import { loadDaemonConfig } from './config'
@@ -737,6 +738,21 @@ export const startDaemon = async (
         bus.emit('task.queued', { taskId: id })
       }
       if (after.status === 'done') {
+        // Auto-supersede the inbox row keyed to this origin task, if any.
+        // The operator no longer needs to ack/dismiss: the underlying
+        // stuck task has reached a terminal state on its own.
+        try {
+          const closed = await supersedeInboxItemsForOrigin(id, 'origin-done')
+          if (closed.length > 0) {
+            log(
+              `[inbox] superseded ${closed.length} item(s) for origin ${id} on done`,
+            )
+          }
+        } catch (err) {
+          log(
+            `[inbox] error superseding items for origin ${id}: ${(err as Error).message}`,
+          )
+        }
         // Diagnose Chore completion takes the PRD 06e677fb verdict-driven
         // branch — read the structured verdict, dispatch exactly one fix
         // attempt OR raise exactly one inbox item, and re-park the parent
@@ -891,6 +907,18 @@ export const startDaemon = async (
     }
     await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
     await deleteTask(id)
+    try {
+      const closed = await supersedeInboxItemsForOrigin(id, 'origin-purged')
+      if (closed.length > 0) {
+        log(
+          `[inbox] superseded ${closed.length} item(s) for origin ${id} on purge`,
+        )
+      }
+    } catch (err) {
+      log(
+        `[inbox] error superseding items for origin ${id} on purge: ${(err as Error).message}`,
+      )
+    }
   }
 
   const handleUnblock = async (id: string): Promise<UnblockTaskResult> => {
@@ -951,6 +979,18 @@ export const startDaemon = async (
       .catch(() => false)
 
     const result = await dropTask(id)
+    try {
+      const closed = await supersedeInboxItemsForOrigin(id, 'origin-dropped')
+      if (closed.length > 0) {
+        log(
+          `[inbox] superseded ${closed.length} item(s) for origin ${id} on drop`,
+        )
+      }
+    } catch (err) {
+      log(
+        `[inbox] error superseding items for origin ${id} on drop: ${(err as Error).message}`,
+      )
+    }
     log(
       `[drop] ${id} (was ${result.previousStatus}; force=${force}, ` +
         `incoming=${result.edgesRemoved.incoming}, outgoing=${result.edgesRemoved.outgoing}, ` +
