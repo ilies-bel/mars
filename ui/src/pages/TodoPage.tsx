@@ -116,7 +116,7 @@ const InboxRow = ({ item, active, onSelect, onDismiss }: InboxRowProps) => {
         </span>
       </div>
       <div className="mt-1 truncate font-mono text-[12px] text-fg">
-        Stale worktree
+        {w.prompt.trim() || 'Stale worktree'}
       </div>
       <div className="mt-1 flex items-center justify-between font-mono text-[9px] uppercase text-iron/80">
         <span>stale · {w.status}</span>
@@ -250,6 +250,16 @@ const StaleDetail = ({ worktree }: StaleDetailProps) => (
       <dl className="flex flex-col gap-4 font-mono text-[12px]">
         <div>
           <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Task
+          </dt>
+          <dd className="whitespace-pre-wrap text-fg">
+            {worktree.prompt.trim() || (
+              <span className="text-iron/70">(empty)</span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
             Task id
           </dt>
           <dd className="text-fg">{worktree.taskId}</dd>
@@ -259,6 +269,12 @@ const StaleDetail = ({ worktree }: StaleDetailProps) => (
             Status
           </dt>
           <dd className="text-fg">{worktree.status}</dd>
+        </div>
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Branch
+          </dt>
+          <dd className="text-fg">{worktree.branch ?? '—'}</dd>
         </div>
         <div>
           <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
@@ -272,6 +288,22 @@ const StaleDetail = ({ worktree }: StaleDetailProps) => (
           </dt>
           <dd className="text-fg">{worktree.updatedAt}</dd>
         </div>
+        {worktree.blockerTaskId !== null ? (
+          <div>
+            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+              Blocked by
+            </dt>
+            <dd className="text-fg">{worktree.blockerTaskId}</dd>
+          </div>
+        ) : null}
+        {worktree.error !== null ? (
+          <div>
+            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+              Error
+            </dt>
+            <dd className="whitespace-pre-wrap text-fg">{worktree.error}</dd>
+          </div>
+        ) : null}
       </dl>
     </main>
   </div>
