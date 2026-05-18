@@ -16,6 +16,7 @@ import {
   isBlockersAbortError,
   isDirtyMainAbortError,
   resolveWorkerSystemPrompt,
+  shouldWireReadSpanWatcher,
 } from '../implement-workflow'
 
 describe('composePrompt — coder default', () => {
@@ -103,6 +104,61 @@ describe('composePrompt — writer routing', () => {
   it('writer task prompt does NOT contain deviation-rules text', () => {
     const out = composePrompt('add glossary terms', null, 'writer')
     expect(out).not.toContain('## Deviation rules')
+  })
+})
+
+describe('shouldWireReadSpanWatcher — read-span guard exemption', () => {
+  it("wires the watcher for an ordinary coder task (tag='coder', kind='task')", () => {
+    expect(shouldWireReadSpanWatcher('coder', 'task')).toBe(true)
+  })
+
+  it("wires the watcher for a recovery fix-task (tag='coder', kind='fix')", () => {
+    expect(shouldWireReadSpanWatcher('coder', 'fix')).toBe(true)
+  })
+
+  it("does NOT wire the watcher for a diagnose Chore (tag='coder', kind='diagnose')", () => {
+    // PRD 06e677fb: heavy reading is the diagnose Chore's actual job;
+    // its only backstop is the existing time/turn cap.
+    expect(shouldWireReadSpanWatcher('coder', 'diagnose')).toBe(false)
+  })
+
+  it("does NOT wire the watcher for a writer task (tag='writer')", () => {
+    expect(shouldWireReadSpanWatcher('writer', 'task')).toBe(false)
+    expect(shouldWireReadSpanWatcher('writer', 'diagnose')).toBe(false)
+  })
+})
+
+describe('composePrompt — diagnose Chore short-circuit', () => {
+  it("returns the prompt verbatim when kind is 'diagnose' — no commit footer", () => {
+    const prompt = '# Diagnose-only Chore for mars-aaaaaaaa\n\nbody'
+    const out = composePrompt(
+      prompt,
+      null,
+      'coder',
+      null,
+      'mars-aaaaaaaa',
+      '/tmp/worktree',
+      'diagnose',
+    )
+    expect(out).toBe(prompt.trim())
+    expect(out).not.toContain(COMMIT_FOOTER)
+    expect(out).not.toContain(WRITER_FOOTER)
+  })
+
+  it("does not inject the worktree orientation block when kind is 'diagnose'", () => {
+    const prompt = '# Diagnose-only Chore for mars-aaaaaaaa'
+    const out = composePrompt(
+      prompt,
+      { functional: 'F', technical: 'T' },
+      'coder',
+      { files: ['src/foo.ts'], verifyCmd: null, doneCriteria: [], taskType: 'auto' },
+      'mars-aaaaaaaa',
+      '/tmp/worktree',
+      'diagnose',
+    )
+    expect(out).toBe(prompt.trim())
+    expect(out).not.toContain('## Worktree orientation')
+    expect(out).not.toContain('## Functional plan')
   })
 })
 
