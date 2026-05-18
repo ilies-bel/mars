@@ -118,6 +118,9 @@ export const raiseRetryBudgetExhaustedInbox = async (
     },
     raisedBy: 'orchestrator:retry-budget',
     signature: input.taskId,
+    // Retry-budget exhaustion always fires on the origin task itself
+    // (recoveries never enter this path), so collapse on the same key.
+    originTaskId: input.taskId,
     occurrence: {
       at: new Date().toISOString(),
       lastStep: input.lastStep,

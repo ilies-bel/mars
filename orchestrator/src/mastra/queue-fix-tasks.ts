@@ -622,6 +622,8 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
     raisedBy: 'agent:fail-fix-handler',
     // Dedup so a flapping signature doesn't spawn a herd of investigators.
     signature: input.failureSignature,
+    // Collapse all failure-kinds for the same origin into one row.
+    originTaskId: input.sourceTask.originId,
     occurrence: {
       at: now,
       sourceTaskId: input.sourceTask.id,
@@ -765,6 +767,8 @@ export const handleTaskFailureWithFixTask = async (
       },
       raisedBy: 'agent:fail-fix-handler',
       signature: inboxSignature,
+      // Collapse all failure-kinds for the same origin into one row.
+      originTaskId: originId,
       occurrence: {
         at: new Date().toISOString(),
         recoveryTaskId: input.taskId,
@@ -893,6 +897,8 @@ export const handleTaskFailureWithFixTask = async (
       // seenCount instead of spawning new rows. No signature string is
       // hardcoded — the value flows from the classifier.
       signature: failureSignature,
+      // Collapse all failure-kinds for the same origin into one row.
+      originTaskId: task.originId,
       occurrence: {
         at: now,
         sourceTaskId: input.taskId,
