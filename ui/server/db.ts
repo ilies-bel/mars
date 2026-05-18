@@ -167,9 +167,9 @@ export class StateDb {
     await this.client.execute(`PRAGMA journal_mode = WAL`)
   }
 
-  async ideasTableExists(): Promise<boolean> {
+  async proposalsTableExists(): Promise<boolean> {
     const r = await this.client.execute(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='ideas'`,
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='proposals'`,
     )
     return r.rows.length > 0
   }
@@ -206,31 +206,22 @@ export class StateDb {
   }
 
   async dismissDraftFeature(id: string): Promise<void> {
-    const exists = await this.ideasTableExists()
+    const exists = await this.proposalsTableExists()
     if (!exists) return
     await this.client.execute({
-      sql: `UPDATE ideas SET status = 'dismissed', updated_at = ? WHERE id = ? AND status = 'draft'`,
+      sql: `UPDATE proposals SET status = 'dismissed', updated_at = ? WHERE id = ? AND status = 'draft'`,
       args: [Date.now(), id],
     })
   }
 
   async listDraftFeatures(): Promise<DraftFeature[]> {
-    const cols = await this.client.execute(`PRAGMA table_info(ideas)`)
-    const colNames = new Set(
-      cols.rows.map((r) => (r as unknown as { name: string }).name),
-    )
-    const sourceCol = colNames.has('source')
-      ? 'i.source'
-      : colNames.has('origin')
-        ? `CASE WHEN i.origin = 'agent' THEN 'planner' ELSE 'human' END AS source`
-        : `'human' AS source`
     const r = await this.client.execute(
-      `SELECT i.id, i.goal, i.story, i.technical, i.status, ${sourceCol},
-              i.created_at, i.updated_at,
-              (SELECT COUNT(*) FROM idea_user_stories s WHERE s.idea_id = i.id) AS acceptance_count
-       FROM ideas i
-       WHERE i.status = 'draft'
-       ORDER BY i.created_at DESC`,
+      `SELECT p.id, p.goal, p.story, p.technical, p.status, p.source,
+              p.created_at, p.updated_at,
+              (SELECT COUNT(*) FROM proposal_user_stories s WHERE s.proposal_id = p.id) AS acceptance_count
+       FROM proposals p
+       WHERE p.status = 'draft'
+       ORDER BY p.created_at DESC`,
     )
     return r.rows.map((row) => {
       const r0 = row as unknown as Record<string, unknown>
