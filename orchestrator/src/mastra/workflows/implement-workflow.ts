@@ -17,13 +17,14 @@ import {
   checkMergeTargetStatus,
   detectTemplatePaths,
 } from '../lib/git'
-import { getWorkerForTag } from '../workers'
+import { getWorkerForTag, Workers, type WorkerName } from '../workers'
 import {
   TASK_TAGS,
   isTaskTag,
   TASK_TYPES,
   type TaskTag,
   type TaskSpec,
+  type Task,
 } from '../queue'
 import { resolveContext } from '../context'
 import {
@@ -314,6 +315,19 @@ export const resolveWorkerSystemPrompt = (
   tag: TaskTag,
 ): string | undefined =>
   tag === 'writer' ? WRITER_SYSTEM_PROMPT : buildCoderSystemPrompt(resolveReadSpanLimit())
+
+/**
+ * Pick the Worker that should handle a dispatched Task.
+ *
+ * Routing rules (highest priority first):
+ *  1. kind === 'fix'  → Fixer  (recovery resilience; Opus, backlog-mutation denied)
+ *  2. otherwise       → Coder  (default implementation worker)
+ *
+ * Writer routing is handled separately via `tag` in the codeStep call site;
+ * this helper only covers the kind-based override so it is testable in isolation.
+ */
+export const pickWorkerForTask = (task: Pick<Task, 'kind'>): WorkerName =>
+  task.kind === 'fix' ? 'Fixer' : 'Coder'
 
 const renderSpec = (spec: TaskSpec | null, taskId: string): string | null => {
   if (!spec) return null
@@ -795,7 +809,13 @@ const codeStep = createStep({
       inputData.kind,
     )
     const conversation: ClaudeEvent[] = []
-    const worker = getWorkerForTag(tag)
+    // Kind-aware routing: fix tasks go to the Fixer Worker (Opus, backlog-
+    // mutation denied); writer tasks stay on Writer via tag; everything else
+    // uses Coder. Kind takes precedence over tag for the fix → Fixer path
+    // because a recovery task must always land on the higher-resilience Worker
+    // regardless of what tag the row carries.
+    const worker =
+      inputData.kind === 'fix' ? Workers.Fixer : getWorkerForTag(tag)
     // Read/Grep span watcher (gsd-style analysis-paralysis signal). Log-
     // only on threshold breach (no SIGKILL, no child spawn — see commit
     // 48bb929). Skipped for Writer runs (surface too narrow to stall on
@@ -856,6 +876,7 @@ const codeStep = createStep({
         originId,
         taskId: inputData.taskId,
         claudeSessionId: r.sessionId,
+        workerName: worker.config.name,
         usage,
       },
     })
