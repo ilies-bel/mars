@@ -376,6 +376,38 @@ export const raiseInboxItem = async (
   return id
 }
 
+/**
+ * Overwrite the "suggested next action" body on the existing open inbox
+ * item keyed by `originTaskId`. Used when a recovery agent produces
+ * task-specific findings that are more actionable than the generic
+ * kind-template. NEVER inserts a new row — if no open row exists for
+ * the origin, returns `null` and the generic template stays untouched
+ * elsewhere. Re-calling overwrites the body in place on the same row,
+ * so the row id remains stable across recovery iterations.
+ */
+export const setRecoveryFindings = async (
+  originTaskId: string,
+  findings: string,
+): Promise<string | null> => {
+  await initInbox()
+  const c = getClient()
+  const fingerprint = computeOriginFingerprint(originTaskId)
+  const existing = await c.execute({
+    sql: `SELECT id FROM inbox_items
+           WHERE fingerprint = ? AND state = 'open'
+           ORDER BY raised_at ASC
+           LIMIT 1`,
+    args: [fingerprint],
+  })
+  if (existing.rows.length === 0) return null
+  const id = (existing.rows[0] as unknown as { id: string }).id
+  await c.execute({
+    sql: `UPDATE inbox_items SET body = ? WHERE id = ?`,
+    args: [findings, id],
+  })
+  return id
+}
+
 const fetchById = async (
   c: Client,
   id: string,
