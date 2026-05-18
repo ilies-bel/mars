@@ -1106,6 +1106,19 @@ export const startDaemon = async (
         log(
           `[reconcile] task ${t.id} was verifying; worktree missing, marking failed`,
         )
+        // Best-effort: prune any stale git worktree registration even though
+        // the directory is already gone from disk. Keep the branch ref for
+        // post-mortem forensics (keepBranch=true). Errors are logged and
+        // swallowed — a missing/unregistered worktree must not break reconcile.
+        if (t.worktreePath) {
+          const branch = t.branch ?? `task/${t.id}`
+          try {
+            await removeWorktree({ path: t.worktreePath, branch }, true, true)
+            log(`[reconcile] removed stale worktree registration for ${t.id} at ${t.worktreePath}`)
+          } catch {
+            log(`[reconcile] worktree cleanup skipped for ${t.id}: not registered or already removed`)
+          }
+        }
         await updateTask(t.id, {
           status: 'failed',
           error: 'daemon restart while task was verifying; worktree missing',
