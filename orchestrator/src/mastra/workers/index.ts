@@ -95,11 +95,23 @@ const CLAUDE_OPUS_MODEL = 'claude-opus-4-7'
 const CLAUDE_SONNET_MODEL = 'claude-sonnet-4-6'
 const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 
+// Resolve the effective model for the Coder Worker. When `MARS_WORKER_MODEL`
+// is set, it overrides the pinned default — useful for one-off sessions that
+// need Opus reasoning (e.g. a complex architectural migration) without editing
+// code. The env var is read at process start and affects every Coder run for
+// the lifetime of that daemon process; there is no per-task override.
+// Writer and Planner/Slicer are NOT affected — they always use their pinned
+// model for cost/safety reasons.
+export const CODER_MODEL: string =
+  process.env.MARS_WORKER_MODEL ?? CLAUDE_SONNET_MODEL
+
 // Day-one defaults agreed in the grill for PRD 948691d0. The Coder runs on
 // sonnet / high effort / bypassPermissions with the full tool surface (no
 // per-Worker disallows beyond the wrapper-layer agent-to-user ban). Fixer
-// shares Coder's model and permission posture but layers backlog-mutation
-// denials so a no-commit Fixer Session cannot refile its task as a loose end.
+// mirrors Coder's effort and permission posture but intentionally stays on
+// Opus — recovery tasks deal with broken or partially-applied code where
+// Sonnet may miss corner cases. Fixer also layers backlog-mutation denials so
+// a no-commit Session cannot refile its task as a loose end.
 // Planner, Slicer, and Triager are read-only synthesis stages: default
 // permissions, Edit/Write/NotebookEdit denied. Triager additionally pins a
 // 40-message cap (sonnet / medium effort). Bare mode is disabled because
@@ -109,7 +121,7 @@ const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Coder: {
     name: 'Coder',
-    model: CLAUDE_SONNET_MODEL,
+    model: CODER_MODEL,
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,

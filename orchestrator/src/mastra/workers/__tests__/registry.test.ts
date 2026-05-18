@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { claudeStreamArgs } from '../../lib/git'
 import {
+  CODER_MODEL,
   FIXER_BACKLOG_DENIED_TOOLS,
   READ_ONLY_DENIED_TOOLS,
   WORKER_CONFIGS,
@@ -57,8 +58,11 @@ describe('Worker registry', () => {
 describe('Coder pinned config', () => {
   const args = argvFor('Coder')
 
-  it('runs sonnet on high effort with bypassPermissions and no read-only denials', () => {
-    expect(valueAfter(args, '--model')).toBe('claude-sonnet-4-6')
+  it('runs on CODER_MODEL (sonnet by default) with high effort, bypassPermissions, and no read-only denials', () => {
+    // CODER_MODEL resolves process.env.MARS_WORKER_MODEL ?? 'claude-sonnet-4-6'.
+    // This assertion adapts to the test environment so it passes whether or not
+    // MARS_WORKER_MODEL is set (e.g. in CI overrides).
+    expect(valueAfter(args, '--model')).toBe(CODER_MODEL)
     expect(valueAfter(args, '--effort')).toBe('high')
     expect(args).toContain('--dangerously-skip-permissions')
     expect(args).not.toContain('--bare')
@@ -107,7 +111,10 @@ describe('Planner / Slicer / Triager pinned config', () => {
 describe('Fixer pinned config', () => {
   const args = argvFor('Fixer')
 
-  it('matches Coder model/effort/permission posture so it can land code', () => {
+  it('runs Opus on high effort with bypassPermissions (intentionally Opus — recovery resilience over cost)', () => {
+    // Fixer intentionally stays on Opus even though Coder uses Sonnet.
+    // Recovery tasks deal with broken/partially-applied code where extra
+    // reasoning headroom pays off.
     expect(valueAfter(args, '--model')).toBe('claude-opus-4-7')
     expect(valueAfter(args, '--effort')).toBe('high')
     expect(args).toContain('--dangerously-skip-permissions')
@@ -118,6 +125,20 @@ describe('Fixer pinned config', () => {
     for (const pattern of FIXER_BACKLOG_DENIED_TOOLS) {
       expect(denied).toContain(pattern)
     }
+  })
+})
+
+describe('MARS_WORKER_MODEL env var', () => {
+  it('defaults Coder to sonnet when MARS_WORKER_MODEL is unset', () => {
+    // CODER_MODEL is resolved at module-load time: process.env.MARS_WORKER_MODEL
+    // ?? 'claude-sonnet-4-6'. This test verifies the resolved value matches the
+    // env — either the override or the Sonnet default.
+    const expected = process.env.MARS_WORKER_MODEL ?? 'claude-sonnet-4-6'
+    expect(CODER_MODEL).toBe(expected)
+  })
+
+  it('Coder config carries the resolved CODER_MODEL so the env var takes effect', () => {
+    expect(WORKER_CONFIGS.Coder.model).toBe(CODER_MODEL)
   })
 })
 
