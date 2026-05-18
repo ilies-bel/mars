@@ -165,6 +165,13 @@ export interface Task {
    * always populate this; ad-hoc `mars task add "..."` does not.
    */
   spec: TaskSpec | null
+  /**
+   * The integration-branch HEAD commit SHA captured the moment the task's
+   * worktree was created at setup time. Null for tasks dispatched before
+   * this column was added, or for resumed tasks that skip worktree creation.
+   * A populated value is always a 40-character hex string.
+   */
+  integrationHeadSha: string | null
   createdAt: string
   updatedAt: string
 }
@@ -373,6 +380,13 @@ export const initQueue = async (): Promise<void> => {
   }
   if (!names.has('task_type')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN task_type TEXT`)
+  }
+  // integration_head_sha: integration-branch HEAD SHA captured at setup time.
+  // Null for tasks created before this column was added or that bypassed the
+  // worktree creation path (e.g. resumed tasks). A populated value is always
+  // a 40-character hex string.
+  if (!names.has('integration_head_sha')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN integration_head_sha TEXT`)
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
@@ -731,6 +745,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     failedPhase: coerceFailedPhase(row.failed_phase),
     resumeFrom: coerceFailedPhase(row.resume_from),
     spec: rowToTaskSpec(row),
+    integrationHeadSha: (row.integration_head_sha as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -868,6 +883,7 @@ export const updateTask = async (
       | 'error'
       | 'failedPhase'
       | 'resumeFrom'
+      | 'integrationHeadSha'
     >
   >,
 ): Promise<void> => {
@@ -907,6 +923,10 @@ export const updateTask = async (
   if (patch.resumeFrom !== undefined) {
     fields.push('resume_from = ?')
     args.push(patch.resumeFrom)
+  }
+  if (patch.integrationHeadSha !== undefined) {
+    fields.push('integration_head_sha = ?')
+    args.push(patch.integrationHeadSha)
   }
   fields.push('updated_at = ?')
   args.push(new Date().toISOString())

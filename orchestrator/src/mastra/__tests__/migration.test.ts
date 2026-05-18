@@ -148,6 +148,82 @@ describe('schema migration: drop blocker_id + task_suggestions, rename origin->s
   })
 })
 
+describe('integration_head_sha column', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('initQueue adds integration_head_sha column to tasks table', async () => {
+    const { initQueue } = await import('../queue')
+    await initQueue()
+
+    const q = createClient({ url: `file:${repo}/.mars/queue.db` })
+    const cols = await q.execute(`PRAGMA table_info(tasks)`)
+    const colNames = (cols.rows as unknown as Array<{ name: string }>).map(
+      (r) => r.name,
+    )
+    expect(colNames).toContain('integration_head_sha')
+    q.close()
+  })
+
+  it('updateTask + getTask round-trip a valid 40-char SHA', async () => {
+    const { initQueue, enqueueTask, updateTask, getTask } = await import('../queue')
+    await initQueue()
+
+    const task = await enqueueTask('test prompt', undefined, { skipTriage: true })
+    const fakeSha = 'a'.repeat(40)
+    await updateTask(task.id, { integrationHeadSha: fakeSha })
+
+    const loaded = await getTask(task.id)
+    expect(loaded?.integrationHeadSha).toBe(fakeSha)
+  })
+
+  it('tasks without integration_head_sha load with null', async () => {
+    const { initQueue, enqueueTask, getTask } = await import('../queue')
+    await initQueue()
+
+    const task = await enqueueTask('test prompt 2', undefined, { skipTriage: true })
+    const loaded = await getTask(task.id)
+    expect(loaded?.integrationHeadSha).toBeNull()
+  })
+
+  it('migrates a legacy DB that has no integration_head_sha column', async () => {
+    const queueDb = `file:${repo}/.mars/queue.db`
+    const q = createClient({ url: queueDb })
+    // Create a legacy tasks table without integration_head_sha
+    await q.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
+      origin_id TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`)
+    const now = new Date().toISOString()
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, created_at, updated_at)
+            VALUES ('legacy-task', 'old task', 'done', 'legacy-task', 0, ?, ?)`,
+      args: [now, now],
+    })
+    q.close()
+
+    // Run migration
+    const { initQueue, getTask } = await import('../queue')
+    await initQueue()
+
+    // Legacy task loads without error; integration_head_sha is null
+    const loaded = await getTask('legacy-task')
+    expect(loaded).not.toBeNull()
+    expect(loaded?.integrationHeadSha).toBeNull()
+  })
+})
+
 describe('schema bootstrap: task_proposal_blockers table + indexes', () => {
   let repo: string
 
