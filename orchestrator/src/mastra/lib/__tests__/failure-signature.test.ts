@@ -157,6 +157,41 @@ describe('matchFull rules are checked against full output', () => {
       'merge:crashed/index-lock-contention',
     )
   })
+
+  it('computeFailureSignature produces merge:vcs-supervisor-aborted/not-fast-forward for the git merge --ff-only error shape', () => {
+    // The actual error captured when `git merge --ff-only <branch>` fails because
+    // main advanced after the VCS supervisor rebased the task branch:
+    // - The first non-blank line is from the VCS supervisor JSON output (doesn't
+    //   match any `match` rule), so classification falls through to matchFull.
+    // - `fatal: Not possible to fast-forward, aborting.` appears in the body.
+    const errorOutput = [
+      '{"type":"result","subtype":"success","result":"COMMIT: rebase complete\\nSTATUS: completed"}',
+      'hint: Diverging branches can\'t be fast-forwarded, you need to either:',
+      'hint:',
+      'hint: \tgit merge --no-ff',
+      'hint:',
+      'hint: \tor:',
+      'hint:',
+      'hint: \tgit rebase',
+      'hint:',
+      'hint: Disable this message with "git config set advice.diverging false"',
+      'fatal: Not possible to fast-forward, aborting.',
+      'Command failed: git merge --ff-only task/mars-eca7da0e',
+    ].join('\n')
+    expect(
+      computeFailureSignature('merge:vcs-supervisor-aborted', errorOutput),
+    ).toBe('merge:vcs-supervisor-aborted/not-fast-forward')
+  })
+
+  it('classifyError returns not-fast-forward for the pure git merge --ff-only output without VCS supervisor preamble', () => {
+    const gitOnlyError = [
+      'hint: Diverging branches can\'t be fast-forwarded, you need to either:',
+      'hint: \tgit merge --no-ff',
+      'fatal: Not possible to fast-forward, aborting.',
+      'Command failed: git merge --ff-only task/abc',
+    ].join('\n')
+    expect(classifyError(gitOnlyError)).toBe('not-fast-forward')
+  })
 })
 
 describe('errorClassRules registry', () => {
