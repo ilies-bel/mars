@@ -535,6 +535,60 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     expect(result.ideaId).toBe(ideaId)
     expect(result.status).toBe('sliced')
   })
+
+  it('cleans up orphaned tasks from a previous crash before re-slicing', async () => {
+    // Crash-recovery deduplication: a process crash between Phase 1
+    // (task inserts) and Phase 4 (status flip) leaves the idea prd-ready
+    // with orphaned tasks from the crashed run. Without a pre-flight
+    // cleanup, a retry would INSERT a second set of tasks on top of the
+    // orphans, duplicating the queue work. The pre-flight must delete any
+    // tasks with parent_proposal_id = idea.id before Phase 1 runs, so a
+    // retry lands exactly N tasks — not N orphans + N fresh ones.
+    vi.doMock('../../lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../lib/git')>(
+        '../../lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(validSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    // Simulate the crash: manually insert an orphaned task that claims
+    // this idea as its parent (as if Phase 1 ran but the process died
+    // before Phase 4 could flip the status).
+    const queue = await vi.importActual<typeof import('../../queue')>(
+      '../../queue',
+    )
+    await queue.initQueue()
+    await queue.enqueueTask('orphaned task from crashed run', undefined, {
+      parentProposalId: ideaId,
+      sliceIndex: 1,
+    })
+    expect(await countTasksForIdea(ideaId)).toBe(1) // orphan is there
+
+    // Now re-run the slice — this is the retry after the crash.
+    const slice = await import('../slice-workflow')
+    const result = await slice.runSlice(ideaId)
+
+    // The retry must produce exactly the fresh slicer output (1 slice),
+    // not 1 orphan + 1 new = 2. The orphan must have been cleaned up.
+    expect(result.taskIds).toHaveLength(1)
+    expect(await countTasksForIdea(ideaId)).toBe(1)
+
+    // And the idea must now be sliced (not prd-ready).
+    const proposals = await import('../../proposals')
+    const after = await proposals.getProposal(ideaId)
+    expect(after?.status).toBe('sliced')
+  })
 })
 
 describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
