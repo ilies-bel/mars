@@ -570,3 +570,45 @@ export const setInboxState = async (
     opts?.note ?? null,
   )
 }
+
+/**
+ * Reason an inbox item was auto-closed because its origin task reached a
+ * terminal state. Surfaced in the resolution note so an operator reading
+ * inbox history can tell why the row vanished.
+ */
+export type SupersedeReason = 'origin-done' | 'origin-dropped' | 'origin-purged'
+
+/**
+ * Auto-close every open inbox item keyed to the given origin task. Called
+ * by the daemon when an origin task reaches done / dropped / purged so
+ * the operator does not need to ack or dismiss a row whose underlying
+ * stuck task is no longer stuck. Returns the ids of the rows that were
+ * superseded (possibly empty — no-op when nothing matches).
+ *
+ * Idempotent: rerunning against an origin whose rows are already closed
+ * is a silent no-op.
+ */
+export const supersedeInboxItemsForOrigin = async (
+  originTaskId: string,
+  reason: SupersedeReason,
+  by = 'daemon:auto-supersede',
+): Promise<string[]> => {
+  await initInbox()
+  const c = getClient()
+  const fingerprint = computeOriginFingerprint(originTaskId)
+  const rows = await c.execute({
+    sql: `SELECT id FROM inbox_items WHERE fingerprint = ? AND state = 'open'`,
+    args: [fingerprint],
+  })
+  const ids: string[] = []
+  for (const row of rows.rows) {
+    const id = (row as unknown as { id: string }).id
+    await setInboxState(id, 'resolved', {
+      resolution: 'superseded',
+      note: `superseded: ${reason}`,
+      by,
+    })
+    ids.push(id)
+  }
+  return ids
+}
