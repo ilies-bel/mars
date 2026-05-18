@@ -22,16 +22,16 @@
  * The function is pure and side-effect-free.
  */
 
-export type NodeKind = 'task' | 'idea'
-export type EdgeKind = 'blocker' | 'provenance'
+type NodeKind = 'task' | 'idea'
+type EdgeKind = 'blocker' | 'provenance'
 
-export interface GraphNode {
+interface GraphNode {
   id: string
   kind: NodeKind
   [key: string]: unknown
 }
 
-export interface GraphEdge {
+interface GraphEdge {
   from: string
   to: string
   kind: EdgeKind

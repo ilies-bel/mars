@@ -11,7 +11,7 @@ export type TaskStatus =
   | 'dropped'
   | 'blocked'
 
-export type IdeaSource = 'reflection' | 'human' | 'planner'
+type IdeaSource = 'reflection' | 'human' | 'planner'
 
 export interface DraftFeature {
   id: string
@@ -25,7 +25,7 @@ export interface DraftFeature {
   acceptanceCount: number
 }
 
-export interface TaskRow {
+interface TaskRow {
   id: string
   prompt: string
   status: TaskStatus

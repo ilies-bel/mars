@@ -1,5 +1,3 @@
-import { useSyncExternalStore } from 'react'
-
 /**
  * Tiny external store holding the id of the task whose detail drawer is
  * currently mounted. Drawers register themselves on mount and clear on
@@ -32,9 +30,6 @@ const subscribe = (cb: () => void): (() => void) => {
     listeners.delete(cb)
   }
 }
-
-export const useOpenTaskId = (): string | null =>
-  useSyncExternalStore(subscribe, getOpenTaskId, () => null)
 
 // Test-only hook so suites can subscribe without a React renderer.
 export const subscribeOpenTaskId = subscribe
