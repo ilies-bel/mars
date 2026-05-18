@@ -1,23 +1,26 @@
 import { NavBar } from '@/widgets/NavBar'
 import { useHashRoute } from '@/shared/useHashRoute'
+import { detectRoute } from '@/shared/routing'
 import { AgentsPage } from '@/pages/AgentsPage'
 import { KanbanPage } from '@/pages/KanbanPage'
-import { TodoPage } from '@/pages/TodoPage'
+import { ActionQueuePage } from '@/pages/TodoPage'
+import { ProposalsPage } from '@/pages/ProposalsPage'
 
 const App = () => {
   const hash = useHashRoute()
-  const onKanban = hash.startsWith('#/kanban')
-  const onAgents = hash.startsWith('#/agents')
+  const route = detectRoute(hash)
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
       <NavBar hash={hash} />
       <div className="min-h-0 flex-1">
-        {onAgents ? (
+        {route === 'agents' ? (
           <AgentsPage />
-        ) : onKanban ? (
+        ) : route === 'kanban' ? (
           <KanbanPage />
+        ) : route === 'proposals' ? (
+          <ProposalsPage />
         ) : (
-          <TodoPage />
+          <ActionQueuePage />
         )}
       </div>
     </div>
