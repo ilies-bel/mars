@@ -993,6 +993,7 @@ export const updateTask = async (
       | 'failedPhase'
       | 'resumeFrom'
       | 'integrationHeadSha'
+      | 'failureReason'
     >
   >,
 ): Promise<void> => {
@@ -1036,6 +1037,10 @@ export const updateTask = async (
   if (patch.integrationHeadSha !== undefined) {
     fields.push('integration_head_sha = ?')
     args.push(patch.integrationHeadSha)
+  }
+  if (patch.failureReason !== undefined) {
+    fields.push('failure_reason = ?')
+    args.push(patch.failureReason)
   }
   fields.push('updated_at = ?')
   args.push(new Date().toISOString())

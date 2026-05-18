@@ -701,12 +701,29 @@ export interface HandleTaskFailureViaTaskResult {
  * Plus `failed` when the legacy retry budget for the original task is
  * exhausted, and `noop` when the task row vanished.
  */
+export const CANCELLED_FAILURE_REASON = 'cancelled'
+
 export const handleTaskFailureWithFixTask = async (
   input: HandleTaskFailureViaTaskInput,
 ): Promise<HandleTaskFailureViaTaskResult> => {
   await initQueue()
   const task: Task | null = await getTask(input.taskId)
   if (!task) return { outcome: 'noop' }
+
+  // PRD slice 2/4 (mars-9234e1b2): cancellation gate. When the
+  // stop-task RPC (slice 1) marks a task failed with
+  // failure_reason='cancelled', self-heal must NOT spawn a fix-task —
+  // the user explicitly killed it. Skip regardless of how this handler
+  // was reached (workflow exitCode-137 path, in-flight abort, or any
+  // later call site). Centralised here so every call site honours the
+  // gate without auditing five workflow branches.
+  if (task.failureReason === CANCELLED_FAILURE_REASON) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[failure-handler] task ${input.taskId} failure is cancelled-by-user, skipping fix-task spawn`,
+    )
+    return { outcome: 'noop' }
+  }
 
   const { computeFailureSignature } = await import('./lib/failure-signature')
   const failureSignature = computeFailureSignature(

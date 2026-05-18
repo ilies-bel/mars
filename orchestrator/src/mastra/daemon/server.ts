@@ -30,6 +30,8 @@ import {
 } from '../queue'
 import { listProposals, promoteProposal } from '../proposals'
 import {
+  CANCELLED_FAILURE_REASON,
+  onBlockerTaskCancelled,
   onBlockerTaskCompleted,
   recoverBlockedTasks,
 } from '../blocker-resolution'
@@ -736,6 +738,31 @@ export const startDaemon = async (
     if (after && before?.status !== after.status) {
       if (after.status === 'queued') {
         bus.emit('task.queued', { taskId: id })
+      }
+      if (
+        after.status === 'failed' &&
+        after.failureReason === CANCELLED_FAILURE_REASON
+      ) {
+        // PRD slice 2/4 (mars-9234e1b2): cancellation cascade. When a
+        // blocker is cancelled by the user (stop-task RPC marks the row
+        // failed with failure_reason='cancelled'), every dependent
+        // waiting on it must also fail rather than be recovered. The
+        // helper raises one inbox item per cascaded dependent so the
+        // operator can see why the chain died.
+        try {
+          const cascade = await onBlockerTaskCancelled(id)
+          for (const o of cascade.outcomes) {
+            if (o.outcome === 'failed') {
+              log(
+                `[cancel-cascade] task ${o.taskId} cancelled because blocker ${id} was cancelled`,
+              )
+            }
+          }
+        } catch (err) {
+          log(
+            `[cancel-cascade] error cascading cancellation from ${id}: ${(err as Error).message}`,
+          )
+        }
       }
       if (after.status === 'done') {
         // Auto-supersede the inbox row keyed to this origin task, if any.
