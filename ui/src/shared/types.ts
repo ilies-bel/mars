@@ -4,6 +4,7 @@ export type {
   TaskStatus,
   IdeaSource,
   DraftFeature,
+  InboxPayload,
   Task,
   StaleWorktree,
   TodoPayload,
