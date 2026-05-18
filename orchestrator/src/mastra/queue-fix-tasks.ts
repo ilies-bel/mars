@@ -570,6 +570,14 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
         now,
       ],
     })
+    // AUDIT (mars-88a4e657): this is the second known violation of the
+    // "blocked-implies-edge" invariant. The source is parked in 'blocked'
+    // with no `task_blockers` row by design — merging the investigator's
+    // recipe does not "complete" the past failure, so wiring an edge
+    // would put the source back on the unblock-on-done path incorrectly.
+    // The correct terminal here is `'failed'` + the inbox item raised
+    // below. Tracked as a follow-up; see lib/blocker-invariant.ts.
+    //
     // Source task: park it in blocked. No task_blockers row — there is
     // nothing to unblock against. Human resolves via mars retry/unblock.
     await tx.execute({
@@ -857,6 +865,13 @@ export const handleTaskFailureWithFixTask = async (
     failureSignature,
   )
   if (priorAttempts >= cap) {
+    // AUDIT (mars-88a4e657): safe site for the "blocked-implies-edge"
+    // invariant. We re-stamp 'blocked' here AFTER `priorAttempts >= cap`,
+    // which means at least one earlier `upsertFixTask` call already
+    // inserted a `task_blockers` edge for this (sourceTaskId, signature)
+    // pair in the same transaction that first blocked the task. The edge
+    // survives until explicitly cleared by `mars unblock`, so this branch
+    // re-stamps a status the row already has.
     const now = new Date().toISOString()
     await getClient().execute({
       sql: `UPDATE tasks

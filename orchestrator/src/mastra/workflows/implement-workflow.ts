@@ -606,6 +606,14 @@ const setupStep = createStep({
       const preflight = await checkSetupPreflight(preflightRoot)
       if (preflight.dirty) {
         const dirtyFiles = preflight.dirtyLines
+        // AUDIT (mars-88a4e657): this is a known violation of the
+        // "blocked-implies-edge" invariant. We park the task in 'blocked' but
+        // never insert a `task_blockers` row — there is no concrete blocker
+        // task to wait on; recovery is `mars restart` after the operator
+        // cleans the merge target. The correct terminal here is `'failed'`
+        // + the inbox item below, NOT `'blocked'` with zero edges. Tracked
+        // as a follow-up; see lib/blocker-invariant.ts for the helper that
+        // a future fix will route through.
         const errorMsg = `setup:preflight/dirty-main: ${inputData.integrationBranch} has uncommitted changes; task parked blocked`
         await updateTask(inputData.taskId, { status: 'blocked', error: errorMsg })
         await raiseInboxItem({
