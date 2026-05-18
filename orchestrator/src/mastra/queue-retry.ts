@@ -68,7 +68,7 @@ const buildTaskBlockedBody = (
   const lines: Array<string | null> = [
     `Unblock task ${input.taskId} now: run /mars:unblock ${input.taskId}, or resolve it from the mars inbox.`,
     '',
-    `Why you're seeing this: task ${input.taskId} exhausted its retry budget at step \`${input.lastStep}\` and the orchestrator will not retry it again. It stays blocked until you act.`,
+    `Why you're seeing this: task ${input.taskId} failed at step \`${input.lastStep}\` and the retry budget (${input.retryCount}) has been reached — the orchestrator will not retry it again. It stays blocked until you act.`,
     '',
     'Context:',
     input.lastErrorSignature
