@@ -926,13 +926,13 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
   })
 })
 
-describe('composeTaskPrompt: inlines the parent PRD so no DB lookup is needed', () => {
+describe('composeTaskPrompt: parent digest replaces full PRD dump', () => {
   // Dispatched coders run from .mars/worktrees/<id>/ where `mars` walks up
-  // from CWD and binds to the worktree's own (empty) .mars/. A bare
-  // `mars idea show <id>` therefore returns 'not found' and silently
-  // strands the implementor. The slice prompt MUST inline the PRD body so
-  // the implementor never has to look it up. Regression pin for the
-  // mars-45d9abd8 too_hard arc.
+  // from CWD and binds to the worktree's own (empty) .mars/. Instead of
+  // inlining the full PRD verbatim (which bloats every slice prompt with the
+  // same multi-KB body), the prompt now carries a short, bounded digest:
+  // parent goal in 1-2 sentences, this slice's blockers, and the PRD's
+  // non-goals. The worker can act on the slice without any preparatory read.
   const sampleIdea = {
     id: 'idea-xyz',
     title: 'Inline the PRD into slice prompts',
@@ -957,15 +957,74 @@ describe('composeTaskPrompt: inlines the parent PRD so no DB lookup is needed', 
     taskType: 'auto' as const,
   }
 
-  it('inlines title, problem, solution, user stories, out-of-scope, and notes', () => {
+  it('contains a parent digest section with goal, blockers, and non-goals labels', () => {
     const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
-    expect(prompt).toContain(sampleIdea.title)
-    expect(prompt).toContain(sampleIdea.problem)
+    expect(prompt).toContain('## Parent digest')
+    expect(prompt).toContain('**Goal:**')
+    expect(prompt).toContain('**Blockers:**')
+    expect(prompt).toContain('**Non-goals:**')
+  })
+
+  it('digest goal derives from the PRD solution', () => {
+    const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
+    // The solution is short — it fits inside the goal limit verbatim.
     expect(prompt).toContain(sampleIdea.solution)
+  })
+
+  it('digest goal falls back to title when solution is empty', () => {
+    const noSolution = { ...sampleIdea, solution: '' }
+    const prompt = composeTaskPrompt(noSolution, sampleSlice, 1, 1)
+    expect(prompt).toContain(sampleIdea.title)
+  })
+
+  it('digest shows (none) for blockers when the slice has no dependencies', () => {
+    const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
+    // blockedBy is [] — the digest must say "(none)", not a blank line.
+    expect(prompt).toMatch(/\*\*Blockers:\*\* \(none\)/)
+  })
+
+  it('digest shows slice indices when the slice has blockers', () => {
+    const blockedSlice = { ...sampleSlice, blockedBy: [1, 3] }
+    const prompt = composeTaskPrompt(sampleIdea, blockedSlice, 2, 3)
+    expect(prompt).toMatch(/\*\*Blockers:\*\*.*1.*3/)
+  })
+
+  it('digest non-goals derives from the PRD out-of-scope', () => {
+    const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
+    // The outOfScope is short — it fits inside the non-goals limit verbatim.
     expect(prompt).toContain(sampleIdea.outOfScope)
-    expect(prompt).toContain(sampleIdea.notes)
+  })
+
+  it('digest shows (none) for non-goals when out-of-scope is empty', () => {
+    const noScope = { ...sampleIdea, outOfScope: '' }
+    const prompt = composeTaskPrompt(noScope, sampleSlice, 1, 1)
+    expect(prompt).toMatch(/\*\*Non-goals:\*\* \(none\)/)
+  })
+
+  it('digest goal is truncated when solution exceeds the character limit', () => {
+    const long = 'A '.repeat(200).trim() // 400 chars — well above DIGEST_GOAL_CHARS
+    const longIdea = { ...sampleIdea, solution: long }
+    const prompt = composeTaskPrompt(longIdea, sampleSlice, 1, 1)
+    // The full solution must NOT appear verbatim.
+    expect(prompt).not.toContain(long)
+    // But the goal line must still have content.
+    expect(prompt).toMatch(/\*\*Goal:\*\* .+/)
+  })
+
+  it('digest non-goals is truncated when out-of-scope exceeds the character limit', () => {
+    const long = 'B '.repeat(200).trim() // 400 chars — well above DIGEST_NON_GOALS_CHARS
+    const longIdea = { ...sampleIdea, outOfScope: long }
+    const prompt = composeTaskPrompt(longIdea, sampleSlice, 1, 1)
+    expect(prompt).not.toContain(long)
+    expect(prompt).toMatch(/\*\*Non-goals:\*\* .+/)
+  })
+
+  it('does NOT include full PRD body fields (notes, user stories) in the prompt', () => {
+    const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
+    // Notes and user stories are NOT part of the digest.
+    expect(prompt).not.toContain(sampleIdea.notes)
     for (const story of sampleIdea.userStories) {
-      expect(prompt).toContain(story)
+      expect(prompt).not.toContain(story)
     }
   })
 
@@ -976,7 +1035,7 @@ describe('composeTaskPrompt: inlines the parent PRD so no DB lookup is needed', 
     expect(prompt).not.toMatch(/mars\s+--repo\s+\S+\s+idea\s+show/i)
   })
 
-  it('renders an idea with empty optional fields without leaking `undefined`', () => {
+  it('a slice with no blockers and no out-of-scope produces a coherent digest', () => {
     const minimal = {
       id: 'idea-min',
       title: 'Minimal PRD',
@@ -988,9 +1047,12 @@ describe('composeTaskPrompt: inlines the parent PRD so no DB lookup is needed', 
     }
     const prompt = composeTaskPrompt(minimal, sampleSlice, 1, 1)
     expect(prompt).not.toContain('undefined')
-    // Empty fields render as a clear placeholder rather than blank.
-    expect(prompt).toContain('(not specified)')
-    expect(prompt).toContain('(none)')
+    expect(prompt).toContain('## Parent digest')
+    // Both empty fields fall back to a clear placeholder.
+    expect(prompt).toMatch(/\*\*Non-goals:\*\* \(none\)/)
+    expect(prompt).toMatch(/\*\*Blockers:\*\* \(none\)/)
+    // Goal falls back to the title when solution is empty.
+    expect(prompt).toMatch(/\*\*Goal:\*\* .+/)
   })
 })
 
