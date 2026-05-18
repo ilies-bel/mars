@@ -42,7 +42,15 @@ export interface ErrorClassRule {
    * error output, or an exact substring match. Order matters — the first
    * matching rule wins.
    */
-  match: RegExp | string
+  match?: RegExp | string
+  /**
+   * Alternative to `match`: a regex or substring tested against the
+   * **entire** error output, not just the first line. Use this when the
+   * distinguishing signal is buried in the body (e.g. a second-line
+   * `fatal:` that follows a generic `Command failed:` lead). If a rule
+   * has both `match` and `matchFull`, `match` is checked first.
+   */
+  matchFull?: RegExp | string
 }
 
 /**
@@ -103,16 +111,37 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     errorClass: 'merge-conflict-unresolved',
     match: /CONFLICT|fix conflicts/i,
   },
+  {
+    // merge:crashed when git cannot acquire the index lock because another
+    // git process is running (or crashed and left a stale .git/index.lock).
+    // The distinguishing signal is on the second line of the error, not the
+    // first (`Command failed: git checkout <branch>` leads), so matchFull
+    // is required. Intentionally has NO registered recovery recipe — this is
+    // a transient environmental failure; the task's coding work is already
+    // committed on its branch. Operator fix: confirm no active git process
+    // holds the lock, then `mars restart <task-id>`.
+    errorClass: 'index-lock-contention',
+    matchFull: /index\.lock.*File exists/i,
+  },
 ]
 
 export const classifyError = (errorOutput: string): string => {
   const head = firstNonBlankLine(errorOutput)
   if (head.length === 0) return UNCLASSIFIED_ERROR_CLASS
   for (const rule of errorClassRules) {
-    if (typeof rule.match === 'string') {
-      if (head.includes(rule.match)) return rule.errorClass
-    } else {
-      if (rule.match.test(head)) return rule.errorClass
+    if (rule.match !== undefined) {
+      const matched =
+        typeof rule.match === 'string'
+          ? head.includes(rule.match)
+          : rule.match.test(head)
+      if (matched) return rule.errorClass
+    }
+    if (rule.matchFull !== undefined) {
+      const matched =
+        typeof rule.matchFull === 'string'
+          ? errorOutput.includes(rule.matchFull)
+          : rule.matchFull.test(errorOutput)
+      if (matched) return rule.errorClass
     }
   }
   return UNCLASSIFIED_ERROR_CLASS
