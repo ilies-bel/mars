@@ -7,6 +7,10 @@ export interface StaleWorktree {
   status: string
   ageHours: number
   updatedAt: string
+  prompt: string
+  error: string | null
+  branch: string | null
+  blockerTaskId: string | null
 }
 
 const DEFAULT_THRESHOLD_HOURS = 24
@@ -63,6 +67,10 @@ export const listStaleWorktrees = async (
       status: task.status,
       ageHours: Math.round((ageMs / 3_600_000) * 10) / 10,
       updatedAt: task.updatedAt,
+      prompt: task.prompt,
+      error: task.error ?? null,
+      branch: task.branch ?? null,
+      blockerTaskId: task.blockerTaskId ?? null,
     })
   }
   return out
