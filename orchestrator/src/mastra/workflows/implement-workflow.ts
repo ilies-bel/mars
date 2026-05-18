@@ -183,7 +183,9 @@ export const COMMIT_FOOTER = [
   'git rev-list --count $(git rev-parse --abbrev-ref HEAD)@{u}..HEAD 2>/dev/null || git rev-list --count main..HEAD',
   '```',
   '',
-  'The number MUST be greater than `0`. If it prints `0`, your work is staged but not committed — re-run `git commit` and re-check. Do not exit while this number is `0`; verify will reject the run with `verify:has-diff/no-commits-ahead` and park this task in `blocked`.',
+  'The number MUST be greater than `0`. If it prints `0`, you have not committed your work — re-run `git commit` and re-check. Do not exit while this number is `0`; the verify step rejects such runs with `verify:has-diff/no-commits-ahead`, which means the agent did not commit.',
+  '',
+  'A separate failure mode, `verify:dirty-main`, means the merge target was already dirty before your branch landed. That is an operator-owned condition, not your responsibility.',
   '',
   'The orchestrator does not commit on your behalf.',
 ].join('\n')
