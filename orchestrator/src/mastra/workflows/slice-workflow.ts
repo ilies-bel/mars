@@ -277,17 +277,43 @@ export const injectSchemaDropBlockers = (
 }
 
 /**
- * Build the dispatched-coder prompt for a single slice. The parent PRD's
- * intent (title, problem, solution, user stories, out-of-scope, notes) is
- * inlined verbatim into the prompt at slice-build time so the implementor
- * does NOT need to run `mars idea show <id>` to obtain context.
+ * Maximum characters for the goal line inside the per-slice parent digest.
+ * Exported so tests can verify that long solutions are truncated.
+ */
+export const DIGEST_GOAL_CHARS = 150
+
+/**
+ * Maximum characters for the non-goals line inside the per-slice parent
+ * digest. Exported so tests can verify that long out-of-scope fields are
+ * truncated.
+ */
+export const DIGEST_NON_GOALS_CHARS = 200
+
+/**
+ * Truncate `text` at the last word boundary before `maxLen` characters.
+ * Appends an ellipsis when truncation occurs. Returns the input unchanged
+ * when it fits within the limit.
+ */
+const truncateAtWord = (text: string, maxLen: number): string => {
+  if (text.length <= maxLen) return text
+  const cut = text.lastIndexOf(' ', maxLen)
+  const boundary = cut > 0 ? cut : maxLen
+  return `${text.slice(0, boundary)}…`
+}
+
+/**
+ * Build the dispatched-coder prompt for a single slice. A short, bounded
+ * parent digest is inlined — covering the parent goal (1–2 sentences),
+ * this slice's blockers, and the PRD's non-goals — so the implementor does
+ * NOT need to run `mars idea show <id>` to obtain context and does NOT
+ * receive a multi-KB verbatim PRD body that bloats every slice prompt.
  *
  * Rationale: dispatched coders execute from `.mars/worktrees/<id>/`, where
  * `mars` resolves the repo upward from CWD and silently binds to the
  * worktree's own (empty) `.mars/`. A bare `mars idea show <id>` returns
  * 'not found' and burns the implementor's read/grep budget reverse-
- * engineering scope. Inlining the PRD removes the lookup entirely — no
- * DB access, no `--repo` flag plumbing, no worktree-vs-main DB confusion.
+ * engineering scope. The digest removes the lookup entirely while keeping
+ * per-slice prompts lean.
  *
  * Exported for unit testing.
  */
@@ -308,6 +334,20 @@ export const composeTaskPrompt = (
   const acceptance = slice.acceptanceCriteria
     .map((c) => `- [ ] ${c}`)
     .join('\n')
+
+  const rawGoal = (idea.solution || idea.title).trim()
+  const goal = truncateAtWord(rawGoal, DIGEST_GOAL_CHARS)
+
+  const blockers =
+    slice.blockedBy.length === 0
+      ? '(none)'
+      : `slices ${slice.blockedBy.join(', ')} in this PRD`
+
+  const rawNonGoals = (idea.outOfScope || '').trim()
+  const nonGoals = rawNonGoals
+    ? truncateAtWord(rawNonGoals, DIGEST_NON_GOALS_CHARS)
+    : '(none)'
+
   return `# ${slice.title}
 
 Slice ${index} of ${total} for PRD ${idea.id}: ${idea.title}
@@ -329,33 +369,13 @@ slices in the same PRD will thicken this work; do not pre-build for them.
 
 Match the project's existing testing and naming conventions.
 
-## Parent PRD (inlined — no DB lookup required)
+## Parent digest
 
-The full PRD intent is reproduced verbatim below so you do not need to
-query the ideas DB. You are running from a git worktree whose own
-\`.mars/\` is empty, so a bare lookup would silently miss the parent.
+**Goal:** ${goal}
 
-Title: ${idea.title}
+**Blockers:** ${blockers}
 
-Problem
--------
-${idea.problem || '(not specified)'}
-
-Solution
---------
-${idea.solution || '(not specified)'}
-
-User stories
-------------
-${renderUserStories(idea.userStories)}
-
-Out of scope
-------------
-${idea.outOfScope || '(not specified)'}
-
-Notes
------
-${idea.notes || '(not specified)'}
+**Non-goals:** ${nonGoals}
 
 Save your work: stage and commit when verify passes.
 `
