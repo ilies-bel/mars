@@ -130,6 +130,13 @@ exactly one recovery attempt per origin failure, full stop.
   watcher SIGKILLs after 5 consecutive Read/Grep/Glob calls without an
   Edit/Write/Bash (`MARS_READ_SPAN_LIMIT` to override) and parks the
   task in `blocked` with a context-gathering child as blocker.
+- **Worker models (defaults):** Coder → `claude-sonnet-4-6`, Fixer →
+  `claude-opus-4-7` (recovery resilience), Writer → `claude-haiku-4-5-20251001`,
+  Planner/Slicer → `claude-opus-4-7` (architectural reasoning), Triager →
+  `claude-sonnet-4-6`. Override the Coder model for the lifetime of a daemon
+  process via `MARS_WORKER_MODEL=<model>` (e.g. `MARS_WORKER_MODEL=claude-opus-4-7`
+  for a high-complexity session). Planner, Slicer, Writer, and Fixer models are
+  always pinned; only Coder is overridable.
 - Inspect runs at `http://localhost:4111` (`cd orchestrator && npm run dev`).
 
 ## Conventions
