@@ -141,6 +141,13 @@ export class TaskDb {
     return all.filter((t) => wanted.has(t.status))
   }
 
+  async findTaskById(id: string): Promise<Task | null> {
+    const exists = await this.tableExists()
+    if (!exists) return null
+    const all = await this.listTasks()
+    return all.find((t) => t.id === id) ?? null
+  }
+
   async tableExists(): Promise<boolean> {
     const r = await this.client.execute(
       `SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'`,
