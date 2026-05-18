@@ -113,7 +113,6 @@ describe('classifyWorktree', () => {
 
   const inFlightStatuses: TaskStatus[] = [
     'queued',
-    'ready',
     'running',
     'verifying',
     'merging',
