@@ -6,5 +6,8 @@ dist
 .env
 *.db
 *.db-*
+# DuckDB files (belt-and-suspenders; root .gitignore already covers *.duckdb)
+*.duckdb
+*.duckdb.wal
 .netlify
 .vercel
