@@ -64,6 +64,12 @@ export const todoResponseSchema = z.object({
   staleWorktrees: z.array(staleWorktreeSchema),
 })
 
+export const inboxResponseSchema = z.object({
+  drafts: z.array(draftFeatureSchema),
+  blocked: z.array(taskSchema),
+  failed: z.array(taskSchema),
+})
+
 export const agentSchema = z.object({
   name: z.string(),
   model: z.string(),
@@ -79,6 +85,7 @@ export const agentsResponseSchema = z.object({
   agents: z.array(agentSchema),
 })
 
+export type InboxPayload = z.infer<typeof inboxResponseSchema>
 export type TaskStatus = z.infer<typeof taskStatusSchema>
 export type IdeaSource = z.infer<typeof ideaSourceSchema>
 export type DraftFeature = z.infer<typeof draftFeatureSchema>

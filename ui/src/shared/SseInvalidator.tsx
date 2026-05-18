@@ -11,9 +11,11 @@ export const SseInvalidator = () => {
     es.addEventListener('hello', () => setSseConnected(true))
     es.addEventListener('tasks', () => {
       void qc.invalidateQueries({ queryKey: ['tasks'] })
+      void qc.invalidateQueries({ queryKey: ['inbox'] })
     })
     es.addEventListener('todo', () => {
       void qc.invalidateQueries({ queryKey: ['todo'] })
+      void qc.invalidateQueries({ queryKey: ['inbox'] })
     })
     es.onerror = () => setSseConnected(false)
     return () => {
