@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { detectRoute, actionQueueCount, proposalsCount, parseTaskRoute } from './routing'
+import { detectRoute, actionQueueCount, parseTaskRoute } from './routing'
 import type { TodoPayload } from './schemas'
 
 const emptyTodo = (): TodoPayload => ({ drafts: [], staleWorktrees: [] })
@@ -52,11 +52,6 @@ describe('detectRoute', () => {
     expect(detectRoute('#/action-queue/sub')).toBe('action-queue')
   })
 
-  it('returns proposals for the #/proposals hash', () => {
-    expect(detectRoute('#/proposals')).toBe('proposals')
-    expect(detectRoute('#/proposals/idea-1')).toBe('proposals')
-  })
-
   it('returns kanban for the #/kanban hash', () => {
     expect(detectRoute('#/kanban')).toBe('kanban')
     expect(detectRoute('#/kanban/anything')).toBe('kanban')
@@ -65,14 +60,6 @@ describe('detectRoute', () => {
   it('returns agents for the #/agents hash', () => {
     expect(detectRoute('#/agents')).toBe('agents')
     expect(detectRoute('#/agents/coder')).toBe('agents')
-  })
-
-  it('proposals route does not match action-queue', () => {
-    expect(detectRoute('#/proposals')).not.toBe('action-queue')
-  })
-
-  it('action-queue route does not match proposals', () => {
-    expect(detectRoute('#/action-queue')).not.toBe('proposals')
   })
 })
 
@@ -96,7 +83,7 @@ describe('actionQueueCount', () => {
 })
 
 // ---------------------------------------------------------------------------
-// proposalsCount — only counts drafts
+// parseTaskRoute
 // ---------------------------------------------------------------------------
 
 describe('parseTaskRoute', () => {
@@ -116,20 +103,5 @@ describe('parseTaskRoute', () => {
 
   it('decodes percent-encoded ids', () => {
     expect(parseTaskRoute('#/task/mars%2D123')).toBe('mars-123')
-  })
-})
-
-describe('proposalsCount', () => {
-  it('returns 0 when there are no drafts', () => {
-    expect(proposalsCount(emptyTodo())).toBe(0)
-  })
-
-  it('returns the number of drafts regardless of stale worktrees', () => {
-    const todo = { ...withDrafts(4), staleWorktrees: withStale(7).staleWorktrees }
-    expect(proposalsCount(todo)).toBe(4)
-  })
-
-  it('does not count stale worktrees toward the proposals badge', () => {
-    expect(proposalsCount(withStale(10))).toBe(0)
   })
 })
