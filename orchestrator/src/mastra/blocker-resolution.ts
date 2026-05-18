@@ -4,7 +4,12 @@ import {
   markTaskFailed,
   raiseRetryBudgetExhaustedInbox,
 } from './queue-retry'
-import { getClient, getTask, initQueue } from './queue'
+import { getClient, getTask, initQueue, updateTask } from './queue'
+import { raiseInboxItem } from './lib/inbox'
+
+export const CANCELLED_CASCADE_INBOX_KIND = 'cancelled-blocker-cascade'
+export const CANCELLED_FAILURE_REASON = 'cancelled'
+const CANCELLED_CASCADE_FAILURE_REASON = 'cancelled-blocker-cascade'
 
 export interface UnblockOutcome {
   taskId: string
@@ -132,6 +137,88 @@ export const onBlockerTaskCompleted = async (
     } else {
       outcomes.push({ taskId: row.id, outcome: 'noop', retryCount })
     }
+  }
+
+  return { blockerTaskId, outcomes }
+}
+
+/**
+ * PRD slice 2/4 (mars-9234e1b2): cancellation-cascade rule. When a
+ * blocker reaches `failed` with `failure_reason = 'cancelled'`
+ * (i.e. the user explicitly stopped it via the slice-1 stop-task RPC),
+ * dependents waiting on it must NOT be recovered — they must fail too,
+ * with their own `failure_reason = 'cancelled-blocker-cascade'`, and
+ * an inbox item naming the cancelled blocker so the operator can see
+ * why the dependent died.
+ *
+ * Symmetric with {@link onBlockerTaskCompleted}: that path fires when a
+ * blocker reaches `done` and unblocks dependents; this path fires when
+ * a blocker is cancelled and cascades the cancel down the dependency
+ * chain instead.
+ *
+ * Blocker edges in `task_blockers` stay attached — they are
+ * informational; the dependent row is dead and the edges merely record
+ * the cause of death for forensics.
+ */
+export const onBlockerTaskCancelled = async (
+  blockerTaskId: string,
+): Promise<UnblockByTaskResult> => {
+  await initQueue()
+  const c = getClient()
+
+  const r = await c.execute({
+    sql: `SELECT t.id AS id, t.retry_count AS retry_count
+            FROM task_blockers b
+            JOIN tasks t ON t.id = b.task_id
+           WHERE b.blocker_task_id = ?
+             AND t.status = 'blocked'
+             AND b.state IN ('confirmed', 'pending-review')`,
+    args: [blockerTaskId],
+  })
+
+  const outcomes: UnblockOutcome[] = []
+  for (const row of r.rows as unknown as BlockedDependentRow[]) {
+    const retryCount = Number(row.retry_count ?? 0)
+    await updateTask(row.id, {
+      status: 'failed',
+      error: `cancelled-blocker-cascade: blocker ${blockerTaskId} was cancelled by user`,
+      failureReason: CANCELLED_CASCADE_FAILURE_REASON,
+    })
+    try {
+      await raiseInboxItem({
+        kind: CANCELLED_CASCADE_INBOX_KIND,
+        category: 'orchestrator',
+        priority: 'normal',
+        title: `Dependent ${row.id} cancelled because blocker ${blockerTaskId} was cancelled`,
+        body:
+          `Task ${row.id} was waiting on blocker ${blockerTaskId}.\n\n` +
+          `The blocker was cancelled by the user (stop-task RPC, failure_reason='cancelled'). ` +
+          `Per the cancellation-cascade rule, this dependent has been marked failed ` +
+          `with failure_reason='${CANCELLED_CASCADE_FAILURE_REASON}' instead of being unblocked.\n\n` +
+          `Use \`mars restart ${row.id}\` to retry, or \`mars purge ${row.id}\` to drop it.`,
+        payload: {
+          dependentTaskId: row.id,
+          cancelledBlockerTaskId: blockerTaskId,
+          failureReason: CANCELLED_CASCADE_FAILURE_REASON,
+        },
+        context: { repoRoot: process.env.MARS_REPO ?? null },
+        raisedBy: 'agent:blocker-cascade',
+        signature: `${row.id}:${blockerTaskId}`,
+        originTaskId: row.id,
+        occurrence: {
+          at: new Date().toISOString(),
+          cancelledBlockerTaskId: blockerTaskId,
+        },
+      })
+    } catch {
+      // best-effort: inbox failure must not block the cascade
+    }
+    outcomes.push({
+      taskId: row.id,
+      outcome: 'failed',
+      retryCount,
+      failureReason: CANCELLED_CASCADE_FAILURE_REASON,
+    })
   }
 
   return { blockerTaskId, outcomes }
