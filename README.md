@@ -330,7 +330,7 @@ Environment variables:
 | `MARS_BIN_DIR` | `~/.local/bin` | Where `install-dev.sh` symlinks the `mars` binary. |
 | `INTEGRATION_BRANCH` | `main` | Merge target for the implement workflow. |
 | `MARS_MAX_TRIAGE` | `4` | Daemon concurrency cap for triage. |
-| `MARS_MAX_IMPLEMENT` | `4` | Daemon concurrency cap for implement. |
+| `MARS_MAX_IMPLEMENT` | `6` | Daemon concurrency cap for implement. |
 | `MARS_MAX_REFINE` | `2` | Daemon concurrency cap for refine. |
 | `MARS_MAX_STRUCTURED_WRITE` | `1` | Daemon concurrency cap for glossary / ADR writes. |
 | `MARS_REFLECT_DISABLED` | (unset) | When `=1`, skip per-task token/cost capture and short-circuit `mars reflect`. Scorers stay attached. |
