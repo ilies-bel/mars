@@ -80,33 +80,6 @@ export const DIRTY_MAIN_ABORT_MESSAGE = (taskId: string): string =>
 export const isDirtyMainAbortError = (err: unknown): boolean =>
   errorHaystack(err).includes('setup aborted: merge target has uncommitted changes')
 
-// Thrown by codeStep when the read/grep span watcher trips. The codeStep
-// has already (a) marked the task `blocked` and (b) spawned a context-
-// gathering child task as its blocker, so the dispatcher must NOT route
-// this through the generic failure-handler — that would stamp `failed`
-// over `blocked` and double-enqueue a recovery fix-task. Same shape as
-// the blockers-abort sentinel.
-export const TOO_HARD_ABORT_MESSAGE = (taskId: string): string =>
-  `task ${taskId} aborted by read/grep span watcher; task parked in blocked`
-
-// Two distinct strings signal the same too-hard outcome and BOTH must be
-// recognised here, or the dispatcher mislabels the run:
-//   1. The throw path uses TOO_HARD_ABORT_MESSAGE ("aborted by read/grep
-//      span watcher") — codeStep throws this sentinel.
-//   2. The return path stamps the failure summary with TOO_HARD_PREFIX
-//      ("too_hard:no-action-after-reads: N reads without action; …",
-//      see codeStep ~line 780) onto the result/DB row.
-// server.ts only had the throw-path string, so when the workflow RETURNED
-// a too-hard result the guard missed it and the run was logged
-// `[implement] <id> -> failed` even though the task was correctly parked
-// `blocked`. Match either marker.
-export const isTooHardAbortError = (err: unknown): boolean => {
-  const hay = errorHaystack(err)
-  return (
-    hay.includes('aborted by read/grep span watcher') ||
-    hay.includes(TOO_HARD_PREFIX)
-  )
-}
 import { verifyPassedScorer } from '../scorers/verify-passed'
 import { mergeCleanScorer } from '../scorers/merge-clean'
 import { summarizeUsage } from '../lib/claude-usage'
@@ -117,9 +90,6 @@ import { relative } from 'node:path'
 import {
   createReadSpanWatcher,
   resolveReadSpanLimit,
-  summarizeReadCause,
-  type ReadSpanTrace,
-  type TripInfo,
 } from '../lib/read-span-watch'
 import { TDD_WORKER_BRIEF } from './tdd-brief'
 
@@ -277,8 +247,6 @@ export const DEVIATION_RULES = [
   '',
   '**Fix-attempt cap.** If you have run the verify command 3 times on this task and it still fails for reasons you cannot explain, STOP. File a follow-up task via `mars task add --blocked-by $TASK_ID` describing the failing verify and what you tried, then exit. Do not loop.',
   '',
-  '**Read/Grep budget.** You are watched. If you make 5+ consecutive Read/Grep/Glob calls without an Edit, Write, or Bash action, your session will be aborted with a `too_hard` failure. Read enough to act, then act. If you cannot act after that many reads, you do not have enough context — file a follow-up via `mars task add --blocked-by $TASK_ID` describing what you need to learn, then exit.',
-  '',
   '`$TASK_ID` is the id of the task you are executing right now; the orchestrator passes it to you in the brief below.',
 ].join('\n')
 
@@ -287,8 +255,8 @@ export const DEVIATION_RULES = [
 // once, as the Worker's Session-level system prompt, so they are present for
 // the whole Session and never re-sent inside the per-Task prompt. This means
 // the Coder does not re-absorb ~150+ lines of boilerplate at the top of every
-// Task and a retry does not replay it verbatim — avoiding burning the
-// read-span budget on orientation before the agent can act.
+// Task and a retry does not replay it verbatim — keeping the per-task
+// prompt focused on the actual work.
 export const CODER_SYSTEM_PROMPT = [TDD_WORKER_BRIEF, DEVIATION_RULES].join('\n\n')
 
 // Resolve the standing Session instructions a dispatched Worker is launched
@@ -326,13 +294,6 @@ const renderSpec = (spec: TaskSpec | null, taskId: string): string | null => {
   return `## Structured-task contract\n\n${parts.join('\n\n')}`
 }
 
-// Marker prefixed to the failure-reason and child-task prompt when the
-// read/grep span watcher trips. The dispatcher keys on this string so the
-// failure-handler does not also spawn a recovery fix-task — the watcher
-// already spawned a context-gathering follow-up, which is the right
-// next-step here, not a generic retry.
-export const TOO_HARD_PREFIX = 'too_hard:no-action-after-reads'
-
 // Test runners (vitest) print passing tests first and the failing
 // assertion + final summary LAST, so the tail carries the real signal.
 // But an early spawn/import crash aborts *before* any test runs and its
@@ -351,15 +312,9 @@ export const failureExcerpt = (
   return `${output.slice(0, headMax)}\n…[middle elided]…\n${output.slice(-tailMax)}`
 }
 
-const formatTrace = (trace: readonly ReadSpanTrace[]): string =>
-  trace
-    .map((t, i) => `  ${i + 1}. ${t.tool} ${t.target ? `→ ${t.target}` : ''}`)
-    .join('\n')
-
 // Build the "## Worktree orientation" preamble. Disclosing the resolved
 // verify cwd up-front kills the recurring 2-3 read tax we used to see
-// (pwd / ls / ls .github/workflows/) and keeps the read-span watcher's
-// budget aimed at actual work.
+// (pwd / ls / ls .github/workflows/) and keeps orientation cheap.
 //
 // Note: the worker process is still spawned at `worktreeRoot` (see
 // codeStep below). We *disclose* the project subdirectory here rather
@@ -781,30 +736,24 @@ const codeStep = createStep({
     )
     const conversation: ClaudeEvent[] = []
     const worker = getWorkerForTag(tag)
-    // Read/Grep span watcher (gsd-style analysis-paralysis guard). Only
+    // Read/Grep span watcher (gsd-style analysis-paralysis signal). Only
     // applied to Coder runs — Writer's surface is too narrow to stall on
-    // reads (it just calls a few daemon verbs). When the watcher trips we
-    // SIGKILL the child via externalAbort and remember the trace so the
-    // post-run branch below can spawn a follow-up task.
-    const spanAbort = new AbortController()
-    let tooHardTrip: TripInfo | null = null
+    // reads. Log-only: when the streak first crosses the limit we emit
+    // one diagnostic line and otherwise let the run proceed.
     const watcher =
       tag === 'coder'
         ? createReadSpanWatcher({
             limit: resolveReadSpanLimit(),
-            onTrip: (info) => {
-              tooHardTrip = info
+            onThreshold: (info) => {
               console.log(
-                `[span] task ${inputData.taskId}: ${info.limit} consecutive Read/Grep/Glob calls without action — aborting.`,
+                `[span] task ${inputData.taskId}: ${info.limit} consecutive Read/Grep/Glob calls without action (trace=${info.trace.map((t) => t.tool).join('+')}).`,
               )
-              spanAbort.abort()
             },
           })
         : null
     const r = await worker.run(fullPrompt, {
       cwd: inputData.path,
       systemPrompt: resolveWorkerSystemPrompt(tag),
-      externalAbort: spanAbort.signal,
       onEvent: async (event) => {
         conversation.push(event)
         watcher?.observe(event)
@@ -853,57 +802,6 @@ const codeStep = createStep({
     await recordSignals(inputData.taskId, 'run-claude-code', usage).catch(() => {
       // signal capture must never fail the task
     })
-    // Too-hard branch: the watcher tripped. Fail the parent task to the
-    // inbox — no child task, no blocker edge. The human decides whether to
-    // restart (`mars restart <id>`) or re-slice the work.
-    if (tooHardTrip !== null) {
-      const trip: TripInfo = tooHardTrip
-      const errorSummary = `${TOO_HARD_PREFIX}: ${trip.limit} reads without action; trace=${trip.trace.map((t) => t.tool).join('+')}`.slice(0, 1000)
-      await updateTask(inputData.taskId, {
-        status: 'failed',
-        error: errorSummary,
-        failedPhase: 'code',
-      })
-      const cause = summarizeReadCause(trip.trace)
-      const inboxTitle = cause
-        ? `Coder stalled on ${inputData.taskId}: stuck reading ${cause}`
-        : `Coder stalled on ${inputData.taskId}: no action after ${trip.trace.length} reads`
-      const inboxBody = [
-        `Coder stalled gathering context (${trip.trace.length} reads, no action); restart with \`mars restart ${inputData.taskId}\` or re-slice if the scope was wrong.`,
-        '',
-        '## Read trace',
-        '',
-        formatTrace(trip.trace),
-      ].join('\n')
-      await raiseInboxItem({
-        kind: 'too-hard-abort',
-        category: 'orchestrator',
-        priority: 'high',
-        title: inboxTitle,
-        body: inboxBody,
-        payload: {
-          taskId: inputData.taskId,
-          trace: trip.trace as unknown as Record<string, unknown>[],
-          readCount: trip.trace.length,
-        },
-        context: {},
-        raisedBy: 'implement-workflow',
-        signature: inputData.taskId,
-      }).catch((err) => {
-        console.error(
-          `[span] task ${inputData.taskId}: failed to raise inbox item:`,
-          err,
-        )
-      })
-      console.log(
-        `[span] task ${inputData.taskId}: too-hard abort; parent → failed, inbox item raised`,
-      )
-      // Short-circuit the rest of the workflow. Throwing the sentinel
-      // bypasses verify+merge and signals the dispatcher to leave the task
-      // parked in `failed` instead of routing through the generic
-      // failure-handler.
-      throw new Error(TOO_HARD_ABORT_MESSAGE(inputData.taskId))
-    }
     if (!isReflectDisabled()) {
       await upsertTranscript({
         taskId: inputData.taskId,
