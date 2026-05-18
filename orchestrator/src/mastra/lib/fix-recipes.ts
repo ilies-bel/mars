@@ -133,6 +133,37 @@ const worktreeInstallFrozenLockfileRecipe: FixRecipe = {
   },
 }
 
+const worktreeInstallTimeoutRecipe: FixRecipe = {
+  signature: 'setup:install/install-timeout',
+  title: () => `Resolve wedged install (SIGKILL); check for lockfile drift or network issues`,
+  buildPrompt: (ctx) => {
+    const status = ctx.statusOutput.length > 0 ? ctx.statusOutput : '(empty)'
+    return [
+      `The orchestrator's worktree setup ran the package manager install (pnpm/npm/yarn/bun) and it was killed by the wall-clock timeout (SIGKILL, exit 137). This usually means the install wedged — either a network stall, a registry outage, or a lockfile drift that caused the solver to spin.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `Diagnose and fix the underlying cause. Common causes, in order of likelihood:`,
+      ` (a) lockfile drift: \`package.json\` was edited without regenerating the lockfile — regenerate it (e.g. \`pnpm install\` without --frozen-lockfile, or \`npm install\`) and commit both \`package.json\` and the lockfile;`,
+      ` (b) registry / network blip: the install wedged waiting for a package that never arrived — re-run the failing install once before assuming it's a code issue;`,
+      ` (c) missing peer dep declared by a recently bumped package — add the missing peer to \`package.json\` and regenerate the lockfile.`,
+      '',
+      `Do NOT edit \`node_modules\` directly. Do NOT bypass the failure with \`--no-frozen-lockfile\` permanently — the orchestrator runs frozen by design so concurrent worktrees stay reproducible.`,
+      '',
+      `Failing install directory: ${ctx.targetPath}`,
+      `Branch: ${ctx.targetBranch}`,
+      '',
+      'Install error (truncated):',
+      '```',
+      status,
+      '```',
+      '',
+      `After fixing, verify locally by deleting \`node_modules\` in that directory and re-running the same install command (\`pnpm install --frozen-lockfile\`, \`npm ci\`, \`yarn install --frozen-lockfile\`, or \`bun install --frozen-lockfile\`) — it must succeed cleanly within the timeout window (8 minutes).`,
+      '',
+      `Save your work: stage \`package.json\` and the lockfile if changed, then commit with a message describing the dependency change.`,
+    ].join('\n')
+  },
+}
+
 const noCommitsAheadRecipe: FixRecipe = {
   signature: 'verify:has-diff/no-commits-ahead',
   title: (ctx) =>
@@ -210,6 +241,7 @@ const noCommitsAheadRecipe: FixRecipe = {
 const recipeList: readonly FixRecipe[] = [
   dirtyMergeTargetRecipe,
   worktreeInstallFrozenLockfileRecipe,
+  worktreeInstallTimeoutRecipe,
   noCommitsAheadRecipe,
 ]
 
