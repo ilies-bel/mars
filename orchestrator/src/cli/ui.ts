@@ -1,12 +1,20 @@
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveContext } from '../mastra/context'
 
 interface LaunchOptions {
   repo?: string
   port?: string
   host?: string
+}
+
+export interface UiPidEntry {
+  pid: number
+  port: number
+  host: string
+  startedAt: string
 }
 
 const resolveLauncher = (): string | null => {
@@ -21,6 +29,30 @@ const resolveLauncher = (): string | null => {
   return null
 }
 
+export const getPidFilePath = (repo?: string): string => {
+  const ctx = resolveContext(repo)
+  return resolve(ctx.stateDir, 'ui.pid.json')
+}
+
+export const readPidEntry = (repo?: string): UiPidEntry | null => {
+  const pidFile = getPidFilePath(repo)
+  if (!existsSync(pidFile)) return null
+  try {
+    return JSON.parse(readFileSync(pidFile, 'utf8')) as UiPidEntry
+  } catch {
+    return null
+  }
+}
+
+const isAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const launchUi = (opts: LaunchOptions): void => {
   const launcher = resolveLauncher()
   if (!launcher) {
@@ -29,6 +61,9 @@ export const launchUi = (opts: LaunchOptions): void => {
     )
     process.exit(1)
   }
+
+  const port = opts.port ? parseInt(opts.port, 10) : 7777
+  const host = opts.host ?? '127.0.0.1'
 
   const args: string[] = []
   if (opts.repo) args.push('--repo', opts.repo)
@@ -39,9 +74,86 @@ export const launchUi = (opts: LaunchOptions): void => {
     stdio: 'inherit',
     env: process.env,
   })
-  child.on('exit', (code) => process.exit(code ?? 0))
+
+  const pidFile = getPidFilePath(opts.repo)
+  const entry: UiPidEntry = {
+    pid: child.pid!,
+    port,
+    host,
+    startedAt: new Date().toISOString(),
+  }
+  writeFileSync(pidFile, JSON.stringify(entry, null, 2))
+
+  child.on('exit', (code) => {
+    try {
+      unlinkSync(pidFile)
+    } catch {
+      // already gone — ignore
+    }
+    process.exit(code ?? 0)
+  })
   child.on('error', (err) => {
+    try {
+      unlinkSync(pidFile)
+    } catch {
+      // already gone — ignore
+    }
     console.error(`failed to launch mars ui: ${err.message}`)
     process.exit(1)
   })
+}
+
+export const statusUi = (repo?: string): void => {
+  const entry = readPidEntry(repo)
+  if (!entry || !isAlive(entry.pid)) {
+    console.log('not running')
+    return
+  }
+  console.log(`pid=${entry.pid}  port=${entry.port}  url=http://${entry.host}:${entry.port}`)
+}
+
+export const stopUi = (repo?: string): void => {
+  const pidFile = getPidFilePath(repo)
+  const entry = readPidEntry(repo)
+
+  if (!entry || !isAlive(entry.pid)) {
+    console.log('no mars ui running')
+    try {
+      unlinkSync(pidFile)
+    } catch {
+      // already gone
+    }
+    process.exit(0)
+  }
+
+  process.kill(entry.pid, 'SIGTERM')
+
+  const deadline = Date.now() + 2000
+  const poll = (): void => {
+    if (!isAlive(entry.pid)) {
+      try {
+        unlinkSync(pidFile)
+      } catch {
+        // already gone
+      }
+      console.log(`stopped pid=${entry.pid}`)
+      process.exit(0)
+    }
+    if (Date.now() >= deadline) {
+      try {
+        process.kill(entry.pid, 'SIGKILL')
+      } catch {
+        // already gone
+      }
+      try {
+        unlinkSync(pidFile)
+      } catch {
+        // already gone
+      }
+      console.log(`stopped pid=${entry.pid}`)
+      process.exit(0)
+    }
+    setTimeout(poll, 100)
+  }
+  setTimeout(poll, 100)
 }
