@@ -29,9 +29,11 @@ export const TaskCard = ({ task, index }: Props) => {
       data-task-status={task.status}
       className={`flex flex-col gap-2 rounded-md border border-border bg-surface p-3 ${accent}`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <div className="font-mono text-[11px] text-muted">{task.shortId}</div>
-        <div className="flex items-center gap-1.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="break-all font-mono text-[11px] text-muted">
+          {task.id}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
           {task.retryCount > 0 ? (
             <span
               className="rounded bg-basalt/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wide text-basalt"
@@ -60,9 +62,9 @@ export const TaskCard = ({ task, index }: Props) => {
           {task.blockerTaskId ? (
             <a
               href={`#/task/${task.blockerTaskId}`}
-              className="underline decoration-dotted underline-offset-2"
+              className="break-all underline decoration-dotted underline-offset-2"
             >
-              Blocked by · {task.blockerTaskId.slice(0, 8)}
+              Blocked by · {task.blockerTaskId}
             </a>
           ) : (
             'Blocked'

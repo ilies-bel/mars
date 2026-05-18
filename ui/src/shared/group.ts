@@ -5,8 +5,6 @@ const titleFromPrompt = (prompt: string): string => {
   return first.length > 0 ? first : prompt.trim()
 }
 
-const shortId = (id: string): string => `T${id.slice(0, 8)}`
-
 const roleFromTask = (t: Task): Role => {
   switch (t.status) {
     case 'running':
@@ -46,7 +44,6 @@ const columnFor = (t: Task): ColumnKey | null => {
 
 const toUI = (t: Task): UITask => ({
   id: t.id,
-  shortId: shortId(t.id),
   title: titleFromPrompt(t.prompt),
   status: t.status,
   role: roleFromTask(t),

@@ -15,7 +15,6 @@ export type Role = 'planner' | 'builder' | 'reviewer' | 'orchestrator'
 
 export interface UITask {
   id: string
-  shortId: string
   title: string
   status: TaskStatus
   role: Role
