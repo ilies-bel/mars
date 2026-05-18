@@ -42,7 +42,7 @@ const createQueueSchema = async (path: string): Promise<Client> => {
 
 const createStateSchema = async (path: string): Promise<Client> => {
   const c = createClient({ url: `file:${path}` })
-  await c.execute(`CREATE TABLE ideas (
+  await c.execute(`CREATE TABLE proposals (
     id TEXT PRIMARY KEY,
     goal TEXT NOT NULL,
     story TEXT NOT NULL DEFAULT '',
@@ -52,10 +52,11 @@ const createStateSchema = async (path: string): Promise<Client> => {
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`)
-  await c.execute(`CREATE TABLE idea_user_stories (
-    id TEXT PRIMARY KEY,
-    idea_id TEXT NOT NULL,
-    story TEXT NOT NULL
+  await c.execute(`CREATE TABLE proposal_user_stories (
+    proposal_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    PRIMARY KEY(proposal_id, position)
   )`)
   return c
 }
@@ -80,7 +81,7 @@ const insertIdea = async (
 ): Promise<void> => {
   const now = Date.now()
   await c.execute({
-    sql: `INSERT INTO ideas (id, goal, status, source, created_at, updated_at)
+    sql: `INSERT INTO proposals (id, goal, status, source, created_at, updated_at)
           VALUES (?, ?, ?, 'human', ?, ?)`,
     args: [id, `goal for ${id}`, status, now, now],
   })
@@ -242,12 +243,12 @@ describe('GET /api/inbox', () => {
     // filter visibly wrong if it ever leaked in.
     const sc = createClient({ url: `file:${resolve(repo, '.mars/state.db')}` })
     await sc.execute({
-      sql: `INSERT INTO ideas (id, goal, status, source, created_at, updated_at)
+      sql: `INSERT INTO proposals (id, goal, status, source, created_at, updated_at)
             VALUES (?, ?, 'draft', 'human', ?, ?)`,
       args: ['idea-human', 'human goal', Date.now(), Date.now()],
     })
     await sc.execute({
-      sql: `INSERT INTO ideas (id, goal, status, source, created_at, updated_at)
+      sql: `INSERT INTO proposals (id, goal, status, source, created_at, updated_at)
             VALUES (?, ?, 'draft', 'reflection', ?, ?)`,
       args: ['idea-reflection', 'reflection goal', Date.now(), Date.now()],
     })

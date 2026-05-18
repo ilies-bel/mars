@@ -7,7 +7,7 @@ export interface InboxData {
 }
 
 /**
- * Aggregate the inbox view: draft ideas plus blocked and failed tasks.
+ * Aggregate the inbox view: draft proposals plus blocked and failed tasks.
  *
  * Pure read-only aggregation — issues no writes and tolerates missing
  * tables (a fresh repo whose schema has not been created yet) by
@@ -17,8 +17,8 @@ export const aggregateInbox = async (
   db: TaskDb,
   stateDb: StateDb,
 ): Promise<InboxData> => {
-  const ideasExist = await stateDb.ideasTableExists()
-  const drafts = ideasExist ? await stateDb.listDraftFeatures() : []
+  const proposalsExist = await stateDb.proposalsTableExists()
+  const drafts = proposalsExist ? await stateDb.listDraftFeatures() : []
   const tasksExist = await db.tableExists()
   // Bucket query: deliberately restricted to status='blocked' OR
   // status='failed'. These are the only two task states that require

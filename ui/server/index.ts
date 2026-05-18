@@ -144,8 +144,8 @@ export const startServer = async (
 
       if (path === '/api/todo') {
         try {
-          const ideasExist = await stateDb.ideasTableExists()
-          const drafts = ideasExist ? await stateDb.listDraftFeatures() : []
+          const proposalsExist = await stateDb.proposalsTableExists()
+          const drafts = proposalsExist ? await stateDb.listDraftFeatures() : []
           const dismissedIds = await stateDb.listDismissedStaleWorktreeIds()
           const staleWorktrees = await listStaleWorktrees(db, ctx.repoRoot, dismissedIds)
           return jsonResponse(200, { drafts, staleWorktrees })

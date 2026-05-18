@@ -48,7 +48,7 @@ const createQueueSchema = async (path: string): Promise<Client> => {
 
 const createStateSchema = async (path: string): Promise<Client> => {
   const c = createClient({ url: `file:${path}` })
-  await c.execute(`CREATE TABLE ideas (
+  await c.execute(`CREATE TABLE proposals (
     id TEXT PRIMARY KEY,
     goal TEXT NOT NULL,
     story TEXT NOT NULL DEFAULT '',
@@ -58,10 +58,11 @@ const createStateSchema = async (path: string): Promise<Client> => {
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`)
-  await c.execute(`CREATE TABLE idea_user_stories (
-    id TEXT PRIMARY KEY,
-    idea_id TEXT NOT NULL,
-    story TEXT NOT NULL
+  await c.execute(`CREATE TABLE proposal_user_stories (
+    proposal_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    PRIMARY KEY(proposal_id, position)
   )`)
   return c
 }
