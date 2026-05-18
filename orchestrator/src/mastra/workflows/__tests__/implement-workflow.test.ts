@@ -43,8 +43,21 @@ describe('composePrompt — coder default', () => {
     expect(COMMIT_FOOTER).toContain('git commit')
   })
 
-  it('warns about the no-commits-ahead failure signature', () => {
+  it('names no-commits-ahead only as the consequence of the agent failing to commit', () => {
+    // The footer must link the verify:has-diff/no-commits-ahead signature to
+    // the agent not having committed — not to some other cause such as
+    // dirty-main. The phrase "agent did not commit" is the required signal.
     expect(COMMIT_FOOTER).toContain('verify:has-diff/no-commits-ahead')
+    expect(COMMIT_FOOTER).toContain('agent did not commit')
+  })
+
+  it('explicitly distinguishes dirty-main as a separate, operator-owned failure mode', () => {
+    // The footer must name verify:dirty-main and attribute it to the operator,
+    // so the agent cannot truthfully blame dirty-main on itself after reading
+    // the footer.
+    expect(COMMIT_FOOTER).toContain('verify:dirty-main')
+    expect(COMMIT_FOOTER).toMatch(/operator-owned/i)
+    expect(COMMIT_FOOTER).toMatch(/not your responsibility/i)
   })
 
   it('defaults to the coder footer when no tag is supplied', () => {
