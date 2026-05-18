@@ -7,7 +7,6 @@ import type { Author, AuthorKind } from './author'
 export type TaskStatus =
   | 'draft'
   | 'queued'
-  | 'ready'
   | 'running'
   | 'verifying'
   | 'merging'
@@ -1133,22 +1132,6 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
     edgesRemoved: { incoming: incomingCount, outgoing: outgoingCount },
     fixForRefsCleared,
   }
-}
-
-export const claimReadyTask = async (id: string): Promise<Task | null> => {
-  await initQueue()
-  const now = new Date().toISOString()
-  const upd = await getClient().execute({
-    sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ? AND status = 'ready'`,
-    args: [now, id],
-  })
-  if (upd.rowsAffected === 0) return null
-  const r = await getClient().execute({
-    sql: `SELECT * FROM tasks WHERE id = ?`,
-    args: [id],
-  })
-  if (r.rows.length === 0) return null
-  return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
 }
 
 export const insertReflectionTask = async (corpusSize: number): Promise<string> => {

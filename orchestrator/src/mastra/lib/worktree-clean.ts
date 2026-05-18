@@ -11,7 +11,6 @@ const exec = promisify(execFile)
 
 const IN_FLIGHT_STATUSES: ReadonlySet<TaskStatus> = new Set([
   'queued',
-  'ready',
   'running',
   'verifying',
   'merging',
