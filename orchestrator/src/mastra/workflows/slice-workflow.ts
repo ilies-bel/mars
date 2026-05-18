@@ -414,6 +414,30 @@ const generateStep = createStep({
     await initQueue()
     const queueClient = getQueueClient()
     const ideasClient = getProposalsClient()
+
+    // Pre-flight: crash-recovery deduplication. A process crash between
+    // Phase 1 (task inserts) and Phase 4 (status flip) leaves the idea
+    // prd-ready with orphaned tasks in the queue. Without this cleanup,
+    // a retry would insert a fresh set of tasks on top of the orphans,
+    // creating duplicates. Delete any tasks that claim this idea as
+    // parent before starting Phase 1 so retries are idempotent.
+    await queueClient
+      .execute({
+        sql: `DELETE FROM task_blockers WHERE task_id IN (
+                SELECT id FROM tasks WHERE parent_proposal_id = ?
+              ) OR blocker_task_id IN (
+                SELECT id FROM tasks WHERE parent_proposal_id = ?
+              )`,
+        args: [idea.id, idea.id],
+      })
+      .catch(() => {})
+    await queueClient
+      .execute({
+        sql: `DELETE FROM tasks WHERE parent_proposal_id = ?`,
+        args: [idea.id],
+      })
+      .catch(() => {})
+
     const taskIds: string[] = []
     // Tracks whether Phase 4 successfully flipped the idea row to 'sliced'.
     // The catch block uses this to compensate (revert to 'prd-ready') when
