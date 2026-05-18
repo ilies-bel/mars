@@ -18,6 +18,7 @@ import {
   resolveWorkerSystemPrompt,
   shouldWireReadSpanWatcher,
 } from '../implement-workflow'
+import { resolveReadSpanLimit } from '../../lib/read-span-watch'
 
 describe('composePrompt — coder default', () => {
   it('appends the commit footer to a bare prompt', () => {
@@ -176,6 +177,44 @@ describe('resolveWorkerSystemPrompt — deviation rules in coder standing instru
   it('DEVIATION_RULES is not injected as a standalone section — it is embedded in CODER_SYSTEM_PROMPT', () => {
     const coderPrompt = resolveWorkerSystemPrompt('coder')
     expect(coderPrompt).toContain(DEVIATION_RULES)
+  })
+})
+
+describe('resolveWorkerSystemPrompt — read-span guard budget in standing instructions', () => {
+  afterEach(() => {
+    delete process.env.MARS_READ_SPAN_LIMIT
+  })
+
+  it('coder standing instructions contain a read-span guard section', () => {
+    delete process.env.MARS_READ_SPAN_LIMIT
+    const instructions = resolveWorkerSystemPrompt('coder')!
+    expect(instructions).toMatch(/Read.span guard/i)
+  })
+
+  it('the stated consecutive-read budget equals the configured guard limit (default 5)', () => {
+    delete process.env.MARS_READ_SPAN_LIMIT
+    const instructions = resolveWorkerSystemPrompt('coder')!
+    const limit = resolveReadSpanLimit() // → 5 by default
+    // The limit must appear in the read-span guard context, not incidentally.
+    // Implementation embeds it as "**<limit>**" in the guard section.
+    expect(instructions).toContain(`**${limit}**`)
+  })
+
+  it('overriding MARS_READ_SPAN_LIMIT changes the stated budget in the standing instructions', () => {
+    process.env.MARS_READ_SPAN_LIMIT = '12'
+    const instructions = resolveWorkerSystemPrompt('coder')!
+    const limit = resolveReadSpanLimit() // → 12
+    expect(limit).toBe(12)
+    // The new limit must appear in the guard section.
+    expect(instructions).toContain(`**${limit}**`)
+    // The default (5) must NOT appear as the guard limit when overridden.
+    expect(instructions).not.toContain('**5**')
+  })
+
+  it('writer standing instructions are unchanged — no read-span guard section', () => {
+    const instructions = resolveWorkerSystemPrompt('writer')
+    expect(instructions).toBe(WRITER_SYSTEM_PROMPT)
+    expect(WRITER_SYSTEM_PROMPT).not.toMatch(/Read.span guard/i)
   })
 })
 
