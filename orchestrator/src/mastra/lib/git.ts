@@ -1239,6 +1239,35 @@ export const acquireLock = async (
   throw new Error(`Failed to acquire merge lock after ${timeoutMs}ms`)
 }
 
+export interface SetupPreflightResult {
+  dirty: boolean
+  /** Non-empty only when `dirty` is true. Each entry is a raw porcelain v1 line. */
+  dirtyLines: string[]
+}
+
+/**
+ * Setup-time pre-flight: checks whether the integration branch has uncommitted
+ * tracked changes that would block a later fast-forward merge. Called at the
+ * start of the worktree-setup step, before the coding agent is dispatched.
+ *
+ * Only tracked files are included (`--untracked-files=no`): untracked/ignored
+ * files cannot block `git merge --ff-only` and are silently skipped.
+ *
+ * Throws when `git status` itself fails (e.g. `repoRoot` is not a git repo);
+ * callers are expected to catch git/IO errors separately from the `dirty` path.
+ */
+export const checkSetupPreflight = async (
+  repoRoot: string,
+): Promise<SetupPreflightResult> => {
+  const { stdout } = await exec(
+    'git',
+    ['status', '--porcelain', '--untracked-files=no'],
+    { cwd: repoRoot },
+  )
+  const dirtyLines = stdout.split('\n').filter((l) => l.length > 0)
+  return { dirty: dirtyLines.length > 0, dirtyLines }
+}
+
 export type MergeTargetStatus =
   | { kind: 'clean' }
   // The task branch has diverged from / fallen behind integration, so a
