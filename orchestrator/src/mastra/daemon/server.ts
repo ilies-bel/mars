@@ -321,6 +321,7 @@ export const startDaemon = async (
           prompt: task.prompt,
           plan: task.plan,
           tag: task.tag ?? 'coder',
+          kind: task.kind ?? 'task',
           integrationBranch,
           resumeFrom:
             task.resumeFrom === 'verify' || task.resumeFrom === 'merge'
