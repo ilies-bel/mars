@@ -11,6 +11,8 @@ import {
   getWorkerForTag,
   type WorkerName,
 } from '..'
+import { pickWorkerForTask } from '../../workflows/implement-workflow'
+import type { Task } from '../../queue'
 
 // Resolve the argv `claude -p` would receive for a given Worker. Behaviour
 // test against the public registry rather than reaching into the run()
@@ -182,5 +184,37 @@ describe('agent-to-user denial inheritance', () => {
       expect(denied).toContain('AskUserQuestion')
       expect(denied).toContain('SendUserMessage')
     }
+  })
+})
+
+describe('pickWorkerForTask', () => {
+  it('routes fix tasks to Fixer', () => {
+    expect(pickWorkerForTask({ kind: 'fix' } as Task)).toBe('Fixer')
+  })
+
+  it('routes task-kind tasks to Coder', () => {
+    expect(pickWorkerForTask({ kind: 'task' } as Task)).toBe('Coder')
+  })
+
+  it('routes diagnose-kind tasks to Coder (diagnose is not a fix)', () => {
+    expect(pickWorkerForTask({ kind: 'diagnose' } as Task)).toBe('Coder')
+  })
+
+  it('routes legacy rows with undefined kind to Coder', () => {
+    expect(pickWorkerForTask({} as Task)).toBe('Coder')
+  })
+})
+
+describe('Fixer denial set — backlog-mutation guard', () => {
+  it('WORKER_CONFIGS.Fixer.disallowedTools contains all FIXER_BACKLOG_DENIED_TOOLS entries', () => {
+    for (const denied of FIXER_BACKLOG_DENIED_TOOLS) {
+      expect(WORKER_CONFIGS.Fixer.disallowedTools).toContain(denied)
+    }
+  })
+
+  it('WORKER_CONFIGS.Fixer.disallowedTools blocks mars task add, mars idea, and mars draft CLI paths', () => {
+    expect(WORKER_CONFIGS.Fixer.disallowedTools).toContain('Bash(mars task add*)')
+    expect(WORKER_CONFIGS.Fixer.disallowedTools).toContain('Bash(mars idea*)')
+    expect(WORKER_CONFIGS.Fixer.disallowedTools).toContain('Bash(mars draft*)')
   })
 })
