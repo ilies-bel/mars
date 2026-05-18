@@ -336,7 +336,7 @@ export const startDaemon = async (
             : null,
         },
       })
-      const { isBlockersAbortError, isTooHardAbortError } = await import('../workflows/implement-workflow')
+      const { isBlockersAbortError, isTooHardAbortError, isDirtyMainAbortError } = await import('../workflows/implement-workflow')
       // Pass the raw error through: the detectors flatten the cause chain
       // and accept `unknown`, so the previous `instanceof Error` precondition
       // (which silently nulled out any wrapped/serialized error and dropped
@@ -351,15 +351,21 @@ export const startDaemon = async (
         log(`[implement] ${task.id} parked in blocked: read/grep span watcher tripped; spawned context-gathering child task`)
         return
       }
+      if (result.status === 'failed' && isDirtyMainAbortError(resultError)) {
+        log(`[implement] ${task.id} parked in blocked: merge target had uncommitted changes at setup; inbox item raised`)
+        return
+      }
       log(`[implement] ${task.id} -> ${result.status}`)
       bus.emit('task.completed', { taskId: task.id, status: result.status })
     } catch (err) {
       const message = (err as Error).message
-      const { isBlockersAbortError, isTooHardAbortError } = await import('../workflows/implement-workflow')
+      const { isBlockersAbortError, isTooHardAbortError, isDirtyMainAbortError } = await import('../workflows/implement-workflow')
       if (isBlockersAbortError(err)) {
         log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
       } else if (isTooHardAbortError(err)) {
         log(`[implement] ${task.id} parked in blocked: read/grep span watcher tripped; spawned context-gathering child task`)
+      } else if (isDirtyMainAbortError(err)) {
+        log(`[implement] ${task.id} parked in blocked: merge target had uncommitted changes at setup; inbox item raised`)
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
         try {
