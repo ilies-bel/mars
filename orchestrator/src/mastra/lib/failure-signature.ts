@@ -71,6 +71,15 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     match: /is not a fast-forward of/i,
   },
   {
+    // SIGKILL from the wall-clock timeout (exit 137) or an explicit SIGKILL
+    // surfaced in the error text. Must be checked before install-frozen-lockfile
+    // because WorktreeInstallError embeds the install command (which contains
+    // "frozen-lockfile") in its first line — without this guard, a timed-out
+    // install would be misclassified as a lockfile-drift failure.
+    errorClass: 'install-timeout',
+    match: /exited with 137|SIGKILL|exit code 137/i,
+  },
+  {
     errorClass: 'install-frozen-lockfile',
     match: /frozen-lockfile/i,
   },

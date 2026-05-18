@@ -1,6 +1,8 @@
 import { stat } from 'node:fs/promises'
 import { resolve, relative } from 'node:path'
-import { runSubprocess, type RunSubprocessResult } from './git'
+import { runSubprocessStreaming, type RunSubprocessResult } from './git'
+
+export const DEFAULT_INSTALL_TIMEOUT_MS = 8 * 60_000
 
 export type PackageManager = 'pnpm' | 'npm' | 'yarn' | 'bun'
 
@@ -140,18 +142,40 @@ export type InstallRunner = (
   cmd: string,
   args: readonly string[],
   cwd: string,
+  opts?: { timeoutMs?: number },
 ) => Promise<RunSubprocessResult>
 
 export interface InstallWorktreeDepsOptions {
   worktreeRoot: string
   runner?: InstallRunner
   log?: (line: string) => void
+  timeoutMs?: number
+}
+
+const defaultInstallRunner: InstallRunner = (cmd, args, cwd, opts) => {
+  const timeoutMs = opts?.timeoutMs
+  if (timeoutMs === undefined) {
+    return runSubprocessStreaming(cmd, args, cwd)
+  }
+  const abort = new AbortController()
+  const handle = setTimeout(() => abort.abort(), timeoutMs)
+  return runSubprocessStreaming(cmd, args, cwd, undefined, abort.signal).then(
+    (result) => {
+      clearTimeout(handle)
+      return result
+    },
+    (err: unknown) => {
+      clearTimeout(handle)
+      throw err
+    },
+  )
 }
 
 export const installWorktreeDeps = async ({
   worktreeRoot,
-  runner = runSubprocess,
+  runner = defaultInstallRunner,
   log,
+  timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
 }: InstallWorktreeDepsOptions): Promise<WorktreeInstallSummary> => {
   const sites = await detectInstallSites(worktreeRoot)
   if (sites.length === 0) {
@@ -163,7 +187,7 @@ export const installWorktreeDeps = async ({
     sites.map(async (site) => {
       const [cmd, args] = installCommand(site.manager)
       const t0 = Date.now()
-      const r = await runner(cmd, args, site.dir)
+      const r = await runner(cmd, args, site.dir, { timeoutMs })
       const durationMs = Date.now() - t0
       const rel = relative(worktreeRoot, site.dir) || '.'
       log?.(

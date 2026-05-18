@@ -9,6 +9,8 @@ import { isBranchMergedIntoMain, isZeroCommitBranch } from './git'
 
 const exec = promisify(execFile)
 
+export const DEFAULT_WORKTREE_REMOVE_TIMEOUT_MS = 60_000
+
 const IN_FLIGHT_STATUSES: ReadonlySet<TaskStatus> = new Set([
   'queued',
   'running',
@@ -145,12 +147,25 @@ export const discoverAllWorktrees = (
 const removeWorktreeAt = async (
   wt: DiscoveredWorktree,
   repoRoot: string,
+  timeoutMs = DEFAULT_WORKTREE_REMOVE_TIMEOUT_MS,
 ): Promise<void> => {
   try {
     await exec('git', ['worktree', 'remove', '--force', wt.path], {
       cwd: repoRoot,
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
     })
-  } catch {
+  } catch (err: unknown) {
+    // A timeout surfaces as an error with `.killed === true` or
+    // `.signal === 'SIGKILL'`. Re-throw so the caller can surface it clearly;
+    // skip only for the "not a registered worktree / already gone" class of
+    // errors that we want to fall through silently.
+    const e = err as { killed?: boolean; signal?: string; code?: string | number }
+    if (e.killed || e.signal === 'SIGKILL') {
+      throw new Error(
+        `git worktree remove --force ${wt.path} timed out after ${timeoutMs}ms (SIGKILL)`,
+      )
+    }
     // git refused (e.g. not a registered worktree, locked); fall through to
     // rm -rf so we still clean the dead directory.
   }
