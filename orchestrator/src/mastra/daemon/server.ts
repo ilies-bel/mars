@@ -1068,7 +1068,8 @@ export const startDaemon = async (
 
     // Stale in-flight rows: the previous daemon died mid-work.
     // Per-status recovery logic:
-    //   running  → mark failed (claude -p child is gone, no recovery possible)
+    //   running  → requeue from setup (daemon restart is not a task fault;
+    //              do NOT consume the retry budget)
     //   verifying → auto-resume if worktree intact; else mark failed
     //   merging  → decide by git state: FF landed → done; else requeue from setup
 
@@ -1079,13 +1080,13 @@ export const startDaemon = async (
     const { removeWorktree, isBranchMergedIntoMain } = await import('../lib/git')
     const { getRepoRoot } = await import('../context')
 
-    const running = await listTasks('running')
-    for (const t of running) {
-      log(`[reconcile] task ${t.id} was running on prior daemon; marking failed`)
-      await updateTask(t.id, {
-        status: 'failed',
-        error: 'daemon restart while task was running',
-      }).catch(() => {})
+    {
+      const { requeueRunningTasksFromPriorDaemon } = await import('./reconcile-running')
+      const requeued = await requeueRunningTasksFromPriorDaemon(getRepoRoot())
+      for (const taskId of requeued) {
+        log(`[reconcile] task ${taskId} was running on prior daemon; requeued from setup`)
+        bus.emit('task.queued', { taskId })
+      }
     }
 
     const verifying = await listTasks('verifying')
