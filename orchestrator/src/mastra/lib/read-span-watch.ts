@@ -3,9 +3,11 @@ import type { ClaudeEvent } from './claude-stream'
 /**
  * Implementor read/grep span watcher.
  *
- * Counts consecutive read-class tool calls (Read/Grep/Glob) emitted by the
- * agent without an interleaving action-class call (Edit/Write/Bash/
- * NotebookEdit/MultiEdit). When the streak first crosses the configured
+ * Counts consecutive read-class tool calls (Read/Grep/Glob, and read-only
+ * Bash commands matched by BASH_READ_PATTERN) emitted by the agent without
+ * an interleaving action-class call (Edit/Write/NotebookEdit/MultiEdit, or
+ * any Bash command that does not match BASH_READ_PATTERN). When the streak
+ * first crosses the configured
  * limit, the watcher fires `onThreshold` exactly once so the caller can
  * emit a log line. The watcher does not abort, kill, or otherwise
  * interfere with the run — it is observational only.
@@ -31,7 +33,7 @@ export interface ReadSpanWatcherConfig {
 }
 
 export interface ReadSpanTrace {
-  readonly tool: 'Read' | 'Grep' | 'Glob'
+  readonly tool: 'Read' | 'Grep' | 'Glob' | 'Bash'
   readonly target: string
 }
 
@@ -41,13 +43,23 @@ export interface ThresholdInfo {
 }
 
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob'])
-const ACTION_TOOLS = new Set([
-  'Edit',
-  'Write',
-  'NotebookEdit',
-  'MultiEdit',
-  'Bash',
-])
+const ACTION_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit'])
+// Bash is handled separately — read-only commands extend the streak;
+// action-class commands reset it. See BASH_READ_PATTERN below.
+
+/**
+ * Matches the leading command of a Bash invocation against known read-only
+ * patterns. A Bash call is treated as read-class only when this pattern
+ * matches AND the command does not contain an output redirect (`>`).
+ */
+export const BASH_READ_PATTERN =
+  /^git\s+(?:status|log|diff|branch|show|rev-parse|rev-list|ls-files|remote|config\s+--get)|^(?:ls|cat|head|tail|wc|pwd|env|tree|find|stat|file)\b|^rg\b|^sqlite3\s+\S+\s+'?(?:SELECT|\.tables|\.schema)|^mars\s+(?:list|show|where|inbox|idea\s+(?:list|show))/
+
+/** Output-redirect pattern — any command with this is write-class regardless of the leading command. */
+const BASH_WRITE_REDIRECT = /\s>/
+
+const isBashReadOnly = (command: string): boolean =>
+  BASH_READ_PATTERN.test(command) && !BASH_WRITE_REDIRECT.test(command)
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -136,6 +148,23 @@ export const createReadSpanWatcher = (
           if (streak >= limit && !thresholdReached) {
             thresholdReached = true
             config.onThreshold({ limit, trace: [...trace] })
+          }
+        } else if (use.name === 'Bash') {
+          const cmd =
+            isRecord(use.input) && typeof use.input.command === 'string'
+              ? use.input.command
+              : ''
+          if (isBashReadOnly(cmd)) {
+            streak += 1
+            trace.push({ tool: 'Bash', target: cmd.slice(0, 80) })
+            if (streak >= limit && !thresholdReached) {
+              thresholdReached = true
+              config.onThreshold({ limit, trace: [...trace] })
+            }
+          } else {
+            streak = 0
+            thresholdReached = false
+            trace = []
           }
         } else if (ACTION_TOOLS.has(use.name)) {
           streak = 0
