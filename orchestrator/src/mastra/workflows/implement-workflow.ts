@@ -99,7 +99,7 @@ import { verifyPassedScorer } from '../scorers/verify-passed'
 import { mergeCleanScorer } from '../scorers/merge-clean'
 import { summarizeUsage } from '../lib/claude-usage'
 import { recordSignals, isReflectDisabled } from '../lib/reflect-signals'
-import { resolveVerifyCwd } from '../lib/derive-repro-command'
+import { resolveVerifyCwd, type RanVerifyStep } from '../lib/derive-repro-command'
 import { resolveTaskCwd } from '../lib/resolve-task-cwd'
 import { relative } from 'node:path'
 import {
@@ -964,6 +964,22 @@ const verifyStep = createStep({
       const firstFailedOutput = failed[0]
         ? failureExcerpt(failed[0].output)
         : summary
+      // Build a list of every step that actually ran with its exact command
+      // and directory. Steps that carry cmd/stepDir (all steps routed through
+      // runVerifyStep) form the ranVerifySteps array used to produce an
+      // accurate, language-agnostic reproduce hint. Steps without cmd (e.g.
+      // the synthetic has-diff check) are omitted so the hint stays runnable.
+      const ranVerifySteps: RanVerifyStep[] = r.steps
+        .filter((s): s is typeof s & { cmd: string; stepDir: string } =>
+          s.cmd !== undefined && s.stepDir !== undefined,
+        )
+        .map((s) => ({
+          name: s.name,
+          cmd: s.cmd,
+          args: s.args ?? [],
+          stepDir: s.stepDir,
+          passed: s.passed,
+        }))
       await updateTask(inputData.taskId, {
         status: 'failed',
         error: summary,
@@ -974,6 +990,7 @@ const verifyStep = createStep({
         failingStep: `verify:${firstFailedName}`,
         errorOutput: firstFailedOutput,
         branch: inputData.branch,
+        ranVerifySteps,
         recipeContext: {
           targetPath: inputData.path,
           statusOutput: firstFailedOutput,
