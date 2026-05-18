@@ -735,10 +735,18 @@ Subcommands:
 
 Print resolved repo + state directory.`,
   ui: `mars ui [--repo <path>] [--port <n>] [--host <h>]
+mars ui stop  [--repo <path>]
+mars ui status [--repo <path>]
 
 Launch the read-only Kanban viewer. Resolves the bundled
 ui/bin/mars-ui.mjs launcher (which spawns the SSE server, serves the
 built dashboard when ui/dist/ exists, and forwards exit code).
+
+Subcommands:
+  stop    Send SIGTERM to a running mars ui process (SIGKILL after 2s).
+          Removes .mars/ui.pid.json. Prints 'no mars ui running' and
+          exits 0 if nothing is running.
+  status  Print pid/port/url of a running mars ui, or 'not running'.
 
 Flags:
   --repo <path>   target repo (defaults to the resolver: --repo > MARS_REPO > git toplevel)
@@ -787,6 +795,17 @@ const main = async (): Promise<void> => {
   }
 
   if (cmd === 'ui') {
+    const subCmd = rest[0]
+    if (subCmd === 'stop') {
+      const { stopUi } = await import('./cli/ui')
+      stopUi(repo)
+      return
+    }
+    if (subCmd === 'status') {
+      const { statusUi } = await import('./cli/ui')
+      statusUi(repo)
+      return
+    }
     const { launchUi } = await import('./cli/ui')
     launchUi({
       repo,
