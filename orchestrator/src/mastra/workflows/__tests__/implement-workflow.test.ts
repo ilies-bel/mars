@@ -5,8 +5,6 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
   COMMIT_FOOTER,
-  TOO_HARD_ABORT_MESSAGE,
-  TOO_HARD_PREFIX,
   WRITER_FOOTER,
   WRITER_SYSTEM_PROMPT,
   BLOCKERS_ABORT_MESSAGE,
@@ -17,7 +15,6 @@ import {
   failureExcerpt,
   isBlockersAbortError,
   isDirtyMainAbortError,
-  isTooHardAbortError,
   resolveWorkerSystemPrompt,
 } from '../implement-workflow'
 
@@ -324,54 +321,27 @@ describe('failureExcerpt — verify:test triage excerpt', () => {
   })
 })
 
-describe('isTooHardAbortError / isBlockersAbortError — cause-chain robustness', () => {
+describe('isBlockersAbortError — cause-chain robustness', () => {
   it('detects the bare throw-path sentinel', () => {
-    expect(
-      isTooHardAbortError(new Error(TOO_HARD_ABORT_MESSAGE('mars-abc'))),
-    ).toBe(true)
     expect(
       isBlockersAbortError(new Error(BLOCKERS_ABORT_MESSAGE('mars-abc'))),
     ).toBe(true)
   })
 
-  it('detects the return-path TOO_HARD_PREFIX summary (the mislabel bug)', () => {
-    const summary = `${TOO_HARD_PREFIX}: 5 reads without action; trace=Read+Read+Read+Read+Grep`
-    expect(isTooHardAbortError(new Error(summary))).toBe(true)
-    // …and as a plain string, since serialized errors lose Error-ness.
-    expect(isTooHardAbortError(summary)).toBe(true)
-  })
-
-  it('detects the sentinel when Mastra wraps it on the cause chain', () => {
-    const wrapped = new Error('Step run-claude-code failed', {
-      cause: new Error(TOO_HARD_ABORT_MESSAGE('mars-xyz')),
-    })
-    expect(isTooHardAbortError(wrapped)).toBe(true)
-
-    const deepWrapped = new Error('workflow failed', {
-      cause: new Error('Step failed', {
-        cause: new Error(
-          `${TOO_HARD_PREFIX}: 5 reads without action; trace=Grep+Grep+Read+Read+Read`,
-        ),
-      }),
-    })
-    expect(isTooHardAbortError(deepWrapped)).toBe(true)
-  })
-
   it('does not false-positive on unrelated failures', () => {
-    expect(isTooHardAbortError(new Error('tsc failed: TS2304'))).toBe(false)
     expect(isBlockersAbortError(new Error('verify command exited 1'))).toBe(
       false,
     )
-    expect(isTooHardAbortError(null)).toBe(false)
-    expect(isTooHardAbortError(undefined)).toBe(false)
+    expect(isBlockersAbortError(null)).toBe(false)
+    expect(isBlockersAbortError(undefined)).toBe(false)
   })
 
   it('is cycle-safe on a self-referential cause chain', () => {
     const a = new Error('a')
     const b = new Error('b', { cause: a })
     ;(a as { cause?: unknown }).cause = b
-    expect(() => isTooHardAbortError(a)).not.toThrow()
-    expect(isTooHardAbortError(a)).toBe(false)
+    expect(() => isBlockersAbortError(a)).not.toThrow()
+    expect(isBlockersAbortError(a)).toBe(false)
   })
 })
 
@@ -396,9 +366,8 @@ describe('isDirtyMainAbortError', () => {
     expect(isDirtyMainAbortError(wrapped)).toBe(true)
   })
 
-  it('does not match blockers or too-hard sentinels', () => {
+  it('does not match the blockers sentinel', () => {
     expect(isDirtyMainAbortError(new Error(BLOCKERS_ABORT_MESSAGE('mars-abc')))).toBe(false)
-    expect(isDirtyMainAbortError(new Error(TOO_HARD_ABORT_MESSAGE('mars-abc')))).toBe(false)
   })
 
   it('DIRTY_MAIN_ABORT_MESSAGE contains the task id', () => {

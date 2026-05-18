@@ -6,9 +6,9 @@
  * pair. Most signatures get a single retry — that's enough to absorb the
  * common transient flake without spending money on a runaway loop. The
  * `daemon-killed` signature is the documented exception: a worker killed
- * by the read-span watchdog or an external SIGKILL is much more likely to
- * succeed on a fresh dispatch, so it gets three attempts before we give
- * up and leave the parent blocked.
+ * by an external SIGKILL is much more likely to succeed on a fresh
+ * dispatch, so it gets three attempts before we give up and leave the
+ * parent blocked.
  *
  * Lookup is intentionally trivial — a frozen map plus a getter that falls
  * back to the default. Callers ask `getRetryBudget(signature)` rather
