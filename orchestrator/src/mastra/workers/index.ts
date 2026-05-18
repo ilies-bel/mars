@@ -35,7 +35,7 @@ export const READ_ONLY_DENIED_TOOLS: readonly string[] = [
 // guard; these Bash patterns block the CLI escape hatch. See slice 5/8.
 export const FIXER_BACKLOG_DENIED_TOOLS: readonly string[] = [
   'Bash(mars task add*)',
-  'Bash(mars idea*)',
+  'Bash(mars proposal*)',
   'Bash(mars draft*)',
 ] as const
 

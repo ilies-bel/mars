@@ -30,15 +30,15 @@ Parse the output:
   invoke `Skill({ skill: "mars:unblock", args: "<id>" })`. Stop.
 - **Task hit**, any other status → print one line summarising the task
   (id, status, title) and stop. Do not dispatch anywhere.
-- **Idea hit** (`kind: idea`) and `status: draft` →
+- **Proposal hit** (`kind: proposal`) and `status: draft` →
   invoke `Skill({ skill: "mars:grill", args: "<id>" })`. Stop.
-- **Idea hit** and `status: prd-ready` → ask one yes/no via
+- **Proposal hit** and `status: prd-ready` → ask one yes/no via
   `AskUserQuestion`: "Promote `<id>` and slice?" with options
   `["Yes — promote now", "No — leave it"]`. If yes, run
-  `mars idea promote <id>` and print the CLI output verbatim. Stop.
-- **Idea hit**, any other status → print one line summarising the idea
+  `mars proposal promote <id>` and print the CLI output verbatim. Stop.
+- **Proposal hit**, any other status → print one line summarising the proposal
   (id, status, title) and stop.
-- **No hit** (exit non-zero or "no task or idea matching") →
+- **No hit** (exit non-zero or "no task or proposal matching") →
   go to Step 1b.
 
 **Step 1b — Try `mars inbox show <arg>` as fallback:**
@@ -84,7 +84,7 @@ ambiguous — any of:
 - Mentions a trade-off ("should we…", "thinking about…", "best way to…").
 
 If any of these hold:
-1. Run `mars idea add "<text>"` and capture the printed id from stdout.
+1. Run `mars proposal add "<text>"` and capture the printed id from stdout.
 2. Invoke `Skill({ skill: "mars:grill", args: "<captured-id>" })`. Stop.
 
 **When in doubt** (neither clearly concrete nor clearly exploratory) → ask
@@ -103,7 +103,7 @@ the other.
 - Do not answer free-form questions about Mars. Always dispatch.
 - Do not load `mars glossary list` or `mars adr list`. Sub-skills handle that.
 - Do not call write verbs directly **except** `mars task add` (concrete-task
-  branch) and `mars idea add` (grill branch). All other writes belong to
+  branch) and `mars proposal add` (grill branch). All other writes belong to
   sub-skills.
 - Do not print the inbox or queue yourself.
 - Do not try to resolve a free-text argument as an id — only apply Rule 1 when

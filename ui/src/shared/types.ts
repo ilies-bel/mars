@@ -2,7 +2,7 @@ import type { TaskStatus } from './schemas'
 
 export type {
   TaskStatus,
-  IdeaSource,
+  ProposalSource,
   DraftFeature,
   InboxPayload,
   Task,

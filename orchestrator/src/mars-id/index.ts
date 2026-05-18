@@ -77,7 +77,7 @@ export class MarsId {
 /**
  * A partial lookup shape for a Mars id: a hex prefix of 1–8 chars, with
  * no kind attached. Cannot be rendered as a final id; intended only for
- * prefix-based lookup (e.g. `mars idea show 0483`).
+ * prefix-based lookup (e.g. `mars proposal show 0483`).
  */
 export class MarsIdPrefix {
   private constructor(readonly hex: string) {}

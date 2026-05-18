@@ -1,6 +1,6 @@
 ---
 name: mars:deep-reflect
-description: Run `mars deep-reflect [<task-id>]` to do a single-session, transcript-level post-mortem on one Mars task arc. Surfaces token-spend patterns, redundant tool calls, confusion loops, and tool-call/result mismatches (e.g. a successful tool call that still required a follow-up call to get the needed info). Persists a JSON report under .mars/deep-reflections/ and lands "save" verdicts as draft ideas (source='reflection'). Use when the user says "deep reflect", "post-mortem one task", "analyse a single arc/session", or invokes `/mars:deep-reflect [task-id]`.
+description: Run `mars deep-reflect [<task-id>]` to do a single-session, transcript-level post-mortem on one Mars task arc. Surfaces token-spend patterns, redundant tool calls, confusion loops, and tool-call/result mismatches (e.g. a successful tool call that still required a follow-up call to get the needed info). Persists a JSON report under .mars/deep-reflections/ and lands "save" verdicts as draft proposals (source='reflection'). Use when the user says "deep reflect", "post-mortem one task", "analyse a single arc/session", or invokes `/mars:deep-reflect [task-id]`.
 ---
 
 # Mars: deep-reflect on a single task arc
@@ -25,12 +25,11 @@ things aggregate reflection cannot see:
 
 The CLI persists a structured JSON report under
 `.mars/deep-reflections/<task-id>-<iso>.json` (gitignored) and inserts
-"save"-verdict findings as draft ideas with `source='reflection'`.
-Ideas are **never auto-run** — they are proposals for the user to
-triage.
+"save"-verdict findings as draft proposals with `source='reflection'`.
+Proposals are **never auto-run** — they are for the user to triage.
 
 This skill does **not** invent findings itself. It runs the CLI, then
-points the user at the report and the resulting draft ideas.
+points the user at the report and the resulting draft proposals.
 
 ## When to invoke
 
@@ -89,8 +88,8 @@ shape, in this order:
 9. **Report path** — the absolute `.mars/deep-reflections/<task>-<iso>.json`
    path from `Full report:`.
 10. **Next step** — only if `saved > 0`: point at
-    `mars idea list --source reflection --status draft` and
-    `/mars:grill <idea-id>`.
+    `mars proposal list --source reflection --status draft` and
+    `/mars:grill <proposal-id>`.
 
 Rules:
 - Do **not** add findings the CLI did not print.
@@ -130,14 +129,14 @@ Rules:
    contents into chat — the file is large and the CLI's stdout
    summary already covered the highlights.
 
-4. If the CLI's summary mentions that draft ideas were created, point
+4. If the CLI's summary mentions that draft proposals were created, point
    the user at the list and the follow-up verb:
    ```bash
-   mars idea list --source reflection --status draft
+   mars proposal list --source reflection --status draft
    ```
    Then tell them how to act:
    ```
-   To shape a reflection idea into a runnable task: /mars:grill <idea-id>
+   To shape a reflection proposal into a runnable task: /mars:grill <proposal-id>
    ```
    Do **not** run `/mars:grill` yourself — that is a separate
    user-driven step.
@@ -146,7 +145,7 @@ Rules:
 
 - **Never bypass the CLI.** Don't poke at `.mars/queue.db` or
   `.mars/mastra.db` directly; don't read transcripts by hand; don't
-  insert into `ideas` by hand.
+  insert into `proposals` by hand.
 - **Foreground only.** `mars deep-reflect` is the user-visible action;
   do not run it with `run_in_background`.
 - **Never invent a task id.** If the user is vague, ask one clarifying
@@ -154,8 +153,8 @@ Rules:
 - **Single session.** One invocation, one arc. Don't loop the verb.
 - **Repo resolution.** The CLI resolves the target repo itself. Do not
   pass `--repo` unless the user explicitly provided one.
-- **No auto-promotion.** Reflection ideas stay in `draft` status. This
-  skill does not call `mars idea promote`, `/mars:grill`, or any write
+- **No auto-promotion.** Reflection proposals stay in `draft` status. This
+  skill does not call `mars proposal promote`, `/mars:grill`, or any write
   verb beyond `mars deep-reflect` itself.
 
 ## Failure handling
@@ -171,7 +170,7 @@ Rules:
   explicit id → tell the user verbatim and stop. The skill cannot
   recover a missing transcript.
 - CLI ran but produced no "save" verdicts → report that the
-  post-mortem completed and produced no new draft ideas (this is a
+  post-mortem completed and produced no new draft proposals (this is a
   normal outcome, not a failure). The JSON report still exists and is
   worth pointing at.
 
@@ -183,9 +182,9 @@ Rules:
 > `mars deep-reflect mars-7f86263a` in the foreground, watches the
 > CLI print the pick line, findings, and verdict summary, then runs
 > `ls -1t .mars/deep-reflections/mars-7f86263a-*.json | head -1` and
-> tells the user the path. If new draft ideas landed, points at
-> `mars idea list --source reflection --status draft` and
-> `/mars:grill <idea-id>` to shape one into a task.
+> tells the user the path. If new draft proposals landed, points at
+> `mars proposal list --source reflection --status draft` and
+> `/mars:grill <proposal-id>` to shape one into a task.
 >
 > User: `/mars:deep-reflect` (no id)
 >
