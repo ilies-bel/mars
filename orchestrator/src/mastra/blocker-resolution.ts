@@ -48,9 +48,13 @@ const raiseInboxForBlockedTask = async (taskId: string): Promise<void> => {
   const task = await getTask(taskId)
   if (!task) return
   const error = task.error ?? ''
-  const colon = error.indexOf(':')
-  const lastStep = colon > 0 ? error.slice(0, colon).trim() : 'unblock'
-  const lastErrorSummary = colon > 0 ? error.slice(colon + 1).trim() : error
+  // Step names can be compound (e.g. "verify:test"), so split on ": " (colon-space)
+  // rather than just ":" to get the full step name including sub-step.
+  const colonSpace = error.indexOf(': ')
+  const lastStep =
+    colonSpace > 0 ? error.slice(0, colonSpace).trim() : 'blocked-dependent'
+  const lastErrorSummary =
+    colonSpace > 0 ? error.slice(colonSpace + 2).trim() : error
   await raiseRetryBudgetExhaustedInbox({
     taskId,
     lastStep,

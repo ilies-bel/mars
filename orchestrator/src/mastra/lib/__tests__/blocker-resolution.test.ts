@@ -257,4 +257,63 @@ describe('blocker-resolution (task_blockers)', () => {
     const reloaded = await q.getTask(dep.id)
     expect(reloaded?.status).toBe('blocked')
   })
+
+  it('never-run dependent (no error field) produces inbox lastStep of "blocked-dependent", not "unblock"', async () => {
+    // A task that sat in blocked without ever running has no error field.
+    // The inbox item must NOT use the bogus 'unblock' sentinel — it must
+    // use 'blocked-dependent' so a human reading mars inbox can tell this
+    // task never executed vs failing at a real workflow step.
+    const { q, br } = await loadModules(repo)
+    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+    // retry_count=1 so retryBudgetExhausted fires; no error field (never ran).
+    await blockTask(q, dep.id, fix.id, 1)
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [fix.id],
+    })
+
+    await br.onBlockerTaskCompleted(fix.id)
+
+    const inbox = (await import('../inbox')) as unknown as {
+      listInboxItems: typeof import('../inbox').listInboxItems
+    }
+    const open = await inbox.listInboxItems('open')
+    const item = open.find((i) => i.kind === `task-blocked(${dep.id})`)
+    expect(item).toBeDefined()
+    expect(item!.payload.lastStep).toBe('blocked-dependent')
+    expect(item!.payload.lastStep).not.toBe('unblock')
+    expect(item!.body).not.toContain('at step `unblock`')
+    expect(item!.body).toMatch(/never ran|blocked dependent/i)
+  })
+
+  it('task that failed at a real step produces inbox lastStep matching the step name', async () => {
+    // A task with error='verify:test: npm test failed' should surface
+    // lastStep='verify:test' — the real step — not 'blocked-dependent'.
+    const { q, br } = await loadModules(repo)
+    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+    await blockTask(q, dep.id, fix.id, 1)
+    // Give it a real step error.
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET error = 'verify:test: npm test failed' WHERE id = ?`,
+      args: [dep.id],
+    })
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [fix.id],
+    })
+
+    await br.onBlockerTaskCompleted(fix.id)
+
+    const inbox = (await import('../inbox')) as unknown as {
+      listInboxItems: typeof import('../inbox').listInboxItems
+    }
+    const open = await inbox.listInboxItems('open')
+    const item = open.find((i) => i.kind === `task-blocked(${dep.id})`)
+    expect(item).toBeDefined()
+    expect(item!.payload.lastStep).toBe('verify:test')
+    expect(item!.body).toContain('at step `verify:test`')
+    expect(item!.body).not.toContain('never ran')
+  })
 })
