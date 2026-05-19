@@ -1,9 +1,10 @@
-import { createClient, type Client, type InStatement } from '@libsql/client'
+import { type Client, type InStatement } from '@libsql/client'
 import { randomUUID } from 'node:crypto'
 import { resolveContext } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
 import { dismissAlertsOnStatusChange } from './lib/inbox'
+import { openLibsql } from './lib/libsql'
 
 export type TaskStatus =
   | 'draft'
@@ -293,7 +294,7 @@ let clientSingleton: Client | null = null
 export const getClient = (): Client => {
   if (!clientSingleton) {
     const { queueDbPath } = resolveContext()
-    clientSingleton = createClient({ url: `file:${queueDbPath}` })
+    clientSingleton = openLibsql({ url: `file:${queueDbPath}` })
   }
   return clientSingleton
 }

@@ -1,7 +1,8 @@
-import { createClient, type Client } from '@libsql/client'
+import { type Client } from '@libsql/client'
 import { randomBytes } from 'node:crypto'
 import { resolveContext } from './context'
 import type { Author, AuthorKind } from './author'
+import { openLibsql } from './lib/libsql'
 
 export type ProposalSource = 'reflection' | 'human' | 'planner'
 
@@ -25,7 +26,7 @@ let clientSingleton: Client | null = null
 const getClient = (): Client => {
   if (clientSingleton) return clientSingleton
   const { stateDbPath } = resolveContext()
-  clientSingleton = createClient({ url: `file:${stateDbPath}` })
+  clientSingleton = openLibsql({ url: `file:${stateDbPath}` })
   return clientSingleton
 }
 
@@ -245,7 +246,7 @@ const migrateTaskSuggestions = async (c: Client): Promise<void> => {
   const { queueDbPath } = resolveContext()
   let queueClient: Client
   try {
-    queueClient = createClient({ url: `file:${queueDbPath}` })
+    queueClient = openLibsql({ url: `file:${queueDbPath}` })
   } catch {
     return
   }
