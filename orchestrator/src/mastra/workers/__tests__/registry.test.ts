@@ -128,6 +128,18 @@ describe('Fixer pinned config', () => {
       expect(denied).toContain(pattern)
     }
   })
+
+  it('retains the full coding surface — does not deny Edit, Write, or NotebookEdit', () => {
+    // Fixer needs to mutate the worktree to apply a fix. Unlike the read-only
+    // synthesis Workers (Planner/Slicer/Triager), it must NOT have Edit, Write,
+    // or NotebookEdit blocked. The only denials on Fixer are the backlog-
+    // mutation guards (FIXER_BACKLOG_DENIED_TOOLS) and the wrapper-layer
+    // agent-to-user ban.
+    const denied = (valueAfter(args, '--disallowedTools') ?? '').split(',')
+    expect(denied).not.toContain('Edit')
+    expect(denied).not.toContain('Write')
+    expect(denied).not.toContain('NotebookEdit')
+  })
 })
 
 describe('MARS_WORKER_MODEL env var', () => {
