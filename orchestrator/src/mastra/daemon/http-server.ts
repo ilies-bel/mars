@@ -29,7 +29,7 @@ const isRestartTaskError = (
   err: unknown,
 ): err is RestartTaskError & { code: 'NOT_FOUND' | 'WRONG_STATUS' } => {
   if (!(err instanceof Error)) return false
-  const code = (err as Record<string, unknown>).code
+  const code = (err as unknown as Record<string, unknown>).code
   return code === 'NOT_FOUND' || code === 'WRONG_STATUS'
 }
 

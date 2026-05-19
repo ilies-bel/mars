@@ -877,36 +877,12 @@ export const startDaemon = async (
   }
 
   // 'mars restart <id>' wipes the worktree+branch and re-runs the full
-  // pipeline from setup. Same body as the legacy 'retry' verb.
+  // pipeline from setup. The restart mechanics live in coreRestartTask so
+  // the HTTP endpoint (slice 2 of the retry-button PRD) shares the exact
+  // same code path — see daemon/restart-task.ts.
   const handleRestart = async (id: string): Promise<void> => {
-    const task = await getTask(id)
-    if (!task) throw new Error(`task ${id} not found`)
-    if (task.status !== 'failed' && task.status !== 'done') {
-      throw new Error(`task ${id} is ${task.status}; only failed/done tasks can be restarted`)
-    }
-
-    const { existsSync: exists } = await import('node:fs')
-    const { execFile } = await import('node:child_process')
-    const { promisify } = await import('node:util')
-    const exec = promisify(execFile)
-    const { removeWorktree } = await import('../lib/git')
-    const { getRepoRoot } = await import('../context')
-
-    const branch = task.branch ?? `task/${task.id}`
-    if (task.worktreePath && exists(task.worktreePath)) {
-      await removeWorktree({ path: task.worktreePath, branch }, true).catch(() => {})
-    }
-    await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
-
-    await updateTask(id, {
-      status: 'queued',
-      branch: null,
-      worktreePath: null,
-      claudeSessionId: null,
-      error: null,
-      failedPhase: null,
-      resumeFrom: null,
-    })
+    const { coreRestartTask } = await import('./restart-task')
+    await coreRestartTask(id, new Set(['failed', 'done']))
     bus.emit('task.queued', { taskId: id })
   }
 
