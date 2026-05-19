@@ -131,7 +131,9 @@ class ExitCalled extends Error {
   }
 }
 
-const withMockedExit = (fn: () => void): { exitCode: number } => {
+const withMockedExit = async (
+  fn: () => Promise<void> | void,
+): Promise<{ exitCode: number }> => {
   const origExit = process.exit.bind(process) as (code?: number) => never
   let exitCode = -1
   ;(process as { exit: (code?: number) => void }).exit = (code?: number) => {
@@ -139,7 +141,7 @@ const withMockedExit = (fn: () => void): { exitCode: number } => {
     throw new ExitCalled(exitCode)
   }
   try {
-    fn()
+    await fn()
   } catch (err) {
     if (!(err instanceof ExitCalled)) throw err
   } finally {
@@ -149,21 +151,21 @@ const withMockedExit = (fn: () => void): { exitCode: number } => {
 }
 
 describe('stopUi — no running process', () => {
-  it('exits 0 and prints "no mars ui running" when no pid file', () => {
+  it('exits 0 and prints "no ui running" when no pid file', async () => {
     const lines: string[] = []
     const origLog = console.log
     console.log = (...args: unknown[]) => lines.push(args.join(' '))
     let result: { exitCode: number }
     try {
-      result = withMockedExit(() => stopUi(tmpRepo))
+      result = await withMockedExit(() => stopUi(tmpRepo))
     } finally {
       console.log = origLog
     }
-    expect(lines).toContain('no mars ui running')
+    expect(lines).toContain('no ui running')
     expect(result!.exitCode).toBe(0)
   })
 
-  it('removes a stale pid file and exits 0', () => {
+  it('removes a stale pid file and exits 0', async () => {
     const entry: UiPidEntry = {
       pid: 2_147_483_647,
       port: 7777,
@@ -173,7 +175,7 @@ describe('stopUi — no running process', () => {
     writePidEntry(entry)
     expect(existsSync(pidFilePath())).toBe(true)
 
-    const result = withMockedExit(() => stopUi(tmpRepo))
+    const result = await withMockedExit(() => stopUi(tmpRepo))
 
     expect(existsSync(pidFilePath())).toBe(false)
     expect(result.exitCode).toBe(0)

@@ -3,6 +3,7 @@ import { existsSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveContext } from '../mastra/context'
+import { stopProcess, makeOsStopDeps } from './ui-stop'
 
 interface LaunchOptions {
   repo?: string
@@ -112,48 +113,16 @@ export const statusUi = (repo?: string): void => {
   console.log(`pid=${entry.pid}  port=${entry.port}  url=http://${entry.host}:${entry.port}`)
 }
 
-export const stopUi = (repo?: string): void => {
+export const stopUi = async (repo?: string): Promise<void> => {
   const pidFile = getPidFilePath(repo)
   const entry = readPidEntry(repo)
 
-  if (!entry || !isAlive(entry.pid)) {
-    console.log('no mars ui running')
-    try {
-      unlinkSync(pidFile)
-    } catch {
-      // already gone
-    }
-    process.exit(0)
-  }
+  const result = await stopProcess(entry, pidFile, makeOsStopDeps())
 
-  process.kill(entry.pid, 'SIGTERM')
-
-  const deadline = Date.now() + 2000
-  const poll = (): void => {
-    if (!isAlive(entry.pid)) {
-      try {
-        unlinkSync(pidFile)
-      } catch {
-        // already gone
-      }
-      console.log(`stopped pid=${entry.pid}`)
-      process.exit(0)
-    }
-    if (Date.now() >= deadline) {
-      try {
-        process.kill(entry.pid, 'SIGKILL')
-      } catch {
-        // already gone
-      }
-      try {
-        unlinkSync(pidFile)
-      } catch {
-        // already gone
-      }
-      console.log(`stopped pid=${entry.pid}`)
-      process.exit(0)
-    }
-    setTimeout(poll, 100)
+  if (result.kind === 'not-running') {
+    console.log('no ui running')
+  } else {
+    console.log(`stopped pid=${result.pid}  port=${result.port}`)
   }
-  setTimeout(poll, 100)
+  process.exit(0)
 }
