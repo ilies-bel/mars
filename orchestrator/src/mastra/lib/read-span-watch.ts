@@ -15,6 +15,13 @@ import type { ClaudeEvent } from './claude-stream'
  * Tools outside both classes (TaskCreate, TodoWrite, WebFetch, etc.) are
  * ignored — they neither extend nor reset the streak. The watcher is
  * advisory and pure: it never mutates the conversation or queue.
+ *
+ * A sibling detector tracks Agent/Explore sub-agent invocations: when the
+ * sub-agent's return payload cites file paths and the coder subsequently
+ * re-reads three or more of those paths (even interleaved with Bash or
+ * other calls), the watcher fires `onRedundantSelfRead` exactly once with
+ * a tag of 'redundant-self-read-after-subagent'. This detector is also
+ * purely observational — it never aborts the run.
  */
 export interface ReadSpanWatcherConfig {
   /**
@@ -42,6 +49,26 @@ export interface ReadSpanWatcherConfig {
    * watcher keeps observing; the caller decides whether to abort.
    */
   onAbort?: (info: ThresholdInfo) => void
+  /**
+   * Optional. Invoked exactly once per sub-agent invocation when the coder
+   * re-reads three or more paths that were cited in that sub-agent's return
+   * payload. The call is tagged 'redundant-self-read-after-subagent' and is
+   * purely informational — the watcher does not abort the run.
+   */
+  onRedundantSelfRead?: (info: RedundantSelfReadInfo) => void
+}
+
+/**
+ * Payload delivered to `onRedundantSelfRead` when the watcher detects that
+ * a coder has re-read three or more paths already cited by a sub-agent.
+ */
+export interface RedundantSelfReadInfo {
+  /** The tool_use id of the Agent/Explore invocation whose report was cited. */
+  readonly subAgentInvocationId: string
+  /** File paths extracted from the sub-agent's return payload. */
+  readonly citedPaths: readonly string[]
+  /** Read targets that overlapped with `citedPaths`, in observation order. */
+  readonly redundantReadPaths: readonly string[]
 }
 
 export interface ReadSpanTrace {
@@ -123,6 +150,7 @@ const targetFromInput = (input: unknown): string => {
 }
 
 interface ToolUseBlock {
+  readonly id: string
   readonly name: string
   readonly input: unknown
 }
@@ -138,10 +166,103 @@ const extractToolUses = (event: ClaudeEvent): ToolUseBlock[] => {
     if (!isRecord(block)) continue
     if (block.type !== 'tool_use') continue
     if (typeof block.name !== 'string') continue
-    out.push({ name: block.name, input: block.input })
+    out.push({
+      id: typeof block.id === 'string' ? block.id : '',
+      name: block.name,
+      input: block.input,
+    })
   }
   return out
 }
+
+// ---------------------------------------------------------------------------
+// Sub-agent result extraction helpers
+// ---------------------------------------------------------------------------
+
+interface ToolResultBlock {
+  readonly toolUseId: string
+  readonly text: string
+}
+
+const extractTextFromContent = (content: unknown): string => {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .filter(isRecord)
+      .filter((b) => b.type === 'text' && typeof b.text === 'string')
+      .map((b) => b.text as string)
+      .join('\n')
+  }
+  return ''
+}
+
+const extractToolResults = (event: ClaudeEvent): ToolResultBlock[] => {
+  if (event.type !== 'user') return []
+  const message = (event as { message?: unknown }).message
+  if (!isRecord(message)) return []
+  const content = message.content
+  if (!Array.isArray(content)) return []
+  const out: ToolResultBlock[] = []
+  for (const block of content) {
+    if (!isRecord(block)) continue
+    if (block.type !== 'tool_result') continue
+    if (typeof block.tool_use_id !== 'string') continue
+    const text = extractTextFromContent(block.content)
+    if (text.length > 0) {
+      out.push({ toolUseId: block.tool_use_id, text })
+    }
+  }
+  return out
+}
+
+/**
+ * Extracts file-path-like tokens from a text blob. Matches bare filenames
+ * (e.g. `queue.ts`, `implement-workflow.ts`) and relative/absolute paths
+ * that end with a recognised source-file extension. Returns each unique
+ * path once.
+ */
+const extractFilePaths = (text: string): string[] => {
+  const found = new Set<string>()
+  // Match tokens that look like file paths, preceded by whitespace/punctuation
+  // or the start of string, and followed by whitespace/punctuation or end.
+  const re =
+    /(?:^|[\s"'`(,[\]{}])((?:\.\/|\/)?[-\w][-\w./]*\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yaml|yml|sh|py|go|rs|sql|txt|toml|lock))(?=[\s"'`),[\]{}.!?;:]|$)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    if (m[1]) found.add(m[1])
+  }
+  return [...found]
+}
+
+/**
+ * Returns true when `readTarget` (a Read tool file_path) overlaps with one
+ * of the `citedPaths` extracted from a sub-agent report. Handles the common
+ * cases:
+ * - exact match (`queue.ts` === `queue.ts`)
+ * - absolute target vs bare cited name (`/a/b/queue.ts` ends with `/queue.ts`)
+ * - bare target vs absolute cited path (`queue.ts` matches `/a/b/queue.ts`)
+ */
+const pathMatchesAny = (readTarget: string, citedPaths: readonly string[]): boolean =>
+  citedPaths.some(
+    (cited) =>
+      readTarget === cited ||
+      readTarget.endsWith('/' + cited) ||
+      cited.endsWith('/' + readTarget),
+  )
+
+// ---------------------------------------------------------------------------
+// Internal sub-agent tracking state
+// ---------------------------------------------------------------------------
+
+interface SubAgentTrack {
+  readonly invocationId: string
+  readonly citedPaths: readonly string[]
+  readonly redundantReadPaths: string[]
+  fired: boolean
+}
+
+/** Tool names that represent sub-agent dispatches worth tracking. */
+const SUB_AGENT_TOOLS = new Set(['Agent', 'Explore'])
 
 export const resolveReadSpanLimit = (override?: number): number => {
   if (override !== undefined && Number.isFinite(override) && override > 0) {
@@ -202,6 +323,11 @@ export const createReadSpanWatcher = (
   const limit = config.limit
   const abortLimit = config.abortLimit
 
+  // Sub-agent tracking: pending invocations waiting for their tool_result,
+  // and active tracks for which we're counting redundant reads.
+  const pendingSubAgentIds = new Map<string, string>() // tool_use_id → agent name
+  const activeSubAgentTracks: SubAgentTrack[] = []
+
   const bumpRead = (entry: ReadSpanTrace): void => {
     streak += 1
     totalReads += 1
@@ -231,6 +357,29 @@ export const createReadSpanWatcher = (
     trace = []
   }
 
+  /**
+   * After each Read tool_use, check whether the target overlaps with any
+   * active sub-agent track. When a track accumulates 3+ overlapping reads,
+   * fire `onRedundantSelfRead` exactly once.
+   */
+  const checkRedundantRead = (readTarget: string): void => {
+    if (!config.onRedundantSelfRead) return
+    for (const track of activeSubAgentTracks) {
+      if (track.fired) continue
+      if (pathMatchesAny(readTarget, track.citedPaths)) {
+        track.redundantReadPaths.push(readTarget)
+        if (track.redundantReadPaths.length >= 3) {
+          track.fired = true
+          config.onRedundantSelfRead({
+            subAgentInvocationId: track.invocationId,
+            citedPaths: track.citedPaths,
+            redundantReadPaths: [...track.redundantReadPaths],
+          })
+        }
+      }
+    }
+  }
+
   return {
     get streak() {
       return streak
@@ -257,14 +406,46 @@ export const createReadSpanWatcher = (
       return abortThresholdReached
     },
     observe(event) {
+      // Process user events: correlate tool_results to pending sub-agent
+      // invocations and build active tracks from cited file paths.
+      if (event.type === 'user') {
+        const results = extractToolResults(event)
+        for (const result of results) {
+          const agentName = pendingSubAgentIds.get(result.toolUseId)
+          if (agentName !== undefined) {
+            pendingSubAgentIds.delete(result.toolUseId)
+            const citedPaths = extractFilePaths(result.text)
+            if (citedPaths.length > 0) {
+              activeSubAgentTracks.push({
+                invocationId: result.toolUseId,
+                citedPaths,
+                redundantReadPaths: [],
+                fired: false,
+              })
+            }
+          }
+        }
+      }
+
       const uses = extractToolUses(event)
       if (uses.length === 0) return
       for (const use of uses) {
+        // Track sub-agent dispatches so we can correlate their results.
+        if (SUB_AGENT_TOOLS.has(use.name) && use.id.length > 0) {
+          pendingSubAgentIds.set(use.id, use.name)
+        }
+
         if (READ_TOOLS.has(use.name)) {
+          const target = targetFromInput(use.input)
           bumpRead({
             tool: use.name as 'Read' | 'Grep' | 'Glob',
-            target: targetFromInput(use.input),
+            target,
           })
+          // Only Read calls (not Grep/Glob) trigger the redundant-self-read
+          // detector because those are the coder re-fetching full file content.
+          if (use.name === 'Read') {
+            checkRedundantRead(target)
+          }
         } else if (use.name === 'Bash') {
           const cmd =
             isRecord(use.input) && typeof use.input.command === 'string'
