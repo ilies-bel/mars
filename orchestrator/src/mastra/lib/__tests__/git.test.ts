@@ -24,6 +24,7 @@ import {
   acquireLock,
   checkSetupPreflight,
   claudeBinEnvFingerprint,
+  resolveClaudeBin,
   runSubprocessStreaming,
   runClaudeCode,
   stripFrontmatter,
@@ -71,6 +72,84 @@ describe('claudeBinEnvFingerprint', () => {
   it('uses a non-NUL separator so the source file stays text for ripgrep', () => {
     const fp = claudeBinEnvFingerprint('x', 'y')
     expect(fp.includes('\0')).toBe(false)
+  })
+})
+
+describe('resolveClaudeBin — Windows platform (monkey-patched)', () => {
+  // These tests monkey-patch process.platform to 'win32' via Object.defineProperty
+  // (process.platform is configurable in Node.js, allowing safe overrides).
+  // They verify that:
+  //   1. PATH is split on ';' rather than ':'
+  //   2. 'claude.exe' is probed and returned when found
+  //   3. POSIX fallback directories are NOT consulted
+
+  let tempDir: string
+  let originalPath: string | undefined
+  let originalPlatformDescriptor: PropertyDescriptor | undefined
+
+  beforeAll(() => {
+    tempDir = mkdtempSync(resolve(tmpdir(), 'mars-win-claude-'))
+    // Write a shell script named claude.exe — on POSIX isExecutableFile checks
+    // fs.statSync().isFile() + accessSync(X_OK), so a chmod'd script works.
+    writeFileSync(resolve(tempDir, 'claude.exe'), '#!/bin/sh\n', 'utf8')
+    chmodSync(resolve(tempDir, 'claude.exe'), 0o755)
+    writeFileSync(resolve(tempDir, 'claude.cmd'), '@echo off\r\n', 'utf8')
+    chmodSync(resolve(tempDir, 'claude.cmd'), 0o755)
+  })
+
+  afterAll(() => {
+    rmSync(tempDir, { recursive: true, force: true })
+  })
+
+  beforeEach(() => {
+    originalPath = process.env.PATH
+    originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+    // Monkey-patch process.platform to 'win32' for the duration of each test.
+    Object.defineProperty(process, 'platform', {
+      value: 'win32',
+      configurable: true,
+      writable: false,
+      enumerable: true,
+    })
+  })
+
+  afterEach(() => {
+    // Restore process.platform
+    if (originalPlatformDescriptor) {
+      Object.defineProperty(process, 'platform', originalPlatformDescriptor)
+    }
+    if (originalPath !== undefined) process.env.PATH = originalPath
+    else delete process.env.PATH
+  })
+
+  it('splits PATH on ";" and returns claude.exe when it is the first probe hit', () => {
+    // Semicolon-delimited Windows-style PATH: tempDir is first, then a dummy.
+    // If the code were still splitting on ':', the whole string would be treated
+    // as a single (non-existent) directory and 'claude' would be returned instead.
+    process.env.PATH = `${tempDir};/nonexistent-dir`
+
+    const result = resolveClaudeBin()
+
+    expect(result).toBe(resolve(tempDir, 'claude.exe'))
+  })
+
+  it('prefers claude.exe over claude.cmd when both exist', () => {
+    process.env.PATH = tempDir
+
+    const result = resolveClaudeBin()
+
+    expect(result).toBe(resolve(tempDir, 'claude.exe'))
+  })
+
+  it('does not probe POSIX fallback directories on Windows', () => {
+    // PATH has no directories containing claude.exe/.cmd — the resolver
+    // must fall back to bare 'claude' rather than searching POSIX dirs
+    // like /opt/homebrew/bin, /usr/local/bin, etc.
+    process.env.PATH = '/nonexistent-windows-path'
+
+    const result = resolveClaudeBin()
+
+    expect(result).toBe('claude')
   })
 })
 
