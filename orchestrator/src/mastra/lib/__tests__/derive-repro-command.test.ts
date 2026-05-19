@@ -40,6 +40,55 @@ describe('deriveReproCommand', () => {
       expect(cmd).toBe(`cd ${worktree} && pnpm test`)
     })
 
+    it('uses `yarn test` when a yarn.lock is present alongside the script', () => {
+      writeFileSync(
+        resolve(worktree, 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } }),
+      )
+      writeFileSync(resolve(worktree, 'yarn.lock'), '')
+      const cmd = deriveReproCommand('verify:test', worktree)
+      expect(cmd).toBe(`cd ${worktree} && yarn test`)
+    })
+
+    it('uses `bun test` when a bun.lockb is present alongside the script', () => {
+      writeFileSync(
+        resolve(worktree, 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } }),
+      )
+      writeFileSync(resolve(worktree, 'bun.lockb'), '')
+      const cmd = deriveReproCommand('verify:test', worktree)
+      expect(cmd).toBe(`cd ${worktree} && bun test`)
+    })
+
+    it('uses `bun test` when a bun.lock is present alongside the script', () => {
+      writeFileSync(
+        resolve(worktree, 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } }),
+      )
+      writeFileSync(resolve(worktree, 'bun.lock'), '')
+      const cmd = deriveReproCommand('verify:test', worktree)
+      expect(cmd).toBe(`cd ${worktree} && bun test`)
+    })
+
+    it('uses `npm test` when a package-lock.json is present alongside the script', () => {
+      writeFileSync(
+        resolve(worktree, 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } }),
+      )
+      writeFileSync(resolve(worktree, 'package-lock.json'), '{}')
+      const cmd = deriveReproCommand('verify:test', worktree)
+      expect(cmd).toBe(`cd ${worktree} && npm test`)
+    })
+
+    it('falls back to `npx vitest run` when the test script value is an empty string', () => {
+      writeFileSync(
+        resolve(worktree, 'package.json'),
+        JSON.stringify({ scripts: { test: '' } }),
+      )
+      const cmd = deriveReproCommand('verify:test', worktree)
+      expect(cmd).toBe(`cd ${worktree} && npx vitest run`)
+    })
+
     it('falls back to `npx vitest run` when package.json has no test script', () => {
       writeFileSync(
         resolve(worktree, 'package.json'),
