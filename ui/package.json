@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Read-only Kanban viewer for the Mars orchestrator queue.",
+  "description": "Read-only Progress viewer for the Mars orchestrator queue.",
   "bin": {
     "mars-ui": "./bin/mars-ui.mjs"
   },

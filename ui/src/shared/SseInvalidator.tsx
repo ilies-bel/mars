@@ -12,8 +12,9 @@ export const SseInvalidator = () => {
     es.addEventListener('hello', () => setSseConnected(true))
     es.addEventListener('tasks', () => {
       void qc.invalidateQueries({ queryKey: ['tasks'] })
+      void qc.invalidateQueries({ queryKey: ['progress'] })
       void qc.invalidateQueries({ queryKey: ['inbox'] })
-      // Refetch the open drawer's task alongside the Kanban so the status
+      // Refetch the open drawer's task alongside Progress so the status
       // chip and section data update in place. Switching the drawer to a
       // different id automatically retargets here because `getOpenTaskId`
       // reads the current store value at event time.

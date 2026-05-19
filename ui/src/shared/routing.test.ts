@@ -52,9 +52,15 @@ describe('detectRoute', () => {
     expect(detectRoute('#/action-queue/sub')).toBe('action-queue')
   })
 
-  it('returns kanban for the #/kanban hash', () => {
-    expect(detectRoute('#/kanban')).toBe('kanban')
-    expect(detectRoute('#/kanban/anything')).toBe('kanban')
+  it('returns progress for the #/progress hash', () => {
+    expect(detectRoute('#/progress')).toBe('progress')
+    expect(detectRoute('#/progress/anything')).toBe('progress')
+  })
+
+  it('does not recognise the legacy #/kanban hash', () => {
+    // Hard cut — no alias, no redirect. The legacy hash falls through to the
+    // default route.
+    expect(detectRoute('#/kanban')).toBe('action-queue')
   })
 
   it('returns agents for the #/agents hash', () => {
@@ -90,7 +96,7 @@ describe('parseTaskRoute', () => {
   it('returns null when the hash has no task fragment', () => {
     expect(parseTaskRoute('')).toBeNull()
     expect(parseTaskRoute('#/')).toBeNull()
-    expect(parseTaskRoute('#/kanban')).toBeNull()
+    expect(parseTaskRoute('#/progress')).toBeNull()
   })
 
   it('returns the id from #/task/<id>', () => {

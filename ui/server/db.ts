@@ -11,6 +11,17 @@ export type TaskStatus =
   | 'dropped'
   | 'blocked'
 
+/**
+ * Server-derived cluster tag for the Progress tab. The UI MUST NOT recompute
+ * this — it is the single source of truth for how a live or recently-broken
+ * task should be grouped on screen.
+ */
+export type Cluster = 'In progress' | 'Blocked' | 'Failed'
+
+export interface ProgressTask extends Task {
+  cluster: Cluster
+}
+
 type ProposalSource = 'reflection' | 'human' | 'planner'
 
 export interface DraftFeature {
@@ -81,6 +92,35 @@ const normaliseSource = (raw: unknown): ProposalSource => {
   return 'human'
 }
 
+/**
+ * Maps a task to its Progress-tab cluster, or `null` if the task is out of
+ * scope (draft/done/dropped, or failed older than the 24h window).
+ */
+const clusterFor = (
+  task: Task,
+  now: number,
+  windowMs: number,
+): Cluster | null => {
+  switch (task.status) {
+    case 'queued':
+    case 'running':
+    case 'verifying':
+    case 'merging':
+      return 'In progress'
+    case 'blocked':
+      return 'Blocked'
+    case 'failed': {
+      const updatedAt = Date.parse(task.updatedAt)
+      if (Number.isNaN(updatedAt)) return 'Failed'
+      return now - updatedAt <= windowMs ? 'Failed' : null
+    }
+    case 'draft':
+    case 'done':
+    case 'dropped':
+      return null
+  }
+}
+
 export class TaskDb {
   private client: Client
 
@@ -139,6 +179,35 @@ export class TaskDb {
     const all = await this.listTasks()
     const wanted = new Set<TaskStatus>(statuses)
     return all.filter((t) => wanted.has(t.status))
+  }
+
+  /**
+   * Tasks in scope for the Progress tab.
+   *
+   * Scope:
+   * - all non-terminal statuses (queued, running, verifying, merging, blocked)
+   * - plus `failed` tasks whose `updated_at` is within the last 24 hours
+   *
+   * Excluded:
+   * - `draft` (not yet enqueued)
+   * - `done` and `dropped` (terminal-success or operator-dismissed)
+   * - `failed` older than 24h (recovered or simply stale)
+   *
+   * Each returned task carries a server-derived `cluster` tag so the UI
+   * does not encode the cluster taxonomy itself.
+   */
+  async listProgressTasks(now: number = Date.now()): Promise<ProgressTask[]> {
+    const exists = await this.tableExists()
+    if (!exists) return []
+    const all = await this.listTasks()
+    const dayMs = 24 * 60 * 60 * 1000
+    const out: ProgressTask[] = []
+    for (const t of all) {
+      const cluster = clusterFor(t, now, dayMs)
+      if (cluster === null) continue
+      out.push({ ...t, cluster })
+    }
+    return out
   }
 
   async findTaskById(id: string): Promise<Task | null> {
