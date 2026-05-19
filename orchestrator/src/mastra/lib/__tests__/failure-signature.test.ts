@@ -96,6 +96,11 @@ describe('computeFailureSignature', () => {
         "src/mastra/daemon/__tests__/liveness.test.ts(144,51): error TS2345: Argument of type '(value: void | PromiseLike<void>) => void' is not assignable to parameter of type '(err?: Error | undefined) => void'.",
       ),
     ).toBe('typecheck-arg-type-mismatch')
+    expect(
+      classifyError(
+        "src/cli/__tests__/foo.test.ts(23,10): error TS2694: Namespace 'queue' has no exported member 'listSiblings'.",
+      ),
+    ).toBe('typecheck-missing-export')
   })
 
   it('ignores ANSI escape codes when matching rules', () => {
