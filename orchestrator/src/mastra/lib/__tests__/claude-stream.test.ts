@@ -104,14 +104,12 @@ describe('parseClaudeStreamLine', () => {
       type: 'result',
       subtype: 'success',
       session_id: 's1',
-      total_cost_usd: 0.01,
     })
     const event = parseClaudeStreamLine(line)
     expect(event).toEqual({
       type: 'result',
       subtype: 'success',
       session_id: 's1',
-      total_cost_usd: 0.01,
     })
   })
 })

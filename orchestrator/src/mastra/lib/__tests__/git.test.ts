@@ -276,7 +276,7 @@ const lines = [
   { type: 'system', subtype: 'init', session_id: 'stub-session-xyz' },
   { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] } },
   { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } },
-  { type: 'result', subtype: 'success', session_id: 'stub-session-xyz', total_cost_usd: 0 },
+  { type: 'result', subtype: 'success', session_id: 'stub-session-xyz' },
 ];
 for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
 `
@@ -361,7 +361,7 @@ const fs = require('node:fs');
 fs.writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)));
 process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'deny-session' }) + '\\n');
 process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } }) + '\\n');
-process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', session_id: 'deny-session', total_cost_usd: 0 }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', session_id: 'deny-session' }) + '\\n');
 `
     writeFileSync(stubPath, stubScript, 'utf8')
     chmodSync(stubPath, 0o755)

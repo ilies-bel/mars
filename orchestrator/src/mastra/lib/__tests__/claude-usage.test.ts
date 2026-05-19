@@ -7,6 +7,24 @@ const assistant = (usage: Record<string, unknown>): ClaudeEvent => ({
   message: { usage, content: [] },
 })
 
+describe('UsageTotals shape', () => {
+  it('carries no key matching /usd/i or /cost/i', () => {
+    const keys = Object.keys(emptyUsageTotals())
+    for (const key of keys) {
+      expect(key).not.toMatch(/usd/i)
+      expect(key).not.toMatch(/cost/i)
+    }
+  })
+
+  it('summarizeUsage result carries no key matching /usd/i or /cost/i', () => {
+    const keys = Object.keys(summarizeUsage([]))
+    for (const key of keys) {
+      expect(key).not.toMatch(/usd/i)
+      expect(key).not.toMatch(/cost/i)
+    }
+  })
+})
+
 describe('summarizeUsage', () => {
   it('returns zeros for empty input', () => {
     expect(summarizeUsage([])).toEqual(emptyUsageTotals())
