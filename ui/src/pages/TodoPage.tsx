@@ -194,7 +194,7 @@ const StaleDetail = ({ worktree }: StaleDetailProps) => (
           <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
             Age
           </dt>
-          <dd className="text-fg">{worktree.ageHours}h</dd>
+          <dd className="text-fg">{formatRelativeAgeFromHours(worktree.ageHours)}</dd>
         </div>
         <div>
           <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
