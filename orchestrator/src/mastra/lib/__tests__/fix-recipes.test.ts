@@ -527,6 +527,77 @@ describe('fix-recipes', () => {
     })
   })
 
+  describe('verify:typecheck/typecheck-arg-type-mismatch recipe', () => {
+    const ctx = {
+      targetPath: '/tmp/worktrees/task-abc',
+      statusOutput:
+        "src/mastra/daemon/__tests__/liveness.test.ts(144,51): error TS2345: Argument of type '(value: void | PromiseLike<void>) => void' is not assignable to parameter of type '(err?: Error | undefined) => void'.\nCommand failed: npx tsc --noEmit\n",
+      targetBranch: 'task/abc',
+      integrationBranch: 'main',
+      originalPrompt: '',
+    }
+
+    it('is registered under the correct signature', () => {
+      expect(hasRecipe('verify:typecheck/typecheck-arg-type-mismatch')).toBe(true)
+    })
+
+    it('produces a stable title', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
+      expect(recipe.title(ctx)).toBe(
+        'Fix argument type mismatch(es) to resolve TS2345 typecheck failure',
+      )
+    })
+
+    it('prompt contains TS2345, step instructions, and constraint against ts-ignore', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('TS2345')
+      expect(prompt).toContain('STEP 1')
+      expect(prompt).toContain('STEP 2')
+      expect(prompt).toContain('STEP 3')
+      expect(prompt).toMatch(/do NOT add.*@ts-ignore/i)
+      expect(prompt).toContain('Save your work')
+    })
+
+    it('shows the Promise-resolver-as-error-first-callback example — the most common cause in this codebase', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/server\.close\(resolve\)/i)
+      expect(prompt).toMatch(/error-first callback/i)
+      expect(prompt).toMatch(/err \? reject\(err\) : resolve\(\)/i)
+    })
+
+    it('embeds the failing branch and worktree path', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(ctx.targetBranch)
+      expect(prompt).toContain(ctx.targetPath)
+    })
+
+    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
+      const promptWithSource = recipe.buildPrompt({
+        ...ctx,
+        originalPrompt: 'add isDaemonAlive helper in src/mastra/daemon/liveness.ts',
+      })
+      expect(promptWithSource).toContain(
+        'add isDaemonAlive helper in src/mastra/daemon/liveness.ts',
+      )
+      expect(promptWithSource).toMatch(/inlined/i)
+      const promptWithout = recipe.buildPrompt(ctx)
+      expect(promptWithout).not.toContain(
+        'add isDaemonAlive helper in src/mastra/daemon/liveness.ts',
+      )
+      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
+    })
+
+    it('instructs the agent to adapt the argument to match the declared parameter, not change the parameter type', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/adapt the argument to match the declared parameter/i)
+    })
+  })
+
   describe('intentionally absent recipes (documented investigation outcomes)', () => {
     it('merge:crashed/index-lock-contention has no recipe — environmental transient failure; operator restarts with `mars restart`', () => {
       // Investigated 2026-05-18 (task 5c15a8e1). Root cause: git checkout main
