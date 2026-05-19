@@ -1,14 +1,16 @@
 /**
- * Regression test for the worktree-dirtying bug.
+ * Tests for the .claude/ template-tree sync script and its npm lifecycle wiring.
  *
- * Root cause: `pretest` / `prebuild` unconditionally ran
- * `sync-claude-templates.sh`, which copies the live project CLAUDE.md into
- * the bundled templates tree. Inside a task worktree the "live" CLAUDE.md is
- * the worktree's copy — overwriting the template with it dirties the tree and
- * blocks the rebase-based merge step.
+ * Worktree guard (regression):
+ *   `sync-claude-templates.sh` detects a git worktree context (`git-dir ≠
+ *   git-common-dir`) and exits 0 without touching any files.  This prevents
+ *   the worktree-dirtying bug that blocked the rebase-based merge step.
  *
- * Fix: the script now detects a git worktree context (`git-dir ≠ git-common-
- * dir`) and exits 0 without touching any files.
+ * Lifecycle hook contract:
+ *   The sync script must NOT be wired into `prebuild` or `pretest` — that
+ *   was the root cause of the bug.  It is now an explicit maintainer verb
+ *   (`mars:bundle:refresh`) that must be run deliberately before committing
+ *   changes to the framework's own .claude/ tree.
  */
 
 import {
@@ -172,5 +174,33 @@ describe('sync-claude-templates.sh — worktree guard', () => {
 
     // Operator should be able to see WHY the sync was skipped
     expect(result.stderr).toContain('inside a git worktree')
+  })
+})
+
+describe('sync-claude-templates — package.json lifecycle hook contract', () => {
+  const PACKAGE_JSON_PATH = resolve(__dirname, '../../../package.json')
+
+  it('mars:bundle:refresh script exists and invokes sync-claude-templates.sh', () => {
+    const pkg = JSON.parse(readFileSync(PACKAGE_JSON_PATH, 'utf8')) as {
+      scripts: Record<string, string>
+    }
+    expect(pkg.scripts['mars:bundle:refresh']).toBeDefined()
+    expect(pkg.scripts['mars:bundle:refresh']).toContain('sync-claude-templates.sh')
+  })
+
+  it('prebuild does not invoke the template sync script', () => {
+    const pkg = JSON.parse(readFileSync(PACKAGE_JSON_PATH, 'utf8')) as {
+      scripts: Record<string, string>
+    }
+    const prebuild = pkg.scripts['prebuild'] ?? ''
+    expect(prebuild).not.toContain('sync-claude-templates')
+  })
+
+  it('pretest does not invoke the template sync script', () => {
+    const pkg = JSON.parse(readFileSync(PACKAGE_JSON_PATH, 'utf8')) as {
+      scripts: Record<string, string>
+    }
+    const pretest = pkg.scripts['pretest'] ?? ''
+    expect(pretest).not.toContain('sync-claude-templates')
   })
 })
