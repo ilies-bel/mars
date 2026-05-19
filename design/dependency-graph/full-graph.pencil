@@ -1,0 +1,892 @@
+{
+  "version": "2.11",
+  "children": [
+    {
+      "type": "frame",
+      "id": "fg-artboard",
+      "x": 0,
+      "y": 0,
+      "name": "Mars DS — Dependency graph: full-graph layout (slice 4/6)",
+      "width": 1440,
+      "height": 1080,
+      "fill": "$bg-light",
+      "layout": "vertical",
+      "gap": 28,
+      "padding": 48,
+      "children": [
+
+        {
+          "type": "frame",
+          "id": "fg-hdr",
+          "name": "Header",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 6,
+          "children": [
+            {
+              "type": "text",
+              "id": "fg-hdr-t",
+              "name": "title",
+              "fill": "$mars-night",
+              "content": "Full-graph layout — dependency closure on task-detail page",
+              "fontFamily": "Inter",
+              "fontSize": 32,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "fg-hdr-s",
+              "name": "subtitle",
+              "fill": "$muted-light",
+              "content": "Slice 4 of 6. Representative closure: originating idea → intermediate tasks → fix-task → current task (pinned right) + independent blocker chain. Depth from root, not time, drives column placement. Root nodes at left; current task pinned at right.",
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "fg-hdr-r",
+              "name": "design-rules",
+              "fill": "$muted-light",
+              "content": "Solid edges = originId-parent lineage (why this task exists). Dashed edges = blocker (why this task is not done). Badge ★ on a fix-task node = recovery-failed or no-recipe. Single write affordance = inbox deep-link on the badge; no Resolve/Retry/Unblock controls in-view.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "fg-legend",
+          "name": "Legend",
+          "width": "fill_container",
+          "layout": "horizontal",
+          "gap": 32,
+          "alignItems": "center",
+          "padding": 16,
+          "fill": "$surface-light",
+          "cornerRadius": 6,
+          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+          "children": [
+            {
+              "type": "frame",
+              "id": "leg-solid",
+              "name": "legend: solid edge",
+              "layout": "horizontal",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                { "type": "path", "id": "leg-solid-line", "name": "solid-line", "d": "M 0 6 L 36 6", "stroke": { "fill": "$mars-night", "thickness": 2 }, "markerEnd": { "type": "arrow", "fill": "$mars-night", "size": 6 } },
+                { "type": "text", "id": "leg-solid-lbl", "name": "label", "fill": "$mars-night", "content": "Lineage (originId-parent)", "fontFamily": "Inter", "fontSize": 12, "fontWeight": "500" }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "leg-dashed",
+              "name": "legend: dashed edge",
+              "layout": "horizontal",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                { "type": "path", "id": "leg-dashed-line", "name": "dashed-line", "d": "M 0 6 L 36 6", "stroke": { "fill": "$mars-night", "thickness": 2, "dashArray": "6 4" }, "markerEnd": { "type": "arrow", "fill": "$mars-night", "size": 6 } },
+                { "type": "text", "id": "leg-dashed-lbl", "name": "label", "fill": "$mars-night", "content": "Blocker (waiting-on)", "fontFamily": "Inter", "fontSize": 12, "fontWeight": "500" }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "leg-idea",
+              "name": "legend: idea node",
+              "layout": "horizontal",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                { "type": "frame", "id": "leg-idea-swatch", "name": "idea-swatch", "width": 24, "height": 16, "fill": "$surface-light", "cornerRadius": 3, "stroke": { "align": "outside", "thickness": 2, "fill": "$mars-night", "dashArray": "4 3" } },
+                { "type": "text", "id": "leg-idea-lbl", "name": "label", "fill": "$mars-night", "content": "Idea (dashed outline)", "fontFamily": "Inter", "fontSize": 12, "fontWeight": "500" }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "leg-palette",
+              "name": "legend: status palette",
+              "layout": "horizontal",
+              "gap": 12,
+              "alignItems": "center",
+              "children": [
+                { "type": "frame", "id": "leg-succeeded", "name": "succeeded", "layout": "horizontal", "gap": 4, "alignItems": "center", "children": [
+                  { "type": "frame", "id": "leg-s-sw", "name": "swatch", "width": 14, "height": 14, "fill": "$mars-ice", "cornerRadius": 2 },
+                  { "type": "text", "id": "leg-s-lbl", "fill": "$mars-night", "content": "succeeded", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "normal" }
+                ]},
+                { "type": "frame", "id": "leg-inflight", "name": "in-flight", "layout": "horizontal", "gap": 4, "alignItems": "center", "children": [
+                  { "type": "frame", "id": "leg-if-sw", "name": "swatch", "width": 14, "height": 14, "fill": "$mars-amber", "cornerRadius": 2 },
+                  { "type": "text", "id": "leg-if-lbl", "fill": "$mars-night", "content": "in-flight", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "normal" }
+                ]},
+                { "type": "frame", "id": "leg-needs-attn", "name": "needs-attention", "layout": "horizontal", "gap": 4, "alignItems": "center", "children": [
+                  { "type": "frame", "id": "leg-na-sw", "name": "swatch", "width": 14, "height": 14, "fill": "$mars-rust", "cornerRadius": 2 },
+                  { "type": "text", "id": "leg-na-lbl", "fill": "$mars-night", "content": "needs-attention", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "normal" }
+                ]},
+                { "type": "frame", "id": "leg-not-started", "name": "not-started", "layout": "horizontal", "gap": 4, "alignItems": "center", "children": [
+                  { "type": "frame", "id": "leg-ns-sw", "name": "swatch", "width": 14, "height": 14, "fill": "$mars-basalt", "cornerRadius": 2 },
+                  { "type": "text", "id": "leg-ns-lbl", "fill": "$mars-night", "content": "not-started", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "normal" }
+                ]}
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "leg-badge",
+              "name": "legend: recovery-failed badge",
+              "layout": "horizontal",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                { "type": "frame", "id": "leg-badge-chip", "name": "chip", "fill": "$mars-rust", "cornerRadius": 4, "padding": 4, "children": [
+                  { "type": "text", "id": "leg-badge-t", "fill": "$surface-light", "content": "★ recovery-failed", "fontFamily": "Inter", "fontSize": 9, "fontWeight": "600" }
+                ]},
+                { "type": "text", "id": "leg-badge-lbl", "fill": "$mars-night", "content": "Badge: inbox deep-link (→ /mars:inbox)", "fontFamily": "Inter", "fontSize": 12, "fontWeight": "500" }
+              ]
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "fg-canvas",
+          "name": "Graph canvas — representative closure",
+          "width": 1344,
+          "height": 520,
+          "fill": "$surface-light",
+          "cornerRadius": 8,
+          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+          "children": [
+
+            {
+              "type": "text",
+              "id": "fg-canvas-label-d0",
+              "name": "depth-label: col-0 roots",
+              "x": 20,
+              "y": 494,
+              "fill": "$muted-light",
+              "content": "Depth 0 · roots",
+              "fontFamily": "Inter",
+              "fontSize": 10,
+              "fontWeight": "500"
+            },
+            {
+              "type": "text",
+              "id": "fg-canvas-label-d1",
+              "name": "depth-label: col-1",
+              "x": 380,
+              "y": 494,
+              "fill": "$muted-light",
+              "content": "Depth 1",
+              "fontFamily": "Inter",
+              "fontSize": 10,
+              "fontWeight": "500"
+            },
+            {
+              "type": "text",
+              "id": "fg-canvas-label-d2",
+              "name": "depth-label: col-2",
+              "x": 740,
+              "y": 494,
+              "fill": "$muted-light",
+              "content": "Depth 2",
+              "fontFamily": "Inter",
+              "fontSize": 10,
+              "fontWeight": "500"
+            },
+            {
+              "type": "text",
+              "id": "fg-canvas-label-d3",
+              "name": "depth-label: col-3 current",
+              "x": 1100,
+              "y": 494,
+              "fill": "$muted-light",
+              "content": "Depth 3 · current",
+              "fontFamily": "Inter",
+              "fontSize": 10,
+              "fontWeight": "500"
+            },
+
+            {
+              "type": "frame",
+              "id": "col-div-1",
+              "name": "column-divider-1",
+              "x": 300,
+              "y": 0,
+              "width": 1,
+              "height": 488,
+              "fill": "$border-light"
+            },
+            {
+              "type": "frame",
+              "id": "col-div-2",
+              "name": "column-divider-2",
+              "x": 660,
+              "y": 0,
+              "width": 1,
+              "height": 488,
+              "fill": "$border-light"
+            },
+            {
+              "type": "frame",
+              "id": "col-div-3",
+              "name": "column-divider-3",
+              "x": 1020,
+              "y": 0,
+              "width": 1,
+              "height": 488,
+              "fill": "$border-light"
+            },
+
+            {
+              "type": "path",
+              "id": "edge-1",
+              "name": "edge (solid lineage): IDEA-578ab441 → mars-abc01234  [slice 1/6]",
+              "d": "M 220 146 L 380 66",
+              "stroke": { "fill": "$mars-night", "thickness": 2 },
+              "markerEnd": { "type": "arrow", "fill": "$mars-night", "size": 7 }
+            },
+            {
+              "type": "text",
+              "id": "el-1",
+              "name": "edge-label-1",
+              "x": 271,
+              "y": 90,
+              "fill": "$mars-night",
+              "content": "slice 1/6",
+              "fontFamily": "Inter",
+              "fontSize": 10,
+              "fontWeight": "500",
+              "background": "$bg-light"
+            },
+
+            {
+              "type": "path",
+              "id": "edge-2",
+              "name": "edge (solid lineage): IDEA-578ab441 → mars-7af3c2e1  [slice 2/6]",
+              "d": "M 220 146 L 380 226",
+              "stroke": { "fill": "$mars-night", "thickness": 2 },
+              "markerEnd": { "type": "arrow", "fill": "$mars-night", "size": 7 }
+            },
+            {
+              "type": "text",
+              "id": "el-2",
+              "name": "edge-label-2",
+              "x": 271,
+              "y": 196,
+              "fill": "$mars-night",
+              "content": "slice 2/6",
+              "fontFamily": "Inter",
+              "fontSize": 10,
+              "fontWeight": "500",
+              "background": "$bg-light"
+            },
+
+            {
+              "type": "path",
+              "id": "edge-3",
+              "name": "edge (solid lineage): IDEA-578ab441 → mars-44b089ff  [slice 4/6 — current; routed along top to avoid node collisions]",
+              "d": "M 220 146 L 220 22 L 1200 22 L 1200 190",
+              "stroke": { "fill": "$mars-night", "thickness": 2 },
+              "markerEnd": { "type": "arrow", "fill": "$mars-night", "size": 7 }
+            },
+            {
+              "type": "text",
+              "id": "el-3",
+              "name": "edge-label-3",
+              "x": 630,
+              "y": 8,
+              "fill": "$mars-night",
+              "content": "slice 4/6 — current",
+              "fontFamily": "Inter",
+              "fontSize": 10,
+              "fontWeight": "500",
+              "background": "$surface-light"
+            },
+
+            {
+              "type": "path",
+              "id": "edge-4",
+              "name": "edge (solid lineage): mars-7af3c2e1 → mars-9b021ddc  [fix: verify:typecheck-error]",
+              "d": "M 580 226 L 740 226",
+              "stroke": { "fill": "$mars-night", "thickness": 2 },
+              "markerEnd": { "type": "arrow", "fill": "$mars-night", "size": 7 }
+            },
+            {
+              "type": "text",
+              "id": "el-4",
+              "name": "edge-label-4",
+              "x": 594,
+              "y": 210,
+              "fill": "$mars-night",
+              "content": "fix: verify:typecheck-error",
+              "fontFamily": "Inter",
+              "fontSize": 10,
+              "fontWeight": "500",
+              "background": "$surface-light"
+            },
+
+            {
+              "type": "path",
+              "id": "edge-5",
+              "name": "edge (dashed blocker): mars-abc01234 ╌→ mars-44b089ff  [waiting on: task_blockers API]",
+              "d": "M 580 66 L 1100 226",
+              "stroke": { "fill": "$mars-rust", "thickness": 2, "dashArray": "6 4" },
+              "markerEnd": { "type": "arrow", "fill": "$mars-rust", "size": 7 }
+            },
+            {
+              "type": "text",
+              "id": "el-5",
+              "name": "edge-label-5",
+              "x": 804,
+              "y": 130,
+              "fill": "$mars-rust",
+              "content": "waiting on: task_blockers API",
+              "fontFamily": "Inter",
+              "fontSize": 10,
+              "fontWeight": "500",
+              "background": "$surface-light"
+            },
+
+            {
+              "type": "path",
+              "id": "edge-6",
+              "name": "edge (dashed blocker): mars-ext-root ╌→ mars-ext-block1  [prereq: Alembic migration runner]",
+              "d": "M 220 426 L 380 426",
+              "stroke": { "fill": "$mars-rust", "thickness": 2, "dashArray": "6 4" },
+              "markerEnd": { "type": "arrow", "fill": "$mars-rust", "size": 7 }
+            },
+            {
+              "type": "text",
+              "id": "el-6",
+              "name": "edge-label-6",
+              "x": 232,
+              "y": 410,
+              "fill": "$mars-rust",
+              "content": "prereq: migration runner",
+              "fontFamily": "Inter",
+              "fontSize": 10,
+              "fontWeight": "500",
+              "background": "$surface-light"
+            },
+
+            {
+              "type": "path",
+              "id": "edge-7",
+              "name": "edge (dashed blocker): mars-ext-block1 ╌→ mars-44b089ff  [waiting on: schema migration]",
+              "d": "M 580 426 L 1100 226",
+              "stroke": { "fill": "$mars-rust", "thickness": 2, "dashArray": "6 4" },
+              "markerEnd": { "type": "arrow", "fill": "$mars-rust", "size": 7 }
+            },
+            {
+              "type": "text",
+              "id": "el-7",
+              "name": "edge-label-7",
+              "x": 800,
+              "y": 338,
+              "fill": "$mars-rust",
+              "content": "waiting on: schema migration",
+              "fontFamily": "Inter",
+              "fontSize": 10,
+              "fontWeight": "500",
+              "background": "$surface-light"
+            },
+
+            {
+              "type": "frame",
+              "id": "node-idea",
+              "name": "node: IDEA-578ab441 — originating idea (root, dashed border = idea shape)",
+              "x": 20,
+              "y": 110,
+              "width": 200,
+              "height": 72,
+              "fill": "$surface-light",
+              "cornerRadius": 6,
+              "stroke": { "align": "outside", "thickness": 2, "fill": "$mars-night", "dashArray": "6 4" },
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "node-idea-inner",
+                  "name": "node-content",
+                  "x": 0,
+                  "y": 0,
+                  "width": 200,
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 4,
+                  "padding": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "node-idea-row",
+                      "name": "header-row",
+                      "width": "fill_container",
+                      "layout": "horizontal",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-idea-chip",
+                          "name": "type-chip",
+                          "fill": "$mars-night",
+                          "cornerRadius": 3,
+                          "padding": 3,
+                          "children": [
+                            { "type": "text", "id": "node-idea-chip-t", "fill": "$surface-light", "content": "IDEA", "fontFamily": "Inter", "fontSize": 8, "fontWeight": "700" }
+                          ]
+                        },
+                        { "type": "text", "id": "node-idea-id", "fill": "$muted-light", "content": "578ab441", "fontFamily": "JetBrains Mono", "fontSize": 9, "fontWeight": "normal" }
+                      ]
+                    },
+                    { "type": "text", "id": "node-idea-title", "fill": "$mars-night", "content": "Show dep-closure on task-detail page", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600" }
+                  ]
+                }
+              ]
+            },
+
+            {
+              "type": "frame",
+              "id": "node-abc01234",
+              "name": "node: mars-abc01234 — Slice 1/6: Add task_blockers query endpoint (succeeded)",
+              "x": 380,
+              "y": 30,
+              "width": 200,
+              "height": 72,
+              "fill": "$surface-light",
+              "cornerRadius": 6,
+              "stroke": { "align": "outside", "thickness": 2, "fill": "$mars-ice" },
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "node-abc01234-inner",
+                  "name": "node-content",
+                  "x": 0,
+                  "y": 0,
+                  "width": 200,
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 4,
+                  "padding": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "node-abc01234-row",
+                      "name": "header-row",
+                      "width": "fill_container",
+                      "layout": "horizontal",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-abc01234-chip",
+                          "name": "status-chip",
+                          "fill": "$mars-ice",
+                          "cornerRadius": 3,
+                          "padding": 3,
+                          "children": [
+                            { "type": "text", "id": "node-abc01234-chip-t", "fill": "$surface-light", "content": "succeeded", "fontFamily": "Inter", "fontSize": 8, "fontWeight": "600" }
+                          ]
+                        },
+                        { "type": "text", "id": "node-abc01234-id", "fill": "$muted-light", "content": "mars-abc01234", "fontFamily": "JetBrains Mono", "fontSize": 9, "fontWeight": "normal" }
+                      ]
+                    },
+                    { "type": "text", "id": "node-abc01234-title", "fill": "$mars-night", "content": "Slice 1/6 — Add task_blockers query endpoint", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600" }
+                  ]
+                }
+              ]
+            },
+
+            {
+              "type": "frame",
+              "id": "node-7af3c2e1",
+              "name": "node: mars-7af3c2e1 — Slice 2/6: Render graph canvas component (needs-attention: failed, spawned fix-task)",
+              "x": 380,
+              "y": 190,
+              "width": 200,
+              "height": 72,
+              "fill": "$surface-light",
+              "cornerRadius": 6,
+              "stroke": { "align": "outside", "thickness": 2, "fill": "$mars-rust" },
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "node-7af3c2e1-inner",
+                  "name": "node-content",
+                  "x": 0,
+                  "y": 0,
+                  "width": 200,
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 4,
+                  "padding": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "node-7af3c2e1-row",
+                      "name": "header-row",
+                      "width": "fill_container",
+                      "layout": "horizontal",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-7af3c2e1-chip",
+                          "name": "status-chip",
+                          "fill": "$mars-rust",
+                          "cornerRadius": 3,
+                          "padding": 3,
+                          "children": [
+                            { "type": "text", "id": "node-7af3c2e1-chip-t", "fill": "$surface-light", "content": "needs-attention", "fontFamily": "Inter", "fontSize": 8, "fontWeight": "600" }
+                          ]
+                        },
+                        { "type": "text", "id": "node-7af3c2e1-id", "fill": "$muted-light", "content": "mars-7af3c2e1", "fontFamily": "JetBrains Mono", "fontSize": 9, "fontWeight": "normal" }
+                      ]
+                    },
+                    { "type": "text", "id": "node-7af3c2e1-title", "fill": "$mars-night", "content": "Slice 2/6 — Render graph canvas component", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600" }
+                  ]
+                }
+              ]
+            },
+
+            {
+              "type": "frame",
+              "id": "node-9b021ddc",
+              "name": "node: mars-9b021ddc — Fix-task for verify:typecheck-error (needs-attention: recovery-failed badge)",
+              "x": 740,
+              "y": 190,
+              "width": 200,
+              "height": 72,
+              "fill": "$surface-light",
+              "cornerRadius": 6,
+              "stroke": { "align": "outside", "thickness": 2, "fill": "$mars-rust" },
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "node-9b021ddc-inner",
+                  "name": "node-content",
+                  "x": 0,
+                  "y": 0,
+                  "width": 200,
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 4,
+                  "padding": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "node-9b021ddc-row",
+                      "name": "header-row",
+                      "width": "fill_container",
+                      "layout": "horizontal",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-9b021ddc-chip",
+                          "name": "status-chip",
+                          "fill": "$mars-rust",
+                          "cornerRadius": 3,
+                          "padding": 3,
+                          "children": [
+                            { "type": "text", "id": "node-9b021ddc-chip-t", "fill": "$surface-light", "content": "needs-attention", "fontFamily": "Inter", "fontSize": 8, "fontWeight": "600" }
+                          ]
+                        },
+                        { "type": "text", "id": "node-9b021ddc-id", "fill": "$muted-light", "content": "mars-9b021ddc", "fontFamily": "JetBrains Mono", "fontSize": 9, "fontWeight": "normal" }
+                      ]
+                    },
+                    { "type": "text", "id": "node-9b021ddc-title", "fill": "$mars-night", "content": "Fix — verify:typecheck-error in canvas render", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600" }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "node-9b021ddc-badge",
+                  "name": "badge: recovery-failed (inbox deep-link → /mars:inbox)",
+                  "x": 110,
+                  "y": -10,
+                  "fill": "$mars-rust",
+                  "cornerRadius": 4,
+                  "padding": 4,
+                  "children": [
+                    { "type": "text", "id": "node-9b021ddc-badge-t", "fill": "$surface-light", "content": "★ recovery-failed", "fontFamily": "Inter", "fontSize": 9, "fontWeight": "600" }
+                  ]
+                }
+              ]
+            },
+
+            {
+              "type": "frame",
+              "id": "node-ext-root",
+              "name": "node: mars-ext-root — Add Alembic migration runner (not-started; root of independent blocker chain)",
+              "x": 20,
+              "y": 380,
+              "width": 200,
+              "height": 72,
+              "fill": "$surface-light",
+              "cornerRadius": 6,
+              "stroke": { "align": "outside", "thickness": 2, "fill": "$mars-basalt" },
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "node-ext-root-inner",
+                  "name": "node-content",
+                  "x": 0,
+                  "y": 0,
+                  "width": 200,
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 4,
+                  "padding": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "node-ext-root-row",
+                      "name": "header-row",
+                      "width": "fill_container",
+                      "layout": "horizontal",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-ext-root-chip",
+                          "name": "status-chip",
+                          "fill": "$mars-basalt",
+                          "cornerRadius": 3,
+                          "padding": 3,
+                          "children": [
+                            { "type": "text", "id": "node-ext-root-chip-t", "fill": "$surface-light", "content": "not-started", "fontFamily": "Inter", "fontSize": 8, "fontWeight": "600" }
+                          ]
+                        },
+                        { "type": "text", "id": "node-ext-root-id", "fill": "$muted-light", "content": "mars-ext-root", "fontFamily": "JetBrains Mono", "fontSize": 9, "fontWeight": "normal" }
+                      ]
+                    },
+                    { "type": "text", "id": "node-ext-root-title", "fill": "$mars-night", "content": "Add Alembic migration runner support", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600" }
+                  ]
+                }
+              ]
+            },
+
+            {
+              "type": "frame",
+              "id": "node-ext-block1",
+              "name": "node: mars-ext-block1 — Migrate task schema: add originId column (in-flight; blocked by mars-ext-root, blocks current)",
+              "x": 380,
+              "y": 380,
+              "width": 200,
+              "height": 72,
+              "fill": "$surface-light",
+              "cornerRadius": 6,
+              "stroke": { "align": "outside", "thickness": 2, "fill": "$mars-amber" },
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "node-ext-block1-inner",
+                  "name": "node-content",
+                  "x": 0,
+                  "y": 0,
+                  "width": 200,
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 4,
+                  "padding": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "node-ext-block1-row",
+                      "name": "header-row",
+                      "width": "fill_container",
+                      "layout": "horizontal",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-ext-block1-chip",
+                          "name": "status-chip",
+                          "fill": "$mars-amber",
+                          "cornerRadius": 3,
+                          "padding": 3,
+                          "children": [
+                            { "type": "text", "id": "node-ext-block1-chip-t", "fill": "$mars-night", "content": "in-flight", "fontFamily": "Inter", "fontSize": 8, "fontWeight": "600" }
+                          ]
+                        },
+                        { "type": "text", "id": "node-ext-block1-id", "fill": "$muted-light", "content": "mars-ext-block1", "fontFamily": "JetBrains Mono", "fontSize": 9, "fontWeight": "normal" }
+                      ]
+                    },
+                    { "type": "text", "id": "node-ext-block1-title", "fill": "$mars-night", "content": "Migrate task schema: add originId column", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600" }
+                  ]
+                }
+              ]
+            },
+
+            {
+              "type": "frame",
+              "id": "node-current",
+              "name": "node: mars-44b089ff — CURRENT TASK — Full-graph layout draft (in-flight; pinned at right)",
+              "x": 1100,
+              "y": 190,
+              "width": 200,
+              "height": 72,
+              "fill": "$surface-light",
+              "cornerRadius": 6,
+              "stroke": { "align": "outside", "thickness": 3, "fill": "$mars-amber" },
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "node-current-inner",
+                  "name": "node-content",
+                  "x": 0,
+                  "y": 0,
+                  "width": 200,
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 4,
+                  "padding": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "node-current-row",
+                      "name": "header-row",
+                      "width": "fill_container",
+                      "layout": "horizontal",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-current-chip",
+                          "name": "status-chip",
+                          "fill": "$mars-amber",
+                          "cornerRadius": 3,
+                          "padding": 3,
+                          "children": [
+                            { "type": "text", "id": "node-current-chip-t", "fill": "$mars-night", "content": "in-flight", "fontFamily": "Inter", "fontSize": 8, "fontWeight": "600" }
+                          ]
+                        },
+                        { "type": "text", "id": "node-current-id", "fill": "$muted-light", "content": "mars-44b089ff", "fontFamily": "JetBrains Mono", "fontSize": 9, "fontWeight": "normal" }
+                      ]
+                    },
+                    { "type": "text", "id": "node-current-title", "fill": "$mars-night", "content": "Slice 4/6 — Full-graph layout draft", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600" }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "node-current-pin",
+                  "name": "current-pin badge",
+                  "x": 130,
+                  "y": -10,
+                  "fill": "$mars-amber",
+                  "cornerRadius": 4,
+                  "padding": 4,
+                  "children": [
+                    { "type": "text", "id": "node-current-pin-t", "fill": "$mars-night", "content": "◎ CURRENT", "fontFamily": "Inter", "fontSize": 9, "fontWeight": "700" }
+                  ]
+                }
+              ]
+            }
+
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "fg-depth-axis",
+          "name": "Depth axis annotation",
+          "width": "fill_container",
+          "layout": "horizontal",
+          "gap": 0,
+          "alignItems": "start",
+          "children": [
+            {
+              "type": "frame",
+              "id": "axis-d0",
+              "name": "axis-col-0",
+              "width": 340,
+              "layout": "vertical",
+              "gap": 2,
+              "children": [
+                { "type": "text", "id": "axis-d0-label", "fill": "$mars-night", "content": "Depth 0 — roots", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600" },
+                { "type": "text", "id": "axis-d0-desc", "fill": "$muted-light", "content": "Originating idea (IDEA) and any parentless tasks that are blockers. No inbound edges from this view's perspective.", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "normal" }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "axis-d1",
+              "name": "axis-col-1",
+              "width": 340,
+              "layout": "vertical",
+              "gap": 2,
+              "children": [
+                { "type": "text", "id": "axis-d1-label", "fill": "$mars-night", "content": "Depth 1", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600" },
+                { "type": "text", "id": "axis-d1-desc", "fill": "$muted-light", "content": "Slice tasks spawned directly from the idea, and first-hop blocker tasks.", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "normal" }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "axis-d2",
+              "name": "axis-col-2",
+              "width": 340,
+              "layout": "vertical",
+              "gap": 2,
+              "children": [
+                { "type": "text", "id": "axis-d2-label", "fill": "$mars-night", "content": "Depth 2", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600" },
+                { "type": "text", "id": "axis-d2-desc", "fill": "$muted-light", "content": "Fix-tasks spawned from depth-1 failures, and second-hop blockers.", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "normal" }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "axis-d3",
+              "name": "axis-col-3",
+              "width": 324,
+              "layout": "vertical",
+              "gap": 2,
+              "children": [
+                { "type": "text", "id": "axis-d3-label", "fill": "$mars-night", "content": "Depth 3 — current (pinned)", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600" },
+                { "type": "text", "id": "axis-d3-desc", "fill": "$muted-light", "content": "The task whose detail page is open. Always pinned at the rightmost column regardless of closure depth.", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "normal" }
+              ]
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "fg-notes",
+          "name": "Design notes",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 8,
+          "padding": 16,
+          "fill": "$surface-light",
+          "cornerRadius": 6,
+          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+          "children": [
+            {
+              "type": "text",
+              "id": "fg-notes-hdr",
+              "fill": "$mars-night",
+              "content": "Design notes for implementation",
+              "fontFamily": "Inter",
+              "fontSize": 13,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "fg-notes-body",
+              "fill": "$muted-light",
+              "content": "1. NODE SHAPES: Task nodes use a solid-border rectangle. Idea nodes use a dashed-border rectangle (same geometry, different stroke). This matches ia-decision.md §vocabulary: distinguished by stroke style, not by color, so the semantic palette applies uniformly to both.\n\n2. EDGE ROUTING: Long lineage edges (e.g. IDEA → current task spanning all columns) route along the top gutter (y≈22) to avoid crossing interior nodes. Implementation may substitute an orthogonal router or curved spline — the constraint is legibility of the label, not the exact path.\n\n3. STATUS COLOR MAPPING (semantic palette, v1): succeeded → $mars-ice (teal); in-flight → $mars-amber; needs-attention → $mars-rust; not-started → $mars-basalt. These map one-to-one to semantic intent, not to granular task-status enum values. A single in-flight task and a recovering task both render as amber.\n\n4. RECOVERY-FAILED BADGE: Positioned at the top-right corner of the fix-task node, overlapping the node border. The badge text is the inbox item kind (recovery-failed | no-recipe). Clicking the badge is the sole write affordance — it navigates to /mars:inbox, it does not act in place.\n\n5. DEPTH DEGENERACY: A task with no idea ancestor and no blockers renders as a single node in column 0 (it IS the root). The canvas degenerates to a single node; this is expected and self-explanatory per ia-decision.md §decision.\n\n6. TOKENS USED: $mars-ice is referenced as the 'succeeded' status color; it exists in design/ui.pen. All other tokens ($mars-amber, $mars-rust, $mars-basalt, $mars-night, $surface-light, $bg-light, $border-light, $muted-light) are already present in the design system.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+
+      ]
+    }
+  ]
+}
