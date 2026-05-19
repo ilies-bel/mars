@@ -655,6 +655,16 @@ describe('fix-recipes', () => {
       // Outcome: (b) inbox item; human must edit the template directly on main.
       // Repro: git diff --name-only main..task/mars-5989999f
       //        | grep 'orchestrator/src/init/templates/'
+      //
+      // Re-confirmed 2026-05-19 (task mars-9dce6ff6). Root cause: PRD
+      // e32ed35f slice 2 instructed the agent to remove the false SessionStart
+      // claim from orchestrator/src/init/templates/CLAUDE.md. The agent
+      // correctly committed the change (commit ab0b0c9 on task/mars-9dce6ff6),
+      // but the merge preflight blocked it. Same outcome (b): human must apply
+      // the template edit directly on main. The /unclassified suffix persists
+      // because the orchestrator daemon is still running the pre-9ed0041 classifier.
+      // Repro: git diff --name-only main..task/mars-9dce6ff6
+      //        | grep 'orchestrator/src/init/templates/'
       expect(hasRecipe('merge:preflight/template-leakage/unclassified')).toBe(false)
     })
   })
