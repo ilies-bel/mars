@@ -359,6 +359,80 @@ const typecheckMissingExportRecipe: FixRecipe = {
   },
 }
 
+const testAssertionErrorRecipe: FixRecipe = {
+  signature: 'verify:test/test-assertion-error',
+  title: (ctx) =>
+    `Fix failing test assertions in ${ctx.targetBranch}`,
+  buildPrompt: (ctx) => {
+    const integration = ctx.integrationBranch ?? 'main'
+    const countCmd = `git rev-list --count ${integration}..HEAD`
+    const sanitizedBranch = ctx.targetBranch.replace(/[^a-zA-Z0-9-]/g, '-')
+    const patchFile = `/tmp/recover-${sanitizedBranch}.patch`
+    const failureOutput =
+      ctx.statusOutput.length > 0
+        ? ctx.statusOutput
+        : '(no test output captured)'
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `The previous attempt on branch ${ctx.targetBranch} failed the verify:test step with AssertionError — the implementation does not match what the tests expect. The coding work is present in the failing worktree; it needs targeted fixes to make the failing assertions green.`,
+      '',
+      `You are running in a FRESH recovery worktree on a FRESH branch (not ${ctx.targetBranch}). Your job is to leave a commit HERE — in your own cwd, on your own branch. Do NOT \`cd\` into ${ctx.targetPath} and do NOT edit files there: that is the failing tree, inspect it read-only only.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `STEP 1 — sanity-check first. From your current working directory, run \`${countCmd}\` to count commits on your recovery branch not yet on ${integration}. The output is a plain integer.`,
+      ` - If it prints a non-zero integer, your recovery branch already has commits: this is a false positive — do NOT modify files, exit successfully.`,
+      ` - If it prints \`0\`, your branch is genuinely empty: proceed to STEP 2.`,
+      '',
+      `Do not use \`git log\` or any other command to make this decision — only the integer from \`rev-list --count\` is authoritative.`,
+      '',
+      `STEP 2 — Lift the failing worktree's diff into YOUR recovery worktree. Only enter this step when \`${countCmd}\` printed \`0\`.`,
+      '',
+      `Inspect what the previous agent did (read-only against the failing worktree):`,
+      '',
+      '```',
+      `git -C ${ctx.targetPath} diff ${integration}..HEAD --stat`,
+      `git -C ${ctx.targetPath} diff ${integration}..HEAD`,
+      '```',
+      '',
+      ` 1. Capture: \`git -C ${ctx.targetPath} diff ${integration}..HEAD > ${patchFile}\``,
+      ` 2. Apply: \`git apply --3way ${patchFile}\` (resolve any \`.rej\` files by hand if needed).`,
+      ` 3. **Commit immediately**: \`git add -A && git commit -m "recover: lift diff from ${ctx.targetBranch}"\`. Do this BEFORE running tests or fixing anything.`,
+      ` 4. Re-run \`${countCmd}\`. It MUST now print a non-zero integer. If it still prints \`0\`, fix that before anything else.`,
+      '',
+      `STEP 3 — Fix only the failing assertions. Use the captured test output at the bottom of this prompt to identify exactly what is wrong.`,
+      '',
+      `**Critical rule: do NOT modify test files.** Tests define expected behaviour. Fix the implementation files only. Each AssertionError tells you exactly what the implementation must produce — read it literally.`,
+      '',
+      `Common causes of assertion mismatches, in order of likelihood:`,
+      ` (a) wrong string literal — the implementation prints a different message than what the test contains in \`toContain\` / \`toBe\` / \`toEqual\`;`,
+      ` (b) missing \`process.exit\` call — the test wraps the call in a mock-exit helper that only records exit when \`process.exit()\` is explicitly called; if the implementation just \`return\`s, the exit code stays at the sentinel \`-1\`;`,
+      ` (c) missing or incorrect side-effect — the test checks a file was created or removed, but the implementation skips that step.`,
+      '',
+      `After each fix, re-run the failing tests using the reproduce command above to confirm the assertions now pass. Multiple fix commits are fine.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (for context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only — \`git -C ${ctx.targetPath} ...\` for inspection only, never edit there): ${ctx.targetPath}`,
+      `Integration branch: ${integration}`,
+      '',
+      'Captured test failure output (use this to identify the exact assertions that failed):',
+      '```',
+      failureOutput,
+      '```',
+      '',
+      `Save your work. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 // NOTE — intentionally absent entries (documented so future investigators don't
 // re-open these):
 //
@@ -391,6 +465,7 @@ const recipeList: readonly FixRecipe[] = [
   noCommitsAheadRecipe,
   vcsAbortedNotFastForwardRecipe,
   typecheckMissingExportRecipe,
+  testAssertionErrorRecipe,
 ]
 
 /**

@@ -142,6 +142,16 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /index\.lock.*File exists/i,
   },
   {
+    // verify:test/test-assertion-error fires when the test runner (vitest)
+    // reports an AssertionError — the implementation does not match what the
+    // tests expect. Common causes: wrong string literal, missing process.exit
+    // call, or a missing/incorrect side-effect (file create/remove). A recovery
+    // agent can read the assertion error output to identify the exact mismatch
+    // and fix the implementation without touching the test files.
+    errorClass: 'test-assertion-error',
+    matchFull: /AssertionError:/,
+  },
+  {
     // merge:preflight/template-leakage fires when a task branch edits a path
     // under orchestrator/src/init/templates/. The preflight categorically
     // blocks ALL orchestrator edits to that subtree — humans edit it directly
