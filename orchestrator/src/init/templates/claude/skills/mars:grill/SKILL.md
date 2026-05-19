@@ -1,12 +1,12 @@
 ---
 name: mars:grill
-description: Grilling session that challenges the user's plan against the project's domain model, sharpens terminology, and updates the glossary and ADRs inline as decisions crystallise. Conversation only — no PRD synthesis. When the conversation settles, automatically invoke `/mars:to-prd` via the Skill tool. Use when the user says "grill this", "shape this idea", or invokes `/mars:grill`.
+description: Grilling session that challenges the user's plan against the project's domain model, sharpens terminology, and updates the glossary and ADRs inline as decisions crystallise. Conversation only — no PRD synthesis. When the conversation settles, automatically invoke `/mars:to-prd` via the Skill tool. Use when the user says "grill this", "shape this proposal", or invokes `/mars:grill`.
 ---
 
-# Mars: grill an idea against the project's domain model
+# Mars: grill a proposal against the project's domain model
 
-You are running as the Mars idea **shaper** inside the user's Claude Code
-session. The user has named a target draft idea; the id is in
+You are running as the Mars proposal **shaper** inside the user's Claude Code
+session. The user has named a target draft proposal; the id is in
 `$ARGUMENTS`.
 
 This skill is a **conversation**, not a form-fill. You interview the user
@@ -34,20 +34,27 @@ codebase instead of asking the user.
 
 <supporting-info>
 
-## Step 0 — Sanity-check the argument
+## Step 0 — Parse arguments and sanity-check the proposal id
 
-`$ARGUMENTS` should be a draft idea id. If it is missing or empty, stop
-immediately and tell the user to pass an id — picking a target is not
-this skill's job.
+**Parse `$ARGUMENTS` before doing anything else:**
+
+1. Look for a `--inbox <inbox-id>` token anywhere in the string. Extract
+   `<inbox-id>` and strip the `--inbox <inbox-id>` token from the string.
+   If absent, `inbox-id` is empty.
+2. Treat the remainder (trimmed) as the `<proposal-id>`.
+
+`<proposal-id>` should be a draft proposal id. If it is missing or empty
+after parsing, stop immediately and tell the user to pass an id — picking
+a target is not this skill's job.
 
 Verify the id resolves to a draft:
 
 ```bash
-mars idea show <id>
+mars proposal show <id>
 ```
 
-- Idea hit, `status: draft` → continue.
-- Idea hit, anything else → tell the user this skill only operates on
+- Proposal hit, `status: draft` → continue.
+- Proposal hit, anything else → tell the user this skill only operates on
   drafts and stop.
 - No hit → tell the user the id doesn't resolve and stop.
 
@@ -58,18 +65,18 @@ grill inside the project's existing vocabulary, not parallel to it.
 
 1. `mars glossary list` — hold the terms in working memory.
 2. `mars adr list`, then `mars adr show <NNNN>` for any ADR whose title
-   looks topically related to the idea. ADRs are constraints: if the
+   looks topically related to the proposal. ADRs are constraints: if the
    user's intent contradicts one, surface it.
-3. If the idea's title hints at observable system behaviour, do a quick
-   targeted code read of the relevant module so you can cross-reference
-   user claims against what the code actually does.
+3. If the proposal's title hints at observable system behaviour, do a
+   quick targeted code read of the relevant module so you can
+   cross-reference user claims against what the code actually does.
 
 Do not dump the glossary or ADRs at the user. Do not announce that you've
 done this. Just internalise it and let it shape your questions.
 
 ## Open the conversation
 
-Before any questions, reflect the idea back in your own words — one or
+Before any questions, reflect the proposal back in your own words — one or
 two sentences on what you understood the user to be after, grounded in
 the draft title/body and anything the pre-read surfaced. This is the
 moment to name the tension you see ("sounds like you're trying to X,
@@ -108,11 +115,11 @@ you can't do that for them.
 
 Examples:
 
-- *"A draft idea is promoted while a slicer run is already in flight for
-  it — which wins?"*
+- *"A draft proposal is promoted while a slicer run is already in flight
+  for it — which wins?"*
 - *"The operator dismisses a stale-worktree alert, then the same worktree
   becomes stale again two days later — is that one alert or two?"*
-- *"If the user can both 'cancel' and 'reject' an idea, what's the
+- *"If the user can both 'cancel' and 'reject' a proposal, what's the
   operational difference?"*
 
 ### Cross-reference with code
@@ -209,21 +216,29 @@ settle: the user stops introducing new constraints, the scenarios stop
 producing new branches, and the language has stabilised.
 
 When you're there, announce the handoff in one short line and **invoke
-the `mars:to-prd` skill via the Skill tool yourself**, passing the idea
-id as `args`:
+the `mars:to-prd` skill via the Skill tool yourself**, passing the
+proposal id as `args`. If an `--inbox <inbox-id>` was parsed from
+`$ARGUMENTS`, forward it in the args so `mars:to-prd` can resolve the
+inbox row after the PRD is synthesised:
 
 > *"I think we have a shared understanding — synthesising the PRD now."*
 
 ```
+// No inbox id:
 Skill({ skill: "mars:to-prd", args: "<id>" })
+
+// With inbox id (inbox resolution is handled by to-prd after synthesis):
+Skill({ skill: "mars:to-prd", args: "<id> --inbox <inbox-id>" })
 ```
+
+<!-- TODO: to-prd handles inbox resolution when --inbox is passed; see follow-up task -->
 
 Do not ask the user to type `/mars:to-prd` — invoke it for them. The
 user's next interaction should be confirming the synthesised PRD inside
 `to-prd`, not running another slash command.
 
 Do **not** synthesise the PRD yourself in this skill. Do **not** call
-`mars idea set`, `mars idea add-user-story`, or `mars idea promote`.
+`mars proposal set`, `mars proposal add-user-story`, or `mars proposal promote`.
 Those are `to-prd`'s job. The only writes you may issue here are
 `mars glossary {set,remove}` and `mars adr add`.
 
@@ -231,13 +246,13 @@ Those are `to-prd`'s job. The only writes you may issue here are
 
 # What you do NOT do
 
-- Do not pick a target idea yourself. If `$ARGUMENTS` is empty, tell
-  the user to pass an idea id and stop.
+- Do not pick a target proposal yourself. If `$ARGUMENTS` is empty, tell
+  the user to pass a proposal id and stop.
 - Do not synthesise the PRD. That belongs in `/mars:to-prd`. Stop the
   conversation when understanding is shared and hand off.
-- Do not call `mars idea set`, `mars idea add-user-story`,
-  `mars idea remove-user-story`, `mars idea promote`, or `mars idea
-  reject`. The conversation phase writes nothing to the ideas table.
+- Do not call `mars proposal set`, `mars proposal add-user-story`,
+  `mars proposal remove-user-story`, `mars proposal promote`, or `mars proposal
+  reject`. The conversation phase writes nothing to the proposals table.
 - Do not batch questions. One question per turn, with your recommended
   answer, and wait for the user's reply before moving on.
 - Do not ask the user for facts the codebase already encodes — explore
@@ -255,4 +270,9 @@ Those are `to-prd`'s job. The only writes you may issue here are
 
 # Argument
 
-The user passed: `$ARGUMENTS`  (must be a draft idea id)
+The user passed: `$ARGUMENTS`
+
+Parse as described in Step 0: strip any `--inbox <inbox-id>` token
+first; the remainder is the draft proposal id. Both are carried through
+the full skill — the proposal id for the grill conversation, the inbox
+id for forwarding to `mars:to-prd` at handoff.

@@ -1,15 +1,15 @@
 ---
 name: mars:drafts
-description: Show Mars draft ideas and act on a single one — grill (shape into PRD), promote, reject, or delete. Lists drafts only; the inbox lives in `/mars:inbox`. Use when the user says "mars drafts", "show drafts", "refine a draft", "what drafts do I have", or invokes `/mars:drafts`.
+description: Show Mars draft proposals and act on a single one — grill (shape into PRD), promote, reject, or delete. Lists drafts only; the inbox lives in `/mars:inbox`. Use when the user says "mars drafts", "show drafts", "refine a draft", "what drafts do I have", or invokes `/mars:drafts`.
 ---
 
 # Mars: drafts router
 
-You are the Mars **drafts router**. Your job is strictly draft ideas —
+You are the Mars **drafts router**. Your job is strictly draft proposals —
 listing them, letting the user pick one, and dispatching the chosen
 draft-side action (`grill` / `promote` / `reject` / `delete`).
 
-Drafts are idea rows in `.mars/state.db` with `status='draft'`. The
+Drafts are proposal rows in `.mars/state.db` with `status='draft'`. The
 inbox is a separate surface and lives in `/mars:inbox`. If the user
 hands you an id that turns out to be an inbox item (not a draft), point
 them at `/mars:inbox` and stop.
@@ -20,7 +20,7 @@ Three resolution modes, driven by the argument shape.
 
 ## 1a — Argument looks like an id (8-hex prefix or full id)
 
-Run `mars idea show <argument>`:
+Run `mars proposal show <argument>`:
 
 - **Hit** → target is this draft. **Print the full CLI output
   verbatim** in a fenced block — no summarising, no paraphrasing, no
@@ -30,19 +30,19 @@ Run `mars idea show <argument>`:
 - **No hit / not a draft** → the id may be an inbox item. Tell the
   user in one line:
 
-  > `<id> is not a draft idea. If it's an inbox item, use /mars:inbox <id>.`
+  > `<id> is not a draft proposal. If it's an inbox item, use /mars:inbox <id>.`
 
   Then stop. Do not fall through to listing — the user named
   something specific.
 
 ## 1b — Argument is a source filter (`reflection`, `human`, `planner`)
 
-Run `mars idea list --source <argument> --status draft` and present
+Run `mars proposal list --source <argument> --status draft` and present
 the result per Step 2.
 
 ## 1c — No argument: show all open drafts
 
-Run `mars idea list --status draft` and present the result per Step 2.
+Run `mars proposal list --status draft` and present the result per Step 2.
 
 # Step 2 — Present the list
 
@@ -76,7 +76,7 @@ Column rules, applied identically on every invocation:
 
 If the list is empty, say so in one line and stop:
 
-> `No draft ideas. Try /mars:reflect to surface candidates from recent task arcs, or just describe what you want to shape.`
+> `No draft proposals. Try /mars:reflect to surface candidates from recent task arcs, or just describe what you want to shape.`
 
 After printing, **stop and wait**. Do not ask a follow-up question.
 The user's next message is expected to be one of:
@@ -89,7 +89,7 @@ The user's next message is expected to be one of:
 # Step 3 — Act on a single draft
 
 When the user has resolved a specific draft (Step 1a hit, or by
-replying with an id after Step 2), the `mars idea show <id>` output
+replying with an id after Step 2), the `mars proposal show <id>` output
 MUST already have been printed verbatim in this turn before this menu
 is shown. Then offer the four draft-side actions via **one**
 `AskUserQuestion`:
@@ -97,15 +97,15 @@ is shown. Then offer the four draft-side actions via **one**
 - **Grill** — invoke the `mars:grill` skill on `<id>` to shape it
   into a PRD. Use when the draft is still rough and needs sharpening
   against the project's domain model.
-- **Promote** — `mars idea promote <id>`. Flips status from `draft`
-  to `prd-ready`. Only valid once the idea is already shaped (has
+- **Promote** — `mars proposal promote <id>`. Flips status from `draft`
+  to `prd-ready`. Only valid once the proposal is already shaped (has
   problem / solution / user stories). Slicing creates the underlying
   tasks separately; this verb does not enqueue.
-- **Reject** — `mars idea reject <id>`. Flips status to `dismissed`
-  while keeping the row for history. Use when the idea is no longer
+- **Reject** — `mars proposal reject <id>`. Flips status to `dismissed`
+  while keeping the row for history. Use when the proposal is no longer
   worth pursuing.
-- **Delete** — `mars idea delete <id>`. Hard delete; cascades
-  `idea_user_stories`. Use for noise / accidental drafts.
+- **Delete** — `mars proposal delete <id>`. Hard delete; cascades
+  `proposal_user_stories`. Use for noise / accidental drafts.
 - **Skip** — do nothing and stop.
 
 Run the chosen verb via Bash (or invoke the skill for **Grill**); print
@@ -117,10 +117,10 @@ whatever the CLI reports verbatim. Stop after the dispatch.
   `/mars:inbox`.
 - Do not synthesise a PRD inline. Shaping happens in `/mars:grill`
   (which itself ends by invoking `/mars:to-prd`).
-- Do not slice. Slicing is a separate verb (`mars idea slice`) that
-  the user runs once the idea is `prd-ready`; this skill is about
+- Do not slice. Slicing is a separate verb (`mars proposal slice`) that
+  the user runs once the proposal is `prd-ready`; this skill is about
   the draft → prd-ready transition, not what comes after.
-- Do not call `mars idea add` to create a new draft. New drafts come
+- Do not call `mars proposal add` to create a new draft. New drafts come
   from the user (via routing / grilling), from `/mars:reflect`, or
   from the orchestrator — not from this listing skill.
 - Do not bulk-act on multiple drafts in one turn. One id per

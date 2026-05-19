@@ -1,6 +1,6 @@
 ---
 name: mars:unblock
-description: Help unblock a Mars task that the orchestrator stopped on. Loads the task and its blockers, reads implicated files, and proposes 2–3 concrete unblock options via AskUserQuestion. No idea-shaping, no glossary curation, no ADR offers. Use when the user says "unblock <id>", "why is this blocked", "help with <id>", or invokes `/mars:unblock`.
+description: Help unblock a Mars task that the orchestrator stopped on. Loads the task and its blockers, reads implicated files, and proposes 2–3 concrete unblock options via AskUserQuestion. No proposal-shaping, no glossary curation, no ADR offers. Use when the user says "unblock <id>", "why is this blocked", "help with <id>", or invokes `/mars:unblock`.
 ---
 
 # Mars: unblock a stuck task
@@ -11,25 +11,19 @@ upstream task, or a decision that needs an ADR. Your job is to surface
 **why** it's blocked, give the user enough context to decide, and then
 execute their decision through the right `mars` verb.
 
-You do **not** shape ideas, curate the glossary, or offer ADRs. If the
+You do **not** shape proposals, curate the glossary, or offer ADRs. If the
 unblock decision turns out to need a new task, enqueue it and stop.
 
-# Step 0 — No argument? Show the blocked list and stop.
+# Step 0 — No argument? Point to the inbox and stop.
 
-If `$ARGUMENTS` is empty, the user doesn't yet know which task they want
-to unblock. Run:
+If `$ARGUMENTS` is empty (after stripping any `--inbox` token — see
+"Argument" section at the end), the user doesn't yet know which task
+they want to unblock. Do **not** run `mars list blocked`. Instead, tell
+the user:
 
-```bash
-mars list blocked
-```
+> "Run `/mars:inbox` and pick a `task-blocked` row to continue here."
 
-Print the output verbatim (or a tight summary if it's long) and ask the
-user which id to work on. Do not guess and do not pick one yourself.
-Stop here until they reply with an id — then re-enter the skill with that
-id as the argument.
-
-If `mars list blocked` returns no rows, say so plainly ("nothing is
-blocked right now") and stop.
+Stop here. Do not guess and do not pick one yourself.
 
 # Step 1 — Identify whether the id is a task or an inbox item
 
@@ -43,7 +37,7 @@ blockers (69):
 
 Those ids under "blockers" are **inbox item ids, not task ids**, and they
 are not what `mars blockers <task-id>` operates on. If you pass one to
-`mars show`, you'll get `no task or idea matching <id>` and waste a turn.
+`mars show`, you'll get `no task or proposal matching <id>` and waste a turn.
 
 Resolve the id **once, up front**, before doing anything else:
 
@@ -51,9 +45,9 @@ Resolve the id **once, up front**, before doing anything else:
 mars show <id> 2>&1 | head -1
 ```
 
-- If it prints `kind: task` (or `kind: idea`) → it's a task/idea id, this
-  skill applies as written. Continue to Step 2.
-- If it prints `no task or idea matching <id>` → try
+- If it prints `kind: task` (or `kind: proposal`) → it's a task/proposal id,
+  this skill applies as written. Continue to Step 2.
+- If it prints `no task or proposal matching <id>` → try
   `mars inbox show <id>`. If that succeeds, the id is an **inbox item**.
   STOP and hand off — see "Inbox-item ids" below.
 - If both fail → tell the user the id doesn't resolve and ask them to
@@ -100,8 +94,8 @@ Print the recap in plain prose, in this shape:
 > to `<observable outcome>`. The orchestrator stopped on it at `<step>`."*
 
 Pull the goal from the task's prompt/title (the first sentence of the
-prompt body usually carries it). Origin candidates: a parent idea
-(`fromIdea: <idea-id>`), a sibling task that blocked it, or "user-queued
+prompt body usually carries it). Origin candidates: a parent proposal
+(`fromIdea: <proposal-id>`), a sibling task that blocked it, or "user-queued
 via `mars task add`". The step is whichever workflow stage flipped it to
 blocked (`code`, `verify`, `merge`).
 
@@ -188,13 +182,30 @@ After the verb runs, print one short confirmation line — what changed,
 and (if relevant) what the user should expect next ("orchestrator will
 pick up <new-id> automatically" or "<id> is back on the queue").
 
+## Inbox resolution on success
+
+If an `--inbox <inbox-id>` was passed in `$ARGUMENTS` **and** the
+chosen option fully clears the block (the task is now re-queued,
+restarted, continued, or dropped — i.e. it is no longer `blocked`),
+run:
+
+```bash
+mars inbox resolve <inbox-id> --note "<one-line summary of what was done>"
+```
+
+**Only resolve when the underlying condition is gone.** If the user
+chose "split into a new task" and the original task still has open
+blockers (status remains `blocked`), do **not** resolve the inbox row —
+it stays open until the chain clears. When in doubt, check the task's
+status with `mars show <task-id>` before resolving.
+
 # What you do NOT do
 
-- Do not call any `mars idea` write verb (`add`, `set`, `promote`, etc.).
-  This skill operates on tasks, not ideas. If the unblock requires
+- Do not call any `mars proposal` write verb (`add`, `set`, `promote`, etc.).
+  This skill operates on tasks, not proposals. If the unblock requires
   shaping a new feature, enqueue it as a `mars task add` prompt with
   enough self-contained context, or send the user to `/mars:grill` for
-  idea-shaping.
+  proposal-shaping.
 - Do not run `mars glossary set/remove` or `mars adr add`. Domain-language
   curation belongs to `mars:grill`.
 - Do not invent flag combinations not shown above. If `mars unblock`,
@@ -208,5 +219,14 @@ pick up <new-id> automatically" or "<id> is back on the queue").
 
 The user passed: `$ARGUMENTS`
 
-If empty, go to **Step 0** (list blocked tasks and ask which one). If an
-id is present, start at **Step 1** (resolve task vs. inbox item first).
+**Parse `$ARGUMENTS` as follows before doing anything else:**
+
+1. Look for a `--inbox <inbox-id>` token anywhere in the string. Extract
+   `<inbox-id>` and strip the `--inbox <inbox-id>` token from the string.
+   If absent, `inbox-id` is empty.
+2. Treat the remainder (trimmed) as `<task-id>`.
+
+If `<task-id>` is empty after parsing, go to **Step 0** (point to the
+inbox). If `<task-id>` is present, start at **Step 1** (resolve task vs.
+inbox item first). Carry `inbox-id` through to **Step 4** for the inbox
+resolution logic.
