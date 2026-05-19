@@ -1281,6 +1281,13 @@ const main = async (): Promise<void> => {
         console.log(`notes:`)
         console.log(idea.notes)
       }
+      const { listTasksForProposal } = await import('./mastra/queue')
+      const proposalTasks = await listTasksForProposal(idea.id)
+      if (proposalTasks.length > 0) {
+        console.log(
+          `tasks:      ${proposalTasks.map((t) => `${t.id} (${t.status})`).join(', ')}`,
+        )
+      }
       return
     }
     if (sub === 'set') {
