@@ -653,14 +653,25 @@ const typecheckCannotFindNameRecipe: FixRecipe = {
 // • merge:crashed/index-lock-contention
 //     git checkout <integration> failed because .git/index.lock already exists
 //     (another git process was running, or a previous process crashed and left
-//     a stale lock). The task's coding work is already committed on its branch
-//     — only the merge step crashed. This is environmental and transient; the
-//     lock is typically gone by the time the investigator runs. A recipe that
-//     blindly deletes index.lock is dangerous (it may be held by an active
-//     process). Operator fix: confirm no active git process holds the lock,
-//     then `mars restart <task-id>` to re-run the merge step. Investigated
-//     2026-05-19 (task 708a0e1b, origin dafb5b90 which had committed recipe
-//     4ce1608 on task/dafb5b90; lock was already gone at investigation time).
+//     a stale lock). The task's coding work may or may not have been committed
+//     before the crash — only the merge checkout step itself failed. This is
+//     environmental and transient; the lock is typically gone by the time the
+//     investigator runs. A recipe that blindly deletes index.lock is dangerous
+//     (it may be held by an active process). Operator fix: confirm no active
+//     git process holds the lock, then `mars restart <task-id>` to re-run the
+//     merge step. If the task had 0 commits ahead of integration at crash time,
+//     the retry will fail with verify:has-diff/no-commits-ahead and route to
+//     the no-commits-ahead recipe automatically.
+//     Investigated 2026-05-19 (task 708a0e1b, origin dafb5b90 which had
+//     committed recipe 4ce1608 on task/dafb5b90; lock was already gone at
+//     investigation time).
+//     Re-confirmed 2026-05-20 (task mars-f0b3da78, origin
+//     82f2b926-taskstore-seam-slice-3-migrate-the-7-lib). In this occurrence
+//     the branch had 0 commits ahead of main (the queue-fix-tasks migration
+//     work was never committed before the crash). The lock was already gone at
+//     investigation time, confirming the transient nature. Operator fix:
+//     mars restart mars-f0b3da78 — the retry will route through
+//     verify:has-diff/no-commits-ahead and the existing recipe handles it.
 //
 // • merge:vcs-supervisor-aborted/index-lock-contention
 //     The vcs-supervisor ran `git merge --ff-only <branch>` and it failed with
