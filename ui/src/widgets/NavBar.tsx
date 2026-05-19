@@ -1,5 +1,5 @@
 import { useAgents } from '@/hooks/useAgents'
-import { useTasks } from '@/hooks/useTasks'
+import { useProgress } from '@/hooks/useProgress'
 import { useTodo } from '@/hooks/useTodo'
 import { detectRoute, actionQueueCount } from '@/shared/routing'
 
@@ -28,15 +28,11 @@ export const NavBar = ({ hash }: NavBarProps) => {
   const route = detectRoute(hash)
 
   const todo = useTodo()
-  const { snapshot } = useTasks()
+  const { tasks } = useProgress()
   const { agents } = useAgents()
 
   const actionCount = actionQueueCount({ drafts: todo.drafts, staleWorktrees: todo.staleWorktrees })
-  const kanbanCount = snapshot
-    ? snapshot.columns.backlog.length +
-      snapshot.columns.in_progress.length +
-      snapshot.columns.done.length
-    : 0
+  const progressCount = tasks?.length ?? 0
   const agentsCount = agents?.length ?? 0
 
   return (
@@ -48,9 +44,9 @@ export const NavBar = ({ hash }: NavBarProps) => {
         </a>
       </span>
       <span className="relative">
-        <CountBadge count={kanbanCount} />
-        <a className={linkClass(route === 'kanban')} href="#/kanban">
-          Kanban
+        <CountBadge count={progressCount} />
+        <a className={linkClass(route === 'progress')} href="#/progress">
+          Progress
         </a>
       </span>
       <span className="relative">

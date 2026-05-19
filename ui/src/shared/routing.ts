@@ -1,16 +1,16 @@
 import type { TodoPayload } from './schemas'
 
-export type RouteName = 'action-queue' | 'kanban' | 'agents'
+export type RouteName = 'action-queue' | 'progress' | 'agents'
 
 /**
  * Derives the current route from the URL hash.
  *
- * #/kanban[/…]          → kanban
+ * #/progress[/…]        → progress
  * #/agents[/…]          → agents
  * everything else       → action-queue  (default; also covers #/todo legacy)
  */
 export const detectRoute = (hash: string): RouteName => {
-  if (hash.startsWith('#/kanban')) return 'kanban'
+  if (hash.startsWith('#/progress')) return 'progress'
   if (hash.startsWith('#/agents')) return 'agents'
   return 'action-queue'
 }
@@ -18,8 +18,8 @@ export const detectRoute = (hash: string): RouteName => {
 /**
  * Parses an optional `#/task/<id>` overlay route. The task drawer is layered
  * on top of whatever the underlying `detectRoute(...)` route resolves to —
- * Kanban or otherwise — so this function returns the id alone (or `null` when
- * the hash carries no task fragment).
+ * Progress or otherwise — so this function returns the id alone (or `null`
+ * when the hash carries no task fragment).
  *
  * Trailing slashes and empty ids are normalised to `null` so a stray
  * `#/task/` never opens an empty drawer.
