@@ -2,11 +2,13 @@ import { useState } from 'react'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useProgress } from '@/hooks/useProgress'
 import type { Cluster, ProgressTask } from '@/shared/schemas'
-import { DEFAULT_TAB, TABS, tabLabel, type Tab } from '@/shared/tabs'
+import { DEFAULT_TAB, type Tab } from '@/shared/tabs'
 import type { Role, UITask } from '@/shared/types'
 import { Column } from '@/widgets/Column'
 import { Footer } from '@/widgets/Footer'
 import { Sidebar } from '@/widgets/Sidebar'
+import { TabStrip } from '@/widgets/TabStrip'
+import { TopologyView } from '@/widgets/TopologyView'
 import { TopStripe } from '@/widgets/TopStripe'
 
 const titleFromPrompt = (prompt: string): string => {
@@ -50,6 +52,7 @@ const CLUSTERS: readonly Cluster[] = ['In progress', 'Blocked', 'Failed']
 
 export const ProgressPage = () => {
   const { byCluster, tasks, error, connected } = useProgress()
+  const [activeTab, setActiveTab] = useState<Tab>(DEFAULT_TAB)
 
   const totalTasks = tasks?.length ?? 0
   const inProgressCount = byCluster['In progress'].length
@@ -62,6 +65,32 @@ export const ProgressPage = () => {
     cursor += n
     return v
   }
+
+  const boardBody = (
+    <>
+      <main className="flex min-h-0 flex-1 gap-3 overflow-hidden bg-bg p-4">
+        {CLUSTERS.map((cluster) => {
+          const tasksForCluster = byCluster[cluster].map(toUI)
+          const accent: 'flame' | 'muted' =
+            cluster === 'In progress' ? 'flame' : 'muted'
+          return (
+            <Column
+              key={cluster}
+              label={cluster}
+              accent={accent}
+              tasks={tasksForCluster}
+              startIndex={startIdx(tasksForCluster.length)}
+            />
+          )
+        })}
+      </main>
+      {error ? (
+        <div className="border-t border-iron/40 bg-iron/10 px-6 py-1.5 font-mono text-[11px] text-iron">
+          {error}
+        </div>
+      ) : null}
+    </>
+  )
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg">
@@ -77,34 +106,15 @@ export const ProgressPage = () => {
           done={failedCount}
           connected={connected}
         />
+        <TabStrip active={activeTab} onSelect={setActiveTab} />
         {error && tasks === null ? (
           <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
             <ApiErrorPanel error={error} />
           </main>
+        ) : activeTab === 'topology' ? (
+          <TopologyView />
         ) : (
-          <>
-            <main className="flex min-h-0 flex-1 gap-3 overflow-hidden bg-bg p-4">
-              {CLUSTERS.map((cluster) => {
-                const tasksForCluster = byCluster[cluster].map(toUI)
-                const accent: 'flame' | 'muted' =
-                  cluster === 'In progress' ? 'flame' : 'muted'
-                return (
-                  <Column
-                    key={cluster}
-                    label={cluster}
-                    accent={accent}
-                    tasks={tasksForCluster}
-                    startIndex={startIdx(tasksForCluster.length)}
-                  />
-                )
-              })}
-            </main>
-            {error ? (
-              <div className="border-t border-iron/40 bg-iron/10 px-6 py-1.5 font-mono text-[11px] text-iron">
-                {error}
-              </div>
-            ) : null}
-          </>
+          boardBody
         )}
         <Footer />
       </div>
