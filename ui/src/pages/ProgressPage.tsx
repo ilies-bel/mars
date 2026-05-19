@@ -1,3 +1,4 @@
+import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useProgress } from '@/hooks/useProgress'
 import type { Cluster, ProgressTask } from '@/shared/schemas'
 import type { Role, UITask } from '@/shared/types'
@@ -74,27 +75,35 @@ export const ProgressPage = () => {
           done={failedCount}
           connected={connected}
         />
-        <main className="flex min-h-0 flex-1 gap-3 overflow-hidden bg-bg p-4">
-          {CLUSTERS.map((cluster) => {
-            const tasksForCluster = byCluster[cluster].map(toUI)
-            const accent: 'flame' | 'muted' =
-              cluster === 'In progress' ? 'flame' : 'muted'
-            return (
-              <Column
-                key={cluster}
-                label={cluster}
-                accent={accent}
-                tasks={tasksForCluster}
-                startIndex={startIdx(tasksForCluster.length)}
-              />
-            )
-          })}
-        </main>
-        {error ? (
-          <div className="border-t border-iron/40 bg-iron/10 px-6 py-1.5 font-mono text-[11px] text-iron">
-            {error}
-          </div>
-        ) : null}
+        {error && tasks === null ? (
+          <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
+            <ApiErrorPanel error={error} />
+          </main>
+        ) : (
+          <>
+            <main className="flex min-h-0 flex-1 gap-3 overflow-hidden bg-bg p-4">
+              {CLUSTERS.map((cluster) => {
+                const tasksForCluster = byCluster[cluster].map(toUI)
+                const accent: 'flame' | 'muted' =
+                  cluster === 'In progress' ? 'flame' : 'muted'
+                return (
+                  <Column
+                    key={cluster}
+                    label={cluster}
+                    accent={accent}
+                    tasks={tasksForCluster}
+                    startIndex={startIdx(tasksForCluster.length)}
+                  />
+                )
+              })}
+            </main>
+            {error ? (
+              <div className="border-t border-iron/40 bg-iron/10 px-6 py-1.5 font-mono text-[11px] text-iron">
+                {error}
+              </div>
+            ) : null}
+          </>
+        )}
         <Footer />
       </div>
     </div>
