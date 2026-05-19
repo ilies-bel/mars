@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useProgress } from '@/hooks/useProgress'
 import type { Cluster, ProgressTask } from '@/shared/schemas'
+import { DEFAULT_TAB, TABS, tabLabel, type Tab } from '@/shared/tabs'
 import type { Role, UITask } from '@/shared/types'
 import { Column } from '@/widgets/Column'
 import { Footer } from '@/widgets/Footer'
