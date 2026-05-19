@@ -3399,6 +3399,11 @@ const main = async (): Promise<void> => {
 
     const { binPath, srcDir } = resolveUninstallPaths(wrapperPath)
 
+    // Always print the resolved paths before acting so the user (or a
+    // non-interactive caller) can see exactly what would be removed.
+    console.log(`wrapper: ${binPath}`)
+    console.log(`source:  ${srcDir}`)
+
     const rl =
       !yes && isTty
         ? createInterface({ input: process.stdin, output: process.stdout })
