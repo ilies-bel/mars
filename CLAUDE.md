@@ -85,8 +85,7 @@ stopped on after exhausting retries (kind `task-blocked`), and draft ideas
 waiting to be shaped (kind `idea-needs-shaping`) — appears as an inbox
 message. Pick one via `mars inbox list` or `/mars:inbox`; the inbox
 dispatches to the right resolver (`/mars:unblock`, `/mars:grill`, or
-ack/resolve/dismiss). A `SessionStart` hook runs `mars inbox --lean` so
-the current inbox state primes every Claude Code session.
+ack/resolve/dismiss). To see pending work, run `/mars:chat` or `/mars:inbox`.
 
 ## Glossary and ADRs
 
