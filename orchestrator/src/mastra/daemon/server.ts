@@ -31,6 +31,7 @@ import {
 import { listProposals, promoteProposal } from '../proposals'
 import {
   CANCELLED_FAILURE_REASON,
+  markOriginDoneFromRecovery,
   onBlockerTaskCancelled,
   onBlockerTaskCompleted,
   recoverBlockedTasks,
@@ -779,6 +780,42 @@ export const startDaemon = async (
           log(
             `[inbox] error superseding items for origin ${id}: ${(err as Error).message}`,
           )
+        }
+        // Recovery→origin done propagation. CLAUDE.md contract: "a
+        // successful recovery counts as its origin reaching done, so
+        // a recovered blocker unblocks the whole chain." When a fix
+        // task (kind='fix', non-null fixForTaskId) reaches done, flip
+        // the origin row to done, close any inbox items keyed on the
+        // origin, and propagate the unblock to its dependents.
+        if (after.kind === 'fix' && after.fixForTaskId !== null) {
+          try {
+            const propagation = await markOriginDoneFromRecovery(
+              after.fixForTaskId,
+            )
+            if (propagation.originFlipped) {
+              log(
+                `[propagate] recovery ${id} flipped origin ${propagation.originTaskId} to done; closed ${propagation.inboxItemsClosed} inbox item(s)`,
+              )
+              if (propagation.unblock) {
+                for (const o of propagation.unblock.outcomes) {
+                  if (o.outcome === 'queued') {
+                    log(
+                      `[unblock] task ${o.taskId} re-queued after recovery ${id} propagated done to origin ${propagation.originTaskId}`,
+                    )
+                    bus.emit('task.queued', { taskId: o.taskId })
+                  } else if (o.outcome === 'failed') {
+                    log(
+                      `[unblock] task ${o.taskId} failed at unblock (retry budget exhausted) after recovery ${id} propagated done to origin ${propagation.originTaskId}`,
+                    )
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            log(
+              `[propagate] error propagating recovery ${id} done to origin ${after.fixForTaskId}: ${(err as Error).message}`,
+            )
+          }
         }
         // Diagnose Chore completion takes the PRD 06e677fb verdict-driven
         // branch — read the structured verdict, dispatch exactly one fix
