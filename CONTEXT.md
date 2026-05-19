@@ -288,7 +288,3 @@ _Avoid_: Kanban tab, Runs tab, live tab
 **Cluster**:
 An operator-meaningful grouping of task statuses (or proposals) used by the Progress tab: Proposal, In progress (queued + running + verifying + merging), Blocked, Failed.
 _Avoid_: bucket, group, status group, Graph bucket
-
-**Worker instance**:
-An operator-declared dispatch target that pairs a Worker class with a Runtime and a tag set. Mars ships with one default instance per class; operators add more to express different execution shapes (e.g. a tmux-Runtime Coder alongside the default headless one).
-_Avoid_: Instance, WorkerInstance, dispatch slot, configured worker
