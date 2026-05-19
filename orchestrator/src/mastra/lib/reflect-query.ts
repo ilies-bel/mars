@@ -1,5 +1,5 @@
-import { createClient } from '@libsql/client'
 import { resolveContext } from '../context'
+import { openLibsql } from './libsql'
 import { getClient, initQueue } from '../queue'
 import type { TaskSignalRow } from './reflect-signals'
 
@@ -116,7 +116,11 @@ export const loadScoresForTasks = async (
   const scoresByTask = new Map<string, Record<string, TaskScoreEntry>>()
   if (taskIds.length === 0) return scoresByTask
   const { mastraDbPath } = resolveContext()
-  const mastraClient = createClient({ url: `file:${mastraDbPath}` })
+  // openLibsql issues PRAGMA foreign_keys = ON as a fire-and-forget. This is
+  // behaviourally inert here: this connection only runs SELECTs against
+  // mastra.db and exercises no FK constraints. Routed through the helper to
+  // satisfy AC#3 (no raw createClient in Mars-owned source outside the helper).
+  const mastraClient = openLibsql({ url: `file:${mastraDbPath}` })
   let scorerRows: MastraScorerRow[] = []
   try {
     const r = await mastraClient.execute({

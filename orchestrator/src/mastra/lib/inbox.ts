@@ -1,6 +1,7 @@
-import { createClient, type Client } from '@libsql/client'
+import { type Client } from '@libsql/client'
 import { createHash, randomUUID } from 'node:crypto'
 import { resolveContext } from '../context'
+import { openLibsql } from './libsql'
 
 export type InboxCategory = 'orchestrator' | 'reflector' | 'daemon' | 'user'
 export type InboxPriority = 'urgent' | 'high' | 'normal' | 'low'
@@ -80,7 +81,7 @@ let initialised = false
 const getClient = (): Client => {
   if (clientSingleton) return clientSingleton
   const { stateDbPath } = resolveContext()
-  clientSingleton = createClient({ url: `file:${stateDbPath}` })
+  clientSingleton = openLibsql({ url: `file:${stateDbPath}` })
   return clientSingleton
 }
 
