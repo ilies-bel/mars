@@ -290,3 +290,7 @@ _Avoid_: bucket, group, status group, Graph bucket
 
 **Worker class**:
 The role definition that pins model, effort, permission posture, denied tools, and message cap for a kind of Session — one of Coder, Planner, Slicer, Triager, Fixer, Writer. Closed set; operators do not add new classes.
+
+**Worker instance**:
+An operator-declared dispatch target that pairs a Worker class with a Runtime and a tag set. Mars ships with one default instance per class; operators add more to express different execution shapes (e.g. a tmux-Runtime Coder alongside the default headless one).
+_Avoid_: Instance, WorkerInstance, dispatch slot, configured worker
