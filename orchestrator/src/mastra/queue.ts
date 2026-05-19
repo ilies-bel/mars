@@ -1239,6 +1239,13 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
       sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
       args: [id, id],
     })
+    // task_proposal_blockers has a FK on task_id → tasks(id). Delete these
+    // rows before the task row so the constraint never fires. (Rows where the
+    // task appears as proposal_id are in a different db and have no FK here.)
+    await tx.execute({
+      sql: `DELETE FROM task_proposal_blockers WHERE task_id = ?`,
+      args: [id],
+    })
     if (fixForRefsCleared.length > 0) {
       // fix_for_task_id is not declared as a FK, but a dangling pointer
       // confuses readers that conflate a non-null value with "parent
