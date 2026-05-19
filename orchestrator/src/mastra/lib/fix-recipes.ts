@@ -303,6 +303,76 @@ const vcsAbortedNotFastForwardRecipe: FixRecipe = {
   },
 }
 
+const typecheckPropertyNotExistRecipe: FixRecipe = {
+  signature: 'verify:typecheck/typecheck-property-not-exist',
+  title: () =>
+    `Fix property-does-not-exist error(s) to resolve TS2339/TS2353 typecheck failure`,
+  buildPrompt: (ctx) => {
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `TypeScript reported TS2339 ("Property 'X' does not exist on type 'Y'") or TS2353 ("Object literal may only specify known properties, and 'X' does not exist in type 'Y'") during the typecheck step. Both errors mean code is accessing or declaring a field that has been removed from (or was never added to) a type definition.`,
+      '',
+      `The most common cause in this codebase is an **incomplete refactoring**: a task removed a field from a type (e.g. \`totalCostUsd\` from \`TaskSignalRow\`) but did not update every call site that reads, writes, or spreads that field. The failing task's original prompt (inlined below) describes what was being changed — use it to determine whether the fix is to complete the deletion or to add the missing field.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `## How to fix`,
+      '',
+      `STEP 1 — Identify every TS2339 and TS2353 error. From your current working directory, run:`,
+      '',
+      '```',
+      `cd orchestrator && npx tsc --noEmit 2>&1 | grep -E "TS2339|TS2353"`,
+      '```',
+      '',
+      `Each error line has the form:`,
+      `  <file>(<line>,<col>): error TS2339: Property '<field>' does not exist on type '<TypeName>'.`,
+      `  <file>(<line>,<col>): error TS2353: Object literal may only specify known properties, and '<field>' does not exist in type '<TypeName>'.`,
+      '',
+      `STEP 2 — For each missing property '<field>', determine the correct fix by consulting the original task prompt below:`,
+      '',
+      ` **(a) Intentional deletion — the field was removed from the type as part of the task.** Distinguishing signal: the original task prompt says to remove, drop, or delete '<field>'.`,
+      `     Fix: complete the deletion. Remove every remaining reference to '<field>' at the call sites named in the errors. Common patterns to handle:`,
+      `     • Property access: \`obj.field\` → remove the access or the surrounding expression.`,
+      `     • Spread mapping: \`{ ...rest, field: s.field }\` → remove the \`field\` key from the object.`,
+      `     • Accumulator in reduce: \`acc.field + s.field\` → remove the field key from the accumulator initializer and from the reduce body.`,
+      `     • Object literal: \`{ field: value, ... }\` → remove the key from the literal.`,
+      `     Re-run the typecheck after each file edit; additional TS2339/TS2353 errors for the same field in other files resolve once all references are cleaned up.`,
+      '',
+      ` **(b) Missing implementation — the field was supposed to be added to the type but was not.** Distinguishing signal: the original task prompt says to add or introduce '<field>'.`,
+      `     Fix: add the field to the type definition and ensure all read/write sites are consistent.`,
+      '',
+      ` **(c) Missing import or wrong type used.** If the field exists on a related type but the wrong type was imported, add or correct the import.`,
+      '',
+      `STEP 3 — After each fix, re-run the full typecheck to confirm the error count drops:`,
+      '',
+      '```',
+      `cd orchestrator && npx tsc --noEmit`,
+      '```',
+      '',
+      ` - Fix TS2339/TS2353 errors one field at a time. Multiple errors for the same missing field (across different call sites or files) resolve with a single fix to the origin.`,
+      ` - If fresh, unrelated TS errors appear after your fix, fix them too — they are in scope.`,
+      '',
+      `## Important constraints`,
+      ` - Do NOT add \`// @ts-ignore\` or cast to \`any\` to silence the error — fix the actual code.`,
+      ` - Do NOT re-add a field that the original task explicitly removed — complete the deletion instead.`,
+      ` - If fixing the error requires a new DB column, new table, or other schema change, STOP: raise a high-priority inbox item via \`mars inbox raise --from -\` explaining the blocker, then exit. Do not silently expand scope.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only): ${ctx.targetPath}`,
+      '',
+      `Save your work: stage all changed files and commit. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 const typecheckMissingExportRecipe: FixRecipe = {
   signature: 'verify:typecheck/typecheck-missing-export',
   title: () =>
@@ -723,6 +793,7 @@ const recipeList: readonly FixRecipe[] = [
   worktreeInstallTimeoutRecipe,
   noCommitsAheadRecipe,
   vcsAbortedNotFastForwardRecipe,
+  typecheckPropertyNotExistRecipe,
   typecheckMissingExportRecipe,
   typecheckArgTypeMismatchRecipe,
   typecheckExcessPropertyRecipe,

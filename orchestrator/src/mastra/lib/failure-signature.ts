@@ -103,6 +103,24 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     match: /requires a peer of/i,
   },
   {
+    // TS2339: Property 'X' does not exist on type 'Y'.
+    // Fired when a task removes a field from a type definition (e.g. drops
+    // `totalCostUsd` from `TaskSignalRow`) but leaves behind call sites that
+    // still access that field. A recovery agent can inspect the original task
+    // prompt to determine whether the intent was deletion (complete the
+    // deletion at all call sites) or addition (add the missing field).
+    // TS2353 ("Object literal may only specify known properties, and 'X' does
+    // not exist in type 'Y'") fires for the same root cause when the removed
+    // field appears inside an object literal rather than as a property access.
+    // Both codes share this slug — fix strategy is identical. `match` fires
+    // when TS2339 appears on the first error line (the common case); the
+    // `matchFull` guard catches the rare case where only TS2353 errors appear
+    // (e.g. all property accesses were cleaned up but object literals were not).
+    errorClass: 'typecheck-property-not-exist',
+    match: /\bTS2339:/,
+    matchFull: /\bTS2353:/,
+  },
+  {
     errorClass: 'typecheck-cannot-find-name',
     match: /\bTS2304:/,
   },

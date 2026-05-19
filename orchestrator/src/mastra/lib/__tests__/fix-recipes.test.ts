@@ -612,6 +612,93 @@ describe('fix-recipes', () => {
     })
   })
 
+  describe('verify:typecheck/typecheck-property-not-exist recipe', () => {
+    const ctx = {
+      targetPath: '/tmp/worktrees/task-abc',
+      statusOutput:
+        "src/mastra/lib/deep-reflect-query.ts(169,21): error TS2339: Property 'totalCostUsd' does not exist on type 'TaskSignalRow'.\nCommand failed: npx tsc --noEmit\n",
+      targetBranch: 'task/abc',
+      integrationBranch: 'main',
+      originalPrompt: '',
+    }
+
+    it('is registered under the correct signature', () => {
+      expect(hasRecipe('verify:typecheck/typecheck-property-not-exist')).toBe(true)
+    })
+
+    it('produces a stable title', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
+      expect(recipe.title(ctx)).toBe(
+        'Fix property-does-not-exist error(s) to resolve TS2339/TS2353 typecheck failure',
+      )
+    })
+
+    it('prompt contains TS2339 and TS2353, step instructions, and constraint against ts-ignore', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('TS2339')
+      expect(prompt).toContain('TS2353')
+      expect(prompt).toContain('STEP 1')
+      expect(prompt).toContain('STEP 2')
+      expect(prompt).toContain('STEP 3')
+      expect(prompt).toMatch(/do NOT add.*@ts-ignore/i)
+      expect(prompt).toContain('Save your work')
+    })
+
+    it('describes the incomplete-refactoring (deletion) path so the agent completes removals rather than re-adding the field', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/incomplete refactoring/i)
+      expect(prompt).toMatch(/complete the deletion/i)
+      expect(prompt).toMatch(/do NOT re-add a field that the original task explicitly removed/i)
+    })
+
+    it('describes common code patterns the agent must clean up when completing a deletion', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/property access/i)
+      expect(prompt).toMatch(/object literal/i)
+      expect(prompt).toMatch(/accumulator/i)
+    })
+
+    it('describes the missing-implementation path so the agent can add a field when that is the intent', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/missing implementation/i)
+    })
+
+    it('embeds the failing branch and worktree path', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(ctx.targetBranch)
+      expect(prompt).toContain(ctx.targetPath)
+    })
+
+    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
+      const promptWithSource = recipe.buildPrompt({
+        ...ctx,
+        originalPrompt: 'remove totalCostUsd from TaskSignalRow and all call sites',
+      })
+      expect(promptWithSource).toContain(
+        'remove totalCostUsd from TaskSignalRow and all call sites',
+      )
+      expect(promptWithSource).toMatch(/inlined/i)
+      const promptWithout = recipe.buildPrompt(ctx)
+      expect(promptWithout).not.toContain(
+        'remove totalCostUsd from TaskSignalRow and all call sites',
+      )
+      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
+    })
+
+    it('instructs the agent to re-run typecheck after each fix to confirm error count drops', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('npx tsc --noEmit')
+      expect(prompt).toMatch(/error count drops/i)
+    })
+  })
+
   describe('verify:typecheck/typecheck-missing-export recipe', () => {
     const ctx = {
       targetPath: '/tmp/worktrees/task-abc',
