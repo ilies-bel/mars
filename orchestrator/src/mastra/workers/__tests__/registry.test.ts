@@ -1,14 +1,18 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { claudeStreamArgs } from '../../lib/git'
 import {
   CODER_MODEL,
+  DEFAULT_MAX_MESSAGES,
   FIXER_BACKLOG_DENIED_TOOLS,
   READ_ONLY_DENIED_TOOLS,
   WORKER_CONFIGS,
   WRITER_DENIED_TOOLS,
   Workers,
+  createWorker,
   getWorker,
   getWorkerForTag,
+  resolveWorkerMaxMessages,
+  type WorkerConfig,
   type WorkerName,
 } from '..'
 import { pickWorkerForTask } from '../../workflows/implement-workflow'
@@ -214,6 +218,113 @@ describe('pickWorkerForTask', () => {
 
   it('routes legacy rows with undefined kind to Coder', () => {
     expect(pickWorkerForTask({} as Task)).toBe('Coder')
+  })
+})
+
+describe('audit surface — full role-pinned config exposed via WORKER_CONFIGS', () => {
+  it('every Worker exposes the full dispatch-surface contract in one place', () => {
+    // Operator-facing audit point: any shipped Worker can be inspected through
+    // WORKER_CONFIGS without chasing call sites. Each entry MUST carry the
+    // structural fields named in the PRD; optional fields may be undefined
+    // when the role does not pin them, but they must be representable.
+    const requiredKeys: ReadonlyArray<keyof WorkerConfig> = [
+      'name',
+      'model',
+      'effort',
+      'permissionMode',
+      'bare',
+      'disallowedTools',
+      'outputFormat',
+      'defaultTimeoutMs',
+      'maxMessages',
+    ]
+    for (const name of Object.keys(WORKER_CONFIGS) as WorkerName[]) {
+      const cfg = WORKER_CONFIGS[name]
+      for (const k of requiredKeys) {
+        expect(cfg[k], `${name}.${k} must be defined`).toBeDefined()
+      }
+    }
+  })
+
+  it('every Worker pins outputFormat to stream-json (the only format the orchestrator parses)', () => {
+    for (const name of Object.keys(WORKER_CONFIGS) as WorkerName[]) {
+      expect(WORKER_CONFIGS[name].outputFormat).toBe('stream-json')
+    }
+  })
+})
+
+describe('systemPrompt / appendSystemPrompt mutual exclusion', () => {
+  const baseConfig: WorkerConfig = {
+    name: 'Coder',
+    model: 'claude-sonnet-4-6',
+    effort: 'medium',
+    permissionMode: 'default',
+    bare: false,
+    disallowedTools: [],
+    outputFormat: 'stream-json',
+    defaultTimeoutMs: 1000,
+    maxMessages: 100,
+  }
+
+  it('createWorker throws when both systemPrompt and appendSystemPrompt are pinned', () => {
+    // Behaviour: claude -p cannot honour both --system-prompt and
+    // --append-system-prompt on the same invocation. The factory must fail
+    // loudly at construction so the misconfiguration surfaces at module-load
+    // (where the operator can fix it) rather than being silently dropped at
+    // dispatch.
+    expect(() =>
+      createWorker({ ...baseConfig, systemPrompt: 'X', appendSystemPrompt: 'Y' }),
+    ).toThrow(/mutually exclusive/i)
+  })
+
+  it('createWorker accepts a config with only systemPrompt set', () => {
+    expect(() => createWorker({ ...baseConfig, systemPrompt: 'X' })).not.toThrow()
+  })
+
+  it('createWorker accepts a config with only appendSystemPrompt set', () => {
+    expect(() => createWorker({ ...baseConfig, appendSystemPrompt: 'Y' })).not.toThrow()
+  })
+
+  it('createWorker accepts a config with neither system-prompt field set', () => {
+    expect(() => createWorker(baseConfig)).not.toThrow()
+  })
+
+  it('shipped registry never pins both system-prompt fields on the same Worker', () => {
+    for (const name of Object.keys(WORKER_CONFIGS) as WorkerName[]) {
+      const c = WORKER_CONFIGS[name]
+      const bothSet = c.systemPrompt !== undefined && c.appendSystemPrompt !== undefined
+      expect(bothSet, `${name} pins both system-prompt fields`).toBe(false)
+    }
+  })
+})
+
+describe('resolveWorkerMaxMessages — explicit → env var → DEFAULT_MAX_MESSAGES', () => {
+  const original = process.env.MARS_CLAUDE_MAX_MESSAGES
+  beforeEach(() => {
+    delete process.env.MARS_CLAUDE_MAX_MESSAGES
+  })
+  afterEach(() => {
+    if (original === undefined) delete process.env.MARS_CLAUDE_MAX_MESSAGES
+    else process.env.MARS_CLAUDE_MAX_MESSAGES = original
+  })
+
+  it('returns the explicit override when one is provided', () => {
+    expect(resolveWorkerMaxMessages(42)).toBe(42)
+  })
+
+  it('falls back to MARS_CLAUDE_MAX_MESSAGES when no override is given', () => {
+    process.env.MARS_CLAUDE_MAX_MESSAGES = '77'
+    expect(resolveWorkerMaxMessages()).toBe(77)
+  })
+
+  it('falls back to DEFAULT_MAX_MESSAGES (100) when neither override nor env is set', () => {
+    expect(resolveWorkerMaxMessages()).toBe(DEFAULT_MAX_MESSAGES)
+    expect(DEFAULT_MAX_MESSAGES).toBe(100)
+  })
+
+  it('ignores non-integer env values and falls back to the default', () => {
+    process.env.MARS_CLAUDE_MAX_MESSAGES = 'notanumber'
+    expect(resolveWorkerMaxMessages()).toBe(DEFAULT_MAX_MESSAGES)
   })
 })
 
