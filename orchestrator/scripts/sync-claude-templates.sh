@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# Copy the framework's `.claude/` config and root `CLAUDE.md` into the
-# orchestrator's template tree, so that `mars init` ships a self-contained
-# Claude Code setup. Runs as `prebuild`/`pretest`, so the bundled tree is
-# always fresh.
+# Copy the framework's `.claude/` config into the orchestrator's template
+# tree, so that `mars init` ships a self-contained Claude Code setup. Runs
+# as `prebuild`/`pretest`, so the bundled tree is always fresh.
+#
+# The bundled `templates/CLAUDE.md` is intentionally NOT synced from the
+# framework's own root `CLAUDE.md` — the two have diverged: the template
+# carries Mars-meta content for target repos, while the framework's own
+# CLAUDE.md describes the mars-framework codebase itself. Edit
+# `orchestrator/src/init/templates/CLAUDE.md` directly when the template
+# needs to change.
 #
 # Symlinks (e.g. `.claude/skills/mastra → .agents/skills/mastra` in the
 # framework repo) are dereferenced with `cp -RL` so the resulting templates
@@ -29,24 +35,17 @@ if [ -n "$_git_dir" ] && [ "$_git_dir" != "$_git_common" ]; then
 fi
 
 SRC_CLAUDE="$FRAMEWORK_ROOT/.claude"
-SRC_CLAUDE_MD="$FRAMEWORK_ROOT/CLAUDE.md"
 DEST_DIR="$ORCH_ROOT/src/init/templates"
 DEST_CLAUDE="$DEST_DIR/claude"
-DEST_CLAUDE_MD="$DEST_DIR/CLAUDE.md"
 
 if [ ! -d "$SRC_CLAUDE" ]; then
   echo "sync-claude-templates: source $SRC_CLAUDE does not exist" >&2
-  exit 1
-fi
-if [ ! -f "$SRC_CLAUDE_MD" ]; then
-  echo "sync-claude-templates: source $SRC_CLAUDE_MD does not exist" >&2
   exit 1
 fi
 
 mkdir -p "$DEST_DIR"
 rm -rf "$DEST_CLAUDE"
 cp -RL "$SRC_CLAUDE" "$DEST_CLAUDE"
-cp "$SRC_CLAUDE_MD" "$DEST_CLAUDE_MD"
 
 # `cp -RL` copies the *entire* live `.claude/` tree, which includes Claude
 # Code runtime artifacts the harness writes there at run time — notably

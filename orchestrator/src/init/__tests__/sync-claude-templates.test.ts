@@ -73,7 +73,32 @@ describe('sync-claude-templates.sh — worktree guard', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('syncs templates when running from the main working tree', () => {
+  it('syncs the .claude/ config tree when running from the main working tree', () => {
+    const mainRepo = join(tmpDir, 'main')
+    mkdirSync(mainRepo)
+    setupMainRepo(mainRepo)
+
+    const settingsTemplatePath = join(
+      mainRepo,
+      'orchestrator',
+      'src',
+      'init',
+      'templates',
+      'claude',
+      'settings.json',
+    )
+
+    const result = spawnSync('bash', ['./scripts/sync-claude-templates.sh'], {
+      cwd: join(mainRepo, 'orchestrator'),
+      stdio: 'pipe',
+    })
+
+    expect(result.status).toBe(0)
+    // `.claude/settings.json` MUST have been synced into the template tree.
+    expect(readFileSync(settingsTemplatePath, 'utf8')).toBe(CLAUDE_SETTINGS_CONTENT)
+  })
+
+  it('does NOT overwrite the bundled CLAUDE.md template (it is hand-maintained)', () => {
     const mainRepo = join(tmpDir, 'main')
     mkdirSync(mainRepo)
     setupMainRepo(mainRepo)
@@ -93,9 +118,11 @@ describe('sync-claude-templates.sh — worktree guard', () => {
     })
 
     expect(result.status).toBe(0)
-    // Template MUST have been overwritten with the root CLAUDE.md
-    const content = readFileSync(templatePath, 'utf8')
-    expect(content).toBe(ROOT_CLAUDE_MD_CONTENT)
+    // Template MUST be untouched — the framework's CLAUDE.md describes the
+    // mars-framework codebase, while the bundled template carries the
+    // Mars-meta content shipped to target repos. They have diverged on
+    // purpose; syncing would re-couple them.
+    expect(readFileSync(templatePath, 'utf8')).toBe(TEMPLATE_CLAUDE_MD_CONTENT)
   })
 
   it('does NOT touch template files when running from inside a git worktree', () => {
