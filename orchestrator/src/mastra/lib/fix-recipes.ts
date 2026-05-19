@@ -537,6 +537,49 @@ const testAssertionErrorRecipe: FixRecipe = {
 //     (task mars-6348aec4, commit 31933fe on task/mars-6348aec4 confirmed
 //     complete). Operator fix: confirm no active git process holds the lock,
 //     then `mars restart <task-id>` to re-run the merge step.
+//
+// • merge:vcs-supervisor-aborted/unclassified
+//     Historical-only. The post-supervisor `git merge --ff-only <branch>` failed
+//     with `fatal: Not possible to fast-forward` because integration advanced in
+//     the window between the supervisor's rebase and the orchestrator's ff
+//     attempt. This is the exact error shape commit cab1551 added a classifier
+//     rule for (`matchFull: /Not possible to fast-forward/i`) and a recipe for
+//     (`merge:vcs-supervisor-aborted/not-fast-forward`, see
+//     `vcsAbortedNotFastForwardRecipe` above). A failure whose signature is
+//     still `merge:vcs-supervisor-aborted/unclassified` for this error body was
+//     recorded BEFORE cab1551 landed — the signature is frozen on the failed row
+//     and isn't recomputed. There is no live failure mode here to write a recipe
+//     for: any fresh occurrence of this race classifies as `not-fast-forward`
+//     and routes to the existing recipe. Investigated 2026-05-19 (task
+//     ba603773, origin mars-e2587d97 / f1dd72b3). Operator fix: `mars restart
+//     mars-e2587d97` so the merge step retries against the current integration
+//     branch; the new failure (if any) will be classified correctly.
+//
+//     Diagnose discipline — ranked hypotheses considered:
+//       (1) [WINNER] Stale unclassified signature: the failure was recorded
+//           before cab1551 added the classifier rule, so the row carries
+//           `/unclassified` even though the same error body now classifies as
+//           `/not-fast-forward`. Verified by reading `errorClassRules` in
+//           failure-signature.ts (matchFull rule present) and the existing
+//           test at failure-signature.test.ts:166-189 which exercises the
+//           exact JSON+hint+fatal shape this failure exhibits.
+//       (2) Falsified — race between supervisor and ff that the existing rule
+//           misses: would require the body NOT to contain "Not possible to
+//           fast-forward", but the captured `m.output` tail shows that exact
+//           string. classifyError's matchFull would fire.
+//       (3) Falsified — supervisor returning aborted=true with a different
+//           error shape: would require sup.exitCode !== 0 or
+//           stillInProgress=true, but the captured supervisor output ends in
+//           `STATUS: completed` and `COMMIT: rebase complete`. The aborted
+//           path here is git.ts:1596 (ff failure after successful rebase), not
+//           git.ts:1567 (supervisor failure).
+//     Repro: not deterministically reproducible — the underlying race
+//     condition is reproducible (rebase then advance main concurrently then
+//     ff), but the failing task's stored signature can only be changed by
+//     re-running it. cab1551's test
+//     (`computeFailureSignature produces merge:vcs-supervisor-aborted/not-fast-forward
+//     for the git merge --ff-only error shape`) is the deterministic check
+//     that the live classifier handles this body correctly.
 
 const recipeList: readonly FixRecipe[] = [
   dirtyMergeTargetRecipe,
