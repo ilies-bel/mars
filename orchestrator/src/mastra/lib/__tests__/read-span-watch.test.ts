@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { ClaudeEvent } from '../claude-stream'
 import {
   createReadSpanWatcher,
-  resolveReadSpanLimit,
   resolveReadSpanAbortLimit,
+  resolveReadSpanLimit,
   stripLeadingPrefixes,
+  type RedundantSelfReadInfo,
   type ThresholdInfo,
 } from '../read-span-watch'
 
@@ -259,6 +260,217 @@ describe('createReadSpanWatcher', () => {
     w.observe(assistant([{ name: 'Read' }]))
     w.observe(assistant([{ name: 'Read' }]))
     expect(w.streak).toBe(4)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Redundant-self-read-after-subagent detector
+// ---------------------------------------------------------------------------
+
+describe('redundant-self-read-after-subagent detector', () => {
+  // Build an assistant event that invokes a sub-agent (Agent or Explore) with
+  // a specific tool_use id so we can correlate it with its result.
+  const agentInvocation = (id: string, subagentType = 'Agent'): ClaudeEvent => ({
+    type: 'assistant',
+    message: {
+      role: 'assistant',
+      content: [
+        {
+          type: 'tool_use',
+          id,
+          name: subagentType,
+          input: { description: 'find files', prompt: 'search the codebase' },
+        },
+      ],
+    },
+  })
+
+  // Build a user event carrying the sub-agent's tool_result (the report).
+  const toolResult = (toolUseId: string, text: string): ClaudeEvent => ({
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: toolUseId,
+          content: [{ type: 'text', text }],
+        },
+      ],
+    },
+  })
+
+  const readFile = (filePath: string): ClaudeEvent =>
+    assistant([{ name: 'Read', input: { file_path: filePath } }])
+
+  const actionBash = (command: string): ClaudeEvent =>
+    assistant([{ name: 'Bash', input: { command } }])
+
+  // -------------------------------------------------------------------------
+  // Tracer-bullet test: mirrors the mars-c44ffb1f event shape
+  // -------------------------------------------------------------------------
+  it('fires redundant-self-read-after-subagent exactly once when coder re-reads 3+ cited paths (mars-c44ffb1f shape)', () => {
+    const events: RedundantSelfReadInfo[] = []
+    const w = createReadSpanWatcher({
+      limit: 99, // high limit so consecutive-streak watcher never fires
+      onThreshold: () => {},
+      onRedundantSelfRead: (info) => events.push(info),
+    })
+
+    // Sub-agent dispatched
+    w.observe(agentInvocation('inv-001'))
+    // Sub-agent returns a report naming two files
+    w.observe(
+      toolResult(
+        'inv-001',
+        'Found the relevant files: queue.ts handles task queue operations and implement-workflow.ts contains the workflow implementation.',
+      ),
+    )
+
+    // Coder re-reads the first cited file (redundant read #1)
+    w.observe(readFile('/repo/src/queue.ts'))
+    // Bash call interleaved — resets streak but detector spans across it
+    w.observe(actionBash('git add -A'))
+    // Coder re-reads the second cited file (redundant read #2)
+    w.observe(readFile('/repo/src/implement-workflow.ts'))
+    // Another Bash call
+    w.observe(actionBash('git commit -m "wip"'))
+    // Coder re-reads the first again (redundant read #3 — fires the tag)
+    w.observe(readFile('/repo/src/queue.ts'))
+
+    expect(events).toHaveLength(1)
+    const info = events[0]!
+    expect(info.subAgentInvocationId).toBe('inv-001')
+    expect(info.citedPaths).toContain('queue.ts')
+    expect(info.citedPaths).toContain('implement-workflow.ts')
+    expect(info.redundantReadPaths).toHaveLength(3)
+  })
+
+  it('does not fire when the coder reads paths the sub-agent did not cite (negative case)', () => {
+    const events: RedundantSelfReadInfo[] = []
+    const w = createReadSpanWatcher({
+      limit: 99,
+      onThreshold: () => {},
+      onRedundantSelfRead: (info) => events.push(info),
+    })
+
+    w.observe(agentInvocation('inv-002'))
+    w.observe(
+      toolResult('inv-002', 'Relevant file: queue.ts is important.'),
+    )
+
+    // Read completely unrelated paths — none overlap with cited set
+    w.observe(readFile('/repo/src/unrelated-a.ts'))
+    w.observe(readFile('/repo/src/unrelated-b.ts'))
+    w.observe(readFile('/repo/src/unrelated-c.ts'))
+    w.observe(readFile('/repo/src/unrelated-d.ts'))
+
+    expect(events).toHaveLength(0)
+  })
+
+  it('emitted log line includes sub-agent invocation id, cited paths, and redundant read paths', () => {
+    let captured: RedundantSelfReadInfo | null = null
+    const w = createReadSpanWatcher({
+      limit: 99,
+      onThreshold: () => {},
+      onRedundantSelfRead: (info) => {
+        captured = info
+      },
+    })
+
+    w.observe(agentInvocation('inv-003', 'Explore'))
+    w.observe(
+      toolResult(
+        'inv-003',
+        'I examined queue.ts and found implement-workflow.ts.',
+      ),
+    )
+    w.observe(readFile('/abs/queue.ts'))
+    w.observe(readFile('/abs/implement-workflow.ts'))
+    w.observe(readFile('/abs/queue.ts'))
+
+    expect(captured).not.toBeNull()
+    const info = captured as unknown as RedundantSelfReadInfo
+    expect(info.subAgentInvocationId).toBe('inv-003')
+    expect(Array.isArray(info.citedPaths)).toBe(true)
+    expect(Array.isArray(info.redundantReadPaths)).toBe(true)
+    expect(info.redundantReadPaths).toHaveLength(3)
+  })
+
+  it('fires exactly once even when more overlapping reads arrive after the 3rd', () => {
+    let callCount = 0
+    const w = createReadSpanWatcher({
+      limit: 99,
+      onThreshold: () => {},
+      onRedundantSelfRead: () => {
+        callCount += 1
+      },
+    })
+
+    w.observe(agentInvocation('inv-004'))
+    w.observe(toolResult('inv-004', 'See queue.ts for details.'))
+
+    w.observe(readFile('/repo/queue.ts'))
+    w.observe(readFile('/repo/queue.ts'))
+    w.observe(readFile('/repo/queue.ts')) // fires here
+    w.observe(readFile('/repo/queue.ts')) // must not fire again
+    w.observe(readFile('/repo/queue.ts')) // must not fire again
+
+    expect(callCount).toBe(1)
+  })
+
+  it('works for Explore sub-agents as well as Agent', () => {
+    const events: RedundantSelfReadInfo[] = []
+    const w = createReadSpanWatcher({
+      limit: 99,
+      onThreshold: () => {},
+      onRedundantSelfRead: (info) => events.push(info),
+    })
+
+    w.observe(agentInvocation('inv-005', 'Explore'))
+    w.observe(toolResult('inv-005', 'queue.ts is the key file.'))
+
+    w.observe(readFile('/x/queue.ts'))
+    w.observe(readFile('/x/queue.ts'))
+    w.observe(readFile('/x/queue.ts'))
+
+    expect(events).toHaveLength(1)
+  })
+
+  it('does not affect the existing consecutive-read streak behaviour', () => {
+    let thresholdFired = false
+    const w = createReadSpanWatcher({
+      limit: 2,
+      onThreshold: () => {
+        thresholdFired = true
+      },
+      onRedundantSelfRead: () => {},
+    })
+
+    w.observe(agentInvocation('inv-006'))
+    w.observe(toolResult('inv-006', 'queue.ts is relevant.'))
+
+    // Two consecutive reads — hits existing threshold
+    w.observe(readFile('/x/queue.ts'))
+    w.observe(readFile('/x/queue.ts'))
+
+    expect(thresholdFired).toBe(true)
+    expect(w.streak).toBe(2)
+  })
+
+  it('does not fire when onRedundantSelfRead is not provided (no crash)', () => {
+    const w = createReadSpanWatcher({
+      limit: 99,
+      onThreshold: () => {},
+      // no onRedundantSelfRead
+    })
+
+    w.observe(agentInvocation('inv-007'))
+    w.observe(toolResult('inv-007', 'queue.ts and implement-workflow.ts.'))
+    w.observe(readFile('/x/queue.ts'))
+    w.observe(readFile('/x/implement-workflow.ts'))
+    w.observe(readFile('/x/queue.ts'))
+    // Must not throw
   })
 })
 
