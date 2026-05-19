@@ -1248,6 +1248,252 @@ describe('composeTaskPrompt: Files section', () => {
   })
 })
 
+describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () => {
+  // Acceptance criterion: a 3-slice PRD whose slices declare consecutive
+  // blockedBy edges (2←1, 3←2) must produce exactly two task_blockers rows
+  // — one per consecutive pair — so dispatch gates on prerequisite-task
+  // success, not just enqueue order.
+  let repo: string
+
+  const setupRepo = (): string => {
+    const r = mkdtempSync(resolve(tmpdir(), 'mars-slice-dag-'))
+    execFileSync('git', ['init', '-q'], { cwd: r })
+    mkdirSync(resolve(r, '.mars'), { recursive: true })
+    return r
+  }
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+    vi.doUnmock('../../lib/git')
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  const envelope = (jsonResult: unknown): string =>
+    JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
+
+  const seedPrdReadyIdea = async (): Promise<string> => {
+    const proposals = await import('../../proposals')
+    await proposals.initProposals()
+    const idea = await proposals.createProposal('3-slice sequential PRD', {
+      problem: 'p',
+      solution: 's',
+    })
+    await proposals.addProposalUserStory(idea.id, 'as a user, I want X')
+    const promoted = await proposals.promoteProposal(idea.id)
+    expect(promoted.status).toBe('prd-ready')
+    return idea.id
+  }
+
+  it('persists a task_blockers row for each consecutive pair when slices declare sequential blockedBy', async () => {
+    // 3-slice chain: slice 2 blocked by slice 1, slice 3 blocked by slice 2.
+    // The slicer emits no schema-drop patterns, so injectSchemaDropBlockers
+    // is a no-op — only the explicit blockedBy declarations produce edges.
+    const threeSliceSequential = {
+      slices: [
+        {
+          title: 'Foundation: set up the data model',
+          type: 'AFK' as const,
+          whatToBuild: 'Create the core data model',
+          acceptanceCriteria: ['data model is in place'],
+          blockedBy: [] as number[],
+          modifies: [] as string[],
+          creates: [] as string[],
+          verifyCmd: null,
+          taskType: 'auto' as const,
+        },
+        {
+          title: 'Service layer: expose the data model via an API',
+          type: 'AFK' as const,
+          whatToBuild: 'Wrap the data model in a service',
+          acceptanceCriteria: ['service layer works'],
+          blockedBy: [1] as number[],
+          modifies: [] as string[],
+          creates: [] as string[],
+          verifyCmd: null,
+          taskType: 'auto' as const,
+        },
+        {
+          title: 'UI layer: render the API response',
+          type: 'AFK' as const,
+          whatToBuild: 'Display the service output in the UI',
+          acceptanceCriteria: ['UI renders correctly end-to-end'],
+          blockedBy: [2] as number[],
+          modifies: [] as string[],
+          creates: [] as string[],
+          verifyCmd: null,
+          taskType: 'auto' as const,
+        },
+      ],
+    }
+
+    vi.doMock('../../lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../lib/git')>(
+        '../../lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(threeSliceSequential),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+    expect(result.taskIds).toHaveLength(3)
+
+    const [task1Id, task2Id, task3Id] = result.taskIds
+
+    const queue = await import('../../queue')
+    await queue.initQueue()
+
+    // Consecutive pair 1→2: task 2 must be blocked by task 1
+    const blockers2 = await queue.getClient().execute({
+      sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ? ORDER BY blocker_task_id`,
+      args: [task2Id],
+    })
+    expect(
+      blockers2.rows.map(
+        (r) => (r as unknown as { blocker_task_id: string }).blocker_task_id,
+      ),
+    ).toEqual([task1Id])
+
+    // Consecutive pair 2→3: task 3 must be blocked by task 2
+    const blockers3 = await queue.getClient().execute({
+      sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ? ORDER BY blocker_task_id`,
+      args: [task3Id],
+    })
+    expect(
+      blockers3.rows.map(
+        (r) => (r as unknown as { blocker_task_id: string }).blocker_task_id,
+      ),
+    ).toEqual([task2Id])
+
+    // Task 1 is the root: it must have no blocker rows
+    const blockers1 = await queue.getClient().execute({
+      sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ?`,
+      args: [task1Id],
+    })
+    expect(blockers1.rows).toHaveLength(0)
+
+    // Status reflects the DAG: task 1 is ready to dispatch; 2 and 3 wait
+    for (const [id, expectedStatus] of [
+      [task1Id, 'queued'],
+      [task2Id, 'blocked'],
+      [task3Id, 'blocked'],
+    ] as const) {
+      const row = await queue.getClient().execute({
+        sql: `SELECT status FROM tasks WHERE id = ?`,
+        args: [id],
+      })
+      expect(
+        (row.rows[0] as unknown as { status: string }).status,
+      ).toBe(expectedStatus)
+    }
+  })
+
+  it('produces no task_blockers rows when no slice declares blockedBy (pure parallel PRD)', async () => {
+    // Slices with empty blockedBy must generate no task_blockers rows —
+    // no spurious edges even when there are multiple slices.
+    const parallelSlices = {
+      slices: [
+        {
+          title: 'Parallel slice A',
+          type: 'AFK' as const,
+          whatToBuild: 'Independent work A',
+          acceptanceCriteria: ['A done'],
+          blockedBy: [] as number[],
+          modifies: [] as string[],
+          creates: [] as string[],
+          verifyCmd: null,
+          taskType: 'auto' as const,
+        },
+        {
+          title: 'Parallel slice B',
+          type: 'AFK' as const,
+          whatToBuild: 'Independent work B',
+          acceptanceCriteria: ['B done'],
+          blockedBy: [] as number[],
+          modifies: [] as string[],
+          creates: [] as string[],
+          verifyCmd: null,
+          taskType: 'auto' as const,
+        },
+        {
+          title: 'Parallel slice C',
+          type: 'AFK' as const,
+          whatToBuild: 'Independent work C',
+          acceptanceCriteria: ['C done'],
+          blockedBy: [] as number[],
+          modifies: [] as string[],
+          creates: [] as string[],
+          verifyCmd: null,
+          taskType: 'auto' as const,
+        },
+      ],
+    }
+
+    vi.doMock('../../lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../lib/git')>(
+        '../../lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(parallelSlices),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+    expect(result.taskIds).toHaveLength(3)
+
+    const queue = await import('../../queue')
+    await queue.initQueue()
+
+    // Zero task_blockers rows across all 3 tasks
+    const blockerCount = await queue.getClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id IN (?, ?, ?)`,
+      args: result.taskIds,
+    })
+    expect(
+      Number(
+        (blockerCount.rows[0] as unknown as { n: number | bigint }).n ?? 0,
+      ),
+    ).toBe(0)
+
+    // All 3 tasks must be immediately dispatchable (queued)
+    for (const id of result.taskIds) {
+      const row = await queue.getClient().execute({
+        sql: `SELECT status FROM tasks WHERE id = ?`,
+        args: [id],
+      })
+      expect(
+        (row.rows[0] as unknown as { status: string }).status,
+      ).toBe('queued')
+    }
+  })
+})
+
 describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Task text', () => {
   // The coder Worker used to re-absorb the ~150-line TDD brief at the top
   // of every per-Task prompt, and a retry replayed it verbatim — burning
