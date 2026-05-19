@@ -56,7 +56,7 @@ the CLI auto-pick via `pickDeepReflectCandidate()`. Its precedence:
 
 If the user's natural-language pointer ("the last failed task", "the
 one about X") is ambiguous, ask one clarifying question or just let
-the CLI auto-pick — the CLI prints the pick reason (status, costUsd,
+the CLI auto-pick — the CLI prints the pick reason (status, weightedTokens,
 why-picked) so the user can see what was chosen.
 
 `mars deep-reflect` is single-session by design. **Do not** loop it
@@ -71,7 +71,7 @@ re-score; it surfaces what the CLI already produced, in this fixed
 shape, in this order:
 
 1. **Pick line** — verbatim from the CLI:
-   `task <id> (status=<status>, cost=$<usd>, picked: <reason>)`
+   `task <id> (status=<status>, weighted-tokens=<n>, picked: <reason>)`
    or `task <id> (explicit selection)`.
 2. **Transcript size** — verbatim:
    `loading transcript: <n> event(s), verifyOutput=<n> chars | none`.
