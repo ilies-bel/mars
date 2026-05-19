@@ -475,6 +475,8 @@ export const claudeStreamArgs = (
   '--system-prompt',
   composeSystemPrompt(options.systemPrompt),
   ...(options.sessionId ? ['--session-id', options.sessionId] : []),
+  '--max-turns',
+  '60',
 ]
 
 const DEFAULT_CLAUDE_MAX_MESSAGES = 100
