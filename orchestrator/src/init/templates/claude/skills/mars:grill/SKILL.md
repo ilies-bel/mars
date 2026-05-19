@@ -231,8 +231,6 @@ Skill({ skill: "mars:to-prd", args: "<id>" })
 Skill({ skill: "mars:to-prd", args: "<id> --inbox <inbox-id>" })
 ```
 
-<!-- TODO: to-prd handles inbox resolution when --inbox is passed; see follow-up task -->
-
 Do not ask the user to type `/mars:to-prd` — invoke it for them. The
 user's next interaction should be confirming the synthesised PRD inside
 `to-prd`, not running another slash command.
