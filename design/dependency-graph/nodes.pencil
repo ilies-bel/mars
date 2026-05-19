@@ -1,0 +1,1007 @@
+{
+  "version": "2.11",
+  "children": [
+    {
+      "type": "frame",
+      "id": "nodes-root",
+      "x": 0,
+      "y": 0,
+      "name": "Mars DS — Dependency graph: node visual language (slice 1/6)",
+      "width": 1440,
+      "fill": "$bg-light",
+      "layout": "vertical",
+      "gap": 56,
+      "padding": 48,
+      "children": [
+
+        {
+          "type": "frame",
+          "id": "nodes-hdr",
+          "name": "Artboard Header",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 6,
+          "children": [
+            {
+              "type": "text",
+              "id": "nodes-hdr-t",
+              "name": "title",
+              "fill": "$mars-night",
+              "content": "Node visual language — dependency graph",
+              "fontFamily": "Inter",
+              "fontSize": 32,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "nodes-hdr-s",
+              "name": "sub",
+              "fill": "$muted-light",
+              "content": "Each node shows title and id only. Status is encoded by a 4 px left-edge accent bar. Shape (rounded-rect vs. dashed pill) distinguishes task nodes from idea-root nodes. Badges surface terminal harness failures.",
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "nodes-hdr-r",
+              "name": "rules",
+              "fill": "$muted-light",
+              "content": "Colors are defined by the semantic palette in palette.md. No other text fields appear on the node itself — detail lives in the side-panel (slice 3/6).",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "sec-statuses",
+          "name": "Section — task status variants",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 20,
+          "children": [
+            {
+              "type": "text",
+              "id": "sec-statuses-cap",
+              "name": "sectionCaption",
+              "fill": "$mars-night",
+              "content": "1 — Task node: four status colors",
+              "fontFamily": "Inter",
+              "fontSize": 18,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "sec-statuses-sub",
+              "name": "sectionSub",
+              "fill": "$muted-light",
+              "content": "Solid 1 px $border-light stroke, 8 px corner radius, $surface-light fill. Left accent bar = 4 px × full height, colored by semantic palette.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "sec-statuses-row",
+              "name": "statusRow",
+              "width": "fill_container",
+              "layout": "horizontal",
+              "gap": 24,
+              "alignItems": "start",
+              "children": [
+
+                {
+                  "type": "frame",
+                  "id": "col-succeeded",
+                  "name": "col — succeeded",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "col-succeeded-lbl",
+                      "name": "label",
+                      "fill": "$muted-light",
+                      "content": "succeeded  ·  $mars-ice  #D9E4E8",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-succeeded",
+                      "name": "node — succeeded",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-succeeded-bar",
+                          "name": "statusBar",
+                          "width": 4,
+                          "height": 72,
+                          "fill": "$mars-ice",
+                          "cornerRadius": 0
+                        },
+                        {
+                          "type": "frame",
+                          "id": "node-succeeded-body",
+                          "name": "nodeBody",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "node-succeeded-title",
+                              "name": "title",
+                              "fill": "$mars-night",
+                              "content": "Add idempotency guard to task-claim transaction",
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "node-succeeded-id",
+                              "name": "id",
+                              "fill": "$muted-light",
+                              "content": "mars-7af3c2e1",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+
+                {
+                  "type": "frame",
+                  "id": "col-needs-attention",
+                  "name": "col — needs-attention",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "col-needs-attention-lbl",
+                      "name": "label",
+                      "fill": "$muted-light",
+                      "content": "needs-attention  ·  $mars-iron  #9C2E35",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-needs-attention",
+                      "name": "node — needs-attention",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-needs-attention-bar",
+                          "name": "statusBar",
+                          "width": 4,
+                          "height": 72,
+                          "fill": "$mars-iron",
+                          "cornerRadius": 0
+                        },
+                        {
+                          "type": "frame",
+                          "id": "node-needs-attention-body",
+                          "name": "nodeBody",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "node-needs-attention-title",
+                              "name": "title",
+                              "fill": "$mars-night",
+                              "content": "Fix typecheck error in verify pipeline",
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "node-needs-attention-id",
+                              "name": "id",
+                              "fill": "$muted-light",
+                              "content": "mars-9b02c3d4",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+
+                {
+                  "type": "frame",
+                  "id": "col-in-flight",
+                  "name": "col — in-flight",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "col-in-flight-lbl",
+                      "name": "label",
+                      "fill": "$muted-light",
+                      "content": "in-flight  ·  $mars-amber  #E8A33D",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-in-flight",
+                      "name": "node — in-flight",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-in-flight-bar",
+                          "name": "statusBar",
+                          "width": 4,
+                          "height": 72,
+                          "fill": "$mars-amber",
+                          "cornerRadius": 0
+                        },
+                        {
+                          "type": "frame",
+                          "id": "node-in-flight-body",
+                          "name": "nodeBody",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "node-in-flight-title",
+                              "name": "title",
+                              "fill": "$mars-night",
+                              "content": "Render dependency-ordered graph in task detail",
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "node-in-flight-id",
+                              "name": "id",
+                              "fill": "$muted-light",
+                              "content": "mars-4e15a2f8",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+
+                {
+                  "type": "frame",
+                  "id": "col-not-started",
+                  "name": "col — not-started",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "col-not-started-lbl",
+                      "name": "label",
+                      "fill": "$muted-light",
+                      "content": "not-started  ·  $neutral-400  #A89684",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-not-started",
+                      "name": "node — not-started",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-not-started-bar",
+                          "name": "statusBar",
+                          "width": 4,
+                          "height": 72,
+                          "fill": "$neutral-400",
+                          "cornerRadius": 0
+                        },
+                        {
+                          "type": "frame",
+                          "id": "node-not-started-body",
+                          "name": "nodeBody",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "node-not-started-title",
+                              "name": "title",
+                              "fill": "$mars-night",
+                              "content": "Add inbox deep-link on recovery-failed badge",
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "node-not-started-id",
+                              "name": "id",
+                              "fill": "$muted-light",
+                              "content": "mars-2c8b1e39",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+
+              ]
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "sec-idea-root",
+          "name": "Section — idea-root node",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 20,
+          "children": [
+            {
+              "type": "text",
+              "id": "sec-idea-root-cap",
+              "name": "sectionCaption",
+              "fill": "$mars-night",
+              "content": "2 — Idea-root node: shape distinction",
+              "fontFamily": "Inter",
+              "fontSize": 18,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "sec-idea-root-sub",
+              "name": "sectionSub",
+              "fill": "$muted-light",
+              "content": "Same left accent bar and status colors as a task node. Shape distinguishes it: dashed stroke (vs solid) and larger corner radius (20 px vs 8 px). No extra color; the semantic palette applies uniformly.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "sec-idea-root-row",
+              "name": "ideaRootRow",
+              "width": "fill_container",
+              "layout": "horizontal",
+              "gap": 24,
+              "alignItems": "start",
+              "children": [
+
+                {
+                  "type": "frame",
+                  "id": "col-idea-vs-task",
+                  "name": "col — idea vs task side-by-side",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "col-idea-vs-task-lbl",
+                      "name": "label",
+                      "fill": "$muted-light",
+                      "content": "idea-root node  ·  dashed stroke  ·  cornerRadius 20",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-idea-root",
+                      "name": "node — idea-root (succeeded)",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 20,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1.5,
+                        "fill": "$border-light",
+                        "dash": [5, 3]
+                      },
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-idea-root-bar",
+                          "name": "statusBar",
+                          "width": 4,
+                          "height": 72,
+                          "fill": "$mars-ice",
+                          "cornerRadius": 0
+                        },
+                        {
+                          "type": "frame",
+                          "id": "node-idea-root-body",
+                          "name": "nodeBody",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "node-idea-root-title",
+                              "name": "title",
+                              "fill": "$mars-night",
+                              "content": "Show dependency graph on every task-detail page",
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "node-idea-root-id",
+                              "name": "id",
+                              "fill": "$muted-light",
+                              "content": "idea-578ab441",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+
+                {
+                  "type": "frame",
+                  "id": "col-task-for-contrast",
+                  "name": "col — task node (contrast reference)",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "col-task-for-contrast-lbl",
+                      "name": "label",
+                      "fill": "$muted-light",
+                      "content": "task node (same status, for contrast)  ·  solid stroke  ·  cornerRadius 8",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-task-contrast",
+                      "name": "node — task (contrast)",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-task-contrast-bar",
+                          "name": "statusBar",
+                          "width": 4,
+                          "height": 72,
+                          "fill": "$mars-ice",
+                          "cornerRadius": 0
+                        },
+                        {
+                          "type": "frame",
+                          "id": "node-task-contrast-body",
+                          "name": "nodeBody",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "node-task-contrast-title",
+                              "name": "title",
+                              "fill": "$mars-night",
+                              "content": "Render node visual language in dependency graph",
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "node-task-contrast-id",
+                              "name": "id",
+                              "fill": "$muted-light",
+                              "content": "mars-8635c115",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+
+                {
+                  "type": "frame",
+                  "id": "col-shape-key",
+                  "name": "col — shape distinction key",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "col-shape-key-lbl",
+                      "name": "label",
+                      "fill": "$muted-light",
+                      "content": "shape key",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "shape-key-box",
+                      "name": "shapeKey",
+                      "width": "fill_container",
+                      "fill": "$neutral-50",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "layout": "vertical",
+                      "gap": 10,
+                      "padding": 16,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "shape-key-task",
+                          "name": "keyTask",
+                          "fill": "$mars-night",
+                          "content": "■  Solid border + 8 px radius = task node",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "shape-key-idea",
+                          "name": "keyIdea",
+                          "fill": "$mars-night",
+                          "content": "⬡  Dashed border + 20 px radius = idea-root node",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "shape-key-note",
+                          "name": "keyNote",
+                          "fill": "$muted-light",
+                          "content": "Color does not encode node type. Both kinds use the same four status colors.",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+
+              ]
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "sec-badges",
+          "name": "Section — badge variants",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 20,
+          "children": [
+            {
+              "type": "text",
+              "id": "sec-badges-cap",
+              "name": "sectionCaption",
+              "fill": "$mars-night",
+              "content": "3 — Badge variants: recovery-failed and no-recipe",
+              "fontFamily": "Inter",
+              "fontSize": 18,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "sec-badges-sub",
+              "name": "sectionSub",
+              "fill": "$muted-light",
+              "content": "Badges appear on a task node when the harness has reached a terminal failure state. The badge uses $mars-iron text on $surface-light regardless of node status. It anchors to the top-right of the node body, inline with the title row.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "sec-badges-row",
+              "name": "badgesRow",
+              "width": "fill_container",
+              "layout": "horizontal",
+              "gap": 24,
+              "alignItems": "start",
+              "children": [
+
+                {
+                  "type": "frame",
+                  "id": "col-recovery-failed",
+                  "name": "col — recovery-failed badge",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "col-recovery-failed-lbl",
+                      "name": "label",
+                      "fill": "$muted-light",
+                      "content": "recovery-failed badge  ·  base status: needs-attention",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-recovery-failed",
+                      "name": "node — recovery-failed",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-recovery-failed-bar",
+                          "name": "statusBar",
+                          "width": 4,
+                          "height": 72,
+                          "fill": "$mars-iron",
+                          "cornerRadius": 0
+                        },
+                        {
+                          "type": "frame",
+                          "id": "node-recovery-failed-body",
+                          "name": "nodeBody",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "node-recovery-failed-title-row",
+                              "name": "titleRow",
+                              "width": "fill_container",
+                              "layout": "horizontal",
+                              "gap": 8,
+                              "alignItems": "start",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "node-recovery-failed-title",
+                                  "name": "title",
+                                  "fill": "$mars-night",
+                                  "content": "Fix verify:typecheck-error in merge pipeline",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "600",
+                                  "width": "fill_container"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "badge-recovery-failed",
+                                  "name": "badge — recovery-failed",
+                                  "fill": "$surface-light",
+                                  "cornerRadius": 3,
+                                  "stroke": { "align": "inside", "thickness": 1, "fill": "$mars-iron" },
+                                  "layout": "horizontal",
+                                  "gap": 0,
+                                  "padding": 4,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "badge-recovery-failed-text",
+                                      "name": "badgeText",
+                                      "fill": "$mars-iron",
+                                      "content": "recovery-failed",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 10,
+                                      "fontWeight": "600"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "node-recovery-failed-id",
+                              "name": "id",
+                              "fill": "$muted-light",
+                              "content": "mars-3f7d8c21",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "col-recovery-failed-note",
+                      "name": "note",
+                      "fill": "$muted-light",
+                      "content": "recovery-failed: the harness attempted a fix-task and the fix-task also failed. Corresponds to ADR-0002's single-recovery-attempt limit.",
+                      "fontFamily": "Inter",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+
+                {
+                  "type": "frame",
+                  "id": "col-no-recipe",
+                  "name": "col — no-recipe badge",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "col-no-recipe-lbl",
+                      "name": "label",
+                      "fill": "$muted-light",
+                      "content": "no-recipe badge  ·  base status: needs-attention",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-no-recipe",
+                      "name": "node — no-recipe",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-no-recipe-bar",
+                          "name": "statusBar",
+                          "width": 4,
+                          "height": 72,
+                          "fill": "$mars-iron",
+                          "cornerRadius": 0
+                        },
+                        {
+                          "type": "frame",
+                          "id": "node-no-recipe-body",
+                          "name": "nodeBody",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "node-no-recipe-title-row",
+                              "name": "titleRow",
+                              "width": "fill_container",
+                              "layout": "horizontal",
+                              "gap": 8,
+                              "alignItems": "start",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "node-no-recipe-title",
+                                  "name": "title",
+                                  "fill": "$mars-night",
+                                  "content": "Handle database lock timeout during claim",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "600",
+                                  "width": "fill_container"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "badge-no-recipe",
+                                  "name": "badge — no-recipe",
+                                  "fill": "$surface-light",
+                                  "cornerRadius": 3,
+                                  "stroke": { "align": "inside", "thickness": 1, "fill": "$mars-iron" },
+                                  "layout": "horizontal",
+                                  "gap": 0,
+                                  "padding": 4,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "badge-no-recipe-text",
+                                      "name": "badgeText",
+                                      "fill": "$mars-iron",
+                                      "content": "no-recipe",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 10,
+                                      "fontWeight": "600"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "node-no-recipe-id",
+                              "name": "id",
+                              "fill": "$muted-light",
+                              "content": "mars-1e9a4b67",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "col-no-recipe-note",
+                      "name": "note",
+                      "fill": "$muted-light",
+                      "content": "no-recipe: the failure signature had no matching recipe in the registry, so no fix-task was ever spawned. Corresponds to ADR-0002's recipe-per-signature escalation.",
+                      "fontFamily": "Inter",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+
+                {
+                  "type": "frame",
+                  "id": "col-badge-key",
+                  "name": "col — badge key",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "col-badge-key-lbl",
+                      "name": "label",
+                      "fill": "$muted-light",
+                      "content": "badge key",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "badge-key-box",
+                      "name": "badgeKey",
+                      "width": "fill_container",
+                      "fill": "$neutral-50",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "layout": "vertical",
+                      "gap": 10,
+                      "padding": 16,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "badge-key-style",
+                          "name": "keyStyle",
+                          "fill": "$mars-night",
+                          "content": "Badge style: $surface-light background + 1 px $mars-iron stroke + $mars-iron text, 10 px Inter 600. Does NOT inherit the node's status color.",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "badge-key-placement",
+                          "name": "keyPlacement",
+                          "fill": "$mars-night",
+                          "content": "Placement: top-right of the node body, inline-end of the title row. At most one badge per node.",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "badge-key-link",
+                          "name": "keyLink",
+                          "fill": "$muted-light",
+                          "content": "The badge is a deep-link to /mars:inbox (the matching inbox item). Clicking routes to the inbox — it does not act in place. See ia-decision.md §Write affordance.",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+
+              ]
+            }
+          ]
+        }
+
+      ]
+    }
+  ]
+}
