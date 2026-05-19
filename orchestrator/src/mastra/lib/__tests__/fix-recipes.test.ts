@@ -563,6 +563,29 @@ describe('fix-recipes', () => {
       //        | grep 'orchestrator/src/init/templates/'
       expect(hasRecipe('merge:preflight/template-leakage/template-paths-detected')).toBe(false)
     })
+
+    it('merge:preflight/template-leakage/unclassified has no recipe — same root cause as template-paths-detected; stale orchestrator process at failure time', () => {
+      // Investigated 2026-05-19 (task mars-5989999f). Root cause: task tried to
+      // edit orchestrator/src/init/templates/claude/skills/mars:inbox/SKILL.md
+      // (a YAML description fix in the frontmatter). The template-leakage
+      // preflight categorically blocks ALL orchestrator edits to that subtree
+      // (git.ts: "humans edit it directly on main"). A recipe is wrong for the
+      // same reasons as template-paths-detected:
+      // (a) any recovery agent hits the same preflight block if it tries to
+      //     update the template;
+      // (b) a recovery that skips the template edit fails the task's own verify
+      //     criteria (the verify diff command checks the template path).
+      // The /unclassified suffix appeared because the 'template-paths-detected'
+      // classifier rule (commit 9ed0041, added during the mars-77844c1f
+      // investigation) was already in the codebase but the orchestrator process
+      // that ran the merge preflight had not been restarted to pick it up.
+      // Future occurrences of this error produce the stable
+      // 'merge:preflight/template-leakage/template-paths-detected' signature.
+      // Outcome: (b) inbox item; human must edit the template directly on main.
+      // Repro: git diff --name-only main..task/mars-5989999f
+      //        | grep 'orchestrator/src/init/templates/'
+      expect(hasRecipe('merge:preflight/template-leakage/unclassified')).toBe(false)
+    })
   })
 })
 
