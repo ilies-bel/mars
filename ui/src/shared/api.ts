@@ -15,7 +15,17 @@ import {
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
 const fetchJson = async <T>(path: string, schema: ZodType<T>): Promise<T> => {
-  const r = await fetch(`${BASE}${path}`)
+  let r: Response
+  try {
+    r = await fetch(`${BASE}${path}`)
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error(
+        `GET ${path} → cannot reach the mars-ui API server. Start it with \`cd ui && npm run dev:server\` (or \`npm run dev:all\` to run UI + API together).`,
+      )
+    }
+    throw err
+  }
   if (!r.ok) throw new Error(`GET ${path} → ${r.status}`)
   const ct = r.headers.get('content-type') ?? ''
   if (!ct.includes('application/json')) {
