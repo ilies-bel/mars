@@ -6,14 +6,14 @@ import { dismissTodoItem, type StaleWorktree, type TodoPayload } from '@/shared/
 import type { DraftFeature } from '@/shared/types'
 import { formatRelativeAgeFromHours } from '@/shared/time'
 import { getBucketFromHours, BUCKET_ORDER, type BucketLabel } from '@/shared/todoBuckets'
-
-// ---- Types ----
-
-type AlertItem = { kind: 'stale'; id: string; worktree: StaleWorktree }
-type IdeaItem = { kind: 'draft'; id: string; draft: DraftFeature }
-type SidebarItem = AlertItem | IdeaItem
-
-const itemKey = (item: SidebarItem): string => `${item.kind}:${item.id}`
+import {
+  filterAlertItems,
+  filterIdeaItems,
+  itemKey,
+  type AlertItem,
+  type IdeaItem,
+  type SidebarItem,
+} from './TodoPageFilters'
 
 // ---- Alert Row ----
 
@@ -528,22 +528,39 @@ export const ActionQueuePage = () => {
     return counts
   }, [allItems])
 
+  const [query, setQuery] = useState<string>('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [alertsExpanded, setAlertsExpanded] = useState(true)
   const [proposalsExpanded, setProposalsExpanded] = useState(true)
 
+  const filteredAlertItems = useMemo(
+    () => filterAlertItems(alertItems, query),
+    [alertItems, query],
+  )
+
+  const filteredIdeaItems = useMemo(
+    () => filterIdeaItems(ideaItems, query),
+    [ideaItems, query],
+  )
+
+  const filteredAllItems = useMemo<SidebarItem[]>(
+    () => [...filteredAlertItems, ...filteredIdeaItems],
+    [filteredAlertItems, filteredIdeaItems],
+  )
+
   useEffect(() => {
-    if (allItems.length === 0) {
+    if (filteredAllItems.length === 0) {
       setSelectedKey(null)
       return
     }
-    if (!selectedKey || !allItems.some((i) => itemKey(i) === selectedKey)) {
-      setSelectedKey(itemKey(allItems[0]))
+    if (!selectedKey || !filteredAllItems.some((i) => itemKey(i) === selectedKey)) {
+      setSelectedKey(itemKey(filteredAllItems[0]))
     }
-  }, [allItems, selectedKey])
+  }, [filteredAllItems, selectedKey])
 
-  const selected = allItems.find((i) => itemKey(i) === selectedKey) ?? null
+  const selected = filteredAllItems.find((i) => itemKey(i) === selectedKey) ?? null
   const empty = allItems.length === 0
+  const noMatches = !empty && filteredAllItems.length === 0
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-bg">
@@ -564,25 +581,34 @@ export const ActionQueuePage = () => {
                 .join(' · ')}
             </p>
           )}
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search…"
+            aria-label="Search inbox"
+            data-testid="inbox-search"
+            className="mt-2 w-full border border-iron/30 bg-bg px-2 py-1 font-mono text-[12px] text-fg placeholder:text-iron/40 focus:outline-none focus:ring-1 focus:ring-iron/50"
+          />
         </header>
 
         <div className="flex-1 overflow-auto">
           {/* Alerts section */}
           <SectionHeader
             label="Alerts"
-            count={alertItems.length}
+            count={filteredAlertItems.length}
             expanded={alertsExpanded}
             onToggle={() => setAlertsExpanded((e) => !e)}
             controlsId="inbox-section-alerts"
           />
           <div id="inbox-section-alerts" role="region" aria-label="Alerts" hidden={!alertsExpanded}>
-            {alertItems.length === 0 ? (
+            {filteredAlertItems.length === 0 ? (
               <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
-                No alerts.
+                {query.trim() ? 'No matches.' : 'No alerts.'}
               </p>
             ) : (
               <ul>
-                {alertItems.map((item) => (
+                {filteredAlertItems.map((item) => (
                   <AlertRow
                     key={itemKey(item)}
                     item={item}
@@ -598,19 +624,19 @@ export const ActionQueuePage = () => {
           {/* Proposals section */}
           <SectionHeader
             label="Proposals"
-            count={ideaItems.length}
+            count={filteredIdeaItems.length}
             expanded={proposalsExpanded}
             onToggle={() => setProposalsExpanded((e) => !e)}
             controlsId="inbox-section-proposals"
           />
           <div id="inbox-section-proposals" role="region" aria-label="Proposals" hidden={!proposalsExpanded}>
-            {ideaItems.length === 0 ? (
+            {filteredIdeaItems.length === 0 ? (
               <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
-                No proposals.
+                {query.trim() ? 'No matches.' : 'No proposals.'}
               </p>
             ) : (
               <ul>
-                {ideaItems.map((item) => (
+                {filteredIdeaItems.map((item) => (
                   <IdeaRow
                     key={itemKey(item)}
                     item={item}
@@ -640,6 +666,10 @@ export const ActionQueuePage = () => {
               No items. Alerts appear when worktrees go stale; proposals appear
               when drafts are added.
             </div>
+          </div>
+        ) : noMatches ? (
+          <div className="flex h-full items-center justify-center font-mono text-[12px] text-iron">
+            No matches.
           </div>
         ) : selected?.kind === 'stale' ? (
           <StaleDetail worktree={selected.worktree} />
