@@ -1,88 +1,92 @@
 /**
- * Core logic for `mars uninstall`.
+ * uninstall — core logic for `mars uninstall`.
  *
- * All I/O is injected so the function is fully testable without spawning a
- * subprocess or touching the real filesystem. The CLI entry point is
- * responsible for resolving paths, detecting TTY state, wiring readline, and
- * calling process.exit() based on the returned outcome.
+ * Deletes the wrapper binary first, then the source clone directory, with
+ * graceful partial-state handling.  All side effects (filesystem I/O,
+ * user confirmation, logging) are injected so the function is fully
+ * testable without touching the real filesystem.
  */
 
-/** The two on-disk locations that `mars uninstall` removes. */
-export interface UninstallPaths {
-  /** Resolved path to the mars binary (e.g. /usr/local/bin/mars). */
-  binPath: string
-  /** Resolved path to the mars source clone / installation directory. */
-  srcDir: string
+export interface UninstallDeps {
+  /** Return true when the given path exists on disk. */
+  exists: (p: string) => boolean
+  /** Remove a single file. */
+  removeFile: (p: string) => Promise<void>
+  /** Recursively remove a directory. */
+  removeDir: (p: string) => Promise<void>
+  /** Prompt the user; return true to proceed, false to cancel. */
+  confirm: () => Promise<boolean>
+  /** Emit a human-readable line of output. */
+  log: (msg: string) => void
 }
 
-/** Injectable I/O surface — every non-pure dependency. */
-export interface UninstallOptions {
-  paths: UninstallPaths
-  /** When true, skip the interactive prompt and proceed immediately. */
-  yes: boolean
-  /** Whether stdin is a real TTY. Inject `process.stdin.isTTY ?? false` in production. */
-  isTty: boolean
-  /**
-   * Read one line of input from the user. Only called when `isTty` is true
-   * and `yes` is false.
-   */
-  readLine: () => Promise<string>
-  /**
-   * Write the interactive prompt text (no trailing newline). Defaults to
-   * `process.stdout.write` in production; inject a recorder in tests.
-   */
-  writePrompt?: (text: string) => void
-}
-
-/** Outcome of the confirmation phase. */
 export type UninstallOutcome =
-  | 'confirmed' // user said y/Y, or --yes was passed
-  | 'aborted' // user answered n / empty / anything other than y|Y
-  | 'non-tty-aborted' // stdin is not a TTY and --yes was not given
+  | 'cancelled'
+  | 'full-success'
+  | 'source-already-absent'
+  | 'wrapper-already-absent'
+
+export interface UninstallResult {
+  outcome: UninstallOutcome
+}
 
 /**
- * Run the `mars uninstall` confirmation flow.
+ * Run the uninstall sequence.
  *
- * Displays the resolved paths, optionally prompts the user, and returns the
- * outcome. Never deletes anything — deletion is handled in a subsequent slice.
+ * Deletion order: wrapper first, then source clone.  Per-repo .mars/ and
+ * .worktrees/ directories are never touched — only the two paths passed in.
+ *
+ * @param wrapperPath  Absolute path to the installed `mars` wrapper binary.
+ * @param cloneDir     Absolute path to the source clone (the repo root).
+ * @param deps         Injected I/O dependencies.
  */
-export async function runUninstall(opts: UninstallOptions): Promise<UninstallOutcome> {
-  const {
-    paths,
-    yes,
-    isTty,
-    readLine,
-    writePrompt = (t: string) => {
-      process.stdout.write(t)
-    },
-  } = opts
+export async function runUninstall(
+  wrapperPath: string,
+  cloneDir: string,
+  deps: UninstallDeps,
+): Promise<UninstallResult> {
+  const confirmed = await deps.confirm()
+  if (!confirmed) {
+    return { outcome: 'cancelled' }
+  }
 
-  // Always show the resolved paths so the user knows what would be removed.
-  console.log(`binary:     ${paths.binPath}`)
-  console.log(`source dir: ${paths.srcDir}`)
-  console.log('')
+  const wrapperExists = deps.exists(wrapperPath)
+  const cloneExists = deps.exists(cloneDir)
 
-  // Non-TTY stdin without --yes would hang forever waiting for input.
-  // Abort with a clear message so scripts fail fast.
-  if (!yes && !isTty) {
-    console.error(
-      'error: stdin is not a terminal; pass --yes (or -y) to proceed non-interactively',
+  // --- wrapper (always first) ---
+  if (wrapperExists) {
+    await deps.removeFile(wrapperPath)
+  } else {
+    deps.log(`wrapper already absent: ${wrapperPath}`)
+  }
+
+  // --- source clone (always second, after wrapper) ---
+  if (cloneExists) {
+    await deps.removeDir(cloneDir)
+  } else {
+    deps.log(`source clone already absent: ${cloneDir}`)
+  }
+
+  // --- outcome + PATH reminder ---
+  if (!wrapperExists && cloneExists) {
+    deps.log(
+      `Done. Note: your shell rc may still export the install bin directory on PATH. ` +
+        `Remove or update that export in ~/.bashrc / ~/.zshrc if you no longer want it.`,
     )
-    return 'non-tty-aborted'
+    return { outcome: 'wrapper-already-absent' }
   }
 
-  // --yes skips the interactive prompt entirely.
-  if (!yes) {
-    writePrompt('Delete these? [y/N] ')
-    const answer = await readLine()
-    if (answer !== 'y' && answer !== 'Y') {
-      console.log('Aborted.')
-      return 'aborted'
-    }
+  if (wrapperExists && !cloneExists) {
+    deps.log(
+      `Done. Note: your shell rc may still export the install bin directory on PATH. ` +
+        `Remove or update that export in ~/.bashrc / ~/.zshrc if you no longer want it.`,
+    )
+    return { outcome: 'source-already-absent' }
   }
 
-  // Confirmed — print what would be deleted (actual deletion is a later slice).
-  console.log(`would delete: ${paths.binPath}`)
-  console.log(`would delete: ${paths.srcDir}`)
-  return 'confirmed'
+  deps.log(
+    `Uninstalled. Note: your shell rc may still export the install bin directory on PATH. ` +
+      `Remove or update that export in ~/.bashrc / ~/.zshrc if you no longer want it.`,
+  )
+  return { outcome: 'full-success' }
 }

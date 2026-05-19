@@ -60,6 +60,7 @@ const FLAGS_WITH_VALUES = new Set([
   '--verify',
   '--done',
   '--type',
+  '--wrapper',
 ])
 
 const REPEATABLE_FLAGS = new Set(['--blocked-by', '--files', '--done'])
@@ -362,6 +363,13 @@ Commands:
   ui [--repo <path>] [--port <n>] [--host <h>]
                                 launch the read-only Kanban viewer
                                 (defaults: port 7777, host 127.0.0.1)
+  uninstall [--wrapper <path>]  remove the installed mars wrapper and source
+                                clone. Prompts for confirmation. Wrapper is
+                                deleted first; if either is already absent the
+                                command still proceeds. Per-repo .mars/ and
+                                .worktrees/ directories are never touched.
+                                --wrapper overrides auto-detection of the
+                                wrapper path (defaults to \`which mars\`).
   where                         print resolved repo + state directory
   help                          show this message
   --version, -v                 print mars version and exit
@@ -3321,6 +3329,67 @@ const main = async (): Promise<void> => {
         continue
       }
       console.log(`${t.id}\t${t.status}\t${t.prompt.slice(0, 60)}`)
+    }
+    return
+  }
+
+  if (cmd === 'uninstall') {
+    // Resolve paths.
+    //   cloneDir   — the source-clone repo root (3 levels above src/cli.ts)
+    //   wrapperPath — the installed `mars` wrapper binary; located via `which mars`
+    //                 or overridden with --wrapper <path>.
+    const { fileURLToPath } = await import('node:url')
+    const { resolve: resolvePath, dirname } = await import('node:path')
+    const { existsSync } = await import('node:fs')
+    const { rm } = await import('node:fs/promises')
+    const { createInterface } = await import('node:readline')
+    const { execSync } = await import('node:child_process')
+
+    const cliFile = fileURLToPath(import.meta.url)
+    const cloneDir = resolvePath(dirname(cliFile), '..', '..', '..')
+
+    // Resolve the wrapper path: --wrapper flag wins, then `which mars`.
+    let wrapperPath = flags['--wrapper']
+    if (!wrapperPath) {
+      try {
+        wrapperPath = execSync('which mars 2>/dev/null', { encoding: 'utf8' }).trim()
+      } catch {
+        wrapperPath = ''
+      }
+    }
+    if (!wrapperPath) {
+      console.error(
+        'mars uninstall: could not detect wrapper path. ' +
+          'Pass --wrapper <path> to specify it explicitly.',
+      )
+      process.exit(1)
+    }
+
+    const { runUninstall } = await import('./commands/uninstall.js')
+
+    const rl = createInterface({ input: process.stdin, output: process.stdout })
+    const confirm = (): Promise<boolean> =>
+      new Promise((resolve) => {
+        rl.question(
+          `Remove wrapper '${wrapperPath}' and source clone '${cloneDir}'? [y/N] `,
+          (answer) => {
+            rl.close()
+            resolve(answer.trim().toLowerCase() === 'y')
+          },
+        )
+      })
+
+    const result = await runUninstall(wrapperPath, cloneDir, {
+      exists: existsSync,
+      removeFile: (p) => rm(p, { force: true }),
+      removeDir: (p) => rm(p, { recursive: true, force: true }),
+      confirm,
+      log: (msg) => console.log(msg),
+    })
+
+    if (result.outcome === 'cancelled') {
+      console.log('uninstall cancelled')
+      process.exit(0)
     }
     return
   }
