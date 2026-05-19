@@ -49,6 +49,7 @@ interface TaskRow {
   drop_reason: string | null
   retry_count: number | null
   blocker_task_id: string | null
+  blocker_task_ids: string | null
   created_at: string
   updated_at: string
 }
@@ -64,8 +65,21 @@ export interface Task {
   dropReason: string | null
   retryCount: number
   blockerTaskId: string | null
+  /**
+   * Every Task carries the full list of task ids that block it, derived from
+   * the `task_blockers` junction. Tasks with no blockers return an empty
+   * list, never a missing field. This feeds the Topology tab's DAG view
+   * (PRD 82df662a) so the UI can render blocker edges without a second
+   * round-trip.
+   */
+  blockedBy: string[]
   createdAt: string
   updatedAt: string
+}
+
+const parseBlockedBy = (raw: string | null): string[] => {
+  if (raw === null || raw === '') return []
+  return raw.split(',').filter((id) => id.length > 0)
 }
 
 const rowToTask = (row: TaskRow): Task => {
@@ -82,6 +96,7 @@ const rowToTask = (row: TaskRow): Task => {
     dropReason: row.drop_reason ?? null,
     retryCount: Number(row.retry_count ?? 0),
     blockerTaskId: row.blocker_task_id ?? null,
+    blockedBy: parseBlockedBy(row.blocker_task_ids ?? null),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -168,6 +183,16 @@ export class TaskDb {
            LIMIT 1) AS blocker_task_id`
       : `NULL AS blocker_task_id`
     select.push(blockerCol)
+    // PRD 82df662a / slice 1: every task carries the full list of its
+    // blocker ids (as a comma-joined string, parsed back to string[] in
+    // `rowToTask`). Tasks with no blockers get an empty string -> [].
+    const blockerIdsCol = blockersTableExists
+      ? `(SELECT GROUP_CONCAT(b.blocker_task_id, ',')
+            FROM (SELECT blocker_task_id, created_at FROM task_blockers
+                   WHERE task_id = t.id
+                ORDER BY created_at ASC) b) AS blocker_task_ids`
+      : `NULL AS blocker_task_ids`
+    select.push(blockerIdsCol)
 
     const sql = `SELECT ${select.join(', ')} FROM tasks t ORDER BY t.created_at`
     const r = await this.client.execute(sql)
