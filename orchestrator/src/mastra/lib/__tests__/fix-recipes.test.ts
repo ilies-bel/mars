@@ -663,6 +663,85 @@ describe('fix-recipes', () => {
     })
   })
 
+  describe('verify:typecheck/typecheck-cannot-find-name recipe', () => {
+    const ctx = {
+      targetPath: '/tmp/worktrees/task-abc',
+      statusOutput:
+        "src/mastra/queue-fix-tasks.ts(605,11): error TS2304: Cannot find name 'NO_RECIPE_INBOX_KIND'.\nCommand failed: npx tsc --noEmit\n",
+      targetBranch: 'task/abc',
+      integrationBranch: 'main',
+      originalPrompt: '',
+    }
+
+    it('is registered under the correct signature', () => {
+      expect(hasRecipe('verify:typecheck/typecheck-cannot-find-name')).toBe(true)
+    })
+
+    it('produces a stable title', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
+      expect(recipe.title(ctx)).toBe(
+        'Fix cannot-find-name error(s) to resolve TS2304 typecheck failure',
+      )
+    })
+
+    it('prompt contains TS2304, step instructions, and constraint against ts-ignore', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('TS2304')
+      expect(prompt).toContain('STEP 1')
+      expect(prompt).toContain('STEP 2')
+      expect(prompt).toContain('STEP 3')
+      expect(prompt).toMatch(/do NOT add.*@ts-ignore/i)
+      expect(prompt).toContain('Save your work')
+    })
+
+    it('describes the partial-deletion path so the agent completes deletions rather than re-adding the name', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/partial deletion/i)
+      expect(prompt).toMatch(/complete the deletion/i)
+      expect(prompt).toMatch(/do not re-introduce a name that the original task explicitly removed/i)
+    })
+
+    it('describes the missing-implementation and missing-import paths', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/missing implementation/i)
+      expect(prompt).toMatch(/missing import/i)
+    })
+
+    it('embeds the failing branch and worktree path', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(ctx.targetBranch)
+      expect(prompt).toContain(ctx.targetPath)
+    })
+
+    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
+      const promptWithSource = recipe.buildPrompt({
+        ...ctx,
+        originalPrompt: 'delete NO_RECIPE_INBOX_KIND and all its usages from queue-fix-tasks.ts',
+      })
+      expect(promptWithSource).toContain(
+        'delete NO_RECIPE_INBOX_KIND and all its usages from queue-fix-tasks.ts',
+      )
+      expect(promptWithSource).toMatch(/inlined/i)
+      const promptWithout = recipe.buildPrompt(ctx)
+      expect(promptWithout).not.toContain(
+        'delete NO_RECIPE_INBOX_KIND and all its usages from queue-fix-tasks.ts',
+      )
+      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
+    })
+
+    it('instructs agent to re-run typecheck after each fix to confirm error count drops', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('npx tsc --noEmit')
+      expect(prompt).toMatch(/error count drops/i)
+    })
+  })
+
   describe('intentionally absent recipes (documented investigation outcomes)', () => {
     it('merge:crashed/index-lock-contention has no recipe — environmental transient failure; operator restarts with `mars restart`', () => {
       // Investigated 2026-05-18 (task 5c15a8e1). Root cause: git checkout main
