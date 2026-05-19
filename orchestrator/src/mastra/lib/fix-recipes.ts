@@ -650,6 +650,32 @@ const typecheckCannotFindNameRecipe: FixRecipe = {
 // NOTE — intentionally absent entries (documented so future investigators don't
 // re-open these):
 //
+// • merge:preflight/template-leakage/template-paths-detected
+// • merge:preflight/template-leakage/unclassified  (stale: pre-9ed0041 daemon)
+//     The merge preflight blocks any task branch that touches paths under
+//     orchestrator/src/init/templates/ (TEMPLATE_LEAKAGE_PREFIX in git.ts).
+//     Humans edit this subtree directly on main; the orchestrator has a
+//     categorical block because CLAUDE.md is inlined into every coder brief,
+//     meaning a bypassPermissions coder reconciles the brief back to the
+//     template, causing regressions. A recipe is wrong for two compounding
+//     reasons:
+//     (a) any recovery agent that tries to apply the template edit hits the
+//         same preflight block on its own merge step;
+//     (b) a recovery that skips the template edit fails the original task's
+//         verify criteria (the verify command always references the template
+//         path explicitly, because the task was specifically asked to change it).
+//     The /unclassified suffix appears on failures recorded BEFORE commit
+//     9ed0041 added the 'template-paths-detected' classifier rule — the
+//     signature is frozen on the DB row and is not recomputed. Investigated:
+//       2026-05-18 (mars-77844c1f, 9ed0041 — CLAUDE.md edit)
+//       2026-05-19 (mars-5989999f — mars:inbox SKILL.md YAML frontmatter fix)
+//       2026-05-19 (mars-9dce6ff6 — CLAUDE.md false SessionStart claim)
+//       2026-05-19 (mars-2c6dd178 — zombie kind removal from template files)
+//       2026-05-20 (mars-af0d8023 — mars:inbox skill head-20 listing limit)
+//     Operator fix: apply the desired template edit directly on main, then drop
+//     or close the original task. Repro: git diff --name-only main..task/<id>
+//                                        | grep 'orchestrator/src/init/templates/'
+//
 // • merge:crashed/index-lock-contention
 //     git checkout <integration> failed because .git/index.lock already exists
 //     (another git process was running, or a previous process crashed and left
