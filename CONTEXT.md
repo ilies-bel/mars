@@ -21,8 +21,8 @@ The full tree of work sharing a single originId, from the first proposal (idea o
 A read-only, passive activity feed in the ui/ frontend tracking progress of completed tasks (and other terminal-state lifecycle moments) for situational awareness, with no acknowledgement or action required from the user.
 
 **Worker**:
-An operator-declared dispatch target that pairs a Worker class with a Runtime and a tag set; shorthand for Worker instance. Mars ships with one default Worker per class; operators add more to express different execution shapes.
-_Avoid_: WorkerInstance, Instance, dispatch slot, configured worker
+A preconfigured claude -p invocation bound to a class (model, effort, permission-mode, disallowed tools, message cap); the six classes are Coder, Planner, Slicer, Triager, Fixer, Writer.
+_Avoid_: Slot, dispatch slot
 
 **Slot**:
 One concurrent unit inside a Pool; pulls a task from the daemon and runs it to completion by enacting a Worker.
