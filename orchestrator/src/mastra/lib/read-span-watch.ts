@@ -115,6 +115,14 @@ export interface ReadSpanWatcher {
   readonly thresholdReached: boolean
   /** Full read trace since the last action call. */
   readonly trace: readonly ReadSpanTrace[]
+  /** Highest streak the watcher has ever seen across the whole run. */
+  readonly maxStreak: number
+  /** Total read-class tool uses observed (Read/Grep/Glob + read-only Bash). */
+  readonly totalReads: number
+  /** Total action-class tool uses observed (Edit/Write/MultiEdit/NotebookEdit + write Bash). */
+  readonly totalActions: number
+  /** True once the streak reached the limit at least once during the run. */
+  readonly thresholdEverReached: boolean
 }
 
 export const createReadSpanWatcher = (
@@ -122,8 +130,31 @@ export const createReadSpanWatcher = (
 ): ReadSpanWatcher => {
   let streak = 0
   let thresholdReached = false
+  let thresholdEverReached = false
   let trace: ReadSpanTrace[] = []
+  let maxStreak = 0
+  let totalReads = 0
+  let totalActions = 0
   const limit = config.limit
+
+  const bumpRead = (entry: ReadSpanTrace): void => {
+    streak += 1
+    totalReads += 1
+    if (streak > maxStreak) maxStreak = streak
+    trace.push(entry)
+    if (streak >= limit && !thresholdReached) {
+      thresholdReached = true
+      thresholdEverReached = true
+      config.onThreshold({ limit, trace: [...trace] })
+    }
+  }
+
+  const resetOnAction = (): void => {
+    totalActions += 1
+    streak = 0
+    thresholdReached = false
+    trace = []
+  }
 
   return {
     get streak() {
@@ -135,41 +166,39 @@ export const createReadSpanWatcher = (
     get trace() {
       return trace
     },
+    get maxStreak() {
+      return maxStreak
+    },
+    get totalReads() {
+      return totalReads
+    },
+    get totalActions() {
+      return totalActions
+    },
+    get thresholdEverReached() {
+      return thresholdEverReached
+    },
     observe(event) {
       const uses = extractToolUses(event)
       if (uses.length === 0) return
       for (const use of uses) {
         if (READ_TOOLS.has(use.name)) {
-          streak += 1
-          trace.push({
+          bumpRead({
             tool: use.name as 'Read' | 'Grep' | 'Glob',
             target: targetFromInput(use.input),
           })
-          if (streak >= limit && !thresholdReached) {
-            thresholdReached = true
-            config.onThreshold({ limit, trace: [...trace] })
-          }
         } else if (use.name === 'Bash') {
           const cmd =
             isRecord(use.input) && typeof use.input.command === 'string'
               ? use.input.command
               : ''
           if (isBashReadOnly(cmd)) {
-            streak += 1
-            trace.push({ tool: 'Bash', target: cmd.slice(0, 80) })
-            if (streak >= limit && !thresholdReached) {
-              thresholdReached = true
-              config.onThreshold({ limit, trace: [...trace] })
-            }
+            bumpRead({ tool: 'Bash', target: cmd.slice(0, 80) })
           } else {
-            streak = 0
-            thresholdReached = false
-            trace = []
+            resetOnAction()
           }
         } else if (ACTION_TOOLS.has(use.name)) {
-          streak = 0
-          thresholdReached = false
-          trace = []
+          resetOnAction()
         }
         // Other tools (TaskCreate, WebFetch, TodoWrite, etc.) are ignored
         // — they neither extend nor reset the streak.
