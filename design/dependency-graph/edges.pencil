@@ -1,0 +1,1597 @@
+{
+  "version": "2.11",
+  "children": [
+    {
+      "type": "frame",
+      "id": "edges-root",
+      "x": 0,
+      "y": 0,
+      "name": "Mars DS — Dependency graph: edges (slice 2/6)",
+      "width": 1440,
+      "fill": "$bg-light",
+      "layout": "vertical",
+      "gap": 48,
+      "padding": 48,
+      "children": [
+
+        {
+          "type": "frame",
+          "id": "edges-hdr",
+          "name": "Artboard Header",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 6,
+          "children": [
+            {
+              "type": "text",
+              "id": "edges-hdr-t",
+              "name": "title",
+              "fill": "$mars-night",
+              "content": "Edge visual language — dependency graph",
+              "fontFamily": "Inter",
+              "fontSize": 32,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "edges-hdr-s",
+              "name": "sub",
+              "fill": "$muted-light",
+              "content": "Two edge kinds: solid ($mars-night, originId-parent lineage) and dashed ($mars-rust, blocker / waiting-on). Three label variants: slice index+title on an idea→task edge, failure signature on a task→fix-task edge, blocker reason on a blocker edge.",
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "edges-hdr-r",
+              "name": "rule",
+              "fill": "$muted-light",
+              "content": "Stroke style (solid vs dashed) is the primary distinguisher; hue ($mars-night vs $mars-rust) is a second, reinforcing signal. Labels sit centered on the edge midpoint — 11px Inter, $muted-light, italic — and never overlap with node bounds.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "sec1",
+          "name": "Section 1 — Edge kinds (solid vs dashed)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 20,
+          "children": [
+            {
+              "type": "frame",
+              "id": "sec1-hdr",
+              "name": "sectionHeader",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sec1-hdr-t",
+                  "name": "sectionTitle",
+                  "fill": "$mars-night",
+                  "content": "1. Edge kinds",
+                  "fontFamily": "Inter",
+                  "fontSize": 18,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "sec1-hdr-s",
+                  "name": "sectionSub",
+                  "fill": "$muted-light",
+                  "content": "Solid = lineage (why this task exists — its originId-parent chain). Dashed = blocker (what this task is waiting on). Both carry a directional arrowhead pointing toward the dependency.",
+                  "fontFamily": "Inter",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "sec1-row",
+              "name": "specimensRow",
+              "width": "fill_container",
+              "layout": "horizontal",
+              "gap": 32,
+              "alignItems": "start",
+              "children": [
+
+                {
+                  "type": "frame",
+                  "id": "mockA",
+                  "name": "Mock A — solid originId-parent edge",
+                  "width": 656,
+                  "layout": "vertical",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "mockA-cap",
+                      "name": "caption",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "mockA-cap-t",
+                          "name": "captionTitle",
+                          "fill": "$mars-night",
+                          "content": "A. Solid edge — originId-parent (lineage)",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "mockA-cap-s",
+                          "name": "captionSub",
+                          "fill": "$muted-light",
+                          "content": "Drawn for every originId relationship: idea → task, task → fix-task, proposal slice promotions. Read: 'the right-hand node gave rise to the left-hand node.'",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "mockA-canvas",
+                      "name": "canvas",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "padding": 32,
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "mockA-from",
+                          "name": "fromNode — child task",
+                          "fill": "$surface-light",
+                          "cornerRadius": 6,
+                          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                          "padding": [8, 12],
+                          "layout": "horizontal",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "mockA-from-dot",
+                              "name": "statusDot — in-flight",
+                              "width": 8,
+                              "height": 8,
+                              "cornerRadius": 4,
+                              "fill": "$mars-ochre"
+                            },
+                            {
+                              "type": "text",
+                              "id": "mockA-from-id",
+                              "name": "taskId",
+                              "fill": "$mars-night",
+                              "content": "mars-9b021ddc",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "mockA-edge",
+                          "name": "solidEdge",
+                          "layout": "horizontal",
+                          "gap": 0,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "mockA-edge-line",
+                              "name": "solidLine",
+                              "width": 220,
+                              "height": 2,
+                              "fill": "$mars-night"
+                            },
+                            {
+                              "type": "text",
+                              "id": "mockA-edge-arrow",
+                              "name": "arrowhead",
+                              "fill": "$mars-night",
+                              "content": "▶",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "mockA-to",
+                          "name": "toNode — parent task",
+                          "fill": "$surface-light",
+                          "cornerRadius": 6,
+                          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                          "padding": [8, 12],
+                          "layout": "horizontal",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "mockA-to-dot",
+                              "name": "statusDot — done",
+                              "width": 8,
+                              "height": 8,
+                              "cornerRadius": 4,
+                              "fill": "$mars-green"
+                            },
+                            {
+                              "type": "text",
+                              "id": "mockA-to-id",
+                              "name": "taskId",
+                              "fill": "$mars-night",
+                              "content": "mars-7af3c2e1",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "mockA-note",
+                      "name": "specNote",
+                      "fill": "$muted-light",
+                      "content": "SVG: stroke=$mars-night, stroke-width=2, stroke-dasharray=none. Arrowhead: marker-end triangle, filled $mars-night. Direction: child → parent (walking backward up the lineage).",
+                      "fontFamily": "Inter",
+                      "fontSize": 11,
+                      "fontWeight": "normal",
+                      "fontStyle": "italic"
+                    }
+                  ]
+                },
+
+                {
+                  "type": "frame",
+                  "id": "mockB",
+                  "name": "Mock B — dashed blocker edge",
+                  "width": 656,
+                  "layout": "vertical",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "mockB-cap",
+                      "name": "caption",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "mockB-cap-t",
+                          "name": "captionTitle",
+                          "fill": "$mars-night",
+                          "content": "B. Dashed edge — blocker (waiting-on)",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "mockB-cap-s",
+                          "name": "captionSub",
+                          "fill": "$muted-light",
+                          "content": "Drawn for every task_blockers relationship. Read: 'the left-hand node cannot dispatch until the right-hand node reaches done.' Uses $mars-rust to reinforce the 'impediment' semantic.",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "mockB-canvas",
+                      "name": "canvas",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "padding": 32,
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "mockB-from",
+                          "name": "fromNode — waiting task",
+                          "fill": "$surface-light",
+                          "cornerRadius": 6,
+                          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                          "padding": [8, 12],
+                          "layout": "horizontal",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "mockB-from-dot",
+                              "name": "statusDot — blocked",
+                              "width": 8,
+                              "height": 8,
+                              "cornerRadius": 4,
+                              "fill": "$mars-rust"
+                            },
+                            {
+                              "type": "text",
+                              "id": "mockB-from-id",
+                              "name": "taskId",
+                              "fill": "$mars-night",
+                              "content": "mars-3e8e0f12",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "mockB-edge",
+                          "name": "dashedEdge",
+                          "layout": "horizontal",
+                          "gap": 5,
+                          "alignItems": "center",
+                          "children": [
+                            { "type": "frame", "id": "mockB-d1", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d2", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d3", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d4", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d5", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d6", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d7", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d8", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d9", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d10", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d11", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d12", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d13", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "mockB-d14", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            {
+                              "type": "text",
+                              "id": "mockB-edge-arrow",
+                              "name": "arrowhead",
+                              "fill": "$mars-rust",
+                              "content": "▶",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "mockB-to",
+                          "name": "toNode — blocker task",
+                          "fill": "$surface-light",
+                          "cornerRadius": 6,
+                          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                          "padding": [8, 12],
+                          "layout": "horizontal",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "mockB-to-dot",
+                              "name": "statusDot — queued",
+                              "width": 8,
+                              "height": 8,
+                              "cornerRadius": 4,
+                              "fill": "$muted-light"
+                            },
+                            {
+                              "type": "text",
+                              "id": "mockB-to-id",
+                              "name": "taskId",
+                              "fill": "$mars-night",
+                              "content": "mars-2c11fa44",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "mockB-note",
+                      "name": "specNote",
+                      "fill": "$muted-light",
+                      "content": "SVG: stroke=$mars-rust, stroke-width=2, stroke-dasharray=\"8 5\". Arrowhead: marker-end triangle, filled $mars-rust. Direction: waiting task → blocker task.",
+                      "fontFamily": "Inter",
+                      "fontSize": 11,
+                      "fontWeight": "normal",
+                      "fontStyle": "italic"
+                    }
+                  ]
+                }
+
+              ]
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "sec2",
+          "name": "Section 2 — Edge label variants",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 20,
+          "children": [
+            {
+              "type": "frame",
+              "id": "sec2-hdr",
+              "name": "sectionHeader",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sec2-hdr-t",
+                  "name": "sectionTitle",
+                  "fill": "$mars-night",
+                  "content": "2. Label variants",
+                  "fontFamily": "Inter",
+                  "fontSize": 18,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "sec2-hdr-s",
+                  "name": "sectionSub",
+                  "fill": "$muted-light",
+                  "content": "Each edge kind carries one optional label, centered on its midpoint. Three label shapes exist. Labels are always italic, $muted-light, 11px Inter — never bold, never primary color.",
+                  "fontFamily": "Inter",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "sec2-row",
+              "name": "specimensRow",
+              "width": "fill_container",
+              "layout": "horizontal",
+              "gap": 24,
+              "alignItems": "start",
+              "children": [
+
+                {
+                  "type": "frame",
+                  "id": "mockC",
+                  "name": "Mock C — idea-to-task edge with slice index/title label",
+                  "width": 432,
+                  "layout": "vertical",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "mockC-cap",
+                      "name": "caption",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "mockC-cap-t",
+                          "name": "captionTitle",
+                          "fill": "$mars-night",
+                          "content": "C. Idea → Task  ·  slice index/title label",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "mockC-cap-s",
+                          "name": "captionSub",
+                          "fill": "$muted-light",
+                          "content": "Solid edge. Label: «<slice-index>/<total>: <slice-title>». Appears on every idea-to-task originId edge so the operator knows which slice of the proposal this task implements.",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "mockC-canvas",
+                      "name": "canvas",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "padding": 24,
+                      "layout": "vertical",
+                      "gap": 0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "mockC-diagram",
+                          "name": "diagram",
+                          "layout": "horizontal",
+                          "gap": 0,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "mockC-from",
+                              "name": "fromNode — task",
+                              "fill": "$surface-light",
+                              "cornerRadius": 6,
+                              "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                              "padding": [8, 12],
+                              "layout": "horizontal",
+                              "gap": 6,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "mockC-from-dot",
+                                  "name": "statusDot — queued",
+                                  "width": 8,
+                                  "height": 8,
+                                  "cornerRadius": 4,
+                                  "fill": "$muted-light"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mockC-from-id",
+                                  "name": "taskId",
+                                  "fill": "$mars-night",
+                                  "content": "mars-53c5d6d5",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "mockC-edge",
+                              "name": "solidEdge",
+                              "layout": "vertical",
+                              "gap": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "mockC-edge-line",
+                                  "name": "lineWithArrow",
+                                  "layout": "horizontal",
+                                  "gap": 0,
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "mockC-edge-seg",
+                                      "name": "solidLine",
+                                      "width": 100,
+                                      "height": 2,
+                                      "fill": "$mars-night"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "mockC-edge-arrow",
+                                      "name": "arrowhead",
+                                      "fill": "$mars-night",
+                                      "content": "▶",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 10,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mockC-edge-label",
+                                  "name": "edgeLabel",
+                                  "fill": "$muted-light",
+                                  "content": "2/6: Edge visual language draft",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal",
+                                  "fontStyle": "italic"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "mockC-to",
+                              "name": "toNode — idea",
+                              "fill": "$mars-ochre",
+                              "cornerRadius": 6,
+                              "padding": [8, 12],
+                              "layout": "horizontal",
+                              "gap": 6,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "mockC-to-icon",
+                                  "name": "ideaIcon",
+                                  "fill": "$mars-night",
+                                  "content": "◆",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 9,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mockC-to-id",
+                                  "name": "ideaId",
+                                  "fill": "$mars-night",
+                                  "content": "578ab441",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "mockC-note",
+                      "name": "specNote",
+                      "fill": "$muted-light",
+                      "content": "Label format: \"<n>/<total>: <slice-title>\". Truncate title to 32 chars with ellipsis if needed. Idea nodes use $mars-ochre background + ◆ icon to distinguish from task nodes.",
+                      "fontFamily": "Inter",
+                      "fontSize": 11,
+                      "fontWeight": "normal",
+                      "fontStyle": "italic"
+                    }
+                  ]
+                },
+
+                {
+                  "type": "frame",
+                  "id": "mockD",
+                  "name": "Mock D — task-to-fix-task edge with failure-signature label",
+                  "width": 432,
+                  "layout": "vertical",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "mockD-cap",
+                      "name": "caption",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "mockD-cap-t",
+                          "name": "captionTitle",
+                          "fill": "$mars-night",
+                          "content": "D. Task → Fix-task  ·  failure-signature label",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "mockD-cap-s",
+                          "name": "captionSub",
+                          "fill": "$muted-light",
+                          "content": "Solid edge (it is an originId-parent lineage edge). Label: the failure signature that spawned the fix-task — e.g. «verify:typecheck-error». Tells the operator why the fix-task was created.",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "mockD-canvas",
+                      "name": "canvas",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "padding": 24,
+                      "layout": "vertical",
+                      "gap": 0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "mockD-diagram",
+                          "name": "diagram",
+                          "layout": "horizontal",
+                          "gap": 0,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "mockD-from",
+                              "name": "fromNode — fix-task",
+                              "fill": "$surface-light",
+                              "cornerRadius": 6,
+                              "stroke": { "align": "inside", "thickness": 1, "fill": "$mars-rust" },
+                              "padding": [8, 12],
+                              "layout": "horizontal",
+                              "gap": 6,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "mockD-from-dot",
+                                  "name": "statusDot — needs-attention",
+                                  "width": 8,
+                                  "height": 8,
+                                  "cornerRadius": 4,
+                                  "fill": "$mars-rust"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mockD-from-id",
+                                  "name": "taskId",
+                                  "fill": "$mars-night",
+                                  "content": "mars-9b021ddc",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "mockD-edge",
+                              "name": "solidEdge",
+                              "layout": "vertical",
+                              "gap": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "mockD-edge-line",
+                                  "name": "lineWithArrow",
+                                  "layout": "horizontal",
+                                  "gap": 0,
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "mockD-edge-seg",
+                                      "name": "solidLine",
+                                      "width": 100,
+                                      "height": 2,
+                                      "fill": "$mars-night"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "mockD-edge-arrow",
+                                      "name": "arrowhead",
+                                      "fill": "$mars-night",
+                                      "content": "▶",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 10,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mockD-edge-label",
+                                  "name": "edgeLabel",
+                                  "fill": "$muted-light",
+                                  "content": "verify:typecheck-error",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal",
+                                  "fontStyle": "italic"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "mockD-to",
+                              "name": "toNode — origin task (failed)",
+                              "fill": "$surface-light",
+                              "cornerRadius": 6,
+                              "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                              "padding": [8, 12],
+                              "layout": "horizontal",
+                              "gap": 6,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "mockD-to-dot",
+                                  "name": "statusDot — failed",
+                                  "width": 8,
+                                  "height": 8,
+                                  "cornerRadius": 4,
+                                  "fill": "$mars-rust"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mockD-to-id",
+                                  "name": "taskId",
+                                  "fill": "$mars-night",
+                                  "content": "mars-7af3c2e1",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "mockD-note",
+                      "name": "specNote",
+                      "fill": "$muted-light",
+                      "content": "Label: the failure-signature string verbatim (monospace, since it is a machine-produced key). Fix-task nodes get $mars-rust border stroke to signal their recovery role. Edge is solid because fix_for_task_id is an originId-parent relationship.",
+                      "fontFamily": "Inter",
+                      "fontSize": 11,
+                      "fontWeight": "normal",
+                      "fontStyle": "italic"
+                    }
+                  ]
+                },
+
+                {
+                  "type": "frame",
+                  "id": "mockE",
+                  "name": "Mock E — blocker edge with blocker-reason label",
+                  "width": 432,
+                  "layout": "vertical",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "mockE-cap",
+                      "name": "caption",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "mockE-cap-t",
+                          "name": "captionTitle",
+                          "fill": "$mars-night",
+                          "content": "E. Blocker edge  ·  blocker-reason label",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "mockE-cap-s",
+                          "name": "captionSub",
+                          "fill": "$muted-light",
+                          "content": "Dashed edge ($mars-rust). Label: the human-readable reason stored on the task_blockers edge — e.g. «prerequisite schema change». Omit when the reason field is null.",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "mockE-canvas",
+                      "name": "canvas",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "padding": 24,
+                      "layout": "vertical",
+                      "gap": 0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "mockE-diagram",
+                          "name": "diagram",
+                          "layout": "horizontal",
+                          "gap": 0,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "mockE-from",
+                              "name": "fromNode — blocked task",
+                              "fill": "$surface-light",
+                              "cornerRadius": 6,
+                              "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                              "padding": [8, 12],
+                              "layout": "horizontal",
+                              "gap": 6,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "mockE-from-dot",
+                                  "name": "statusDot — blocked",
+                                  "width": 8,
+                                  "height": 8,
+                                  "cornerRadius": 4,
+                                  "fill": "$mars-rust"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mockE-from-id",
+                                  "name": "taskId",
+                                  "fill": "$mars-night",
+                                  "content": "mars-3e8e0f12",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "mockE-edge",
+                              "name": "dashedEdge",
+                              "layout": "vertical",
+                              "gap": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "mockE-edge-dashes",
+                                  "name": "dashesWithArrow",
+                                  "layout": "horizontal",
+                                  "gap": 5,
+                                  "alignItems": "center",
+                                  "children": [
+                                    { "type": "frame", "id": "mockE-da1", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                                    { "type": "frame", "id": "mockE-da2", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                                    { "type": "frame", "id": "mockE-da3", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                                    { "type": "frame", "id": "mockE-da4", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                                    { "type": "frame", "id": "mockE-da5", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                                    { "type": "frame", "id": "mockE-da6", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                                    { "type": "frame", "id": "mockE-da7", "name": "dash", "width": 8, "height": 2, "fill": "$mars-rust" },
+                                    {
+                                      "type": "text",
+                                      "id": "mockE-edge-arrow",
+                                      "name": "arrowhead",
+                                      "fill": "$mars-rust",
+                                      "content": "▶",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 10,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mockE-edge-label",
+                                  "name": "edgeLabel",
+                                  "fill": "$muted-light",
+                                  "content": "prerequisite schema change",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal",
+                                  "fontStyle": "italic"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "mockE-to",
+                              "name": "toNode — blocker task",
+                              "fill": "$surface-light",
+                              "cornerRadius": 6,
+                              "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                              "padding": [8, 12],
+                              "layout": "horizontal",
+                              "gap": 6,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "mockE-to-dot",
+                                  "name": "statusDot — done",
+                                  "width": 8,
+                                  "height": 8,
+                                  "cornerRadius": 4,
+                                  "fill": "$mars-green"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mockE-to-id",
+                                  "name": "taskId",
+                                  "fill": "$mars-night",
+                                  "content": "mars-2c11fa44",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "mockE-note",
+                      "name": "specNote",
+                      "fill": "$muted-light",
+                      "content": "Label: free-text prose (Inter, not monospace). Null reason → omit label entirely; do not render an empty string. Dashed + $mars-rust distinguishes from all solid lineage edges at a glance.",
+                      "fontFamily": "Inter",
+                      "fontSize": 11,
+                      "fontWeight": "normal",
+                      "fontStyle": "italic"
+                    }
+                  ]
+                }
+
+              ]
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "sec3",
+          "name": "Section 3 — Adjacent comparison (solid vs dashed)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 20,
+          "children": [
+            {
+              "type": "frame",
+              "id": "sec3-hdr",
+              "name": "sectionHeader",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sec3-hdr-t",
+                  "name": "sectionTitle",
+                  "fill": "$mars-night",
+                  "content": "3. Adjacent comparison — distinguishability at a glance",
+                  "fontFamily": "Inter",
+                  "fontSize": 18,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "sec3-hdr-s",
+                  "name": "sectionSub",
+                  "fill": "$muted-light",
+                  "content": "Both edge kinds placed side by side at the same scale. An operator who cannot distinguish them must be able to do so without reading any label. The two signals — stroke style + hue — must each be sufficient on their own.",
+                  "fontFamily": "Inter",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "sec3-canvas",
+              "name": "adjacentCanvas",
+              "width": "fill_container",
+              "fill": "$surface-light",
+              "cornerRadius": 8,
+              "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+              "padding": 40,
+              "layout": "horizontal",
+              "gap": 64,
+              "alignItems": "center",
+              "children": [
+
+                {
+                  "type": "frame",
+                  "id": "sec3-solid",
+                  "name": "solidEdgeSpecimen",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "sec3-solid-diagram",
+                      "name": "diagram",
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "sec3-solid-from",
+                          "name": "nodeA",
+                          "fill": "$surface-light",
+                          "cornerRadius": 6,
+                          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                          "padding": [8, 14],
+                          "layout": "horizontal",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "sec3-solid-from-dot",
+                              "width": 8,
+                              "height": 8,
+                              "cornerRadius": 4,
+                              "fill": "$mars-ochre"
+                            },
+                            {
+                              "type": "text",
+                              "id": "sec3-solid-from-id",
+                              "fill": "$mars-night",
+                              "content": "Task A",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sec3-solid-line",
+                          "name": "solidLine",
+                          "layout": "horizontal",
+                          "gap": 0,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "sec3-solid-seg",
+                              "width": 140,
+                              "height": 2,
+                              "fill": "$mars-night"
+                            },
+                            {
+                              "type": "text",
+                              "id": "sec3-solid-arrow",
+                              "fill": "$mars-night",
+                              "content": "▶",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sec3-solid-to",
+                          "name": "nodeB",
+                          "fill": "$surface-light",
+                          "cornerRadius": 6,
+                          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                          "padding": [8, 14],
+                          "layout": "horizontal",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "sec3-solid-to-dot",
+                              "width": 8,
+                              "height": 8,
+                              "cornerRadius": 4,
+                              "fill": "$mars-green"
+                            },
+                            {
+                              "type": "text",
+                              "id": "sec3-solid-to-id",
+                              "fill": "$mars-night",
+                              "content": "Task B",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sec3-solid-legend",
+                      "name": "edgeLegend",
+                      "layout": "horizontal",
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "sec3-solid-legend-line",
+                          "width": 24,
+                          "height": 2,
+                          "fill": "$mars-night"
+                        },
+                        {
+                          "type": "text",
+                          "id": "sec3-solid-legend-t",
+                          "fill": "$mars-night",
+                          "content": "Solid — lineage (originId-parent)",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+
+                {
+                  "type": "frame",
+                  "id": "sec3-dashed",
+                  "name": "dashedEdgeSpecimen",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "sec3-dashed-diagram",
+                      "name": "diagram",
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "sec3-dashed-from",
+                          "name": "nodeC",
+                          "fill": "$surface-light",
+                          "cornerRadius": 6,
+                          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                          "padding": [8, 14],
+                          "layout": "horizontal",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "sec3-dashed-from-dot",
+                              "width": 8,
+                              "height": 8,
+                              "cornerRadius": 4,
+                              "fill": "$mars-rust"
+                            },
+                            {
+                              "type": "text",
+                              "id": "sec3-dashed-from-id",
+                              "fill": "$mars-night",
+                              "content": "Task C",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sec3-dashed-line",
+                          "name": "dashedLine",
+                          "layout": "horizontal",
+                          "gap": 5,
+                          "alignItems": "center",
+                          "children": [
+                            { "type": "frame", "id": "sec3-dd1", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "sec3-dd2", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "sec3-dd3", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "sec3-dd4", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "sec3-dd5", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "sec3-dd6", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "sec3-dd7", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "sec3-dd8", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "sec3-dd9", "width": 8, "height": 2, "fill": "$mars-rust" },
+                            {
+                              "type": "text",
+                              "id": "sec3-dashed-arrow",
+                              "fill": "$mars-rust",
+                              "content": "▶",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sec3-dashed-to",
+                          "name": "nodeD",
+                          "fill": "$surface-light",
+                          "cornerRadius": 6,
+                          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                          "padding": [8, 14],
+                          "layout": "horizontal",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "sec3-dashed-to-dot",
+                              "width": 8,
+                              "height": 8,
+                              "cornerRadius": 4,
+                              "fill": "$muted-light"
+                            },
+                            {
+                              "type": "text",
+                              "id": "sec3-dashed-to-id",
+                              "fill": "$mars-night",
+                              "content": "Task D",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sec3-dashed-legend",
+                      "name": "edgeLegend",
+                      "layout": "horizontal",
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "sec3-dashed-legend-dashes",
+                          "layout": "horizontal",
+                          "gap": 3,
+                          "alignItems": "center",
+                          "children": [
+                            { "type": "frame", "id": "sec3-ld1", "width": 6, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "sec3-ld2", "width": 6, "height": 2, "fill": "$mars-rust" },
+                            { "type": "frame", "id": "sec3-ld3", "width": 6, "height": 2, "fill": "$mars-rust" }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "sec3-dashed-legend-t",
+                          "fill": "$mars-rust",
+                          "content": "Dashed — blocker (waiting-on)",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+
+              ]
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "spec",
+          "name": "Section 4 — SVG implementation spec",
+          "width": "fill_container",
+          "fill": "$surface-light",
+          "cornerRadius": 8,
+          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+          "padding": 24,
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "text",
+              "id": "spec-t",
+              "name": "specTitle",
+              "fill": "$mars-night",
+              "content": "SVG implementation spec",
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "spec-table",
+              "name": "table",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 0,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "spec-table-hdr",
+                  "name": "tableHeader",
+                  "width": "fill_container",
+                  "fill": "$bg-light",
+                  "padding": [8, 12],
+                  "layout": "horizontal",
+                  "gap": 0,
+                  "children": [
+                    { "type": "text", "id": "spec-th-kind", "fill": "$muted-light", "content": "Edge kind", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600", "letterSpacing": 0.5, "width": 220 },
+                    { "type": "text", "id": "spec-th-stroke", "fill": "$muted-light", "content": "stroke", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600", "letterSpacing": 0.5, "width": 160 },
+                    { "type": "text", "id": "spec-th-dash", "fill": "$muted-light", "content": "stroke-dasharray", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600", "letterSpacing": 0.5, "width": 200 },
+                    { "type": "text", "id": "spec-th-width", "fill": "$muted-light", "content": "stroke-width", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600", "letterSpacing": 0.5, "width": 140 },
+                    { "type": "text", "id": "spec-th-label", "fill": "$muted-light", "content": "label content", "fontFamily": "Inter", "fontSize": 11, "fontWeight": "600", "letterSpacing": 0.5, "width": 240 }
+                  ]
+                },
+                { "type": "frame", "id": "spec-sep1", "width": "fill_container", "height": 1, "fill": "$border-light" },
+                {
+                  "type": "frame",
+                  "id": "spec-row1",
+                  "name": "row: originId-parent lineage",
+                  "width": "fill_container",
+                  "padding": [10, 12],
+                  "layout": "horizontal",
+                  "gap": 0,
+                  "children": [
+                    { "type": "text", "id": "spec-r1-kind", "fill": "$mars-night", "content": "originId-parent (lineage)", "fontFamily": "Inter", "fontSize": 12, "fontWeight": "normal", "width": 220 },
+                    { "type": "text", "id": "spec-r1-stroke", "fill": "$mars-night", "content": "$mars-night", "fontFamily": "JetBrains Mono", "fontSize": 12, "fontWeight": "normal", "width": 160 },
+                    { "type": "text", "id": "spec-r1-dash", "fill": "$mars-night", "content": "none (solid)", "fontFamily": "JetBrains Mono", "fontSize": 12, "fontWeight": "normal", "width": 200 },
+                    { "type": "text", "id": "spec-r1-width", "fill": "$mars-night", "content": "2", "fontFamily": "JetBrains Mono", "fontSize": 12, "fontWeight": "normal", "width": 140 },
+                    { "type": "text", "id": "spec-r1-label", "fill": "$mars-night", "content": "slice n/total title  OR  failure-sig", "fontFamily": "Inter", "fontSize": 12, "fontWeight": "normal", "width": 240 }
+                  ]
+                },
+                { "type": "frame", "id": "spec-sep2", "width": "fill_container", "height": 1, "fill": "$border-light" },
+                {
+                  "type": "frame",
+                  "id": "spec-row2",
+                  "name": "row: blocker",
+                  "width": "fill_container",
+                  "padding": [10, 12],
+                  "layout": "horizontal",
+                  "gap": 0,
+                  "children": [
+                    { "type": "text", "id": "spec-r2-kind", "fill": "$mars-night", "content": "blocker (waiting-on)", "fontFamily": "Inter", "fontSize": 12, "fontWeight": "normal", "width": 220 },
+                    { "type": "text", "id": "spec-r2-stroke", "fill": "$mars-rust", "content": "$mars-rust", "fontFamily": "JetBrains Mono", "fontSize": 12, "fontWeight": "normal", "width": 160 },
+                    { "type": "text", "id": "spec-r2-dash", "fill": "$mars-night", "content": "\"8 5\"", "fontFamily": "JetBrains Mono", "fontSize": 12, "fontWeight": "normal", "width": 200 },
+                    { "type": "text", "id": "spec-r2-width", "fill": "$mars-night", "content": "2", "fontFamily": "JetBrains Mono", "fontSize": 12, "fontWeight": "normal", "width": 140 },
+                    { "type": "text", "id": "spec-r2-label", "fill": "$mars-night", "content": "blocker reason  (omit if null)", "fontFamily": "Inter", "fontSize": 12, "fontWeight": "normal", "width": 240 }
+                  ]
+                },
+                { "type": "frame", "id": "spec-sep3", "width": "fill_container", "height": 1, "fill": "$border-light" },
+                {
+                  "type": "frame",
+                  "id": "spec-note-row",
+                  "name": "noteRow",
+                  "width": "fill_container",
+                  "padding": [10, 12],
+                  "layout": "horizontal",
+                  "gap": 0,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "spec-note-t",
+                      "fill": "$muted-light",
+                      "content": "All edges: marker-end arrowhead (SVG <marker> element), triangle filled with same color as stroke. Label: text-anchor=middle, dominant-baseline=hanging, dy=6px below midpoint, 11px Inter, $muted-light, italic. Omit label element entirely when value is null.",
+                      "fontFamily": "Inter",
+                      "fontSize": 11,
+                      "fontWeight": "normal",
+                      "fontStyle": "italic"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "legend",
+          "name": "Legend — acceptance criteria checklist",
+          "width": "fill_container",
+          "fill": "$surface-light",
+          "cornerRadius": 8,
+          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+          "padding": 20,
+          "layout": "vertical",
+          "gap": 8,
+          "children": [
+            {
+              "type": "text",
+              "id": "legend-t",
+              "name": "legendTitle",
+              "fill": "$mars-night",
+              "content": "Slice 2 acceptance criteria — where they are satisfied in this draft",
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "legend-1",
+              "name": "ac1",
+              "fill": "$mars-night",
+              "content": "✓ Solid originId-parent edge mock — Mock A (Section 1, left specimen): continuous $mars-night 2px line with ▶ arrowhead, from child task to parent task.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "legend-2",
+              "name": "ac2",
+              "fill": "$mars-night",
+              "content": "✓ Dashed blocker edge mock — Mock B (Section 1, right specimen): $mars-rust 8px/5px-gap dash segments with ▶ arrowhead, from waiting task to blocker task.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "legend-3",
+              "name": "ac3",
+              "fill": "$mars-night",
+              "content": "✓ Idea-to-task edge with slice index/title label — Mock C (Section 2, left specimen): solid edge from task node to $mars-ochre idea node, label \"2/6: Edge visual language draft\".",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "legend-4",
+              "name": "ac4",
+              "fill": "$mars-night",
+              "content": "✓ Task-to-fix-task edge with failure-signature label — Mock D (Section 2, centre specimen): solid edge from fix-task node ($mars-rust border) to origin task node, label \"verify:typecheck-error\" (monospace).",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "legend-5",
+              "name": "ac5",
+              "fill": "$mars-night",
+              "content": "✓ Blocker edge with blocker-reason label — Mock E (Section 2, right specimen): dashed edge, label \"prerequisite schema change\" (italic prose, omitted when null).",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "legend-6",
+              "name": "ac6",
+              "fill": "$mars-night",
+              "content": "✓ Adjacent distinguishability — Section 3: solid ($mars-night, continuous) and dashed ($mars-rust, 8/5 gap) placed side by side at identical scale. Two independent signals (stroke style + hue) each sufficient alone.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+
+      ]
+    }
+  ]
+}
