@@ -14,15 +14,23 @@ already know. If a field genuinely cannot be inferred from context, ask
 The grilling phase wrote nothing to the proposals table. This skill writes
 all PRD fields in one batch through the `mars proposal` verbs.
 
-## Step 0 — Sanity-check the argument
+## Step 0 — Parse arguments and sanity-check the proposal id
 
-`$ARGUMENTS` should be a draft proposal id. If empty, tell the user to pass
-one (e.g. `mars proposal list --status draft` to find one), and stop.
+**Parse `$ARGUMENTS` before doing anything else:**
+
+1. Look for a `--inbox <inbox-id>` token anywhere in the string. Extract
+   `<inbox-id>` and strip the `--inbox <inbox-id>` token from the string.
+   If absent, `inbox-id` is empty.
+2. Treat the remainder (trimmed) as the `<proposal-id>`.
+
+`<proposal-id>` should be a draft proposal id. If it is missing or empty
+after parsing, tell the user to pass one (e.g. `mars proposal list
+--status draft` to find one), and stop.
 
 Verify it resolves to a draft:
 
 ```bash
-mars proposal show <id>
+mars proposal show <proposal-id>
 ```
 
 - `status: draft` → continue.
@@ -147,12 +155,23 @@ No prose preamble in the question body.
 
 Then act on the answer:
 
-- **Yes, promote** → `mars proposal promote <id>` and end with one line:
+- **Yes, promote** → `mars proposal promote <id>`. If it succeeds and
+  `<inbox-id>` (parsed in Step 0) is non-empty, then run:
+
+  ```bash
+  mars inbox resolve <inbox-id> --note "promoted as <proposal-id>"
+  ```
+
+  and print the CLI output verbatim. End with one line:
   `Promoted <id>.`
 - **No, keep shaping** → tell the user to run `/mars:grill <id>` again
-  to revisit specific branches. Do not re-interview here. End your turn.
+  to revisit specific branches. Do not re-interview here. Do **not**
+  resolve the inbox row — the row stays open until the proposal is
+  actually promoted. End your turn.
 - **No, abandon** → `mars proposal reject <id>` and end with one line:
-  `Rejected <id>.`
+  `Rejected <id>.` Do **not** resolve the inbox row in this branch
+  either — abandoning a proposal does not resolve the underlying inbox
+  item; the operator decides what to do with it.
 
 If the promote (or reject) command fails, surface the error verbatim in
 one sentence and stop — do not retry silently.
@@ -176,4 +195,9 @@ one sentence and stop — do not retry silently.
 
 # Argument
 
-The user passed: `$ARGUMENTS`  (must be a draft proposal id)
+The user passed: `$ARGUMENTS`
+
+Parse as described in Step 0: strip any `--inbox <inbox-id>` token
+first; the remainder is the draft proposal id. Both are carried through
+the full skill — the proposal id for the PRD synthesis, the inbox id
+for resolving the originating inbox row after a successful promote.
