@@ -516,6 +516,71 @@ const testAssertionErrorRecipe: FixRecipe = {
   },
 }
 
+const typecheckCannotFindNameRecipe: FixRecipe = {
+  signature: 'verify:typecheck/typecheck-cannot-find-name',
+  title: () =>
+    `Fix cannot-find-name error(s) to resolve TS2304 typecheck failure`,
+  buildPrompt: (ctx) => {
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `TypeScript reported TS2304 ("Cannot find name 'X'") during the typecheck step. This means code references a name — a constant, function, type, or variable — that does not exist in scope.`,
+      '',
+      `The most common cause in this codebase is a **partial deletion**: a task deleted a constant or function declaration but left behind call sites that reference it, or removed an import that is still used elsewhere. Less commonly, the name was never implemented by the original task.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `## How to fix`,
+      '',
+      `STEP 1 — Identify every TS2304 error. From your current working directory, run:`,
+      '',
+      '```',
+      `cd orchestrator && npx tsc --noEmit 2>&1 | grep "TS2304"`,
+      '```',
+      '',
+      `Each error line has the form:`,
+      `  <file>(<line>,<col>): error TS2304: Cannot find name '<name>'.`,
+      '',
+      `STEP 2 — For each missing name '<name>', determine the correct fix by consulting the original task prompt at the bottom of this message:`,
+      '',
+      ` **(a) Partial deletion — the name was removed by the original task but its call sites were not updated.** Distinguishing signal: the original task prompt says to delete, remove, or drop '<name>'.`,
+      `     Fix: complete the deletion. Remove every remaining call site that references '<name>'. If '<name>' is used inside a larger block (a function body, an if-branch, a field in a union type, a JSDoc bullet, an outcome string literal), remove the entire block — do not leave orphaned code or stubs. Then re-run the typecheck; additional TS2304 errors for the same name (in other files) resolve automatically once all usages are gone.`,
+      '',
+      ` **(b) Missing implementation — the original task was supposed to define '<name>' but did not.** Distinguishing signal: the original task prompt says to add, implement, or introduce something named '<name>'.`,
+      `     Fix: implement the missing name in the location the original prompt specifies. Mirror the style and structure of nearby declarations.`,
+      '',
+      ` **(c) Missing import — '<name>' is defined elsewhere but never imported in the file.** Check whether a nearby module exports it.`,
+      `     Fix: add the import statement.`,
+      '',
+      `STEP 3 — After each fix, re-run the full typecheck to confirm the error count drops:`,
+      '',
+      '```',
+      `cd orchestrator && npx tsc --noEmit`,
+      '```',
+      '',
+      ` - Fix TS2304 errors one name at a time. Multiple errors for the same missing name (across different call sites or files) resolve with a single fix to the origin.`,
+      ` - If fresh unrelated TS errors appear after your fix, fix them too — they are cascade errors that TypeScript could not surface before the missing name was resolved.`,
+      '',
+      `## Important constraints`,
+      ` - Do NOT add \`// @ts-ignore\` or \`declare const <name>: any\` to silence the error — fix the actual code.`,
+      ` - Do NOT re-introduce a name that the original task explicitly removed — complete the deletion instead.`,
+      ` - If fixing the error requires a new DB column, new table, or other schema change, STOP: raise a high-priority inbox item via \`mars inbox raise --from -\` explaining the blocker, then exit.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only): ${ctx.targetPath}`,
+      '',
+      `Save your work: stage all changed files and commit. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 // NOTE — intentionally absent entries (documented so future investigators don't
 // re-open these):
 //
@@ -594,6 +659,7 @@ const recipeList: readonly FixRecipe[] = [
   vcsAbortedNotFastForwardRecipe,
   typecheckMissingExportRecipe,
   typecheckArgTypeMismatchRecipe,
+  typecheckCannotFindNameRecipe,
   testAssertionErrorRecipe,
 ]
 
