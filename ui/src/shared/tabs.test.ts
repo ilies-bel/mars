@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import { DEFAULT_TAB, TABS, tabLabel, type Tab } from './tabs'
 
+// `Tab` is imported so the test file is the consumer that proves the type
+// is exported from the public module surface.
+const _typeProbe: Tab = DEFAULT_TAB
+void _typeProbe
+
 // ---------------------------------------------------------------------------
 // Default tab
 // ---------------------------------------------------------------------------
@@ -41,19 +46,19 @@ describe('tabLabel', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Visibility logic
+// Round-trip — every tab in the strip has a human label and the default
+// tab is itself a member of the strip.
 // ---------------------------------------------------------------------------
 
-describe('tabs – visibility', () => {
-  it('switching to topology hides the board and shows topology', () => {
-    const active: Tab = 'topology'
-    expect(active === 'board').toBe(false)
-    expect(active === 'topology').toBe(true)
+describe('tabs – round-trip', () => {
+  it('every entry in the strip has a non-empty label', () => {
+    for (const tab of TABS) {
+      expect(tabLabel(tab).length).toBeGreaterThan(0)
+    }
   })
 
-  it('switching back to board shows the board and hides topology', () => {
-    const active: Tab = 'board'
-    expect(active === 'board').toBe(true)
-    expect(active === 'topology').toBe(false)
+  it('the default tab is one of the entries in the strip', () => {
+    const known: readonly Tab[] = TABS
+    expect(known).toContain(DEFAULT_TAB)
   })
 })
