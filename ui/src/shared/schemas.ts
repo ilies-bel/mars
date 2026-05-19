@@ -48,6 +48,12 @@ const taskSchema = z.object({
   updatedAt: z.string(),
 })
 
+const clusterSchema = z.enum(['In progress', 'Blocked', 'Failed'])
+
+const progressTaskSchema = taskSchema.extend({
+  cluster: clusterSchema,
+})
+
 const staleWorktreeSchema = z.object({
   taskId: z.string(),
   status: z.string(),
@@ -61,6 +67,10 @@ const staleWorktreeSchema = z.object({
 
 export const tasksResponseSchema = z.object({
   tasks: z.array(taskSchema),
+})
+
+export const progressResponseSchema = z.object({
+  tasks: z.array(progressTaskSchema),
 })
 
 export const todoResponseSchema = z.object({
@@ -94,6 +104,8 @@ export type TaskStatus = z.infer<typeof taskStatusSchema>
 export type ProposalSource = z.infer<typeof proposalSourceSchema>
 export type DraftFeature = z.infer<typeof draftFeatureSchema>
 export type Task = z.infer<typeof taskSchema>
+export type Cluster = z.infer<typeof clusterSchema>
+export type ProgressTask = z.infer<typeof progressTaskSchema>
 export type StaleWorktree = z.infer<typeof staleWorktreeSchema>
 export type TodoPayload = z.infer<typeof todoResponseSchema>
 export type Agent = z.infer<typeof agentSchema>
