@@ -287,3 +287,6 @@ _Avoid_: Kanban tab, Runs tab, live tab
 **Cluster**:
 An operator-meaningful grouping of task statuses (or proposals) used by the Progress tab: Proposal, In progress (queued + running + verifying + merging), Blocked, Failed.
 _Avoid_: bucket, group, status group, Graph bucket
+
+**Worker class**:
+The role definition that pins model, effort, permission posture, denied tools, and message cap for a kind of Session — one of Coder, Planner, Slicer, Triager, Fixer, Writer. Closed set; operators do not add new classes.
