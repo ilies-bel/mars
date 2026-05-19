@@ -107,11 +107,16 @@ itself writes nothing to those files.
 
 ## Structured tasks
 
-`mars task add` accepts `--files`, `--verify`, `--done`, `--type`. Any of
-them stores a typed spec; the implementor receives `<files>`, `<verify>`,
-`<done>`, `<task_type>`, `<task_id>` sections so completion is a
-checklist. The slicer always emits structured tasks; free-prose still
-works and degrades to prompt-only.
+`mars task add` accepts `--files`, `--verify`, `--done`, and
+`--type auto|checkpoint` (default `auto`; no other values are valid —
+the CLI rejects `chore`, `feat`, etc.). Any of them stores a typed
+spec; the implementor receives `<files>`, `<verify>`, `<done>`,
+`<task_type>`, `<task_id>` sections so completion is a checklist. The
+slicer always emits structured tasks; free-prose still works and
+degrades to prompt-only. Other useful flags: `--priority 0..3`,
+`--tag coder|writer`, `--blocked-by <id>` (repeatable). Always
+`mars task add --help` to confirm the current flag surface before
+invoking — this CLAUDE.md note may lag the CLI.
 
 ## Blockers
 
