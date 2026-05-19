@@ -851,6 +851,14 @@ const codeStep = createStep({
         await writer?.write({ type: 'claude-event', event })
       },
     })
+    // Per-run read/action summary. Emitted on every wired run so paralysis
+    // patterns are greppable in bulk (e.g. zero-action runs with a high
+    // max-streak), not just when the threshold was tripped.
+    if (watcher) {
+      console.log(
+        `[span-summary] task ${inputData.taskId}: maxStreak=${watcher.maxStreak} totalReads=${watcher.totalReads} totalActions=${watcher.totalActions} tripped=${watcher.thresholdEverReached}`,
+      )
+    }
     // Classify the worktree end-state. Only the 'dirty-no-commits' case is
     // worth a log line — it's the new failure mode the post-test commit
     // guard is being built to detect. Clean-success and clean-no-work are

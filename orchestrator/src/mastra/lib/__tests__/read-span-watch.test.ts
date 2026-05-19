@@ -202,6 +202,41 @@ describe('createReadSpanWatcher', () => {
     expect((fired as unknown as ThresholdInfo).trace).toHaveLength(3)
   })
 
+  it('tracks maxStreak across the whole run, not just the active streak', () => {
+    const w = createReadSpanWatcher({ limit: 99, onThreshold: () => {} })
+    w.observe(assistant([{ name: 'Read' }, { name: 'Read' }, { name: 'Read' }]))
+    expect(w.maxStreak).toBe(3)
+    w.observe(assistant([{ name: 'Edit', input: { file_path: 'a' } }]))
+    expect(w.streak).toBe(0)
+    expect(w.maxStreak).toBe(3)
+    w.observe(assistant([{ name: 'Read' }, { name: 'Read' }]))
+    expect(w.maxStreak).toBe(3)
+    w.observe(assistant([{ name: 'Read' }, { name: 'Read' }]))
+    expect(w.streak).toBe(4)
+    expect(w.maxStreak).toBe(4)
+  })
+
+  it('counts totalReads and totalActions across the whole run', () => {
+    const w = createReadSpanWatcher({ limit: 99, onThreshold: () => {} })
+    w.observe(assistant([{ name: 'Read' }, { name: 'Grep' }]))
+    w.observe(assistant([{ name: 'Bash', input: { command: 'ls' } }]))
+    w.observe(assistant([{ name: 'Edit', input: { file_path: 'a' } }]))
+    w.observe(assistant([{ name: 'Bash', input: { command: 'git add -A' } }]))
+    w.observe(assistant([{ name: 'Write', input: { file_path: 'b' } }]))
+    expect(w.totalReads).toBe(3)
+    expect(w.totalActions).toBe(3)
+  })
+
+  it('thresholdEverReached stays true after a reset, unlike thresholdReached', () => {
+    const w = createReadSpanWatcher({ limit: 2, onThreshold: () => {} })
+    w.observe(assistant([{ name: 'Read' }, { name: 'Read' }]))
+    expect(w.thresholdReached).toBe(true)
+    expect(w.thresholdEverReached).toBe(true)
+    w.observe(assistant([{ name: 'Edit', input: { file_path: 'a' } }]))
+    expect(w.thresholdReached).toBe(false)
+    expect(w.thresholdEverReached).toBe(true)
+  })
+
   it('does not kill or interfere — observation is the only side effect', () => {
     // Pinned behaviour: the watcher hands back a ThresholdInfo and that's
     // it. It does not throw, does not call an abort signal, and does not
