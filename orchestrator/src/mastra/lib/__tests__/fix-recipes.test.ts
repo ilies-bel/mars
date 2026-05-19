@@ -912,6 +912,22 @@ describe('fix-recipes', () => {
       // rule added in commit 9ed0041.
       // Repro: git diff --name-only main..task/mars-2c6dd178
       //        | grep 'orchestrator/src/init/templates/'
+      //
+      // Re-confirmed 2026-05-20 (task mars-af0d8023). Root cause: the task
+      // prompt explicitly asked to update orchestrator/src/init/templates/
+      // claude/skills/mars:inbox/SKILL.md to limit the open-inbox listing
+      // to 20 rows via `| head -n 20`. The agent committed the change across
+      // 10 template paths (commit f49bddc on task/mars-af0d8023), but the
+      // merge preflight blocked all 10. The task's own verify command
+      // (`grep -n "mars inbox list" orchestrator/src/init/templates/...`)
+      // explicitly names the template path, so a recovery that skips the
+      // template edit fails verify. Same outcome (b): human must apply the
+      // head-20 edit directly on main. The /unclassified suffix appears
+      // because the daemon process that ran the preflight predated commit
+      // 9ed0041 — the task itself ran at 15:42 on 2026-05-18, before
+      // 9ed0041 landed at 19:06 on the same day.
+      // Repro: git diff --name-only main..task/mars-af0d8023
+      //        | grep 'orchestrator/src/init/templates/'
       expect(hasRecipe('merge:preflight/template-leakage/unclassified')).toBe(false)
     })
   })
