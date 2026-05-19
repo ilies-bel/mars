@@ -516,6 +516,72 @@ const testAssertionErrorRecipe: FixRecipe = {
   },
 }
 
+const typecheckExcessPropertyRecipe: FixRecipe = {
+  signature: 'verify:typecheck/typecheck-excess-property',
+  title: () =>
+    `Remove excess property(ies) from object literals to resolve TS2353 typecheck failure`,
+  buildPrompt: (ctx) => {
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `TypeScript reported TS2353 ("Object literal may only specify known properties, and 'X' does not exist in type 'Y'") during the typecheck step. This is TypeScript's excess-property check: an object literal includes a field that no longer exists in the type it is being assigned to.`,
+      '',
+      `The canonical cause in this codebase is a **partial type cleanup**: the original task updated a type to remove a field (for example, removing \`totalCostUsd\` as part of a USD-removal pass), but one or more object literals that construct that type (often in test fixtures) were not updated to match. The type change is correct and intentional — do NOT revert it.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `## How to fix`,
+      '',
+      `STEP 1 — Identify every TS2353 error. From your current working directory, run:`,
+      '',
+      '```',
+      `cd orchestrator && npx tsc --noEmit 2>&1 | grep "TS2353"`,
+      '```',
+      '',
+      `Each error line has the form:`,
+      `  <file>(<line>,<col>): error TS2353: Object literal may only specify known properties, and '<prop>' does not exist in type '<Type>'.`,
+      '',
+      `STEP 2 — For each TS2353 error, remove the excess property from the object literal:`,
+      '',
+      ` (a) Open <file> at <line> and locate the object literal at <col>.`,
+      ` (b) Remove the property named '<prop>' from that object literal — just the one key-value pair. Do NOT touch the surrounding properties.`,
+      ` (c) If the same property appears in other object literals in the same or other files (for example, a shared \`emptySummary\` fixture, a \`const\` default object, or another test fixture), remove it from ALL of them — TypeScript will surface one TS2353 per offending object literal, but often the same property appears in multiple places.`,
+      '',
+      `## Important constraints`,
+      ` - Do NOT revert the type change. The type was updated intentionally — it is the object literals that need to catch up.`,
+      ` - Do NOT add \`// @ts-ignore\` or \`as any\` casts to silence the error.`,
+      ` - Do NOT add the excess property back to the type definition to make the object literal compile — that undoes the original task's intent.`,
+      ` - After removing the property, check whether any other code in the same file still references the removed property name (e.g., a \`console.log\`, a return value, an assertion). If so, update those references too.`,
+      ` - If removing the property reveals that other code (e.g. a function body) still computes or returns the removed field, remove those computations as well — they are dead code under the new type.`,
+      '',
+      `STEP 3 — Re-run the full typecheck to confirm all TS2353 errors are gone:`,
+      '',
+      '```',
+      `cd orchestrator && npx tsc --noEmit`,
+      '```',
+      '',
+      ` - If fresh TS errors appear after the removal (e.g. TS2339 "Property does not exist" elsewhere), those are cascade errors caused by code that read the now-removed field — fix them by removing or updating those read sites.`,
+      ` - If the typecheck is fully clean, run the test suite to confirm no test assertions rely on the removed field: \`cd orchestrator && npx vitest run\`.`,
+      '',
+      `## If the property appears in a fixture shared by multiple test cases`,
+      '',
+      `Shared test fixtures (e.g. \`const emptySummary = { ..., totalCostUsd: 0, ... }\`) are common in this codebase. Remove the excess property from the fixture constant and from every spread or direct usage of that constant that TypeScript flags.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only): ${ctx.targetPath}`,
+      '',
+      `Save your work: stage all changed files and commit. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 const typecheckCannotFindNameRecipe: FixRecipe = {
   signature: 'verify:typecheck/typecheck-cannot-find-name',
   title: () =>
@@ -659,6 +725,7 @@ const recipeList: readonly FixRecipe[] = [
   vcsAbortedNotFastForwardRecipe,
   typecheckMissingExportRecipe,
   typecheckArgTypeMismatchRecipe,
+  typecheckExcessPropertyRecipe,
   typecheckCannotFindNameRecipe,
   testAssertionErrorRecipe,
 ]

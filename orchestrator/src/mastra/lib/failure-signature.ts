@@ -126,6 +126,18 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     match: /\bTS2345:/,
   },
   {
+    // TS2353: Object literal may only specify known properties, and 'X'
+    // does not exist in type 'Y'. Fires when a object literal in test or
+    // source code includes a field that was removed from the type in the
+    // same task (TypeScript's excess-property check). The canonical cause
+    // is a partial type cleanup: the implementation updated the type to drop
+    // a field (e.g. `totalCostUsd`) but the object literal(s) that create
+    // instances of that type were not updated. Fix: remove the excess
+    // property from the object literal — do NOT revert the type change.
+    errorClass: 'typecheck-excess-property',
+    match: /\bTS2353:/,
+  },
+  {
     // TS2694: Namespace '...' has no exported member '...'.
     // Fired when a test or source file imports a named export that does not
     // exist in the target module. The canonical cause is TDD work where
