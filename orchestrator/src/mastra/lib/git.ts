@@ -481,14 +481,9 @@ const DEFAULT_CLAUDE_MAX_MESSAGES = 100
 
 // Default search path for the `claude` binary when it is not on the daemon's
 // PATH (e.g. detached / launchd contexts strip everything but a minimal PATH).
-//
-// POSIX-portability audit (slice 2 of PRD 1bf05375, multi-OS mars binaries):
-// the directories below, the `claude` bare-name lookup, and the colon
-// PATH split in `resolveClaudeBin` are POSIX-only environment assumptions
-// that break on Windows. They are not shell invocations, so they do not
-// block this slice's no-POSIX-shell-out gate, but they will need to be
-// addressed before the windows-x64 binary can locate claude. Tracked as
-// idea f6a9df36; expected to land alongside the Windows smoke-test slice.
+// Only consulted on POSIX — Windows users install claude.exe via the Windows
+// installer which places it on PATH; there are no equivalent well-known
+// fallback directories on Windows.
 const FALLBACK_CLAUDE_PATH_DIRS = [
   '/opt/homebrew/bin',
   '/usr/local/bin',
@@ -532,7 +527,7 @@ export const claudeBinEnvFingerprint = (
   path: string | undefined,
 ): string => `${override ?? ''}${path ?? ''}`
 
-const resolveClaudeBin = (): string => {
+export const resolveClaudeBin = (): string => {
   const override = process.env.MARS_CLAUDE_BIN
   // Re-resolve when the relevant env changes (mostly for tests; in prod it
   // is set once at daemon start and never mutates).
@@ -547,16 +542,28 @@ const resolveClaudeBin = (): string => {
     return override
   }
 
-  const pathDirs = (process.env.PATH ?? '').split(':').filter((p) => p.length > 0)
+  // Use the platform-appropriate PATH delimiter at call time so that the
+  // resolver works correctly on both POSIX (':') and Windows (';').
+  const isWindows = process.platform === 'win32'
+  const pathDelimiter = isWindows ? ';' : ':'
+  // On Windows probe for .exe and .cmd; on POSIX probe for the plain name.
+  const binaryNames = isWindows ? ['claude.exe', 'claude.cmd'] : ['claude']
+  // POSIX-only fallback directories — not applicable on Windows where
+  // the installer places claude.exe on PATH.
+  const fallbackDirs = isWindows ? [] : FALLBACK_CLAUDE_PATH_DIRS
+
+  const pathDirs = (process.env.PATH ?? '').split(pathDelimiter).filter((p) => p.length > 0)
   const seen = new Set<string>()
-  for (const dir of [...pathDirs, ...FALLBACK_CLAUDE_PATH_DIRS]) {
+  for (const dir of [...pathDirs, ...fallbackDirs]) {
     if (seen.has(dir)) continue
     seen.add(dir)
     if (!isAbsolute(dir)) continue
-    const candidate = join(dir, 'claude')
-    if (isExecutableFile(candidate)) {
-      cachedClaudeBin = candidate
-      return candidate
+    for (const name of binaryNames) {
+      const candidate = join(dir, name)
+      if (isExecutableFile(candidate)) {
+        cachedClaudeBin = candidate
+        return candidate
+      }
     }
   }
 
