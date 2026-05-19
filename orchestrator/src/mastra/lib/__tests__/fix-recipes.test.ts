@@ -193,6 +193,71 @@ describe('fix-recipes', () => {
       expect(prompt).toMatch(/stub/i)
     })
 
+    describe('Path B placeholder commit', () => {
+      it('git commit --allow-empty with placeholder message appears before any read/explore instruction in Path B', () => {
+        const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+        const prompt = recipe.buildPrompt(ctx)
+        const pathBIdx = prompt.indexOf('Path B')
+        expect(pathBIdx).toBeGreaterThan(-1)
+
+        // The empty commit must appear in the Path B section
+        const emptyCommitIdx = prompt.indexOf('git commit --allow-empty', pathBIdx)
+        expect(emptyCommitIdx).toBeGreaterThan(pathBIdx)
+
+        // The placeholder commit message must reference the failing branch/task
+        expect(prompt).toContain(`recover: placeholder for ${ctx.targetBranch}`)
+
+        // The empty commit must appear BEFORE the "Read the Original task prompt" instruction
+        const readOriginalIdx = prompt.indexOf('Read the **Original task prompt**', pathBIdx)
+        expect(readOriginalIdx).toBeGreaterThan(emptyCommitIdx)
+      })
+
+      it('Path B section explicitly forbids Read, Grep, or Bash calls before the placeholder commit', () => {
+        const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+        const prompt = recipe.buildPrompt(ctx)
+        const pathBIdx = prompt.indexOf('Path B')
+        const emptyCommitIdx = prompt.indexOf('git commit --allow-empty', pathBIdx)
+
+        // The prohibition must appear in Path B before (or around) the empty commit step
+        const sectionAroundPlaceholder = prompt.slice(pathBIdx, emptyCommitIdx + 200)
+        expect(sectionAroundPlaceholder).toMatch(
+          /do not run.*read.*grep.*bash|no.*read.*grep.*bash|before.*any.*read|without.*any.*read/i,
+        )
+      })
+
+      it('Path B section instructs the agent to re-run the rev-list assertion immediately after the placeholder commit', () => {
+        const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+        const prompt = recipe.buildPrompt(ctx)
+        const pathBIdx = prompt.indexOf('Path B')
+        const emptyCommitIdx = prompt.indexOf('git commit --allow-empty', pathBIdx)
+
+        // There must be a rev-list check AFTER the placeholder commit in Path B
+        const revListAfterIdx = prompt.indexOf('git rev-list --count', emptyCommitIdx)
+        expect(revListAfterIdx).toBeGreaterThan(emptyCommitIdx)
+      })
+
+      it('Path B section permits amending the placeholder commit message or adding follow-up commits', () => {
+        const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+        const prompt = recipe.buildPrompt(ctx)
+        const pathBIdx = prompt.indexOf('Path B')
+        const pathBSection = prompt.slice(pathBIdx)
+
+        expect(pathBSection).toMatch(/amend.*placeholder|follow-up commit|--amend/i)
+      })
+
+      it('Path A section does not contain git commit --allow-empty', () => {
+        const recipe = getRecipe('verify:has-diff/no-commits-ahead')
+        const prompt = recipe.buildPrompt(ctx)
+        const pathAIdx = prompt.indexOf('Path A')
+        const pathBIdx = prompt.indexOf('Path B')
+        expect(pathAIdx).toBeGreaterThan(-1)
+
+        // Extract only the Path A section (between Path A and Path B markers)
+        const pathASection = prompt.slice(pathAIdx, pathBIdx)
+        expect(pathASection).not.toContain('git commit --allow-empty')
+      })
+    })
+
     it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
       const recipe = getRecipe('verify:has-diff/no-commits-ahead')
       const promptWithSource = recipe.buildPrompt({
