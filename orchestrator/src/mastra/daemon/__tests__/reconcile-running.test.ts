@@ -80,12 +80,21 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     expect(reloaded?.retryCount).toBe(1) // unchanged from before the restart
   })
 
-  it('clears branch and worktreePath on requeue so the new run starts from setup', async () => {
+  it('clears all in-flight fields on requeue so the new run starts from setup', async () => {
     const { q, rr } = await loadModules(repo)
     const t = await q.enqueueTask('some work', undefined, { skipTriage: true })
 
+    // Simulate all in-flight fields a running task might have set
     await q.getClient().execute({
-      sql: `UPDATE tasks SET status = 'running', branch = ?, worktree_path = ? WHERE id = ?`,
+      sql: `UPDATE tasks
+              SET status = 'running',
+                  branch = ?,
+                  worktree_path = ?,
+                  claude_session_id = 'sess-abc123',
+                  error = 'prior error',
+                  failed_phase = 'verify',
+                  resume_from = 'code'
+            WHERE id = ?`,
       args: [`task/${t.id}`, `/mars/worktrees/${t.id}`, t.id],
     })
 
@@ -94,6 +103,10 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.branch).toBeNull()
     expect(reloaded?.worktreePath).toBeNull()
+    expect(reloaded?.claudeSessionId).toBeNull()
+    expect(reloaded?.error).toBeNull()
+    expect(reloaded?.failedPhase).toBeNull()
+    expect(reloaded?.resumeFrom).toBeNull()
   })
 
   it('removes the worktree directory from disk when the path exists', async () => {
