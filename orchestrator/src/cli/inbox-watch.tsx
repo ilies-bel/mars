@@ -1,40 +1,75 @@
+/**
+ * Live Todo TUI — what `mars inbox watch` renders.
+ *
+ * Mirrors the web UI's Todo page: a single feed of drafts (proposals
+ * waiting to be shaped) and stale worktrees (operational alerts), grouped
+ * into Today / Yesterday / This Week / Older. Bucketing rules live in
+ * `orchestrator/src/mastra/lib/todo-feed.ts` so the CLI, web UI server,
+ * and React Todo page all agree.
+ *
+ * Data source: the local web UI server's `/api/todo` endpoint at
+ * `MARS_UI_URL` (default `http://127.0.0.1:7777`). Reusing the existing
+ * HTTP endpoint avoids duplicating the DB-query path in the orchestrator
+ * package today. A future task can lift `listTodo()` into `todo-feed.ts`
+ * and have the web server delegate to it; both surfaces will keep working
+ * because the wire shape is unchanged.
+ *
+ * Keybindings (intentionally trimmed from the old inbox_items TUI):
+ *   - j/k or arrows : move cursor
+ *   - enter         : open detail view
+ *   - b or escape   : back from detail
+ *   - q or ctrl-c   : quit
+ *
+ * a/r/d (ack/resolve/dismiss) are gone because drafts and stale worktrees
+ * have no in-TUI mutating actions in this slice — by design. `mars inbox`
+ * (the non-watch verb) keeps managing the orchestrator `inbox_items` table
+ * exactly as before.
+ */
+
 import React, { useEffect, useState, useCallback } from 'react'
 import { Box, Text, render, useApp, useInput } from 'ink'
 import {
-  listInboxItems,
-  setInboxState,
-  type InboxItem,
-  type InboxPriority,
-} from '../mastra/lib/inbox'
+  BUCKET_ORDER,
+  BUCKET_LABEL,
+  buildTodoFeed,
+  groupTodoIntoBuckets,
+  itemKey,
+  itemTimestamp,
+  type DraftLike,
+  type StaleLike,
+  type TodoItem,
+} from '../mastra/lib/todo-feed'
 
-// Future task: replace 1s polling with a notify socket (.mars/inbox.sock)
-// for instant updates. Out of scope here.
 const POLL_INTERVAL_MS = 1000
 
-const PRIORITY_RANK: Record<InboxPriority, number> = {
-  urgent: 0,
-  high: 1,
-  normal: 2,
-  low: 3,
+const DEFAULT_UI_URL = 'http://127.0.0.1:7777'
+
+const todoUrl = (): string => {
+  const base = process.env.MARS_UI_URL?.trim() || DEFAULT_UI_URL
+  return `${base.replace(/\/+$/, '')}/api/todo`
 }
 
-const STATE_GLYPH: Record<string, string> = {
-  open: '●',
-  acknowledged: '◐',
+interface TodoPayload {
+  drafts: DraftLike[]
+  staleWorktrees: StaleLike[]
 }
 
-const PRIORITY_COLOR: Record<InboxPriority, string> = {
-  urgent: 'red',
-  high: 'magenta',
-  normal: 'yellow',
-  low: 'gray',
+const fetchTodoPayload = async (): Promise<TodoPayload> => {
+  const res = await fetch(todoUrl())
+  if (!res.ok) {
+    throw new Error(`GET /api/todo: HTTP ${res.status}`)
+  }
+  const body = (await res.json()) as TodoPayload
+  return {
+    drafts: Array.isArray(body.drafts) ? body.drafts : [],
+    staleWorktrees: Array.isArray(body.staleWorktrees)
+      ? body.staleWorktrees
+      : [],
+  }
 }
 
-const formatRelativeTime = (iso: string): string => {
-  if (!iso) return '-'
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return iso
-  const diffSec = Math.floor((Date.now() - t) / 1000)
+const formatRelativeMs = (ts: number, now: number): string => {
+  const diffSec = Math.max(0, Math.floor((now - ts) / 1000))
   if (diffSec < 5) return 'now'
   if (diffSec < 60) return `${diffSec}s ago`
   const m = Math.floor(diffSec / 60)
@@ -45,170 +80,149 @@ const formatRelativeTime = (iso: string): string => {
   return `${d}d ago`
 }
 
-const compareItems = (a: InboxItem, b: InboxItem): number => {
-  const pr = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
-  if (pr !== 0) return pr
-  // last_seen_at desc
-  const ta = Date.parse(a.lastSeenAt) || 0
-  const tb = Date.parse(b.lastSeenAt) || 0
-  return tb - ta
-}
+const shortId = (id: string): string =>
+  id.length <= 8 ? id : id.slice(0, 8)
 
-const extractAffectedTaskIds = (item: InboxItem): string[] => {
-  const occurrences = (item.payload as { occurrences?: unknown }).occurrences
-  if (!Array.isArray(occurrences)) return []
-  const ids: string[] = []
-  for (const occ of occurrences) {
-    if (occ && typeof occ === 'object') {
-      const taskId = (occ as { taskId?: unknown; task_id?: unknown }).taskId
-        ?? (occ as { taskId?: unknown; task_id?: unknown }).task_id
-      if (typeof taskId === 'string' && taskId.length > 0) {
-        ids.push(taskId)
-      }
-    }
-  }
-  return ids
-}
-
-interface ListRowProps {
-  item: InboxItem
+interface RowProps {
+  item: TodoItem
   selected: boolean
+  now: number
 }
 
-const ListRow: React.FC<ListRowProps> = ({ item, selected }) => {
-  const glyph = STATE_GLYPH[item.state] ?? '·'
-  const sig = item.signature ? `(${item.signature})` : '()'
-  const affected = extractAffectedTaskIds(item)
-  const affectedDisplay =
-    affected.length > 0
-      ? affected.length > 4
-        ? `${affected.slice(0, 4).join(', ')} +${affected.length - 4}`
-        : affected.join(', ')
-      : null
+const Row: React.FC<RowProps> = ({ item, selected, now }) => {
+  const ts = itemTimestamp(item, now)
+  const rel = formatRelativeMs(ts, now)
 
-  return (
-    <Box flexDirection="column" marginBottom={0}>
+  if (item.kind === 'draft') {
+    const d = item.draft
+    const goal = d.goal.trim() || '(no goal)'
+    return (
       <Box>
         <Text color={selected ? 'cyan' : undefined}>
           {selected ? '> ' : '  '}
         </Text>
-        <Text color={item.state === 'open' ? 'green' : 'yellow'}>{glyph}</Text>
+        <Text color="magenta">draft</Text>
         <Text> </Text>
-        <Text bold>{item.kind}</Text>
-        <Text dimColor>{sig}</Text>
-        <Text>   </Text>
-        <Text color={PRIORITY_COLOR[item.priority]}>{item.priority}</Text>
-        <Text>   </Text>
-        <Text dimColor>×{item.seenCount}</Text>
-        <Text>   </Text>
-        <Text dimColor>{formatRelativeTime(item.lastSeenAt)}</Text>
+        <Text dimColor>{shortId(d.id)}</Text>
+        <Text>  </Text>
+        <Text>{goal}</Text>
+        <Text>  </Text>
+        <Text dimColor>{rel}</Text>
       </Box>
-      <Box paddingLeft={6}>
-        <Text>{item.title}</Text>
-      </Box>
-      <Box paddingLeft={6}>
-        <Text dimColor>raised_by {item.raisedBy}</Text>
-      </Box>
-      {affectedDisplay && (
-        <Box paddingLeft={6}>
-          <Text dimColor>affected {affectedDisplay}</Text>
-        </Box>
-      )}
+    )
+  }
+
+  const w = item.worktree
+  return (
+    <Box>
+      <Text color={selected ? 'cyan' : undefined}>
+        {selected ? '> ' : '  '}
+      </Text>
+      <Text color="yellow">stale</Text>
+      <Text> </Text>
+      <Text dimColor>{shortId(w.taskId)}</Text>
+      <Text>  </Text>
+      <Text>{w.prompt.trim() || '(no prompt)'}</Text>
+      <Text>  </Text>
+      <Text dimColor>{rel}</Text>
     </Box>
   )
 }
 
-interface DetailViewProps {
-  item: InboxItem
+interface DetailProps {
+  item: TodoItem
+  now: number
 }
 
-const DetailView: React.FC<DetailViewProps> = ({ item }) => {
-  // Markdown rendering of body is out of scope; render as plain text.
-  const payloadJson = JSON.stringify(item.payload, null, 2)
-  const contextJson = JSON.stringify(item.context, null, 2)
+const Detail: React.FC<DetailProps> = ({ item, now }) => {
+  if (item.kind === 'draft') {
+    const d = item.draft
+    return (
+      <Box flexDirection="column" flexGrow={1}>
+        <Box>
+          <Text bold>draft · {d.id}</Text>
+        </Box>
+        <Box marginTop={1}>
+          <Text>{d.goal.trim() || '(no goal)'}</Text>
+        </Box>
+        <Box marginTop={1} flexDirection="column">
+          <Text dimColor>source: {d.source}</Text>
+          <Text dimColor>acceptance: {d.acceptanceCount}</Text>
+          <Text dimColor>
+            updated: {formatRelativeMs(d.updatedAt, now)}
+          </Text>
+        </Box>
+        <Box marginTop={1}>
+          <Text dimColor>refine: /mars:chat {d.id}</Text>
+        </Box>
+      </Box>
+    )
+  }
+
+  const w = item.worktree
   return (
     <Box flexDirection="column" flexGrow={1}>
       <Box>
-        <Text bold>{item.title}</Text>
+        <Text bold>stale worktree · {w.taskId}</Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text>{w.prompt.trim() || '(no prompt)'}</Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
-        <Text dimColor>id: {item.id}</Text>
-        <Text dimColor>
-          kind: {item.kind} ({item.signature ?? '-'})
-        </Text>
-        <Text dimColor>
-          state: {item.state}   priority: {item.priority}   seen: ×
-          {item.seenCount}
-        </Text>
-        <Text dimColor>raised_by: {item.raisedBy}</Text>
-        <Text dimColor>raised_at: {item.raisedAt}</Text>
-        <Text dimColor>last_seen_at: {item.lastSeenAt}</Text>
+        <Text dimColor>status: {w.status}</Text>
+        <Text dimColor>age: {w.ageHours.toFixed(1)}h</Text>
+        <Text dimColor>updated_at: {w.updatedAt}</Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
-        <Text>{item.body || '(no body)'}</Text>
-      </Box>
-      <Box marginTop={1} flexDirection="column">
-        <Text bold>payload:</Text>
-        <Text>{payloadJson}</Text>
-      </Box>
-      <Box marginTop={1} flexDirection="column">
-        <Text bold>context:</Text>
-        <Text>{contextJson}</Text>
+        <Text bold>cleanup:</Text>
+        <Text>mars purge {w.taskId}</Text>
       </Box>
     </Box>
   )
 }
 
 interface AppState {
-  items: InboxItem[]
-  resolvedCount: number
+  items: TodoItem[]
+  draftCount: number
+  staleCount: number
   cursor: number
-  showResolved: boolean
-  detailId: string | null
+  detailKey: string | null
   error: string | null
-  status: string | null
+  now: number
 }
 
-const InboxWatchApp: React.FC = () => {
+const TodoWatchApp: React.FC = () => {
   const { exit } = useApp()
   const [state, setState] = useState<AppState>({
     items: [],
-    resolvedCount: 0,
+    draftCount: 0,
+    staleCount: 0,
     cursor: 0,
-    showResolved: false,
-    detailId: null,
+    detailKey: null,
     error: null,
-    status: null,
+    now: Date.now(),
   })
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      // Future task: filtering UI by category/kind/priority + search are out of scope.
-      const [open, ack, resolved] = await Promise.all([
-        listInboxItems('open'),
-        listInboxItems('acknowledged'),
-        listInboxItems('resolved'),
-      ])
+      const payload = await fetchTodoPayload()
+      const items = buildTodoFeed(payload)
       setState((prev) => {
-        const visible: InboxItem[] = prev.showResolved
-          ? [...open, ...ack, ...resolved]
-          : [...open, ...ack]
-        visible.sort(compareItems)
         const cursor =
-          visible.length === 0
-            ? 0
-            : Math.min(prev.cursor, visible.length - 1)
+          items.length === 0 ? 0 : Math.min(prev.cursor, items.length - 1)
         return {
           ...prev,
-          items: visible,
-          resolvedCount: resolved.length,
+          items,
+          draftCount: payload.drafts.length,
+          staleCount: payload.staleWorktrees.length,
           cursor,
           error: null,
+          now: Date.now(),
         }
       })
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
-      setState((prev) => ({ ...prev, error: message }))
+      setState((prev) => ({ ...prev, error: message, now: Date.now() }))
     }
   }, [])
 
@@ -220,37 +234,18 @@ const InboxWatchApp: React.FC = () => {
     return () => clearInterval(t)
   }, [refresh])
 
-  const selected = state.items[state.cursor] ?? null
-
-  const applyState = useCallback(
-    async (
-      item: InboxItem,
-      target: 'acknowledged' | 'resolved' | 'dismissed',
-    ): Promise<void> => {
-      try {
-        await setInboxState(item.id, target)
-        setState((prev) => ({
-          ...prev,
-          status: `${target} ${item.id.slice(0, 8)}`,
-        }))
-        await refresh()
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err)
-        setState((prev) => ({ ...prev, error: message }))
-      }
-    },
-    [refresh],
-  )
+  // Flat list, sorted into bucket order. `state.cursor` indexes into this
+  // flat view so j/k can move smoothly across bucket boundaries while the
+  // visual grouping (with headers) is computed below.
+  const groups = groupTodoIntoBuckets(state.items, state.now)
+  const flat: TodoItem[] = []
+  for (const g of groups) flat.push(...g.items)
+  const selected = flat[state.cursor] ?? null
 
   useInput((input, key) => {
-    if (state.detailId !== null) {
+    if (state.detailKey !== null) {
       if (input === 'b' || key.escape) {
-        setState((prev) => ({ ...prev, detailId: null }))
-        return
-      }
-      if (input === 'r' && selected) {
-        void applyState(selected, 'resolved')
-        setState((prev) => ({ ...prev, detailId: null }))
+        setState((prev) => ({ ...prev, detailKey: null }))
         return
       }
       if (input === 'q' || (key.ctrl && input === 'c')) {
@@ -266,7 +261,8 @@ const InboxWatchApp: React.FC = () => {
     if (input === 'j' || key.downArrow) {
       setState((prev) => ({
         ...prev,
-        cursor: prev.items.length === 0 ? 0 : Math.min(prev.cursor + 1, prev.items.length - 1),
+        cursor:
+          flat.length === 0 ? 0 : Math.min(prev.cursor + 1, flat.length - 1),
       }))
       return
     }
@@ -279,43 +275,23 @@ const InboxWatchApp: React.FC = () => {
     }
     if (key.return) {
       if (selected) {
-        setState((prev) => ({ ...prev, detailId: selected.id }))
+        setState((prev) => ({ ...prev, detailKey: itemKey(selected) }))
       }
-      return
-    }
-    if (input === 'a' && selected) {
-      void applyState(selected, 'acknowledged')
-      return
-    }
-    if (input === 'r' && selected) {
-      void applyState(selected, 'resolved')
-      return
-    }
-    if (input === 'd' && selected) {
-      void applyState(selected, 'dismissed')
-      return
-    }
-    if (input === 'R') {
-      setState((prev) => ({ ...prev, showResolved: !prev.showResolved }))
-      void refresh()
       return
     }
   })
 
-  const openCount = state.items.filter((i) => i.state === 'open').length
-  const ackCount = state.items.filter((i) => i.state === 'acknowledged').length
-
-  if (state.detailId !== null) {
-    const detailItem = state.items.find((i) => i.id === state.detailId)
+  if (state.detailKey !== null) {
+    const detailItem = flat.find((i) => itemKey(i) === state.detailKey)
     return (
       <Box flexDirection="column">
         <Box>
           <Text bold color="cyan">
-            mars inbox · detail
+            mars todo · detail
           </Text>
         </Box>
         {detailItem ? (
-          <DetailView item={detailItem} />
+          <Detail item={detailItem} now={state.now} />
         ) : (
           <Box>
             <Text dimColor>(item no longer available)</Text>
@@ -327,44 +303,61 @@ const InboxWatchApp: React.FC = () => {
           </Box>
         )}
         <Box marginTop={1}>
-          <Text dimColor>r resolve · b back</Text>
+          <Text dimColor>b back · q quit</Text>
         </Box>
       </Box>
     )
   }
 
+  let runningIndex = 0
   return (
     <Box flexDirection="column">
       <Box>
         <Text bold color="cyan">
-          mars inbox
+          mars todo
         </Text>
         <Text> · </Text>
-        <Text color="green">{openCount} open</Text>
+        <Text color="magenta">{state.draftCount} drafts</Text>
         <Text> · </Text>
-        <Text color="yellow">{ackCount} ack</Text>
-        <Text> · </Text>
-        <Text dimColor>{state.resolvedCount} resolved</Text>
-        {state.showResolved && (
-          <>
-            <Text>  </Text>
-            <Text color="magenta">[showing resolved]</Text>
-          </>
-        )}
+        <Text color="yellow">{state.staleCount} stale</Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
-        {state.items.length === 0 ? (
+        {flat.length === 0 ? (
           <Box justifyContent="center" paddingY={2}>
-            <Text dimColor>inbox empty — nothing to triage</Text>
+            <Text dimColor>
+              todo empty — no drafts or stale worktrees
+            </Text>
           </Box>
         ) : (
-          state.items.map((item, idx) => (
-            <ListRow
-              key={item.id}
-              item={item}
-              selected={idx === state.cursor}
-            />
-          ))
+          // We iterate the grouped buckets so headers render in canonical
+          // order; the flat-cursor mapping above keeps j/k navigation in
+          // sync with the visual order.
+          BUCKET_ORDER.map((key) => {
+            const group = groups.find((g) => g.key === key)
+            if (!group) return null
+            const header = (
+              <Box key={`h-${key}`} marginTop={1}>
+                <Text dimColor>── {BUCKET_LABEL[key]} ──</Text>
+              </Box>
+            )
+            const rows = group.items.map((item) => {
+              const idx = runningIndex++
+              return (
+                <Row
+                  key={itemKey(item)}
+                  item={item}
+                  selected={idx === state.cursor}
+                  now={state.now}
+                />
+              )
+            })
+            return (
+              <Box key={`g-${key}`} flexDirection="column">
+                {header}
+                {rows}
+              </Box>
+            )
+          })
         )}
       </Box>
       {state.error && (
@@ -372,15 +365,9 @@ const InboxWatchApp: React.FC = () => {
           <Text color="red">error: {state.error}</Text>
         </Box>
       )}
-      {state.status && !state.error && (
-        <Box marginTop={1}>
-          <Text dimColor>{state.status}</Text>
-        </Box>
-      )}
       <Box marginTop={1}>
         <Text dimColor>
-          j/k move · enter detail · a ack · r resolve · d dismiss · R toggle
-          resolved · q quit
+          j/k move · enter detail · q quit
         </Text>
       </Box>
     </Box>
@@ -388,5 +375,5 @@ const InboxWatchApp: React.FC = () => {
 }
 
 export const runInboxWatch = (): void => {
-  render(<InboxWatchApp />)
+  render(<TodoWatchApp />)
 }

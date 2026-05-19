@@ -346,7 +346,8 @@ Commands:
                                 (stdin when path is '-'). Replaces the
                                 deprecated pattern of writing one-shot
                                 .ts scripts under orchestrator/scripts/.
-  inbox watch                   live terminal UI for the inbox (ink TUI)
+  inbox watch                   live terminal UI for the todo feed
+                                (drafts + stale worktrees)
   diagnose set <task-id> --from <-|path>
                                 record a diagnose Chore's verdict against a
                                 stuck task. Input is a JSON object with kind
@@ -768,10 +769,14 @@ Subcommands:
                                      decoration. Exit codes: 0 ok, 1
                                      library error, 2 parse/validation
                                      error.
-  watch                              live terminal UI for the inbox (ink TUI;
-                                     j/k move, enter detail, a ack,
-                                     r resolve, d dismiss, R toggle resolved,
-                                     q quit)`,
+  watch                              live terminal UI for the todo feed
+                                     (drafts + stale worktrees, grouped
+                                     by Today / Yesterday / This Week /
+                                     Older; ink TUI; j/k move, enter
+                                     detail, b/escape back, q quit).
+                                     The non-watch \`mars inbox\` verbs
+                                     keep managing the orchestrator
+                                     inbox_items table.`,
   uninstall: `mars uninstall [--yes|-y] [--wrapper <path>]
 
 Remove the installed mars wrapper binary and its source clone.
