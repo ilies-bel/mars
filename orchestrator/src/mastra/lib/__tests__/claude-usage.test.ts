@@ -7,13 +7,6 @@ const assistant = (usage: Record<string, unknown>): ClaudeEvent => ({
   message: { usage, content: [] },
 })
 
-const result = (totalCostUsd: number): ClaudeEvent => ({
-  type: 'result',
-  subtype: 'success',
-  session_id: 's',
-  total_cost_usd: totalCostUsd,
-})
-
 describe('summarizeUsage', () => {
   it('returns zeros for empty input', () => {
     expect(summarizeUsage([])).toEqual(emptyUsageTotals())
@@ -23,11 +16,9 @@ describe('summarizeUsage', () => {
     const totals = summarizeUsage([
       assistant({ input_tokens: 100, output_tokens: 25 }),
       assistant({ input_tokens: 50, output_tokens: 12 }),
-      result(0.0042),
     ])
     expect(totals.inputTokens).toBe(150)
     expect(totals.outputTokens).toBe(37)
-    expect(totals.totalCostUsd).toBeCloseTo(0.0042, 6)
     expect(totals.messageCount).toBe(2)
   })
 
@@ -69,7 +60,6 @@ describe('summarizeUsage', () => {
     ])
     expect(totals.inputTokens).toBe(200)
     expect(totals.outputTokens).toBe(50)
-    expect(totals.totalCostUsd).toBe(0)
   })
 
   it('rejects non-finite or non-number usage values', () => {

@@ -31,7 +31,6 @@ const usageTotalsSchema = z.object({
   outputTokens: z.number(),
   cacheCreateTokens: z.number(),
   cacheReadTokens: z.number(),
-  totalCostUsd: z.number(),
   messageCount: z.number(),
 })
 
