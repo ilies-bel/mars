@@ -98,7 +98,7 @@ const IdeaRow = ({ item, active, onSelect, onDismiss }: IdeaRowProps) => {
         {draftLabel(d)}
       </div>
       <div className="mt-1 flex items-center justify-between font-mono text-[9px] uppercase text-iron/80">
-        <span>idea · acceptance {d.acceptanceCount}</span>
+        <span>acceptance {d.acceptanceCount}</span>
         <button
           type="button"
           onClick={handleDismiss}
@@ -391,15 +391,27 @@ const IdeaDetail = ({ draft, onDismiss }: IdeaDetailProps) => {
 interface SectionHeaderProps {
   label: string
   count: number
+  expanded: boolean
+  onToggle: () => void
+  controlsId: string
 }
 
-const SectionHeader = ({ label, count }: SectionHeaderProps) => (
-  <div className="flex items-center gap-2 border-b border-iron/20 bg-iron/5 px-4 py-1.5">
+const SectionHeader = ({ label, count, expanded, onToggle, controlsId }: SectionHeaderProps) => (
+  <button
+    type="button"
+    onClick={onToggle}
+    aria-expanded={expanded}
+    aria-controls={controlsId}
+    className="flex w-full items-center gap-2 border-b border-iron/20 bg-iron/5 px-4 py-1.5 text-left"
+  >
+    <span className="font-mono text-[10px] text-iron/60">
+      {expanded ? '▾' : '▸'}
+    </span>
     <span className="font-mono text-[10px] uppercase tracking-wider text-iron">
       {label}
     </span>
     <span className="ml-auto font-mono text-[10px] text-iron/60">{count}</span>
-  </div>
+  </button>
 )
 
 // ---- Page ----
@@ -467,6 +479,8 @@ export const ActionQueuePage = () => {
   )
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [alertsExpanded, setAlertsExpanded] = useState(true)
+  const [proposalsExpanded, setProposalsExpanded] = useState(true)
 
   useEffect(() => {
     if (allItems.length === 0) {
@@ -497,44 +511,60 @@ export const ActionQueuePage = () => {
 
         <div className="flex-1 overflow-auto">
           {/* Alerts section */}
-          <SectionHeader label="Alerts" count={alertItems.length} />
-          {alertItems.length === 0 ? (
-            <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
-              No alerts.
-            </p>
-          ) : (
-            <ul>
-              {alertItems.map((item) => (
-                <AlertRow
-                  key={itemKey(item)}
-                  item={item}
-                  active={itemKey(item) === selectedKey}
-                  onSelect={() => setSelectedKey(itemKey(item))}
-                  onDismiss={() => dismissStaleMutation.mutate({ id: item.id })}
-                />
-              ))}
-            </ul>
-          )}
+          <SectionHeader
+            label="Alerts"
+            count={alertItems.length}
+            expanded={alertsExpanded}
+            onToggle={() => setAlertsExpanded((e) => !e)}
+            controlsId="inbox-section-alerts"
+          />
+          <div id="inbox-section-alerts" role="region" aria-label="Alerts" hidden={!alertsExpanded}>
+            {alertItems.length === 0 ? (
+              <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
+                No alerts.
+              </p>
+            ) : (
+              <ul>
+                {alertItems.map((item) => (
+                  <AlertRow
+                    key={itemKey(item)}
+                    item={item}
+                    active={itemKey(item) === selectedKey}
+                    onSelect={() => setSelectedKey(itemKey(item))}
+                    onDismiss={() => dismissStaleMutation.mutate({ id: item.id })}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
 
           {/* Proposals section */}
-          <SectionHeader label="Proposals" count={ideaItems.length} />
-          {ideaItems.length === 0 ? (
-            <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
-              No proposals.
-            </p>
-          ) : (
-            <ul>
-              {ideaItems.map((item) => (
-                <IdeaRow
-                  key={itemKey(item)}
-                  item={item}
-                  active={itemKey(item) === selectedKey}
-                  onSelect={() => setSelectedKey(itemKey(item))}
-                  onDismiss={() => dismissDraftMutation.mutate({ id: item.id })}
-                />
-              ))}
-            </ul>
-          )}
+          <SectionHeader
+            label="Proposals"
+            count={ideaItems.length}
+            expanded={proposalsExpanded}
+            onToggle={() => setProposalsExpanded((e) => !e)}
+            controlsId="inbox-section-proposals"
+          />
+          <div id="inbox-section-proposals" role="region" aria-label="Proposals" hidden={!proposalsExpanded}>
+            {ideaItems.length === 0 ? (
+              <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
+                No proposals.
+              </p>
+            ) : (
+              <ul>
+                {ideaItems.map((item) => (
+                  <IdeaRow
+                    key={itemKey(item)}
+                    item={item}
+                    active={itemKey(item) === selectedKey}
+                    onSelect={() => setSelectedKey(itemKey(item))}
+                    onDismiss={() => dismissDraftMutation.mutate({ id: item.id })}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
         {error ? (
