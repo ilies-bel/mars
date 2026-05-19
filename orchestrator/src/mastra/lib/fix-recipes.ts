@@ -359,6 +359,84 @@ const typecheckMissingExportRecipe: FixRecipe = {
   },
 }
 
+const typecheckArgTypeMismatchRecipe: FixRecipe = {
+  signature: 'verify:typecheck/typecheck-arg-type-mismatch',
+  title: () =>
+    `Fix argument type mismatch(es) to resolve TS2345 typecheck failure`,
+  buildPrompt: (ctx) => {
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `TypeScript reported TS2345 ("Argument of type X is not assignable to parameter of type Y") during the typecheck step. This means the code is passing an argument that does not match the parameter type expected by the function being called.`,
+      '',
+      `The most common cause in this codebase is test code that passes a Promise \`resolve\` function directly as an error-first callback. For example:`,
+      ``,
+      '```typescript',
+      `// WRONG — TypeScript rejects this because server.close() expects`,
+      `// (err?: Error | undefined) => void, not a Promise resolver.`,
+      `await new Promise<void>((resolve) => server.close(resolve))`,
+      ``,
+      `// CORRECT — wrap the callback to bridge the error-first signature.`,
+      `await new Promise<void>((resolve, reject) =>`,
+      `  server.close((err) => (err ? reject(err) : resolve()))`,
+      `)`,
+      '```',
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `## How to fix`,
+      '',
+      `STEP 1 — Identify the TS2345 errors. From your current working directory, run:`,
+      '',
+      '```',
+      `cd orchestrator && npx tsc --noEmit 2>&1 | grep "TS2345"`,
+      '```',
+      '',
+      `Each error line has the form:`,
+      `  <file>(<line>,<col>): error TS2345: Argument of type '<ActualType>' is not assignable to parameter of type '<ExpectedType>'.`,
+      '',
+      `For each TS2345 error:`,
+      ` (a) Open <file> at <line> and read the call site.`,
+      ` (b) Identify what the function expects (the "parameter of type" in the error) and what you are passing (the "argument of type" in the error).`,
+      ` (c) Adapt the argument to match the expected type. Common patterns:`,
+      `     • **Promise resolver passed as error-first callback**: change`,
+      `       \`new Promise<void>((resolve) => fn(resolve))\``,
+      `       to`,
+      `       \`new Promise<void>((resolve, reject) => fn((err) => err ? reject(err) : resolve()))\``,
+      `     • **Wrong object shape**: add or remove fields so the argument matches the parameter interface.`,
+      `     • **Union type mismatch**: narrow the value before passing it (e.g. \`if (x instanceof Error) ...\`).`,
+      '',
+      `STEP 2 — Re-run the typecheck after each fix:`,
+      '',
+      '```',
+      `cd orchestrator && npx tsc --noEmit`,
+      '```',
+      '',
+      ` - Fix TS2345 errors first. Other cascading errors (e.g. TS7006) may clear automatically once argument types are correct.`,
+      ` - If fresh, unrelated TS errors appear, fix them too — you are in a recovery worktree with no prior commits.`,
+      '',
+      `STEP 3 — Run the tests that live in the same file(s) as the fixed call sites to confirm the fix is behaviourally correct, not just type-correct.`,
+      '',
+      `## Important constraints`,
+      ` - Do NOT add \`// @ts-ignore\` or \`as any\` casts to silence the error — fix the actual type.`,
+      ` - Do NOT change the function's parameter type to accept the wrong argument — adapt the argument to match the declared parameter.`,
+      ` - If fixing the argument type requires a schema change (new DB column, new table, etc.), STOP: raise a high-priority inbox item via \`mars inbox raise --from -\` explaining the blocker, then exit.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only): ${ctx.targetPath}`,
+      '',
+      `Save your work: stage all changed files and commit. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 const testAssertionErrorRecipe: FixRecipe = {
   signature: 'verify:test/test-assertion-error',
   title: (ctx) =>
@@ -467,6 +545,7 @@ const recipeList: readonly FixRecipe[] = [
   noCommitsAheadRecipe,
   vcsAbortedNotFastForwardRecipe,
   typecheckMissingExportRecipe,
+  typecheckArgTypeMismatchRecipe,
   testAssertionErrorRecipe,
 ]
 

@@ -115,6 +115,17 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     match: /\bTS2322:/,
   },
   {
+    // TS2345: Argument of type X is not assignable to parameter of type Y.
+    // Most commonly surfaces in test code that passes a Promise resolver
+    // directly as an error-first callback (e.g. `server.close(resolve)`),
+    // where the callback expects `(err?: Error) => void` but the resolver
+    // is typed `(value: void | PromiseLike<void>) => void`. Fix: wrap the
+    // callback — `(resolve, reject) => server.close((err) => err ? reject(err) : resolve())`.
+    // Also covers any other argument type mismatch the coding agent introduced.
+    errorClass: 'typecheck-arg-type-mismatch',
+    match: /\bTS2345:/,
+  },
+  {
     // TS2694: Namespace '...' has no exported member '...'.
     // Fired when a test or source file imports a named export that does not
     // exist in the target module. The canonical cause is TDD work where
