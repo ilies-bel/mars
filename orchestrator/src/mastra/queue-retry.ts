@@ -1,4 +1,5 @@
 import { raiseInboxItem } from './lib/inbox'
+import { publish } from './lib/outbox'
 import { getClient, initQueue } from './queue'
 
 export const DEFAULT_RETRY_BUDGET = 0
@@ -19,14 +20,23 @@ export const markTaskDropped = async (
 ): Promise<void> => {
   await initQueue()
   const now = new Date().toISOString()
-  await getClient().execute({
-    sql: `UPDATE tasks SET status = 'dropped', drop_reason = ?, updated_at = ? WHERE id = ?`,
-    args: [reason, now, taskId],
-  })
-  await getClient().execute({
-    sql: `DELETE FROM task_blockers WHERE task_id = ?`,
-    args: [taskId],
-  })
+  const c = getClient()
+  const tx = await c.transaction('write')
+  try {
+    await tx.execute({
+      sql: `UPDATE tasks SET status = 'dropped', drop_reason = ?, updated_at = ? WHERE id = ?`,
+      args: [reason, now, taskId],
+    })
+    await tx.execute({
+      sql: `DELETE FROM task_blockers WHERE task_id = ?`,
+      args: [taskId],
+    })
+    await publish(tx, 'task.dropped', { taskId, dropReason: reason })
+    await tx.commit()
+  } catch (error: unknown) {
+    tx.close()
+    throw error
+  }
 }
 
 /**
@@ -42,14 +52,23 @@ export const markTaskFailed = async (
 ): Promise<void> => {
   await initQueue()
   const now = new Date().toISOString()
-  await getClient().execute({
-    sql: `UPDATE tasks SET status = 'failed', failure_reason = ?, updated_at = ? WHERE id = ?`,
-    args: [reason, now, taskId],
-  })
-  await getClient().execute({
-    sql: `DELETE FROM task_blockers WHERE task_id = ?`,
-    args: [taskId],
-  })
+  const c = getClient()
+  const tx = await c.transaction('write')
+  try {
+    await tx.execute({
+      sql: `UPDATE tasks SET status = 'failed', failure_reason = ?, updated_at = ? WHERE id = ?`,
+      args: [reason, now, taskId],
+    })
+    await tx.execute({
+      sql: `DELETE FROM task_blockers WHERE task_id = ?`,
+      args: [taskId],
+    })
+    await publish(tx, 'task.failed', { taskId, error: reason })
+    await tx.commit()
+  } catch (error: unknown) {
+    tx.close()
+    throw error
+  }
 }
 
 export interface RetryBudgetExhaustedInboxInput {
