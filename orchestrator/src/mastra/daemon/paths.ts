@@ -8,6 +8,8 @@ export interface DaemonPaths {
   socket: string
   pidFile: string
   logFile: string
+  /** File that stores the TCP port of the daemon's local HTTP API (one line). */
+  httpPortFile: string
 }
 
 export const daemonPaths = (): DaemonPaths => {
@@ -16,6 +18,7 @@ export const daemonPaths = (): DaemonPaths => {
     socket: resolve(ctx.stateDir, 'watch.sock'),
     pidFile: resolve(ctx.stateDir, 'watch.pid'),
     logFile: resolve(ctx.stateDir, 'watch.log'),
+    httpPortFile: resolve(ctx.stateDir, 'http.port'),
   }
 }
 
