@@ -1143,6 +1143,111 @@ describe('describeSliceFailure', () => {
   })
 })
 
+describe('composeTaskPrompt: Files section', () => {
+  const idea = {
+    id: 'idea-files',
+    title: 'Render Files Section',
+    problem: 'Coders must discover paths the slicer already named.',
+    solution: 'Surface them in a Files section of the Coder prompt.',
+    outOfScope: 'Parsing imports to infer missing files.',
+    notes: '',
+    userStories: [],
+  }
+
+  it('contains a Files section listing each modifies entry as a bullet', () => {
+    const slice = {
+      title: 'Add Files section',
+      type: 'AFK' as const,
+      whatToBuild: 'Render modifies paths as bullets.',
+      acceptanceCriteria: ['Files section present'],
+      blockedBy: [] as number[],
+      modifies: ['src/foo.ts', 'src/bar.ts'],
+      creates: [] as string[],
+      verifyCmd: null,
+      taskType: 'auto' as const,
+    }
+    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    expect(prompt).toContain('## Files')
+    expect(prompt).toContain('- src/foo.ts')
+    expect(prompt).toContain('- src/bar.ts')
+  })
+
+  it('contains a Files section listing each creates entry as a bullet', () => {
+    const slice = {
+      title: 'Add Files section',
+      type: 'AFK' as const,
+      whatToBuild: 'Render creates paths as bullets.',
+      acceptanceCriteria: ['Files section present'],
+      blockedBy: [] as number[],
+      modifies: [] as string[],
+      creates: ['src/new.test.ts'],
+      verifyCmd: null,
+      taskType: 'auto' as const,
+    }
+    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    expect(prompt).toContain('## Files')
+    expect(prompt).toContain('- src/new.test.ts')
+  })
+
+  it("preserves the 'NEW: ' prefix verbatim in the rendered creates entries", () => {
+    const slice = {
+      title: 'Add Files section',
+      type: 'AFK' as const,
+      whatToBuild: 'Render creates with NEW: prefix.',
+      acceptanceCriteria: ['NEW: prefix preserved'],
+      blockedBy: [] as number[],
+      modifies: [] as string[],
+      creates: ['NEW: orchestrator/src/manifest/load.ts'],
+      verifyCmd: null,
+      taskType: 'auto' as const,
+    }
+    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    expect(prompt).toContain('## Files')
+    expect(prompt).toContain('- NEW: orchestrator/src/manifest/load.ts')
+  })
+
+  it('does not emit a Files section when both modifies and creates are empty', () => {
+    const slice = {
+      title: 'Add Files section',
+      type: 'AFK' as const,
+      whatToBuild: 'No files named.',
+      acceptanceCriteria: ['no crash'],
+      blockedBy: [] as number[],
+      modifies: [] as string[],
+      creates: [] as string[],
+      verifyCmd: null,
+      taskType: 'auto' as const,
+    }
+    // Must not throw and must not emit the section at all (HITL / empty-files case).
+    expect(() => composeTaskPrompt(idea, slice, 1, 1)).not.toThrow()
+    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    expect(prompt).not.toContain('## Files')
+  })
+
+  it('lists modifies before creates, both arrays together under one section', () => {
+    const slice = {
+      title: 'Add Files section',
+      type: 'AFK' as const,
+      whatToBuild: 'Render all paths.',
+      acceptanceCriteria: ['all paths present'],
+      blockedBy: [] as number[],
+      modifies: ['src/existing.ts'],
+      creates: ['NEW: src/brand-new/load.ts', 'src/another.test.ts'],
+      verifyCmd: null,
+      taskType: 'auto' as const,
+    }
+    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    expect(prompt).toContain('## Files')
+    expect(prompt).toContain('- src/existing.ts')
+    expect(prompt).toContain('- NEW: src/brand-new/load.ts')
+    expect(prompt).toContain('- src/another.test.ts')
+    // Modifies before creates: existing.ts should appear before brand-new/load.ts
+    const modIdx = prompt.indexOf('- src/existing.ts')
+    const creIdx = prompt.indexOf('- NEW: src/brand-new/load.ts')
+    expect(modIdx).toBeLessThan(creIdx)
+  })
+})
+
 describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Task text', () => {
   // The coder Worker used to re-absorb the ~150-line TDD brief at the top
   // of every per-Task prompt, and a retry replayed it verbatim — burning
