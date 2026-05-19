@@ -933,7 +933,12 @@ export const startDaemon = async (
       await removeWorktree({ path: task.worktreePath, branch }, true).catch(() => {})
     }
     await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
-    await deleteTask(id)
+    // Use dropTask (the shared cleanup-then-delete helper) so blocker edges
+    // (task_blockers, task_proposal_blockers) and fix_for sibling pointers are
+    // all cleared atomically before the tasks row is removed. deleteTask does
+    // only a bare DELETE and will hit SQLITE_CONSTRAINT FOREIGN KEY whenever
+    // the task has any such references.
+    await dropTask(id)
     try {
       const closed = await supersedeInboxItemsForOrigin(id, 'origin-purged')
       if (closed.length > 0) {
