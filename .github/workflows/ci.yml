@@ -111,6 +111,22 @@ jobs:
           command -v mars
           mars --help || mars help || true
 
+  scripts:
+    # Verify the root-level scripts/ Node.js helpers and their inline tests.
+    # These scripts are used by release workflows and are not covered by the
+    # orchestrator vitest suite (which lives under orchestrator/src/).
+    name: Root scripts tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run scripts test suite
+        run: npm run test-scripts
+
   templates-sync:
     # `orchestrator/src/init/templates/CLAUDE.md` and
     # `orchestrator/src/init/templates/claude/**` are tracked files
