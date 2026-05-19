@@ -91,6 +91,11 @@ describe('computeFailureSignature', () => {
         "src/foo.ts(4,8): error TS2307: Cannot find module 'baz' or its corresponding type declarations.",
       ),
     ).toBe('typecheck-cannot-find-module')
+    expect(
+      classifyError(
+        "src/mastra/daemon/__tests__/liveness.test.ts(144,51): error TS2345: Argument of type '(value: void | PromiseLike<void>) => void' is not assignable to parameter of type '(err?: Error | undefined) => void'.",
+      ),
+    ).toBe('typecheck-arg-type-mismatch')
   })
 
   it('ignores ANSI escape codes when matching rules', () => {
