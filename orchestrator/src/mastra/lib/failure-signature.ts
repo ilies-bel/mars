@@ -115,6 +115,17 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     match: /\bTS2322:/,
   },
   {
+    // TS2694: Namespace '...' has no exported member '...'.
+    // Fired when a test or source file imports a named export that does not
+    // exist in the target module. The canonical cause is TDD work where
+    // tests were written before the implementation was added, or where a
+    // function was renamed in the implementation but not in the import.
+    // A recovery agent can inspect the test file's usage to infer the
+    // missing signature and add the implementation.
+    errorClass: 'typecheck-missing-export',
+    match: /\bTS2694:/,
+  },
+  {
     errorClass: 'merge-conflict-unresolved',
     match: /CONFLICT|fix conflicts/i,
   },

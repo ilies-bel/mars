@@ -298,6 +298,67 @@ const vcsAbortedNotFastForwardRecipe: FixRecipe = {
   },
 }
 
+const typecheckMissingExportRecipe: FixRecipe = {
+  signature: 'verify:typecheck/typecheck-missing-export',
+  title: () =>
+    `Implement missing exported member(s) to resolve TS2694 typecheck failure`,
+  buildPrompt: (ctx) => {
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `TypeScript reported TS2694 ("Namespace has no exported member") during the typecheck step. This means a source or test file imports a named export that does not exist in the target module.`,
+      '',
+      `The most common cause is TDD work where tests were written before the implementation was added — the failing task wrote tests that reference a function which was never implemented in the module.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `## How to fix`,
+      '',
+      `STEP 1 — Identify the missing export. From your current working directory, run the typecheck to see the TS2694 errors:`,
+      '',
+      '```',
+      `cd orchestrator && npx tsc --noEmit 2>&1 | grep "TS2694"`,
+      '```',
+      '',
+      `Each error line has the form:`,
+      `  <file>(<line>,<col>): error TS2694: Namespace '<module-path>' has no exported member '<name>'.`,
+      '',
+      `For each missing export '<name>' in module '<module-path>':`,
+      ` (a) Open the test file at <file> and read the tests that call '<name>' to understand the expected signature and behaviour.`,
+      ` (b) Open the implementation file at <module-path>.ts and add the missing function/type/constant with the correct export.`,
+      ` (c) If the failing task prompt (inlined below) specifies the implementation — use it verbatim. Do not guess or invent behaviour not described there.`,
+      '',
+      `STEP 2 — After implementing the missing export(s), re-run the typecheck:`,
+      '',
+      '```',
+      `cd orchestrator && npx tsc --noEmit`,
+      '```',
+      '',
+      ` - If TS2694 errors are gone but other errors remain (e.g. TS7006 "implicitly has any type"), those are cascade errors caused by the missing export — they will clear automatically once the export is in place and TypeScript can infer types.`,
+      ` - If fresh, unrelated TS errors appear, fix them too (they are in scope — you are in a recovery worktree with no prior commits).`,
+      '',
+      `STEP 3 — Run any tests named in the original prompt's verify command to confirm behaviour is correct, not just type-correct.`,
+      '',
+      `## Important constraints`,
+      ` - Do NOT delete or modify the test file. The tests describe the intended behaviour — the implementation must satisfy them.`,
+      ` - Do NOT add an \`export * from\` or \`// @ts-ignore\` to paper over the error — implement the actual function.`,
+      ` - If the missing export requires a new DB column, new table, or other schema change, STOP: raise a high-priority inbox item via \`mars inbox raise --from -\` explaining the blocker, then exit. Do not silently expand scope.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only): ${ctx.targetPath}`,
+      '',
+      `Save your work: stage all changed files and commit. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 // NOTE — intentionally absent entries (documented so future investigators don't
 // re-open these):
 //
@@ -329,6 +390,7 @@ const recipeList: readonly FixRecipe[] = [
   worktreeInstallTimeoutRecipe,
   noCommitsAheadRecipe,
   vcsAbortedNotFastForwardRecipe,
+  typecheckMissingExportRecipe,
 ]
 
 /**
