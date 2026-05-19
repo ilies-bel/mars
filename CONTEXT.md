@@ -291,3 +291,6 @@ _Avoid_: bucket, group, status group, Graph bucket
 
 **Tag**:
 An author-supplied label on a Task that materialises a fixed set of Definition-of-Done criteria at enqueue time.
+
+**Definition of Done**:
+The list of criteria a Task must satisfy before verify passes; materialised from the Task's Tags at enqueue time.
