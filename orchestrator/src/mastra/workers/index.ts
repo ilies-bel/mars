@@ -53,23 +53,83 @@ export const WRITER_DENIED_TOOLS: readonly string[] = [
 
 export type WorkerName = 'Coder' | 'Planner' | 'Slicer' | 'Triager' | 'Fixer' | 'Writer'
 
+export type ClaudeOutputFormat = 'stream-json' | 'json' | 'text'
+
 // Pinned configuration for a Worker. Everything here is fixed at registration
 // time; per-invocation values (cwd, prompt, sessionId, onEvent) are passed to
 // run().
+//
+// This interface is the single auditable contract: every field a dispatched
+// `claude -p` invocation can be configured with appears here. A workflow
+// author who reads WORKER_CONFIGS sees the entire role-pinned posture
+// (model, fallback model, effort, permission mode, agent, system prompt
+// shape, allow/deny lists, tool list, output format, message cap, bare
+// mode, default timeout) without having to chase the dispatch call site.
+//
+// `systemPrompt` and `appendSystemPrompt` are mutually exclusive. The
+// Worker factory throws at construction time if both are pinned — the
+// underlying `claude -p` flags `--system-prompt` and
+// `--append-system-prompt` cannot both be set on one invocation.
 export interface WorkerConfig {
   readonly name: WorkerName
   readonly model: string
+  // Optional fallback model. Reserved for the dispatch wrapper to use when
+  // the primary model is unavailable / overloaded. Pinned per Worker so the
+  // operator audits which fallback applies per stage.
+  readonly fallbackModel?: string
   readonly effort: ClaudeEffort
   readonly permissionMode: ClaudePermissionMode
   readonly bare: boolean
+  // Pinned --agent value for this Worker, if any. Optional — most Workers
+  // run with the default agent.
+  readonly agent?: string
+  // Replaces the default composed system prompt at dispatch time. Mutually
+  // exclusive with `appendSystemPrompt`.
+  readonly systemPrompt?: string
+  // Appended to the default composed system prompt at dispatch time.
+  // Mutually exclusive with `systemPrompt`.
+  readonly appendSystemPrompt?: string
+  // Tools explicitly allowed for this Worker. The dispatch wrapper passes
+  // these as `--allowedTools`; absence means no allow-list filtering.
+  readonly allowedTools?: readonly string[]
   readonly disallowedTools: readonly string[]
+  // Pinned tool list (mapped to claude's `--tools` flag if present). Most
+  // Workers leave this undefined and rely on the default tool surface;
+  // tightly-scoped roles may pin a narrow list.
+  readonly tools?: readonly string[]
+  // Wire format for claude -p's streamed output. Defaults to stream-json
+  // (the only format the orchestrator's event reader currently parses).
+  readonly outputFormat: ClaudeOutputFormat
   // Default per-invocation timeout (ms). Workflow authors may override with
   // RunOptions.timeoutMs but the default is pinned here so a stage cannot
   // forget to set one.
   readonly defaultTimeoutMs: number
-  // Per-Worker message cap. Triager pins 40 so a stuck triage fails fast
-  // instead of spinning to the global default of 100.
+  // Per-Worker message cap. Resolved at construction time via the cascade:
+  // explicit override → MARS_CLAUDE_MAX_MESSAGES env var → DEFAULT_MAX_MESSAGES.
   readonly maxMessages: number
+}
+
+// Public default for the message-cap cascade. Matches the wrapper's
+// DEFAULT_CLAUDE_MAX_MESSAGES so the registry stays consistent with
+// runClaudeCode's per-invocation fallback.
+export const DEFAULT_MAX_MESSAGES = 100
+
+// Resolve a Worker's effective message cap from the three-step cascade:
+//   1. an explicit per-Worker override (number)
+//   2. the MARS_CLAUDE_MAX_MESSAGES environment variable
+//   3. DEFAULT_MAX_MESSAGES (100)
+// Non-integer or negative env values are ignored and fall through to the
+// default — this matches resolveClaudeMessageCap inside the dispatch
+// wrapper so the two resolution sites agree.
+export const resolveWorkerMaxMessages = (override?: number): number => {
+  if (override !== undefined && Number.isInteger(override) && override >= 0) {
+    return override
+  }
+  const raw = process.env.MARS_CLAUDE_MAX_MESSAGES
+  if (raw === undefined) return DEFAULT_MAX_MESSAGES
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isInteger(parsed) || parsed < 0) return DEFAULT_MAX_MESSAGES
+  return parsed
 }
 
 export interface RunOptions {
@@ -126,8 +186,9 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     permissionMode: 'bypassPermissions',
     bare: false,
     disallowedTools: [],
+    outputFormat: 'stream-json',
     defaultTimeoutMs: 20 * 60 * 1000,
-    maxMessages: 100,
+    maxMessages: resolveWorkerMaxMessages(),
   },
   Planner: {
     name: 'Planner',
@@ -136,8 +197,9 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     permissionMode: 'default',
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
+    outputFormat: 'stream-json',
     defaultTimeoutMs: 5 * 60 * 1000,
-    maxMessages: 100,
+    maxMessages: resolveWorkerMaxMessages(),
   },
   Slicer: {
     name: 'Slicer',
@@ -146,13 +208,14 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     permissionMode: 'default',
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
+    outputFormat: 'stream-json',
     defaultTimeoutMs: 5 * 60 * 1000,
     // Slicing is a read-heavy, one-shot analysis of a whole PRD against the
     // codebase; the 100-message default (shared with Coder/Planner) is too
     // tight — the slicer spends 60+ messages orienting and was SIGKILLed
     // before it could emit the slice JSON. 250 gives ~4x headroom while
     // keeping a hard ceiling so a looping slicer can't burn unbounded tokens.
-    maxMessages: 250,
+    maxMessages: resolveWorkerMaxMessages(250),
   },
   Triager: {
     name: 'Triager',
@@ -161,8 +224,9 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     permissionMode: 'default',
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
+    outputFormat: 'stream-json',
     defaultTimeoutMs: 2 * 60 * 1000,
-    maxMessages: 40,
+    maxMessages: resolveWorkerMaxMessages(40),
   },
   Fixer: {
     name: 'Fixer',
@@ -171,8 +235,9 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     permissionMode: 'bypassPermissions',
     bare: false,
     disallowedTools: FIXER_BACKLOG_DENIED_TOOLS,
+    outputFormat: 'stream-json',
     defaultTimeoutMs: 20 * 60 * 1000,
-    maxMessages: 100,
+    maxMessages: resolveWorkerMaxMessages(),
   },
   // Writer lands glossary/ADR slices via the daemon's structured-write verbs
   // rather than direct worktree edits. Haiku is enough for the
@@ -189,30 +254,48 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     permissionMode: 'default',
     bare: false,
     disallowedTools: WRITER_DENIED_TOOLS,
+    outputFormat: 'stream-json',
     defaultTimeoutMs: 20 * 60 * 1000,
-    maxMessages: 100,
+    maxMessages: resolveWorkerMaxMessages(),
   },
 } as const
 
-const buildWorker = (config: WorkerConfig): Worker => ({
-  config,
-  run: (prompt, options) =>
-    runClaudeCode({
-      cwd: options.cwd,
-      prompt,
-      timeoutMs: options.timeoutMs ?? config.defaultTimeoutMs,
-      model: config.model,
-      systemPrompt: options.systemPrompt,
-      sessionId: options.sessionId,
-      onEvent: options.onEvent,
-      effort: config.effort,
-      permissionMode: config.permissionMode,
-      bare: config.bare,
-      disallowedTools: config.disallowedTools,
-      maxMessages: config.maxMessages,
-      externalAbort: options.externalAbort,
-    }),
-})
+// Construction-time guard. `claude -p` cannot accept both --system-prompt
+// and --append-system-prompt on the same invocation, and silently letting
+// a Worker pin both would mean one is dropped at dispatch with no audit
+// trail. Throwing at module-load surfaces the misconfiguration where the
+// operator can fix it.
+const assertSystemPromptShape = (config: WorkerConfig): void => {
+  if (config.systemPrompt !== undefined && config.appendSystemPrompt !== undefined) {
+    throw new Error(
+      `Worker ${config.name}: systemPrompt and appendSystemPrompt are mutually exclusive — set exactly one.`,
+    )
+  }
+}
+
+const buildWorker = (config: WorkerConfig): Worker => {
+  assertSystemPromptShape(config)
+  return {
+    config,
+    run: (prompt, options) =>
+      runClaudeCode({
+        cwd: options.cwd,
+        prompt,
+        timeoutMs: options.timeoutMs ?? config.defaultTimeoutMs,
+        model: config.model,
+        systemPrompt: options.systemPrompt ?? config.systemPrompt ?? config.appendSystemPrompt,
+        sessionId: options.sessionId,
+        onEvent: options.onEvent,
+        effort: config.effort,
+        permissionMode: config.permissionMode,
+        bare: config.bare,
+        agent: config.agent,
+        disallowedTools: config.disallowedTools,
+        maxMessages: config.maxMessages,
+        externalAbort: options.externalAbort,
+      }),
+  }
+}
 
 export const Workers: Readonly<Record<WorkerName, Worker>> = {
   Coder: buildWorker(WORKER_CONFIGS.Coder),
