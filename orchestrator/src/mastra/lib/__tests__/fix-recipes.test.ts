@@ -730,6 +730,24 @@ describe('fix-recipes', () => {
       // because the orchestrator daemon is still running the pre-9ed0041 classifier.
       // Repro: git diff --name-only main..task/mars-9dce6ff6
       //        | grep 'orchestrator/src/init/templates/'
+      //
+      // Re-confirmed 2026-05-19 (task mars-2c6dd178). Root cause: the task
+      // prompt explicitly asked to hard-cut zombie inbox kinds
+      // (idea-needs-shaping, stale-worktree) from template files — specifically
+      // orchestrator/src/init/templates/CLAUDE.md,
+      // orchestrator/src/init/templates/claude/skills/mars:grill/SKILL.md, and
+      // orchestrator/src/init/templates/claude/skills/mars:inbox/SKILL.md.
+      // The agent correctly committed the change (commit cf8ed6b on
+      // task/mars-2c6dd178), but the merge preflight blocked it. The task's
+      // own verify command (`grep -rn 'idea-needs-shaping|stale-worktree'
+      // orchestrator/src CLAUDE.md`) explicitly names template paths, so a
+      // recovery that skips the template edit cannot satisfy the verify.
+      // Same outcome (b): human must apply the template edits directly on main.
+      // The /unclassified suffix persists because the orchestrator daemon has
+      // not been restarted to pick up the template-paths-detected classifier
+      // rule added in commit 9ed0041.
+      // Repro: git diff --name-only main..task/mars-2c6dd178
+      //        | grep 'orchestrator/src/init/templates/'
       expect(hasRecipe('merge:preflight/template-leakage/unclassified')).toBe(false)
     })
   })
