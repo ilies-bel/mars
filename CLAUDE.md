@@ -168,7 +168,9 @@ exactly one recovery attempt per origin failure, full stop.
 
 ## Conventions
 
-- Bun for the framework CLI; Node `>=22.13.0` for the orchestrator.
+- Bun compiles the `mars` CLI into standalone single-file binaries (the
+  binary embeds its own runtime; no Bun installation required to run it).
+  The orchestrator runs on Node `>=22.13.0` — Bun is not involved there.
 - Mastra APIs churn — load the `mastra` skill before touching
   `orchestrator/src/mastra/**`.
 - Register new Mastra agents/tools/workflows/scorers in
