@@ -1000,6 +1000,60 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
     expect(row.prompt).toMatch(/Original task prompt \(inlined/i)
   })
 
+  it('recovery prompt for verify:has-diff/no-commits-ahead uses git rev-list --count integration..HEAD (recovery branch), never git -C <failing-path> rev-list or rev-list ...<failing-branch>', async () => {
+    // Regression: task mars-fda4da8b failed with no-commits-ahead and spawned
+    // recovery 9900226d. The OLD recipe used
+    //   `git -C .mars/worktrees/mars-fda4da8b/ rev-list --count main..task/mars-fda4da8b`
+    // which checked the ORIGINAL (empty) branch, not the recovery branch.
+    // The agent then committed in its own CWD (task/9900226d) but the
+    // orchestrator's verify step found 0 commits on task/mars-fda4da8b and
+    // marked recovery failed. This test locks in the CORRECT countCmd form:
+    // `git rev-list --count main..HEAD` (no -C flag, no branch name — just HEAD
+    // in the recovery worktree's CWD), so the check always reflects the
+    // recovery task's own branch state, not the original failing branch.
+    const { q, ft } = await loadModules(repo)
+    process.env.MARS_FIX_RETRY_BUDGET = '1'
+    const failingBranch = 'task/mars-fda4da8b'
+    const failingWorktree = resolve(repo, '.mars/worktrees/mars-fda4da8b')
+    const t = await q.enqueueTask(
+      'Raise an inbox message on draft-idea creation',
+      undefined,
+      { skipTriage: true },
+    )
+    const result = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:has-diff',
+      errorOutput: `no commits ahead of integration branch — task did not produce any changes\nbranch ${failingBranch} has 0 commits ahead of main`,
+      branch: failingBranch,
+      recipeContext: {
+        targetPath: failingWorktree,
+        statusOutput: '',
+        targetBranch: failingBranch,
+        integrationBranch: 'main',
+        originalPrompt: '',
+      },
+    })
+    expect(result.outcome).toBe('blocked')
+    expect(result.failureSignature).toBe('verify:has-diff/no-commits-ahead')
+
+    const r = await q.getClient().execute({
+      sql: `SELECT prompt FROM tasks WHERE id = ?`,
+      args: [result.fixTaskId ?? ''],
+    })
+    const row = r.rows[0] as unknown as { prompt: string }
+
+    // The countCmd MUST be in the recovery agent's own CWD (HEAD), not
+    // pointing at the failing branch via -C <failing-worktree>.
+    expect(row.prompt).toContain('git rev-list --count main..HEAD')
+
+    // The OLD broken forms that pointed at the empty failing branch:
+    expect(row.prompt).not.toMatch(/git -C \S+ rev-list/)
+    expect(row.prompt).not.toContain(`rev-list --count main..${failingBranch}`)
+
+    // The agent must be told it is in a FRESH worktree (not the failing one).
+    expect(row.prompt).toMatch(/FRESH recovery worktree/i)
+  })
+
   it('an error matching the merge:preflight/uncommitted-changes classifier produces a fix-task using the canned recipe', async () => {
     const { q, ft } = await loadModules(repo)
     // Default retry budget is 0 (every failure drops); this test exercises
