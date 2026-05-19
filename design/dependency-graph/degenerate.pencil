@@ -1,0 +1,318 @@
+{
+  "version": "2.11",
+  "children": [
+    {
+      "type": "frame",
+      "id": "degen-root",
+      "x": 0,
+      "y": 0,
+      "name": "Mars DS — Dependency graph: degenerate single-node case (slice 5/6)",
+      "width": 1440,
+      "fill": "$bg-light",
+      "layout": "vertical",
+      "gap": 56,
+      "padding": 48,
+      "children": [
+
+        {
+          "type": "frame",
+          "id": "degen-hdr",
+          "name": "Artboard Header",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 6,
+          "children": [
+            {
+              "type": "text",
+              "id": "degen-hdr-t",
+              "name": "title",
+              "fill": "$mars-night",
+              "content": "Degenerate single-node case — dependency graph",
+              "fontFamily": "Inter",
+              "fontSize": 32,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "degen-hdr-s",
+              "name": "sub",
+              "fill": "$muted-light",
+              "content": "A task with no idea ancestor and no blockers. The dependency closure contains only the current task itself. The graph degenerates to a single node — this is the view.",
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "degen-hdr-r",
+              "name": "rules",
+              "fill": "$muted-light",
+              "content": "No empty-state copy. No 'no dependencies' message. The single node IS the graph. Layout is depth-ordered (root at left, current task at right); depth=0 means the current task IS the root — it occupies the same right-hand position it would in any larger closure.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "degen-mock-section",
+          "name": "Mock — degenerate graph view",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "text",
+              "id": "degen-mock-cap",
+              "name": "caption",
+              "fill": "$mars-night",
+              "content": "Graph view: no-ancestor, no-blocker task",
+              "fontFamily": "Inter",
+              "fontSize": 18,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "degen-mock-sub",
+              "name": "captionSub",
+              "fill": "$muted-light",
+              "content": "The canvas renders at full width. The single node is placed at the right-hand column — the position the current task always occupies, regardless of closure depth.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+
+            {
+              "type": "frame",
+              "id": "graph-canvas",
+              "name": "graph-canvas",
+              "width": "fill_container",
+              "height": 200,
+              "fill": "$bg-light",
+              "cornerRadius": 8,
+              "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+              "children": [
+
+                {
+                  "type": "frame",
+                  "id": "current-task-col",
+                  "name": "current-task column — same x-position as in full-graph layout",
+                  "x": 948,
+                  "y": 64,
+                  "width": 300,
+                  "layout": "vertical",
+                  "gap": 0,
+                  "children": [
+
+                    {
+                      "type": "frame",
+                      "id": "node-current-task",
+                      "name": "node — current task (not-started) — same visual language as nodes.pencil",
+                      "width": "fill_container",
+                      "fill": "$surface-light",
+                      "cornerRadius": 8,
+                      "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+                      "layout": "horizontal",
+                      "gap": 0,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "node-current-task-bar",
+                          "name": "statusBar — not-started ($neutral-400)",
+                          "width": 4,
+                          "height": 72,
+                          "fill": "$neutral-400",
+                          "cornerRadius": 0
+                        },
+                        {
+                          "type": "frame",
+                          "id": "node-current-task-body",
+                          "name": "nodeBody",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "node-current-task-title",
+                              "name": "title",
+                              "fill": "$mars-night",
+                              "content": "Add SSE reconnect logic to daemon bus client",
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "node-current-task-id",
+                              "name": "id",
+                              "fill": "$muted-light",
+                              "content": "mars-5f2a9c3b",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+
+                  ]
+                },
+
+                {
+                  "type": "frame",
+                  "id": "placement-annotation",
+                  "name": "Annotation — current-task column marker (design-only, not rendered in production)",
+                  "x": 948,
+                  "y": 148,
+                  "width": 300,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "placement-annotation-t",
+                      "name": "annotationText",
+                      "fill": "$muted-light",
+                      "content": "↑ current-task column (depth 0)",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 10,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+
+              ]
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "degen-layout-note",
+          "name": "Layout note — placement rationale",
+          "width": "fill_container",
+          "fill": "$neutral-50",
+          "cornerRadius": 8,
+          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+          "padding": 20,
+          "layout": "vertical",
+          "gap": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "layout-note-t",
+              "name": "title",
+              "fill": "$mars-night",
+              "content": "Placement rationale",
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "layout-note-b1",
+              "name": "body1",
+              "fill": "$mars-night",
+              "content": "The dependency graph is depth-ordered: the current task is pinned at the right-hand end (depth 0); ancestor nodes extend leftward column-by-column (depth 1, 2, …). The node column at x=948 is the fixed position the current task occupies regardless of how many ancestors exist.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "layout-note-b2",
+              "name": "body2",
+              "fill": "$mars-night",
+              "content": "In the degenerate case, no ancestors or blockers exist, so the left-hand portion of the canvas is empty background. The current-task node stays in its column. The view is not 'broken' — it is the expected and consistent shape for a task with no closure.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "layout-note-b3",
+              "name": "body3",
+              "fill": "$muted-light",
+              "content": "The column position (x=948 in a 1344 px canvas, after padding) mirrors the slot used in the full-graph mocks (slices 2 and 4). If those mocks revise the current-task column position, this mock should be updated to match.",
+              "fontFamily": "Inter",
+              "fontSize": 11,
+              "fontWeight": "normal",
+              "fontStyle": "italic"
+            }
+          ]
+        },
+
+        {
+          "type": "frame",
+          "id": "degen-legend",
+          "name": "Legend — acceptance criteria checklist",
+          "width": "fill_container",
+          "fill": "$surface-light",
+          "cornerRadius": 8,
+          "stroke": { "align": "inside", "thickness": 1, "fill": "$border-light" },
+          "padding": 20,
+          "layout": "vertical",
+          "gap": 8,
+          "children": [
+            {
+              "type": "text",
+              "id": "legend-t",
+              "name": "legendTitle",
+              "fill": "$mars-night",
+              "content": "Slice 5 acceptance criteria — where they show up in this draft",
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "legend-1",
+              "name": "ac1",
+              "fill": "$mars-night",
+              "content": "✓ A mock exists showing the graph for a task with no ancestors and no blockers — the graph-canvas frame above contains exactly one node.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "legend-2",
+              "name": "ac2",
+              "fill": "$mars-night",
+              "content": "✓ The single node uses the same visual language as nodes.pencil (slice 1/6): $surface-light fill, 1px $border-light solid stroke, 8px corner radius, 4px $neutral-400 left-accent bar, Inter-13-600 title, JetBrains Mono-11 id — no deviations.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "legend-3",
+              "name": "ac3",
+              "fill": "$mars-night",
+              "content": "✓ No empty-state copy anywhere in this artboard. There is no 'no dependencies', 'nothing to show', or any other explanatory text attached to the canvas itself — the node is the view.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "legend-4",
+              "name": "ac4",
+              "fill": "$mars-night",
+              "content": "✓ The node is placed at x=948 in the canvas — the right-hand current-task column, same x-position the current-task node occupies in the full-graph layout (depth-0 column). The layout-note section above documents the placement rationale.",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+
+      ]
+    }
+  ]
+}
