@@ -24,6 +24,8 @@ interface AlertRowProps {
 }
 
 const AlertRow = ({ item, active, onSelect, onDismiss }: AlertRowProps) => {
+  const [copied, setCopied] = useState(false)
+
   const baseClass = [
     'cursor-pointer border-l-2 px-3 py-2 transition-colors',
     active ? 'border-fg bg-iron/20' : 'border-transparent hover:bg-iron/10',
@@ -35,12 +37,25 @@ const AlertRow = ({ item, active, onSelect, onDismiss }: AlertRowProps) => {
   }
 
   const w = item.worktree
+
+  const handleCopyId = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    void navigator.clipboard.writeText(w.taskId).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    })
+  }
   return (
     <li className={baseClass} onClick={onSelect}>
       <div className="flex items-baseline gap-2">
-        <span className="break-all font-mono text-[13px] text-fg">
+        <button
+          type="button"
+          onClick={handleCopyId}
+          title={copied ? 'Copied!' : 'Copy task id'}
+          className="break-all border-0 bg-transparent p-0 font-mono text-[13px] text-fg transition-colors hover:text-fg/80"
+        >
           {w.taskId}
-        </span>
+        </button>
         <span className="ml-auto shrink-0 font-mono text-[10px] uppercase text-iron/80">
           {formatRelativeAgeFromHours(w.ageHours)}
         </span>
@@ -74,6 +89,8 @@ interface IdeaRowProps {
 }
 
 const IdeaRow = ({ item, active, onSelect, onDismiss }: IdeaRowProps) => {
+  const [copied, setCopied] = useState(false)
+
   const baseClass = [
     'cursor-pointer border-l-2 px-3 py-2 transition-colors',
     active ? 'border-fg bg-iron/20' : 'border-transparent hover:bg-iron/10',
@@ -85,12 +102,25 @@ const IdeaRow = ({ item, active, onSelect, onDismiss }: IdeaRowProps) => {
   }
 
   const d = item.draft
+
+  const handleCopyId = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    void navigator.clipboard.writeText(d.id).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    })
+  }
   return (
     <li className={baseClass} onClick={onSelect}>
       <div className="flex items-baseline gap-2">
-        <span className="break-all font-mono text-[10px] uppercase text-iron">
+        <button
+          type="button"
+          onClick={handleCopyId}
+          title={copied ? 'Copied!' : 'Copy id'}
+          className="break-all border-0 bg-transparent p-0 font-mono text-[10px] uppercase text-iron transition-colors hover:text-iron/70"
+        >
           {d.id}
-        </span>
+        </button>
         <span className="ml-auto shrink-0 font-mono text-[9px] uppercase text-iron/80">
           {d.source}
         </span>
