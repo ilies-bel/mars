@@ -279,8 +279,7 @@ Commands:
                                 judged by an LLM rubric. No merge — both
                                 worktrees are retained.
   triage [<task-id>]            run triage once on one draft, or all drafts in
-                                parallel (Haiku assesses actionability + blockers)
-  blockers <task-id>            list incomplete blockers on a task
+                                parallel (Haiku assesses actionability)
   glossary set "<term>" "<definition>" [--avoid alias1,alias2]
                                 add or update a term in <repo>/CONTEXT.md via a
                                 daemon-routed structured write (fresh worktree
@@ -602,10 +601,7 @@ No merge — both worktrees are retained.`,
   triage: `mars triage [<task-id>]
 
 Run triage once on one draft, or all drafts in parallel. Haiku assesses
-actionability + blockers.`,
-  blockers: `mars blockers <task-id>
-
-List incomplete blockers on a task.`,
+actionability.`,
   block: `mars block <task-id> <blocker-id> [<blocker-id> ...]
 
 Insert one or more blocker edges so <task-id> waits for the listed blocker
@@ -3299,9 +3295,7 @@ const main = async (): Promise<void> => {
     const { runTriage } = await import('./mastra/workflows/triage-workflow')
     if (id) {
       const result = await runTriage(id)
-      console.log(
-        `[${result.taskId}] actionable=${result.actionable} blockers=${result.blockerCount}`,
-      )
+      console.log(`[${result.taskId}] actionable=${result.actionable}`)
       if (result.reason) console.log(`  reason: ${result.reason}`)
       return
     }
@@ -3326,35 +3320,10 @@ const main = async (): Promise<void> => {
       }
       const v = s.value
       if (v.ok) {
-        console.log(
-          `[${v.taskId}] actionable=${v.result.actionable} blockers=${v.result.blockerCount}`,
-        )
+        console.log(`[${v.taskId}] actionable=${v.result.actionable}`)
       } else {
         console.log(`[${v.taskId}] error: ${v.error}`)
       }
-    }
-    return
-  }
-
-  if (cmd === 'blockers') {
-    const id = rest[0]
-    if (!id) {
-      console.error('usage: mars blockers <task-id>')
-      process.exit(1)
-    }
-    const { listBlockers, getTask } = await import('./mastra/queue')
-    const blockerIds = await listBlockers(id)
-    if (blockerIds.length === 0) {
-      console.log(`task ${id} has no incomplete blockers`)
-      return
-    }
-    for (const bid of blockerIds) {
-      const t = await getTask(bid)
-      if (!t) {
-        console.log(`${bid}\t(missing)`)
-        continue
-      }
-      console.log(`${t.id}\t${t.status}\t${t.prompt.slice(0, 60)}`)
     }
     return
   }
