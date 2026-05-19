@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { resolveContext } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
+import { dismissAlertsOnStatusChange } from './lib/inbox'
 
 export type TaskStatus =
   | 'draft'
@@ -1000,6 +1001,21 @@ export const updateTask = async (
   const fields: string[] = []
   const args: unknown[] = []
 
+  // Read the current status before the UPDATE so we can detect real
+  // transitions (patch.status === existing status ⇒ no-op, skip dismissals).
+  let previousStatus: string | null = null
+  if (patch.status !== undefined) {
+    const c = getClient()
+    const before = await c.execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [id],
+    })
+    previousStatus =
+      before.rows.length > 0
+        ? ((before.rows[0] as unknown as { status: string }).status ?? null)
+        : null
+  }
+
   if (patch.status !== undefined) {
     fields.push('status = ?')
     args.push(patch.status)
@@ -1094,6 +1110,18 @@ export const updateTask = async (
       sql: `UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`,
       args: args as never,
     })
+  }
+
+  // Dismiss open inbox alerts and stale-worktree dismissal rows whenever
+  // the task's status actually changes (no-op writes are excluded so a
+  // caller that writes the same status twice doesn't wipe a freshly-raised
+  // alert that arrived between the two writes).
+  if (
+    patch.status !== undefined &&
+    previousStatus !== null &&
+    patch.status !== previousStatus
+  ) {
+    await dismissAlertsOnStatusChange(id, patch.status)
   }
 
   if (patch.status === 'done') {
