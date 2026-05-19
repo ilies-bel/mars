@@ -527,6 +527,91 @@ describe('fix-recipes', () => {
     })
   })
 
+  describe('verify:typecheck/typecheck-excess-property recipe', () => {
+    const ctx = {
+      targetPath: '/tmp/worktrees/task-abc',
+      statusOutput:
+        "src/mastra/lib/__tests__/reflector.test.ts(40,9): error TS2353: Object literal may only specify known properties, and 'totalCostUsd' does not exist in type '{ inputTokens: number; outputTokens: number; cacheCreateTokens: number; cacheReadTokens: number; cacheHitRatio: number; }'.\nCommand failed: npx tsc --noEmit\n",
+      targetBranch: 'task/abc',
+      integrationBranch: 'main',
+      originalPrompt: '',
+    }
+
+    it('is registered under the correct signature', () => {
+      expect(hasRecipe('verify:typecheck/typecheck-excess-property')).toBe(true)
+    })
+
+    it('produces a stable title', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
+      expect(recipe.title(ctx)).toBe(
+        'Remove excess property(ies) from object literals to resolve TS2353 typecheck failure',
+      )
+    })
+
+    it('prompt contains TS2353, step instructions, and constraint against reverting the type', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('TS2353')
+      expect(prompt).toContain('STEP 1')
+      expect(prompt).toContain('STEP 2')
+      expect(prompt).toContain('STEP 3')
+      expect(prompt).toMatch(/do NOT revert the type change/i)
+      expect(prompt).toMatch(/do NOT add.*@ts-ignore/i)
+      expect(prompt).toContain('Save your work')
+    })
+
+    it('explains the canonical cause — partial type cleanup where the implementation was updated but object literals were not', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/partial type cleanup/i)
+      expect(prompt).toMatch(/object literal/i)
+      expect(prompt).toMatch(/intentional/i)
+    })
+
+    it('instructs the agent to remove the excess property from ALL object literals that include it, not just the first TS error site', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/all of them|ALL of them/i)
+    })
+
+    it('mentions shared fixtures (emptySummary pattern) to help the agent find less-obvious removal sites', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/emptySummary|shared.*fixture|fixture.*shared/i)
+    })
+
+    it('embeds the failing branch and worktree path', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(ctx.targetBranch)
+      expect(prompt).toContain(ctx.targetPath)
+    })
+
+    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
+      const promptWithSource = recipe.buildPrompt({
+        ...ctx,
+        originalPrompt:
+          'remove totalCostUsd from reflect-query aggregation so callers receive token totals only',
+      })
+      expect(promptWithSource).toContain(
+        'remove totalCostUsd from reflect-query aggregation so callers receive token totals only',
+      )
+      expect(promptWithSource).toMatch(/inlined/i)
+      const promptWithout = recipe.buildPrompt(ctx)
+      expect(promptWithout).not.toContain(
+        'remove totalCostUsd from reflect-query aggregation so callers receive token totals only',
+      )
+      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
+    })
+
+    it('instructs the agent to run vitest after typecheck is clean, to catch assertion-level regressions', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/npx vitest run/i)
+    })
+  })
+
   describe('verify:typecheck/typecheck-missing-export recipe', () => {
     const ctx = {
       targetPath: '/tmp/worktrees/task-abc',
