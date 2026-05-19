@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
   COMMIT_FOOTER,
+  CODING_DISCIPLINE,
   WRITER_FOOTER,
   WRITER_SYSTEM_PROMPT,
   BLOCKERS_ABORT_MESSAGE,
@@ -291,6 +292,44 @@ describe('composePrompt — worktree orientation', () => {
   it('omits the orientation block entirely when worktreeRoot is not supplied (legacy callers)', () => {
     const out = composePrompt('do the thing', null)
     expect(out).not.toContain('## Worktree orientation')
+  })
+})
+
+describe('composePrompt — coding discipline', () => {
+  it('includes the coding discipline section in coder task prompts', () => {
+    const out = composePrompt('do the thing', null)
+    expect(out).toContain('## Coding discipline')
+  })
+
+  it('coding discipline section appears before the commit footer', () => {
+    const out = composePrompt('do the thing', null)
+    const disciplineIdx = out.indexOf('## Coding discipline')
+    const footerIdx = out.indexOf(COMMIT_FOOTER)
+    expect(disciplineIdx).toBeGreaterThan(-1)
+    expect(footerIdx).toBeGreaterThan(disciplineIdx)
+  })
+
+  it('does NOT include coding discipline in writer task prompts', () => {
+    const out = composePrompt('add glossary terms', null, 'writer')
+    expect(out).not.toContain('## Coding discipline')
+  })
+
+  it('does NOT include coding discipline in diagnose prompts', () => {
+    const prompt = '# Diagnose-only Chore'
+    const out = composePrompt(prompt, null, 'coder', null, 'mars-test', '/tmp/wt', 'diagnose')
+    expect(out).not.toContain('## Coding discipline')
+  })
+
+  it('CODING_DISCIPLINE names the no-single-caller-helpers rule', () => {
+    expect(CODING_DISCIPLINE).toMatch(/single.caller/i)
+  })
+
+  it('CODING_DISCIPLINE names the test-observable-behaviour rule', () => {
+    expect(CODING_DISCIPLINE).toMatch(/internal state/i)
+  })
+
+  it('CODING_DISCIPLINE names the cross-boundary verification rule', () => {
+    expect(CODING_DISCIPLINE).toMatch(/cross.boundary|real.boundary|real binary/i)
   })
 })
 

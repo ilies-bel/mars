@@ -275,6 +275,20 @@ export const DEVIATION_RULES = [
   '`$TASK_ID` is the id of the task you are executing right now; the orchestrator passes it to you in the brief below.',
 ].join('\n')
 
+// Three concrete failure modes observed across real coder transcripts
+// (mars-07988fba, mars-8304c7d9). Delivered per-Task in the composePrompt
+// body (not the standing Session instructions) so the rules are visible in
+// the task context window without relying on the agent recalling them from
+// a long system prompt. Coder-only: not injected for writer tasks or
+// diagnose Chores.
+export const CODING_DISCIPLINE = [
+  '## Coding discipline',
+  '',
+  '- **No single-caller helpers.** Only extract a function when two or more call sites use it. A helper with one caller fails the deletion test — inline it.',
+  '- **Test observable behaviour, not internal state.** Never assert on private fields, internal queues, or implementation details. A test that breaks on a safe internal refactor is a bad test.',
+  '- **Cross-boundary changes need real-boundary verification.** When you add a cap, limit, or guard on a subprocess or external call, include at least one test (or documented manual step) against the real binary or service — stub-only tests can pass while the real path misbehaves.',
+].join('\n')
+
 // Build the Coder Worker's standing Session instructions for a given
 // read-span limit. The limit is threaded in so the stated budget in the
 // instructions always equals the value the guard actually enforces — there
@@ -444,9 +458,11 @@ export const composePrompt = (
   }
   const specBlock = renderSpec(spec, taskId)
   if (specBlock !== null) sections.push(specBlock)
-  // Both tags get their footer. Deviation rules are NOT included here — they
-  // are part of CODER_SYSTEM_PROMPT (standing Session instructions) and must
-  // not appear in the per-Task prompt.
+  // Coding discipline rules are coder-only: skip for writer tasks.
+  // Deviation rules are NOT included here — they are part of
+  // CODER_SYSTEM_PROMPT (standing Session instructions) and must not
+  // appear in the per-Task prompt.
+  if (tag !== 'writer') sections.push(CODING_DISCIPLINE)
   sections.push(tag === 'writer' ? WRITER_FOOTER : COMMIT_FOOTER)
   return sections.join('\n\n')
 }
