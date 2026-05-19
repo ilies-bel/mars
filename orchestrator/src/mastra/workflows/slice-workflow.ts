@@ -335,6 +335,12 @@ export const composeTaskPrompt = (
     .map((c) => `- [ ] ${c}`)
     .join('\n')
 
+  const allFiles = [...slice.modifies, ...slice.creates]
+  const filesSection =
+    allFiles.length > 0
+      ? `\n## Files\n\n${allFiles.map((f) => `- ${f}`).join('\n')}\n`
+      : ''
+
   const rawGoal = (idea.solution || idea.title).trim()
   const goal = truncateAtWord(rawGoal, DIGEST_GOAL_CHARS)
 
@@ -360,7 +366,7 @@ ${slice.whatToBuild}
 ## Acceptance criteria
 
 ${acceptance}
-
+${filesSection}
 ## Context
 
 This is a tracer-bullet vertical slice — implement the thinnest path through
