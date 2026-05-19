@@ -14,9 +14,9 @@ export interface DaemonConfig {
 }
 
 const DEFAULTS: DaemonCaps = {
-  implement: 6,
-  triage: 4,
-  refine: 2,
+  implement: 12,
+  triage: 8,
+  refine: 6,
   structuredWrite: 1,
 }
 
