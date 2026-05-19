@@ -93,6 +93,7 @@ import {
   resolveReadSpanLimit,
 } from '../lib/read-span-watch'
 import { TDD_WORKER_BRIEF } from './tdd-brief'
+import { CONTEXT_GATHERING_BRIEF } from './context-gathering-brief'
 
 const planSchema = z
   .object({
@@ -288,7 +289,7 @@ export const buildCoderSystemPrompt = (readSpanLimit: number): string => {
     '',
     `A watcher observes consecutive Read/Grep/Glob tool calls without an interleaving action-class call (Edit/Write/Bash/NotebookEdit). When your streak first reaches **${readSpanLimit}**, the watcher logs one advisory warning. It does not abort your run or kill the process. Override the threshold with \`MARS_READ_SPAN_LIMIT=<n>\`.`,
   ].join('\n')
-  return [TDD_WORKER_BRIEF, readSpanGuard, DEVIATION_RULES].join('\n\n')
+  return [TDD_WORKER_BRIEF, readSpanGuard, CONTEXT_GATHERING_BRIEF, DEVIATION_RULES].join('\n\n')
 }
 
 // Standing Session instructions for the Coder Worker. The test-driven-
