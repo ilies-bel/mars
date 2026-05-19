@@ -1,6 +1,6 @@
 import { resolveContext } from '../context'
 import { openLibsql } from './libsql'
-import { getClient, initQueue } from '../queue'
+import { getDefaultTaskStore, type TaskStore } from './task-store'
 import type { TaskSignalRow } from './reflect-signals'
 
 export interface ReflectCorpusEntry {
@@ -63,6 +63,12 @@ export interface ReflectCorpus {
 export interface LoadCorpusOptions {
   sinceIso?: string
   limit?: number
+  /**
+   * Injected TaskStore over `.mars/queue.db`. Defaults to the composition-root
+   * singleton (`getDefaultTaskStore()`) when omitted so existing CLI callers
+   * keep working; tests inject an in-memory store.
+   */
+  store?: TaskStore
 }
 
 const PROMPT_PREFIX_BYTES = 200
@@ -270,11 +276,10 @@ export const loadRecentTaskCorpus = async (
   const limit = options.limit ?? 10
   const sinceIso = options.sinceIso ?? null
 
-  await initQueue()
-  const queue = getClient()
+  const queue = options.store ?? (await getDefaultTaskStore())
 
   const taskRows = sinceIso
-    ? await queue.execute({
+    ? await queue.query({
         sql: `SELECT id, status, prompt, error, created_at
                 FROM tasks
                WHERE created_at >= ?
@@ -283,7 +288,7 @@ export const loadRecentTaskCorpus = async (
                LIMIT ?`,
         args: [sinceIso, limit],
       })
-    : await queue.execute({
+    : await queue.query({
         sql: `SELECT id, status, prompt, error, created_at
                 FROM tasks
                WHERE status IN ('done', 'failed')
@@ -299,7 +304,7 @@ export const loadRecentTaskCorpus = async (
   const taskIds = taskRows.rows.map((r) => (r as unknown as { id: string }).id)
   const placeholders = taskIds.map(() => '?').join(',')
 
-  const signalRows = await queue.execute({
+  const signalRows = await queue.query({
     sql: `SELECT task_id, step_id, input_tokens, output_tokens,
                  cache_create_tokens, cache_read_tokens, total_cost_usd,
                  message_count
