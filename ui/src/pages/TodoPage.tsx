@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
-import { useTodo } from '@/hooks/useTodo'
+import { useTodo } from '@/entities/todo/useTodo'
 import { dismissTodoItem, type StaleWorktree, type TodoPayload } from '@/shared/api'
-import type { DraftFeature } from '@/shared/types'
+import type { DraftFeature } from '@/entities/todo/types'
 import { formatRelativeAgeFromHours } from '@/shared/time'
 import { getBucketFromHours, BUCKET_ORDER, type BucketLabel } from '@/shared/todoBuckets'
 

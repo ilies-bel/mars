@@ -2,12 +2,7 @@ import type { TaskStatus } from './schemas'
 
 export type {
   TaskStatus,
-  ProposalSource,
-  DraftFeature,
-  InboxPayload,
   Task,
-  StaleWorktree,
-  TodoPayload,
 } from './schemas'
 
 export type ColumnKey = 'backlog' | 'in_progress' | 'done'
