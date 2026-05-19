@@ -1,28 +1,28 @@
 ---
 name: mars:to-prd
-description: Turn the current `/mars:grill` conversation context into a PRD and write it to the Mars ideas table. Do NOT re-interview the user — synthesise from what you already know. Use when the user says "write the PRD", "to PRD", or invokes `/mars:to-prd <id>`.
+description: Turn the current `/mars:grill` conversation context into a PRD and write it to the Mars proposals table. Do NOT re-interview the user — synthesise from what you already know. Use when the user says "write the PRD", "to PRD", or invokes `/mars:to-prd <id>`.
 ---
 
 # Mars: synthesise a PRD from grilled context
 
 This skill takes the current conversation context — typically a finished
-`/mars:grill <id>` session — and produces a PRD on the draft idea row in
+`/mars:grill <id>` session — and produces a PRD on the draft proposal row in
 `.mars/state.db`. **Do NOT interview the user.** Synthesise from what you
 already know. If a field genuinely cannot be inferred from context, ask
 *one* short, specific question; do not restart grilling.
 
-The grilling phase wrote nothing to the ideas table. This skill writes
-all PRD fields in one batch through the `mars idea` verbs.
+The grilling phase wrote nothing to the proposals table. This skill writes
+all PRD fields in one batch through the `mars proposal` verbs.
 
 ## Step 0 — Sanity-check the argument
 
-`$ARGUMENTS` should be a draft idea id. If empty, tell the user to pass
-one (e.g. `mars idea list --status draft` to find one), and stop.
+`$ARGUMENTS` should be a draft proposal id. If empty, tell the user to pass
+one (e.g. `mars proposal list --status draft` to find one), and stop.
 
 Verify it resolves to a draft:
 
 ```bash
-mars idea show <id>
+mars proposal show <id>
 ```
 
 - `status: draft` → continue.
@@ -36,7 +36,7 @@ Take a quick read-only pass so the PRD speaks the project's language:
 1. `mars glossary list` — use these terms verbatim in the PRD. Do not
    invent synonyms.
 2. `mars adr list`, then `mars adr show <NNNN>` for any ADR topically
-   related to the idea. Respect their constraints; if the synthesis
+   related to the proposal. Respect their constraints; if the synthesis
    violates one, surface it to the user before writing.
 3. If you haven't already, do a quick targeted code read of the relevant
    module so the PRD doesn't encode phantom requirements.
@@ -47,15 +47,15 @@ Do not dump these back at the user. Internalise them.
 
 Draft each field in your head from the conversation context, then write
 them to the DB through the verbs below. **Do not edit any markdown
-scaffold.** The source of truth is the ideas table.
+scaffold.** The source of truth is the proposals table.
 
 ```bash
-mars idea set <id> title         "<text>"
-mars idea set <id> problem       "<text>"
-mars idea set <id> solution      "<text>"
-mars idea set <id> out-of-scope  "<text>"
-mars idea set <id> notes         "<text>"
-mars idea add-user-story <id>    "<text>"     # one call per story
+mars proposal set <id> title         "<text>"
+mars proposal set <id> problem       "<text>"
+mars proposal set <id> solution      "<text>"
+mars proposal set <id> out-of-scope  "<text>"
+mars proposal set <id> notes         "<text>"
+mars proposal add-user-story <id>    "<text>"     # one call per story
 ```
 
 ### Field shapes
@@ -117,7 +117,7 @@ tasks the slicer produces.
 
 The PRD is now written to the draft row, but **not yet promoted**.
 Surface a tight summary so the user can decide without scrolling through
-the full field dump. Do **not** run `mars idea show <id>` here — that
+the full field dump. Do **not** run `mars proposal show <id>` here — that
 dumps everything verbatim and defeats the point of the summary. The
 user can run it themselves if they want the full text.
 
@@ -147,11 +147,11 @@ No prose preamble in the question body.
 
 Then act on the answer:
 
-- **Yes, promote** → `mars idea promote <id>` and end with one line:
+- **Yes, promote** → `mars proposal promote <id>` and end with one line:
   `Promoted <id>.`
 - **No, keep shaping** → tell the user to run `/mars:grill <id>` again
   to revisit specific branches. Do not re-interview here. End your turn.
-- **No, abandon** → `mars idea reject <id>` and end with one line:
+- **No, abandon** → `mars proposal reject <id>` and end with one line:
   `Rejected <id>.`
 
 If the promote (or reject) command fails, surface the error verbatim in
@@ -162,18 +162,18 @@ one sentence and stop — do not retry silently.
 - Do not re-interview the user. Synthesise from context. One short
   clarifying question is fine if a field is genuinely missing; full
   grilling is not.
-- Do not edit `features/<id>.md`, `ideas/<id>.md`, or any markdown
+- Do not edit `features/<id>.md`, `proposals/<id>.md`, or any markdown
   scaffold. PRD lives in the DB.
 - Do not append to `.mars/inbox.jsonl`.
 - Do not edit `CONTEXT.md` or `docs/adr/*.md` directly. If grilling
   surfaced a missing term or ADR you forgot to capture, route through
   `mars glossary set` / `mars adr add` — but prefer to do this during
   `/mars:grill`, not here.
-- Do not run any non-idea write-side `mars` command beyond the verbs
+- Do not run any non-proposal write-side `mars` command beyond the verbs
   listed above.
 - Do not invent details the user did not provide. Default-and-defer in
   `notes` instead.
 
 # Argument
 
-The user passed: `$ARGUMENTS`  (must be a draft idea id)
+The user passed: `$ARGUMENTS`  (must be a draft proposal id)
