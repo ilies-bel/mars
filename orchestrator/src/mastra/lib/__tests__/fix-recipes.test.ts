@@ -242,6 +242,110 @@ describe('fix-recipes', () => {
     })
   })
 
+  describe('verify:test/test-assertion-error recipe', () => {
+    const ctx = {
+      targetPath: '/tmp/worktrees/task-abc',
+      statusOutput:
+        'FAIL  src/cli/__tests__/ui.test.ts > stopUi > exits 0\nAssertionError: expected [ \'no ui running\' ] to include \'no mars ui running\'\n',
+      targetBranch: 'task/abc',
+      integrationBranch: 'main',
+      originalPrompt: '',
+    }
+
+    it('produces a stable title that names the failing branch', () => {
+      const recipe = getRecipe('verify:test/test-assertion-error')
+      expect(recipe.title(ctx)).toBe(
+        'Fix failing test assertions in task/abc',
+      )
+    })
+
+    it('embeds the failing path, branch, integration branch, and test output', () => {
+      const recipe = getRecipe('verify:test/test-assertion-error')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(ctx.targetPath)
+      expect(prompt).toContain(ctx.targetBranch)
+      expect(prompt).toContain(ctx.integrationBranch)
+      expect(prompt).toContain('AssertionError')
+      expect(prompt).toContain('Save your work')
+    })
+
+    it('instructs the agent NOT to modify test files', () => {
+      const recipe = getRecipe('verify:test/test-assertion-error')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/do not modify test files/i)
+    })
+
+    it('lists common causes including wrong string literal and missing process.exit', () => {
+      const recipe = getRecipe('verify:test/test-assertion-error')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/wrong string literal/i)
+      expect(prompt).toMatch(/missing.*process\.exit/i)
+    })
+
+    it('gates the exit-successfully escape hatch on a non-zero rev-list count', () => {
+      const recipe = getRecipe('verify:test/test-assertion-error')
+      const prompt = recipe.buildPrompt(ctx)
+      const exitLine = prompt
+        .split('\n')
+        .find((line) => /exit successfully/i.test(line))
+      expect(exitLine).toBeDefined()
+      expect(exitLine).toMatch(/non-zero/i)
+    })
+
+    it('instructs the recovery agent to read from the failing worktree using git -C and never edit there', () => {
+      const recipe = getRecipe('verify:test/test-assertion-error')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(`git -C ${ctx.targetPath} diff`)
+      expect(prompt).toMatch(/do not edit/i)
+      expect(prompt).toMatch(/FRESH recovery worktree/i)
+      expect(prompt).toMatch(/never edit there/i)
+    })
+
+    it('orders commit-immediately before fixing assertions', () => {
+      const recipe = getRecipe('verify:test/test-assertion-error')
+      const prompt = recipe.buildPrompt(ctx)
+      const commitIdx = prompt.search(/commit immediately/i)
+      const step3Idx = prompt.search(/STEP 3/i)
+      expect(commitIdx).toBeGreaterThan(0)
+      expect(step3Idx).toBeGreaterThan(commitIdx)
+    })
+
+    it('uses git apply to land the lifted diff in the recovery worktree', () => {
+      const recipe = getRecipe('verify:test/test-assertion-error')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/git apply/i)
+      expect(prompt).toContain('git add -A && git commit')
+    })
+
+    it('falls back to `main` when integrationBranch is absent', () => {
+      const recipe = getRecipe('verify:test/test-assertion-error')
+      const prompt = recipe.buildPrompt({
+        targetPath: ctx.targetPath,
+        statusOutput: ctx.statusOutput,
+        targetBranch: ctx.targetBranch,
+        originalPrompt: '',
+      })
+      expect(prompt).toContain('git rev-list --count main..HEAD')
+    })
+
+    it('inlines the original task prompt when provided', () => {
+      const recipe = getRecipe('verify:test/test-assertion-error')
+      const promptWithSource = recipe.buildPrompt({
+        ...ctx,
+        originalPrompt: 'add mars ui stop subcommand in src/cli/ui-stop.ts',
+      })
+      expect(promptWithSource).toContain(
+        'add mars ui stop subcommand in src/cli/ui-stop.ts',
+      )
+      expect(promptWithSource).toMatch(/inlined/i)
+      const promptWithout = recipe.buildPrompt(ctx)
+      expect(promptWithout).not.toContain(
+        'add mars ui stop subcommand in src/cli/ui-stop.ts',
+      )
+      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
+    })
+  })
+
   describe('getRecipe', () => {
     it('throws on unknown signature', () => {
       expect(() => getRecipe('does_not_exist')).toThrow(
