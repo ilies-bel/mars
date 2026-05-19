@@ -209,7 +209,7 @@ interface IdeaDetailProps {
 }
 
 const IdeaDetail = ({ draft }: IdeaDetailProps) => {
-  const refineCommand = `/mars:drafts`
+  const refineCommand = `/mars:chat ${draft.id}`
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
