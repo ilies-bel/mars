@@ -288,3 +288,6 @@ _Avoid_: Kanban tab, Runs tab, live tab
 **Cluster**:
 An operator-meaningful grouping of task statuses (or proposals) used by the Progress tab: Proposal, In progress (queued + running + verifying + merging), Blocked, Failed.
 _Avoid_: bucket, group, status group, Graph bucket
+
+**Tag**:
+An author-supplied label on a Task that materialises a fixed set of Definition-of-Done criteria at enqueue time.
