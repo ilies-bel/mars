@@ -8,9 +8,10 @@
   },
   "scripts": {
     "sync-claude-templates": "bash ./scripts/sync-claude-templates.sh",
+    "mars:bundle:refresh": "bash ./scripts/sync-claude-templates.sh",
     "sync-version": "node ./scripts/sync-version.mjs",
-    "prebuild": "bash ./scripts/sync-claude-templates.sh && node ./scripts/sync-version.mjs",
-    "pretest": "bash ./scripts/sync-claude-templates.sh && node ./scripts/sync-version.mjs",
+    "prebuild": "node ./scripts/sync-version.mjs",
+    "pretest": "node ./scripts/sync-version.mjs",
     "test": "vitest run",
     "dev": "mastra dev",
     "build": "mastra build",
