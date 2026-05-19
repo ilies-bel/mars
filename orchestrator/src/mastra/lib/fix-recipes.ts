@@ -444,7 +444,9 @@ const testAssertionErrorRecipe: FixRecipe = {
 //     lock is typically gone by the time the investigator runs. A recipe that
 //     blindly deletes index.lock is dangerous (it may be held by an active
 //     process). Operator fix: confirm no active git process holds the lock,
-//     then `mars restart <task-id>` to re-run the merge step.
+//     then `mars restart <task-id>` to re-run the merge step. Investigated
+//     2026-05-19 (task 708a0e1b, origin dafb5b90 which had committed recipe
+//     4ce1608 on task/dafb5b90; lock was already gone at investigation time).
 //
 // • merge:vcs-supervisor-aborted/index-lock-contention
 //     The vcs-supervisor ran `git merge --ff-only <branch>` and it failed with
