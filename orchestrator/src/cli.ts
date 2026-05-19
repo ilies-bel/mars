@@ -2179,7 +2179,6 @@ const main = async (): Promise<void> => {
           outputTokens: number
           cacheCreateTokens: number
           cacheReadTokens: number
-          totalCostUsd: number
           messageCount: number
         }
         verifyResult: { passed: boolean; steps: ReadonlyArray<{ name: string; passed: boolean }> }
@@ -2219,7 +2218,6 @@ const main = async (): Promise<void> => {
       console.log(`  tokens (out):   ${v.usage.outputTokens}`)
       console.log(`  cache create:   ${v.usage.cacheCreateTokens}`)
       console.log(`  cache read:     ${v.usage.cacheReadTokens}`)
-      console.log(`  cost (USD):     ${v.usage.totalCostUsd.toFixed(4)}`)
       console.log(`  verify passed:  ${v.verifyResult.passed}`)
       console.log(
         `  diff:           ${v.diff.changedFiles.length} files, +${v.diff.additions}/-${v.diff.deletions}${v.diff.patchTruncated ? ' (truncated)' : ''}`,
