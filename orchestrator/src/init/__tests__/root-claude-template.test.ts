@@ -1,0 +1,139 @@
+/**
+ * Acceptance tests for slice 2 of PRD
+ * `95d11715-accept-root-child-manifests-in-mars-init`:
+ *
+ * - The root `CLAUDE.md` `mars init` writes into a target repo is the
+ *   bundled Mars-meta template, NOT a copy of the framework's own
+ *   `CLAUDE.md`.
+ * - The template mentions the routing rules and the orchestrator / inbox /
+ *   glossary / ADR commands an operator of a Mars-managed repo needs.
+ * - The template carries no references to framework-internal directories
+ *   that only exist inside the mars-framework repo itself.
+ * - The on-disk output of `mars init` matches the bundled template
+ *   byte-for-byte.
+ */
+
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { scaffoldClaudeConfig } from '../scaffold'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
+const BUNDLED_TEMPLATE_PATH = resolve(
+  __dirname,
+  '..',
+  'templates',
+  'CLAUDE.md',
+)
+
+const FRAMEWORK_CLAUDE_MD_PATH = resolve(
+  __dirname,
+  '..',
+  '..',
+  '..',
+  '..',
+  'CLAUDE.md',
+)
+
+describe('mars init: root CLAUDE.md template', () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(resolve(tmpdir(), 'mars-root-claude-template-'))
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('writes a root CLAUDE.md whose content matches the bundled template byte-for-byte', () => {
+    const result = scaffoldClaudeConfig({ repoRoot: root })
+    expect(result.status).toBe('ok')
+
+    const written = readFileSync(resolve(root, 'CLAUDE.md'))
+    const bundled = readFileSync(BUNDLED_TEMPLATE_PATH)
+    // `Buffer.equals` performs a true byte-for-byte comparison and will
+    // catch any encoding or trailing-newline drift between the bundled
+    // template and what `mars init` actually drops on disk.
+    expect(written.equals(bundled)).toBe(true)
+  })
+
+  it('does not write a verbatim copy of the framework\'s own CLAUDE.md', () => {
+    const result = scaffoldClaudeConfig({ repoRoot: root })
+    expect(result.status).toBe('ok')
+
+    const written = readFileSync(resolve(root, 'CLAUDE.md'), 'utf8')
+    const framework = readFileSync(FRAMEWORK_CLAUDE_MD_PATH, 'utf8')
+    expect(written).not.toBe(framework)
+  })
+
+  it('contains the routing rules and mentions the orchestrator, inbox, glossary, and ADR commands', () => {
+    scaffoldClaudeConfig({ repoRoot: root })
+    const written = readFileSync(resolve(root, 'CLAUDE.md'), 'utf8')
+
+    // Routing rules
+    expect(written).toMatch(/##\s+Routing/)
+    expect(written).toContain('enqueue')
+    expect(written).toContain('grill')
+    expect(written).toContain('mars task add')
+
+    // The orchestrator
+    expect(written.toLowerCase()).toContain('orchestrator')
+
+    // Inbox commands
+    expect(written).toContain('mars inbox')
+
+    // Glossary commands
+    expect(written).toMatch(/mars glossary\s+(set|list|show|remove)/)
+
+    // ADR commands
+    expect(written).toMatch(/mars adr\s+(add|list|show)/)
+  })
+
+  it('contains no references to framework-internal paths that only exist inside the mars-framework repo', () => {
+    scaffoldClaudeConfig({ repoRoot: root })
+    const written = readFileSync(resolve(root, 'CLAUDE.md'), 'utf8')
+
+    // Each of these is a path or symbol that only makes sense inside the
+    // mars-framework repo itself; none of them should leak into the
+    // CLAUDE.md that ships to target repos.
+    const forbidden: ReadonlyArray<string> = [
+      'orchestrator/',
+      'orchestrator/src/mastra',
+      'ui/',
+      'design/',
+      'get-mars.sh',
+      'install.sh',
+      'mars-framework',
+      'Mastra Studio',
+      'localhost:4111',
+      'MARS_WORKER_MODEL',
+      'MARS_READ_SPAN_LIMIT',
+    ]
+    for (const needle of forbidden) {
+      expect(written, `template leaks framework-internal token ${JSON.stringify(needle)}`).not.toContain(needle)
+    }
+  })
+
+  it('loads the template from a bundled file alongside the compiled scaffold module', () => {
+    // The bundled template MUST exist next to the scaffold module so that
+    // `scaffoldClaudeConfig` can find it both when running from source and
+    // from a compiled artefact. If a future refactor moves the template
+    // out of `src/init/templates/`, this test fails loudly.
+    expect(() => readFileSync(BUNDLED_TEMPLATE_PATH)).not.toThrow()
+
+    // And the bundled file MUST be what `scaffoldClaudeConfig` writes.
+    scaffoldClaudeConfig({ repoRoot: root })
+    const written = readFileSync(resolve(root, 'CLAUDE.md'))
+    const bundled = readFileSync(BUNDLED_TEMPLATE_PATH)
+    expect(written.equals(bundled)).toBe(true)
+  })
+})
