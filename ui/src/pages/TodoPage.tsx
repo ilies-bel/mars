@@ -206,11 +206,15 @@ const formatTime = (ts: number): string => {
 
 interface IdeaDetailProps {
   draft: DraftFeature
+  onDismiss: () => Promise<unknown>
 }
 
-const IdeaDetail = ({ draft }: IdeaDetailProps) => {
+const IdeaDetail = ({ draft, onDismiss }: IdeaDetailProps) => {
   const refineCommand = `/mars:chat ${draft.id}`
   const [copied, setCopied] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [dismissing, setDismissing] = useState(false)
+  const [dismissError, setDismissError] = useState<string | null>(null)
 
   const handleCopy = async () => {
     try {
@@ -219,6 +223,30 @@ const IdeaDetail = ({ draft }: IdeaDetailProps) => {
       setTimeout(() => setCopied(false), 1200)
     } catch {
       setCopied(false)
+    }
+  }
+
+  const openConfirm = () => {
+    setDismissError(null)
+    setConfirmOpen(true)
+  }
+
+  const closeConfirm = () => {
+    if (dismissing) return
+    setConfirmOpen(false)
+    setDismissError(null)
+  }
+
+  const handleConfirmDismiss = async () => {
+    setDismissing(true)
+    setDismissError(null)
+    try {
+      await onDismiss()
+      setConfirmOpen(false)
+    } catch (err: unknown) {
+      setDismissError(err instanceof Error ? err.message : 'Dismiss failed')
+    } finally {
+      setDismissing(false)
     }
   }
 
@@ -289,6 +317,71 @@ const IdeaDetail = ({ draft }: IdeaDetailProps) => {
           </div>
         </dl>
       </main>
+
+      <footer className="border-t border-iron/30 px-6 py-3">
+        <button
+          type="button"
+          onClick={openConfirm}
+          data-testid="idea-detail-dismiss"
+          className="rounded border border-iron/40 px-3 py-1 font-mono text-[11px] uppercase text-iron transition-colors hover:bg-iron/10"
+        >
+          Dismiss proposal
+        </button>
+      </footer>
+
+      {confirmOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirm dismiss proposal"
+          data-testid="idea-dismiss-confirm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+          onClick={closeConfirm}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md border border-iron/40 bg-bg p-5 font-mono text-[12px] text-fg shadow-2xl"
+          >
+            <h3 className="text-[13px] uppercase tracking-wide text-fg">
+              Dismiss proposal?
+            </h3>
+            <p className="mt-2 break-all text-[11px] text-iron">
+              {draft.id} — {draftLabel(draft)}
+            </p>
+            <p className="mt-3 text-[11px] text-iron/80">
+              This flips the proposal to <code>dismissed</code>. It is refused
+              if any task still depends on this proposal.
+            </p>
+            {dismissError ? (
+              <p
+                data-testid="idea-dismiss-error"
+                className="mt-3 whitespace-pre-wrap border border-iron/40 bg-iron/10 px-2 py-1 text-[11px] text-iron"
+              >
+                {dismissError}
+              </p>
+            ) : null}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeConfirm}
+                disabled={dismissing}
+                className="rounded border border-iron/40 px-3 py-1 text-[11px] uppercase text-iron transition-colors hover:bg-iron/10 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDismiss}
+                disabled={dismissing}
+                data-testid="idea-dismiss-confirm-btn"
+                className="rounded border border-iron/40 bg-iron/20 px-3 py-1 text-[11px] uppercase text-fg transition-colors hover:bg-iron/30 disabled:opacity-50"
+              >
+                {dismissing ? 'Dismissing…' : 'Dismiss'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -462,7 +555,13 @@ export const ActionQueuePage = () => {
         ) : selected?.kind === 'stale' ? (
           <StaleDetail worktree={selected.worktree} />
         ) : selected?.kind === 'draft' ? (
-          <IdeaDetail draft={selected.draft} />
+          <IdeaDetail
+            key={selected.draft.id}
+            draft={selected.draft}
+            onDismiss={() =>
+              dismissDraftMutation.mutateAsync({ id: selected.draft.id })
+            }
+          />
         ) : (
           <div className="flex h-full items-center justify-center font-mono text-[12px] text-iron">
             Select an item
