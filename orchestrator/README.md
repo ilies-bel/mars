@@ -87,10 +87,10 @@ storm or a burst of `task add` calls can't spawn one worktree + `claude
 the default. Tune at runtime with `mars daemon reload` (re-reads the
 env vars below without restarting); a kill + restart also picks them up.
 
-- `MARS_MAX_TRIAGE` (default `4`) — concurrent triage workflows.
-- `MARS_MAX_IMPLEMENT` (default `4`) — concurrent implement workflows
+- `MARS_MAX_TRIAGE` (default `8`) — concurrent triage workflows.
+- `MARS_MAX_IMPLEMENT` (default `12`) — concurrent implement workflows
   (worktree + `claude -p`). The hardware-bound knob; raise cautiously.
-- `MARS_MAX_REFINE` (default `2`) — concurrent `mars idea refine`
+- `MARS_MAX_REFINE` (default `6`) — concurrent `mars idea refine`
   (planner) runs.
 - `MARS_MAX_STRUCTURED_WRITE` (default `1`) — shared cap for
   `glossary-write` and `adr-add`. Both serialize on `.mars/.merge.lock`
