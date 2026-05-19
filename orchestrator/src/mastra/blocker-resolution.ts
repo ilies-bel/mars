@@ -5,7 +5,7 @@ import {
   raiseRetryBudgetExhaustedInbox,
 } from './queue-retry'
 import { getClient, getTask, initQueue, updateTask } from './queue'
-import { raiseInboxItem } from './lib/inbox'
+import { raiseInboxItem, supersedeInboxItemsForOrigin } from './lib/inbox'
 
 export const CANCELLED_CASCADE_INBOX_KIND = 'cancelled-blocker-cascade'
 export const CANCELLED_FAILURE_REASON = 'cancelled'
@@ -275,4 +275,77 @@ export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
     results.push({ blockerTaskId: '(recovered)', outcomes })
   }
   return results
+}
+
+export interface PropagateRecoveryDoneResult {
+  originTaskId: string
+  originFlipped: boolean
+  unblock: UnblockByTaskResult | null
+  inboxItemsClosed: number
+}
+
+/**
+ * When a recovery task (kind='fix', non-null fixForTaskId) reaches
+ * `done`, the work the operator was waiting on has shipped. Flip the
+ * origin row to `done`, close inbox items keyed on the origin, and
+ * propagate the unblock signal so dependents waiting on the origin
+ * leave `blocked`.
+ *
+ * Idempotent: a no-op if the origin is already in a terminal state, or
+ * if the recovery's fixForTaskId points at a missing/non-blocked row.
+ *
+ * CLAUDE.md contract: "a successful recovery counts as its origin
+ * reaching done, so a recovered blocker unblocks the whole chain."
+ */
+export const markOriginDoneFromRecovery = async (
+  originTaskId: string,
+): Promise<PropagateRecoveryDoneResult> => {
+  await initQueue()
+  const origin = await getTask(originTaskId)
+  if (!origin) {
+    return {
+      originTaskId,
+      originFlipped: false,
+      unblock: null,
+      inboxItemsClosed: 0,
+    }
+  }
+  if (origin.status === 'done' || origin.status === 'failed' || origin.status === 'dropped') {
+    return {
+      originTaskId,
+      originFlipped: false,
+      unblock: null,
+      inboxItemsClosed: 0,
+    }
+  }
+  const c = getClient()
+  const now = new Date().toISOString()
+  const upd = await c.execute({
+    sql: `UPDATE tasks
+             SET status = 'done', error = NULL, updated_at = ?
+           WHERE id = ? AND status NOT IN ('done', 'failed', 'dropped')`,
+    args: [now, originTaskId],
+  })
+  if (upd.rowsAffected === 0) {
+    return {
+      originTaskId,
+      originFlipped: false,
+      unblock: null,
+      inboxItemsClosed: 0,
+    }
+  }
+  let inboxItemsClosed = 0
+  try {
+    const closed = await supersedeInboxItemsForOrigin(originTaskId, 'origin-done')
+    inboxItemsClosed = closed.length
+  } catch {
+    // best-effort: inbox closing must not block dependent unblock
+  }
+  const unblock = await onBlockerTaskCompleted(originTaskId)
+  return {
+    originTaskId,
+    originFlipped: true,
+    unblock,
+    inboxItemsClosed,
+  }
 }

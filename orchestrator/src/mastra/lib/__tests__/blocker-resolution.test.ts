@@ -16,6 +16,7 @@ interface QueueModule {
 interface BlockerModule {
   onBlockerTaskCompleted: typeof import('../../blocker-resolution').onBlockerTaskCompleted
   recoverBlockedTasks: typeof import('../../blocker-resolution').recoverBlockedTasks
+  markOriginDoneFromRecovery: typeof import('../../blocker-resolution').markOriginDoneFromRecovery
 }
 
 const setupRepo = (): string => {
@@ -315,5 +316,92 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(item!.payload.lastStep).toBe('verify:test')
     expect(item!.body).toContain('at step `verify:test`')
     expect(item!.body).not.toContain('never ran')
+  })
+
+  describe('markOriginDoneFromRecovery', () => {
+    const makeRecoveryRow = async (
+      q: QueueModule,
+      originTaskId: string,
+    ): Promise<string> => {
+      const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+      await q.getClient().execute({
+        sql: `UPDATE tasks
+                 SET kind = 'fix',
+                     fix_for_task_id = ?,
+                     status = 'running'
+               WHERE id = ?`,
+        args: [originTaskId, fix.id],
+      })
+      return fix.id
+    }
+
+    it('flips origin to done and unblocks dependents when recovery succeeds', async () => {
+      const { q, br } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+      await blockTask(q, dep.id, origin.id, 0)
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+        args: [origin.id],
+      })
+      const recoveryId = await makeRecoveryRow(q, origin.id)
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [recoveryId],
+      })
+
+      const result = await br.markOriginDoneFromRecovery(origin.id)
+
+      expect(result.originFlipped).toBe(true)
+      expect(result.unblock).not.toBeNull()
+      expect(result.unblock!.outcomes.map((o) => o.outcome)).toContain('queued')
+      expect((await q.getTask(origin.id))?.status).toBe('done')
+      expect((await q.getTask(dep.id))?.status).toBe('queued')
+    })
+
+    it('is idempotent — second call is a no-op', async () => {
+      const { q, br } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+        args: [origin.id],
+      })
+      const recoveryId = await makeRecoveryRow(q, origin.id)
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [recoveryId],
+      })
+
+      const first = await br.markOriginDoneFromRecovery(origin.id)
+      const second = await br.markOriginDoneFromRecovery(origin.id)
+
+      expect(first.originFlipped).toBe(true)
+      expect(second.originFlipped).toBe(false)
+      expect(second.unblock).toBeNull()
+      expect((await q.getTask(origin.id))?.status).toBe('done')
+    })
+
+    it('is a no-op when origin is already in a terminal state', async () => {
+      const { q, br } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
+        args: [origin.id],
+      })
+
+      const result = await br.markOriginDoneFromRecovery(origin.id)
+
+      expect(result.originFlipped).toBe(false)
+      expect(result.unblock).toBeNull()
+      expect(result.inboxItemsClosed).toBe(0)
+      expect((await q.getTask(origin.id))?.status).toBe('failed')
+    })
+
+    it('returns no-op when origin does not exist', async () => {
+      const { br } = await loadModules(repo)
+      const result = await br.markOriginDoneFromRecovery('missing-id')
+      expect(result.originFlipped).toBe(false)
+      expect(result.unblock).toBeNull()
+    })
   })
 })
