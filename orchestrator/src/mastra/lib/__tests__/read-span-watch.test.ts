@@ -3,6 +3,8 @@ import type { ClaudeEvent } from '../claude-stream'
 import {
   createReadSpanWatcher,
   resolveReadSpanLimit,
+  resolveReadSpanAbortLimit,
+  stripLeadingPrefixes,
   type ThresholdInfo,
 } from '../read-span-watch'
 
@@ -286,5 +288,169 @@ describe('resolveReadSpanLimit', () => {
     } finally {
       delete process.env.MARS_READ_SPAN_LIMIT
     }
+  })
+})
+
+describe('investigative Bash commands as discovery', () => {
+  it('six consecutive cat-style Bash calls trip log-only threshold', () => {
+    let fired: ThresholdInfo | null = null
+    const w = createReadSpanWatcher({
+      limit: 6,
+      onThreshold: (info) => {
+        fired = info
+      },
+    })
+    for (let i = 0; i < 6; i += 1) {
+      w.observe(assistant([{ name: 'Bash', input: { command: `cat file${i}.ts` } }]))
+    }
+    expect(w.thresholdReached).toBe(true)
+    expect(fired).not.toBeNull()
+    expect((fired as unknown as ThresholdInfo).trace).toHaveLength(6)
+  })
+
+  it('grep without redirect is read-class', () => {
+    const w = createReadSpanWatcher({ limit: 5, onThreshold: () => {} })
+    w.observe(assistant([{ name: 'Bash', input: { command: 'grep pattern file.ts' } }]))
+    expect(w.streak).toBe(1)
+  })
+
+  it('grep with output redirect is action-class', () => {
+    const w = createReadSpanWatcher({ limit: 5, onThreshold: () => {} })
+    w.observe(assistant([{ name: 'Bash', input: { command: 'grep foo > out.txt' } }]))
+    expect(w.streak).toBe(0)
+  })
+
+  it('fd is read-class', () => {
+    const w = createReadSpanWatcher({ limit: 5, onThreshold: () => {} })
+    w.observe(assistant([{ name: 'Bash', input: { command: 'fd -e ts src/' } }]))
+    expect(w.streak).toBe(1)
+  })
+
+  it('jq is read-class', () => {
+    const w = createReadSpanWatcher({ limit: 5, onThreshold: () => {} })
+    w.observe(assistant([{ name: 'Bash', input: { command: 'jq .name package.json' } }]))
+    expect(w.streak).toBe(1)
+  })
+
+  it('awk is read-class', () => {
+    const w = createReadSpanWatcher({ limit: 5, onThreshold: () => {} })
+    w.observe(assistant([{ name: 'Bash', input: { command: "awk '{print $1}' file.txt" } }]))
+    expect(w.streak).toBe(1)
+  })
+
+  it('sed -n is read-class', () => {
+    const w = createReadSpanWatcher({ limit: 5, onThreshold: () => {} })
+    w.observe(assistant([{ name: 'Bash', input: { command: "sed -n 'p' file.txt" } }]))
+    expect(w.streak).toBe(1)
+  })
+
+  it('env FOO=bar prefix stripped — grep becomes read-class', () => {
+    const w = createReadSpanWatcher({ limit: 5, onThreshold: () => {} })
+    w.observe(assistant([{ name: 'Bash', input: { command: 'env FOO=bar grep pattern file' } }]))
+    expect(w.streak).toBe(1)
+  })
+
+  it('cd <path> && prefix stripped — cat becomes read-class', () => {
+    const w = createReadSpanWatcher({ limit: 5, onThreshold: () => {} })
+    w.observe(assistant([{ name: 'Bash', input: { command: 'cd src && cat file.ts' } }]))
+    expect(w.streak).toBe(1)
+  })
+
+  it('env with destructive command is still action-class', () => {
+    const w = createReadSpanWatcher({ limit: 5, onThreshold: () => {} })
+    w.observe(assistant([{ name: 'Bash', input: { command: 'env FOO=bar rm -rf /' } }]))
+    expect(w.streak).toBe(0)
+  })
+
+  it('chained prefix stripped — cd then env then grep is read-class', () => {
+    const w = createReadSpanWatcher({ limit: 5, onThreshold: () => {} })
+    w.observe(
+      assistant([
+        { name: 'Bash', input: { command: 'cd src && env FOO=bar grep pattern file' } },
+      ]),
+    )
+    expect(w.streak).toBe(1)
+  })
+})
+
+describe('hard-abort threshold', () => {
+  it('fires onAbort on long run — onThreshold fires at limit, onAbort fires at abortLimit', () => {
+    let thresholdFired = false
+    let abortFired: ThresholdInfo | null = null
+    const w = createReadSpanWatcher({
+      limit: 3,
+      abortLimit: 5,
+      onThreshold: () => {
+        thresholdFired = true
+      },
+      onAbort: (info) => {
+        abortFired = info
+      },
+    })
+    for (let i = 0; i < 5; i += 1) {
+      w.observe(assistant([{ name: 'Read', input: { file_path: `file${i}.ts` } }]))
+    }
+    expect(thresholdFired).toBe(true)
+    expect(abortFired).not.toBeNull()
+    const info = abortFired as unknown as ThresholdInfo
+    expect(info.limit).toBe(5)
+    expect(info.trace).toHaveLength(5)
+  })
+
+  it('abortThresholdReached stays false below abort limit', () => {
+    const w = createReadSpanWatcher({
+      limit: 3,
+      abortLimit: 5,
+      onThreshold: () => {},
+      onAbort: () => {},
+    })
+    for (let i = 0; i < 4; i += 1) {
+      w.observe(assistant([{ name: 'Read', input: { file_path: `file${i}.ts` } }]))
+    }
+    expect(w.abortThresholdReached).toBe(false)
+  })
+
+  it('abortThresholdReached resets on action', () => {
+    const w = createReadSpanWatcher({
+      limit: 2,
+      abortLimit: 3,
+      onThreshold: () => {},
+      onAbort: () => {},
+    })
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'a' } }]))
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'b' } }]))
+    w.observe(assistant([{ name: 'Read', input: { file_path: 'c' } }]))
+    expect(w.abortThresholdReached).toBe(true)
+    w.observe(assistant([{ name: 'Edit', input: { file_path: 'x' } }]))
+    expect(w.abortThresholdReached).toBe(false)
+  })
+})
+
+describe('resolveReadSpanAbortLimit', () => {
+  it('returns undefined when not set', () => {
+    delete process.env.MARS_READ_SPAN_ABORT_LIMIT
+    expect(resolveReadSpanAbortLimit()).toBeUndefined()
+  })
+
+  it('reads from MARS_READ_SPAN_ABORT_LIMIT env var', () => {
+    process.env.MARS_READ_SPAN_ABORT_LIMIT = '15'
+    try {
+      expect(resolveReadSpanAbortLimit()).toBe(15)
+    } finally {
+      delete process.env.MARS_READ_SPAN_ABORT_LIMIT
+    }
+  })
+
+  it('falls back to undefined on bogus env value', () => {
+    process.env.MARS_READ_SPAN_ABORT_LIMIT = 'not-a-number'
+    try {
+      expect(resolveReadSpanAbortLimit()).toBeUndefined()
+    } finally {
+      delete process.env.MARS_READ_SPAN_ABORT_LIMIT
+    }
+  })
+
+  it('honors positive override argument', () => {
+    expect(resolveReadSpanAbortLimit(20)).toBe(20)
   })
 })
