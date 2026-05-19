@@ -573,10 +573,14 @@ export const setInboxState = async (
 
 /**
  * Reason an inbox item was auto-closed because its origin task reached a
- * terminal state. Surfaced in the resolution note so an operator reading
- * inbox history can tell why the row vanished.
+ * terminal state (or any status transition). Surfaced in the resolution note
+ * so an operator reading inbox history can tell why the row vanished.
  */
-export type SupersedeReason = 'origin-done' | 'origin-dropped' | 'origin-purged'
+export type SupersedeReason =
+  | 'origin-done'
+  | 'origin-dropped'
+  | 'origin-purged'
+  | 'status-changed'
 
 /**
  * Auto-close every open inbox item keyed to the given origin task. Called
@@ -610,5 +614,66 @@ export const supersedeInboxItemsForOrigin = async (
     })
     ids.push(id)
   }
+  return ids
+}
+
+/**
+ * Delete the stale-worktree dismissal row for a task so a future
+ * stale-worktree alert can re-fire cleanly if the task becomes stale again.
+ * No-op when no row exists.
+ */
+export const clearStaleWorktreeDismissal = async (
+  taskId: string,
+): Promise<void> => {
+  await initInbox()
+  const c = getClient()
+  // The table may not exist yet (first run before any dismissal).
+  try {
+    await c.execute({
+      sql: `DELETE FROM stale_worktree_dismissals WHERE task_id = ?`,
+      args: [taskId],
+    })
+  } catch {
+    // Table doesn't exist yet — nothing to clear.
+  }
+}
+
+/**
+ * Auto-clear all open inbox alerts for a task and remove its
+ * stale-worktree dismissal row whenever the task's status changes.
+ * Called by `updateTask` in queue.ts on every real status transition.
+ *
+ * Each closed inbox item gets `resolution_note` = `"status-changed → <newStatus>"`
+ * and a matching `inbox_history` row so operators can see which transition
+ * triggered the dismissal.
+ *
+ * @param taskId    The task whose alerts should be cleared.
+ * @param newStatus The status the task just transitioned to. Recorded in
+ *                  `inbox_history.note` and `inbox_items.resolution_note`.
+ * @returns         The ids of the inbox items that were closed.
+ */
+export const dismissAlertsOnStatusChange = async (
+  taskId: string,
+  newStatus: string,
+): Promise<string[]> => {
+  await initInbox()
+  const c = getClient()
+  const fingerprint = computeOriginFingerprint(taskId)
+  const rows = await c.execute({
+    sql: `SELECT id FROM inbox_items WHERE fingerprint = ? AND state = 'open'`,
+    args: [fingerprint],
+  })
+  const ids: string[] = []
+  const note = `status-changed → ${newStatus}`
+  for (const row of rows.rows) {
+    const id = (row as unknown as { id: string }).id
+    await setInboxState(id, 'resolved', {
+      resolution: 'superseded',
+      note,
+      by: `daemon:status-changed:${newStatus}`,
+    })
+    ids.push(id)
+  }
+  await clearStaleWorktreeDismissal(taskId)
   return ids
 }
