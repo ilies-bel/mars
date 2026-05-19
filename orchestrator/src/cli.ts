@@ -1142,6 +1142,13 @@ const main = async (): Promise<void> => {
       }
       if (task.failureSignature) {
         console.log(`failureSig: ${task.failureSignature}`)
+        const { causeForSignature } = await import(
+          './mastra/lib/failure-signature'
+        )
+        const cause = causeForSignature(task.failureSignature, task.id)
+        if (cause) {
+          console.log(`cause:      ${cause}`)
+        }
       }
       const blockerTaskIds = await listBlockers(task.id)
       if (blockerTaskIds.length > 0) {
@@ -1710,6 +1717,13 @@ const main = async (): Promise<void> => {
       }
       if (task.failureSignature) {
         console.log(`failureSig: ${task.failureSignature}`)
+        const { causeForSignature } = await import(
+          './mastra/lib/failure-signature'
+        )
+        const cause = causeForSignature(task.failureSignature, task.id)
+        if (cause) {
+          console.log(`cause:      ${cause}`)
+        }
       }
       const { listBlockers, listSiblings } = await import('./mastra/queue')
       const blockerTaskIds = await listBlockers(task.id)
