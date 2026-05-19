@@ -15,6 +15,13 @@ export const KanbanPage = () => {
   const totalTasks =
     cols.backlog.length + cols.in_progress.length + cols.done.length
 
+  let cursor = 0
+  const startIdx = (n: number) => {
+    const v = cursor
+    cursor += n
+    return v
+  }
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg">
       <Sidebar
@@ -31,10 +38,20 @@ export const KanbanPage = () => {
         />
         <main className="flex min-h-0 flex-1 gap-3 overflow-hidden bg-bg p-4">
           <Column
+            label="BACKLOG"
+            tasks={cols.backlog}
+            startIndex={startIdx(cols.backlog.length)}
+          />
+          <Column
             label="IN PROGRESS"
             accent="flame"
             tasks={cols.in_progress}
-            startIndex={0}
+            startIndex={startIdx(cols.in_progress.length)}
+          />
+          <Column
+            label="DONE"
+            tasks={cols.done}
+            startIndex={startIdx(cols.done.length)}
           />
         </main>
         {error ? (

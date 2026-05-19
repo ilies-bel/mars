@@ -30,11 +30,7 @@ export const NavBar = ({ hash }: NavBarProps) => {
   const { snapshot } = useTasks()
 
   const actionCount = actionQueueCount({ drafts: todo.drafts, staleWorktrees: todo.staleWorktrees })
-  const kanbanCount = snapshot
-    ? snapshot.columns.backlog.length +
-      snapshot.columns.in_progress.length +
-      snapshot.columns.done.length
-    : 0
+  const kanbanCount = snapshot ? snapshot.columns.in_progress.length : 0
 
   return (
     <nav className="flex items-center gap-2 border-b border-iron/30 bg-bg px-4 py-1.5">
