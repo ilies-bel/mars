@@ -145,9 +145,10 @@ sqlite3 .mars/queue.db "select * from task_signals where task_id = '<id>'"
 ```
 
 Columns: `step_id`, `input_tokens`, `output_tokens`, `cache_create_tokens`,
-`cache_read_tokens`, `total_cost_usd`, `message_count`. Cache-creation and
-cache-read tokens are kept separate from `input_tokens` because they're
-priced differently — conflating them would mislead any reflection pass.
+`cache_read_tokens`, `message_count`. Cache-creation and cache-read tokens
+are tracked separately from `input_tokens` because they carry different
+weights in the token-volume signal — conflating them would skew any
+weighted-token calculation in the reflection pass.
 
 The two existing scorers (`verify-passed`, `merge-clean`) are also wired
 to their respective steps and persist to `mastra_scorers` in
