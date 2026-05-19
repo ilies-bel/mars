@@ -1586,32 +1586,59 @@ export const mergeBranch = async ({
       conflictResolved = true
     }
 
-    // Step 2: fast-forward integration to the (now-rebased) task branch.
-    await exec('git', ['checkout', integrationBranch], { cwd: repoRoot() })
-    try {
-      const r = await exec(
-        'git',
-        ['merge', '--ff-only', branch],
-        { cwd: repoRoot() },
-      )
-      output += r.stdout + r.stderr
+    // Step 2: fast-forward integration to the (now-rebased) task branch via a
+    // working-tree-free ref update. Unlike `git checkout` + `git merge --ff-only`,
+    // `git update-ref` never touches any working tree, so it succeeds even when
+    // the main working tree has uncommitted tracked changes or is checked out on
+    // a different branch.
+    const taskSha = (await exec('git', ['rev-parse', branch], { cwd: repoRoot() })).stdout.trim()
+    const integrationSha = (await exec('git', ['rev-parse', integrationBranch], { cwd: repoRoot() })).stdout.trim()
+
+    // Confirm fast-forward is valid: integrationSha must be an ancestor of taskSha.
+    // `git merge-base --is-ancestor` exits 0 when true, 1 when false.
+    const ancestryOk = await exec(
+      'git',
+      ['merge-base', '--is-ancestor', integrationSha, taskSha],
+      { cwd: repoRoot() },
+    ).then(() => true, () => false)
+
+    if (!ancestryOk) {
       return {
-        merged: true,
+        merged: false,
         conflictResolved,
-        aborted: false,
-        output,
+        aborted: true,
+        output: `fast-forward into ${integrationBranch} not possible: ${integrationSha} is not an ancestor of ${taskSha}.\n${output}`,
         supervisorConversation,
       }
-    } catch (ffError: unknown) {
-      const e = ffError as { stdout?: string; stderr?: string; message?: string }
+    }
+
+    // Bare ref update — does not touch any working tree, immune to dirty state.
+    // The CAS form `update-ref <ref> <new> <old>` is atomic and rejects if
+    // integrationBranch has been advanced concurrently (providing the same
+    // race-safety as the file lock, with an additional CAS layer).
+    try {
+      await exec(
+        'git',
+        ['update-ref', `refs/heads/${integrationBranch}`, taskSha, integrationSha],
+        { cwd: repoRoot() },
+      )
+    } catch (casError: unknown) {
+      const e = casError as { stdout?: string; stderr?: string; message?: string }
       output += (e.stdout ?? '') + (e.stderr ?? '') + (e.message ?? '')
       return {
         merged: false,
         conflictResolved,
         aborted: true,
-        output: `fast-forward into ${integrationBranch} failed unexpectedly after rebase.\n${output}`,
+        output: `integration moved during merge, retry needed: ${integrationBranch} advanced concurrently.\n${output}`,
         supervisorConversation,
       }
+    }
+    return {
+      merged: true,
+      conflictResolved,
+      aborted: false,
+      output,
+      supervisorConversation,
     }
   } finally {
     await release()
