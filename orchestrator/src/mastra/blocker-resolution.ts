@@ -6,6 +6,7 @@ import {
 } from './queue-retry'
 import { getClient, getTask, initQueue, updateTask } from './queue'
 import { raiseInboxItem, supersedeInboxItemsForOrigin } from './lib/inbox'
+import { publish } from './lib/outbox'
 
 export const CANCELLED_CASCADE_INBOX_KIND = 'cancelled-blocker-cascade'
 export const CANCELLED_FAILURE_REASON = 'cancelled'
@@ -122,13 +123,28 @@ export const onBlockerTaskCompleted = async (
       outcomes.push({ taskId: row.id, outcome: 'noop', retryCount })
       continue
     }
-    const upd = await c.execute({
-      sql: `UPDATE tasks
-               SET status = 'queued', updated_at = ?
-             WHERE id = ? AND status = 'blocked'`,
-      args: [now, row.id],
-    })
-    if (upd.rowsAffected > 0) {
+    const tx = await c.transaction('write')
+    let flipped = false
+    try {
+      const upd = await tx.execute({
+        sql: `UPDATE tasks
+                 SET status = 'queued', updated_at = ?
+               WHERE id = ? AND status = 'blocked'`,
+        args: [now, row.id],
+      })
+      flipped = upd.rowsAffected > 0
+      if (flipped) {
+        await publish(tx, 'task.unblocked', {
+          taskId: row.id,
+          blockerTaskId,
+        })
+      }
+      await tx.commit()
+    } catch (error: unknown) {
+      tx.close()
+      throw error
+    }
+    if (flipped) {
       outcomes.push({ taskId: row.id, outcome: 'queued', retryCount })
       internalBus().emit('task.unblocked', {
         taskId: row.id,
@@ -260,15 +276,30 @@ export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
         failureReason: RETRY_BUDGET_FAILURE_REASON,
       })
     } else {
-      const upd = await c.execute({
-        sql: `UPDATE tasks
-                 SET status = 'queued', updated_at = ?
-               WHERE id = ? AND status = 'blocked'`,
-        args: [now, row.id],
-      })
+      const tx = await c.transaction('write')
+      let flipped = false
+      try {
+        const upd = await tx.execute({
+          sql: `UPDATE tasks
+                   SET status = 'queued', updated_at = ?
+                 WHERE id = ? AND status = 'blocked'`,
+          args: [now, row.id],
+        })
+        flipped = upd.rowsAffected > 0
+        if (flipped) {
+          await publish(tx, 'task.unblocked', {
+            taskId: row.id,
+            blockerTaskId: '(recovered)',
+          })
+        }
+        await tx.commit()
+      } catch (error: unknown) {
+        tx.close()
+        throw error
+      }
       outcomes.push({
         taskId: row.id,
-        outcome: upd.rowsAffected > 0 ? 'queued' : 'noop',
+        outcome: flipped ? 'queued' : 'noop',
         retryCount,
       })
     }
@@ -320,13 +351,28 @@ export const markOriginDoneFromRecovery = async (
   }
   const c = getClient()
   const now = new Date().toISOString()
-  const upd = await c.execute({
-    sql: `UPDATE tasks
-             SET status = 'done', error = NULL, updated_at = ?
-           WHERE id = ? AND status NOT IN ('done', 'failed', 'dropped')`,
-    args: [now, originTaskId],
-  })
-  if (upd.rowsAffected === 0) {
+  const tx = await c.transaction('write')
+  let originFlipped = false
+  try {
+    const upd = await tx.execute({
+      sql: `UPDATE tasks
+               SET status = 'done', error = NULL, updated_at = ?
+             WHERE id = ? AND status NOT IN ('done', 'failed', 'dropped')`,
+      args: [now, originTaskId],
+    })
+    originFlipped = upd.rowsAffected > 0
+    if (originFlipped) {
+      await publish(tx, 'task.completed', {
+        taskId: originTaskId,
+        result: { via: 'recovery' },
+      })
+    }
+    await tx.commit()
+  } catch (error: unknown) {
+    tx.close()
+    throw error
+  }
+  if (!originFlipped) {
     return {
       originTaskId,
       originFlipped: false,
