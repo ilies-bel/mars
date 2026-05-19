@@ -952,3 +952,47 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
     expect(row.prompt).toContain('high-priority inbox notification')
   })
 })
+
+describe('handleTaskFailureWithFixTask investigator path flows originalPrompt', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('includes the original task prompt in the investigator task prompt so the investigator can judge intent vs. incident', async () => {
+    const { q, ft } = await loadModules(repo)
+    const originalPrompt =
+      'add the nudge link in src/components/NudgePanel.tsx with a specific href'
+    const t = await q.enqueueTask(originalPrompt, undefined, {
+      skipTriage: true,
+    })
+
+    const result = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'code:some-unknown-step',
+      // Error text that classifies to /unclassified — no recipe registered for it.
+      errorOutput:
+        'completely unknown error text with no classifier rule match',
+    })
+
+    expect(result.outcome).toBe('no-recipe')
+    expect(result.investigatorTaskId).toBeDefined()
+
+    const r = await q.getClient().execute({
+      sql: `SELECT prompt FROM tasks WHERE id = ?`,
+      args: [result.investigatorTaskId ?? ''],
+    })
+    const row = r.rows[0] as unknown as { prompt: string }
+    // The investigator prompt must embed the original task's text verbatim so
+    // the investigator can judge whether the failure is a real product bug or a
+    // malformed/underspecified task — without burning turn budget on a DB lookup.
+    expect(row.prompt).toContain(originalPrompt)
+    expect(row.prompt).toMatch(/## Original task prompt/i)
+  })
+})
