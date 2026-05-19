@@ -138,22 +138,14 @@ const StaleDetail = ({ worktree }: StaleDetailProps) => (
 
     <main className="flex-1 px-6 py-4">
       <dl className="flex flex-col gap-4 font-mono text-[12px]">
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Task
-          </dt>
-          <dd className="whitespace-pre-wrap text-fg">
-            {worktree.prompt.trim() || (
-              <span className="text-iron/70">(empty)</span>
-            )}
-          </dd>
-        </div>
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Task id
-          </dt>
-          <dd className="text-fg">{worktree.taskId}</dd>
-        </div>
+        {worktree.error !== null ? (
+          <div>
+            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+              Error
+            </dt>
+            <dd className="whitespace-pre-wrap text-fg">{worktree.error}</dd>
+          </div>
+        ) : null}
         <div>
           <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
             Status
@@ -186,14 +178,22 @@ const StaleDetail = ({ worktree }: StaleDetailProps) => (
             <dd className="text-fg">{worktree.blockerTaskId}</dd>
           </div>
         ) : null}
-        {worktree.error !== null ? (
-          <div>
-            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Error
-            </dt>
-            <dd className="whitespace-pre-wrap text-fg">{worktree.error}</dd>
-          </div>
-        ) : null}
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Task
+          </dt>
+          <dd className="whitespace-pre-wrap text-fg">
+            {worktree.prompt.trim() || (
+              <span className="text-iron/70">(empty)</span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Task id
+          </dt>
+          <dd className="text-fg">{worktree.taskId}</dd>
+        </div>
       </dl>
     </main>
   </div>
