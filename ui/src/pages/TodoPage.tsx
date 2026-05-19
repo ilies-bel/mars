@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useTodo } from '@/hooks/useTodo'
 import { dismissTodoItem, type StaleWorktree, type TodoPayload } from '@/shared/api'
 import type { DraftFeature } from '@/shared/types'
@@ -575,7 +576,9 @@ export const ActionQueuePage = () => {
       </aside>
 
       <section className="flex min-w-0 flex-1 flex-col">
-        {empty ? (
+        {empty && error ? (
+          <ApiErrorPanel error={error} />
+        ) : empty ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div className="font-mono text-[12px] text-iron">
               No items. Alerts appear when worktrees go stale; proposals appear

@@ -116,6 +116,17 @@ describe('fetchTasks', () => {
     fetchSpy.mockResolvedValue(json({ tasks: [minTask({ status: 'flying' })] }))
     await expect(fetchTasks()).rejects.toThrow('schema validation')
   })
+
+  it('throws a descriptive server-not-running message on connection refused (TypeError)', async () => {
+    fetchSpy.mockRejectedValue(new TypeError('Failed to fetch'))
+    await expect(fetchTasks()).rejects.toThrow('cannot reach the mars-ui API server')
+  })
+
+  it('re-throws non-TypeError network errors unchanged', async () => {
+    const cause = new Error('unexpected network error')
+    fetchSpy.mockRejectedValue(cause)
+    await expect(fetchTasks()).rejects.toThrow('unexpected network error')
+  })
 })
 
 // ---------------------------------------------------------------------------

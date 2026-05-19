@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { HeaderCard } from '../components/agents/HeaderCard'
 import { PromptCard } from '../components/agents/PromptCard'
 import { ToolsCard } from '../components/agents/ToolsCard'
@@ -90,12 +91,9 @@ export const AgentsPage = () => {
         hint="system prompt · tools · recent runs"
       />
       <div className="flex min-h-0 flex-1 gap-4 px-6 pt-3 pb-6">
-        {error ? (
-          <section
-            className="min-w-0 flex-1 rounded-lg border border-border bg-surface p-6 text-iron"
-            aria-label="Agent detail"
-          >
-            <p className="font-mono text-[12px]">Failed to load agents: {error}</p>
+        {error && agents === null ? (
+          <section className="min-w-0 flex-1" aria-label="Agent detail">
+            <ApiErrorPanel error={error} />
           </section>
         ) : !agents ? (
           <section
