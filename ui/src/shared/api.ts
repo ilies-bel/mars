@@ -2,10 +2,12 @@ import type { ZodType } from 'zod'
 import {
   agentsResponseSchema,
   inboxResponseSchema,
+  progressResponseSchema,
   tasksResponseSchema,
   todoResponseSchema,
   type Agent,
   type InboxPayload,
+  type ProgressTask,
   type Task,
   type TodoPayload,
 } from './schemas'
@@ -33,6 +35,11 @@ const fetchJson = async <T>(path: string, schema: ZodType<T>): Promise<T> => {
 
 export const fetchTasks = async (): Promise<Task[]> => {
   const json = await fetchJson('/api/tasks', tasksResponseSchema)
+  return json.tasks
+}
+
+export const fetchProgress = async (): Promise<ProgressTask[]> => {
+  const json = await fetchJson('/api/progress', progressResponseSchema)
   return json.tasks
 }
 
