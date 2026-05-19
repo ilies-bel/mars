@@ -1,6 +1,7 @@
 {
 	"scripts": {
 		"validate-manifest": "node scripts/check-manifest.mjs",
+		"test-scripts": "node scripts/check-manifest.test.mjs && node scripts/is-prerelease.test.mjs && node scripts/compute-next-tag.test.mjs",
 		"knip": "knip --no-progress --no-exit-code"
 	},
 	"devDependencies": {

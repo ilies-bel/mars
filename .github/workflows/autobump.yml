@@ -1,0 +1,140 @@
+name: Autobump
+
+# Cut a new semver tag + GitHub Release on every push to main. The tag is
+# derived from conventional-commit subjects since the previous tag:
+#   feat!: / <type>!:  → breaking change (minor while MAJOR=0, then major)
+#   feat:              → minor bump
+#   fix: / perf: / …  → patch bump
+#   non-conventional   → ignored, no bump
+#
+# Once this workflow pushes a new tag, .github/workflows/release.yml fires
+# automatically to build and publish the Bundle tarball for that tag.
+
+on:
+  push:
+    branches: [main]
+
+# Never cancel a run in progress: if two pushes race, let them serialise so
+# neither bump is silently skipped.  The second run will see the tag from the
+# first and compute a correct incremental bump.
+concurrency:
+  group: autobump
+  cancel-in-progress: false
+
+# Write access is needed to push tags and create releases.  Scoped to this
+# workflow rather than defaulting at the org level.
+permissions:
+  contents: write
+
+jobs:
+  autobump:
+    name: Compute bump and cut release
+    runs-on: ubuntu-latest
+
+    steps:
+      # fetch-depth: 0 is required so that `git tag --list` returns the full
+      # tag history and `git log <tag>..HEAD` can walk all commits since it.
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Find previous tag and collect commits since it
+        id: commits
+        run: |
+          set -euo pipefail
+
+          # Find the most recent clean semver tag (vMAJOR.MINOR.PATCH).
+          # --sort=-version:refname gives newest first; grep filters out any
+          # pre-release or build-metadata tags that might have been pushed by
+          # hand (only clean tags feed the bump algorithm).
+          PREV_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
+                       --sort=-version:refname \
+                     | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+                     | head -1 \
+                     || true)
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous semver tag found; treating all commits as new."
+            CURRENT_TAG_ARG="none"
+            # All commits in history — format: subject only.
+            SUBJECTS=$(git log --format="%s" HEAD || true)
+          else
+            echo "Previous tag: ${PREV_TAG}"
+            CURRENT_TAG_ARG="$PREV_TAG"
+            SUBJECTS=$(git log --format="%s" "${PREV_TAG}..HEAD" || true)
+          fi
+
+          if [ -z "$SUBJECTS" ]; then
+            echo "No commits since last tag."
+          fi
+
+          echo "current_tag_arg=${CURRENT_TAG_ARG}" >> "$GITHUB_OUTPUT"
+          # Write subjects to a temp file — avoids shell-quoting hell when the
+          # list is piped into the Node script in the next step.
+          printf '%s\n' "$SUBJECTS" > /tmp/commit-subjects.txt
+
+      - name: Compute next semver tag
+        id: bump
+        run: |
+          set -euo pipefail
+          CURRENT_TAG="${{ steps.commits.outputs.current_tag_arg }}"
+          NEW_TAG=$(node scripts/compute-next-tag.mjs "$CURRENT_TAG" \
+                      < /tmp/commit-subjects.txt)
+          NEW_TAG="${NEW_TAG:-}"  # normalise to empty string if script emits blank
+
+          if [ -z "$NEW_TAG" ]; then
+            echo "No conventional commits found; skipping release."
+          else
+            echo "New tag: ${NEW_TAG}"
+          fi
+
+          echo "new_tag=${NEW_TAG}" >> "$GITHUB_OUTPUT"
+
+          # Recover the resolved previous tag for --notes-start-tag below.
+          PREV="${{ steps.commits.outputs.current_tag_arg }}"
+          if [ "$PREV" = "none" ]; then
+            echo "previous_tag=" >> "$GITHUB_OUTPUT"
+          else
+            echo "previous_tag=${PREV}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push new tag
+        if: steps.bump.outputs.new_tag != ''
+        run: |
+          set -euo pipefail
+          git tag "${{ steps.bump.outputs.new_tag }}"
+          git push origin "${{ steps.bump.outputs.new_tag }}"
+
+      # `gh release create --generate-notes` asks GitHub to auto-generate the
+      # release body from merged pull requests and commit subjects since the
+      # previous tag.  When a previous tag is known we pass it via
+      # --notes-start-tag so the range is precise; omitting it lets GitHub
+      # infer the boundary from the previous release.
+      #
+      # No version is written to package.json, a VERSION file, or committed
+      # back to main — the tag itself is the canonical version record.
+      - name: Create GitHub release with auto-generated notes
+        if: steps.bump.outputs.new_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          NEW="${{ steps.bump.outputs.new_tag }}"
+          PREV="${{ steps.bump.outputs.previous_tag }}"
+
+          if [ -n "$PREV" ]; then
+            gh release create "$NEW" \
+              --generate-notes \
+              --notes-start-tag "$PREV" \
+              --title "$NEW"
+          else
+            gh release create "$NEW" \
+              --generate-notes \
+              --title "$NEW"
+          fi
