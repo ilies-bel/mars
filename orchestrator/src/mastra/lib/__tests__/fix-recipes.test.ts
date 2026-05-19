@@ -358,6 +358,71 @@ describe('fix-recipes', () => {
     })
   })
 
+  describe('verify:typecheck/typecheck-missing-export recipe', () => {
+    const ctx = {
+      targetPath: '/tmp/worktrees/task-abc',
+      statusOutput:
+        'src/mastra/blocker-resolution.test.ts(19,73): error TS2694: Namespace \'...\' has no exported member \'markOriginDoneFromRecovery\'.\nCommand failed: npx tsc --noEmit\n',
+      targetBranch: 'task/abc',
+      integrationBranch: 'main',
+      originalPrompt: '',
+    }
+
+    it('is registered under the correct signature', () => {
+      expect(hasRecipe('verify:typecheck/typecheck-missing-export')).toBe(true)
+    })
+
+    it('produces a stable title', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-missing-export')
+      expect(recipe.title(ctx)).toBe(
+        'Implement missing exported member(s) to resolve TS2694 typecheck failure',
+      )
+    })
+
+    it('prompt contains TS2694, step instructions, and constraint not to modify tests', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-missing-export')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('TS2694')
+      expect(prompt).toContain('STEP 1')
+      expect(prompt).toContain('STEP 2')
+      expect(prompt).toContain('STEP 3')
+      expect(prompt).toMatch(/Do NOT delete or modify the test file/i)
+      expect(prompt).toMatch(/Do NOT add an `export \* from`/i)
+      expect(prompt).toContain('Save your work')
+    })
+
+    it('embeds the failing branch and worktree path', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-missing-export')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(ctx.targetBranch)
+      expect(prompt).toContain(ctx.targetPath)
+    })
+
+    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-missing-export')
+      const promptWithSource = recipe.buildPrompt({
+        ...ctx,
+        originalPrompt: 'add markOriginDoneFromRecovery to blocker-resolution.ts',
+      })
+      expect(promptWithSource).toContain(
+        'add markOriginDoneFromRecovery to blocker-resolution.ts',
+      )
+      expect(promptWithSource).toMatch(/inlined/i)
+      const promptWithout = recipe.buildPrompt(ctx)
+      expect(promptWithout).not.toContain(
+        'add markOriginDoneFromRecovery to blocker-resolution.ts',
+      )
+      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
+    })
+
+    it('mentions cascade TS7006 errors so the agent understands they are not independent', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-missing-export')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('TS7006')
+      expect(prompt).toMatch(/cascade/i)
+    })
+  })
+
   describe('intentionally absent recipes (documented investigation outcomes)', () => {
     it('merge:crashed/index-lock-contention has no recipe — environmental transient failure; operator restarts with `mars restart`', () => {
       // Investigated 2026-05-18 (task 5c15a8e1). Root cause: git checkout main
