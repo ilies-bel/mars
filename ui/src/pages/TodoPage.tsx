@@ -5,6 +5,7 @@ import { useTodo } from '@/hooks/useTodo'
 import { dismissTodoItem, type StaleWorktree, type TodoPayload } from '@/shared/api'
 import type { DraftFeature } from '@/shared/types'
 import { formatRelativeAgeFromHours } from '@/shared/time'
+import { getBucketFromHours, BUCKET_ORDER, type BucketLabel } from '@/shared/todoBuckets'
 
 // ---- Types ----
 
@@ -509,6 +510,24 @@ export const ActionQueuePage = () => {
     [alertItems, ideaItems],
   )
 
+  /**
+   * Per-bucket item counts derived from allItems.
+   * Stale worktrees use the pre-computed ageHours field;
+   * drafts have their age computed from updatedAt (ms timestamp).
+   */
+  const groupedBuckets = useMemo<Map<BucketLabel, number>>(() => {
+    const counts = new Map<BucketLabel, number>()
+    for (const item of allItems) {
+      const ageHours =
+        item.kind === 'stale'
+          ? item.worktree.ageHours
+          : Math.max(0, (Date.now() - item.draft.updatedAt) / 3_600_000)
+      const bucket = getBucketFromHours(ageHours)
+      counts.set(bucket, (counts.get(bucket) ?? 0) + 1)
+    }
+    return counts
+  }, [allItems])
+
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [alertsExpanded, setAlertsExpanded] = useState(true)
   const [proposalsExpanded, setProposalsExpanded] = useState(true)
@@ -538,6 +557,13 @@ export const ActionQueuePage = () => {
             {staleWorktrees.length === 1 ? '' : 's'} ·{' '}
             {drafts.length} proposal{drafts.length === 1 ? '' : 's'}
           </p>
+          {allItems.length > 0 && (
+            <p className="mt-0.5 font-mono text-[10px] text-iron/60">
+              {BUCKET_ORDER.filter((b) => (groupedBuckets.get(b) ?? 0) > 0)
+                .map((b) => `${b} ${groupedBuckets.get(b)}`)
+                .join(' · ')}
+            </p>
+          )}
         </header>
 
         <div className="flex-1 overflow-auto">
