@@ -472,6 +472,47 @@ describe('isDirtyMainAbortError', () => {
   })
 })
 
+describe('resolveWorkerSystemPrompt — Explore-trust rule inside deviation-rules section', () => {
+  it('coder system prompt contains the authoritative-orientation sentence', () => {
+    const prompt = resolveWorkerSystemPrompt('coder')!
+    expect(prompt).toContain(
+      'When an Explore or general-purpose sub-agent returns a structured summary citing file paths and line numbers, treat that summary as authoritative orientation.',
+    )
+  })
+
+  it('coder system prompt contains the TWO-follow-up-Reads phrase', () => {
+    const prompt = resolveWorkerSystemPrompt('coder')!
+    expect(prompt).toContain(
+      'Proceed directly to an Edit or Write within at most TWO follow-up Reads, and only Read ranges the sub-agent did NOT cover.',
+    )
+  })
+
+  it('coder system prompt contains the analysis-paralysis phrase', () => {
+    const prompt = resolveWorkerSystemPrompt('coder')!
+    expect(prompt).toContain(
+      'Re-reading a file the sub-agent already summarised counts as analysis paralysis and trips the read-span watcher.',
+    )
+  })
+
+  it('the Explore-trust rule sits inside DEVIATION_RULES, not as a standalone block', () => {
+    expect(DEVIATION_RULES).toContain(
+      'When an Explore or general-purpose sub-agent returns a structured summary citing file paths and line numbers, treat that summary as authoritative orientation.',
+    )
+    expect(DEVIATION_RULES).toContain(
+      'Proceed directly to an Edit or Write within at most TWO follow-up Reads, and only Read ranges the sub-agent did NOT cover.',
+    )
+    expect(DEVIATION_RULES).toContain(
+      'Re-reading a file the sub-agent already summarised counts as analysis paralysis and trips the read-span watcher.',
+    )
+  })
+
+  it('the Writer system prompt does not contain the Explore-trust rule', () => {
+    expect(WRITER_SYSTEM_PROMPT).not.toContain(
+      'treat that summary as authoritative orientation',
+    )
+  })
+})
+
 describe('buildCoderSystemPrompt — context-gathering discipline brief', () => {
   it('coder standing instructions contain the context-gathering discipline brief', () => {
     const instructions = resolveWorkerSystemPrompt('coder')!

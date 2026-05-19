@@ -270,6 +270,8 @@ export const DEVIATION_RULES = [
   '',
   '**Fix-attempt cap.** If you have run the verify command 3 times on this task and it still fails for reasons you cannot explain, STOP. File a follow-up task via `mars task add --blocked-by $TASK_ID` describing the failing verify and what you tried, then exit. Do not loop.',
   '',
+  '**Explore-trust rule — treat sub-agent summaries as authoritative.** When an Explore or general-purpose sub-agent returns a structured summary citing file paths and line numbers, treat that summary as authoritative orientation. Proceed directly to an Edit or Write within at most TWO follow-up Reads, and only Read ranges the sub-agent did NOT cover. Re-reading a file the sub-agent already summarised counts as analysis paralysis and trips the read-span watcher.',
+  '',
   '`$TASK_ID` is the id of the task you are executing right now; the orchestrator passes it to you in the brief below.',
 ].join('\n')
 
