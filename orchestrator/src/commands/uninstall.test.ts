@@ -1,237 +1,184 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { runUninstall, type UninstallPaths } from './uninstall'
+import { describe, it, expect } from 'vitest'
+import { runUninstall } from './uninstall.js'
+import type { UninstallDeps } from './uninstall.js'
 
-// ─── shared fixtures ─────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
 
-const fakePaths: UninstallPaths = {
-  binPath: '/usr/local/bin/mars',
-  srcDir: '/home/user/.mars-framework',
-}
+/** Build an UninstallDeps where both paths exist and confirm returns true. */
+function makeDeps(
+  overrides: Partial<UninstallDeps> & { existingPaths?: Set<string> } = {},
+): UninstallDeps & { removed: string[]; logged: string[] } {
+  const removed: string[] = []
+  const logged: string[] = []
+  const existingPaths: Set<string> =
+    overrides.existingPaths ??
+    new Set(['/home/user/.local/bin/mars', '/home/user/mars-framework'])
 
-// Capture console.log / console.error during an async call.
-type Captured = { out: string[]; err: string[] }
-
-async function capturing<T>(fn: () => Promise<T>): Promise<{ result: T } & Captured> {
-  const out: string[] = []
-  const err: string[] = []
-  const origLog = console.log
-  const origErr = console.error
-  console.log = (...args: unknown[]) => out.push(args.map(String).join(' '))
-  console.error = (...args: unknown[]) => err.push(args.map(String).join(' '))
-  try {
-    const result = await fn()
-    return { result, out, err }
-  } finally {
-    console.log = origLog
-    console.error = origErr
+  return {
+    removed,
+    logged,
+    exists: overrides.exists ?? ((p) => existingPaths.has(p)),
+    removeFile:
+      overrides.removeFile ??
+      (async (p) => {
+        removed.push(`file:${p}`)
+      }),
+    removeDir:
+      overrides.removeDir ??
+      (async (p) => {
+        removed.push(`dir:${p}`)
+      }),
+    confirm: overrides.confirm ?? (async () => true),
+    log:
+      overrides.log ??
+      ((msg) => {
+        logged.push(msg)
+      }),
   }
 }
 
-// ─── tracer bullet: entering 'y' proceeds and prints "would delete" lines ────
+const WRAPPER = '/home/user/.local/bin/mars'
+const CLONE = '/home/user/mars-framework'
 
-describe('runUninstall — prompt accepted', () => {
-  it('returns "confirmed" and prints "would delete" for each path when user enters y', async () => {
-    const promptTexts: string[] = []
-    const { result, out } = await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: false,
-        isTty: true,
-        readLine: async () => 'y',
-        writePrompt: (t) => promptTexts.push(t),
-      }),
-    )
-    expect(result).toBe('confirmed')
-    expect(out.some((l) => l.includes('would delete') && l.includes(fakePaths.binPath))).toBe(true)
-    expect(out.some((l) => l.includes('would delete') && l.includes(fakePaths.srcDir))).toBe(true)
+// ---------------------------------------------------------------------------
+// Suite
+// ---------------------------------------------------------------------------
+
+describe('runUninstall — full success', () => {
+  it('removes the wrapper file on a confirmed full-success run', async () => {
+    const deps = makeDeps()
+    const result = await runUninstall(WRAPPER, CLONE, deps)
+
+    expect(result.outcome).toBe('full-success')
+    expect(deps.removed).toContain(`file:${WRAPPER}`)
   })
 
-  it('prompts "Delete these? [y/N]" on a TTY when --yes is not passed', async () => {
-    const promptTexts: string[] = []
-    await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: false,
-        isTty: true,
-        readLine: async () => 'y',
-        writePrompt: (t) => promptTexts.push(t),
-      }),
-    )
-    expect(promptTexts.join('')).toContain('Delete these? [y/N]')
+  it('removes the source clone directory on a confirmed full-success run', async () => {
+    const deps = makeDeps()
+    const result = await runUninstall(WRAPPER, CLONE, deps)
+
+    expect(result.outcome).toBe('full-success')
+    expect(deps.removed).toContain(`dir:${CLONE}`)
   })
 
-  it('capital Y is also accepted', async () => {
-    const { result } = await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: false,
-        isTty: true,
-        readLine: async () => 'Y',
-        writePrompt: () => {},
-      }),
+  it('prints a shell rc PATH reminder on full success', async () => {
+    const deps = makeDeps()
+    await runUninstall(WRAPPER, CLONE, deps)
+
+    const reminder = deps.logged.some((msg) =>
+      /shell\s+rc|\.bashrc|\.zshrc|PATH/i.test(msg),
     )
-    expect(result).toBe('confirmed')
+    expect(reminder).toBe(true)
   })
 })
 
-// ─── prompt rejected ──────────────────────────────────────────────────────────
+describe('runUninstall — deletion order invariant', () => {
+  it('wrapper is deleted before the source clone is attempted', async () => {
+    // Make removeDir throw — after the throw, verify the wrapper is already gone.
+    const callOrder: string[] = []
+    const deps = makeDeps({
+      removeFile: async (p) => {
+        callOrder.push(`file:${p}`)
+      },
+      removeDir: async (_p) => {
+        // Simulate a failure partway through; the wrapper must already be removed.
+        throw new Error('simulated clone removal failure')
+      },
+    })
 
-describe('runUninstall — prompt rejected', () => {
-  it('returns "aborted" when user enters n', async () => {
-    const { result, out } = await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: false,
-        isTty: true,
-        readLine: async () => 'n',
-        writePrompt: () => {},
-      }),
+    await expect(runUninstall(WRAPPER, CLONE, deps)).rejects.toThrow(
+      'simulated clone removal failure',
     )
-    expect(result).toBe('aborted')
-    expect(out.every((l) => !l.includes('would delete'))).toBe(true)
-  })
 
-  it('returns "aborted" when user enters empty input', async () => {
-    const { result } = await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: false,
-        isTty: true,
-        readLine: async () => '',
-        writePrompt: () => {},
-      }),
-    )
-    expect(result).toBe('aborted')
-  })
-
-  it('returns "aborted" for any non-y character (e.g. "q")', async () => {
-    const { result } = await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: false,
-        isTty: true,
-        readLine: async () => 'q',
-        writePrompt: () => {},
-      }),
-    )
-    expect(result).toBe('aborted')
-  })
-
-  it('does not print "would delete" lines when aborted', async () => {
-    const { out } = await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: false,
-        isTty: true,
-        readLine: async () => 'n',
-        writePrompt: () => {},
-      }),
-    )
-    expect(out.every((l) => !l.includes('would delete'))).toBe(true)
+    // Wrapper was already deleted before removeDir was attempted.
+    expect(callOrder).toContain(`file:${WRAPPER}`)
   })
 })
 
-// ─── --yes flag ───────────────────────────────────────────────────────────────
+describe('runUninstall — partial-state: source clone already absent', () => {
+  it('still removes the wrapper when the source clone is already gone', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([WRAPPER]), // clone is absent
+    })
+    const result = await runUninstall(WRAPPER, CLONE, deps)
 
-describe('runUninstall — --yes / -y flag', () => {
-  it('skips the prompt and returns "confirmed" when yes=true', async () => {
-    let readLineCalled = false
-    const promptTexts: string[] = []
-    const { result, out } = await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: true,
-        isTty: true,
-        readLine: async () => {
-          readLineCalled = true
-          return 'n'
-        },
-        writePrompt: (t) => promptTexts.push(t),
-      }),
-    )
-    expect(result).toBe('confirmed')
-    expect(readLineCalled).toBe(false)
-    expect(promptTexts.length).toBe(0)
-    expect(out.some((l) => l.includes('would delete') && l.includes(fakePaths.binPath))).toBe(true)
-    expect(out.some((l) => l.includes('would delete') && l.includes(fakePaths.srcDir))).toBe(true)
+    expect(result.outcome).toBe('source-already-absent')
+    expect(deps.removed).toContain(`file:${WRAPPER}`)
   })
 
-  it('yes=true also works when stdin is not a TTY (non-interactive script use)', async () => {
-    const { result } = await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: true,
-        isTty: false,
-        readLine: async () => '',
-        writePrompt: () => {},
-      }),
+  it('prints "source clone already absent" when clone is missing', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([WRAPPER]),
+    })
+    await runUninstall(WRAPPER, CLONE, deps)
+
+    const mentioned = deps.logged.some((msg) =>
+      /source clone already absent/i.test(msg),
     )
-    expect(result).toBe('confirmed')
+    expect(mentioned).toBe(true)
+  })
+
+  it('exits 0 (no thrown error) when source clone is already absent', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([WRAPPER]),
+    })
+    await expect(runUninstall(WRAPPER, CLONE, deps)).resolves.not.toThrow()
   })
 })
 
-// ─── non-TTY without --yes ────────────────────────────────────────────────────
+describe('runUninstall — partial-state: wrapper already absent', () => {
+  it('still removes the source clone when the wrapper is already gone', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([CLONE]), // wrapper is absent
+    })
+    const result = await runUninstall(WRAPPER, CLONE, deps)
 
-describe('runUninstall — non-TTY stdin without --yes', () => {
-  it('returns "non-tty-aborted" instead of hanging', async () => {
-    let readLineCalled = false
-    const { result } = await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: false,
-        isTty: false,
-        readLine: async () => {
-          readLineCalled = true
-          return 'y'
-        },
-        writePrompt: () => {},
-      }),
-    )
-    expect(result).toBe('non-tty-aborted')
-    expect(readLineCalled).toBe(false)
+    expect(result.outcome).toBe('wrapper-already-absent')
+    expect(deps.removed).toContain(`dir:${CLONE}`)
   })
 
-  it('prints a clear message to stderr when non-TTY and no --yes', async () => {
-    const { err } = await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: false,
-        isTty: false,
-        readLine: async () => '',
-        writePrompt: () => {},
-      }),
-    )
-    expect(err.some((l) => l.toLowerCase().includes('--yes') || l.toLowerCase().includes('-y'))).toBe(true)
-  })
+  it('prints "wrapper already absent" when wrapper is missing', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([CLONE]),
+    })
+    await runUninstall(WRAPPER, CLONE, deps)
 
-  it('does not print "would delete" lines when non-TTY aborted', async () => {
-    const { out } = await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: false,
-        isTty: false,
-        readLine: async () => '',
-        writePrompt: () => {},
-      }),
+    const mentioned = deps.logged.some((msg) =>
+      /wrapper already absent/i.test(msg),
     )
-    expect(out.every((l) => !l.includes('would delete'))).toBe(true)
+    expect(mentioned).toBe(true)
   })
 })
 
-// ─── paths are always displayed ───────────────────────────────────────────────
+describe('runUninstall — no .mars/ directories touched', () => {
+  it('never passes a .mars/ or .worktrees/ path to removeFile or removeDir', async () => {
+    const touched: string[] = []
+    const deps = makeDeps({
+      removeFile: async (p) => {
+        touched.push(p)
+      },
+      removeDir: async (p) => {
+        touched.push(p)
+      },
+    })
+    await runUninstall(WRAPPER, CLONE, deps)
 
-describe('runUninstall — paths display', () => {
-  it('always shows both paths before prompting', async () => {
-    const { out } = await capturing(() =>
-      runUninstall({
-        paths: fakePaths,
-        yes: false,
-        isTty: true,
-        readLine: async () => 'n',
-        writePrompt: () => {},
-      }),
-    )
-    expect(out.some((l) => l.includes(fakePaths.binPath))).toBe(true)
-    expect(out.some((l) => l.includes(fakePaths.srcDir))).toBe(true)
+    for (const p of touched) {
+      expect(p).not.toMatch(/\.(mars|worktrees)/)
+    }
+  })
+})
+
+describe('runUninstall — cancelled', () => {
+  it('returns cancelled outcome when user does not confirm', async () => {
+    const deps = makeDeps({
+      confirm: async () => false,
+    })
+    const result = await runUninstall(WRAPPER, CLONE, deps)
+
+    expect(result.outcome).toBe('cancelled')
+    expect(deps.removed).toHaveLength(0)
   })
 })
