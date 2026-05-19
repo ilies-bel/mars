@@ -18,6 +18,7 @@ import {
   resolveWorkerSystemPrompt,
   shouldWireReadSpanWatcher,
 } from '../implement-workflow'
+import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 import { resolveReadSpanLimit } from '../../lib/read-span-watch'
 
 describe('composePrompt — coder default', () => {
@@ -468,5 +469,47 @@ describe('isDirtyMainAbortError', () => {
   it('DIRTY_MAIN_ABORT_MESSAGE contains the task id', () => {
     const msg = DIRTY_MAIN_ABORT_MESSAGE('mars-test-123')
     expect(msg).toContain('mars-test-123')
+  })
+})
+
+describe('buildCoderSystemPrompt — context-gathering discipline brief', () => {
+  it('coder standing instructions contain the context-gathering discipline brief', () => {
+    const instructions = resolveWorkerSystemPrompt('coder')!
+    expect(instructions).toContain(CONTEXT_GATHERING_BRIEF)
+  })
+
+  it('brief appears after the read-span guard section and before the deviation rules section', () => {
+    const instructions = resolveWorkerSystemPrompt('coder')!
+    const readSpanGuardIdx = instructions.indexOf('## Read-span guard')
+    const briefIdx = instructions.indexOf(CONTEXT_GATHERING_BRIEF)
+    const deviationRulesIdx = instructions.indexOf(DEVIATION_RULES)
+
+    expect(readSpanGuardIdx).toBeGreaterThan(-1)
+    expect(briefIdx).toBeGreaterThan(readSpanGuardIdx)
+    expect(deviationRulesIdx).toBeGreaterThan(briefIdx)
+  })
+
+  it('brief states the one-Explore-per-turn rule', () => {
+    expect(CONTEXT_GATHERING_BRIEF).toMatch(/one.*Explore.*per.turn|at most one Explore/i)
+  })
+
+  it('brief states the no-re-Read-after-Explore rule', () => {
+    expect(CONTEXT_GATHERING_BRIEF).toMatch(/do not Read.*Explore.*already|not.*re.Read.*after.*Explore/i)
+  })
+
+  it('brief states the Edit-intent escape hatch', () => {
+    expect(CONTEXT_GATHERING_BRIEF).toMatch(/Edit/i)
+    expect(CONTEXT_GATHERING_BRIEF).toMatch(/about to Edit|intent.*Edit|Edit.*escape/i)
+  })
+
+  it('brief states the sharper-follow-up guidance', () => {
+    expect(CONTEXT_GATHERING_BRIEF).toMatch(/sharper|follow.up/i)
+    expect(CONTEXT_GATHERING_BRIEF).toMatch(/Explore/i)
+  })
+
+  it('writer standing instructions do NOT contain the context-gathering discipline brief', () => {
+    // Writer is exempt; only Coder and Fixer (which share the Coder path) carry the brief.
+    const writerInstructions = resolveWorkerSystemPrompt('writer')!
+    expect(writerInstructions).not.toContain(CONTEXT_GATHERING_BRIEF)
   })
 })
