@@ -20,7 +20,7 @@ process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_i
 let i = 0;
 const tick = () => {
   if (i >= eventCount) {
-    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', session_id: sessionId, total_cost_usd: 0 }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', session_id: sessionId }) + '\\n');
     process.exit(0);
     return;
   }
