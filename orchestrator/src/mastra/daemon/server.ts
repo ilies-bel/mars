@@ -286,9 +286,7 @@ export const startDaemon = async (
     try {
       const { runTriage } = await import('../workflows/triage-workflow')
       const result = await runTriage(taskId)
-      log(
-        `[triage] ${taskId} -> actionable=${result.actionable} blockers=${result.blockerCount}`,
-      )
+      log(`[triage] ${taskId} -> actionable=${result.actionable}`)
       if (result.actionable) {
         const t = await getTask(taskId)
         if (t?.status === 'queued') {
