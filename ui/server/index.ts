@@ -115,6 +115,15 @@ export const startServer = async (
         }
       }
 
+      if (path === '/api/progress') {
+        try {
+          const tasks = await db.listProgressTasks()
+          return jsonResponse(200, { tasks })
+        } catch (err) {
+          return jsonResponse(500, { error: (err as Error).message })
+        }
+      }
+
       if (path.startsWith('/api/tasks/')) {
         const id = decodeURIComponent(path.slice('/api/tasks/'.length))
         if (!id) {

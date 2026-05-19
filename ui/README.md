@@ -1,6 +1,6 @@
 # @mars/ui
 
-Read-only Kanban viewer for the Mars orchestrator queue. Standalone Vite SPA + a
+Read-only Progress viewer for the Mars orchestrator queue. Standalone Vite SPA + a
 tiny Node daemon that reads `<repo>/.mars/queue.db` directly. No coupling to the
 orchestrator process — the contract is the SQLite schema.
 

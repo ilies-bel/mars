@@ -44,7 +44,7 @@ just `mkdir -p ui/src/entities/task`). The `@/*` alias **does** exist
 - `src/components/Column.tsx` — **not in the move list but it is an
   importer**. Has `import { TaskCard } from './TaskCard'` and
   `import type { UITask } from '@/lib/types'`. Both must be rewritten.
-- `src/pages/KanbanPage.tsx` — `import { useTasks } from '@/hooks/useTasks'`.
+- `src/pages/ProgressPage.tsx` — `import { useTasks } from '@/hooks/useTasks'`.
   (Its `import { Column } from '@/components/Column'` stays — Column does
   not move.)
 - `src/pages/AgentsPage.tsx` — **red herring; needs no change.** It imports
@@ -147,7 +147,7 @@ This is filed as a Mars idea (see below) — do not block on it.
 5. Rewrite external importers:
    - `Column.tsx`: `from './TaskCard'` → `from '@/entities/task/TaskCard'`;
      `from '@/lib/types'` → `from '@/entities/task/types'`.
-   - `KanbanPage.tsx`: `from '@/hooks/useTasks'` →
+   - `ProgressPage.tsx`: `from '@/hooks/useTasks'` →
      `from '@/entities/task/useTasks'`.
 6. Trim `lib/types.ts`: drop `ColumnKey`, `Role`, `UITask`, `Snapshot`
    definitions and the `TaskStatus`/`Task` entries from the re-export
@@ -165,5 +165,5 @@ This is filed as a Mars idea (see below) — do not block on it.
 
 ## Net effect
 
-Kanban view is visually identical (no behavioural code touched, only
+Progress view is visually identical (no behavioural code touched, only
 module locations + import specifiers). `ui/` stays buildable.
