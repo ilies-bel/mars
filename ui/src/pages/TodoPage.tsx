@@ -37,10 +37,10 @@ const AlertRow = ({ item, active, onSelect, onDismiss }: AlertRowProps) => {
   return (
     <li className={baseClass} onClick={onSelect}>
       <div className="flex items-baseline gap-2">
-        <span className="break-all font-mono text-[10px] uppercase text-iron">
+        <span className="break-all font-mono text-[13px] text-fg">
           {w.taskId}
         </span>
-        <span className="ml-auto shrink-0 font-mono text-[9px] uppercase text-iron/80">
+        <span className="ml-auto shrink-0 font-mono text-[10px] uppercase text-iron/80">
           {formatRelativeAgeFromHours(w.ageHours)}
         </span>
       </div>
