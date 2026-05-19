@@ -168,7 +168,7 @@ A named, declarative pipeline of typed TypeScript steps composed via the in-hous
 _Avoid_: named pipeline, workflow definition, pipeline, Mastra workflow
 
 **Workflow instance**:
-A single execution of a Workflow. In v1 a Workflow instance is one-to-one with a Task: the moment a Task is dispatched, the orchestrator resolves its tag plus task type to exactly one Workflow id and records it on the Task, and from that point on Task and Workflow instance are the same thing. The instance carries durable per-step state (last completed step, step input/output payloads, child-logger lineage) so a crashed Task can resume from the last completed step on retry.
+A single execution of a Workflow against an origin row — a Task in the task-scoped case (Coder, Writer, Fixer, plus setup/verify/merge/recovery) or a Proposal in the proposal-scoped case (Planner, Slicer, Triager). The origin row's id is the Workflow instance's identity; the orchestrator resolves tag plus task type to exactly one Workflow id and records it on the origin row at dispatch. The instance carries durable per-step state (last completed step, step input/output payloads, child-logger lineage) so a crash resumes from the last completed step on retry.
 _Avoid_: workflow run, run, task run, workflow execution
 
 **Precondition (fix-task)**:
