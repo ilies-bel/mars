@@ -202,6 +202,38 @@ describe('matchFull rules are checked against full output', () => {
     ].join('\n')
     expect(classifyError(gitOnlyError)).toBe('not-fast-forward')
   })
+
+  it('computeFailureSignature produces verify:test/test-libsql-no-such-table for the real libsql concurrent-transaction error shape', () => {
+    // The actual error captured when two concurrent publishWithRetry() calls race
+    // against a libsql client backed by ':memory:'. The second transaction gets a
+    // fresh empty in-memory DB (libsql sets this.#db = null after each transaction
+    // call), so it sees no schema. The distinguishing signal ("no such table:") is
+    // buried in the body after the vitest test-runner preamble — hence matchFull.
+    const errorOutput = [
+      ' × src/bus/__tests__/publisher.test.ts > publishWithRetry > two concurrent publishWithRetry calls both commit',
+      '   → SQLITE_ERROR: no such table: events',
+      '',
+      ' FAIL  src/bus/__tests__/publisher.test.ts > publishWithRetry > ...',
+      'LibsqlError: SQLITE_ERROR: no such table: events',
+      ' ❯ mapSqliteError node_modules/.pnpm/@libsql+client@0.17.3/...',
+      'Caused by: SqliteError: no such table: events',
+    ].join('\n')
+    expect(computeFailureSignature('verify:test', errorOutput)).toBe(
+      'verify:test/test-libsql-no-such-table',
+    )
+  })
+
+  it('test-libsql-no-such-table does not interfere with AssertionError classification', () => {
+    // An AssertionError that happens to contain "no such table" text should still
+    // classify as test-assertion-error (AssertionError rule comes first in the list).
+    const assertionWithTableText = [
+      'AssertionError: expected events table to have 2 rows but found no such table: events',
+    ].join('\n')
+    // test-assertion-error fires because AssertionError: appears in the body;
+    // since test-assertion-error is listed before test-libsql-no-such-table in
+    // errorClassRules, it takes priority.
+    expect(classifyError(assertionWithTableText)).toBe('test-assertion-error')
+  })
 })
 
 describe('errorClassRules registry', () => {
