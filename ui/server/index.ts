@@ -83,10 +83,12 @@ export const startServer = async (
 
   const distDir = args.distDir ? resolve(args.distDir) : undefined
 
-  const server = Bun.serve({
-    port: args.port,
-    hostname: args.host,
-    async fetch(req): Promise<Response> {
+  let server: ReturnType<typeof Bun.serve>
+  try {
+    server = Bun.serve({
+      port: args.port,
+      hostname: args.host,
+      async fetch(req): Promise<Response> {
       const url = new URL(req.url)
       const path = url.pathname
 
@@ -241,6 +243,35 @@ export const startServer = async (
       })
     },
   })
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'EADDRINUSE') {
+      const baseUrl = `http://${args.host}:${args.port}`
+      let isOurServer = false
+      try {
+        const resp = await fetch(`${baseUrl}/healthz`, {
+          signal: AbortSignal.timeout(500),
+        })
+        if (resp.ok) {
+          const body = (await resp.json()) as { ok?: boolean }
+          isOurServer = body.ok === true
+        }
+      } catch {
+        // probe failed — not mars-ui or not responding
+      }
+      if (isOurServer) {
+        console.log(
+          `mars-ui: already running at ${baseUrl} — use \`mars ui stop\` to replace it`,
+        )
+        process.exit(0)
+      }
+      console.error(
+        `mars-ui: port ${args.port} is in use by another process — pass --port <n> or stop it first`,
+      )
+      process.exit(1)
+    }
+    throw err
+  }
 
   const url = `http://${server.hostname}:${server.port}`
   console.log(`mars-ui  repo=${ctx.repoRoot}`)

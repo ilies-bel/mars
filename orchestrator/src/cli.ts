@@ -875,6 +875,7 @@ const main = async (): Promise<void> => {
       repo,
       port: flags['--port'],
       host: flags['--host'],
+      dev: rest.includes('--dev'),
     })
     return
   }
