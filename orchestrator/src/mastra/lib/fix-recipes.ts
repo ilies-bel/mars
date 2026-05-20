@@ -647,6 +647,118 @@ const typecheckCannotFindNameRecipe: FixRecipe = {
   },
 }
 
+const testLibsqlNoSuchTableRecipe: FixRecipe = {
+  signature: 'verify:test/test-libsql-no-such-table',
+  title: () =>
+    `Fix libsql concurrent-transaction test failure (no such table — switch to file-based DB)`,
+  buildPrompt: (ctx) => {
+    const integration = ctx.integrationBranch ?? 'main'
+    const countCmd = `git rev-list --count ${integration}..HEAD`
+    const sanitizedBranch = ctx.targetBranch.replace(/[^a-zA-Z0-9-]/g, '-')
+    const patchFile = `/tmp/recover-${sanitizedBranch}.patch`
+    const failureOutput =
+      ctx.statusOutput.length > 0
+        ? ctx.statusOutput
+        : '(no test output captured)'
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `The previous attempt on branch ${ctx.targetBranch} failed the verify:test step with a "no such table" SQLite error. The root cause is a known incompatibility between \`@libsql/client\`'s in-memory URL (\`':memory:'\`) and concurrent write transactions.`,
+      '',
+      `## Root cause`,
+      '',
+      `When \`client.transaction('write')\` is called on a libsql client backed by \`:memory:\`, the implementation detaches the current connection (\`this.#db = null\`) and lazily creates a NEW empty in-memory SQLite database the next time a connection is needed. Two concurrent calls to \`client.transaction('write')\` therefore each get a different in-memory database — the second one has no schema (no tables), producing "no such table: <name>" even though \`beforeEach\` correctly created the table on the first connection.`,
+      '',
+      `## Fix`,
+      '',
+      `Replace the in-memory URL with a temp file-based URL so that all connections (direct \`execute\` calls AND transaction connections) share the same on-disk SQLite database. A temp directory is created per test, cleaned up in \`afterEach\`, and behaves identically to an in-memory database from a test-isolation perspective.`,
+      '',
+      `Pattern to change in the failing test file:`,
+      '',
+      '```typescript',
+      `// BEFORE (broken for concurrent transactions)`,
+      `const client = createClient({ url: ':memory:' })`,
+      '',
+      `// AFTER — use a temp file so all connections share the same database`,
+      `import { mkdtempSync, rmSync } from 'node:fs'`,
+      `import { tmpdir } from 'node:os'`,
+      `import { join } from 'node:path'`,
+      '',
+      `const dir = mkdtempSync(join(tmpdir(), 'test-'))`,
+      `const dbPath = join(dir, 'events.db')`,
+      `const client = createClient({ url: \`file:\${dbPath}\` })`,
+      '```',
+      '',
+      `Also update the \`afterEach\` / cleanup to remove the temp directory:`,
+      '',
+      '```typescript',
+      `afterEach(() => {`,
+      `  client.close()`,
+      `  rmSync(dir, { recursive: true, force: true })`,
+      `})`,
+      '```',
+      '',
+      `You are running in a FRESH recovery worktree on a FRESH branch (not ${ctx.targetBranch}). Your job is to leave a commit HERE — in your own cwd, on your own branch. Do NOT \`cd\` into ${ctx.targetPath} and do NOT edit files there: that is the failing tree, inspect it read-only only.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `STEP 1 — sanity-check first. From your current working directory, run \`${countCmd}\` to count commits on your recovery branch not yet on ${integration}. The output is a plain integer.`,
+      ` - If it prints a non-zero integer, your recovery branch already has commits: this is a false positive — do NOT modify files, exit successfully.`,
+      ` - If it prints \`0\`, your branch is genuinely empty: proceed to STEP 2.`,
+      '',
+      `Do not use \`git log\` or any other command to make this decision — only the integer from \`rev-list --count\` is authoritative.`,
+      '',
+      `STEP 2 — Lift the failing worktree's diff into YOUR recovery worktree. Only enter this step when \`${countCmd}\` printed \`0\`.`,
+      '',
+      `Inspect what the previous agent did (read-only against the failing worktree):`,
+      '',
+      '```',
+      `git -C ${ctx.targetPath} diff ${integration}..HEAD --stat`,
+      `git -C ${ctx.targetPath} diff ${integration}..HEAD`,
+      '```',
+      '',
+      ` 1. Capture: \`git -C ${ctx.targetPath} diff ${integration}..HEAD > ${patchFile}\``,
+      ` 2. Apply: \`git apply --3way ${patchFile}\` (resolve any \`.rej\` files by hand if needed).`,
+      ` 3. **Commit immediately**: \`git add -A && git commit -m "recover: lift diff from ${ctx.targetBranch}"\`. Do this BEFORE running tests or fixing anything.`,
+      ` 4. Re-run \`${countCmd}\`. It MUST now print a non-zero integer. If it still prints \`0\`, fix that before anything else.`,
+      '',
+      `STEP 3 — Apply the fix. Find every test file in the lifted diff that opens a libsql client with \`url: ':memory:'\` and replace each with a temp file URL as shown in the ## Fix section above. The fix is typically a one-file change to the test helper or \`beforeEach\` setup. Also add \`rmSync(dir, { recursive: true, force: true })\` to the \`afterEach\` cleanup.`,
+      '',
+      `STEP 4 — Run the failing test(s) to confirm they now pass:`,
+      '',
+      '```',
+      `cd orchestrator && npm test`,
+      '```',
+      '',
+      `STEP 5 — Commit the fix: \`git add -A && git commit -m "fix: use temp file-based DB in tests to fix concurrent libsql transaction failures"\``,
+      '',
+      `## Important constraints`,
+      ` - The in-memory URL (\`:memory:\`) must be replaced with a file URL — do NOT add WAL PRAGMA calls or other workarounds.`,
+      ` - Make sure the temp directory is removed in \`afterEach\` / \`after\` to avoid leaving garbage in \`/tmp\`.`,
+      ` - Do NOT change production code (e.g. \`publisher.ts\` or any non-test file) — the bug is in the test setup only.`,
+      ` - If the diff is empty or the root cause is not an in-memory libsql client, raise a high-priority inbox item via \`mars inbox raise --from -\` explaining what you found, then exit.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (for context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only — \`git -C ${ctx.targetPath} ...\` for inspection only, never edit there): ${ctx.targetPath}`,
+      `Integration branch: ${integration}`,
+      '',
+      'Captured test failure output (use this to identify the exact test file):',
+      '```',
+      failureOutput,
+      '```',
+      '',
+      `Save your work. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 // NOTE — intentionally absent entries (documented so future investigators don't
 // re-open these):
 //
@@ -728,6 +840,7 @@ const recipeList: readonly FixRecipe[] = [
   typecheckExcessPropertyRecipe,
   typecheckCannotFindNameRecipe,
   testAssertionErrorRecipe,
+  testLibsqlNoSuchTableRecipe,
 ]
 
 /**
