@@ -9,6 +9,7 @@ interface LaunchOptions {
   repo?: string
   port?: string
   host?: string
+  dev?: boolean
 }
 
 export interface UiPidEntry {
@@ -70,6 +71,7 @@ export const launchUi = (opts: LaunchOptions): void => {
   if (opts.repo) args.push('--repo', opts.repo)
   if (opts.port) args.push('--port', opts.port)
   if (opts.host) args.push('--host', opts.host)
+  if (opts.dev) args.push('--dev')
 
   const child = spawn(process.execPath, [launcher, ...args], {
     stdio: 'inherit',
