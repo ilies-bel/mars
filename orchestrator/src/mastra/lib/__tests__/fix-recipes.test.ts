@@ -411,6 +411,108 @@ describe('fix-recipes', () => {
     })
   })
 
+  describe('verify:test/test-libsql-no-such-table recipe', () => {
+    const ctx = {
+      targetPath: '/tmp/worktrees/task-mars-9a654a2e',
+      statusOutput: [
+        ' × src/bus/__tests__/publisher.test.ts > publishWithRetry > two concurrent publishWithRetry calls both commit',
+        'LibsqlError: SQLITE_ERROR: no such table: events',
+        'Caused by: SqliteError: no such table: events',
+      ].join('\n'),
+      targetBranch: 'task/mars-9a654a2e',
+      integrationBranch: 'main',
+      originalPrompt: '',
+    }
+
+    it('produces a stable title', () => {
+      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
+      expect(recipe.title(ctx)).toBe(
+        'Fix libsql concurrent-transaction test failure (no such table — switch to file-based DB)',
+      )
+    })
+
+    it('embeds the failing path, branch, integration branch, and captured failure output', () => {
+      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(ctx.targetPath)
+      expect(prompt).toContain(ctx.targetBranch)
+      expect(prompt).toContain(ctx.integrationBranch)
+      expect(prompt).toContain('no such table: events')
+      expect(prompt).toContain('Save your work')
+    })
+
+    it('explains the root cause: libsql detaches the connection on each transaction call', () => {
+      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/this\.#db = null/i)
+      expect(prompt).toMatch(/in-memory/i)
+      expect(prompt).toMatch(/:memory:/i)
+    })
+
+    it('instructs the agent to replace :memory: with a temp file URL', () => {
+      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(`createClient({ url: ':memory:' })`)
+      expect(prompt).toContain('file:${dbPath}')
+      expect(prompt).toContain('mkdtempSync')
+      expect(prompt).toContain('rmSync')
+    })
+
+    it('instructs the recovery agent to lift the diff from the failing worktree using git -C', () => {
+      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(`git -C ${ctx.targetPath} diff`)
+      expect(prompt).toMatch(/never edit there/i)
+      expect(prompt).toMatch(/FRESH recovery worktree/i)
+    })
+
+    it('gates the false-positive escape hatch on a non-zero rev-list count', () => {
+      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('git rev-list --count main..HEAD')
+      const exitLine = prompt
+        .split('\n')
+        .find((line) => /exit successfully/i.test(line))
+      expect(exitLine).toBeDefined()
+      expect(exitLine).toMatch(/non-zero/i)
+    })
+
+    it('falls back to `main` when integrationBranch is absent', () => {
+      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
+      const prompt = recipe.buildPrompt({
+        targetPath: ctx.targetPath,
+        statusOutput: ctx.statusOutput,
+        targetBranch: ctx.targetBranch,
+        originalPrompt: '',
+      })
+      expect(prompt).toContain('git rev-list --count main..HEAD')
+    })
+
+    it('instructs the agent NOT to change production code', () => {
+      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/do not change production code/i)
+    })
+
+    it('inlines the original task prompt when provided', () => {
+      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
+      const promptWithSource = recipe.buildPrompt({
+        ...ctx,
+        originalPrompt:
+          'add publishWithRetry helper in src/bus/publisher.ts with concurrent-writers test',
+      })
+      expect(promptWithSource).toContain(
+        'add publishWithRetry helper in src/bus/publisher.ts with concurrent-writers test',
+      )
+      expect(promptWithSource).toMatch(/inlined/i)
+      const promptWithout = recipe.buildPrompt(ctx)
+      expect(promptWithout).not.toContain(
+        'add publishWithRetry helper in src/bus/publisher.ts with concurrent-writers test',
+      )
+      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
+    })
+  })
+
   describe('getRecipe', () => {
     it('throws on unknown signature', () => {
       expect(() => getRecipe('does_not_exist')).toThrow(

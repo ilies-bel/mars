@@ -175,6 +175,20 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /AssertionError:/,
   },
   {
+    // verify:test/test-libsql-no-such-table fires when a test opens a libsql
+    // client with an in-memory URL (`createClient({ url: ':memory:' })`),
+    // creates a schema via `client.execute()`, then starts concurrent write
+    // transactions with `client.transaction('write')`. The libsql sqlite3
+    // backend detaches the active connection after each transaction call
+    // (`this.#db = null`) and lazily creates a NEW empty in-memory SQLite
+    // database on the next call — so the second concurrent transaction runs
+    // against a fresh database that has no schema, producing "no such table".
+    // Fix: replace the in-memory URL with a temp file-based path in the test
+    // setup so all connections share the same on-disk database.
+    errorClass: 'test-libsql-no-such-table',
+    matchFull: /no such table:/i,
+  },
+  {
     // merge:preflight/template-leakage fires when a task branch edits a path
     // under orchestrator/src/init/templates/. The preflight categorically
     // blocks ALL orchestrator edits to that subtree — humans edit it directly
