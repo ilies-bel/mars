@@ -89,6 +89,17 @@ describe('deriveReproCommand', () => {
       expect(cmd).toBe(`cd ${worktree} && npx vitest run`)
     })
 
+    it('prefers pnpm over yarn when both lockfiles are present', () => {
+      writeFileSync(
+        resolve(worktree, 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } }),
+      )
+      writeFileSync(resolve(worktree, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n')
+      writeFileSync(resolve(worktree, 'yarn.lock'), '# yarn lockfile v1\n')
+      const cmd = deriveReproCommand('verify:test', worktree)
+      expect(cmd).toBe(`cd ${worktree} && pnpm test`)
+    })
+
     it('falls back to `npx vitest run` when package.json has no test script', () => {
       writeFileSync(
         resolve(worktree, 'package.json'),
