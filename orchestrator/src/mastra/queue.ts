@@ -13,6 +13,7 @@ export type TaskStatus =
   | 'running'
   | 'verifying'
   | 'merging'
+  | 'vega-reconciling'
   | 'done'
   | 'failed'
   | 'dropped'
@@ -32,6 +33,7 @@ export const NON_DISPATCHABLE_STATUSES: readonly TaskStatus[] = [
   'running',
   'verifying',
   'merging',
+  'vega-reconciling',
   'done',
   'failed',
   'dropped',
