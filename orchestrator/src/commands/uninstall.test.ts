@@ -16,9 +16,10 @@ import type { UninstallDeps } from './uninstall.js'
 /** Build an UninstallDeps where both paths exist and confirm returns true. */
 function makeDeps(
   overrides: Partial<UninstallDeps> & { existingPaths?: Set<string> } = {},
-): UninstallDeps & { removed: string[]; logged: string[] } {
+): UninstallDeps & { removed: string[]; logged: string[]; pluginDeactivations: number } {
   const removed: string[] = []
   const logged: string[] = []
+  let pluginDeactivations = 0
   const existingPaths: Set<string> =
     overrides.existingPaths ??
     new Set(['/home/user/.local/bin/mars', '/home/user/mars-framework'])
@@ -26,6 +27,9 @@ function makeDeps(
   return {
     removed,
     logged,
+    get pluginDeactivations() {
+      return pluginDeactivations
+    },
     exists: overrides.exists ?? ((p) => existingPaths.has(p)),
     removeFile:
       overrides.removeFile ??
@@ -42,6 +46,11 @@ function makeDeps(
       overrides.log ??
       ((msg) => {
         logged.push(msg)
+      }),
+    deactivateClaudePlugin:
+      overrides.deactivateClaudePlugin ??
+      (() => {
+        pluginDeactivations++
       }),
   }
 }
@@ -95,6 +104,37 @@ describe('runUninstall — full success', () => {
       /shell\s+rc|\.bashrc|\.zshrc|PATH/i.test(msg),
     )
     expect(reminder).toBe(true)
+  })
+})
+
+describe('runUninstall — plugin deactivation', () => {
+  it('deactivates the Claude Code plugin on confirmed uninstall', async () => {
+    const deps = makeDeps()
+    await runUninstall(WRAPPER, CLONE, deps)
+
+    expect(deps.pluginDeactivations).toBe(1)
+  })
+
+  it('deactivates the plugin before removing the clone dir so plugin.json is still readable', async () => {
+    const callOrder: string[] = []
+    const deps = makeDeps({
+      deactivateClaudePlugin: () => {
+        callOrder.push('deactivate')
+      },
+      removeDir: async (_p) => {
+        callOrder.push('removeDir')
+      },
+    })
+    await runUninstall(WRAPPER, CLONE, deps)
+
+    expect(callOrder.indexOf('deactivate')).toBeLessThan(callOrder.indexOf('removeDir'))
+  })
+
+  it('does not deactivate the plugin when the user cancels', async () => {
+    const deps = makeDeps({ confirm: async () => false })
+    await runUninstall(WRAPPER, CLONE, deps)
+
+    expect(deps.pluginDeactivations).toBe(0)
   })
 })
 

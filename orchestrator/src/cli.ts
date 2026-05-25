@@ -3321,9 +3321,15 @@ const main = async (): Promise<void> => {
     const { existsSync } = await import('node:fs')
     const { rm } = await import('node:fs/promises')
     const { createInterface } = await import('node:readline')
+    const { homedir } = await import('node:os')
+    const { join: pathJoin } = await import('node:path')
     const { findWrapperFor, resolveUninstallPaths, runUninstall } = await import(
       './commands/uninstall.js'
     )
+    const { deactivatePlugin, realDeps: pluginDeps } = await import(
+      './commands/claude-plugin.js'
+    )
+    const userSettingsPath = pathJoin(homedir(), '.claude', 'settings.json')
 
     const yes = rest.includes('--yes') || rest.includes('-y')
     const isTty = Boolean(process.stdin.isTTY)
@@ -3379,6 +3385,7 @@ const main = async (): Promise<void> => {
         removeDir: (p) => rm(p, { recursive: true, force: true }),
         confirm,
         log: (msg) => console.log(msg),
+        deactivateClaudePlugin: () => deactivatePlugin(userSettingsPath, pluginDeps),
       })
 
       if (result.outcome === 'cancelled') {
@@ -3388,6 +3395,45 @@ const main = async (): Promise<void> => {
       rl?.close()
     }
     return
+  }
+
+  // -------------------------------------------------------------------------
+  // plugin activate <path>
+  // plugin deactivate
+  //
+  // Register or deregister the Mars Claude Code plugin in the user-level
+  // ~/.claude/settings.json.  Called by install-dev.sh after creating the
+  // wrapper and by `mars uninstall` before removing the clone directory.
+  // -------------------------------------------------------------------------
+  if (cmd === 'plugin') {
+    const subCmd = rest[0]
+    const { homedir } = await import('node:os')
+    const { join: pathJoin } = await import('node:path')
+    const { activatePlugin, deactivatePlugin, realDeps } = await import(
+      './commands/claude-plugin.js'
+    )
+    const userSettingsPath = pathJoin(homedir(), '.claude', 'settings.json')
+
+    if (subCmd === 'activate') {
+      const pluginDir = rest[1]
+      if (!pluginDir) {
+        console.error('usage: mars plugin activate <plugin-dir>')
+        process.exit(1)
+      }
+      activatePlugin(pluginDir, userSettingsPath, realDeps)
+      console.log(`mars: Claude Code plugin activated at ${pluginDir}`)
+      return
+    }
+
+    if (subCmd === 'deactivate') {
+      deactivatePlugin(userSettingsPath, realDeps)
+      console.log('mars: Claude Code plugin deactivated')
+      return
+    }
+
+    console.error(`mars plugin: unknown subcommand '${subCmd ?? ''}'`)
+    console.error('usage: mars plugin activate <path> | mars plugin deactivate')
+    process.exit(1)
   }
 
   console.error(`unknown command: ${cmd}`)

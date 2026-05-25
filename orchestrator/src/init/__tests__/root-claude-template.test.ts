@@ -14,6 +14,7 @@
  */
 
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -135,5 +136,16 @@ describe('mars init: root CLAUDE.md template', () => {
     const written = readFileSync(resolve(root, 'CLAUDE.md'))
     const bundled = readFileSync(BUNDLED_TEMPLATE_PATH)
     expect(written.equals(bundled)).toBe(true)
+  })
+
+  it('does not write any .claude/ files into the consumer repo (plugin delivers those)', () => {
+    // The .claude/ config tree (skills, agents, hooks, settings) is now
+    // delivered via the Claude Code plugin registered at install time.
+    // mars init MUST NOT write any files under .claude/ so the consumer's
+    // repository config stays clean and is not overwritten on update.
+    scaffoldClaudeConfig({ repoRoot: root })
+
+    const claudeDir = resolve(root, '.claude')
+    expect(existsSync(claudeDir)).toBe(false)
   })
 })

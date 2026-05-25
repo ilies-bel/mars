@@ -112,6 +112,12 @@ export interface UninstallDeps {
   confirm: () => Promise<boolean>
   /** Emit a human-readable line of output. */
   log: (msg: string) => void
+  /**
+   * Remove the Mars Claude Code plugin entry from ~/.claude/settings.json.
+   * Called before the clone directory is deleted so plugin.json is still
+   * readable when identifying the plugin entry.
+   */
+  deactivateClaudePlugin: () => void
 }
 
 export type UninstallOutcome =
@@ -143,6 +149,11 @@ export async function runUninstall(
   if (!confirmed) {
     return { outcome: 'cancelled' }
   }
+
+  // Deactivate the Claude Code plugin BEFORE removing the clone directory so
+  // that plugin.json is still readable when identifying the entry in
+  // ~/.claude/settings.json.
+  deps.deactivateClaudePlugin()
 
   const wrapperExists = deps.exists(wrapperPath)
   const cloneExists = deps.exists(cloneDir)
