@@ -32,7 +32,7 @@ const STALE_TABLE_RE = /no such table:\s*(ideas|proposals)\b/i
 export const STALE_DAEMON_HINT =
   'orchestrator daemon appears to be running stale code ' +
   '(the running daemon and the on-disk source disagree about the proposals/ideas table). ' +
-  'Restart the daemon: `mars daemon stop && mars daemon start --detach`, then retry.'
+  'Restart the daemon: `mars daemon restart`, then retry.'
 
 /**
  * Rewrite a raw daemon-returned error string so a stale-table SQLite failure
