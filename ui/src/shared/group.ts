@@ -12,6 +12,7 @@ const roleFromTask = (t: Task): Role => {
     case 'verifying':
       return 'reviewer'
     case 'merging':
+    case 'vega-reconciling':
       return 'orchestrator'
     case 'draft':
     case 'queued':
@@ -34,6 +35,7 @@ const columnFor = (t: Task): ColumnKey | null => {
     case 'running':
     case 'verifying':
     case 'merging':
+    case 'vega-reconciling':
     case 'blocked':
       return 'in_progress'
     case 'done':
