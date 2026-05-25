@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import type { Mock } from 'bun:test'
-import { fetchAgents, fetchInbox, fetchTasks, fetchTodo } from './api'
+import { fetchAgents, fetchTasks, fetchTodo } from './api'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -167,47 +167,6 @@ describe('fetchAgents', () => {
   it('throws when agent entry is missing required fields', async () => {
     fetchSpy.mockResolvedValue(json({ agents: [{ name: 'Coder' }] }))
     await expect(fetchAgents()).rejects.toThrow('schema validation')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// fetchInbox
-// ---------------------------------------------------------------------------
-
-describe('fetchInbox', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let fetchSpy: Mock<any>
-
-  beforeEach(() => {
-    fetchSpy = spyOn(globalThis, 'fetch')
-  })
-
-  afterEach(() => {
-    fetchSpy.mockRestore()
-  })
-
-  it('returns typed inbox payload on a valid response', async () => {
-    const payload = { drafts: [minDraft()], blocked: [], failed: [] }
-    fetchSpy.mockResolvedValue(json(payload))
-    const result = await fetchInbox()
-    expect(result.drafts).toHaveLength(1)
-    expect(result.drafts[0].id).toBe('idea-1')
-    expect(result.blocked).toEqual([])
-    expect(result.failed).toEqual([])
-  })
-
-  it('returns an empty inbox when all groups are empty', async () => {
-    fetchSpy.mockResolvedValue(json({ drafts: [], blocked: [], failed: [] }))
-    const result = await fetchInbox()
-    expect(result.drafts).toEqual([])
-    expect(result.blocked).toEqual([])
-    expect(result.failed).toEqual([])
-  })
-
-  it('throws when the inbox payload is missing a required group', async () => {
-    // `failed` group absent — schema should reject this
-    fetchSpy.mockResolvedValue(json({ drafts: [], blocked: [] }))
-    await expect(fetchInbox()).rejects.toThrow('schema validation')
   })
 })
 

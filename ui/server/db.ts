@@ -397,12 +397,78 @@ export class StateDb {
     }
   }
 
+  /**
+   * Read operator inbox dismissals as a set of `"<entityKind>:<entityId>"`
+   * keys. The derived inbox uses this to hide rows the operator has chosen
+   * to suppress. Tolerates a missing table (fresh repo) by returning empty.
+   */
+  async listInboxDismissals(): Promise<Set<string>> {
+    try {
+      const r = await this.client.execute(
+        `SELECT entity_kind, entity_id FROM inbox_dismissals`,
+      )
+      return new Set(
+        r.rows.map((row) => {
+          const r0 = row as unknown as {
+            entity_kind: string
+            entity_id: string
+          }
+          return `${r0.entity_kind}:${r0.entity_id}`
+        }),
+      )
+    } catch {
+      return new Set()
+    }
+  }
+
   async dismissDraftFeature(id: string): Promise<void> {
     const exists = await this.proposalsTableExists()
     if (!exists) return
     await this.client.execute({
       sql: `UPDATE proposals SET status = 'dismissed', updated_at = ? WHERE id = ? AND status = 'draft'`,
       args: [Date.now(), id],
+    })
+  }
+
+  private async ensureInboxDismissalsTable(): Promise<void> {
+    await this.client.execute(`
+      CREATE TABLE IF NOT EXISTS inbox_dismissals (
+        entity_kind  TEXT NOT NULL,
+        entity_id    TEXT NOT NULL,
+        dismissed_at TEXT NOT NULL,
+        dismissed_by TEXT,
+        note         TEXT,
+        PRIMARY KEY (entity_kind, entity_id)
+      )
+    `)
+  }
+
+  /**
+   * Dismiss a derived-inbox row: persist a `(entityKind, entityId)` row so the
+   * derived view hides it until the entity's state changes (which clears the
+   * dismissal via the orchestrator's `updateTask` hook).
+   */
+  async dismissInboxEntity(
+    entityKind: 'task' | 'worktree' | 'proposal',
+    entityId: string,
+  ): Promise<void> {
+    await this.ensureInboxDismissalsTable()
+    await this.client.execute({
+      sql: `INSERT INTO inbox_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by)
+            VALUES (?, ?, ?, 'ui')
+            ON CONFLICT(entity_kind, entity_id) DO UPDATE SET dismissed_at = excluded.dismissed_at`,
+      args: [entityKind, entityId, new Date().toISOString()],
+    })
+  }
+
+  async undismissInboxEntity(
+    entityKind: 'task' | 'worktree' | 'proposal',
+    entityId: string,
+  ): Promise<void> {
+    await this.ensureInboxDismissalsTable()
+    await this.client.execute({
+      sql: `DELETE FROM inbox_dismissals WHERE entity_kind = ? AND entity_id = ?`,
+      args: [entityKind, entityId],
     })
   }
 
@@ -459,54 +525,6 @@ export class StateDb {
           branch: typeof pld.branch === 'string' ? pld.branch : null,
           blockerTaskId: null,
         }]
-      })
-    } catch {
-      // inbox_items table may not exist yet on a fresh repo.
-      return []
-    }
-  }
-
-  /**
-   * Read all non-terminal (`open` or `acknowledged`) rows from `inbox_items`
-   * ordered by `raised_at DESC` — the same ordering `mars inbox list` uses.
-   *
-   * Returns an empty array when the table does not yet exist (fresh repo before
-   * any daemon has ever run).
-   */
-  async listOpenInboxItems(): Promise<
-    Array<{
-      id: string
-      kind: string
-      title: string
-      body: string
-      raisedAt: string
-      lastSeenAt: string
-      seenCount: number
-      priority: string
-    }>
-  > {
-    try {
-      const r = await this.client.execute(
-        `SELECT id, kind, title, body, priority, raised_at, last_seen_at, seen_count
-           FROM inbox_items
-          WHERE state IN ('open', 'acknowledged')
-          ORDER BY raised_at DESC`,
-      )
-      return r.rows.map((row) => {
-        const r0 = row as unknown as Record<string, unknown>
-        return {
-          id: r0.id as string,
-          kind: (r0.kind as string | null) ?? 'failed',
-          title: (r0.title as string | null) ?? '',
-          body: (r0.body as string | null) ?? '',
-          priority: (r0.priority as string | null) ?? 'normal',
-          raisedAt: (r0.raised_at as string | null) ?? '',
-          lastSeenAt:
-            (r0.last_seen_at as string | null) ??
-            (r0.raised_at as string | null) ??
-            '',
-          seenCount: Number(r0.seen_count ?? 1),
-        }
       })
     } catch {
       // inbox_items table may not exist yet on a fresh repo.
