@@ -111,13 +111,15 @@ export interface WorkerConfig {
 
 // Public default for the message-cap cascade. Matches the wrapper's
 // DEFAULT_CLAUDE_MAX_MESSAGES so the registry stays consistent with
-// runClaudeCode's per-invocation fallback.
-export const DEFAULT_MAX_MESSAGES = 100
+// runClaudeCode's per-invocation fallback. 0 = unbounded: the 100 default was
+// cutting Coders off mid-implementation. Workers that need a hard ceiling set
+// one explicitly (e.g. Triager=40).
+export const DEFAULT_MAX_MESSAGES = 0
 
 // Resolve a Worker's effective message cap from the three-step cascade:
 //   1. an explicit per-Worker override (number)
 //   2. the MARS_CLAUDE_MAX_MESSAGES environment variable
-//   3. DEFAULT_MAX_MESSAGES (100)
+//   3. DEFAULT_MAX_MESSAGES (0 = unbounded)
 // Non-integer or negative env values are ignored and fall through to the
 // default — this matches resolveClaudeMessageCap inside the dispatch
 // wrapper so the two resolution sites agree.

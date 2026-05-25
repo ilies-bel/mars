@@ -475,11 +475,19 @@ export const claudeStreamArgs = (
   '--system-prompt',
   composeSystemPrompt(options.systemPrompt),
   ...(options.sessionId ? ['--session-id', options.sessionId] : []),
-  '--max-turns',
-  '60',
+  // No --max-turns: the Claude Code CLI runs unbounded turns. The 60-turn cap
+  // was cutting Coders off mid-implementation (they spend 30+ turns exploring
+  // before they edit/commit), producing spurious verify:has-diff/no-commits
+  // failures. Run-length is now bounded only by the per-Worker timeout
+  // (defaultTimeoutMs) and the wall-clock RunOptions.timeoutMs.
 ]
 
-const DEFAULT_CLAUDE_MAX_MESSAGES = 100
+// 0 = no message cap (unbounded). runClaudeCode treats cap<=0 as "capEnabled
+// = false" and never aborts on message count. A Worker that needs a hard
+// ceiling sets one explicitly (e.g. Triager=40); everything else runs to
+// natural completion, bounded only by the wall-clock timeout. The 100 default
+// was cutting Coders off mid-implementation.
+const DEFAULT_CLAUDE_MAX_MESSAGES = 0
 
 // Default search path for the `claude` binary when it is not on the daemon's
 // PATH (e.g. detached / launchd contexts strip everything but a minimal PATH).

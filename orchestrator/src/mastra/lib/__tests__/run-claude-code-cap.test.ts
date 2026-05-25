@@ -56,9 +56,11 @@ describe('runClaudeCode message cap', () => {
     rmSync(stubDir, { recursive: true, force: true })
   })
 
-  it('hits the default 100-message cap and resolves with exit 137', async () => {
+  it('runs uncapped by default (DEFAULT_CLAUDE_MAX_MESSAGES=0) and resolves with exit 0', async () => {
     delete process.env.MARS_CLAUDE_MAX_MESSAGES
-    // 500 assistant events plus the system+result framing — far above 100.
+    // 500 assistant events: with the default now uncapped, the run completes
+    // naturally instead of being SIGKILLed at 100. The 100 default used to cut
+    // Coders off mid-implementation.
     writeStub(stubDir, 500, 'cap-session-default')
 
     const r = await runClaudeCode({
@@ -67,11 +69,9 @@ describe('runClaudeCode message cap', () => {
       timeoutMs: 30_000,
     })
 
-    expect(r.exitCode).toBe(137)
-    expect(r.stderr).toBe(
-      'claude -p hit message cap of 100 (MARS_CLAUDE_MAX_MESSAGES)',
-    )
-    expect(r.conversation.length).toBe(100)
+    expect(r.exitCode).toBe(0)
+    // 1 system + 500 assistant + 1 result, none dropped by a cap.
+    expect(r.conversation.length).toBe(502)
     expect(r.sessionId).toBe('cap-session-default')
   }, 30_000)
 

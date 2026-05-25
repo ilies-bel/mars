@@ -55,9 +55,11 @@ describe('Worker registry', () => {
     expect(getWorker('Writer')).toBe(Workers.Writer)
   })
 
-  it("pins Triager's message cap at 40 (tighter than the global default of 100)", () => {
+  it("pins Triager's message cap at 40 (tighter than the unbounded default)", () => {
     expect(WORKER_CONFIGS.Triager.maxMessages).toBe(40)
-    expect(WORKER_CONFIGS.Coder.maxMessages).toBe(100)
+    // Coder runs uncapped (0 = unbounded) so it can explore + implement +
+    // commit without being cut off mid-run.
+    expect(WORKER_CONFIGS.Coder.maxMessages).toBe(0)
   })
 })
 
@@ -317,9 +319,9 @@ describe('resolveWorkerMaxMessages — explicit → env var → DEFAULT_MAX_MESS
     expect(resolveWorkerMaxMessages()).toBe(77)
   })
 
-  it('falls back to DEFAULT_MAX_MESSAGES (100) when neither override nor env is set', () => {
+  it('falls back to DEFAULT_MAX_MESSAGES (0 = unbounded) when neither override nor env is set', () => {
     expect(resolveWorkerMaxMessages()).toBe(DEFAULT_MAX_MESSAGES)
-    expect(DEFAULT_MAX_MESSAGES).toBe(100)
+    expect(DEFAULT_MAX_MESSAGES).toBe(0)
   })
 
   it('ignores non-integer env values and falls back to the default', () => {
