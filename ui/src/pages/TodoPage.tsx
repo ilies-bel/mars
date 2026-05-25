@@ -1,653 +1,185 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
-import { useTodo } from '@/entities/todo/useTodo'
-import { dismissTodoItem, type StaleWorktree, type TodoPayload } from '@/shared/api'
-import type { DraftFeature } from '@/entities/todo/types'
-import { formatRelativeAgeFromHours } from '@/shared/time'
-import { getBucketFromHours, BUCKET_ORDER, type BucketLabel } from '@/shared/todoBuckets'
-import {
-  filterAlertItems,
-  filterIdeaItems,
-  itemKey,
-  type AlertItem,
-  type IdeaItem,
-  type SidebarItem,
-} from './TodoPageFilters'
+import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import type { ActionQueueItem } from '@/shared/schemas'
 
-// ---- Alert Row ----
+// ---- Helpers ----
 
-interface AlertRowProps {
-  item: AlertItem
-  active: boolean
-  onSelect: () => void
-  onDismiss: () => void
+const formatTime = (iso: string): string => {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString()
 }
 
-const AlertRow = ({ item, active, onSelect, onDismiss }: AlertRowProps) => {
-  const [copied, setCopied] = useState(false)
+const priorityBadgeClass = (priority: string): string => {
+  if (priority === 'urgent') return 'text-[#ff4f4f]'
+  if (priority === 'high') return 'text-[#ff944d]'
+  return 'text-iron/60'
+}
 
+// ---- Row ----
+
+interface RowProps {
+  item: ActionQueueItem
+  active: boolean
+  onSelect: () => void
+}
+
+const ActionQueueRow = ({ item, active, onSelect }: RowProps) => {
   const baseClass = [
     'cursor-pointer border-l-2 px-3 py-2 transition-colors',
     active ? 'border-fg bg-iron/20' : 'border-transparent hover:bg-iron/10',
   ].join(' ')
 
-  const handleDismiss = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    onDismiss()
-  }
-
-  const w = item.worktree
-
-  const handleCopyId = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    void navigator.clipboard.writeText(w.taskId).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1200)
-    })
-  }
   return (
     <li className={baseClass} onClick={onSelect}>
       <div className="flex items-baseline gap-2">
-        <button
-          type="button"
-          onClick={handleCopyId}
-          title={copied ? 'Copied!' : 'Copy task id'}
-          className="break-all border-0 bg-transparent p-0 font-mono text-[13px] text-fg transition-colors hover:text-fg/80"
+        <span className="break-all font-mono text-[11px] uppercase text-iron">
+          {item.id}
+        </span>
+        <span
+          className={`ml-auto shrink-0 font-mono text-[9px] uppercase ${priorityBadgeClass(item.priority)}`}
         >
-          {w.taskId}
-        </button>
-        <span className="ml-auto shrink-0 font-mono text-[10px] uppercase text-iron/80">
-          {formatRelativeAgeFromHours(w.ageHours)}
+          {item.priority}
         </span>
       </div>
       <div className="mt-1 truncate font-mono text-[12px] text-fg">
-        {w.prompt.trim() || 'Stale worktree'}
+        {item.title || '(no title)'}
       </div>
-      <div className="mt-1 flex items-center justify-between font-mono text-[9px] uppercase text-iron/80">
-        <span>stale · {w.status}</span>
-        <button
-          type="button"
-          onClick={handleDismiss}
-          className="shrink-0 text-iron/50 transition-colors hover:text-iron"
-        >
-          dismiss
-        </button>
+      <div className="mt-1 font-mono text-[10px] text-iron/70">
+        {formatTime(item.lastSeenAt)}
       </div>
     </li>
   )
 }
 
-// ---- Idea Row ----
+// ---- Detail panel ----
 
-const draftLabel = (d: DraftFeature): string => d.goal.trim() || '(no goal)'
-
-interface IdeaRowProps {
-  item: IdeaItem
-  active: boolean
-  onSelect: () => void
-  onDismiss: () => void
+interface DetailProps {
+  item: ActionQueueItem
 }
 
-const IdeaRow = ({ item, active, onSelect, onDismiss }: IdeaRowProps) => {
-  const [copied, setCopied] = useState(false)
-
-  const baseClass = [
-    'cursor-pointer border-l-2 px-3 py-2 transition-colors',
-    active ? 'border-fg bg-iron/20' : 'border-transparent hover:bg-iron/10',
-  ].join(' ')
-
-  const handleDismiss = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    onDismiss()
-  }
-
-  const d = item.draft
-
-  const handleCopyId = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    void navigator.clipboard.writeText(d.id).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1200)
-    })
-  }
-  return (
-    <li className={baseClass} onClick={onSelect}>
-      <div className="flex items-baseline gap-2">
-        <button
-          type="button"
-          onClick={handleCopyId}
-          title={copied ? 'Copied!' : 'Copy id'}
-          className="break-all border-0 bg-transparent p-0 font-mono text-[10px] uppercase text-iron transition-colors hover:text-iron/70"
-        >
-          {d.id}
-        </button>
-        <span className="ml-auto shrink-0 font-mono text-[9px] uppercase text-iron/80">
-          {d.source}
-        </span>
-      </div>
-      <div className="mt-1 truncate font-mono text-[12px] text-fg">
-        {draftLabel(d)}
-      </div>
-      <div className="mt-1 flex items-center justify-between font-mono text-[9px] uppercase text-iron/80">
-        <span>acceptance {d.acceptanceCount}</span>
-        <button
-          type="button"
-          onClick={handleDismiss}
-          className="shrink-0 text-iron/50 transition-colors hover:text-iron"
-        >
-          dismiss
-        </button>
-      </div>
-    </li>
-  )
-}
-
-// ---- Detail Panels ----
-
-interface StaleDetailProps {
-  worktree: StaleWorktree
-}
-
-const StaleDetail = ({ worktree }: StaleDetailProps) => (
+const ActionQueueDetail = ({ item }: DetailProps) => (
   <div className="flex h-full flex-col overflow-auto">
     <header className="border-b border-iron/30 px-6 py-4">
       <div className="flex items-baseline gap-3">
         <span className="break-all font-mono text-[11px] uppercase text-iron">
-          {worktree.taskId}
+          {item.id}
         </span>
         <span className="shrink-0 font-mono text-[10px] uppercase text-iron/80">
-          stale worktree
+          {item.kind}
         </span>
-        <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
-          {formatRelativeAgeFromHours(worktree.ageHours)} old
+        <span
+          className={`ml-auto font-mono text-[10px] uppercase ${priorityBadgeClass(item.priority)}`}
+        >
+          {item.priority}
         </span>
       </div>
       <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
-        Stale worktree {worktree.taskId}
+        {item.title || '(no title)'}
       </h2>
     </header>
 
     <main className="flex-1 px-6 py-4">
       <dl className="flex flex-col gap-4 font-mono text-[12px]">
-        {worktree.error !== null ? (
-          <div>
-            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Error
-            </dt>
-            <dd className="whitespace-pre-wrap text-fg">{worktree.error}</dd>
-          </div>
-        ) : null}
         <div>
           <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Status
-          </dt>
-          <dd className="text-fg">{worktree.status}</dd>
-        </div>
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Branch
-          </dt>
-          <dd className="text-fg">{worktree.branch ?? '—'}</dd>
-        </div>
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Age
-          </dt>
-          <dd className="text-fg">{formatRelativeAgeFromHours(worktree.ageHours)}</dd>
-        </div>
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Updated at
-          </dt>
-          <dd className="text-fg">{worktree.updatedAt}</dd>
-        </div>
-        {worktree.blockerTaskId !== null ? (
-          <div>
-            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Blocked by
-            </dt>
-            <dd className="text-fg">{worktree.blockerTaskId}</dd>
-          </div>
-        ) : null}
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Task
+            Next action
           </dt>
           <dd className="whitespace-pre-wrap text-fg">
-            {worktree.prompt.trim() || (
-              <span className="text-iron/70">(empty)</span>
+            {item.body.trim() || (
+              <span className="text-iron/70">(no action recorded)</span>
             )}
           </dd>
         </div>
         <div>
           <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Task id
+            Latest failure
           </dt>
-          <dd className="text-fg">{worktree.taskId}</dd>
+          <dd className="text-fg">{formatTime(item.lastSeenAt)}</dd>
         </div>
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            First raised
+          </dt>
+          <dd className="text-fg">{formatTime(item.raisedAt)}</dd>
+        </div>
+        {item.seenCount > 1 && (
+          <div>
+            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+              Occurrences
+            </dt>
+            <dd className="text-fg">{item.seenCount}</dd>
+          </div>
+        )}
       </dl>
     </main>
   </div>
 )
 
-const formatTime = (ts: number): string => {
-  if (!ts) return ''
-  return new Date(ts).toLocaleString()
-}
-
-interface IdeaDetailProps {
-  draft: DraftFeature
-  onDismiss: () => Promise<unknown>
-}
-
-const IdeaDetail = ({ draft, onDismiss }: IdeaDetailProps) => {
-  const refineCommand = `/mars:chat ${draft.id}`
-  const [copied, setCopied] = useState(false)
-  const [confirmOpen, setConfirmOpen] = useState(false)
-  const [dismissing, setDismissing] = useState(false)
-  const [dismissError, setDismissError] = useState<string | null>(null)
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(refineCommand)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1200)
-    } catch {
-      setCopied(false)
-    }
-  }
-
-  const openConfirm = () => {
-    setDismissError(null)
-    setConfirmOpen(true)
-  }
-
-  const closeConfirm = () => {
-    if (dismissing) return
-    setConfirmOpen(false)
-    setDismissError(null)
-  }
-
-  const handleConfirmDismiss = async () => {
-    setDismissing(true)
-    setDismissError(null)
-    try {
-      await onDismiss()
-      setConfirmOpen(false)
-    } catch (err: unknown) {
-      setDismissError(err instanceof Error ? err.message : 'Dismiss failed')
-    } finally {
-      setDismissing(false)
-    }
-  }
-
-  return (
-    <div className="flex h-full flex-col overflow-auto">
-      <header className="border-b border-iron/30 px-6 py-4">
-        <div className="flex items-baseline gap-3">
-          <span className="break-all font-mono text-[11px] uppercase text-iron">
-            {draft.id}
-          </span>
-          <span className="shrink-0 font-mono text-[10px] uppercase text-iron/80">
-            {draft.source}
-          </span>
-          <span className="ml-auto font-mono text-[10px] uppercase text-iron/80">
-            updated {formatTime(draft.updatedAt)}
-          </span>
-        </div>
-        <h2 className="mt-2 font-mono text-[15px] text-fg">{draftLabel(draft)}</h2>
-        <div className="mt-2 font-mono text-[11px] text-iron">
-          Refine:{' '}
-          <button
-            type="button"
-            onClick={handleCopy}
-            title={copied ? 'Copied!' : 'Copy to clipboard'}
-            className="cursor-pointer rounded bg-iron/20 px-1 font-mono text-[11px] text-iron transition-colors hover:bg-iron/30"
-          >
-            <code>{refineCommand}</code>
-            <span className="ml-1 text-[9px] uppercase text-iron/70">
-              {copied ? 'copied' : 'copy'}
-            </span>
-          </button>
-        </div>
-      </header>
-
-      <main className="flex-1 px-6 py-4">
-        <dl className="flex flex-col gap-4 font-mono text-[12px]">
-          <div>
-            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Story
-            </dt>
-            <dd className="whitespace-pre-wrap text-fg">
-              {draft.story.trim() || (
-                <span className="text-iron/70">(empty)</span>
-              )}
-            </dd>
-          </div>
-          <div>
-            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Technical
-            </dt>
-            <dd className="whitespace-pre-wrap text-fg">
-              {draft.technical.trim() || (
-                <span className="text-iron/70">(empty)</span>
-              )}
-            </dd>
-          </div>
-          <div>
-            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Acceptance
-            </dt>
-            <dd className="text-fg">{draft.acceptanceCount}</dd>
-          </div>
-          <div>
-            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Status
-            </dt>
-            <dd className="text-fg">{draft.status}</dd>
-          </div>
-        </dl>
-      </main>
-
-      <footer className="border-t border-iron/30 px-6 py-3">
-        <button
-          type="button"
-          onClick={openConfirm}
-          data-testid="idea-detail-dismiss"
-          className="rounded border border-iron/40 px-3 py-1 font-mono text-[11px] uppercase text-iron transition-colors hover:bg-iron/10"
-        >
-          Dismiss proposal
-        </button>
-      </footer>
-
-      {confirmOpen ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Confirm dismiss proposal"
-          data-testid="idea-dismiss-confirm"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
-          onClick={closeConfirm}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md border border-iron/40 bg-bg p-5 font-mono text-[12px] text-fg shadow-2xl"
-          >
-            <h3 className="text-[13px] uppercase tracking-wide text-fg">
-              Dismiss proposal?
-            </h3>
-            <p className="mt-2 break-all text-[11px] text-iron">
-              {draft.id} — {draftLabel(draft)}
-            </p>
-            <p className="mt-3 text-[11px] text-iron/80">
-              This flips the proposal to <code>dismissed</code>. It is refused
-              if any task still depends on this proposal.
-            </p>
-            {dismissError ? (
-              <p
-                data-testid="idea-dismiss-error"
-                className="mt-3 whitespace-pre-wrap border border-iron/40 bg-iron/10 px-2 py-1 text-[11px] text-iron"
-              >
-                {dismissError}
-              </p>
-            ) : null}
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeConfirm}
-                disabled={dismissing}
-                className="rounded border border-iron/40 px-3 py-1 text-[11px] uppercase text-iron transition-colors hover:bg-iron/10 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDismiss}
-                disabled={dismissing}
-                data-testid="idea-dismiss-confirm-btn"
-                className="rounded border border-iron/40 bg-iron/20 px-3 py-1 text-[11px] uppercase text-fg transition-colors hover:bg-iron/30 disabled:opacity-50"
-              >
-                {dismissing ? 'Dismissing…' : 'Dismiss'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-// ---- Sidebar Section Header ----
-
-interface SectionHeaderProps {
-  label: string
-  count: number
-  expanded: boolean
-  onToggle: () => void
-  controlsId: string
-}
-
-const SectionHeader = ({ label, count, expanded, onToggle, controlsId }: SectionHeaderProps) => (
-  <button
-    type="button"
-    onClick={onToggle}
-    aria-expanded={expanded}
-    aria-controls={controlsId}
-    className="flex w-full items-center gap-2 border-b border-iron/20 bg-iron/5 px-4 py-1.5 text-left"
-  >
-    <span className="font-mono text-[10px] text-iron/60">
-      {expanded ? '▾' : '▸'}
-    </span>
-    <span className="font-mono text-[10px] uppercase tracking-wider text-iron">
-      {label}
-    </span>
-    <span className="ml-auto font-mono text-[10px] text-iron/60">{count}</span>
-  </button>
-)
-
 // ---- Page ----
 
 export const ActionQueuePage = () => {
-  const { staleWorktrees, drafts, error } = useTodo()
-  const queryClient = useQueryClient()
-
-  const dismissStaleMutation = useMutation({
-    mutationFn: ({ id }: { id: string }) => dismissTodoItem(id, 'stale'),
-    onMutate: async ({ id }) => {
-      await queryClient.cancelQueries({ queryKey: ['todo'] })
-      const prev = queryClient.getQueryData<TodoPayload>(['todo'])
-      if (prev) {
-        queryClient.setQueryData<TodoPayload>(['todo'], {
-          ...prev,
-          staleWorktrees: prev.staleWorktrees.filter((w) => w.taskId !== id),
-        })
-      }
-      return { prev }
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) queryClient.setQueryData<TodoPayload>(['todo'], ctx.prev)
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['todo'] })
-    },
-  })
-
-  const dismissDraftMutation = useMutation({
-    mutationFn: ({ id }: { id: string }) => dismissTodoItem(id, 'draft'),
-    onMutate: async ({ id }) => {
-      await queryClient.cancelQueries({ queryKey: ['todo'] })
-      const prev = queryClient.getQueryData<TodoPayload>(['todo'])
-      if (prev) {
-        queryClient.setQueryData<TodoPayload>(['todo'], {
-          ...prev,
-          drafts: prev.drafts.filter((d) => d.id !== id),
-        })
-      }
-      return { prev }
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) queryClient.setQueryData<TodoPayload>(['todo'], ctx.prev)
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['todo'] })
-    },
-  })
-
-  const alertItems = useMemo<AlertItem[]>(
-    () =>
-      staleWorktrees.map((w) => ({ kind: 'stale', id: w.taskId, worktree: w })),
-    [staleWorktrees],
-  )
-
-  const ideaItems = useMemo<IdeaItem[]>(
-    () => drafts.map((d) => ({ kind: 'draft', id: d.id, draft: d })),
-    [drafts],
-  )
-
-  const allItems = useMemo<SidebarItem[]>(
-    () => [...alertItems, ...ideaItems],
-    [alertItems, ideaItems],
-  )
-
-  /**
-   * Per-bucket item counts derived from allItems.
-   * Stale worktrees use the pre-computed ageHours field;
-   * drafts have their age computed from updatedAt (ms timestamp).
-   */
-  const groupedBuckets = useMemo<Map<BucketLabel, number>>(() => {
-    const counts = new Map<BucketLabel, number>()
-    for (const item of allItems) {
-      const ageHours =
-        item.kind === 'stale'
-          ? item.worktree.ageHours
-          : Math.max(0, (Date.now() - item.draft.updatedAt) / 3_600_000)
-      const bucket = getBucketFromHours(ageHours)
-      counts.set(bucket, (counts.get(bucket) ?? 0) + 1)
-    }
-    return counts
-  }, [allItems])
-
+  const { items, error } = useActionQueue()
   const [query, setQuery] = useState<string>('')
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  const [alertsExpanded, setAlertsExpanded] = useState(true)
-  const [proposalsExpanded, setProposalsExpanded] = useState(true)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  const filteredAlertItems = useMemo(
-    () => filterAlertItems(alertItems, query),
-    [alertItems, query],
-  )
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return items
+    return items.filter(
+      (i) =>
+        i.id.toLowerCase().includes(q) ||
+        i.title.toLowerCase().includes(q) ||
+        i.body.toLowerCase().includes(q) ||
+        i.kind.toLowerCase().includes(q),
+    )
+  }, [items, query])
 
-  const filteredIdeaItems = useMemo(
-    () => filterIdeaItems(ideaItems, query),
-    [ideaItems, query],
-  )
-
-  const filteredAllItems = useMemo<SidebarItem[]>(
-    () => [...filteredAlertItems, ...filteredIdeaItems],
-    [filteredAlertItems, filteredIdeaItems],
-  )
-
-  useEffect(() => {
-    if (filteredAllItems.length === 0) {
-      setSelectedKey(null)
-      return
-    }
-    if (!selectedKey || !filteredAllItems.some((i) => itemKey(i) === selectedKey)) {
-      setSelectedKey(itemKey(filteredAllItems[0]))
-    }
-  }, [filteredAllItems, selectedKey])
-
-  const selected = filteredAllItems.find((i) => itemKey(i) === selectedKey) ?? null
-  const empty = allItems.length === 0
-  const noMatches = !empty && filteredAllItems.length === 0
+  const selected =
+    filtered.find((i) => i.id === selectedId) ?? filtered[0] ?? null
+  const empty = items.length === 0
+  const noMatches = !empty && filtered.length === 0
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-bg">
       <aside className="flex w-80 shrink-0 flex-col border-r border-iron/30">
         <header className="border-b border-iron/30 px-4 py-3">
           <h1 className="font-mono text-sm uppercase tracking-wide text-fg">
-            Inbox
+            Action queue
           </h1>
           <p className="mt-1 font-mono text-[10px] text-iron">
-            {staleWorktrees.length} alert
-            {staleWorktrees.length === 1 ? '' : 's'} ·{' '}
-            {drafts.length} proposal{drafts.length === 1 ? '' : 's'}
+            {items.length} item{items.length === 1 ? '' : 's'}
           </p>
-          {allItems.length > 0 && (
-            <p className="mt-0.5 font-mono text-[10px] text-iron/60">
-              {BUCKET_ORDER.filter((b) => (groupedBuckets.get(b) ?? 0) > 0)
-                .map((b) => `${b} ${groupedBuckets.get(b)}`)
-                .join(' · ')}
-            </p>
-          )}
           <input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search…"
-            aria-label="Search inbox"
+            aria-label="Search action queue"
             data-testid="inbox-search"
             className="mt-2 w-full border border-iron/30 bg-bg px-2 py-1 font-mono text-[12px] text-fg placeholder:text-iron/40 focus:outline-none focus:ring-1 focus:ring-iron/50"
           />
         </header>
 
         <div className="flex-1 overflow-auto">
-          {/* Alerts section */}
-          <SectionHeader
-            label="Alerts"
-            count={filteredAlertItems.length}
-            expanded={alertsExpanded}
-            onToggle={() => setAlertsExpanded((e) => !e)}
-            controlsId="inbox-section-alerts"
-          />
-          <div id="inbox-section-alerts" role="region" aria-label="Alerts" hidden={!alertsExpanded}>
-            {filteredAlertItems.length === 0 ? (
-              <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
-                {query.trim() ? 'No matches.' : 'No alerts.'}
-              </p>
-            ) : (
-              <ul>
-                {filteredAlertItems.map((item) => (
-                  <AlertRow
-                    key={itemKey(item)}
-                    item={item}
-                    active={itemKey(item) === selectedKey}
-                    onSelect={() => setSelectedKey(itemKey(item))}
-                    onDismiss={() => dismissStaleMutation.mutate({ id: item.id })}
-                  />
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {/* Proposals section */}
-          <SectionHeader
-            label="Proposals"
-            count={filteredIdeaItems.length}
-            expanded={proposalsExpanded}
-            onToggle={() => setProposalsExpanded((e) => !e)}
-            controlsId="inbox-section-proposals"
-          />
-          <div id="inbox-section-proposals" role="region" aria-label="Proposals" hidden={!proposalsExpanded}>
-            {filteredIdeaItems.length === 0 ? (
-              <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
-                {query.trim() ? 'No matches.' : 'No proposals.'}
-              </p>
-            ) : (
-              <ul>
-                {filteredIdeaItems.map((item) => (
-                  <IdeaRow
-                    key={itemKey(item)}
-                    item={item}
-                    active={itemKey(item) === selectedKey}
-                    onSelect={() => setSelectedKey(itemKey(item))}
-                    onDismiss={() => dismissDraftMutation.mutate({ id: item.id })}
-                  />
-                ))}
-              </ul>
-            )}
-          </div>
+          {filtered.length === 0 ? (
+            <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
+              {query.trim() ? 'No matches.' : 'No items.'}
+            </p>
+          ) : (
+            <ul>
+              {filtered.map((item) => (
+                <ActionQueueRow
+                  key={item.id}
+                  item={item}
+                  active={item.id === (selected?.id ?? null)}
+                  onSelect={() => setSelectedId(item.id)}
+                />
+              ))}
+            </ul>
+          )}
         </div>
 
         {error ? (
@@ -663,24 +195,15 @@ export const ActionQueuePage = () => {
         ) : empty ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div className="font-mono text-[12px] text-iron">
-              No items. Alerts appear when worktrees go stale; proposals appear
-              when drafts are added.
+              No items. Inbox alerts appear here when tasks need operator attention.
             </div>
           </div>
         ) : noMatches ? (
           <div className="flex h-full items-center justify-center font-mono text-[12px] text-iron">
             No matches.
           </div>
-        ) : selected?.kind === 'stale' ? (
-          <StaleDetail worktree={selected.worktree} />
-        ) : selected?.kind === 'draft' ? (
-          <IdeaDetail
-            key={selected.draft.id}
-            draft={selected.draft}
-            onDismiss={() =>
-              dismissDraftMutation.mutateAsync({ id: selected.draft.id })
-            }
-          />
+        ) : selected ? (
+          <ActionQueueDetail key={selected.id} item={selected} />
         ) : (
           <div className="flex h-full items-center justify-center font-mono text-[12px] text-iron">
             Select an item
