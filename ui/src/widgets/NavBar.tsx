@@ -55,6 +55,11 @@ export const NavBar = ({ hash }: NavBarProps) => {
           Agents
         </a>
       </span>
+      <span className="relative">
+        <a className={linkClass(route === 'topology')} href="#/topology">
+          Topology
+        </a>
+      </span>
     </nav>
   )
 }

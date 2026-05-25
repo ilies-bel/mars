@@ -1,17 +1,19 @@
 import type { TodoPayload } from './schemas'
 
-export type RouteName = 'action-queue' | 'progress' | 'agents'
+export type RouteName = 'action-queue' | 'progress' | 'agents' | 'topology'
 
 /**
  * Derives the current route from the URL hash.
  *
  * #/progress[/…]        → progress
  * #/agents[/…]          → agents
+ * #/topology[/…]        → topology
  * everything else       → action-queue  (default; also covers #/todo legacy)
  */
 export const detectRoute = (hash: string): RouteName => {
   if (hash.startsWith('#/progress')) return 'progress'
   if (hash.startsWith('#/agents')) return 'agents'
+  if (hash.startsWith('#/topology')) return 'topology'
   return 'action-queue'
 }
 
