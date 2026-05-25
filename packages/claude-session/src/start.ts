@@ -47,7 +47,20 @@ export async function start(opts: StartOptions): Promise<SessionHandle> {
     rows: 24,
   });
 
-  const handle: SessionHandle = { id, pty: proc };
+  const handlers = new Set<(chunk: string) => void>();
+
+  proc.onData((chunk) => {
+    for (const h of handlers) h(chunk);
+  });
+
+  const handle: SessionHandle = {
+    id,
+    pty: proc,
+    onData(handler) {
+      handlers.add(handler);
+      return () => { handlers.delete(handler); };
+    },
+  };
   registerSession(handle);
 
   return handle;
