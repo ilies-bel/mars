@@ -8,7 +8,11 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "postinstall": "node -e \"var fs=require('fs'),path=require('path'),g=path.join(__dirname,'node_modules/node-pty/prebuilds');try{fs.readdirSync(g).forEach(function(d){var f=path.join(g,d,'spawn-helper');try{fs.chmodSync(f,0o755);}catch(e){}});}catch(e){}\""
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
