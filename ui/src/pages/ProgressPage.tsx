@@ -56,7 +56,7 @@ const toUI = (t: ProgressTask): UITask => ({
 const CLUSTERS: readonly Cluster[] = ['Queued', 'In progress', 'Blocked', 'Failed']
 
 export const ProgressPage = () => {
-  const { byCluster, tasks, error, connected } = useProgress()
+  const { byCluster, tasks, proposals, error, connected } = useProgress()
   const { drafts } = useTodo()
   const [activeTab, setActiveTab] = useState<Tab>(DEFAULT_TAB)
 
@@ -137,7 +137,7 @@ export const ProgressPage = () => {
         ) : activeTab === 'events' ? (
           <EventsView />
         ) : activeTab === 'topology' ? (
-          <TopologyView />
+          <TopologyView tasks={tasks ?? []} proposals={proposals} />
         ) : (
           boardBody
         )}

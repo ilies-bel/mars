@@ -11,8 +11,8 @@ void _typeProbe
 // ---------------------------------------------------------------------------
 
 describe('tabs – default', () => {
-  it('board tab is selected by default on page load', () => {
-    expect(DEFAULT_TAB).toBe('board')
+  it('topology (DAG) tab is selected by default on page load', () => {
+    expect(DEFAULT_TAB).toBe('topology')
   })
 })
 
@@ -27,8 +27,8 @@ describe('tabs – entries', () => {
     expect(TABS).toContain('events')
   })
 
-  it('board appears before topology in the strip', () => {
-    expect(TABS.indexOf('board')).toBeLessThan(TABS.indexOf('topology'))
+  it('topology appears before board in the strip (topology is the default)', () => {
+    expect(TABS.indexOf('topology')).toBeLessThan(TABS.indexOf('board'))
   })
 
   it('board appears before events in the strip', () => {

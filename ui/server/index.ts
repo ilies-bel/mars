@@ -120,7 +120,14 @@ export const startServer = async (
       if (path === '/api/progress') {
         try {
           const tasks = await db.listProgressTasks()
-          return jsonResponse(200, { tasks })
+          // Collect unique proposal IDs referenced by in-scope tasks
+          const proposalIds = [
+            ...new Set(
+              tasks.map((t) => t.parentProposalId).filter((id): id is string => id !== null),
+            ),
+          ]
+          const proposals = await stateDb.listProposalsByIds(proposalIds)
+          return jsonResponse(200, { tasks, proposals })
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }
