@@ -11,6 +11,7 @@ import { Footer } from '@/widgets/Footer'
 import { Sidebar } from '@/widgets/Sidebar'
 import { TabStrip } from '@/widgets/TabStrip'
 import { EventsView } from '@/widgets/EventsView'
+import { TopologyView } from '@/widgets/TopologyView'
 import { TopStripe } from '@/widgets/TopStripe'
 
 const titleFromPrompt = (prompt: string): string => {
@@ -135,6 +136,8 @@ export const ProgressPage = () => {
           </main>
         ) : activeTab === 'events' ? (
           <EventsView />
+        ) : activeTab === 'topology' ? (
+          <TopologyView />
         ) : (
           boardBody
         )}
