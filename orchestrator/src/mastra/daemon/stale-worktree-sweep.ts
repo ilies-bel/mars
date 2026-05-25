@@ -16,9 +16,9 @@
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { listTasks } from '../queue'
-import { raiseInboxItem } from '../lib/inbox'
+import { type InboxKind, raiseInboxItem } from '../lib/inbox'
 
-export const STALE_WORKTREE_KIND = 'stale-worktree'
+export const STALE_WORKTREE_KIND: InboxKind = 'failed'
 
 const DEFAULT_THRESHOLD_HOURS = 24
 

@@ -1,10 +1,10 @@
-import { raiseInboxItem } from './lib/inbox'
+import { type InboxKind, raiseInboxItem } from './lib/inbox'
 import { publish } from './lib/outbox'
 import { getClient, initQueue } from './queue'
 
 export const DEFAULT_RETRY_BUDGET = 0
 
-export const TASK_BLOCKED_INBOX_KIND_PREFIX = 'task-blocked'
+export const TASK_BLOCKED_INBOX_KIND: InboxKind = 'failed'
 
 export const getRetryBudget = (): number => {
   const raw = process.env.MARS_FIX_RETRY_BUDGET
@@ -130,7 +130,7 @@ export const raiseRetryBudgetExhaustedInbox = async (
       ? `Unblock ${input.taskId}: never ran — blocked dependent exhausted retry budget`
       : `Unblock ${input.taskId}: retry budget exhausted at ${input.lastStep}`
   return raiseInboxItem({
-    kind: `${TASK_BLOCKED_INBOX_KIND_PREFIX}(${input.taskId})`,
+    kind: TASK_BLOCKED_INBOX_KIND,
     category: 'orchestrator',
     priority: 'high',
     title,

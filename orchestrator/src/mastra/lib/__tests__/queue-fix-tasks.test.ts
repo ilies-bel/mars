@@ -561,7 +561,7 @@ describe('queue-fix-tasks', () => {
     expect(first.outcome).toBe('blocked')
     let openItems = await inbox.listInboxItems('open')
     expect(
-      openItems.filter((i) => i.kind.startsWith('task-blocked(')),
+      openItems.filter((i) => i.kind === 'failed'),
     ).toHaveLength(0)
 
     // Second failure: retry budget exhausted -> dropped + inbox raised.
@@ -581,10 +581,10 @@ describe('queue-fix-tasks', () => {
 
     openItems = await inbox.listInboxItems('open')
     const taskBlocked = openItems.filter((i) =>
-      i.kind.startsWith('task-blocked('),
+      i.kind === 'failed' && i.payload.taskId === t.id,
     )
     expect(taskBlocked).toHaveLength(1)
-    expect(taskBlocked[0].kind).toBe(`task-blocked(${t.id})`)
+    expect(taskBlocked[0].kind).toBe('failed')
     expect(taskBlocked[0].signature).toBe(t.id)
     expect(taskBlocked[0].priority).toBe('high')
     expect(taskBlocked[0].raisedBy).toBe('orchestrator:retry-budget')
@@ -614,7 +614,7 @@ describe('queue-fix-tasks', () => {
 
     const openAfter = await inbox.listInboxItems('open')
     const taskBlockedAfter = openAfter.filter((i) =>
-      i.kind.startsWith('task-blocked('),
+      i.kind === 'failed' && i.payload.taskId === t.id,
     )
     expect(taskBlockedAfter).toHaveLength(1)
     expect(taskBlockedAfter[0].seenCount).toBe(2)
@@ -866,7 +866,7 @@ describe('queue-fix-tasks', () => {
     ).toBe(2)
 
     const item3 = await inbox.getInboxItem(r3.inboxItemId!)
-    expect(item3?.kind).toBe('fix-fail-loop')
+    expect(item3?.kind).toBe('failed')
     expect(item3?.category).toBe('orchestrator')
     expect(item3?.priority).toBe('high')
     expect(item3?.signature).toBe(sig)
@@ -979,7 +979,7 @@ describe('queue-fix-tasks', () => {
     // Exactly one fix-fail-loop inbox row exists; seenCount tracks
     // every escalation after the first (3 escalations -> seenCount 3).
     const loopItems = (await inbox.listInboxItems('open')).filter(
-      (i) => i.kind === 'fix-fail-loop',
+      (i) => i.kind === 'failed',
     )
     expect(loopItems).toHaveLength(1)
     expect(loopItems[0].id).toBe(r3.inboxItemId)
