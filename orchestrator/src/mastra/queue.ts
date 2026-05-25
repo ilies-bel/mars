@@ -156,6 +156,18 @@ export const TASK_TYPES: readonly TaskType[] = ['auto', 'checkpoint'] as const
 export const isTaskType = (value: unknown): value is TaskType =>
   value === 'auto' || value === 'checkpoint'
 
+/**
+ * Coder-dispatchable artifact spec attached to an HITL slice. The slicer
+ * emits this to describe a verify script (or similar artifact) a Coder can
+ * build so the human operator has a runnable tool for the HITL step.
+ */
+export interface SubDeliverableSpec {
+  title: string
+  whatToBuild: string
+  acceptanceCriteria: readonly string[]
+  files?: readonly string[]
+}
+
 export interface TaskSpec {
   files: readonly string[]
   verifyCmd: string | null
@@ -172,6 +184,18 @@ export interface TaskSpec {
    * ad-hoc rows.
    */
   prescriptiveAction?: string | null
+  /**
+   * Slice routing kind. 'coder' (default) routes to the Coder worker;
+   * 'hitl' routes to the human operator. Populated by the slicer; absent
+   * on ad-hoc rows. Distinct from TaskKind ('task' | 'fix' | 'diagnose').
+   */
+  sliceKind?: 'coder' | 'hitl'
+  /**
+   * Coder-dispatchable sub-deliverable attached by the slicer to hitl slices.
+   * Describes the artifact (typically a verify script) the operator will use.
+   * Absent on coder slices and ad-hoc rows.
+   */
+  subDeliverable?: SubDeliverableSpec
 }
 
 export const EMPTY_TASK_SPEC: TaskSpec = {
@@ -477,6 +501,18 @@ export const initQueue = async (): Promise<void> => {
   // ad-hoc rows.
   if (!names.has('prescriptive_action')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN prescriptive_action TEXT`)
+  }
+  // slice_kind: routing hint emitted by the slicer ('coder' | 'hitl'). NULL on
+  // ad-hoc rows and legacy slicer rows. 'hitl' marks slices that require a
+  // human operator; 'coder' (default) dispatches to the Coder worker.
+  if (!names.has('slice_kind')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN slice_kind TEXT`)
+  }
+  // sub_deliverable_json: JSON-encoded SubDeliverableSpec attached by the slicer
+  // to hitl slices. Describes the Coder-dispatchable artifact (typically a
+  // verify script) the operator will use. NULL on coder slices and ad-hoc rows.
+  if (!names.has('sub_deliverable_json')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN sub_deliverable_json TEXT`)
   }
   // integration_head_sha: integration-branch HEAD SHA captured at setup time.
   // Null for tasks created before this column was added or that bypassed the
@@ -902,14 +938,26 @@ const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
   const rawType = (row.task_type as string | null) ?? null
   const rawReadFirst = (row.read_first_json as string | null) ?? null
   const rawPrescriptive = (row.prescriptive_action as string | null) ?? null
+  const rawSliceKind = (row.slice_kind as string | null) ?? null
+  const rawSubDeliverable = (row.sub_deliverable_json as string | null) ?? null
   const anySet =
     rawFiles !== null ||
     rawVerify !== null ||
     rawDone !== null ||
     rawType !== null ||
     rawReadFirst !== null ||
-    rawPrescriptive !== null
+    rawPrescriptive !== null ||
+    rawSliceKind !== null ||
+    rawSubDeliverable !== null
   if (!anySet) return null
+  let subDeliverable: SubDeliverableSpec | undefined
+  if (rawSubDeliverable) {
+    try {
+      subDeliverable = JSON.parse(rawSubDeliverable) as SubDeliverableSpec
+    } catch {
+      subDeliverable = undefined
+    }
+  }
   return {
     files: parseStringArray(rawFiles),
     verifyCmd: rawVerify,
@@ -917,6 +965,11 @@ const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
     taskType: isTaskType(rawType) ? rawType : 'auto',
     readFirst: parseStringArray(rawReadFirst),
     prescriptiveAction: rawPrescriptive,
+    sliceKind:
+      rawSliceKind === 'coder' || rawSliceKind === 'hitl'
+        ? rawSliceKind
+        : undefined,
+    subDeliverable,
   }
 }
 
@@ -996,8 +1049,14 @@ export const enqueueTask = async (
   const taskType = spec ? spec.taskType : null
   const readFirstJson = spec ? JSON.stringify(spec.readFirst ?? []) : null
   const prescriptiveAction = spec ? (spec.prescriptiveAction ?? null) : null
+  // sliceKindVal: 'coder' | 'hitl' routing hint from the slicer. Distinct from
+  // the `kind` variable above (TaskKind: 'task' | 'fix' | 'diagnose').
+  const sliceKindVal = spec?.sliceKind ?? null
+  const subDeliverableJson = spec?.subDeliverable
+    ? JSON.stringify(spec.subDeliverable)
+    : null
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tag, kind, files_json, verify_cmd, done_criteria_json, task_type, read_first_json, prescriptive_action, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tag, kind, files_json, verify_cmd, done_criteria_json, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       promptText,
@@ -1018,6 +1077,8 @@ export const enqueueTask = async (
       taskType,
       readFirstJson,
       prescriptiveAction,
+      sliceKindVal,
+      subDeliverableJson,
       now,
       now,
     ],
