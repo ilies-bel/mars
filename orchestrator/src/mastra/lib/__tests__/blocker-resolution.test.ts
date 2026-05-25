@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -21,10 +21,52 @@ interface BlockerModule {
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-blocker-test-'))
-  execFileSync('git', ['init', '-q'], { cwd: repo })
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+  // git needs an identity for the test commits below.
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+  execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
 }
+
+/**
+ * Seed `main` with an initial commit and branch a per-task worktree off it.
+ * Returns the worktree path and the initial main sha, so callers can later
+ * advance main and assert the worktree gets reset to the new tip.
+ */
+const setupTaskWorktree = (
+  repo: string,
+  taskId: string,
+): { worktreePath: string; initialMainSha: string } => {
+  writeFileSync(resolve(repo, 'README.md'), 'init\n')
+  execFileSync('git', ['add', 'README.md'], { cwd: repo })
+  execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+  const initialMainSha = execFileSync('git', ['rev-parse', 'main'], {
+    cwd: repo,
+  })
+    .toString()
+    .trim()
+  const worktreePath = resolve(repo, '.mars', 'worktrees', taskId)
+  mkdirSync(resolve(repo, '.mars', 'worktrees'), { recursive: true })
+  execFileSync(
+    'git',
+    ['worktree', 'add', '-b', `task/${taskId}`, worktreePath, 'main'],
+    { cwd: repo },
+  )
+  return { worktreePath, initialMainSha }
+}
+
+const advanceMain = (repo: string, content: string): string => {
+  writeFileSync(resolve(repo, 'README.md'), content)
+  execFileSync('git', ['add', 'README.md'], { cwd: repo })
+  execFileSync('git', ['commit', '-q', '-m', 'advance main'], { cwd: repo })
+  return execFileSync('git', ['rev-parse', 'main'], { cwd: repo })
+    .toString()
+    .trim()
+}
+
+const headSha = (cwd: string): string =>
+  execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim()
 
 const loadModules = async (
   repo: string,
@@ -482,6 +524,122 @@ describe('blocker-resolution (task_blockers)', () => {
       const result = await br.markOriginDoneFromRecovery('missing-id')
       expect(result.originFlipped).toBe(false)
       expect(result.unblock).toBeNull()
+    })
+  })
+
+  describe('worktree reset before re-dispatch (PRD a4deccc2 slice 1)', () => {
+    it('onBlockerTaskCompleted hard-resets the dependent worktree to integration HEAD before flipping to queued', async () => {
+      const { q, br } = await loadModules(repo)
+      const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+      const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+      const { worktreePath, initialMainSha } = setupTaskWorktree(repo, dep.id)
+      await q.updateTask(dep.id, { worktreePath, branch: `task/${dep.id}` })
+      await blockTask(q, dep.id, fix.id, 0)
+      // Advance main AFTER the worktree was branched off the initial sha.
+      const advancedMainSha = advanceMain(repo, 'advanced\n')
+      expect(advancedMainSha).not.toBe(initialMainSha)
+      // Dependent worktree should still be at the initial main sha before reset.
+      expect(headSha(worktreePath)).toBe(initialMainSha)
+      // Resolve the blocker via the daemon-down path so onBlockerTaskCompleted
+      // is exercised (auto-promote inside updateTask would otherwise short-circuit).
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [fix.id],
+      })
+
+      const r = await br.onBlockerTaskCompleted(fix.id)
+
+      expect(r.outcomes).toHaveLength(1)
+      expect(r.outcomes[0].outcome).toBe('queued')
+      expect((await q.getTask(dep.id))?.status).toBe('queued')
+      // The observable behaviour: the dependent's worktree HEAD now matches
+      // the integration tip, so a dispatched implementor sees the blocker's
+      // landed commits before it starts.
+      expect(headSha(worktreePath)).toBe(advancedMainSha)
+    })
+
+    it('recoverBlockedTasks hard-resets the dependent worktree on the startup reconciler path', async () => {
+      const { q, br } = await loadModules(repo)
+      const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+      const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+      const { worktreePath, initialMainSha } = setupTaskWorktree(repo, dep.id)
+      await q.updateTask(dep.id, { worktreePath, branch: `task/${dep.id}` })
+      await blockTask(q, dep.id, fix.id, 0)
+      const advancedMainSha = advanceMain(repo, 'advanced\n')
+      expect(advancedMainSha).not.toBe(initialMainSha)
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [fix.id],
+      })
+
+      const recovered = await br.recoverBlockedTasks()
+
+      expect(recovered).toHaveLength(1)
+      expect(recovered[0].outcomes[0].outcome).toBe('queued')
+      expect(headSha(worktreePath)).toBe(advancedMainSha)
+    })
+
+    it('refuses to re-dispatch and fails with worktree_ahead_of_integration_at_unblock when the dependent worktree has commits ahead of integration', async () => {
+      const { q, br } = await loadModules(repo)
+      const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+      const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+      const { worktreePath } = setupTaskWorktree(repo, dep.id)
+      await q.updateTask(dep.id, { worktreePath, branch: `task/${dep.id}` })
+      // Add a commit on the dependent's branch so it's ahead of main.
+      writeFileSync(resolve(worktreePath, 'dep.txt'), 'dep work\n')
+      execFileSync('git', ['add', 'dep.txt'], { cwd: worktreePath })
+      execFileSync('git', ['commit', '-q', '-m', 'dep ahead'], {
+        cwd: worktreePath,
+      })
+      const depHeadBefore = headSha(worktreePath)
+      await blockTask(q, dep.id, fix.id, 0)
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [fix.id],
+      })
+
+      const r = await br.onBlockerTaskCompleted(fix.id)
+
+      expect(r.outcomes).toHaveLength(1)
+      expect(r.outcomes[0].outcome).toBe('failed')
+      expect(r.outcomes[0].failureReason).toBe(
+        'worktree_ahead_of_integration_at_unblock',
+      )
+      const reloaded = await q.getTask(dep.id)
+      expect(reloaded?.status).toBe('failed')
+      // The worktree must be left untouched — no auto-rebase.
+      expect(headSha(worktreePath)).toBe(depHeadBefore)
+
+      const inbox = (await import('../inbox')) as unknown as {
+        listInboxItems: typeof import('../inbox').listInboxItems
+      }
+      const open = await inbox.listInboxItems('open')
+      const ahead = open.find(
+        (i) => i.kind === 'worktree-ahead-of-integration',
+      )
+      expect(ahead).toBeDefined()
+      expect(ahead!.payload.taskId).toBe(dep.id)
+      expect(ahead!.payload.aheadCount).toBe(1)
+    })
+
+    it('skips reset cleanly when the dependent has no worktree yet (fresh row, no prior setup)', async () => {
+      // Negative-space test: a never-dispatched dependent has worktreePath=null.
+      // The reset must be a no-op so the dependent flips to queued normally and
+      // the implement workflow's setup step creates a fresh worktree off main.
+      const { q, br } = await loadModules(repo)
+      const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+      const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+      await blockTask(q, dep.id, fix.id, 0)
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [fix.id],
+      })
+
+      const r = await br.onBlockerTaskCompleted(fix.id)
+
+      expect(r.outcomes).toHaveLength(1)
+      expect(r.outcomes[0].outcome).toBe('queued')
+      expect((await q.getTask(dep.id))?.status).toBe('queued')
     })
   })
 })
