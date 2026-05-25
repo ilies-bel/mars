@@ -16,60 +16,27 @@ unblock decision turns out to need a new task, enqueue it and stop.
 
 # Step 0 — No argument? Point to the inbox and stop.
 
-If `$ARGUMENTS` is empty (after stripping any `--inbox` token — see
-"Argument" section at the end), the user doesn't yet know which task
-they want to unblock. Do **not** run `mars list blocked`. Instead, tell
-the user:
+If `$ARGUMENTS` is empty, the user doesn't yet know which task they want
+to unblock. Do **not** run `mars list blocked`. Instead, tell the user:
 
-> "Run `/mars:inbox` and pick a `task-blocked` row to continue here."
+> "Run `/mars:inbox` and pick a `blocked-task` row to continue here."
 
 Stop here. Do not guess and do not pick one yourself.
 
-# Step 1 — Identify whether the id is a task or an inbox item
+# Step 1 — Confirm the id is a blocked task
 
-**Read this carefully — confusing inbox-item ids with task ids is the
-most common failure mode.** `mars inbox` prints lines like:
-
-```
-blockers (69):
-  507862e3  high  no recovery recipe for verify:typecheck/unclassified
-```
-
-Those ids under "blockers" are **inbox item ids, not task ids**, and they
-are not what `mars blockers <task-id>` operates on. If you pass one to
-`mars show`, you'll get `no task or proposal matching <id>` and waste a turn.
-
-Resolve the id **once, up front**, before doing anything else:
+The argument is a task id. (The inbox dispatches here with the bare task
+id — the derived inbox row `blocked-task:<task-id>` carries no separate
+id of its own, so there is no inbox-item id to disambiguate.) Confirm it
+resolves before doing anything else:
 
 ```bash
 mars show <id> 2>&1 | head -1
 ```
 
-- If it prints `kind: task` (or `kind: proposal`) → it's a task/proposal id,
-  this skill applies as written. Continue to Step 2.
-- If it prints `no task or proposal matching <id>` → try
-  `mars inbox show <id>`. If that succeeds, the id is an **inbox item**.
-  STOP and hand off — see "Inbox-item ids" below.
-- If both fail → tell the user the id doesn't resolve and ask them to
-  recheck the snapshot.
-
-## Inbox-item ids — not this skill's job
-
-This skill unblocks tasks. Inbox items are a different surface
-(`mars inbox show/ack/resolve/dismiss`). If the id resolves to an inbox
-item:
-
-1. Print `mars inbox show <id>` so the user can see what it says.
-2. Note that the underlying task (the inbox item's `payload.sourceTaskId`)
-   may already be `dropped`, `done`, or `failed` — check it with
-   `mars show <source-task-id>`. A stale inbox row pointing at a dead
-   task is the most common case.
-3. Hand off to `/mars:inbox` (which is built for triaging inbox rows) or
-   ask the user whether they want to `ack`, `resolve`, or `dismiss` the
-   row directly. Do not run those verbs yourself — they're outside this
-   skill's scope.
-
-Stop here. Do not proceed to Step 2.
+- If it prints `kind: task` → continue to Step 2.
+- If it prints `no task or proposal matching <id>` → tell the user the id
+  doesn't resolve and ask them to recheck the inbox; do not guess.
 
 # Step 2 — Load the task and its blockers
 
@@ -182,22 +149,11 @@ After the verb runs, print one short confirmation line — what changed,
 and (if relevant) what the user should expect next ("orchestrator will
 pick up <new-id> automatically" or "<id> is back on the queue").
 
-## Inbox resolution on success
-
-If an `--inbox <inbox-id>` was passed in `$ARGUMENTS` **and** the
-chosen option fully clears the block (the task is now re-queued,
-restarted, continued, or dropped — i.e. it is no longer `blocked`),
-run:
-
-```bash
-mars inbox resolve <inbox-id> --note "<one-line summary of what was done>"
-```
-
-**Only resolve when the underlying condition is gone.** If the user
-chose "split into a new task" and the original task still has open
-blockers (status remains `blocked`), do **not** resolve the inbox row —
-it stays open until the chain clears. When in doubt, check the task's
-status with `mars show <task-id>` before resolving.
+The inbox row needs no separate cleanup: it is a derived view, so once
+the task leaves `blocked` (re-queued, restarted, continued, or dropped)
+the `blocked-task:<id>` row disappears on the next `mars inbox` read. If
+the user split off a new prerequisite and the task is still `blocked`,
+the row correctly stays — it reflects live state.
 
 # What you do NOT do
 
@@ -219,14 +175,5 @@ status with `mars show <task-id>` before resolving.
 
 The user passed: `$ARGUMENTS`
 
-**Parse `$ARGUMENTS` as follows before doing anything else:**
-
-1. Look for a `--inbox <inbox-id>` token anywhere in the string. Extract
-   `<inbox-id>` and strip the `--inbox <inbox-id>` token from the string.
-   If absent, `inbox-id` is empty.
-2. Treat the remainder (trimmed) as `<task-id>`.
-
-If `<task-id>` is empty after parsing, go to **Step 0** (point to the
-inbox). If `<task-id>` is present, start at **Step 1** (resolve task vs.
-inbox item first). Carry `inbox-id` through to **Step 4** for the inbox
-resolution logic.
+Treat the trimmed `$ARGUMENTS` as `<task-id>`. If it is empty, go to
+**Step 0** (point to the inbox). Otherwise start at **Step 1**.
