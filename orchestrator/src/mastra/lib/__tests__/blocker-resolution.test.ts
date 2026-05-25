@@ -15,6 +15,7 @@ interface QueueModule {
 
 interface BlockerModule {
   onBlockerTaskCompleted: typeof import('../../blocker-resolution').onBlockerTaskCompleted
+  onBlockerTaskFailed: typeof import('../../blocker-resolution').onBlockerTaskFailed
   recoverBlockedTasks: typeof import('../../blocker-resolution').recoverBlockedTasks
   markOriginDoneFromRecovery: typeof import('../../blocker-resolution').markOriginDoneFromRecovery
 }
@@ -437,6 +438,96 @@ describe('blocker-resolution (task_blockers)', () => {
 
       // Origin must remain done — no status change
       expect((await q.getTask(origin.id))?.status).toBe('done')
+    })
+  })
+
+  describe('onBlockerTaskFailed — block downstream queued dependents', () => {
+    it('flips a queued downstream task to blocked and raises an inbox item when its sole blocker fails', async () => {
+      // A is the prerequisite (queued, then fails). B is queued with
+      // --blocked-by A. A's failure must move B to blocked and raise one
+      // inbox item naming the failed prerequisite.
+      const { q, br } = await loadModules(repo)
+      const a = await q.enqueueTask('prerequisite-a', undefined, { skipTriage: true })
+      const b = await q.enqueueTask('downstream-b', undefined, { skipTriage: true })
+      await q.addBlockers(b.id, [a.id])
+      // b is queued; addBlockers does not auto-block when blocker is non-terminal.
+      // Force b into 'queued' to match the AC precondition explicitly.
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'queued' WHERE id = ?`,
+        args: [b.id],
+      })
+
+      // Run the helper directly (verb under test).
+      const queueRetry = (await import('../../queue-retry')) as unknown as {
+        markTaskFailed: typeof import('../../queue-retry').markTaskFailed
+      }
+      await queueRetry.markTaskFailed(a.id, 'verify_failed')
+
+      // Per AC: B must be blocked because its prerequisite failed.
+      const reloaded = await q.getTask(b.id)
+      expect(reloaded?.status).toBe('blocked')
+
+      // Per AC: exactly one inbox item naming the failed prerequisite.
+      const inbox = (await import('../inbox')) as unknown as {
+        listInboxItems: typeof import('../inbox').listInboxItems
+      }
+      const open = await inbox.listInboxItems('open')
+      const prereqItems = open.filter((i) =>
+        i.kind.startsWith('prerequisite-failed('),
+      )
+      expect(prereqItems).toHaveLength(1)
+      expect(prereqItems[0].kind).toBe(`prerequisite-failed(${b.id})`)
+      expect(prereqItems[0].payload.dependentTaskId).toBe(b.id)
+      expect(prereqItems[0].payload.failedBlockerTaskId).toBe(a.id)
+    })
+
+    it('does not disturb downstream tasks already in a non-queued state', async () => {
+      // AC: tasks already in non-queued states are not disturbed. We
+      // verify with status='running' (in-flight) and status='done'
+      // (terminal) as representative non-queued states.
+      const { q, br } = await loadModules(repo)
+      const a = await q.enqueueTask('prerequisite-a', undefined, { skipTriage: true })
+      const running = await q.enqueueTask('running-b', undefined, { skipTriage: true })
+      const done = await q.enqueueTask('done-c', undefined, { skipTriage: true })
+      await q.addBlockers(running.id, [a.id])
+      await q.addBlockers(done.id, [a.id])
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'running' WHERE id = ?`,
+        args: [running.id],
+      })
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [done.id],
+      })
+
+      const result = await br.onBlockerTaskFailed(a.id)
+
+      // No outcomes recorded — the helper's SELECT skips non-queued rows.
+      expect(result.outcomes).toHaveLength(0)
+      expect((await q.getTask(running.id))?.status).toBe('running')
+      expect((await q.getTask(done.id))?.status).toBe('done')
+    })
+
+    it('applies to every failure mode — also triggers when failure_reason is not the fix-task path', async () => {
+      // AC: behaviour applies to all failure modes, not only fix-task
+      // failure. Drive the helper through a generic markTaskFailed call
+      // with an arbitrary failure_reason, and verify the downstream
+      // still flips.
+      const { q } = await loadModules(repo)
+      const a = await q.enqueueTask('prereq', undefined, { skipTriage: true })
+      const b = await q.enqueueTask('downstream', undefined, { skipTriage: true })
+      await q.addBlockers(b.id, [a.id])
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'queued' WHERE id = ?`,
+        args: [b.id],
+      })
+
+      const queueRetry = (await import('../../queue-retry')) as unknown as {
+        markTaskFailed: typeof import('../../queue-retry').markTaskFailed
+      }
+      await queueRetry.markTaskFailed(a.id, 'some_other_failure_mode')
+
+      expect((await q.getTask(b.id))?.status).toBe('blocked')
     })
   })
 

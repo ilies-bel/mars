@@ -36,6 +36,7 @@ import {
   markOriginDoneFromRecovery,
   onBlockerTaskCancelled,
   onBlockerTaskCompleted,
+  onBlockerTaskFailed,
   recoverBlockedTasks,
 } from '../blocker-resolution'
 import { supersedeInboxItemsForOrigin } from '../lib/inbox'
@@ -762,6 +763,26 @@ export const startDaemon = async (
     if (after && before?.status !== after.status) {
       if (after.status === 'queued') {
         bus.emit('task.queued', { taskId: id })
+      }
+      if (after.status === 'failed') {
+        // Block downstream queued dependents: any task with a
+        // task_blockers edge pointing at this failed task must not
+        // dispatch into a broken tree. Helper is idempotent and
+        // covers every failure mode (not just fix-task failure).
+        try {
+          const blocked = await onBlockerTaskFailed(id)
+          for (const o of blocked.outcomes) {
+            if (o.outcome === 'blocked') {
+              log(
+                `[block-cascade] task ${o.taskId} moved queued -> blocked because prerequisite ${id} failed`,
+              )
+            }
+          }
+        } catch (err) {
+          log(
+            `[block-cascade] error blocking downstreams for failed ${id}: ${(err as Error).message}`,
+          )
+        }
       }
       if (
         after.status === 'failed' &&
