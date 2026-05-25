@@ -18,9 +18,12 @@
 
 export const DEFAULT_RETRY_BUDGET = 1
 
+/** Failure signature stamped on tasks killed by `mars daemon kill`. */
+export const DAEMON_KILLED_SIGNATURE = 'daemon-killed'
+
 export const retryBudgetBySignature: Readonly<Record<string, number>> =
   Object.freeze({
-    'daemon-killed': 3,
+    [DAEMON_KILLED_SIGNATURE]: 3,
   })
 
 export const getRetryBudget = (signature: string): number =>
