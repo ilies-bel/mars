@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -70,4 +70,36 @@ export const readDaemonPid = (pidFile: string): number | null => {
   } catch {
     return null
   }
+}
+
+export type DaemonLiveness = { alive: true; pid: number } | { alive: false }
+
+/**
+ * Shared liveness check for `mars daemon`.
+ *
+ * Returns `{ alive: true, pid }` when the daemon socket is connectable (the
+ * daemon is healthy). The pid comes from the pid file; 0 is used as a
+ * sentinel when the pid file is absent.
+ *
+ * When the socket is not connectable (e.g. after a kill -9), any stale
+ * socket and pid files are removed so a fresh spawn won't collide, then
+ * `{ alive: false }` is returned.
+ */
+export const isDaemonAlive = async (): Promise<DaemonLiveness> => {
+  const { socket, pidFile } = daemonPaths()
+  if (await tryConnectSocket(socket)) {
+    const pid = readDaemonPid(pidFile) ?? 0
+    return { alive: true, pid }
+  }
+  // Not connectable — clean up any stale files so a fresh spawn can start cleanly.
+  for (const f of [socket, pidFile]) {
+    if (existsSync(f)) {
+      try {
+        unlinkSync(f)
+      } catch {
+        // best-effort; ignore races with concurrent cleanup
+      }
+    }
+  }
+  return { alive: false }
 }

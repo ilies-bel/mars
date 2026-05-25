@@ -2154,13 +2154,15 @@ const main = async (): Promise<void> => {
       const detach = subFlags.has('--detach')
       if (detach) {
         const { spawn } = await import('node:child_process')
-        const { daemonPaths, resolveLaunchCommand, tryConnectSocket } =
+        const { daemonPaths, resolveLaunchCommand, isDaemonAlive } =
           await import('./mastra/daemon/paths')
-        const { socket } = daemonPaths()
-        if (await tryConnectSocket(socket)) {
-          console.log('daemon already running')
+        const liveness = await isDaemonAlive()
+        if (liveness.alive) {
+          const { logFile } = daemonPaths()
+          console.log(`[mars] daemon detached (pid ${liveness.pid}, log: ${logFile})`)
           return
         }
+        // Not alive (stale files already removed by isDaemonAlive); spawn fresh.
         const { command, baseArgs } = resolveLaunchCommand()
         const child = spawn(
           command,
