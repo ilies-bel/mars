@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -9,6 +9,7 @@ import {
   slicerOutputSchema,
   sliceFilesForPersistence,
   injectSchemaDropBlockers,
+  dropAlreadySatisfiedSlices,
   composeTaskPrompt,
 } from '../slice-workflow'
 import {
@@ -1792,6 +1793,210 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
         (row.rows[0] as unknown as { status: string }).status,
       ).toBe('queued')
     }
+  })
+})
+
+describe('dropAlreadySatisfiedSlices: pre-flight drop of already-shipped slices', () => {
+  // Helper to build a minimal SliceSpec fixture
+  const makeSlice = (
+    overrides: Partial<{
+      title: string
+      creates: string[]
+      prescriptiveAction: string
+      blockedBy: number[]
+      modifies: string[]
+    }> = {},
+  ) => ({
+    title: 'Test slice',
+    type: 'AFK' as const,
+    whatToBuild: 'test',
+    acceptanceCriteria: ['works'],
+    blockedBy: [] as number[],
+    readFirst: ['some/file.ts'],
+    prescriptiveAction: 'Add `mySymbol` to the module.',
+    modifies: [] as string[],
+    creates: [] as string[],
+    verifyCmd: null,
+    taskType: 'auto' as const,
+    ...overrides,
+  })
+
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-preflight-'))
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('drops a slice when all creates files exist and export all declared symbols', () => {
+    mkdirSync(resolve(tmpDir, 'src'), { recursive: true })
+    writeFileSync(
+      resolve(tmpDir, 'src/myModule.ts'),
+      'export const mySymbol = 42\n',
+    )
+
+    const slices = [makeSlice({ creates: ['src/myModule.ts'] })]
+    const result = dropAlreadySatisfiedSlices(slices, tmpDir)
+
+    expect(result).toHaveLength(0)
+  })
+
+  it('does NOT drop a slice when the creates file does not exist', () => {
+    const slices = [makeSlice({ creates: ['src/nonexistent.ts'] })]
+    const result = dropAlreadySatisfiedSlices(slices, tmpDir)
+
+    expect(result).toHaveLength(1)
+  })
+
+  it('does NOT drop a slice when a declared symbol is missing from the file', () => {
+    mkdirSync(resolve(tmpDir, 'src'), { recursive: true })
+    writeFileSync(
+      resolve(tmpDir, 'src/myModule.ts'),
+      // file exists but exports a DIFFERENT symbol
+      'export const otherSymbol = 99\n',
+    )
+
+    const slices = [
+      makeSlice({
+        creates: ['src/myModule.ts'],
+        prescriptiveAction: 'Add `mySymbol` to the module.',
+      }),
+    ]
+    const result = dropAlreadySatisfiedSlices(slices, tmpDir)
+
+    expect(result).toHaveLength(1)
+  })
+
+  it('does NOT drop a slice with no backtick identifiers in prescriptiveAction', () => {
+    mkdirSync(resolve(tmpDir, 'src'), { recursive: true })
+    writeFileSync(
+      resolve(tmpDir, 'src/myModule.ts'),
+      'export const mySymbol = 42\n',
+    )
+
+    const slices = [
+      makeSlice({
+        creates: ['src/myModule.ts'],
+        // No backtick-delimited symbol declared
+        prescriptiveAction: 'Add the mySymbol constant without backticks.',
+      }),
+    ]
+    const result = dropAlreadySatisfiedSlices(slices, tmpDir)
+
+    expect(result).toHaveLength(1)
+  })
+
+  it('does NOT drop a slice with no creates files (modifies-only)', () => {
+    mkdirSync(resolve(tmpDir, 'src'), { recursive: true })
+    writeFileSync(
+      resolve(tmpDir, 'src/existing.ts'),
+      'export const mySymbol = 42\n',
+    )
+
+    const slices = [
+      makeSlice({
+        creates: [],
+        modifies: ['src/existing.ts'],
+        prescriptiveAction: 'Add `mySymbol` to the module.',
+      }),
+    ]
+    const result = dropAlreadySatisfiedSlices(slices, tmpDir)
+
+    expect(result).toHaveLength(1)
+  })
+
+  it('PRD scenario: dropped slice blocker edge is removed from downstream slice', () => {
+    // This is the acceptance-criterion scenario:
+    // Slice 1 creates a file + symbol already on disk → dropped.
+    // Slice 2 is blocked by slice 1 → its blockedBy must be emptied so it
+    // can dispatch immediately.
+    mkdirSync(resolve(tmpDir, 'src'), { recursive: true })
+    writeFileSync(
+      resolve(tmpDir, 'src/alreadyShipped.ts'),
+      'export function alreadyShipped() {}\n',
+    )
+
+    const slices = [
+      makeSlice({
+        title: 'Slice 1 — already on main',
+        creates: ['src/alreadyShipped.ts'],
+        prescriptiveAction:
+          'Add `alreadyShipped` function to src/alreadyShipped.ts.',
+        blockedBy: [],
+      }),
+      makeSlice({
+        title: 'Slice 2 — depends on slice 1',
+        creates: [],
+        prescriptiveAction: 'Use `alreadyShipped` in downstream code.',
+        blockedBy: [1],
+      }),
+    ]
+
+    const result = dropAlreadySatisfiedSlices(slices, tmpDir)
+
+    // Slice 1 should be gone
+    expect(result).toHaveLength(1)
+    expect(result[0].title).toBe('Slice 2 — depends on slice 1')
+    // Its blockedBy must no longer reference the dropped slice
+    expect(result[0].blockedBy).toEqual([])
+  })
+
+  it('re-numbers surviving slice blockedBy indices after a drop', () => {
+    // Slices: [A (dropped), B (blocked by A), C (blocked by A and original 3),
+    //          D (blocked by original 3)]
+    // After dropping A: B → [], C → [1] (was 3→now 2=C, but wait...)
+    // Let's use a cleaner setup:
+    // Slices: [A, B, C] where A is dropped, C is blocked by B (idx 2).
+    // After dropping A: B is now idx 1; C's blockedBy [2] → remap to [1].
+    mkdirSync(resolve(tmpDir, 'src'), { recursive: true })
+    writeFileSync(
+      resolve(tmpDir, 'src/alreadyShipped.ts'),
+      'export const alreadyShipped = true\n',
+    )
+
+    const sliceA = makeSlice({
+      title: 'A — dropped',
+      creates: ['src/alreadyShipped.ts'],
+      prescriptiveAction: 'Add `alreadyShipped` constant.',
+      blockedBy: [],
+    })
+    const sliceB = makeSlice({
+      title: 'B — not dropped, no deps',
+      creates: [],
+      prescriptiveAction: 'Some other work.',
+      blockedBy: [],
+    })
+    const sliceC = makeSlice({
+      title: 'C — blocked by B (original index 2)',
+      creates: [],
+      prescriptiveAction: 'Follow-up work.',
+      blockedBy: [2], // 1-based: slice B
+    })
+
+    const result = dropAlreadySatisfiedSlices([sliceA, sliceB, sliceC], tmpDir)
+
+    expect(result).toHaveLength(2)
+    expect(result[0].title).toBe('B — not dropped, no deps')
+    expect(result[1].title).toBe('C — blocked by B (original index 2)')
+    // C was blocked by original index 2 (B). After dropping A,
+    // B is now new index 1.
+    expect(result[1].blockedBy).toEqual([1])
+  })
+
+  it('is a no-op when no slice is satisfied on disk', () => {
+    const slices = [
+      makeSlice({ creates: ['src/missing.ts'] }),
+      makeSlice({ creates: ['src/alsoMissing.ts'], blockedBy: [1] }),
+    ]
+
+    const result = dropAlreadySatisfiedSlices(slices, tmpDir)
+
+    expect(result).toHaveLength(2)
+    expect(result[0].blockedBy).toEqual([])
+    expect(result[1].blockedBy).toEqual([1])
   })
 })
 
