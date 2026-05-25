@@ -22,7 +22,7 @@ import {
   planClaudeConflicts,
   scaffoldClaudeConfig,
 } from '../../init/scaffold'
-import { writeSlimInit, writePerFolderClaudeMds, type VerifyStepEntry } from '../../init/writer'
+import { writeSlimInit, writePerFolderClaudeMds, purgeStaleSupervisorMds, type VerifyStepEntry } from '../../init/writer'
 import { writeDetectionReport } from '../../init/write-detection-report'
 import { relative, resolve } from 'node:path'
 
@@ -394,6 +394,16 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
       status: 'dry-run',
       message: 'dry run; no files written',
     }
+  }
+
+  // Migration: remove stale per-stack supervisor .md files written by the
+  // old init system. Runs before the pre-flight conflict check so an existing
+  // verify.json is preserved as-is (no regeneration of verifySteps).
+  const { purged } = purgeStaleSupervisorMds(ctx.supervisorsDir)
+  if (purged.length > 0) {
+    process.stdout.write(
+      `[mars init] migration: removed ${purged.length} stale supervisor .md file(s): ${purged.join(', ')}\n`,
+    )
   }
 
   // Emit a best-effort diagnostic detection report. Failures here must not
