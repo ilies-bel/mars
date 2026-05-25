@@ -1664,6 +1664,21 @@ export const startDaemon = async (
   writeFileSync(pidFile, String(process.pid), 'utf8')
   log(`daemon listening on ${socketPath} (pid ${process.pid}, repo ${resolveContext().repoRoot})`)
 
+  // ── Local HTTP restart endpoint ───────────────────────────────────────────
+  // Bound to 127.0.0.1 only; port is OS-assigned. The UI and any local
+  // tooling can POST /tasks/:id/restart to trigger the same code path as
+  // `mars restart <id>` (i.e. coreRestartTask with the 'failed' allowed set).
+  const { startHttpServer } = await import('./http-server')
+  const { coreRestartTask: coreRestart } = await import('./restart-task')
+  const httpHandle = await startHttpServer({
+    restartTask: async (id) => {
+      await coreRestart(id, new Set(['failed']))
+      bus.emit('task.queued', { taskId: id })
+    },
+    isAcceptingWork: () => acceptingWork,
+  })
+  log(`HTTP restart endpoint on http://127.0.0.1:${httpHandle.port}/tasks/:id/restart`)
+
   // Boot reconcile after server is listening (so any reconcile-driven dispatch
   // is fully wired) — fire-and-forget; errors logged inside.
   void reconcile().catch((err) => log(`[reconcile] failed: ${(err as Error).message}`))
@@ -1763,7 +1778,10 @@ export const startDaemon = async (
       }
     }
 
-    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await Promise.all([
+      new Promise<void>((resolve) => server.close(() => resolve())),
+      httpHandle.close(),
+    ])
     for (const f of [socketPath, pidFile]) {
       if (existsSync(f)) {
         try {
