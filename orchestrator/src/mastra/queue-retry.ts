@@ -69,6 +69,16 @@ export const markTaskFailed = async (
     tx.close()
     throw error
   }
+  // Block downstream queued tasks whose only path to running was this
+  // failed prerequisite. Dynamic import breaks the queue-retry <->
+  // blocker-resolution module cycle. Best-effort: a cascade failure
+  // must not mask the original markTaskFailed success.
+  try {
+    const { onBlockerTaskFailed } = await import('./blocker-resolution')
+    await onBlockerTaskFailed(taskId)
+  } catch {
+    // best-effort
+  }
 }
 
 export interface RetryBudgetExhaustedInboxInput {
