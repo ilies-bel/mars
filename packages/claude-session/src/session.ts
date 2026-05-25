@@ -15,4 +15,12 @@ export interface SessionHandle {
    * Returns a function that removes this handler; calling it is idempotent.
    */
   onData(handler: (chunk: string) => void): () => void;
+  /**
+   * Resolves with the process exit code once the session has terminated,
+   * regardless of whether it ended naturally, was gracefully killed, or
+   * was force-killed. Awaiting this after the process has already exited
+   * resolves immediately with the recorded exit code. The session is
+   * removed from the live-sessions registry before this promise settles.
+   */
+  exited: Promise<number>;
 }
