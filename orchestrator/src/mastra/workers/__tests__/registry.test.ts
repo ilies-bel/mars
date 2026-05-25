@@ -14,6 +14,7 @@ import {
   resolveWorkerMaxMessages,
   type WorkerConfig,
   type WorkerName,
+  type WorkerRuntime,
 } from '..'
 import { pickWorkerForTask } from '../../workflows/implement-workflow'
 import type { Task } from '../../queue'
@@ -38,6 +39,49 @@ const valueAfter = (args: readonly string[], flag: string): string | undefined =
   if (i < 0) return undefined
   return args[i + 1]
 }
+
+describe('Worker runtime field', () => {
+  // Tracer bullet: every Worker in the pre-built registry carries runtime: 'headless'.
+  // No dispatch logic branches on it yet — this test only asserts the field is present
+  // and carries the expected value.
+  it('every pre-built Worker exposes runtime === "headless"', () => {
+    const allRoles: ReadonlyArray<WorkerName> = [
+      'Coder',
+      'Planner',
+      'Slicer',
+      'Triager',
+      'Fixer',
+      'Writer',
+    ]
+    for (const name of allRoles) {
+      const worker = Workers[name]
+      const runtime: WorkerRuntime = worker.runtime
+      expect(runtime, `${name}.runtime`).toBe('headless')
+    }
+  })
+
+  it('WORKER_CONFIGS entries carry runtime: "headless"', () => {
+    for (const name of Object.keys(WORKER_CONFIGS) as WorkerName[]) {
+      expect(WORKER_CONFIGS[name].runtime, `${name} config.runtime`).toBe('headless')
+    }
+  })
+
+  it('createWorker plumbs runtime through to the resulting Worker', () => {
+    const cfg: WorkerConfig = {
+      name: 'Coder',
+      model: 'claude-sonnet-4-6',
+      effort: 'medium',
+      permissionMode: 'default',
+      bare: false,
+      disallowedTools: [],
+      outputFormat: 'stream-json',
+      defaultTimeoutMs: 1000,
+      maxMessages: 0,
+      runtime: 'headless',
+    }
+    expect(createWorker(cfg).runtime).toBe('headless')
+  })
+})
 
 describe('Worker registry', () => {
   it('exposes Coder, Planner, Slicer, Triager, Fixer, and Writer as named Workers', () => {
@@ -239,6 +283,7 @@ describe('audit surface — full role-pinned config exposed via WORKER_CONFIGS',
       'outputFormat',
       'defaultTimeoutMs',
       'maxMessages',
+      'runtime',
     ]
     for (const name of Object.keys(WORKER_CONFIGS) as WorkerName[]) {
       const cfg = WORKER_CONFIGS[name]
@@ -266,6 +311,7 @@ describe('systemPrompt / appendSystemPrompt mutual exclusion', () => {
     outputFormat: 'stream-json',
     defaultTimeoutMs: 1000,
     maxMessages: 100,
+    runtime: 'headless',
   }
 
   it('createWorker throws when both systemPrompt and appendSystemPrompt are pinned', () => {

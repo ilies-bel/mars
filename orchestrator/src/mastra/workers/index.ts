@@ -53,6 +53,12 @@ export const WRITER_DENIED_TOOLS: readonly string[] = [
 
 export type WorkerName = 'Coder' | 'Planner' | 'Slicer' | 'Triager' | 'Fixer' | 'Writer'
 
+// Execution runtime for a Worker. 'headless' is the current default and only
+// supported value — the Worker runs via `claude -p` in a non-interactive
+// subprocess. Future values (e.g. 'tmux') are reserved for later PRDs; no
+// dispatch logic branches on this field yet.
+export type WorkerRuntime = 'headless'
+
 export type ClaudeOutputFormat = 'stream-json' | 'json' | 'text'
 
 // Pinned configuration for a Worker. Everything here is fixed at registration
@@ -107,6 +113,10 @@ export interface WorkerConfig {
   // Per-Worker message cap. Resolved at construction time via the cascade:
   // explicit override → MARS_CLAUDE_MAX_MESSAGES env var → DEFAULT_MAX_MESSAGES.
   readonly maxMessages: number
+  // Execution runtime for this Worker. Always 'headless' for existing Workers —
+  // dispatched via `claude -p` in a non-interactive subprocess. Reserved for
+  // future runtimes (e.g. 'tmux'); no dispatch logic branches on this field yet.
+  readonly runtime: WorkerRuntime
 }
 
 // Public default for the message-cap cascade. Matches the wrapper's
@@ -150,6 +160,7 @@ export interface RunOptions {
 
 export interface Worker {
   readonly config: WorkerConfig
+  readonly runtime: WorkerRuntime
   run(prompt: string, options: RunOptions): Promise<RunClaudeResult>
 }
 
@@ -191,6 +202,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     defaultTimeoutMs: 20 * 60 * 1000,
     maxMessages: resolveWorkerMaxMessages(),
+    runtime: 'headless',
   },
   Planner: {
     name: 'Planner',
@@ -202,6 +214,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     defaultTimeoutMs: 5 * 60 * 1000,
     maxMessages: resolveWorkerMaxMessages(),
+    runtime: 'headless',
   },
   Slicer: {
     name: 'Slicer',
@@ -218,6 +231,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     // before it could emit the slice JSON. 250 gives ~4x headroom while
     // keeping a hard ceiling so a looping slicer can't burn unbounded tokens.
     maxMessages: resolveWorkerMaxMessages(250),
+    runtime: 'headless',
   },
   Triager: {
     name: 'Triager',
@@ -229,6 +243,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     defaultTimeoutMs: 2 * 60 * 1000,
     maxMessages: resolveWorkerMaxMessages(40),
+    runtime: 'headless',
   },
   Fixer: {
     name: 'Fixer',
@@ -240,6 +255,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     defaultTimeoutMs: 20 * 60 * 1000,
     maxMessages: resolveWorkerMaxMessages(),
+    runtime: 'headless',
   },
   // Writer lands glossary/ADR slices via the daemon's structured-write verbs
   // rather than direct worktree edits. Haiku is enough for the
@@ -259,6 +275,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     defaultTimeoutMs: 20 * 60 * 1000,
     maxMessages: resolveWorkerMaxMessages(),
+    runtime: 'headless',
   },
 } as const
 
@@ -287,6 +304,7 @@ const buildWorker = (config: WorkerConfig): Worker => {
   assertSystemPromptShape(config)
   return {
     config,
+    runtime: config.runtime,
     run: (prompt, options) =>
       runClaudeCode({
         cwd: options.cwd,
