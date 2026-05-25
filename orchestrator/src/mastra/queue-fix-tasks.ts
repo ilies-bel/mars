@@ -13,9 +13,7 @@ import { type InboxKind, raiseInboxItem } from './lib/inbox'
 import { truncateFailure } from './lib/truncate-failure'
 import { internalBus } from '../internal-bus'
 import {
-  getClient,
   getTask,
-  initQueue,
   MAX_PRIORITY,
   updateTask,
   type Task,
@@ -25,7 +23,7 @@ import {
   markTaskFailed,
   raiseRetryBudgetExhaustedInbox,
 } from './queue-retry'
-import type { TaskStore } from './lib/task-store'
+import { getDefaultTaskStore, type TaskStore } from './lib/task-store'
 
 const truncate = (s: string, max: number): string =>
   s.length <= max ? s : `${s.slice(0, max)}…`
@@ -65,8 +63,10 @@ export const getMaxFixAttempts = (): number => {
 export const countFixTaskAttempts = async (
   sourceTaskId: string,
   failureSignature: string,
+  store?: TaskStore,
 ): Promise<number> => {
-  const r = await getClient().execute({
+  const s = store ?? (await getDefaultTaskStore())
+  const r = await s.query({
     sql: `SELECT COUNT(*) AS n FROM tasks
            WHERE fix_for_task_id = ?
              AND failure_signature = ?`,
@@ -88,6 +88,12 @@ export interface UpsertFixTaskInput {
    * decides whether to use the rest of the fields.
    */
   recipeContext: FixRecipeContext
+  /**
+   * TaskStore threaded in from the workflow composition root. When
+   * provided, all DB operations run through the store rather than
+   * falling back to the module-singleton client.
+   */
+  store?: TaskStore
 }
 
 export interface UpsertFixTaskResult {
@@ -98,8 +104,10 @@ export interface UpsertFixTaskResult {
 const findExistingFixTask = async (
   sourceTaskId: string,
   failureSignature: string,
+  store?: TaskStore,
 ): Promise<string | null> => {
-  const r = await getClient().execute({
+  const s = store ?? (await getDefaultTaskStore())
+  const r = await s.query({
     sql: `SELECT id FROM tasks
            WHERE fix_for_task_id = ?
              AND failure_signature = ?
@@ -119,8 +127,10 @@ const findExistingFixTask = async (
  */
 const findSharedFixTask = async (
   failureSignature: string,
+  store?: TaskStore,
 ): Promise<string | null> => {
-  const r = await getClient().execute({
+  const s = store ?? (await getDefaultTaskStore())
+  const r = await s.query({
     sql: `SELECT id FROM tasks
            WHERE failure_signature = ?
              AND fix_for_task_id IS NOT NULL
@@ -149,8 +159,7 @@ const findSharedFixTask = async (
 export const upsertFixTask = async (
   input: UpsertFixTaskInput,
 ): Promise<UpsertFixTaskResult> => {
-  await initQueue()
-  const c = getClient()
+  const s = input.store ?? (await getDefaultTaskStore())
 
   const recipe = getRecipe(input.failureSignature)
   const shared = recipe.shared === true
@@ -160,10 +169,10 @@ export const upsertFixTask = async (
   // sources just attach a task_blockers edge — one commit unblocks
   // every dependent at once via onBlockerTaskCompleted.
   const existingId = shared
-    ? await findSharedFixTask(input.failureSignature)
-    : await findExistingFixTask(input.sourceTaskId, input.failureSignature)
+    ? await findSharedFixTask(input.failureSignature, s)
+    : await findExistingFixTask(input.sourceTaskId, input.failureSignature, s)
 
-  const source = await getTask(input.sourceTaskId)
+  const source = await getTask(input.sourceTaskId, s)
   if (!source) {
     throw new Error(`source task ${input.sourceTaskId} not found`)
   }
@@ -176,27 +185,25 @@ export const upsertFixTask = async (
 
   if (existingId) {
     // Attach this source to the existing fix-task and park it.
-    const tx = await c.transaction('write')
-    try {
-      await tx.execute({
-        sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
+    await s.batch(
+      [
+        {
+          sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
               VALUES (?, ?, ?)`,
-        args: [input.sourceTaskId, existingId, now],
-      })
-      await tx.execute({
-        sql: `UPDATE tasks
+          args: [input.sourceTaskId, existingId, now],
+        },
+        {
+          sql: `UPDATE tasks
                  SET status = 'blocked',
                      retry_count = ?,
                      error = ?,
                      updated_at = ?
                WHERE id = ?`,
-        args: [nextRetryCount, errorSummary, now, input.sourceTaskId],
-      })
-      await tx.commit()
-    } catch (error: unknown) {
-      tx.close()
-      throw error
-    }
+          args: [nextRetryCount, errorSummary, now, input.sourceTaskId],
+        },
+      ],
+      'write',
+    )
     internalBus().emit('task.blocked', {
       taskId: input.sourceTaskId,
       fixTaskId: existingId,
@@ -226,57 +233,55 @@ export const upsertFixTask = async (
   // stay at default priority; they only unblock the single source.
   const fixPriority = shared ? MAX_PRIORITY : 0
 
-  const tx = await c.transaction('write')
-  try {
-    await tx.execute({
-      sql: `INSERT INTO tasks (
+  await s.batch(
+    [
+      {
+        sql: `INSERT INTO tasks (
               id, prompt, status,
               author_kind, author_name,
               fix_for_task_id, failure_signature,
               retry_count, origin_id, priority,
               created_at, updated_at
             ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
-      args: [
-        fixTaskId,
-        prompt,
-        FIX_TASK_AUTHOR_KIND,
-        FIX_TASK_AUTHOR_NAME,
-        input.sourceTaskId,
-        input.failureSignature,
-        source.originId,
-        fixPriority,
-        now,
-        now,
-      ],
-    })
-    await tx.execute({
-      sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
+        args: [
+          fixTaskId,
+          prompt,
+          FIX_TASK_AUTHOR_KIND,
+          FIX_TASK_AUTHOR_NAME,
+          input.sourceTaskId,
+          input.failureSignature,
+          source.originId,
+          fixPriority,
+          now,
+          now,
+        ],
+      },
+      {
+        sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
             VALUES (?, ?, ?)`,
-      args: [input.sourceTaskId, fixTaskId, now],
-    })
-    await tx.execute({
-      sql: `UPDATE tasks
+        args: [input.sourceTaskId, fixTaskId, now],
+      },
+      {
+        sql: `UPDATE tasks
                SET status = 'blocked',
                    retry_count = ?,
                    error = ?,
                    updated_at = ?
              WHERE id = ?`,
-      args: [nextRetryCount, errorSummary, now, input.sourceTaskId],
-    })
-    // Append-only ledger row for the sweeper's per-(parent,signature)
-    // dedup + budget logic. Lives inside the same transaction as the
-    // fix-task INSERT so a rollback leaves no stray attempt row.
-    await tx.execute({
-      sql: `INSERT INTO self_heal_attempts (
+        args: [nextRetryCount, errorSummary, now, input.sourceTaskId],
+      },
+      // Append-only ledger row for the sweeper's per-(parent,signature)
+      // dedup + budget logic. Lives inside the same batch as the
+      // fix-task INSERT so a rollback leaves no stray attempt row.
+      {
+        sql: `INSERT INTO self_heal_attempts (
               parent_task_id, failure_signature, fix_task_id, created_at
             ) VALUES (?, ?, ?, ?)`,
-      args: [input.sourceTaskId, input.failureSignature, fixTaskId, now],
-    })
-    await tx.commit()
-  } catch (error: unknown) {
-    tx.close()
-    throw error
-  }
+        args: [input.sourceTaskId, input.failureSignature, fixTaskId, now],
+      },
+    ],
+    'write',
+  )
 
   internalBus().emit('task.blocked', {
     taskId: input.sourceTaskId,
@@ -524,8 +529,9 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
   branch: string | null
   truncatedError: string
   reproCommand: string | null
+  store?: TaskStore
 }): Promise<SpawnInvestigatorResult> => {
-  const c = getClient()
+  const s = input.store ?? (await getDefaultTaskStore())
   const investigatorPrompt = buildInvestigatorPrompt({
     sourceTaskId: input.sourceTask.id,
     originTaskId: input.sourceTask.originId,
@@ -545,50 +551,48 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
   )
   const now = new Date().toISOString()
 
-  const tx = await c.transaction('write')
-  try {
-    await tx.execute({
-      sql: `INSERT INTO tasks (
+  await s.batch(
+    [
+      {
+        sql: `INSERT INTO tasks (
               id, prompt, status,
               author_kind, author_name,
               fix_for_task_id, failure_signature,
               retry_count, origin_id,
               created_at, updated_at
             ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 0, ?, ?, ?)`,
-      args: [
-        investigatorTaskId,
-        investigatorPrompt,
-        FIX_TASK_AUTHOR_KIND,
-        INVESTIGATOR_AUTHOR_NAME,
-        // Investigator is not a fix-task for the source — it doesn't
-        // unblock it. Linking via fix_for_task_id would put the source
-        // back on the unblock-on-done path, which is wrong (a merged
-        // recipe doesn't fix the failure that already happened).
-        null,
-        input.failureSignature,
-        input.sourceTask.originId,
-        now,
-        now,
-      ],
-    })
-    // Source task: mark it failed. There is no task_blockers edge to wait on —
-    // the investigator does not unblock the source (a merged recipe doesn't
-    // retroactively fix the past failure). Human resolves via mars continue /
-    // mars restart once the investigator merges a recipe.
-    await tx.execute({
-      sql: `UPDATE tasks
+        args: [
+          investigatorTaskId,
+          investigatorPrompt,
+          FIX_TASK_AUTHOR_KIND,
+          INVESTIGATOR_AUTHOR_NAME,
+          // Investigator is not a fix-task for the source — it doesn't
+          // unblock it. Linking via fix_for_task_id would put the source
+          // back on the unblock-on-done path, which is wrong (a merged
+          // recipe doesn't fix the failure that already happened).
+          null,
+          input.failureSignature,
+          input.sourceTask.originId,
+          now,
+          now,
+        ],
+      },
+      // Source task: mark it failed. There is no task_blockers edge to wait on —
+      // the investigator does not unblock the source (a merged recipe doesn't
+      // retroactively fix the past failure). Human resolves via mars continue /
+      // mars restart once the investigator merges a recipe.
+      {
+        sql: `UPDATE tasks
                SET status = 'failed',
                    retry_count = retry_count + 1,
                    error = ?,
                    updated_at = ?
              WHERE id = ?`,
-      args: [errorSummary, now, input.sourceTask.id],
-    })
-    await tx.commit()
-  } catch (error: unknown) {
-    tx.close()
-    throw error
-  }
+        args: [errorSummary, now, input.sourceTask.id],
+      },
+    ],
+    'write',
+  )
 
   const inboxItemId = await raiseInboxItem({
     kind: NO_RECIPE_INBOX_KIND,
@@ -654,7 +658,7 @@ export interface HandleTaskFailureViaTaskInput {
   /**
    * TaskStore threaded in from the workflow composition root. When
    * provided, getTask and updateTask calls inside this handler route
-   * through the store rather than calling getClient() directly.
+   * through the store rather than going through the module-singleton client.
    */
   store?: TaskStore
 }
@@ -700,9 +704,8 @@ export const CANCELLED_FAILURE_REASON = 'cancelled'
 export const handleTaskFailureWithFixTask = async (
   input: HandleTaskFailureViaTaskInput,
 ): Promise<HandleTaskFailureViaTaskResult> => {
-  const { store } = input
-  if (!store) await initQueue()
-  const task: Task | null = await getTask(input.taskId, store)
+  const s = input.store ?? (await getDefaultTaskStore())
+  const task: Task | null = await getTask(input.taskId, s)
   if (!task) return { outcome: 'noop' }
 
   // PRD slice 2/4 (mars-9234e1b2): cancellation gate. When the
@@ -777,7 +780,7 @@ export const handleTaskFailureWithFixTask = async (
     await updateTask(input.taskId, {
       status: 'failed',
       error: `recovery_failed:${failureSignature}: ${truncatedError.slice(0, 500)}`,
-    }, store)
+    }, s)
 
     const originId = task.originId
     const inboxSignature = `${originId}:${failureSignature}`
@@ -877,6 +880,7 @@ export const handleTaskFailureWithFixTask = async (
         branch,
         truncatedError,
         reproCommand,
+        store: s,
       })
     return {
       outcome: 'no-recipe',
@@ -898,6 +902,7 @@ export const handleTaskFailureWithFixTask = async (
   const priorAttempts = await countFixTaskAttempts(
     input.taskId,
     failureSignature,
+    s,
   )
   if (priorAttempts >= cap) {
     // AUDIT (mars-88a4e657): safe site for the "blocked-implies-edge"
@@ -908,17 +913,12 @@ export const handleTaskFailureWithFixTask = async (
     // survives until explicitly cleared by `mars unblock`, so this branch
     // re-stamps a status the row already has.
     const now = new Date().toISOString()
-    const blockStmt = {
+    await s.execute({
       sql: `UPDATE tasks
                SET status = 'blocked', updated_at = ?
              WHERE id = ?`,
       args: [now, input.taskId],
-    }
-    if (store) {
-      await store.execute(blockStmt)
-    } else {
-      await getClient().execute(blockStmt)
-    }
+    })
 
     const inboxItemId = await raiseInboxItem({
       kind: FIX_FAIL_LOOP_INBOX_KIND,
@@ -1004,6 +1004,7 @@ export const handleTaskFailureWithFixTask = async (
     truncatedError,
     branch,
     recipeContext,
+    store: s,
   })
 
   return {
