@@ -175,7 +175,7 @@ describe('mars init AGENTS.md writer', () => {
     expect(rootAgents).toContain('<!-- mars-init:supervisor=node-backend-supervisor:scope=. -->')
   })
 
-  it('does not write legacy .mars/supervisors/<name>.md prose files', () => {
+  it('does not write any .md files to .mars/supervisors/ — only manifest.json', () => {
     make(root, {
       'frontend/package.json': JSON.stringify({
         dependencies: { react: '*', 'react-dom': '*' },
@@ -187,7 +187,7 @@ describe('mars init AGENTS.md writer', () => {
 
     const supervisorsDir = resolve(root, '.mars', 'supervisors')
     const entries = readdirSync(supervisorsDir).sort()
-    expect(entries).toEqual(['README.md', 'manifest.json'])
+    expect(entries).toEqual(['manifest.json'])
   })
 
   it('persists `cwd` on each verify step when present, and omits it otherwise', () => {
