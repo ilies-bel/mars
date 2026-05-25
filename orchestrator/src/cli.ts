@@ -207,7 +207,7 @@ Commands:
                                 set the technical plan on a draft/queued task
   show <id>                     print full detail for an id; tries tasks
                                 (.mars/queue.db), then proposals (.mars/state.db)
-  list [status]                 list tasks (draft|queued|running|verifying|merging|done|failed|dropped)
+  list [status]                 list tasks (draft|queued|running|verifying|merging|vega-reconciling|done|failed|dropped)
   continue <id> [<id> ...]      resume failed task(s) on their existing
                                 worktree+branch, jumping straight into the
                                 failed phase (verify or merge). Refuses if a
@@ -493,7 +493,7 @@ then proposals (.mars/state.db).`,
   list: `mars list [status]
 
 List tasks. Status one of: draft, queued, running, verifying, merging,
-done, failed, dropped. Defaults to all when omitted.`,
+vega-reconciling, done, failed, dropped. Defaults to all when omitted.`,
   continue: `mars continue <id> [<id> ...]
 
 Resume failed task(s) on their existing worktree+branch, jumping
@@ -2148,7 +2148,7 @@ const main = async (): Promise<void> => {
       console.log(`pid:        ${data.pid}`)
       console.log(`startedAt:  ${data.startedAt}`)
       console.log(
-        `counts:     draft=${data.counts.draft} queued=${data.counts.queued} running=${data.counts.running} verifying=${data.counts.verifying} merging=${data.counts.merging}`,
+        `counts:     draft=${data.counts.draft} queued=${data.counts.queued} running=${data.counts.running} verifying=${data.counts.verifying} merging=${data.counts.merging} vega-reconciling=${data.counts['vega-reconciling']}`,
       )
       console.log(`inFlight:   ${data.inFlight.length}`)
       for (const f of data.inFlight) console.log(`  ${f.kind} ${f.taskId}`)

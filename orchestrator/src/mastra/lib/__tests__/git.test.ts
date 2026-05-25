@@ -744,6 +744,25 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
     expect(currentBranch).toBe('developer/wip')
   })
 
+  it('never fires onVegaStart on a clean fast-forward (task stays in plain merging)', async () => {
+    const { mergeBranch } = await import('../git')
+    let vegaStarts = 0
+    const result = await mergeBranch({
+      branch: 'task/ff-test',
+      worktreePath: worktreeDir,
+      integrationBranch: 'main',
+      lockTimeoutMs: 5_000,
+      onVegaStart: () => {
+        vegaStarts += 1
+      },
+    })
+    expect(result.merged).toBe(true)
+    expect(result.conflictResolved).toBe(false)
+    // A deterministic fast-forward must never spawn Vega, so the task is never
+    // flipped out of the idempotent `merging` phase.
+    expect(vegaStarts).toBe(0)
+  })
+
   it('advances the integration branch ref to the rebased task branch tip', async () => {
     const { execFile: execFileCb } = await import('node:child_process')
     const { promisify } = await import('node:util')
@@ -851,6 +870,89 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
     // main should not have moved
     const mainShaAfter = (await execP('git', ['rev-parse', 'main'], { cwd: repo })).stdout.trim()
     expect(mainShaAfter).toBe(mainSha)
+  })
+})
+
+describe('mergeBranch — onVegaStart fires when fast-forward fails (conflict)', () => {
+  let repo: string
+  let worktreeDir: string
+  let stubDir: string
+  let prevClaudeBin: string | undefined
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-merge-vega-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+    writeFileSync(resolve(repo, 'src.ts'), 'const x = 1\n')
+    execFileSync('git', ['add', '.'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+
+    // Task branch and main diverge on the SAME line of src.ts so a rebase of
+    // the task branch onto main is guaranteed to conflict, forcing mergeBranch
+    // past the deterministic fast-forward and into the Vega path.
+    execFileSync('git', ['checkout', '-q', '-b', 'task/conflict'], { cwd: repo })
+    writeFileSync(resolve(repo, 'src.ts'), 'const x = 2\n')
+    execFileSync('git', ['commit', '-q', '-am', 'task edit'], { cwd: repo })
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+    writeFileSync(resolve(repo, 'src.ts'), 'const x = 999\n')
+    execFileSync('git', ['commit', '-q', '-am', 'main edit'], { cwd: repo })
+
+    worktreeDir = mkdtempSync(resolve(tmpdir(), 'mars-merge-vega-wt-'))
+    rmSync(worktreeDir, { recursive: true, force: true })
+    execFileSync('git', ['worktree', 'add', worktreeDir, 'task/conflict'], { cwd: repo })
+
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+
+    // Stub Vega: a `claude` binary that emits one success result line and exits
+    // 0 WITHOUT touching the in-progress rebase. The conflict therefore remains
+    // unresolved, so mergeBranch aborts — but onVegaStart must already have
+    // fired the moment the supervisor was spawned.
+    stubDir = mkdtempSync(resolve(tmpdir(), 'mars-vega-stub-'))
+    const stubPath = resolve(stubDir, 'claude')
+    writeFileSync(
+      stubPath,
+      `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', session_id: 'vega-stub' }) + '\\n');\n`,
+      'utf8',
+    )
+    chmodSync(stubPath, 0o755)
+    prevClaudeBin = process.env.MARS_CLAUDE_BIN
+    process.env.MARS_CLAUDE_BIN = stubPath
+
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    if (prevClaudeBin === undefined) delete process.env.MARS_CLAUDE_BIN
+    else process.env.MARS_CLAUDE_BIN = prevClaudeBin
+    try {
+      execFileSync('git', ['worktree', 'remove', '--force', worktreeDir], { cwd: repo })
+    } catch {}
+    rmSync(worktreeDir, { recursive: true, force: true })
+    rmSync(stubDir, { recursive: true, force: true })
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('fires onVegaStart exactly once when the rebase conflicts and Vega is spawned', async () => {
+    const { mergeBranch } = await import('../git')
+    let vegaStarts = 0
+    const result = await mergeBranch({
+      branch: 'task/conflict',
+      worktreePath: worktreeDir,
+      integrationBranch: 'main',
+      lockTimeoutMs: 5_000,
+      onVegaStart: () => {
+        vegaStarts += 1
+      },
+    })
+    // The fast-forward path failed and Vega was spawned: the task must be
+    // flipped to vega-reconciling exactly once for the duration of the session.
+    expect(vegaStarts).toBe(1)
+    // The stub did not resolve the conflict, so the merge aborts.
+    expect(result.merged).toBe(false)
+    expect(result.aborted).toBe(true)
   })
 })
 

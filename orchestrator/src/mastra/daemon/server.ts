@@ -988,6 +988,7 @@ export const startDaemon = async (
     'running',
     'verifying',
     'merging',
+    'vega-reconciling',
   ])
 
   const handleDrop = async (
@@ -1160,6 +1161,7 @@ export const startDaemon = async (
       running: (await listTasks('running')).length,
       verifying: (await listTasks('verifying')).length,
       merging: (await listTasks('merging')).length,
+      'vega-reconciling': (await listTasks('vega-reconciling')).length,
     }
     return {
       pid: process.pid,

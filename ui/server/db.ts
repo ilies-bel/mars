@@ -6,6 +6,7 @@ export type TaskStatus =
   | 'running'
   | 'verifying'
   | 'merging'
+  | 'vega-reconciling'
   | 'done'
   | 'failed'
   | 'dropped'
@@ -176,6 +177,7 @@ const clusterFor = (
     case 'running':
     case 'verifying':
     case 'merging':
+    case 'vega-reconciling':
       return 'In progress'
     case 'blocked':
       return 'Blocked'

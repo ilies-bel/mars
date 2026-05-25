@@ -117,6 +117,7 @@ describe('classifyWorktree', () => {
     'running',
     'verifying',
     'merging',
+    'vega-reconciling',
   ]
   for (const status of inFlightStatuses) {
     it(`keeps in-flight worktrees (${status})`, async () => {
