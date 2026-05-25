@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { INBOX_KINDS } from '../mastra/lib/inbox'
 
 const inboxPriority = z.enum(['urgent', 'high', 'normal', 'low'])
 const knownCategory = z.enum(['orchestrator', 'reflector', 'daemon', 'user'])
@@ -6,7 +7,7 @@ const knownCategory = z.enum(['orchestrator', 'reflector', 'daemon', 'user'])
 const recordOfUnknown = z.record(z.string(), z.unknown())
 
 export const inboxRaiseSchema = z.object({
-  kind: z.string().min(1, 'kind must be a non-empty string'),
+  kind: z.enum(INBOX_KINDS),
   category: z.union([knownCategory, z.string().min(1)]),
   priority: inboxPriority,
   title: z.string().min(1, 'title must be a non-empty string'),

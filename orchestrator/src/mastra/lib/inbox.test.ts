@@ -28,7 +28,7 @@ const loadModule = async (repo: string): Promise<InboxModule> => {
 }
 
 const baseItem = (overrides: Partial<Parameters<InboxModule['raiseInboxItem']>[0]> = {}) => ({
-  kind: 'worktree_cleanup_failed',
+  kind: 'failed' as const,
   category: 'orchestrator' as const,
   priority: 'normal' as const,
   title: 'Worktree cleanup failed',
@@ -63,7 +63,7 @@ describe('inbox', () => {
     const item = await inbox.getInboxItem(id)
     expect(item).not.toBeNull()
     expect(item!.id).toBe(id)
-    expect(item!.kind).toBe('worktree_cleanup_failed')
+    expect(item!.kind).toBe('failed')
     expect(item!.state).toBe('open')
     expect(item!.seenCount).toBe(1)
     expect(item!.raisedBy).toBe('orchestrator:merge-step')
@@ -143,28 +143,28 @@ describe('inbox', () => {
   it('listInboxItems filters by kind across any state', async () => {
     const inbox = await loadModule(repo)
     await inbox.raiseInboxItem(
-      baseItem({ kind: 'recovery-failed', signature: 'rf-1' }),
+      baseItem({ kind: 'failed', signature: 'f-1' }),
     )
     await inbox.raiseInboxItem(
-      baseItem({ kind: 'recovery-failed', signature: 'rf-2' }),
+      baseItem({ kind: 'failed', signature: 'f-2' }),
     )
     await inbox.raiseInboxItem(
-      baseItem({ kind: 'no-recipe', signature: 'nr-1' }),
+      baseItem({ kind: 'cancelled-blocker-cascade', signature: 'cbc-1' }),
     )
 
-    const recoveryFailed = await inbox.listInboxItems('open', {
-      kind: 'recovery-failed',
+    const failedItems = await inbox.listInboxItems('open', {
+      kind: 'failed',
     })
-    expect(recoveryFailed).toHaveLength(2)
-    for (const item of recoveryFailed) {
-      expect(item.kind).toBe('recovery-failed')
+    expect(failedItems).toHaveLength(2)
+    for (const item of failedItems) {
+      expect(item.kind).toBe('failed')
     }
 
-    const noRecipe = await inbox.listInboxItems('open', { kind: 'no-recipe' })
-    expect(noRecipe).toHaveLength(1)
-    expect(noRecipe[0].kind).toBe('no-recipe')
+    const cascadeItems = await inbox.listInboxItems('open', { kind: 'cancelled-blocker-cascade' })
+    expect(cascadeItems).toHaveLength(1)
+    expect(cascadeItems[0].kind).toBe('cancelled-blocker-cascade')
 
-    const noMatch = await inbox.listInboxItems('open', { kind: 'nope' })
+    const noMatch = await inbox.listInboxItems('open', { kind: 'diagnose-inconclusive' })
     expect(noMatch).toHaveLength(0)
 
     // Combining state filter and kind filter still narrows correctly.
@@ -230,7 +230,7 @@ describe('inbox', () => {
     const ids = [
       await inbox.raiseInboxItem(
         baseItem({
-          kind: 'no-recipe',
+          kind: 'failed',
           signature: 'sig-A',
           originTaskId: originId,
           occurrence: { attempt: 1 },
@@ -241,7 +241,7 @@ describe('inbox', () => {
       ids.push(
         await inbox.raiseInboxItem(
           baseItem({
-            kind: 'recovery-failed',
+            kind: 'failed',
             signature: `origin-1:sig-${i}`,
             originTaskId: originId,
             occurrence: { attempt: i },
@@ -252,7 +252,7 @@ describe('inbox', () => {
     ids.push(
       await inbox.raiseInboxItem(
         baseItem({
-          kind: 'fix-fail-loop',
+          kind: 'failed',
           signature: 'sig-Z',
           originTaskId: originId,
           occurrence: { attempt: 11 },
@@ -276,14 +276,14 @@ describe('inbox', () => {
     const inbox = await loadModule(repo)
     const a = await inbox.raiseInboxItem(
       baseItem({
-        kind: 'recovery-failed',
+        kind: 'failed',
         signature: 'shared-sig',
         originTaskId: 'origin-A',
       }),
     )
     const b = await inbox.raiseInboxItem(
       baseItem({
-        kind: 'recovery-failed',
+        kind: 'failed',
         signature: 'shared-sig',
         originTaskId: 'origin-B',
       }),
@@ -306,7 +306,7 @@ describe('inbox', () => {
       const originId = 'origin-recovery-1'
       const created = await inbox.raiseInboxItem(
         baseItem({
-          kind: 'task-blocked',
+          kind: 'failed',
           signature: 'sig-initial',
           originTaskId: originId,
           body: 'GENERIC kind-template body — run /mars:unblock to inspect.',
@@ -363,7 +363,7 @@ describe('inbox', () => {
     const originId = 'origin-done-1'
     const id = await inbox.raiseInboxItem(
       baseItem({
-        kind: 'recovery-failed',
+        kind: 'failed',
         signature: 'sig-x',
         originTaskId: originId,
       }),
@@ -390,7 +390,7 @@ describe('inbox', () => {
     const originId = 'origin-dropped-1'
     const id = await inbox.raiseInboxItem(
       baseItem({
-        kind: 'recovery-failed',
+        kind: 'failed',
         signature: 'sig-y',
         originTaskId: originId,
       }),
@@ -413,7 +413,7 @@ describe('inbox', () => {
     const originId = 'origin-purged-1'
     const id = await inbox.raiseInboxItem(
       baseItem({
-        kind: 'no-recipe',
+        kind: 'failed',
         signature: 'sig-z',
         originTaskId: originId,
       }),
@@ -444,14 +444,14 @@ describe('inbox', () => {
     const inbox = await loadModule(repo)
     const a = await inbox.raiseInboxItem(
       baseItem({
-        kind: 'recovery-failed',
+        kind: 'failed',
         signature: 'sig-a',
         originTaskId: 'origin-A',
       }),
     )
     const b = await inbox.raiseInboxItem(
       baseItem({
-        kind: 'recovery-failed',
+        kind: 'failed',
         signature: 'sig-b',
         originTaskId: 'origin-B',
       }),
@@ -484,7 +484,7 @@ describe('inbox', () => {
       const inbox = await loadModule(repo)
       const doneTaskId = 'task-done-1'
       const itemId = await inbox.raiseInboxItem(
-        baseItem({ kind: 'recovery-failed', signature: 'sig-done', originTaskId: doneTaskId }),
+        baseItem({ kind: 'failed', signature: 'sig-done', originTaskId: doneTaskId }),
       )
 
       const result = await inbox.reconcileStaleInboxItems([
@@ -502,7 +502,7 @@ describe('inbox', () => {
       const inbox = await loadModule(repo)
       const droppedTaskId = 'task-dropped-1'
       const itemId = await inbox.raiseInboxItem(
-        baseItem({ kind: 'task-blocked', signature: 'sig-dropped', originTaskId: droppedTaskId }),
+        baseItem({ kind: 'failed', signature: 'sig-dropped', originTaskId: droppedTaskId }),
       )
 
       const result = await inbox.reconcileStaleInboxItems([
@@ -519,7 +519,7 @@ describe('inbox', () => {
       const inbox = await loadModule(repo)
       const failedTaskId = 'task-failed-1'
       const itemId = await inbox.raiseInboxItem(
-        baseItem({ kind: 'recovery-failed', signature: 'sig-failed', originTaskId: failedTaskId }),
+        baseItem({ kind: 'failed', signature: 'sig-failed', originTaskId: failedTaskId }),
       )
 
       // Failed tasks are not passed to reconcile — only done/dropped are
@@ -534,7 +534,7 @@ describe('inbox', () => {
       const inbox = await loadModule(repo)
       const liveTaskId = 'task-running-1'
       const itemId = await inbox.raiseInboxItem(
-        baseItem({ kind: 'no-recipe', signature: 'sig-live', originTaskId: liveTaskId }),
+        baseItem({ kind: 'failed', signature: 'sig-live', originTaskId: liveTaskId }),
       )
 
       // Live tasks are not passed to reconcile
@@ -551,7 +551,7 @@ describe('inbox', () => {
       const inbox = await loadModule(repo)
       const taskId = 'task-done-idem'
       await inbox.raiseInboxItem(
-        baseItem({ kind: 'recovery-failed', signature: 'sig-idem', originTaskId: taskId }),
+        baseItem({ kind: 'failed', signature: 'sig-idem', originTaskId: taskId }),
       )
 
       const first = await inbox.reconcileStaleInboxItems([{ id: taskId, status: 'done' }])
@@ -564,13 +564,13 @@ describe('inbox', () => {
     it('reports accurate count across multiple tasks', async () => {
       const inbox = await loadModule(repo)
       await inbox.raiseInboxItem(
-        baseItem({ kind: 'recovery-failed', signature: 'sig-t1', originTaskId: 'task-t1' }),
+        baseItem({ kind: 'failed', signature: 'sig-t1', originTaskId: 'task-t1' }),
       )
       await inbox.raiseInboxItem(
-        baseItem({ kind: 'no-recipe', signature: 'sig-t2', originTaskId: 'task-t2' }),
+        baseItem({ kind: 'failed', signature: 'sig-t2', originTaskId: 'task-t2' }),
       )
       await inbox.raiseInboxItem(
-        baseItem({ kind: 'task-blocked', signature: 'sig-t3', originTaskId: 'task-t3' }),
+        baseItem({ kind: 'failed', signature: 'sig-t3', originTaskId: 'task-t3' }),
       )
 
       const result = await inbox.reconcileStaleInboxItems([

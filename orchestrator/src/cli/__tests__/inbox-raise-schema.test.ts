@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { inboxRaiseSchema } from '../inbox-raise-schema'
 
 const validBase = {
-  kind: 'manual.smoketest',
+  kind: 'failed' as const,
   category: 'orchestrator' as const,
   priority: 'low' as const,
   title: 'smoke test',
@@ -72,6 +72,24 @@ describe('inboxRaiseSchema', () => {
     expect(result.success).toBe(true)
     if (result.success) {
       expect(result.data.category).toBe('something-bespoke')
+    }
+  })
+
+  it('rejects an unknown kind value', () => {
+    const bad = { ...validBase, kind: 'recovery-failed' as unknown as 'failed' }
+    const result = inboxRaiseSchema.safeParse(bad)
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join('.'))
+      expect(paths).toContain('kind')
+    }
+  })
+
+  it('accepts every valid InboxKind value', () => {
+    const kinds = ['failed', 'cancelled-blocker-cascade', 'dirty-main-at-setup', 'diagnose-inconclusive'] as const
+    for (const kind of kinds) {
+      const result = inboxRaiseSchema.safeParse({ ...validBase, kind })
+      expect(result.success).toBe(true)
     }
   })
 })

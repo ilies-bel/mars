@@ -9,17 +9,17 @@ import {
   raiseRetryBudgetExhaustedInbox,
 } from './queue-retry'
 import { getClient, getTask, initQueue, updateTask } from './queue'
-import { raiseInboxItem, supersedeInboxItemsForOrigin } from './lib/inbox'
+import { type InboxKind, raiseInboxItem, supersedeInboxItemsForOrigin } from './lib/inbox'
 import { publish } from './lib/outbox'
 
 const execFileP = promisify(execFile)
 
-export const CANCELLED_CASCADE_INBOX_KIND = 'cancelled-blocker-cascade'
+export const CANCELLED_CASCADE_INBOX_KIND: InboxKind = 'cancelled-blocker-cascade'
 export const CANCELLED_FAILURE_REASON = 'cancelled'
 const CANCELLED_CASCADE_FAILURE_REASON = 'cancelled-blocker-cascade'
 export const WORKTREE_AHEAD_FAILURE_REASON =
   'worktree_ahead_of_integration_at_unblock'
-export const WORKTREE_AHEAD_INBOX_KIND = 'worktree-ahead-of-integration'
+export const WORKTREE_AHEAD_INBOX_KIND: InboxKind = 'dirty-main-at-setup'
 
 const integrationBranchName = (): string =>
   process.env.INTEGRATION_BRANCH ?? 'main'
@@ -153,7 +153,7 @@ const raiseWorktreeAheadInbox = async (
   }
 }
 
-export const PREREQUISITE_FAILED_INBOX_KIND_PREFIX = 'prerequisite-failed'
+export const PREREQUISITE_FAILED_INBOX_KIND: InboxKind = 'cancelled-blocker-cascade'
 
 export interface BlockByFailureOutcome {
   taskId: string
@@ -397,7 +397,7 @@ export const onBlockerTaskFailed = async (
     if (flipped) {
       try {
         await raiseInboxItem({
-          kind: `${PREREQUISITE_FAILED_INBOX_KIND_PREFIX}(${row.id})`,
+          kind: PREREQUISITE_FAILED_INBOX_KIND,
           category: 'orchestrator',
           priority: 'high',
           title: `Task ${row.id} blocked: prerequisite ${failedBlockerTaskId} failed`,
