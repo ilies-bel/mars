@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
   acquireLock,
+  buildWorkerEnv,
   checkSetupPreflight,
   claudeBinEnvFingerprint,
   resolveClaudeBin,
@@ -1132,5 +1133,45 @@ describe('detectTemplatePaths with getChangedFiles (integration)', () => {
     const { getChangedFiles, detectTemplatePaths: detect } = await import('../git')
     const changed = await getChangedFiles(repo, 'main', 'task/clean')
     expect(detect(changed)).toEqual([])
+  })
+})
+
+// Real-boundary verification: PATH must survive every subprocess spawn path
+// so that git (and other binaries) are findable in the child process.
+//
+// Acceptance criteria:
+//   - every spawn/exec call either passes no env (inherits process.env) or
+//     passes an env that spreads process.env first — both patterns are tested.
+//   - no call site sets env to an object that omits PATH.
+describe('subprocess PATH preservation', () => {
+  it('runSubprocessStreaming with no explicit env can find git via PATH', async () => {
+    // No env argument → spawn receives process.env → git is resolvable.
+    const result = await runSubprocessStreaming('git', ['--version'], process.cwd())
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/^git version/)
+  })
+
+  it('runSubprocessStreaming with buildWorkerEnv() can find git via PATH', async () => {
+    // buildWorkerEnv() spreads process.env first (preserving PATH) then
+    // strips CLAUDE* session vars.  Passing it to runSubprocessStreaming must
+    // not break PATH resolution.
+    const result = await runSubprocessStreaming(
+      'git',
+      ['--version'],
+      process.cwd(),
+      undefined,
+      undefined,
+      buildWorkerEnv(),
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/^git version/)
+  })
+
+  it('buildWorkerEnv() includes PATH from process.env', () => {
+    // Guard: if PATH were absent from buildWorkerEnv() the real-boundary
+    // test above would pass only because spawn falls back to its own lookup.
+    // This assertion confirms the env object itself carries PATH.
+    const env = buildWorkerEnv()
+    expect(env.PATH).toBe(process.env.PATH)
   })
 })
