@@ -6,7 +6,7 @@
  */
 
 import type { StaleWorktree } from '../shared/api'
-import type { DraftFeature } from '../shared/types'
+import type { DraftFeature } from '../shared/schemas'
 
 // ---- Types ----------------------------------------------------------------
 

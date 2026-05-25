@@ -52,7 +52,7 @@ const toUI = (t: ProgressTask): UITask => ({
   updatedAt: t.updatedAt,
 })
 
-const CLUSTERS: readonly Cluster[] = ['In progress', 'Blocked', 'Failed']
+const CLUSTERS: readonly Cluster[] = ['Queued', 'In progress', 'Blocked', 'Failed']
 
 export const ProgressPage = () => {
   const { byCluster, tasks, error, connected } = useProgress()

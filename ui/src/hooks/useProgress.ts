@@ -11,6 +11,7 @@ interface State {
 }
 
 const emptyByCluster = (): Record<Cluster, ProgressTask[]> => ({
+  Queued: [],
   'In progress': [],
   Blocked: [],
   Failed: [],
@@ -31,6 +32,7 @@ export const useProgress = (): State => {
     }
     const byUpdatedDesc = (a: ProgressTask, b: ProgressTask): number =>
       b.updatedAt.localeCompare(a.updatedAt)
+    byCluster.Queued.sort(byUpdatedDesc)
     byCluster['In progress'].sort(byUpdatedDesc)
     byCluster.Blocked.sort(byUpdatedDesc)
     byCluster.Failed.sort(byUpdatedDesc)

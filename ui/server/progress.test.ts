@@ -24,7 +24,7 @@ import { startServer } from './index.ts'
 interface ProgressTaskBody {
   id: string
   status: string
-  cluster: 'In progress' | 'Blocked' | 'Failed'
+  cluster: 'Queued' | 'In progress' | 'Blocked' | 'Failed'
 }
 
 interface ProgressBody {
@@ -106,8 +106,9 @@ const insertProposal = async (
 
 const countBy = (
   tasks: ProgressTaskBody[],
-): Record<'In progress' | 'Blocked' | 'Failed', number> => {
-  const out: Record<'In progress' | 'Blocked' | 'Failed', number> = {
+): Record<'Queued' | 'In progress' | 'Blocked' | 'Failed', number> => {
+  const out: Record<'Queued' | 'In progress' | 'Blocked' | 'Failed', number> = {
+    Queued: 0,
     'In progress': 0,
     Blocked: 0,
     Failed: 0,
@@ -145,12 +146,13 @@ describe('GET /api/progress — column-view cluster contract', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('collapses every granular "In progress" status (queued/running/verifying/merging) into one cluster', async () => {
+  it('queued tasks land in Queued; running/verifying/merging/vega-reconciling tasks land in In progress', async () => {
     const qc = createClient({ url: `file:${queueDbPath}` })
     await insertTask(qc, 't-queued', 'queued')
     await insertTask(qc, 't-running', 'running')
     await insertTask(qc, 't-verifying', 'verifying')
     await insertTask(qc, 't-merging', 'merging')
+    await insertTask(qc, 't-vega', 'vega-reconciling')
     qc.close()
 
     const res = await fetch(`${baseUrl}/api/progress`)
@@ -158,16 +160,17 @@ describe('GET /api/progress — column-view cluster contract', () => {
     const body = (await res.json()) as ProgressBody
     const counts = countBy(body.tasks)
 
-    // Header count for "In progress" is one integer (4), not a
-    // queued+running+verifying+merging breakdown.
+    // queued tasks are now separate from actively-running work.
+    expect(counts.Queued).toBe(1)
+    // running/verifying/merging/vega-reconciling all collapse into In progress.
     expect(counts['In progress']).toBe(4)
     expect(counts.Blocked).toBe(0)
     expect(counts.Failed).toBe(0)
 
-    // Every task carries exactly one of the three cluster tags — no
+    // Every task carries exactly one of the four cluster tags — no
     // task leaks a granular status into the cluster taxonomy.
     for (const t of body.tasks) {
-      expect(['In progress', 'Blocked', 'Failed']).toContain(t.cluster)
+      expect(['Queued', 'In progress', 'Blocked', 'Failed']).toContain(t.cluster)
     }
   })
 
@@ -182,6 +185,7 @@ describe('GET /api/progress — column-view cluster contract', () => {
     const body = (await res.json()) as ProgressBody
     const counts = countBy(body.tasks)
 
+    expect(counts.Queued).toBe(0)
     expect(counts['In progress']).toBe(0)
     expect(counts.Blocked).toBe(2)
     expect(counts.Failed).toBe(1)
@@ -226,9 +230,10 @@ describe('GET /api/progress — column-view cluster contract', () => {
     }
   })
 
-  it('returns no cluster keys outside the three-column taxonomy', async () => {
+  it('returns no cluster keys outside the four-column taxonomy', async () => {
     const qc = createClient({ url: `file:${queueDbPath}` })
     await insertTask(qc, 't-queued', 'queued')
+    await insertTask(qc, 't-running', 'running')
     await insertTask(qc, 't-blocked', 'blocked')
     await insertTask(qc, 't-failed', 'failed')
     qc.close()
@@ -238,8 +243,13 @@ describe('GET /api/progress — column-view cluster contract', () => {
 
     const clusters = new Set(body.tasks.map((t) => t.cluster))
     for (const c of clusters) {
-      expect(['In progress', 'Blocked', 'Failed']).toContain(c)
+      expect(['Queued', 'In progress', 'Blocked', 'Failed']).toContain(c)
     }
+    // All four taxonomy buckets are exhausted by the inserted tasks.
+    expect(clusters.has('Queued')).toBe(true)
+    expect(clusters.has('In progress')).toBe(true)
+    expect(clusters.has('Blocked')).toBe(true)
+    expect(clusters.has('Failed')).toBe(true)
   })
 
   it('task detail endpoint returns the granular status for In-progress tasks so the card drawer can surface it', async () => {
