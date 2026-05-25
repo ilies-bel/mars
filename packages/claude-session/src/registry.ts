@@ -4,8 +4,12 @@ const sessions = new Map<string, SessionHandle>();
 
 /**
  * Store a newly created session handle in the in-memory registry.
+ * Throws if a live session with the same id is already registered.
  */
 export function registerSession(session: SessionHandle): void {
+  if (sessions.has(session.id)) {
+    throw new Error(`Session id "${session.id}" is already in use`);
+  }
   sessions.set(session.id, session);
 }
 

@@ -1,6 +1,6 @@
 import * as pty from 'node-pty';
 import type { SessionHandle } from './session.js';
-import { registerSession } from './registry.js';
+import { getSession, registerSession } from './registry.js';
 
 export interface StartOptions {
   /** Caller-supplied identifier for this session. */
@@ -32,6 +32,11 @@ export async function start(opts: StartOptions): Promise<SessionHandle> {
 
   if (!file) {
     throw new Error('start: args must contain at least one element (the executable)');
+  }
+
+  // Reject before spawning so no process is leaked on a duplicate id.
+  if (getSession(id) !== undefined) {
+    throw new Error(`Session id "${id}" is already in use`);
   }
 
   const proc = pty.spawn(file, rest, {
