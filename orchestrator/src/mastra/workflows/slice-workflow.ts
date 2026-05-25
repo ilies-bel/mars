@@ -3,11 +3,8 @@ import { resolve } from 'node:path'
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
 import { getProposal, getProposalsClient, markProposalSliced } from '../proposals'
-import {
-  getClient as getQueueClient,
-  enqueueTask,
-  initQueue,
-} from '../queue'
+import { enqueueTask } from '../queue'
+import { getDefaultTaskStore } from '../lib/task-store'
 import { Workers } from '../workers'
 import { parseClaudeJsonResult } from '../lib/claude-json'
 import { getRepoRoot } from '../context'
@@ -559,8 +556,7 @@ const generateStep = createStep({
       }
     }
 
-    await initQueue()
-    const queueClient = getQueueClient()
+    const taskStore = await getDefaultTaskStore()
     const ideasClient = getProposalsClient()
 
     // Pre-flight: crash-recovery deduplication. A process crash between
@@ -569,7 +565,7 @@ const generateStep = createStep({
     // a retry would insert a fresh set of tasks on top of the orphans,
     // creating duplicates. Delete any tasks that claim this idea as
     // parent before starting Phase 1 so retries are idempotent.
-    await queueClient
+    await taskStore
       .execute({
         sql: `DELETE FROM task_blockers WHERE task_id IN (
                 SELECT id FROM tasks WHERE parent_proposal_id = ?
@@ -579,7 +575,7 @@ const generateStep = createStep({
         args: [idea.id, idea.id],
       })
       .catch(() => {})
-    await queueClient
+    await taskStore
       .execute({
         sql: `DELETE FROM tasks WHERE parent_proposal_id = ?`,
         args: [idea.id],
@@ -633,7 +629,7 @@ const generateStep = createStep({
       for (let i = 0; i < total; i += 1) {
         const deps = parsed.slices[i].blockedBy
         for (const dep of deps) {
-          await queueClient.execute({
+          await taskStore.execute({
             sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
                   VALUES (?, ?, ?)`,
             args: [taskIds[i], taskIds[dep - 1], now],
@@ -644,7 +640,7 @@ const generateStep = createStep({
       // 'blocked' (has blockers). The daemon will pick up queued ones.
       for (let i = 0; i < total; i += 1) {
         const status = parsed.slices[i].blockedBy.length === 0 ? 'queued' : 'blocked'
-        await queueClient.execute({
+        await taskStore.execute({
           sql: `UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
           args: [status, now, taskIds[i]],
         })
@@ -691,10 +687,10 @@ const generateStep = createStep({
       }
     } catch (error: unknown) {
       for (const id of taskIds) {
-        await queueClient
+        await taskStore
           .execute({ sql: `DELETE FROM tasks WHERE id = ?`, args: [id] })
           .catch(() => {})
-        await queueClient
+        await taskStore
           .execute({
             sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
             args: [id, id],
