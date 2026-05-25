@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'bun:test'
-import { detectRoute, actionQueueCount, parseTaskRoute } from './routing'
+import {
+  detectRoute,
+  actionQueueCount,
+  parseTaskRoute,
+  parseProposalRoute,
+} from './routing'
 import type { TodoPayload } from './schemas'
 
 const emptyTodo = (): TodoPayload => ({ drafts: [], staleWorktrees: [] })
@@ -114,5 +119,33 @@ describe('parseTaskRoute', () => {
 
   it('decodes percent-encoded ids', () => {
     expect(parseTaskRoute('#/task/mars%2D123')).toBe('mars-123')
+  })
+
+  it('does not match a proposal route', () => {
+    expect(parseTaskRoute('#/proposal/abc-123')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseProposalRoute
+// ---------------------------------------------------------------------------
+
+describe('parseProposalRoute', () => {
+  it('returns null when the hash has no proposal fragment', () => {
+    expect(parseProposalRoute('')).toBeNull()
+    expect(parseProposalRoute('#/progress')).toBeNull()
+    expect(parseProposalRoute('#/task/abc-123')).toBeNull()
+  })
+
+  it('returns the id from #/proposal/<id>', () => {
+    expect(parseProposalRoute('#/proposal/abc-123')).toBe('abc-123')
+  })
+
+  it('strips trailing slash and treats empty id as null', () => {
+    expect(parseProposalRoute('#/proposal/')).toBeNull()
+  })
+
+  it('decodes percent-encoded ids', () => {
+    expect(parseProposalRoute('#/proposal/mars%2D123')).toBe('mars-123')
   })
 })
