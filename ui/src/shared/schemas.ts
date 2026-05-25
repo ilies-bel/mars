@@ -61,7 +61,7 @@ const taskSchema = z.object({
   updatedAt: z.string(),
 })
 
-const clusterSchema = z.enum(['In progress', 'Blocked', 'Failed'])
+const clusterSchema = z.enum(['Queued', 'In progress', 'Blocked', 'Failed'])
 
 const progressTaskSchema = taskSchema.extend({
   cluster: clusterSchema,
