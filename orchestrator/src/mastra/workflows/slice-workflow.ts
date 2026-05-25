@@ -19,38 +19,87 @@ const sliceOutputSchema = z.object({
   taskIds: z.array(z.string()),
 })
 
+/**
+ * Coder-dispatchable artifact spec attached by the slicer to an hitl slice.
+ * Describes the artifact (typically a verify script) the human operator will
+ * use to confirm the HITL step. Must be present on every kind='hitl' slice
+ * and absent on every kind='coder' slice — enforced via superRefine below.
+ */
+export const subDeliverableSchema = z.object({
+  title: z.string().min(1),
+  whatToBuild: z.string().min(1),
+  acceptanceCriteria: z.array(z.string()).min(1),
+  files: z.array(z.string()).optional(),
+})
+
+export type SubDeliverableSpec = z.infer<typeof subDeliverableSchema>
+
 export const slicerOutputSchema = z.object({
   slices: z
     .array(
-      z.object({
-        title: z.string(),
-        type: z.enum(['HITL', 'AFK']).default('AFK'),
-        whatToBuild: z.string(),
-        acceptanceCriteria: z.array(z.string()).min(1),
-        blockedBy: z.array(z.number().int().min(1)),
-        // Ordered list of file paths the implementor should read before
-        // touching anything. Required and non-empty so the implementor
-        // always starts from the right files rather than re-orienting.
-        readFirst: z.array(z.string()).min(1),
-        // Prescriptive description naming exact functions, types,
-        // variables, SQL columns, or file paths to change and their exact
-        // target state. Required and non-empty so every slice carries
-        // code-level specifics, not just user-visible behaviour.
-        prescriptiveAction: z.string().min(1),
-        // gsd-style structured-task spec. The slicer names the files it
-        // expects the implementor to touch — split into two arrays so the
-        // slicer must consciously distinguish files it knows already exist
-        // (modifies) from files it intends to create (creates). The split
-        // exists to curb path hallucination: a guessed path inside a
-        // module that doesn't exist had been silently landing in `files`
-        // and blocking slices. Both default to []; they are concatenated
-        // into the queue's `files_json` column at persist time so the
-        // implementor brief stays one flat list.
-        modifies: z.array(z.string()).default([]),
-        creates: z.array(z.string()).default([]),
-        verifyCmd: z.string().nullable().default(null),
-        taskType: z.enum(['auto', 'checkpoint']).default('auto'),
-      }),
+      z
+        .object({
+          title: z.string(),
+          type: z.enum(['HITL', 'AFK']).default('AFK'),
+          /**
+           * Routing kind. 'coder' (default) dispatches to the Coder worker.
+           * 'hitl' marks slices whose acceptance criteria require human-only
+           * actions — push access, observing live external workflows, third-
+           * party UI interactions, downloading from a public release, etc.
+           * An hitl slice MUST include a subDeliverable spec; a coder slice
+           * MUST NOT. This is enforced by the superRefine below.
+           */
+          kind: z.enum(['coder', 'hitl']).default('coder'),
+          whatToBuild: z.string(),
+          acceptanceCriteria: z.array(z.string()).min(1),
+          blockedBy: z.array(z.number().int().min(1)),
+          // Ordered list of file paths the implementor should read before
+          // touching anything. Required and non-empty so the implementor
+          // always starts from the right files rather than re-orienting.
+          readFirst: z.array(z.string()).min(1),
+          // Prescriptive description naming exact functions, types,
+          // variables, SQL columns, or file paths to change and their exact
+          // target state. Required and non-empty so every slice carries
+          // code-level specifics, not just user-visible behaviour.
+          prescriptiveAction: z.string().min(1),
+          // gsd-style structured-task spec. The slicer names the files it
+          // expects the implementor to touch — split into two arrays so the
+          // slicer must consciously distinguish files it knows already exist
+          // (modifies) from files it intends to create (creates). The split
+          // exists to curb path hallucination: a guessed path inside a
+          // module that doesn't exist had been silently landing in `files`
+          // and blocking slices. Both default to []; they are concatenated
+          // into the queue's `files_json` column at persist time so the
+          // implementor brief stays one flat list.
+          modifies: z.array(z.string()).default([]),
+          creates: z.array(z.string()).default([]),
+          verifyCmd: z.string().nullable().default(null),
+          taskType: z.enum(['auto', 'checkpoint']).default('auto'),
+          /**
+           * Present on hitl slices, absent on coder slices. Describes the
+           * ONE Coder-dispatchable artifact (e.g. a verify script) a Coder
+           * can build for the operator to run during the HITL step.
+           */
+          subDeliverable: subDeliverableSchema.optional(),
+        })
+        .superRefine((data, ctx) => {
+          if (data.kind === 'hitl' && data.subDeliverable === undefined) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message:
+                "hitl slices must include a subDeliverable spec (title, whatToBuild, acceptanceCriteria, optional files)",
+              path: ['subDeliverable'],
+            })
+          }
+          if (data.kind === 'coder' && data.subDeliverable !== undefined) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message:
+                "coder slices must not include a subDeliverable spec; only hitl slices carry one",
+              path: ['subDeliverable'],
+            })
+          }
+        }),
     )
     .min(1)
     .max(20),
@@ -96,6 +145,27 @@ Slices may be 'HITL' or 'AFK'. HITL slices require human interaction
 (architectural decision, design review). AFK slices can be implemented
 and merged without human interaction. Prefer AFK over HITL where possible.
 
+kind: routing hint ('coder' vs 'hitl')
+---------------------------------------
+Every slice carries a \`kind\` field (default: 'coder').
+- 'coder' — the slice is dispatched to a Coder agent that can edit code
+  autonomously. This is the default; use it for the vast majority of slices.
+- 'hitl' — the slice requires a HUMAN OPERATOR to act. Emit kind='hitl'
+  when the acceptance criteria include ANY of these human-only verbs:
+    • push or deploy to a live environment or registry
+    • observe or monitor a live external workflow or third-party system
+    • interact with a third-party UI that the agent cannot access
+    • download an artifact from a public release page or external service
+    • copy or inject credentials/secrets that cannot be committed to source
+    • run a visual regression test that requires a human eye to judge
+    • approve or merge a pull request in an external hosted service
+
+When you emit kind='hitl', you MUST also emit a subDeliverable spec.
+The subDeliverable describes ONE Coder-dispatchable artifact (typically a
+verify script) that a Coder agent will build so the operator has a runnable
+tool for the HITL step. An hitl slice WITHOUT a subDeliverable is a schema
+error. A coder slice MUST NOT carry a subDeliverable.
+
 Structured-writes are settled at grill time — never slice one
 -------------------------------------------------------------
 A STRUCTURED-WRITE is a glossary or ADR mutation. Per ADR 0019,
@@ -118,6 +188,7 @@ Output shape
 For each slice, produce:
 - title — a short descriptive name
 - type — "HITL" or "AFK"
+- kind — 'coder' (default) or 'hitl'. See the routing section above.
 - whatToBuild — concise end-to-end behaviour description from the user's
   perspective. Describe what the user observes when this slice is done.
 - acceptanceCriteria — a list of checkbox items the slice must satisfy
@@ -154,11 +225,18 @@ For each slice, produce:
   commit, or "checkpoint" for slices that need human verification before
   merge. Default "auto"; reach for "checkpoint" only when a human must
   visually confirm an output the verifier cannot.
+- subDeliverable — REQUIRED on hitl slices; FORBIDDEN on coder slices.
+  Describes ONE Coder-dispatchable artifact (e.g. a verify script) that
+  the operator will use during the HITL step. Carries:
+    • title (string, min 1 char)
+    • whatToBuild (string, min 1 char)
+    • acceptanceCriteria (string[], min 1 item)
+    • files (string[], optional) — paths the Coder will create/modify
 
 Return ONLY a single JSON object matching exactly this shape, with no
 surrounding prose, no code fences, and no commentary:
 
-{"slices":[{"title":"...","type":"AFK","whatToBuild":"...","acceptanceCriteria":["..."],"blockedBy":[],"readFirst":["src/foo.ts"],"prescriptiveAction":"In fooFn (foo.ts:42), change return type from string to number and update all call sites.","modifies":["src/foo.ts"],"creates":["src/foo.test.ts"],"verifyCmd":"cd src && npx vitest run foo.test.ts","taskType":"auto"}]}
+{"slices":[{"title":"...","type":"AFK","kind":"coder","whatToBuild":"...","acceptanceCriteria":["..."],"blockedBy":[],"readFirst":["src/foo.ts"],"prescriptiveAction":"In fooFn (foo.ts:42), change return type from string to number and update all call sites.","modifies":["src/foo.ts"],"creates":["src/foo.test.ts"],"verifyCmd":"cd src && npx vitest run foo.test.ts","taskType":"auto"}]}
 
 PRD to decompose
 ================
@@ -620,6 +698,8 @@ const generateStep = createStep({
             verifyCmd,
             doneCriteria: slice.acceptanceCriteria,
             taskType: slice.taskType,
+            sliceKind: slice.kind,
+            subDeliverable: slice.subDeliverable,
           },
         })
         taskIds.push(task.id)
