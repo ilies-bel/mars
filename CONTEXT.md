@@ -298,3 +298,7 @@ The list of criteria a Task must satisfy before verify passes; materialised from
 **Status transition**:
 A legal from-to edge between two task statuses; the set of all legal edges forms the task lifecycle's transition map.
 _Avoid_: state change, status update, status write
+
+**Transition seam**:
+The single TaskStore entry point through which every task.status write must pass, validating the from-to edge against the legal transition map.
+_Avoid_: status setter, updateTask, transition function
