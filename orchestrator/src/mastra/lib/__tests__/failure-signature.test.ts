@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  causeForSignature,
   classifyError,
   computeFailureSignature,
   errorClassRules,
@@ -262,6 +263,41 @@ describe('errorClassRules registry', () => {
       expect(seen.has(rule.errorClass)).toBe(false)
       seen.add(rule.errorClass)
     }
+  })
+})
+
+describe('causeForSignature', () => {
+  it('renders an operator-owned cause for the dirty-integration-branch signature naming clean main + restart', () => {
+    const cause = causeForSignature(
+      'merge:preflight/uncommitted-changes',
+      'mars-1234abcd',
+    )
+    expect(cause).not.toBeNull()
+    expect(cause!.toLowerCase()).toContain('integration branch')
+    expect(cause!.toLowerCase()).toContain('uncommitted')
+    expect(cause).toContain('mars restart mars-1234abcd')
+  })
+
+  it('renders an agent-owned cause for the no-commits-ahead signature stating the agent did not commit', () => {
+    const cause = causeForSignature(
+      'verify:has-diff/no-commits-ahead',
+      'mars-1234abcd',
+    )
+    expect(cause).not.toBeNull()
+    expect(cause!.toLowerCase()).toContain("didn't commit")
+    expect(cause!.toLowerCase()).toMatch(/restart|new task/)
+  })
+
+  it('returns null for an unregistered signature so the renderer omits the line entirely', () => {
+    expect(
+      causeForSignature('verify:test/something-else', 'mars-1234abcd'),
+    ).toBeNull()
+    expect(
+      causeForSignature(
+        `verify:test/${UNCLASSIFIED_ERROR_CLASS}`,
+        'mars-1234abcd',
+      ),
+    ).toBeNull()
   })
 })
 
