@@ -1318,6 +1318,12 @@ const mergeStep = createStep({
         worktreePath: inputData.path,
         integrationBranch: inputData.integrationBranch,
         lockTimeoutMs: 5 * 60 * 1000,
+        onVegaStart: async () => {
+          // Fast-forward failed; a live Vega session is being spawned. Leave
+          // the idempotent `merging` phase so `mars list`/`mars show` surface
+          // the conflict-resolution session as `vega-reconciling`.
+          await updateTask(inputData.taskId, { status: 'vega-reconciling' })
+        },
         onSupervisorEvent: async (event) => {
           supervisorConversation.push(event)
           await writer?.write({ type: 'vcs-supervisor-event', event })

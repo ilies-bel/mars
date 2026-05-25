@@ -102,7 +102,7 @@ const findExistingFixTask = async (
     sql: `SELECT id FROM tasks
            WHERE fix_for_task_id = ?
              AND failure_signature = ?
-             AND status IN ('queued','running','verifying','merging','draft','blocked')
+             AND status IN ('queued','running','verifying','merging','vega-reconciling','draft','blocked')
            ORDER BY created_at DESC
            LIMIT 1`,
     args: [sourceTaskId, failureSignature],
@@ -123,7 +123,7 @@ const findSharedFixTask = async (
     sql: `SELECT id FROM tasks
            WHERE failure_signature = ?
              AND fix_for_task_id IS NOT NULL
-             AND status IN ('queued','running','verifying','merging','draft','blocked')
+             AND status IN ('queued','running','verifying','merging','vega-reconciling','draft','blocked')
            ORDER BY created_at DESC
            LIMIT 1`,
     args: [failureSignature],
