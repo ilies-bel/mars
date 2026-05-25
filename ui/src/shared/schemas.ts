@@ -56,6 +56,16 @@ const taskSchema = z.object({
   dropReason: z.string().nullable(),
   retryCount: z.number(),
   blockerTaskId: z.string().nullable(),
+  /**
+   * Full list of blocker task IDs. Empty array for tasks with no blockers.
+   * Drives the Topology tab's DAG edges without a second round-trip.
+   */
+  blockedBy: z.array(z.string()).optional().default([]),
+  /**
+   * The proposal this task was sliced from. Null for ad-hoc tasks.
+   * Drives provenance edges in the Topology DAG view.
+   */
+  parentProposalId: z.string().nullable().optional(),
   spec: taskSpecSchema.optional().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -65,6 +75,17 @@ const clusterSchema = z.enum(['Queued', 'In progress', 'Blocked', 'Failed'])
 
 const progressTaskSchema = taskSchema.extend({
   cluster: clusterSchema,
+})
+
+/**
+ * A Proposal node surfaced in the Progress DAG view.
+ * Only proposals that have at least one in-scope sliced task are included.
+ */
+const progressProposalNodeSchema = z.object({
+  id: z.string(),
+  goal: z.string(),
+  source: proposalSourceSchema,
+  status: z.string(),
 })
 
 const staleWorktreeSchema = z.object({
@@ -84,6 +105,11 @@ export const tasksResponseSchema = z.object({
 
 export const progressResponseSchema = z.object({
   tasks: z.array(progressTaskSchema),
+  /**
+   * Proposals that have at least one in-scope sliced task.
+   * Drives Proposal nodes and provenance edges in the DAG view.
+   */
+  proposals: z.array(progressProposalNodeSchema).optional().default([]),
 })
 
 export const todoResponseSchema = z.object({
@@ -133,6 +159,7 @@ export type DraftFeature = z.infer<typeof draftFeatureSchema>
 export type Task = z.infer<typeof taskSchema>
 export type Cluster = z.infer<typeof clusterSchema>
 export type ProgressTask = z.infer<typeof progressTaskSchema>
+export type ProgressProposalNode = z.infer<typeof progressProposalNodeSchema>
 export type StaleWorktree = z.infer<typeof staleWorktreeSchema>
 export type TodoPayload = z.infer<typeof todoResponseSchema>
 export type Agent = z.infer<typeof agentSchema>

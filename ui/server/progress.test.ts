@@ -274,3 +274,99 @@ describe('GET /api/progress — column-view cluster contract', () => {
     expect(detailBody.task.status).toBe('running')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Slice 3 of PRD 10150b71: DAG view — proposal nodes in the progress response
+// ---------------------------------------------------------------------------
+
+interface ProgressBodyWithProposals {
+  tasks: ProgressTaskBody[]
+  proposals: Array<{ id: string; goal: string; source: string; status: string }>
+}
+
+describe('GET /api/progress — proposal nodes for DAG view', () => {
+  let repo: string
+  let server: ReturnType<typeof Bun.serve> | null = null
+  let baseUrl: string
+  let queueDbPath: string
+  let stateDbPath: string
+
+  beforeEach(async () => {
+    repo = setupRepo()
+    queueDbPath = resolve(repo, '.mars/queue.db')
+    stateDbPath = resolve(repo, '.mars/state.db')
+    const qc = await createQueueSchema(queueDbPath)
+    // Add parent_proposal_id column for provenance tracking
+    await qc.execute(`ALTER TABLE tasks ADD COLUMN parent_proposal_id TEXT`)
+    qc.close()
+    const sc = await createStateSchema(stateDbPath)
+    sc.close()
+
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' })
+    baseUrl = `http://${server.hostname}:${server.port}`
+  })
+
+  afterEach(() => {
+    if (server) server.stop(true)
+    server = null
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns proposals array alongside tasks when an in-scope task has a parent_proposal_id', async () => {
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at, parent_proposal_id)
+            VALUES (?, ?, ?, 0, ?, ?, ?)`,
+      args: ['t-sliced', 'prompt for t-sliced', 'running', new Date().toISOString(), new Date().toISOString(), 'p-abc'],
+    })
+    qc.close()
+
+    const sc = createClient({ url: `file:${stateDbPath}` })
+    await insertProposal(sc, 'p-abc')
+    sc.close()
+
+    const res = await fetch(`${baseUrl}/api/progress`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as ProgressBodyWithProposals
+
+    expect(body.proposals).toBeDefined()
+    expect(body.proposals.length).toBe(1)
+    expect(body.proposals[0]!.id).toBe('p-abc')
+    expect(body.proposals[0]!.goal).toBe('goal for p-abc')
+  })
+
+  it('returns an empty proposals array when no in-scope task has a parent_proposal_id', async () => {
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await insertTask(qc, 't-running', 'running')
+    qc.close()
+
+    const res = await fetch(`${baseUrl}/api/progress`)
+    const body = (await res.json()) as ProgressBodyWithProposals
+
+    expect(Array.isArray(body.proposals)).toBe(true)
+    expect(body.proposals.length).toBe(0)
+  })
+
+  it('excludes proposals whose only sliced tasks are out of scope (done/draft/dropped)', async () => {
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    // Insert a done task that references a proposal — done tasks are out of scope
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at, parent_proposal_id)
+            VALUES (?, ?, ?, 0, ?, ?, ?)`,
+      args: ['t-done', 'prompt', 'done', new Date().toISOString(), new Date().toISOString(), 'p-done'],
+    })
+    // Also insert an in-scope task with no proposal
+    await insertTask(qc, 't-running', 'running')
+    qc.close()
+
+    const sc = createClient({ url: `file:${stateDbPath}` })
+    await insertProposal(sc, 'p-done')
+    sc.close()
+
+    const res = await fetch(`${baseUrl}/api/progress`)
+    const body = (await res.json()) as ProgressBodyWithProposals
+
+    const proposalIds = body.proposals.map((p) => p.id)
+    expect(proposalIds).not.toContain('p-done')
+  })
+})

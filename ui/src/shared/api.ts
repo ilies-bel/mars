@@ -9,6 +9,7 @@ import {
   type ActionQueueItem,
   type Agent,
   type InboxPayload,
+  type ProgressProposalNode,
   type ProgressTask,
   type Task,
   type TodoPayload,
@@ -50,9 +51,12 @@ export const fetchTasks = async (): Promise<Task[]> => {
   return json.tasks
 }
 
-export const fetchProgress = async (): Promise<ProgressTask[]> => {
+export const fetchProgress = async (): Promise<{
+  tasks: ProgressTask[]
+  proposals: ProgressProposalNode[]
+}> => {
   const json = await fetchJson('/api/progress', progressResponseSchema)
-  return json.tasks
+  return { tasks: json.tasks, proposals: json.proposals }
 }
 
 export const fetchTodo = async (): Promise<TodoPayload> => {
@@ -91,4 +95,11 @@ export const dismissTodoItem = async (
   }
 }
 
-export type { ActionQueueItem, Agent, InboxPayload, StaleWorktree, TodoPayload } from './schemas'
+export type {
+  ActionQueueItem,
+  Agent,
+  InboxPayload,
+  ProgressProposalNode,
+  StaleWorktree,
+  TodoPayload,
+} from './schemas'

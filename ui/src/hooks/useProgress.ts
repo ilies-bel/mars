@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchProgress } from '@/shared/api'
 import { useSseConnected } from '@/shared/sseStatus'
-import type { Cluster, ProgressTask } from '@/shared/schemas'
+import type { Cluster, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 
 interface State {
   tasks: ProgressTask[] | null
+  proposals: ProgressProposalNode[]
   byCluster: Record<Cluster, ProgressTask[]>
   error: string | null
   connected: boolean
@@ -24,7 +25,8 @@ export const useProgress = (): State => {
     queryFn: fetchProgress,
   })
 
-  const tasks = query.data ?? null
+  const tasks = query.data?.tasks ?? null
+  const proposals = query.data?.proposals ?? []
   const byCluster = emptyByCluster()
   if (tasks) {
     for (const t of tasks) {
@@ -40,5 +42,5 @@ export const useProgress = (): State => {
 
   const error = query.error ? (query.error as Error).message : null
 
-  return { tasks, byCluster, error, connected }
+  return { tasks, proposals, byCluster, error, connected }
 }
