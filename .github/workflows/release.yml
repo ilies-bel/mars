@@ -80,6 +80,16 @@ jobs:
           fi
           node scripts/check-manifest.mjs
 
+      - name: Inject plugin version
+        # Stamps the release tag as the version field in .claude/plugin.json
+        # before the bundle is built. The committed plugin.json carries no
+        # version field (ensuring no second version line exists in the
+        # repository); the field is added here so the plugin inside the
+        # Bundle always reports the same version as the framework release.
+        run: |
+          set -euo pipefail
+          node scripts/inject-plugin-version.mjs "${{ steps.version.outputs.tag }}"
+
       - name: Build Bundle tarball
         id: bundle
         # The Bundle is exactly manifest.json plus the union of the paths
