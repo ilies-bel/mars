@@ -15,12 +15,16 @@ import { getClient, initQueue } from '../queue'
  * immediately instead of silently parking a task with no recovery path.
  *
  * See ADR-0002 + the orchestrator audit (task mars-88a4e657) for the call-site
- * inventory and the two known violations under remediation:
+ * inventory. Both previously identified violations have been resolved:
  *
- *  - `implement-workflow.ts` dirty-main preflight (no edge — should route to
- *    `'failed'`).
- *  - `queue-fix-tasks.ts` no-recipe investigator path (intentionally edgeless,
- *    same routing fix applies).
+ *  - `implement-workflow.ts` dirty-main preflight routes through
+ *    `handleTaskFailureWithFixTask`, which inserts a real `task_blockers` edge.
+ *  - `queue-fix-tasks.ts` no-recipe investigator path now sets `status='failed'`
+ *    instead of `status='blocked'`, eliminating the edgeless-blocked state.
+ *
+ * The `AUDIT (mars-88a4e657): safe site` annotation in `queue-fix-tasks.ts`
+ * near the fix-fail-loop cap remains valid — that path re-stamps 'blocked' after
+ * at least one prior `upsertFixTask` call inserted an edge.
  */
 
 export interface BlockerInvariantOptions {

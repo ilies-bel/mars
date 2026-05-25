@@ -720,7 +720,7 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
-  it('no-recipe path: spawns an investigator task and raises a no-recipe inbox item; original stays blocked', async () => {
+  it('no-recipe path: spawns an investigator task and raises a no-recipe inbox item; original is marked failed', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
@@ -738,10 +738,12 @@ describe('queue-fix-tasks', () => {
     expect(r.inboxItemId).toBeTruthy()
     expect(r.fixTaskId).toBeUndefined()
 
-    // Original task is blocked but has NO task_blockers row pointing
-    // at the investigator (investigator does not unblock the source).
+    // Original task is marked failed — there is no task_blockers edge since
+    // the investigator does not unblock the source (a merged recipe does not
+    // retroactively fix the past failure). Human re-runs via mars continue /
+    // mars restart once a recipe is available.
     const origin = await q.getTask(t.id)
-    expect(origin?.status).toBe('blocked')
+    expect(origin?.status).toBe('failed')
     const blockers = await q.getClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
       args: [t.id],
