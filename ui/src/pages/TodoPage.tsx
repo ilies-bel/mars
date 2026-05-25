@@ -1,9 +1,14 @@
 import { useMemo, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { ackInboxItem, dismissInboxItem, resolveInboxItem } from '@/shared/api'
-import type { ActionQueueItem, DagNode } from '@/shared/schemas'
+import {
+  ackInboxItem,
+  dismissInboxItem,
+  invokeAction,
+  resolveInboxItem,
+} from '@/shared/api'
+import type { ActionDescriptor, ActionQueueItem, DagNode } from '@/shared/schemas'
 
 // ---- Helpers ----
 
@@ -101,6 +106,90 @@ const DagList = ({ label, nodes }: DagListProps) => {
   )
 }
 
+// ---- Action bar ----
+
+interface ActionBarProps {
+  item: ActionQueueItem
+}
+
+/**
+ * Renders one button per recovery action on the row. Clicking proxies the
+ * action's `op` to the daemon (via `/api/actions`). `needsConfirm` actions
+ * prompt first; destructive ops are styled accordingly. The `shape` op has no
+ * daemon verb — it renders as a guidance chip showing the skill to run.
+ */
+const ActionBar = ({ item }: ActionBarProps) => {
+  const qc = useQueryClient()
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: ({ action }: { action: ActionDescriptor }) => {
+      // Process-level ops (restart-daemon) carry no entity id.
+      const entityId = action.op === 'restart-daemon' ? undefined : item.entityId
+      return invokeAction(action.op, entityId)
+    },
+    onMutate: () => setErrorMsg(null),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['action-queue'] })
+      void qc.invalidateQueries({ queryKey: ['tasks'] })
+      void qc.invalidateQueries({ queryKey: ['progress'] })
+    },
+    onError: (err) => setErrorMsg((err as Error).message),
+  })
+
+  if (item.actions.length === 0) return null
+
+  const run = (action: ActionDescriptor) => {
+    if (mutation.isPending) return
+    if (
+      action.needsConfirm &&
+      !window.confirm(`${action.label}: ${item.entityId}. Proceed?`)
+    ) {
+      return
+    }
+    mutation.mutate({ action })
+  }
+
+  return (
+    <div>
+      <dt className="mb-2 text-[10px] uppercase tracking-wider text-iron">
+        Recovery
+      </dt>
+      <dd className="flex flex-wrap gap-2">
+        {item.actions.map((action) =>
+          action.op === 'shape' ? (
+            <span
+              key={action.id}
+              className="border border-iron/30 px-3 py-1.5 font-mono text-[11px] text-iron"
+            >
+              {action.label}
+              {action.hint ? ` · ${action.hint}` : ''}
+            </span>
+          ) : (
+            <button
+              key={action.id}
+              type="button"
+              disabled={mutation.isPending}
+              onClick={() => run(action)}
+              className={[
+                'border px-3 py-1.5 font-mono text-[11px] uppercase transition-colors disabled:opacity-50',
+                action.needsConfirm
+                  ? 'border-[#ff4f4f]/50 text-[#ff4f4f] hover:bg-[#ff4f4f]/10'
+                  : 'border-iron/40 text-fg hover:bg-iron/20',
+              ].join(' ')}
+            >
+              {action.label}
+            </button>
+          ),
+        )}
+      </dd>
+      {errorMsg ? (
+        <p className="mt-2 font-mono text-[10px] text-[#ff4f4f]">{errorMsg}</p>
+      ) : null}
+    </div>
+  )
+}
+
 // ---- Detail panel ----
 
 interface DetailProps {
@@ -138,6 +227,7 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
 
       <main className="flex-1 px-6 py-4">
         <dl className="flex flex-col gap-4 font-mono text-[12px]">
+          <ActionBar item={item} />
           <div>
             <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
               Next action

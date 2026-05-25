@@ -1,0 +1,111 @@
+/**
+ * Thin proxy from the read-only UI server to the daemon's local HTTP action
+ * server. The daemon publishes its OS-assigned port to `.mars/http.port`; we
+ * read it on demand and forward action requests to `127.0.0.1:<port>`.
+ *
+ * This is the ONLY write path the UI has: every recovery action a user clicks
+ * is forwarded here, and the daemon — the single writer — performs the state
+ * transition. The UI never mutates `mars.db` itself.
+ *
+ * The error-kind registry (the action menus) is also fetched from the daemon
+ * (`GET /error-kinds`) so the UI never imports orchestrator code: it stays a
+ * standalone package that renders descriptors it's handed.
+ */
+
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+
+/** Mirror of the orchestrator's ActionDescriptor (received over the wire). */
+export interface ActionDescriptor {
+  id: string
+  label: string
+  op: string
+  needsConfirm?: boolean
+  hint?: string
+}
+
+/** Mirror of the orchestrator's ErrorKind entity (received over the wire). */
+export interface ErrorKind {
+  kind: string
+  rowKind: string
+  trigger: string
+  recipe: string
+  recoveryActions: ActionDescriptor[]
+}
+
+export interface DaemonActionResult {
+  status: number
+  body: unknown
+}
+
+const portFilePath = (stateDir: string): string => join(stateDir, 'http.port')
+
+/**
+ * Read the daemon's published HTTP port. Returns null when the daemon is not
+ * running (no port file) or the file is malformed — callers surface a 503.
+ */
+export const readDaemonHttpPort = async (
+  stateDir: string,
+): Promise<number | null> => {
+  try {
+    const raw = (await readFile(portFilePath(stateDir), 'utf8')).trim()
+    const port = Number(raw)
+    return Number.isInteger(port) && port > 0 ? port : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Fetch the error-kind registry from the daemon. Returns an empty list when the
+ * daemon is unreachable — the UI then renders rows without action buttons
+ * rather than failing the whole inbox.
+ */
+export const fetchErrorKinds = async (
+  stateDir: string,
+): Promise<ErrorKind[]> => {
+  const port = await readDaemonHttpPort(stateDir)
+  if (port === null) return []
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/error-kinds`)
+    if (!res.ok) return []
+    const body = (await res.json()) as { errorKinds?: ErrorKind[] }
+    return Array.isArray(body.errorKinds) ? body.errorKinds : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Forward a recovery action to the daemon. `op` is the verb from the registry;
+ * `entityId` is the task/worktree id (omitted for process-level ops like
+ * `restart-daemon`). Returns the daemon's status + parsed body so the route can
+ * relay it verbatim. A missing daemon yields a synthetic 503.
+ */
+export const proxyAction = async (
+  stateDir: string,
+  op: string,
+  entityId?: string,
+): Promise<DaemonActionResult> => {
+  const port = await readDaemonHttpPort(stateDir)
+  if (port === null) {
+    return {
+      status: 503,
+      body: { ok: false, error: 'daemon not running', errorCode: 'NO_DAEMON' },
+    }
+  }
+  const path =
+    entityId === undefined
+      ? `/actions/${op}`
+      : `/actions/${op}/${encodeURIComponent(entityId)}`
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST' })
+    const body = await res.json().catch(() => ({}))
+    return { status: res.status, body }
+  } catch (err) {
+    return {
+      status: 502,
+      body: { ok: false, error: (err as Error).message, errorCode: 'PROXY_FAILED' },
+    }
+  }
+}

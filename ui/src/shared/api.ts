@@ -117,6 +117,29 @@ export const fetchAgents = async (): Promise<Agent[]> => {
   return json.agents
 }
 
+/**
+ * Invoke a recovery action against the daemon (via the UI server proxy). `op`
+ * is the registry verb; `entityId` is the task/worktree id, omitted for
+ * process-level ops (`restart-daemon`). Throws with the daemon's error message
+ * on a non-2xx so the caller can surface it.
+ */
+export const invokeAction = async (
+  op: string,
+  entityId?: string,
+): Promise<void> => {
+  const r = await fetch(`${BASE}/api/actions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op, entityId }),
+  })
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { error?: string }
+    throw new Error(
+      `${op} failed (${r.status})${body.error ? `: ${body.error}` : ''}`,
+    )
+  }
+}
+
 export const eventsUrl = (): string => `${BASE}/events`
 
 export const dismissTodoItem = async (
