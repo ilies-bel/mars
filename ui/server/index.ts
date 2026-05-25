@@ -6,7 +6,6 @@ import { listTerminalEvents } from './events.ts'
 import { aggregateInbox } from './inbox.ts'
 import { resolveRepo } from './repo.ts'
 import { SseHub } from './sse.ts'
-import { listStaleWorktrees } from './staleWorktrees.ts'
 import { watchQueue } from './watch.ts'
 
 interface CliArgs {
@@ -173,8 +172,7 @@ export const startServer = async (
         try {
           const proposalsExist = await stateDb.proposalsTableExists()
           const drafts = proposalsExist ? await stateDb.listDraftFeatures() : []
-          const dismissedIds = await stateDb.listDismissedStaleWorktreeIds()
-          const staleWorktrees = await listStaleWorktrees(db, ctx.repoRoot, dismissedIds)
+          const staleWorktrees = await stateDb.listOpenStaleWorktreeAlerts()
           return jsonResponse(200, { drafts, staleWorktrees })
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
