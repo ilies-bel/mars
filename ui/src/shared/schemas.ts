@@ -145,6 +145,12 @@ export const actionQueueItemSchema = z.object({
   at: z.string(),
   dag: dagContextSchema.nullable(),
   dismissed: z.boolean(),
+  /**
+   * The specific operator action recorded against this row, or null when no
+   * action has been taken. 'ack' items remain visible in the open filter;
+   * 'resolved' and 'dismissed' items are hidden from it.
+   */
+  ackState: z.enum(['ack', 'resolved', 'dismissed']).nullable(),
 })
 
 export const actionQueueResponseSchema = z.array(actionQueueItemSchema)

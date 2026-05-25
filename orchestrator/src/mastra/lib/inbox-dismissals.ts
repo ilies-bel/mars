@@ -102,8 +102,12 @@ export const isEntityDismissed = async (
 ): Promise<boolean> => {
   await initInboxDismissals()
   const c = getClient()
+  // Rows with note = 'ack' are acknowledged but not hidden from the open filter.
+  // Only note = null (classic dismiss), 'dismissed', or 'resolved' count as dismissed.
   const r = await c.execute({
-    sql: `SELECT 1 FROM inbox_dismissals WHERE entity_kind = ? AND entity_id = ? LIMIT 1`,
+    sql: `SELECT 1 FROM inbox_dismissals
+          WHERE entity_kind = ? AND entity_id = ? AND (note IS NULL OR note != 'ack')
+          LIMIT 1`,
     args: [entityKind, entityId],
   })
   return r.rows.length > 0

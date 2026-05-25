@@ -181,7 +181,12 @@ export const startServer = async (
         }
       }
 
-      if (path === '/api/inbox/dismiss' && req.method === 'POST') {
+      if (
+        (path === '/api/inbox/dismiss' ||
+          path === '/api/inbox/ack' ||
+          path === '/api/inbox/resolve') &&
+        req.method === 'POST'
+      ) {
         try {
           const body = (await req.json()) as { id?: unknown }
           const id = body.id
@@ -196,7 +201,13 @@ export const startServer = async (
           if (entityKind === null) {
             return jsonResponse(400, { error: `unknown inbox kind: ${kind}` })
           }
-          await stateDb.dismissInboxEntity(entityKind, entityId)
+          if (path === '/api/inbox/ack') {
+            await stateDb.ackInboxEntity(entityKind, entityId)
+          } else if (path === '/api/inbox/resolve') {
+            await stateDb.resolveInboxEntity(entityKind, entityId)
+          } else {
+            await stateDb.dismissInboxEntity(entityKind, entityId)
+          }
           return jsonResponse(200, { ok: true })
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })

@@ -22,6 +22,7 @@ interface ActionQueueItemBody {
     proposalId: string | null
   } | null
   dismissed: boolean
+  ackState: 'ack' | 'resolved' | 'dismissed' | null
 }
 
 const setupRepo = (): string => {
@@ -230,6 +231,53 @@ describe('GET /api/inbox/action-queue (derived view)', () => {
     const all = await fetchQueue('all')
     const row = all.find((r) => r.entityId === 't-failed')
     expect(row?.dismissed).toBe(true)
+    expect(row?.ackState).toBe('dismissed')
+  })
+
+  it('ack keeps row visible in open filter and sets ackState; resolve hides it — UI→seam→UI round trip', async () => {
+    const c = createClient({ url: `file:${queueDbPath(repo)}` })
+    await insertTask(c, { id: 't-round', status: 'failed', error: 'oops' })
+    c.close()
+
+    // Baseline: item appears in open filter with no ackState
+    const before = await fetchQueue()
+    const row0 = before.find((r) => r.entityId === 't-round')
+    expect(row0).toBeDefined()
+    expect(row0?.ackState).toBeNull()
+    expect(row0?.dismissed).toBe(false)
+
+    // Ack from the web UI
+    const ackRes = await fetch(`${baseUrl}/api/inbox/ack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'failed-task:t-round' }),
+    })
+    expect(ackRes.status).toBe(200)
+
+    // After ack: item STILL shows in open filter (not hidden), but carries ackState
+    const afterAck = await fetchQueue()
+    const rowAck = afterAck.find((r) => r.entityId === 't-round')
+    expect(rowAck).toBeDefined()
+    expect(rowAck?.ackState).toBe('ack')
+    expect(rowAck?.dismissed).toBe(false)
+
+    // Resolve from the web UI (the "CLI sees it" surface is the same shared DB)
+    const resolveRes = await fetch(`${baseUrl}/api/inbox/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'failed-task:t-round' }),
+    })
+    expect(resolveRes.status).toBe(200)
+
+    // After resolve: item is HIDDEN from open filter
+    const afterResolve = await fetchQueue()
+    expect(afterResolve.find((r) => r.entityId === 't-round')).toBeUndefined()
+
+    // But visible under ?filter=all with resolved ackState (what 'mars inbox list all' would show)
+    const allRows = await fetchQueue('all')
+    const rowResolved = allRows.find((r) => r.entityId === 't-round')
+    expect(rowResolved?.ackState).toBe('resolved')
+    expect(rowResolved?.dismissed).toBe(true)
   })
 
   it('returns 200 with empty array on a fresh repo (no tasks table)', async () => {
