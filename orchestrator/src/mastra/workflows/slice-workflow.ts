@@ -1,6 +1,6 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
-import { getProposal, getProposalsClient } from '../proposals'
+import { getProposal, getProposalsClient, markProposalSliced } from '../proposals'
 import {
   getClient as getQueueClient,
   enqueueTask,
@@ -568,10 +568,9 @@ const generateStep = createStep({
       }
       // Phase 4: flip the idea row to 'sliced' so subsequent invocations
       // refuse to re-slice (the precondition above checks 'prd-ready').
-      await ideasClient.execute({
-        sql: `UPDATE proposals SET status = 'sliced', updated_at = ? WHERE id = ?`,
-        args: [Date.now(), idea.id],
-      })
+      // markProposalSliced updates state.db and emits proposal.sliced on
+      // the event bus (best-effort, non-atomic with the queue.db writes).
+      await markProposalSliced(idea.id, taskIds.length)
       ideaFlipped = true
       // Phase 5 (ADR-0015 promote transfer): any task that was blocked by
       // THIS idea via task_proposal_blockers must now be re-pointed at the

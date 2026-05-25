@@ -3,6 +3,8 @@ import { randomBytes } from 'node:crypto'
 import { resolveContext } from './context'
 import type { Author, AuthorKind } from './author'
 import { openLibsql } from './lib/libsql'
+import { publish } from '../bus/publisher.js'
+import type { EventName, EventPayload } from '../bus/events.js'
 
 export type ProposalSource = 'reflection' | 'human' | 'planner'
 
@@ -39,6 +41,34 @@ const getClient = (): Client => {
  */
 export const getProposalsClient = (): Client => {
   return getClient()
+}
+
+/**
+ * Emit a proposal lifecycle event to the queue.db events outbox.
+ *
+ * Proposals live in state.db; the events outbox lives in queue.db. Cross-DB
+ * atomicity is not available via libsql transactions, so this emits in a
+ * separate write transaction on queue.db after the state.db write has
+ * committed. Emission failures are non-fatal: the proposal operation succeeds
+ * regardless.
+ */
+async function emitProposalBusEvent<T extends EventName>(
+  type: T,
+  payload: EventPayload<T>,
+): Promise<void> {
+  try {
+    const { initQueue, getClient: getQueueClient } = await import('./queue')
+    await initQueue()
+    const tx = await getQueueClient().transaction('write')
+    try {
+      await publish(tx, type, payload)
+      await tx.commit()
+    } catch {
+      tx.close()
+    }
+  } catch {
+    // Non-fatal: proposal state change already committed in state.db.
+  }
 }
 
 let initialised = false
@@ -520,7 +550,7 @@ export const createProposal = async (
       ],
     })
   }
-  return {
+  const proposal: Proposal = {
     id,
     title,
     problem,
@@ -534,6 +564,8 @@ export const createProposal = async (
     updatedAt: now,
     userStories: [],
   }
+  await emitProposalBusEvent('proposal.added', { proposalId: id, source, title })
+  return proposal
 }
 
 export interface ListProposalsFilter {
@@ -948,6 +980,7 @@ export const promoteProposal = async (
     sql: `UPDATE proposals SET status = 'prd-ready', updated_at = ? WHERE id = ?`,
     args: [now, proposal.id],
   })
+  await emitProposalBusEvent('proposal.promoted', { proposalId: proposal.id })
   const updated = await getProposal(proposal.id)
   if (!updated) {
     throw new Error(`proposal ${proposal.id} disappeared after promotion`)
@@ -1050,9 +1083,41 @@ export const rejectProposal = async (
       `proposal ${id} is '${current.status}'; only draft proposals can be rejected`,
     )
   }
+  await emitProposalBusEvent('proposal.dismissed', { proposalId: id })
   const updated = await getProposal(id)
   if (!updated) {
     throw new Error(`proposal ${id} disappeared after rejection`)
   }
   return updated
+}
+
+/**
+ * Flip a proposal's status from 'prd-ready' to 'sliced' and emit
+ * proposal.sliced on the event bus. Called by the slice workflow's
+ * generate-slices step (Phase 4) after tasks have been successfully
+ * inserted into queue.db. Emitting the event here — in proposals.ts,
+ * alongside the other lifecycle transitions — keeps proposal state
+ * management centralised.
+ */
+export const markProposalSliced = async (
+  idOrPrefix: string,
+  taskCount: number,
+): Promise<void> => {
+  await initProposals()
+  const resolved = await resolveProposalId(idOrPrefix)
+  if (resolved.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} proposals`,
+    )
+  }
+  if (resolved.kind === 'none') {
+    throw new Error(`proposal ${idOrPrefix} not found`)
+  }
+  const id = resolved.id
+  const c = getClient()
+  await c.execute({
+    sql: `UPDATE proposals SET status = 'sliced', updated_at = ? WHERE id = ?`,
+    args: [Date.now(), id],
+  })
+  await emitProposalBusEvent('proposal.sliced', { proposalId: id, taskCount })
 }

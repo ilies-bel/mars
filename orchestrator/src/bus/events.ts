@@ -78,32 +78,34 @@ export const EventMap = {
     toState: z.string(),
     by: z.string(),
   }),
-  'idea.created': z.object({
-    ideaId: z.string(),
+  'proposal.added': z.object({
+    proposalId: z.string(),
     source: z.string(),
+    title: z.string(),
   }),
-  'idea.updated': z.object({
-    ideaId: z.string(),
+  'proposal.updated': z.object({
+    proposalId: z.string(),
     field: z.string(),
   }),
-  'idea.dismissed': z.object({
-    ideaId: z.string(),
+  'proposal.dismissed': z.object({
+    proposalId: z.string(),
   }),
-  'idea.prd_ready': z.object({
-    ideaId: z.string(),
+  'proposal.promoted': z.object({
+    proposalId: z.string(),
   }),
-  'idea.sliced': z.object({
-    ideaId: z.string(),
+  'proposal.sliced': z.object({
+    proposalId: z.string(),
+    taskCount: z.number().int().nonnegative(),
   }),
-  'idea.deleted': z.object({
-    ideaId: z.string(),
+  'proposal.deleted': z.object({
+    proposalId: z.string(),
   }),
-  'idea.story_added': z.object({
-    ideaId: z.string(),
+  'proposal.story_added': z.object({
+    proposalId: z.string(),
     position: z.number().int().nonnegative(),
   }),
-  'idea.story_removed': z.object({
-    ideaId: z.string(),
+  'proposal.story_removed': z.object({
+    proposalId: z.string(),
     position: z.number().int().nonnegative(),
   }),
   'signal.recorded': z.object({
