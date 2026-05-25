@@ -265,16 +265,16 @@ Commands:
                                 --force is also passed; --force-orphans extends
                                 removal to orphan worktrees that did contribute
                                 commits.
-  daemon <start|stop|kill|status|reload|set-flag> [flags]
-                                run the orchestration daemon. 'start' runs it in
-                                the foreground; 'start --detach' forks to
-                                background (also what CLI write ops auto-spawn).
-                                'stop' stops accepting new tasks then waits for
-                                in-flight to finish (--force exits immediately
-                                and abandons in-flight). 'kill' SIGKILLs the
-                                daemon's process group, terminating every child
-                                claude -p worker, and marks in-flight tasks
-                                failed. 'status' prints inFlight + queue counts.
+  daemon <start|stop|restart|kill|status|reload|set-flag> [flags]
+                                run the orchestration daemon. 'start' forks to
+                                background (also --detach). 'stop' stops
+                                accepting new tasks then waits for in-flight to
+                                finish (--force exits immediately and abandons
+                                in-flight). 'restart' stops then starts fresh.
+                                'kill' SIGKILLs the daemon's process group,
+                                terminating every child claude -p worker, and
+                                marks in-flight tasks failed. 'status' (also
+                                --status) prints inFlight + queue counts.
                                 'reload' re-reads .mars/daemon.json (falling
                                 back to MARS_MAX_* env vars and built-in
                                 defaults) without restarting. 'set-flag
@@ -603,22 +603,24 @@ Flags:
 Errors during 'git worktree remove' are caught, logged with the directory
 path, and counted; the verb still processes remaining worktrees and exits
 0 unless every action failed.`,
-  daemon: `mars daemon <start|stop|kill|status|reload|set-flag> [flags]
+  daemon: `mars daemon <start|stop|restart|kill|status|reload|set-flag> [flags]
 
-Run the orchestration daemon. CLI write ops auto-spawn it via
-'daemon start --detach'.
+Run the orchestration daemon. CLI write ops auto-spawn it when needed.
 
 Subcommands:
-  start [--detach]   run the daemon (foreground by default; --detach forks
-                     to background)
+  start              fork the daemon to the background. Equivalent to the
+                     legacy --detach flag form. No-op if already running.
   stop  [--force]    graceful shutdown: stop accepting new tasks, then wait
                      for in-flight tasks to finish and exit. No timeout — use
                      'kill' if you need to abort stuck work. --force exits
                      immediately and abandons in-flight tasks (legacy).
+  restart            force-stop any running daemon, then start a fresh one
+                     in the background. Exits 0 when the new daemon is up.
   kill               hard stop: mark every in-flight task failed and SIGKILL
                      the daemon's process group (kills all child claude -p
                      workers). Use when 'stop' is hanging on stuck work.
-  status             print pid, startedAt, inFlight, and queue counts
+  status             print pid, startedAt, inFlight, and queue counts.
+                     Equivalent to the legacy --status flag form.
   reload             re-read .mars/daemon.json (falling back to MARS_MAX_*
                      env vars and built-in defaults) without restarting
   set-flag <flag> <on|off>
@@ -2059,7 +2061,18 @@ const main = async (): Promise<void> => {
   }
 
   if (cmd === 'daemon') {
-    const sub = rest[0]
+    // Normalize legacy flag-form aliases so '--detach' and '--stop'
+    // dispatch to the canonical subcommand names. Note: '--status' cannot be
+    // aliased here because it is in FLAGS_WITH_VALUES (used by
+    // `proposal list --status <value>`) and is consumed by the top-level
+    // parser before it reaches this point.
+    const rawSub = rest[0]
+    const sub =
+      rawSub === '--detach'
+        ? 'start'
+        : rawSub === '--stop'
+          ? 'stop'
+          : rawSub
     const subFlags = new Set(rest.slice(1).filter((a) => a.startsWith('--')))
 
     if (sub === 'stop') {
@@ -2144,7 +2157,7 @@ const main = async (): Promise<void> => {
         const msg = (err as Error).message
         if (/not running|auto-spawn disabled/i.test(msg)) {
           console.error(
-            "daemon not running; use 'mars daemon start --detach' to start it",
+            "daemon not running; use 'mars daemon start' to start it",
           )
           process.exit(1)
         }
@@ -2176,7 +2189,7 @@ const main = async (): Promise<void> => {
         const msg = (err as Error).message
         if (/not running|auto-spawn disabled/i.test(msg)) {
           console.error(
-            "daemon not running; use 'mars daemon start --detach' to start it",
+            "daemon not running; use 'mars daemon start' to start it",
           )
           process.exit(1)
         }
@@ -2210,43 +2223,86 @@ const main = async (): Promise<void> => {
     }
 
     if (sub === 'start') {
-      const detach = subFlags.has('--detach')
-      if (detach) {
-        const { spawn } = await import('node:child_process')
-        const { daemonPaths, resolveLaunchCommand, isDaemonAlive } =
-          await import('./mastra/daemon/paths')
-        const liveness = await isDaemonAlive()
-        if (liveness.alive) {
-          const { logFile } = daemonPaths()
-          console.log(`[mars] daemon detached (pid ${liveness.pid}, log: ${logFile})`)
-          return
-        }
-        // Not alive (stale files already removed by isDaemonAlive); spawn fresh.
-        const { command, baseArgs } = resolveLaunchCommand()
-        const child = spawn(
-          command,
-          [...baseArgs, '--repo', ctx.repoRoot, 'daemon', 'start'],
-          {
-            detached: true,
-            stdio: 'ignore',
-            env: { ...process.env, MARS_REPO: ctx.repoRoot },
-          },
-        )
-        child.unref()
-        const { logFile } = daemonPaths()
-        console.log(`[mars] daemon detached (pid ${child.pid}, log: ${logFile})`)
+      const foreground = subFlags.has('--foreground')
+      if (foreground) {
+        // Foreground mode: used internally by the detach path when it spawns
+        // a child process to actually run the daemon. Not documented publicly.
+        const { startDaemon } = await import('./mastra/daemon/server')
+        await startDaemon({ log: (line) => console.log(line) })
+        // Block until SIGINT/SIGTERM (the daemon handles shutdown).
+        await new Promise(() => {})
         return
       }
 
-      // Foreground.
-      const { startDaemon } = await import('./mastra/daemon/server')
-      await startDaemon({ log: (line) => console.log(line) })
-      // Block forever until SIGINT/SIGTERM (the daemon handles shutdown).
-      await new Promise(() => {})
+      // Detach mode (default). Fork the daemon to the background.
+      const { spawn } = await import('node:child_process')
+      const { daemonPaths, resolveLaunchCommand, isDaemonAlive } =
+        await import('./mastra/daemon/paths')
+      const liveness = await isDaemonAlive()
+      if (liveness.alive) {
+        const { logFile } = daemonPaths()
+        console.log(`[mars] daemon detached (pid ${liveness.pid}, log: ${logFile})`)
+        return
+      }
+      // Not alive (stale files already removed by isDaemonAlive); spawn fresh.
+      const { command, baseArgs } = resolveLaunchCommand()
+      const child = spawn(
+        command,
+        [...baseArgs, '--repo', ctx.repoRoot, 'daemon', 'start', '--foreground'],
+        {
+          detached: true,
+          stdio: 'ignore',
+          env: { ...process.env, MARS_REPO: ctx.repoRoot },
+        },
+      )
+      child.unref()
+      const { logFile } = daemonPaths()
+      console.log(`[mars] daemon detached (pid ${child.pid}, log: ${logFile})`)
       return
     }
 
-    console.error('usage: mars daemon <start|stop|kill|status|reload|set-flag> [flags]')
+    if (sub === 'restart') {
+      const { daemonPaths, isDaemonAlive, resolveLaunchCommand } =
+        await import('./mastra/daemon/paths')
+      const { spawn } = await import('node:child_process')
+
+      // Step 1: force-stop any running daemon.
+      const liveness = await isDaemonAlive()
+      if (liveness.alive) {
+        const { sendRequest } = await import('./mastra/daemon/client')
+        try {
+          await sendRequest({ op: 'shutdown', force: true }, { autoSpawn: false })
+        } catch (err) {
+          const msg = (err as Error).message
+          if (!/not running|auto-spawn disabled/i.test(msg)) throw err
+        }
+        // Wait for the daemon to exit (up to 5 s).
+        const deadline = Date.now() + 5_000
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 100))
+          const check = await isDaemonAlive()
+          if (!check.alive) break
+        }
+      }
+
+      // Step 2: start a fresh daemon in the background.
+      const { command, baseArgs } = resolveLaunchCommand()
+      const child = spawn(
+        command,
+        [...baseArgs, '--repo', ctx.repoRoot, 'daemon', 'start', '--foreground'],
+        {
+          detached: true,
+          stdio: 'ignore',
+          env: { ...process.env, MARS_REPO: ctx.repoRoot },
+        },
+      )
+      child.unref()
+      const { logFile } = daemonPaths()
+      console.log(`[mars] daemon detached (pid ${child.pid}, log: ${logFile})`)
+      return
+    }
+
+    console.error('usage: mars daemon <start|stop|restart|kill|status|reload|set-flag> [flags]')
     process.exit(2)
   }
 

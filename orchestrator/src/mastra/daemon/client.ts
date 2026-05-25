@@ -26,7 +26,7 @@ const spawnDaemon = async (
   const ctx = resolveContext()
   const { command, baseArgs } = resolveLaunchCommand()
 
-  const child = spawn(command, [...baseArgs, '--repo', ctx.repoRoot, 'daemon', 'start'], {
+  const child = spawn(command, [...baseArgs, '--repo', ctx.repoRoot, 'daemon', 'start', '--foreground'], {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env, MARS_REPO: ctx.repoRoot },
