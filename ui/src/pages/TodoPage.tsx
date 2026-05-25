@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { ackInboxItem, dismissInboxItem, resolveInboxItem } from '@/shared/api'
 import type { ActionQueueItem, DagNode } from '@/shared/schemas'
 
 // ---- Helpers ----
@@ -23,6 +25,12 @@ const KIND_LABEL: Record<ActionQueueItem['kind'], string> = {
   'blocked-task': 'blocked',
   'stale-worktree': 'stale wt',
   'draft-proposal': 'draft',
+}
+
+const ACK_STATE_LABEL: Record<'ack' | 'resolved' | 'dismissed', string> = {
+  ack: 'acknowledged',
+  resolved: 'resolved',
+  dismissed: 'dismissed',
 }
 
 // ---- Row ----
@@ -59,7 +67,7 @@ const ActionQueueRow = ({ item, active, onSelect }: RowProps) => {
       </div>
       <div className="mt-1 font-mono text-[10px] text-iron/70">
         {formatTime(item.at)}
-        {item.dismissed ? ' · dismissed' : ''}
+        {item.ackState !== null ? ` · ${ACK_STATE_LABEL[item.ackState]}` : ''}
       </div>
     </li>
   )
@@ -99,70 +107,116 @@ interface DetailProps {
   item: ActionQueueItem
 }
 
-const ActionQueueDetail = ({ item }: DetailProps) => (
-  <div className="flex h-full flex-col overflow-auto">
-    <header className="border-b border-iron/30 px-6 py-4">
-      <div className="flex items-baseline gap-3">
-        <span className="break-all font-mono text-[11px] uppercase text-iron">
-          {item.entityId}
-        </span>
-        <span className="shrink-0 font-mono text-[10px] uppercase text-iron/80">
-          {KIND_LABEL[item.kind]}
-        </span>
-        <span
-          className={`ml-auto font-mono text-[10px] uppercase ${priorityBadgeClass(item.priority)}`}
-        >
-          {item.priority}
-        </span>
-      </div>
-      <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
-        {item.title || '(no title)'}
-      </h2>
-    </header>
+const ActionQueueDetail = ({ item }: DetailProps) => {
+  const queryClient = useQueryClient()
 
-    <main className="flex-1 px-6 py-4">
-      <dl className="flex flex-col gap-4 font-mono text-[12px]">
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Next action
-          </dt>
-          <dd className="whitespace-pre-wrap text-fg">
-            {item.body.trim() || (
-              <span className="text-iron/70">(no action recorded)</span>
-            )}
-          </dd>
+  const runAction = async (action: () => Promise<void>): Promise<void> => {
+    await action()
+    await queryClient.invalidateQueries({ queryKey: ['action-queue'] })
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-auto">
+      <header className="border-b border-iron/30 px-6 py-4">
+        <div className="flex items-baseline gap-3">
+          <span className="break-all font-mono text-[11px] uppercase text-iron">
+            {item.entityId}
+          </span>
+          <span className="shrink-0 font-mono text-[10px] uppercase text-iron/80">
+            {KIND_LABEL[item.kind]}
+          </span>
+          <span
+            className={`ml-auto font-mono text-[10px] uppercase ${priorityBadgeClass(item.priority)}`}
+          >
+            {item.priority}
+          </span>
         </div>
-        {item.dag && (
-          <>
-            {item.dag.proposalId && (
-              <div>
-                <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-                  From proposal
-                </dt>
-                <dd className="text-fg">{item.dag.proposalId}</dd>
-              </div>
-            )}
-            <DagList label="Waits on (blockers)" nodes={item.dag.blockers} />
-            <DagList
-              label="Waited on by (blocking)"
-              nodes={item.dag.blocking}
-            />
-            <DagList
-              label="Recovery descendants"
-              nodes={item.dag.descendants}
-            />
-          </>
+        <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
+          {item.title || '(no title)'}
+        </h2>
+      </header>
+
+      <main className="flex-1 px-6 py-4">
+        <dl className="flex flex-col gap-4 font-mono text-[12px]">
+          <div>
+            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+              Next action
+            </dt>
+            <dd className="whitespace-pre-wrap text-fg">
+              {item.body.trim() || (
+                <span className="text-iron/70">(no action recorded)</span>
+              )}
+            </dd>
+          </div>
+          {item.dag && (
+            <>
+              {item.dag.proposalId && (
+                <div>
+                  <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+                    From proposal
+                  </dt>
+                  <dd className="text-fg">{item.dag.proposalId}</dd>
+                </div>
+              )}
+              <DagList label="Waits on (blockers)" nodes={item.dag.blockers} />
+              <DagList
+                label="Waited on by (blocking)"
+                nodes={item.dag.blocking}
+              />
+              <DagList
+                label="Recovery descendants"
+                nodes={item.dag.descendants}
+              />
+            </>
+          )}
+          <div>
+            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+              Last updated
+            </dt>
+            <dd className="text-fg">{formatTime(item.at)}</dd>
+          </div>
+        </dl>
+      </main>
+
+      <footer className="border-t border-iron/30 px-6 py-3">
+        {item.ackState !== null && (
+          <p className="mb-2 font-mono text-[10px] text-iron/70">
+            Status: {ACK_STATE_LABEL[item.ackState]}
+          </p>
         )}
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Last updated
-          </dt>
-          <dd className="text-fg">{formatTime(item.at)}</dd>
+        <div className="flex gap-2">
+          {item.ackState === null && (
+            <button
+              data-testid="inbox-ack"
+              onClick={() => runAction(() => ackInboxItem(item.id))}
+              className="border border-iron/40 px-3 py-1 font-mono text-[11px] text-fg hover:bg-iron/10"
+            >
+              Ack
+            </button>
+          )}
+          {(item.ackState === null || item.ackState === 'ack') && (
+            <button
+              data-testid="inbox-resolve"
+              onClick={() => runAction(() => resolveInboxItem(item.id))}
+              className="border border-iron/40 px-3 py-1 font-mono text-[11px] text-fg hover:bg-iron/10"
+            >
+              Resolve
+            </button>
+          )}
+          {!item.dismissed && (
+            <button
+              data-testid="inbox-dismiss"
+              onClick={() => runAction(() => dismissInboxItem(item.id))}
+              className="border border-iron/40 px-3 py-1 font-mono text-[11px] text-fg hover:bg-iron/10"
+            >
+              Dismiss
+            </button>
+          )}
         </div>
-      </dl>
-    </main>
-  </div>
-)
+      </footer>
+    </div>
+  )
+}
 
 // ---- Page ----
 

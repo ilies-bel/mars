@@ -95,8 +95,16 @@ export interface DerivedInboxRow {
   at: string
   /** Present for task-derived rows; null for worktree/proposal rows. */
   dag: DagContext | null
-  /** True when the operator has dismissed this row (only in `all`/`dismissed`). */
+  /** True when the operator has resolved or dismissed this row (hidden from open). */
   dismissed: boolean
+  /**
+   * The specific operator action recorded:
+   *   - `null`        — no operator action
+   *   - `'ack'`       — acknowledged; still visible in the open filter
+   *   - `'resolved'`  — resolved; hidden from the open filter
+   *   - `'dismissed'` — dismissed; hidden from the open filter
+   */
+  ackState: 'ack' | 'resolved' | 'dismissed' | null
 }
 
 const DISMISSAL_KIND_BY_ROW: Record<DerivedInboxKind, DismissalEntityKind> = {
@@ -252,9 +260,26 @@ export const listDerivedInbox = async (
   const allTasks = await listTasks()
   const byId = new Map<string, Task>(allTasks.map((t) => [t.id, t]))
   const dismissals = await listDismissals()
-  const dismissed = new Set(
-    dismissals.map((d) => `${d.entityKind}:${d.entityId}`),
+
+  const noteToAckState = (note: string | null): 'ack' | 'resolved' | 'dismissed' => {
+    if (note === 'ack') return 'ack'
+    if (note === 'resolved') return 'resolved'
+    return 'dismissed'
+  }
+
+  const dismissalNoteMap = new Map<string, string | null>(
+    dismissals.map((d) => [`${d.entityKind}:${d.entityId}`, d.note]),
   )
+
+  const getAckState = (key: string): 'ack' | 'resolved' | 'dismissed' | null => {
+    if (!dismissalNoteMap.has(key)) return null
+    return noteToAckState(dismissalNoteMap.get(key) ?? null)
+  }
+
+  const isDismissed = (key: string): boolean => {
+    const s = getAckState(key)
+    return s === 'resolved' || s === 'dismissed'
+  }
 
   const rows: DerivedInboxRow[] = []
 
@@ -287,7 +312,8 @@ export const listDerivedInbox = async (
       body,
       at: task.updatedAt,
       dag,
-      dismissed: dismissed.has(`task:${task.id}`),
+      dismissed: isDismissed(`task:${task.id}`),
+      ackState: getAckState(`task:${task.id}`),
     })
   }
 
@@ -307,7 +333,8 @@ export const listDerivedInbox = async (
       body: staleWorktreeBody(name, statusLabel),
       at: await worktreeMtime(repoRoot, name),
       dag: null,
-      dismissed: dismissed.has(`worktree:${name}`),
+      dismissed: isDismissed(`worktree:${name}`),
+      ackState: getAckState(`worktree:${name}`),
     })
   }
 
@@ -328,7 +355,8 @@ export const listDerivedInbox = async (
         `  • Reject it:   mars proposal reject ${proposal.id}`,
       at: new Date(proposal.updatedAt).toISOString(),
       dag: null,
-      dismissed: dismissed.has(`proposal:${proposal.id}`),
+      dismissed: isDismissed(`proposal:${proposal.id}`),
+      ackState: getAckState(`proposal:${proposal.id}`),
     })
   }
 
