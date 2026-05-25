@@ -605,3 +605,133 @@ describe('buildCoderSystemPrompt — context-gathering discipline brief', () => 
     expect(writerInstructions).not.toContain(CONTEXT_GATHERING_BRIEF)
   })
 })
+
+describe('composePrompt — read-first and prescriptive-action sections', () => {
+  it('renders <read_first> and <prescriptive_action> when the spec carries them', () => {
+    const out = composePrompt(
+      'implement the thing',
+      null,
+      'coder',
+      {
+        files: ['src/a.ts'],
+        verifyCmd: 'npx tsc --noEmit',
+        doneCriteria: ['types pass'],
+        taskType: 'auto',
+        readFirst: ['src/b.ts', 'src/c.ts'],
+        prescriptiveAction: 'Call doSomething() in src/a.ts at line 42.',
+      },
+      'mars-test-rf',
+    )
+    expect(out).toContain('<read_first>')
+    expect(out).toContain('src/b.ts')
+    expect(out).toContain('src/c.ts')
+    expect(out).toContain('<prescriptive_action>')
+    expect(out).toContain('Call doSomething() in src/a.ts at line 42.')
+  })
+
+  it('preserves read-first list ordering: items appear numbered in producer order', () => {
+    const out = composePrompt(
+      'implement the thing',
+      null,
+      'coder',
+      {
+        files: ['src/a.ts'],
+        verifyCmd: null,
+        doneCriteria: [],
+        taskType: 'auto',
+        readFirst: ['first.ts', 'second.ts', 'third.ts'],
+      },
+      'mars-test-order',
+    )
+    const rfIdx = out.indexOf('<read_first>')
+    expect(rfIdx).toBeGreaterThan(-1)
+    const rfBlock = out.slice(rfIdx, out.indexOf('</read_first>') + 13)
+    const firstIdx = rfBlock.indexOf('first.ts')
+    const secondIdx = rfBlock.indexOf('second.ts')
+    const thirdIdx = rfBlock.indexOf('third.ts')
+    expect(firstIdx).toBeLessThan(secondIdx)
+    expect(secondIdx).toBeLessThan(thirdIdx)
+  })
+
+  it('places read-first after files and before verify in the structured-task contract', () => {
+    const out = composePrompt(
+      'implement the thing',
+      null,
+      'coder',
+      {
+        files: ['src/a.ts'],
+        verifyCmd: 'npx tsc --noEmit',
+        doneCriteria: [],
+        taskType: 'auto',
+        readFirst: ['src/b.ts'],
+        prescriptiveAction: 'do the thing',
+      },
+      'mars-test-order',
+    )
+    const filesIdx = out.indexOf('<files>')
+    const rfIdx = out.indexOf('<read_first>')
+    const paIdx = out.indexOf('<prescriptive_action>')
+    const verifyIdx = out.indexOf('<verify>')
+    expect(filesIdx).toBeGreaterThan(-1)
+    expect(rfIdx).toBeGreaterThan(filesIdx)
+    expect(paIdx).toBeGreaterThan(rfIdx)
+    expect(verifyIdx).toBeGreaterThan(paIdx)
+  })
+
+  it('omits both new sections and leaves no extra whitespace when the spec has neither field', () => {
+    const out = composePrompt(
+      'implement the thing',
+      null,
+      'coder',
+      {
+        files: ['src/a.ts'],
+        verifyCmd: 'npx tsc --noEmit',
+        doneCriteria: ['types pass'],
+        taskType: 'auto',
+      },
+      'mars-test-norf',
+    )
+    expect(out).not.toContain('<read_first>')
+    expect(out).not.toContain('<prescriptive_action>')
+    expect(out).not.toContain('read first')
+  })
+
+  it('omits both sections when spec has empty readFirst and null prescriptiveAction', () => {
+    const out = composePrompt(
+      'implement the thing',
+      null,
+      'coder',
+      {
+        files: ['src/a.ts'],
+        verifyCmd: null,
+        doneCriteria: [],
+        taskType: 'auto',
+        readFirst: [],
+        prescriptiveAction: null,
+      },
+      'mars-test-empty',
+    )
+    expect(out).not.toContain('<read_first>')
+    expect(out).not.toContain('<prescriptive_action>')
+  })
+
+  it('omits read-first section (only) when prescriptiveAction is set but readFirst is empty', () => {
+    const out = composePrompt(
+      'implement the thing',
+      null,
+      'coder',
+      {
+        files: ['src/a.ts'],
+        verifyCmd: null,
+        doneCriteria: [],
+        taskType: 'auto',
+        readFirst: [],
+        prescriptiveAction: 'Do the thing now.',
+      },
+      'mars-test-paonly',
+    )
+    expect(out).not.toContain('<read_first>')
+    expect(out).toContain('<prescriptive_action>')
+    expect(out).toContain('Do the thing now.')
+  })
+})

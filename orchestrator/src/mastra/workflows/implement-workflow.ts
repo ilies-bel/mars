@@ -149,6 +149,8 @@ const specSchema = z
     verifyCmd: z.string().nullable(),
     doneCriteria: z.array(z.string()),
     taskType: z.enum(TASK_TYPES as readonly ['auto', 'checkpoint']),
+    readFirst: z.array(z.string()).default([]),
+    prescriptiveAction: z.string().nullable().default(null),
   })
   .nullable()
   .default(null)
@@ -366,6 +368,17 @@ const renderSpec = (spec: TaskSpec | null, taskId: string): string | null => {
   if (spec.files.length > 0) {
     const lines = spec.files.map((f) => `  - ${f}`).join('\n')
     parts.push(`<files>\n${lines}\n</files>`)
+  }
+  const readFirst = spec.readFirst ?? []
+  if (readFirst.length > 0) {
+    const lines = readFirst.map((f, i) => `  ${i + 1}. ${f}`).join('\n')
+    parts.push(`<read_first>\n${lines}\n</read_first>`)
+  }
+  const prescriptiveAction = spec.prescriptiveAction ?? null
+  if (prescriptiveAction && prescriptiveAction.trim().length > 0) {
+    parts.push(
+      `<prescriptive_action>\n${prescriptiveAction.trim()}\n</prescriptive_action>`,
+    )
   }
   if (spec.verifyCmd && spec.verifyCmd.trim().length > 0) {
     parts.push(`<verify>\n${spec.verifyCmd.trim()}\n</verify>`)
