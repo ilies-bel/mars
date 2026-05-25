@@ -13,6 +13,12 @@ import {
   type ClusterToggle,
 } from '@/widgets/ClusterToggleBar'
 import { Footer } from '@/widgets/Footer'
+import {
+  RecencySlider,
+  RECENCY_STOP_DEFAULT,
+  recencyStopToMs,
+  type RecencyStop,
+} from '@/widgets/RecencySlider'
 import { Sidebar } from '@/widgets/Sidebar'
 import { TabStrip } from '@/widgets/TabStrip'
 import { EventsView } from '@/widgets/EventsView'
@@ -61,7 +67,9 @@ const toUI = (t: ProgressTask): UITask => ({
 const CLUSTERS: readonly Cluster[] = ['Queued', 'In progress', 'Blocked', 'Failed']
 
 export const ProgressPage = () => {
-  const { byCluster, tasks, proposals, error, connected } = useProgress()
+  const [recencyStop, setRecencyStop] = useState<RecencyStop>(RECENCY_STOP_DEFAULT)
+  const failedWindowMs = recencyStopToMs(recencyStop)
+  const { byCluster, tasks, proposals, error, connected } = useProgress({ failedWindowMs })
   const { drafts } = useTodo()
   const [activeTab, setActiveTab] = useState<Tab>(DEFAULT_TAB)
   const [activeToggles, setActiveToggles] = useState<Set<ClusterToggle>>(
@@ -154,6 +162,9 @@ export const ProgressPage = () => {
         />
         <TabStrip active={activeTab} onSelect={setActiveTab} />
         <ClusterToggleBar active={activeToggles} onToggle={handleToggle} />
+        <div className="flex items-center border-b border-iron/20 bg-bg px-4 py-1">
+          <RecencySlider value={recencyStop} onChange={setRecencyStop} />
+        </div>
         {error && tasks === null ? (
           <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
             <ApiErrorPanel error={error} />

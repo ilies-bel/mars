@@ -370,3 +370,118 @@ describe('GET /api/progress — proposal nodes for DAG view', () => {
     expect(proposalIds).not.toContain('p-done')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Slice 12 of PRD 10150b71: recency slider — ?failedWindow query param
+// ---------------------------------------------------------------------------
+//
+// The slider controls how far back the Failed cluster looks. The server must
+// honour a `?failedWindow=<ms>` (number) or `?failedWindow=all` query
+// parameter. In progress and Blocked tasks are never affected.
+//
+
+describe('GET /api/progress — recency slider: ?failedWindow query param', () => {
+  let repo: string
+  let server: ReturnType<typeof Bun.serve> | null = null
+  let baseUrl: string
+  let queueDbPath: string
+
+  beforeEach(async () => {
+    repo = setupRepo()
+    queueDbPath = resolve(repo, '.mars/mars.db')
+    const qc = await createQueueSchema(queueDbPath)
+    qc.close()
+    const sc = await createStateSchema(resolve(repo, '.mars/mars.db'))
+    sc.close()
+
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' })
+    baseUrl = `http://${server.hostname}:${server.port}`
+  })
+
+  afterEach(() => {
+    if (server) server.stop(true)
+    server = null
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('default (no param) uses a 24h window: recent failed task appears, old one is excluded', async () => {
+    const now = Date.now()
+    const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString()
+    const twentyFiveHoursAgo = new Date(now - 25 * 60 * 60 * 1000).toISOString()
+
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await insertTask(qc, 't-failed-recent', 'failed', twoHoursAgo)
+    await insertTask(qc, 't-failed-old', 'failed', twentyFiveHoursAgo)
+    qc.close()
+
+    const res = await fetch(`${baseUrl}/api/progress`)
+    const body = (await res.json()) as ProgressBody
+    const ids = body.tasks.map((t) => t.id)
+
+    expect(ids).toContain('t-failed-recent')
+    expect(ids).not.toContain('t-failed-old')
+  })
+
+  it('?failedWindow=3600000 (1h) excludes a failed task updated 2h ago', async () => {
+    const now = Date.now()
+    const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString()
+    const thirtyMinutesAgo = new Date(now - 30 * 60 * 1000).toISOString()
+
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await insertTask(qc, 't-failed-2h', 'failed', twoHoursAgo)
+    await insertTask(qc, 't-failed-30m', 'failed', thirtyMinutesAgo)
+    qc.close()
+
+    const res = await fetch(`${baseUrl}/api/progress?failedWindow=3600000`)
+    const body = (await res.json()) as ProgressBody
+    const ids = body.tasks.map((t) => t.id)
+
+    expect(ids).toContain('t-failed-30m')
+    expect(ids).not.toContain('t-failed-2h')
+  })
+
+  it('?failedWindow=all includes all failed tasks regardless of age', async () => {
+    const now = Date.now()
+    const twoYearsAgo = new Date(now - 2 * 365 * 24 * 60 * 60 * 1000).toISOString()
+    const recent = new Date(now - 10 * 60 * 1000).toISOString()
+
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await insertTask(qc, 't-failed-ancient', 'failed', twoYearsAgo)
+    await insertTask(qc, 't-failed-recent', 'failed', recent)
+    qc.close()
+
+    const res = await fetch(`${baseUrl}/api/progress?failedWindow=all`)
+    const body = (await res.json()) as ProgressBody
+    const ids = body.tasks.map((t) => t.id)
+
+    expect(ids).toContain('t-failed-ancient')
+    expect(ids).toContain('t-failed-recent')
+    const counts = countBy(body.tasks)
+    expect(counts.Failed).toBe(2)
+  })
+
+  it('?failedWindow does not affect In progress or Blocked tasks', async () => {
+    const now = Date.now()
+    const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString()
+
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await insertTask(qc, 't-running', 'running', twoHoursAgo)
+    await insertTask(qc, 't-blocked', 'blocked', twoHoursAgo)
+    await insertTask(qc, 't-failed-2h', 'failed', twoHoursAgo)
+    qc.close()
+
+    // 1h window: the failed task 2h old should be excluded, but running/blocked remain
+    const res = await fetch(`${baseUrl}/api/progress?failedWindow=3600000`)
+    const body = (await res.json()) as ProgressBody
+    const ids = body.tasks.map((t) => t.id)
+
+    expect(ids).toContain('t-running')
+    expect(ids).toContain('t-blocked')
+    expect(ids).not.toContain('t-failed-2h')
+
+    const counts = countBy(body.tasks)
+    expect(counts['In progress']).toBe(1)
+    expect(counts.Blocked).toBe(1)
+    expect(counts.Failed).toBe(0)
+  })
+})
