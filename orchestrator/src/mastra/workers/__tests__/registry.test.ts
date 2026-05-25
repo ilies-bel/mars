@@ -105,6 +105,14 @@ describe('Worker registry', () => {
     // commit without being cut off mid-run.
     expect(WORKER_CONFIGS.Coder.maxMessages).toBe(0)
   })
+
+  it("pins Slicer's message cap at 250 so it can finish orienting before emitting slice JSON", () => {
+    // The Slicer is a read-heavy, one-shot analysis pass. Before the 250 cap
+    // was introduced it was SIGKILLed at ~100 messages before emitting the
+    // slice JSON output. 250 gives ~4x headroom while keeping a hard ceiling
+    // so a looping slicer can't burn unbounded tokens.
+    expect(WORKER_CONFIGS.Slicer.maxMessages).toBe(250)
+  })
 })
 
 describe('Coder pinned config', () => {
