@@ -73,9 +73,9 @@ describe('detectRoute', () => {
     expect(detectRoute('#/agents/coder')).toBe('agents')
   })
 
-  it('returns topology for the #/topology hash', () => {
-    expect(detectRoute('#/topology')).toBe('topology')
-    expect(detectRoute('#/topology/anything')).toBe('topology')
+  it('returns events for the #/events hash', () => {
+    expect(detectRoute('#/events')).toBe('events')
+    expect(detectRoute('#/events/anything')).toBe('events')
   })
 })
 

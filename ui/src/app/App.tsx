@@ -7,7 +7,7 @@ import { useTodo } from '@/entities/todo/useTodo'
 import { AgentsPage } from '@/pages/AgentsPage'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/TodoPage'
-import { TopologyPage } from '@/pages/TopologyPage'
+import { EventsPage } from '@/pages/EventsPage'
 
 const clearTaskHash = (): void => {
   if (typeof window === 'undefined') return
@@ -36,8 +36,8 @@ const App = () => {
           <AgentsPage />
         ) : route === 'progress' ? (
           <ProgressPage />
-        ) : route === 'topology' ? (
-          <TopologyPage />
+        ) : route === 'events' ? (
+          <EventsPage />
         ) : (
           <ActionQueuePage />
         )}

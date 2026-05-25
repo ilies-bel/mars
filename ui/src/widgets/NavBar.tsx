@@ -56,8 +56,8 @@ export const NavBar = ({ hash }: NavBarProps) => {
         </a>
       </span>
       <span className="relative">
-        <a className={linkClass(route === 'topology')} href="#/topology">
-          Topology
+        <a className={linkClass(route === 'events')} href="#/events">
+          Events
         </a>
       </span>
     </nav>

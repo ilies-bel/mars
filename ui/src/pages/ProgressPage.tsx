@@ -10,7 +10,7 @@ import { Column } from '@/widgets/Column'
 import { Footer } from '@/widgets/Footer'
 import { Sidebar } from '@/widgets/Sidebar'
 import { TabStrip } from '@/widgets/TabStrip'
-import { TopologyView } from '@/widgets/TopologyView'
+import { EventsView } from '@/widgets/EventsView'
 import { TopStripe } from '@/widgets/TopStripe'
 
 const titleFromPrompt = (prompt: string): string => {
@@ -133,8 +133,8 @@ export const ProgressPage = () => {
           <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
             <ApiErrorPanel error={error} />
           </main>
-        ) : activeTab === 'topology' ? (
-          <TopologyView />
+        ) : activeTab === 'events' ? (
+          <EventsView />
         ) : (
           boardBody
         )}
