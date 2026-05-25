@@ -59,9 +59,9 @@ export function filterIdeaItems(items: IdeaItem[], query: string): IdeaItem[] {
     const d = item.draft
     const haystack = [
       d.id,
-      d.goal,
-      d.story,
-      d.technical,
+      d.title,
+      d.problem,
+      d.solution,
       d.source,
       d.status,
       ...IDEA_KIND_TOKENS,

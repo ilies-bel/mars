@@ -17,9 +17,9 @@ const proposalSourceSchema = z.enum(['reflection', 'human', 'planner'])
 
 const draftFeatureSchema = z.object({
   id: z.string(),
-  goal: z.string(),
-  story: z.string(),
-  technical: z.string(),
+  title: z.string(),
+  problem: z.string(),
+  solution: z.string(),
   status: z.string(),
   source: proposalSourceSchema,
   createdAt: z.number(),
@@ -83,7 +83,7 @@ const progressTaskSchema = taskSchema.extend({
  */
 const progressProposalNodeSchema = z.object({
   id: z.string(),
-  goal: z.string(),
+  title: z.string(),
   source: proposalSourceSchema,
   status: z.string(),
 })

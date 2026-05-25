@@ -55,9 +55,9 @@ const minAgent = (overrides: Record<string, unknown> = {}) => ({
 
 const minDraft = (overrides: Record<string, unknown> = {}) => ({
   id: 'idea-1',
-  goal: 'ship it',
-  story: '',
-  technical: '',
+  title: 'ship it',
+  problem: '',
+  solution: '',
   status: 'draft',
   source: 'human',
   createdAt: Date.now(),

@@ -5,9 +5,9 @@ import type { DraftFeature } from '@/shared/schemas'
 
 const draft = (overrides: Partial<DraftFeature> = {}): DraftFeature => ({
   id: 'prop-abc-123',
-  goal: 'Surface proposals in the Progress board',
-  story: '',
-  technical: '',
+  title: 'Surface proposals in the Progress board',
+  problem: '',
+  solution: '',
   status: 'draft',
   source: 'human',
   createdAt: Date.now(),
@@ -22,7 +22,7 @@ describe('ProposalCard', () => {
     expect(html).toContain('href="#/proposal/prop-abc-123"')
   })
 
-  it('shows the proposal goal as the title text', () => {
+  it('shows the proposal title as the title text', () => {
     const html = renderToStaticMarkup(<ProposalCard proposal={draft()} />)
     expect(html).toContain('Surface proposals in the Progress board')
   })

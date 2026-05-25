@@ -25,9 +25,9 @@ const task = (
   ...overrides,
 })
 
-const proposal = (id: string, goal = `Goal ${id}`): ProgressProposalNode => ({
+const proposal = (id: string, title = `Goal ${id}`): ProgressProposalNode => ({
   id,
-  goal,
+  title,
   source: 'human',
   status: 'draft',
 })
