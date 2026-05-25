@@ -37,19 +37,19 @@ const loadModules = async (
   return { q, dq }
 }
 
-const recordCost = async (
+const recordTokens = async (
   q: QueueModule,
   taskId: string,
-  costUsd: number,
+  inputTokens: number,
 ): Promise<void> => {
   const now = new Date().toISOString()
   await q.getClient().execute({
     sql: `INSERT INTO task_signals
             (task_id, step_id, input_tokens, output_tokens,
-             cache_create_tokens, cache_read_tokens, total_cost_usd,
+             cache_create_tokens, cache_read_tokens,
              message_count, recorded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [taskId, 'run-claude-code', 0, 0, 0, 0, costUsd, 0, now],
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [taskId, 'run-claude-code', inputTokens, 0, 0, 0, 0, now],
   })
 }
 
@@ -100,7 +100,7 @@ describe('pickDeepReflectCandidate', () => {
     const tDone = await q.enqueueTask('done task', undefined, { skipTriage: true })
     await setStatus(q, tDone.id, 'done')
     await q.upsertTranscript({ taskId: tDone.id, conversationJson: '[]' })
-    await recordCost(q, tDone.id, 5)
+    await recordTokens(q, tDone.id, 5000)
 
     const r = await dq.pickDeepReflectCandidate()
     expect(r).not.toBeNull()
@@ -108,29 +108,31 @@ describe('pickDeepReflectCandidate', () => {
     expect(r?.reason.reason).toMatch(/most recent failure/i)
   })
 
-  it('rule 2: picks highest-cost done task within last 7d when ≥ 2× median', async () => {
+  it('rule 2: picks highest weighted-token done task within last 7d when ≥ 2× median', async () => {
     const { q, dq } = await loadModules(repo)
+    // cheap tasks: 100 input tokens each → weighted = 100
     const cheap1 = await q.enqueueTask('cheap1', undefined, { skipTriage: true })
     await setStatus(q, cheap1.id, 'done')
     await q.upsertTranscript({ taskId: cheap1.id, conversationJson: '[]' })
-    await recordCost(q, cheap1.id, 0.05)
+    await recordTokens(q, cheap1.id, 100)
 
     const cheap2 = await q.enqueueTask('cheap2', undefined, { skipTriage: true })
     await setStatus(q, cheap2.id, 'done')
     await q.upsertTranscript({ taskId: cheap2.id, conversationJson: '[]' })
-    await recordCost(q, cheap2.id, 0.05)
+    await recordTokens(q, cheap2.id, 100)
 
+    // expensive task: 2100 input tokens → weighted = 2100, > 2×median(100)
     const expensive = await q.enqueueTask('expensive', undefined, {
       skipTriage: true,
     })
     await setStatus(q, expensive.id, 'done')
     await q.upsertTranscript({ taskId: expensive.id, conversationJson: '[]' })
-    await recordCost(q, expensive.id, 1.0)
+    await recordTokens(q, expensive.id, 2100)
 
     const r = await dq.pickDeepReflectCandidate()
     expect(r).not.toBeNull()
     expect(r?.taskId).toBe(expensive.id)
-    expect(r?.reason.reason).toMatch(/highest-cost done/i)
+    expect(r?.reason.reason).toMatch(/highest weighted-token done/i)
   })
 
   it('rule 3: falls back to most recent done when no expensive outlier', async () => {
@@ -139,12 +141,12 @@ describe('pickDeepReflectCandidate', () => {
     const a = await q.enqueueTask('a', undefined, { skipTriage: true })
     await setStatus(q, a.id, 'done')
     await q.upsertTranscript({ taskId: a.id, conversationJson: '[]' })
-    await recordCost(q, a.id, 0.1)
+    await recordTokens(q, a.id, 100)
 
     const b = await q.enqueueTask('b', undefined, { skipTriage: true })
     await setStatus(q, b.id, 'done')
     await q.upsertTranscript({ taskId: b.id, conversationJson: '[]' })
-    await recordCost(q, b.id, 0.1)
+    await recordTokens(q, b.id, 100)
 
     const r = await dq.pickDeepReflectCandidate()
     expect(r).not.toBeNull()
