@@ -23,6 +23,7 @@ const roleFromStatus = (status: ProgressTask['status']): Role => {
     case 'verifying':
       return 'reviewer'
     case 'merging':
+    case 'vega-reconciling':
       return 'orchestrator'
     case 'draft':
     case 'queued':

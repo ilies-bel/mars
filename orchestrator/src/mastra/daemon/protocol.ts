@@ -73,7 +73,7 @@ export interface DaemonStatusPayload {
     taskId: string
     kind: 'triage' | 'implement' | 'refine' | 'glossary-write' | 'adr-add'
   }>
-  counts: { draft: number; queued: number; running: number; verifying: number; merging: number }
+  counts: { draft: number; queued: number; running: number; verifying: number; merging: number; 'vega-reconciling': number }
 }
 
 const NEWLINE = 0x0a

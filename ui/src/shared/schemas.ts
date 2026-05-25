@@ -6,6 +6,7 @@ const taskStatusSchema = z.enum([
   'running',
   'verifying',
   'merging',
+  'vega-reconciling',
   'done',
   'failed',
   'dropped',
