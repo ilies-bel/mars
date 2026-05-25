@@ -64,6 +64,11 @@ const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
  *   path with `execute`; a later slice tightens it to libsql's `'read'`
  *   mode so write attempts fail closed.
  * - `execute` is the single-statement write side door.
+ * - `batch` is the multi-statement atomic write path. Runs all statements
+ *   in a single transaction under `mode` (default `'write'`); if any
+ *   statement fails the whole batch is rolled back. Replaces the
+ *   `client.transaction('write')` pattern so callers never hold raw
+ *   transaction handles.
  * - `arcStatus` is the per-arc rollup predicate added in slice 1 of PRD
  *   9aec85db. Stateless: every call recomputes from the tasks table.
  *
@@ -73,6 +78,10 @@ const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
 export interface TaskStore {
   query(stmt: InStatement): Promise<ResultSet>
   execute(stmt: InStatement): Promise<ResultSet>
+  batch(
+    stmts: InStatement[],
+    mode?: 'write' | 'read' | 'deferred',
+  ): Promise<ResultSet[]>
   arcStatus(originId: string, opts?: ArcStatusOptions): Promise<ArcStatus>
 }
 
@@ -83,6 +92,7 @@ export interface TaskStore {
 export const createLibsqlTaskStore = (client: Client): TaskStore => ({
   query: (stmt) => client.execute(stmt),
   execute: (stmt) => client.execute(stmt),
+  batch: (stmts, mode) => client.batch(stmts, mode),
   arcStatus: async (originId, opts) => {
     const r = await client.execute({
       sql: `SELECT id, status FROM tasks
