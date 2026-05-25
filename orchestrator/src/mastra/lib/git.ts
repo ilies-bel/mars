@@ -1649,18 +1649,40 @@ export const mergeBranch = async ({
     // its index + working tree still reflect the OLD HEAD, so every file the
     // merge introduced now shows as a phantom staged change. That dirty index
     // then trips the setup:preflight/dirty-main guard and mass-fails the whole
-    // queue (one success poisons every subsequent dispatch). `git reset --keep`
-    // fast-forwards the checkout to the new HEAD while preserving genuine local
-    // modifications (and aborting if they'd be clobbered), leaving the tree
-    // clean when there were none. Failure here is non-fatal: the merge already
-    // landed via the ref update; log and continue.
+    // queue (one success poisons every subsequent dispatch).
+    //
+    // Re-sync ONLY when both hold:
+    //   1. HEAD is the integration branch (otherwise update-ref left the
+    //      checkout legitimately untouched — see the non-integration test), and
+    //   2. the working tree + index are clean *relative to the OLD integration
+    //      SHA* the checkout still reflects. We must compare against
+    //      integrationSha, NOT current HEAD: the ref already advanced, so a
+    //      plain `git status` would report the just-merged files as "dirty"
+    //      even on a pristine checkout and wrongly skip the re-sync.
+    // When clean, `git reset --hard <taskSha>` materialises the merged content
+    // and leaves `git status` empty. When the operator has real uncommitted
+    // edits (a diff vs integrationSha) we leave the tree as-is rather than
+    // clobber them — rare for the daemon's own checkout, and a dirty tree is
+    // recoverable where lost edits are not. Failure here is non-fatal: the
+    // merge already landed via the ref update; log and continue.
     try {
       const headBranch = (
         await exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoRoot() })
       ).stdout.trim()
       if (headBranch === integrationBranch) {
-        const reset = await exec('git', ['reset', '--keep', taskSha], { cwd: repoRoot() })
-        output += reset.stdout + reset.stderr
+        // `git diff --quiet <sha>` exits 0 when the working tree + index match
+        // <sha> exactly (no genuine local work), non-zero otherwise.
+        const cleanVsOldHead = await exec(
+          'git',
+          ['diff', '--quiet', integrationSha],
+          { cwd: repoRoot() },
+        ).then(() => true, () => false)
+        if (cleanVsOldHead) {
+          const reset = await exec('git', ['reset', '--hard', taskSha], { cwd: repoRoot() })
+          output += reset.stdout + reset.stderr
+        } else {
+          output += `\n[mergeBranch] merge target checkout has local changes vs ${integrationSha.slice(0, 9)}; left as-is to avoid clobbering (HEAD ref advanced).`
+        }
       }
     } catch (resyncError: unknown) {
       const e = resyncError as { stdout?: string; stderr?: string; message?: string }
