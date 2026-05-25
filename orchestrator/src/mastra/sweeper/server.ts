@@ -1,6 +1,7 @@
 import type { FixRecipeContext } from '../lib/fix-recipes'
+import { getRetryBudget } from '../lib/retry-budget'
 import { getClient, initQueue } from '../queue'
-import { upsertFixTask } from '../queue-fix-tasks'
+import { countFixTaskAttempts, upsertFixTask } from '../queue-fix-tasks'
 
 export interface SweepCandidate {
   /** The parent task that needs self-healing. */
@@ -20,6 +21,7 @@ export interface SweepCandidate {
 export type SweepOutcome =
   | { kind: 'enqueued'; fixTaskId: string }
   | { kind: 'skipped-in-flight'; existingFixTaskId: string }
+  | { kind: 'skipped-budget-exhausted'; attempts: number; budget: number }
 
 /**
  * Returns the id of any in-flight self-heal task for the given failure
@@ -62,6 +64,20 @@ export const sweepOne = async (
   candidate: SweepCandidate,
   log: (msg: string) => void = (msg) => console.log(msg),
 ): Promise<SweepOutcome> => {
+  await initQueue()
+  const budget = getRetryBudget(candidate.failureSignature)
+  const attempts = await countFixTaskAttempts(
+    candidate.taskId,
+    candidate.failureSignature,
+  )
+  if (attempts >= budget) {
+    log(
+      `[sweeper] skipping enqueue for ${candidate.taskId}/${candidate.failureSignature}: ` +
+        `budget exhausted (${attempts}/${budget} attempts used)`,
+    )
+    return { kind: 'skipped-budget-exhausted', attempts, budget }
+  }
+
   const existingId = await findInFlightSelfHealBySignature(
     candidate.failureSignature,
   )
