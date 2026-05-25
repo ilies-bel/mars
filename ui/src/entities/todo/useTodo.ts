@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchTodo, type StaleWorktree } from '@/shared/api'
+import { fetchTodo } from '@/shared/api'
 import { useSseConnected } from '@/shared/sseStatus'
-import type { DraftFeature } from '@/shared/types'
+import type { DraftFeature, StaleWorktree } from './types'
 
 interface State {
   drafts: DraftFeature[]
