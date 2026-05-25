@@ -1068,6 +1068,12 @@ describe('fix-recipes', () => {
       // Task coding work was already committed on branch task/mars-cea7a89f.
       // A recipe that deletes index.lock is dangerous (may be held by an active
       // process). Operator fix: confirm no active git process, then mars restart.
+      //
+      // Re-confirmed 2026-05-20 (task mars-f0b3da78, origin 82f2b926). In this
+      // occurrence the branch had 0 commits ahead of main — the queue-fix-tasks
+      // migration work was never committed before the merge crashed. Lock was
+      // already gone at investigation time. mars restart mars-f0b3da78 will route
+      // the retry through verify:has-diff/no-commits-ahead which has a recipe.
       expect(hasRecipe('merge:crashed/index-lock-contention')).toBe(false)
     })
 
