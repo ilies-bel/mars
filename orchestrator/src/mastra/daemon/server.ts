@@ -1705,12 +1705,36 @@ export const startDaemon = async (
   }, POLL_FALLBACK_MS)
   pollFallback.unref()
 
+  // ── Stale-worktree sweep ──────────────────────────────────────────────────
+  // Periodically raises `stale-worktree` inbox items for tasks whose worktree
+  // has not been updated within MARS_STALE_WORKTREE_HOURS (default 24h). The
+  // inbox dedup logic ensures re-detecting the same stale worktree bumps the
+  // existing open item rather than creating a sibling. Auto-close is handled
+  // by dismissAlertsOnStatusChange (wired in queue.ts updateTask). .unref()
+  // so the interval never prevents a clean shutdown.
+  const STALE_SWEEP_MS = Number(process.env.MARS_STALE_SWEEP_MS ?? 5 * 60_000)
+  const { detectAndRaiseStaleWorktrees } = await import('./stale-worktree-sweep')
+  const staleSweep = setInterval(() => {
+    void (async () => {
+      try {
+        const raised = await detectAndRaiseStaleWorktrees(resolveContext().repoRoot)
+        if (raised.length > 0) {
+          log(`[stale-sweep] raised/bumped ${raised.length} stale-worktree inbox item(s)`)
+        }
+      } catch (err) {
+        log(`[stale-sweep] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, STALE_SWEEP_MS)
+  staleSweep.unref()
+
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
     clearInterval(pollFallback)
+    clearInterval(staleSweep)
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.
