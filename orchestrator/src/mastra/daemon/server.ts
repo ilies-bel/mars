@@ -37,6 +37,7 @@ import {
   recoverBlockedTasks,
 } from '../blocker-resolution'
 import { supersedeInboxItemsForOrigin } from '../lib/inbox'
+import { openTraceEventStore, type TraceEventStore } from '../lib/trace-store'
 import { internalBus } from '../../internal-bus'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
 import { loadDaemonConfig } from './config'
@@ -184,21 +185,30 @@ export const startDaemon = async (
   // gets one clear message at startup instead of every implement step
   // failing with "Could not set lock on file". Stale fds (PID gone) are
   // tolerated: DuckDB will reclaim them on open.
+  let traceStore: TraceEventStore | null = null
   if (process.env.MARS_DISABLE_DUCKDB !== '1') {
-    const { observabilityDbPath } = resolveContext()
-    const probe = probeDuckDBLock(observabilityDbPath)
-    if (probe.status === 'held') {
-      log(
-        `observability DuckDB lock held by pid ${probe.holderPid}; refusing to start. ` +
-          `Stop that process or set MARS_DISABLE_DUCKDB=1 to skip observability.`,
-      )
-      process.exit(1)
+    const { observabilityDbPath, traceDbPath } = resolveContext()
+    for (const { label, path } of [
+      { label: 'observability', path: observabilityDbPath },
+      { label: 'Mars trace-event', path: traceDbPath },
+    ]) {
+      const probe = probeDuckDBLock(path)
+      if (probe.status === 'held') {
+        log(
+          `${label} DuckDB store at ${path} is locked by pid ${probe.holderPid}; refusing to start. ` +
+            `Stop that process or set MARS_DISABLE_DUCKDB=1 to skip DuckDB.`,
+        )
+        process.exit(1)
+      }
+      if (probe.status === 'stale') {
+        log(
+          `${label} DuckDB store at ${path} has a stale fd holder (pid ${probe.holderPid} not alive); proceeding`,
+        )
+      }
     }
-    if (probe.status === 'stale') {
-      log(
-        `observability DuckDB has a stale fd holder (pid ${probe.holderPid} not alive); proceeding`,
-      )
-    }
+    // Mars owns the trace-event store: open it now so the file exists from
+    // first start and Mars holds the single-writer lock for its lifetime.
+    traceStore = await openTraceEventStore(traceDbPath)
   }
 
   await initQueue()
@@ -1782,6 +1792,10 @@ export const startDaemon = async (
       new Promise<void>((resolve) => server.close(() => resolve())),
       httpHandle.close(),
     ])
+    // Release the single-writer lock on Mars's trace-event store so a
+    // restart can reopen it (process.exit below would also free it, but be
+    // explicit so the lock never lingers if exit is delayed).
+    traceStore?.close()
     for (const f of [socketPath, pidFile]) {
       if (existsSync(f)) {
         try {
