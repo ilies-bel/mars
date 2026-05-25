@@ -155,7 +155,7 @@ Skill({ skill: "mars:unblock", args: "<task-id> --inbox <inbox-id>" })
 Do not offer the ack/resolve/dismiss menu for this kind. The unblock
 skill owns the interaction; stop here once you've invoked it.
 
-## 3b — kind `idea-needs-shaping(<proposal-id>)`
+## 3b — kind `proposal-needs-shaping(<proposal-id>)`
 
 The inbox row wraps a draft proposal waiting to be shaped. Extract
 `<proposal-id>` from the kind string and invoke the grill sub-skill:
