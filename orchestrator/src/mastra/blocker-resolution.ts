@@ -669,12 +669,28 @@ export const markOriginDoneFromRecovery = async (
 ): Promise<PropagateRecoveryDoneResult> => {
   await initQueue()
   const origin = await getTask(originTaskId)
+
+  // Close any inbox row keyed to the origin regardless of whether we
+  // flip its status. The origin may be missing (purged, or the
+  // recovery's fixForTaskId was a PRD slug rather than a task row),
+  // or already terminal (the retry-budget guard parked it in
+  // `failed` before the recovery finished). In either case the
+  // operator no longer needs to see a stale "recovery-failed" row:
+  // the recovery just succeeded, the underlying work shipped.
+  let inboxItemsClosed = 0
+  try {
+    const closed = await supersedeInboxItemsForOrigin(originTaskId, 'origin-done')
+    inboxItemsClosed = closed.length
+  } catch {
+    // best-effort: inbox closing must not block dependent unblock
+  }
+
   if (!origin) {
     return {
       originTaskId,
       originFlipped: false,
       unblock: null,
-      inboxItemsClosed: 0,
+      inboxItemsClosed,
     }
   }
   if (origin.status === 'done' || origin.status === 'failed' || origin.status === 'dropped') {
@@ -682,7 +698,7 @@ export const markOriginDoneFromRecovery = async (
       originTaskId,
       originFlipped: false,
       unblock: null,
-      inboxItemsClosed: 0,
+      inboxItemsClosed,
     }
   }
   const c = getClient()
@@ -713,15 +729,8 @@ export const markOriginDoneFromRecovery = async (
       originTaskId,
       originFlipped: false,
       unblock: null,
-      inboxItemsClosed: 0,
+      inboxItemsClosed,
     }
-  }
-  let inboxItemsClosed = 0
-  try {
-    const closed = await supersedeInboxItemsForOrigin(originTaskId, 'origin-done')
-    inboxItemsClosed = closed.length
-  } catch {
-    // best-effort: inbox closing must not block dependent unblock
   }
   const unblock = await onBlockerTaskCompleted(originTaskId)
   return {
