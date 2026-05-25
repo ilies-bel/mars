@@ -721,6 +721,29 @@ export const handleTaskFailureWithFixTask = async (
   }
 
   const { computeFailureSignature } = await import('./lib/failure-signature')
+
+  // Diagnose Chores are terminal: a failing diagnose Chore must never
+  // spawn a fix task or investigator — that would re-introduce the
+  // unbounded recursion the Chore was created to break. Mark it failed
+  // directly; the daemon's failure callback (slice 6) raises the operator
+  // inbox item for explicit resolution.
+  if (task.kind === 'diagnose') {
+    const failureSignature = computeFailureSignature(
+      input.failingStep,
+      input.errorOutput,
+    )
+    await markTaskFailed(
+      input.taskId,
+      `diagnose_chore_failed:${failureSignature}`,
+    )
+    return {
+      outcome: 'failed',
+      failureSignature,
+      retryCount: task.retryCount,
+    }
+  }
+
+  // Re-use the already-imported computeFailureSignature below.
   const failureSignature = computeFailureSignature(
     input.failingStep,
     input.errorOutput,
