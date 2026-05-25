@@ -19,8 +19,7 @@ describe('mapDaemonError', () => {
     const raw = 'SQLITE_ERROR: no such table: ideas'
     const mapped = mapDaemonError(raw)
     expect(mapped).not.toBe(raw)
-    expect(mapped).toContain('mars daemon stop')
-    expect(mapped).toContain('mars daemon start')
+    expect(mapped).toContain('mars daemon restart')
     // Original underlying error is preserved for debugging.
     expect(mapped).toContain(raw)
     // The string the operator looks for: a restart instruction, not a raw
@@ -39,7 +38,7 @@ describe('mapDaemonError', () => {
   it('matches case-insensitively and with arbitrary surrounding context', () => {
     const raw =
       'libsql_client: query failed: SQLITE_ERROR: NO SUCH TABLE: Ideas (statement: SELECT …)'
-    expect(mapDaemonError(raw)).toContain('mars daemon stop')
+    expect(mapDaemonError(raw)).toContain('mars daemon restart')
   })
 
   it('passes unrelated errors through unchanged', () => {
