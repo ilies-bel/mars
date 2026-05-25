@@ -153,6 +153,18 @@ const raiseWorktreeAheadInbox = async (
   }
 }
 
+export const PREREQUISITE_FAILED_INBOX_KIND_PREFIX = 'prerequisite-failed'
+
+export interface BlockByFailureOutcome {
+  taskId: string
+  outcome: 'blocked' | 'noop'
+}
+
+export interface BlockByFailureResult {
+  failedBlockerTaskId: string
+  outcomes: BlockByFailureOutcome[]
+}
+
 export interface UnblockOutcome {
   taskId: string
   outcome: 'queued' | 'failed' | 'noop'
@@ -327,6 +339,98 @@ export const onBlockerTaskCompleted = async (
   }
 
   return { blockerTaskId, outcomes }
+}
+
+/**
+ * When a task lands `failed` (any failure mode), look up every QUEUED
+ * task that has a confirmed/pending-review task_blockers edge pointing
+ * at the failed task and flip each from `queued` -> `blocked`. Raise a
+ * single inbox item per affected downstream naming the failed
+ * prerequisite so the operator can act.
+ *
+ * Tasks already in non-queued states (running, blocked, done, failed,
+ * dropped, draft, ...) are untouched — the brief is "don't disturb
+ * non-queued downstreams".
+ *
+ * Symmetric with {@link onBlockerTaskCompleted}: that path moves
+ * `blocked` -> `queued` when a blocker reaches `done`; this path moves
+ * `queued` -> `blocked` when a blocker reaches `failed`.
+ *
+ * Idempotent: a second invocation finds no `queued` dependents (they
+ * are already `blocked`) and is a no-op. The inbox call dedupes on
+ * `(originTaskId)` fingerprint, so re-raise bumps `seen_count`.
+ */
+export const onBlockerTaskFailed = async (
+  failedBlockerTaskId: string,
+): Promise<BlockByFailureResult> => {
+  await initQueue()
+  const c = getClient()
+  const now = new Date().toISOString()
+
+  const r = await c.execute({
+    sql: `SELECT t.id AS id
+            FROM task_blockers b
+            JOIN tasks t ON t.id = b.task_id
+           WHERE b.blocker_task_id = ?
+             AND t.status = 'queued'
+             AND b.state IN ('confirmed', 'pending-review')`,
+    args: [failedBlockerTaskId],
+  })
+
+  const outcomes: BlockByFailureOutcome[] = []
+  for (const row of r.rows as unknown as Array<{ id: string }>) {
+    const tx = await c.transaction('write')
+    let flipped = false
+    try {
+      const upd = await tx.execute({
+        sql: `UPDATE tasks
+                 SET status = 'blocked', updated_at = ?
+               WHERE id = ? AND status = 'queued'`,
+        args: [now, row.id],
+      })
+      flipped = upd.rowsAffected > 0
+      await tx.commit()
+    } catch (error: unknown) {
+      tx.close()
+      throw error
+    }
+    if (flipped) {
+      try {
+        await raiseInboxItem({
+          kind: `${PREREQUISITE_FAILED_INBOX_KIND_PREFIX}(${row.id})`,
+          category: 'orchestrator',
+          priority: 'high',
+          title: `Task ${row.id} blocked: prerequisite ${failedBlockerTaskId} failed`,
+          body:
+            `Task ${row.id} was queued waiting on prerequisite ${failedBlockerTaskId}.\n\n` +
+            `The prerequisite failed, so this task has been moved from 'queued' to 'blocked' ` +
+            `and will not dispatch into a broken tree.\n\n` +
+            `Resolve the failed prerequisite (e.g. \`mars restart ${failedBlockerTaskId}\` or ` +
+            `via the inbox item raised for it), or drop the blocker edge with ` +
+            `\`mars unblock ${row.id} ${failedBlockerTaskId}\`.`,
+          payload: {
+            dependentTaskId: row.id,
+            failedBlockerTaskId,
+          },
+          context: { repoRoot: process.env.MARS_REPO ?? null },
+          raisedBy: 'agent:prerequisite-failed',
+          signature: `${row.id}:${failedBlockerTaskId}`,
+          originTaskId: row.id,
+          occurrence: {
+            at: new Date().toISOString(),
+            failedBlockerTaskId,
+          },
+        })
+      } catch {
+        // best-effort: inbox failure must not block the cascade
+      }
+      outcomes.push({ taskId: row.id, outcome: 'blocked' })
+    } else {
+      outcomes.push({ taskId: row.id, outcome: 'noop' })
+    }
+  }
+
+  return { failedBlockerTaskId, outcomes }
 }
 
 /**
