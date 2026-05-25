@@ -953,44 +953,16 @@ export const startDaemon = async (
   }
 
   // 'mars continue <id>' resumes a failed task on its existing branch+
-  // worktree, skipping into the failed phase. Refuses if preconditions
-  // aren't met — the user should reach for `mars restart` instead.
-  const handleContinue = async (id: string): Promise<void> => {
-    const task = await getTask(id)
-    if (!task) throw new Error(`task ${id} not found`)
-    if (task.status !== 'failed') {
-      throw new Error(
-        `task ${id} is ${task.status}; only failed tasks can be continued (use 'mars restart' instead)`,
-      )
-    }
-    if (task.failedPhase === null) {
-      throw new Error(
-        `task ${id} has no recorded failed_phase; this is a legacy row from before continue/restart split. Use 'mars restart ${id}' instead.`,
-      )
-    }
-    if (task.failedPhase === 'code') {
-      throw new Error(
-        `task ${id} failed in the 'code' phase (no verifiable artefact exists). Use 'mars restart ${id}' to start over.`,
-      )
-    }
-    if (!task.branch || !task.worktreePath) {
-      throw new Error(
-        `task ${id} has no branch+worktree on the row; cannot continue. Use 'mars restart ${id}' to start over.`,
-      )
-    }
-    const { existsSync: exists } = await import('node:fs')
-    if (!exists(task.worktreePath)) {
-      throw new Error(
-        `task ${id} worktree ${task.worktreePath} is missing on disk; cannot continue. Use 'mars restart ${id}' to start over.`,
-      )
-    }
-
-    await updateTask(id, {
-      status: 'queued',
-      error: null,
-      resumeFrom: task.failedPhase,
-    })
+  // worktree, skipping into the failed phase. When the failure occurred
+  // upstream of worktree creation (pre-setup), it degrades silently to
+  // restart behaviour and returns a note the CLI can surface to the operator.
+  const handleContinue = async (
+    id: string,
+  ): Promise<import('./continue-task').ContinueResult> => {
+    const { coreContinueTask } = await import('./continue-task')
+    const result = await coreContinueTask(id)
     bus.emit('task.queued', { taskId: id })
+    return result
   }
 
   const handlePurge = async (id: string, force: boolean): Promise<void> => {
@@ -1415,8 +1387,8 @@ export const startDaemon = async (
           return { ok: true }
         }
         case 'continue': {
-          await handleContinue(req.id)
-          return { ok: true }
+          const continueResult = await handleContinue(req.id)
+          return { ok: true, data: continueResult }
         }
         case 'restart': {
           await handleRestart(req.id)

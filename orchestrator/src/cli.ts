@@ -1905,16 +1905,27 @@ const main = async (): Promise<void> => {
     }
     const { sendRequest } = await import('./mastra/daemon/client')
     for (const id of ids) {
+      let res: unknown
       try {
-        await sendRequest({ op: cmd, id })
+        res = await sendRequest({ op: cmd, id })
       } catch (err) {
         console.error(`${id}: ${(err as Error).message}`)
         process.exit(1)
       }
-      const verb =
-        cmd === 'continue'
-          ? `queued ${id} to continue from the failed phase`
-          : `queued ${id} for restart from setup`
+      let verb: string
+      if (
+        cmd === 'continue' &&
+        res !== null &&
+        typeof res === 'object' &&
+        (res as { degradedToRestart?: boolean }).degradedToRestart === true
+      ) {
+        verb = `queued ${id} for restart from setup (failure was pre-setup; continue and restart are equivalent here)`
+      } else {
+        verb =
+          cmd === 'continue'
+            ? `queued ${id} to continue from the failed phase`
+            : `queued ${id} for restart from setup`
+      }
       console.log(verb)
     }
     return
