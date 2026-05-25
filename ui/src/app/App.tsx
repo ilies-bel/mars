@@ -1,7 +1,9 @@
 import { NavBar } from '@/widgets/NavBar'
 import { TaskDetailDrawer } from '@/widgets/TaskDetailDrawer'
+import { ProposalDetailDrawer } from '@/widgets/ProposalDetailDrawer'
 import { useHashRoute } from '@/shared/useHashRoute'
-import { detectRoute, parseTaskRoute } from '@/shared/routing'
+import { detectRoute, parseProposalRoute, parseTaskRoute } from '@/shared/routing'
+import { useTodo } from '@/entities/todo/useTodo'
 import { AgentsPage } from '@/pages/AgentsPage'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/TodoPage'
@@ -15,7 +17,17 @@ const clearTaskHash = (): void => {
 const App = () => {
   const hash = useHashRoute()
   const taskId = parseTaskRoute(hash)
-  const route = taskId && hash.startsWith('#/task/') ? 'progress' : detectRoute(hash)
+  const proposalId = parseProposalRoute(hash)
+  // Proposal fields come from the existing `/api/todo` drafts fetch — no new
+  // endpoint is introduced for the drawer.
+  const { drafts } = useTodo()
+  const proposal = proposalId
+    ? (drafts.find((d) => d.id === proposalId) ?? null)
+    : null
+  const overlayOpen =
+    (taskId && hash.startsWith('#/task/')) ||
+    (proposalId && hash.startsWith('#/proposal/'))
+  const route = overlayOpen ? 'progress' : detectRoute(hash)
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
       <NavBar hash={hash} />
@@ -32,6 +44,9 @@ const App = () => {
       </div>
       {taskId ? (
         <TaskDetailDrawer taskId={taskId} onClose={clearTaskHash} />
+      ) : null}
+      {proposal ? (
+        <ProposalDetailDrawer proposal={proposal} onClose={clearTaskHash} />
       ) : null}
     </div>
   )
