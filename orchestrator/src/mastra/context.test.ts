@@ -63,10 +63,10 @@ describe('resolveContext repo-root detection', () => {
     const ctx = resolveContext()
     expect(ctx.repoRoot).toBe(realRepo)
     expect(ctx.stateDir).toBe(resolve(realRepo, '.mars'))
-    expect(ctx.queueDbPath).toBe(resolve(realRepo, '.mars', 'queue.db'))
+    expect(ctx.queueDbPath).toBe(resolve(realRepo, '.mars', 'mars.db'))
     // Never the fabricated worktree-local `.mars/`.
     expect(ctx.queueDbPath).not.toBe(
-      resolve(worktreeDir, '.mars', 'queue.db'),
+      resolve(worktreeDir, '.mars', 'mars.db'),
     )
   })
 
@@ -74,7 +74,7 @@ describe('resolveContext repo-root detection', () => {
     process.chdir(realRepo)
     const ctx = resolveContext()
     expect(ctx.repoRoot).toBe(realRepo)
-    expect(ctx.queueDbPath).toBe(resolve(realRepo, '.mars', 'queue.db'))
+    expect(ctx.queueDbPath).toBe(resolve(realRepo, '.mars', 'mars.db'))
   })
 
   it('honors an explicit override even when cwd is inside a linked worktree', () => {

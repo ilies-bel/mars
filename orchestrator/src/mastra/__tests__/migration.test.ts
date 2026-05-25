@@ -28,8 +28,8 @@ describe('schema migration: drop blocker_id + task_suggestions, rename origin->s
 
   it('migrates a legacy DB end-to-end', async () => {
     // Set up legacy queue.db schema (with blocker_id + task_suggestions).
-    const queueDb = `file:${repo}/.mars/queue.db`
-    const stateDb = `file:${repo}/.mars/state.db`
+    const queueDb = `file:${repo}/.mars/mars.db`
+    const stateDb = `file:${repo}/.mars/mars.db`
     const q = createClient({ url: queueDb })
     await q.execute(`CREATE TABLE tasks (
       id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
@@ -166,7 +166,7 @@ describe('integration_head_sha column', () => {
     const { initQueue } = await import('../queue')
     await initQueue()
 
-    const q = createClient({ url: `file:${repo}/.mars/queue.db` })
+    const q = createClient({ url: `file:${repo}/.mars/mars.db` })
     const cols = await q.execute(`PRAGMA table_info(tasks)`)
     const colNames = (cols.rows as unknown as Array<{ name: string }>).map(
       (r) => r.name,
@@ -197,7 +197,7 @@ describe('integration_head_sha column', () => {
   })
 
   it('migrates a legacy DB that has no integration_head_sha column', async () => {
-    const queueDb = `file:${repo}/.mars/queue.db`
+    const queueDb = `file:${repo}/.mars/mars.db`
     const q = createClient({ url: queueDb })
     // Create a legacy tasks table without integration_head_sha
     await q.execute(`CREATE TABLE tasks (
@@ -242,7 +242,7 @@ describe('schema bootstrap: task_proposal_blockers table + indexes', () => {
     const { initQueue } = await import('../queue')
     await initQueue()
 
-    const q = createClient({ url: `file:${repo}/.mars/queue.db` })
+    const q = createClient({ url: `file:${repo}/.mars/mars.db` })
 
     // Table exists
     const tableRow = await q.execute(

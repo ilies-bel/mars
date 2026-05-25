@@ -79,7 +79,7 @@ describe('queue prompt type guards', () => {
     const q = await loadQueue(repo)
     await q.enqueueTask('seed', undefined, { skipTriage: true })
 
-    const dbPath = resolve(repo, '.mars/queue.db')
+    const dbPath = resolve(repo, '.mars/mars.db')
     const direct = createClient({ url: `file:${dbPath}` })
     const now = new Date().toISOString()
     await direct.execute({
@@ -110,7 +110,7 @@ describe('queue prompt type guards', () => {
   it('initQueue creates the task_transcripts table', async () => {
     const q = await loadQueue(repo)
     await q.initQueue()
-    const dbPath = resolve(repo, '.mars/queue.db')
+    const dbPath = resolve(repo, '.mars/mars.db')
     const direct = createClient({ url: `file:${dbPath}` })
     const tables = await direct.execute(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_transcripts'`,
@@ -129,7 +129,7 @@ describe('queue prompt type guards', () => {
 
   it('reading a row whose prompt was forced to a Uint8Array decodes via rowToTask', async () => {
     const q = await loadQueue(repo)
-    const dbPath = resolve(repo, '.mars/queue.db')
+    const dbPath = resolve(repo, '.mars/mars.db')
     const direct = createClient({ url: `file:${dbPath}` })
     const now = new Date().toISOString()
     // Write a row with a non-string prompt, but skip the boot-time heal by

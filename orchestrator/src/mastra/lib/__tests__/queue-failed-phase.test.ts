@@ -81,7 +81,7 @@ describe('tasks.failed_phase / resume_from columns', () => {
     const q = await loadQueue(repo)
     const t = await q.enqueueTask('weird row', undefined, { skipTriage: true })
     const { createClient } = await import('@libsql/client')
-    const c = createClient({ url: `file:${repo}/.mars/queue.db` })
+    const c = createClient({ url: `file:${repo}/.mars/mars.db` })
     await c.execute({
       sql: `UPDATE tasks SET failed_phase = ?, resume_from = ? WHERE id = ?`,
       args: ['nonsense', '', t.id],
