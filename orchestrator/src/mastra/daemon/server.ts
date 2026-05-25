@@ -35,6 +35,7 @@ import {
 } from './alert-dismisser'
 import { RequestContext } from '@mastra/core/di'
 import { getDefaultTaskStore } from '../lib/task-store'
+import { getDefaultDomainTaskStore } from '../store/task-store'
 import { listProposals, promoteProposal } from '../proposals'
 import {
   CANCELLED_FAILURE_REASON,
@@ -304,7 +305,7 @@ export const startDaemon = async (
     log(`[triage] ${taskId} dispatching`)
     try {
       const { runTriage } = await import('../workflows/triage-workflow')
-      const result = await runTriage(taskId)
+      const result = await runTriage(taskId, getDefaultDomainTaskStore())
       log(`[triage] ${taskId} -> actionable=${result.actionable}`)
       if (result.actionable) {
         const t = await getTask(taskId)

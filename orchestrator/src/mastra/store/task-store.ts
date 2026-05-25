@@ -157,7 +157,7 @@ export const createRunMigrations = (
  */
 export const createTaskStore = (
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _client: Client,
+  _client: Client | null,
 ): DomainTaskStore => ({
   // Core task CRUD
   getTask: (id) => queueGetTask(id),
@@ -201,3 +201,14 @@ export const createTaskStore = (
   upsertTranscript: (input) => queueUpsertTranscript(input),
   getTranscript: (taskId) => queueGetTranscript(taskId),
 })
+
+/**
+ * Return a DomainTaskStore that routes through the queue module's singleton
+ * client. Used as the fallback when no store is injected via RequestContext.
+ *
+ * The `_client` parameter in `createTaskStore` is unused in the current
+ * pass-through implementation; queue functions resolve their own client
+ * internally. This helper lets call sites obtain a domain store without
+ * importing the Client type.
+ */
+export const getDefaultDomainTaskStore = (): DomainTaskStore => createTaskStore(null)
