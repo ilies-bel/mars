@@ -29,6 +29,15 @@ export const slicerOutputSchema = z.object({
         whatToBuild: z.string(),
         acceptanceCriteria: z.array(z.string()).min(1),
         blockedBy: z.array(z.number().int().min(1)),
+        // Ordered list of file paths the implementor should read before
+        // touching anything. Required and non-empty so the implementor
+        // always starts from the right files rather than re-orienting.
+        readFirst: z.array(z.string()).min(1),
+        // Prescriptive description naming exact functions, types,
+        // variables, SQL columns, or file paths to change and their exact
+        // target state. Required and non-empty so every slice carries
+        // code-level specifics, not just user-visible behaviour.
+        prescriptiveAction: z.string().min(1),
         // gsd-style structured-task spec. The slicer names the files it
         // expects the implementor to touch — split into two arrays so the
         // slicer must consciously distinguish files it knows already exist
@@ -110,13 +119,22 @@ Output shape
 For each slice, produce:
 - title — a short descriptive name
 - type — "HITL" or "AFK"
-- whatToBuild — concise end-to-end behaviour description. NO file paths,
-  NO module names, NO code snippets, NO library choices. Describe what
-  the user observes when this slice is done.
+- whatToBuild — concise end-to-end behaviour description from the user's
+  perspective. Describe what the user observes when this slice is done.
 - acceptanceCriteria — a list of checkbox items the slice must satisfy
   to be considered complete. Each item is a single concrete observable.
 - blockedBy — 1-based indices of other slices in the same response that
   this one must wait for. Use sparingly; most slices should parallelise.
+- readFirst — an ordered list of file paths the implementor must read
+  before touching anything. Place the files most likely to need editing
+  first; the implementor reads them in order before writing a single line
+  of code. At least one real path is required — do not leave this empty.
+- prescriptiveAction — a prescriptive description naming the exact
+  functions, exported types, variables, SQL columns, Zod schemas, or
+  file paths to change and their exact target state. Use code-shaped
+  language freely: name specific identifiers, exact strings, exact line
+  ranges when known. At least one concrete identifier or file path is
+  required — do not leave this empty or write vague prose.
 - modifies — array of paths to files that ALREADY EXIST in the
   project and this slice edits. Cite real paths only. If you are
   unsure whether a file exists, OMIT it — the implementor will
@@ -141,7 +159,7 @@ For each slice, produce:
 Return ONLY a single JSON object matching exactly this shape, with no
 surrounding prose, no code fences, and no commentary:
 
-{"slices":[{"title":"...","type":"AFK","whatToBuild":"...","acceptanceCriteria":["..."],"blockedBy":[],"modifies":["src/foo.ts"],"creates":["src/foo.test.ts"],"verifyCmd":"cd src && npx vitest run foo.test.ts","taskType":"auto"}]}
+{"slices":[{"title":"...","type":"AFK","whatToBuild":"...","acceptanceCriteria":["..."],"blockedBy":[],"readFirst":["src/foo.ts"],"prescriptiveAction":"In fooFn (foo.ts:42), change return type from string to number and update all call sites.","modifies":["src/foo.ts"],"creates":["src/foo.test.ts"],"verifyCmd":"cd src && npx vitest run foo.test.ts","taskType":"auto"}]}
 
 PRD to decompose
 ================
@@ -335,6 +353,11 @@ export const composeTaskPrompt = (
     .map((c) => `- [ ] ${c}`)
     .join('\n')
 
+  const readFirstSection =
+    slice.readFirst.length > 0
+      ? `\n## Read first (in order)\n\n${slice.readFirst.map((f, i) => `${i + 1}. ${f}`).join('\n')}\n`
+      : ''
+
   const allFiles = [...slice.modifies, ...slice.creates]
   const filesSection =
     allFiles.length > 0
@@ -366,6 +389,10 @@ ${slice.whatToBuild}
 ## Acceptance criteria
 
 ${acceptance}
+${readFirstSection}
+## Action
+
+${slice.prescriptiveAction}
 ${filesSection}
 ## Context
 

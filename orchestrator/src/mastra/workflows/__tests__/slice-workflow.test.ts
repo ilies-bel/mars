@@ -19,6 +19,255 @@ import {
 } from '../implement-workflow'
 import { TDD_WORKER_BRIEF } from '../tdd-brief'
 
+describe('slicerOutputSchema: readFirst + prescriptiveAction', () => {
+  // These two fields are required and non-empty for every slicer-produced
+  // slice so under-briefed slices never reach the queue.
+
+  it('accepts a slice with non-empty readFirst and prescriptiveAction', () => {
+    const parsed = slicerOutputSchema.parse({
+      slices: [
+        {
+          title: 't',
+          type: 'AFK',
+          whatToBuild: 'x',
+          acceptanceCriteria: ['a'],
+          blockedBy: [],
+          readFirst: [
+            'orchestrator/src/mastra/workflows/slice-workflow.ts',
+          ],
+          prescriptiveAction:
+            'In slicerOutputSchema (slice-workflow.ts ~line 23), add `readFirst: z.array(z.string()).min(1)` and `prescriptiveAction: z.string().min(1)` as required fields.',
+        },
+      ],
+    })
+    expect(parsed.slices[0].readFirst).toEqual([
+      'orchestrator/src/mastra/workflows/slice-workflow.ts',
+    ])
+    expect(parsed.slices[0].prescriptiveAction).toContain('readFirst')
+  })
+
+  it('rejects a slice with an empty readFirst array', () => {
+    expect(() =>
+      slicerOutputSchema.parse({
+        slices: [
+          {
+            title: 't',
+            whatToBuild: 'x',
+            acceptanceCriteria: ['a'],
+            blockedBy: [],
+            readFirst: [],
+            prescriptiveAction: 'do something',
+          },
+        ],
+      }),
+    ).toThrow()
+  })
+
+  it('rejects a slice with an empty prescriptiveAction string', () => {
+    expect(() =>
+      slicerOutputSchema.parse({
+        slices: [
+          {
+            title: 't',
+            whatToBuild: 'x',
+            acceptanceCriteria: ['a'],
+            blockedBy: [],
+            readFirst: ['src/foo.ts'],
+            prescriptiveAction: '',
+          },
+        ],
+      }),
+    ).toThrow()
+  })
+
+  it('rejects a slice with a missing readFirst field', () => {
+    expect(() =>
+      slicerOutputSchema.parse({
+        slices: [
+          {
+            title: 't',
+            whatToBuild: 'x',
+            acceptanceCriteria: ['a'],
+            blockedBy: [],
+            prescriptiveAction: 'do something',
+          },
+        ],
+      }),
+    ).toThrow()
+  })
+
+  it('rejects a slice with a missing prescriptiveAction field', () => {
+    expect(() =>
+      slicerOutputSchema.parse({
+        slices: [
+          {
+            title: 't',
+            whatToBuild: 'x',
+            acceptanceCriteria: ['a'],
+            blockedBy: [],
+            readFirst: ['src/foo.ts'],
+          },
+        ],
+      }),
+    ).toThrow()
+  })
+
+  it('round-trips a representative slicer fixture: multiple files in readFirst and a concrete prescriptiveAction', () => {
+    // Represents what the slicer would plausibly emit for a real task — the
+    // fields carry actual file paths and identifier-level language. If this
+    // parse succeeds, slices reaching the queue are always non-trivially briefed.
+    const parsed = slicerOutputSchema.parse({
+      slices: [
+        {
+          title: 'Extend slicerOutputSchema with readFirst and prescriptiveAction',
+          type: 'AFK',
+          whatToBuild:
+            'The slicer schema gains two required non-empty fields that the coder receives in their brief.',
+          acceptanceCriteria: [
+            'slicerOutputSchema rejects a slice whose readFirst is empty',
+            'slicerOutputSchema rejects a slice whose prescriptiveAction is empty',
+          ],
+          blockedBy: [],
+          readFirst: [
+            'orchestrator/src/mastra/workflows/slice-workflow.ts',
+            'orchestrator/src/mastra/workflows/__tests__/slice-workflow.test.ts',
+          ],
+          prescriptiveAction:
+            'In `slicerOutputSchema` (slice-workflow.ts:23–49), add `readFirst: z.array(z.string()).min(1)` after `blockedBy` and `prescriptiveAction: z.string().min(1)` after `readFirst`. Update `buildSlicerPrompt` to document both fields in the "Output shape" section and include them in the example JSON object.',
+          modifies: [
+            'orchestrator/src/mastra/workflows/slice-workflow.ts',
+            'orchestrator/src/mastra/workflows/__tests__/slice-workflow.test.ts',
+          ],
+          creates: [],
+          verifyCmd: 'cd orchestrator && npx tsc --noEmit',
+          taskType: 'auto',
+        },
+      ],
+    })
+    expect(parsed.slices[0].readFirst).toHaveLength(2)
+    // prescriptiveAction references at least one concrete identifier
+    expect(parsed.slices[0].prescriptiveAction).toMatch(/slicerOutputSchema/)
+    expect(parsed.slices[0].prescriptiveAction).toMatch(/readFirst/)
+  })
+})
+
+describe('slicer prompt: readFirst and prescriptiveAction instructions', () => {
+  const sampleIdea = {
+    id: 'idea-1',
+    title: 'Some PRD',
+    problem: '',
+    solution: '',
+    outOfScope: '',
+    notes: '',
+    userStories: [],
+  }
+
+  it('documents readFirst as an ordered list of files to read before editing', () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+    expect(brief).toMatch(/readFirst\s+—/)
+    expect(brief).toMatch(/ordered/i)
+    // The brief must explain what readFirst is for (before editing)
+    expect(brief).toMatch(/before\b.*(editing|writing|touching)/i)
+  })
+
+  it('documents prescriptiveAction as naming exact identifiers and target state', () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+    expect(brief).toMatch(/prescriptiveAction\s+—/)
+    expect(brief).toMatch(/exact/i)
+    // Must mention identifiers or file paths explicitly
+    expect(brief).toMatch(/identifier|file path/i)
+    // Must mention target state
+    expect(brief).toMatch(/target state/i)
+  })
+
+  it('no longer forbids file paths or module names in the output shape', () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+    // The old prohibition was in the whatToBuild description — it is now gone.
+    expect(brief).not.toMatch(/NO file paths/i)
+    expect(brief).not.toMatch(/NO module names/i)
+  })
+
+  it('explicitly instructs the slicer to use code-shaped language in prescriptiveAction', () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+    // The prescriptiveAction guidance must explicitly say to use code vocabulary.
+    expect(brief).toMatch(/code.shaped|identifier|exact.+function|exact.+type/i)
+  })
+
+  it('includes readFirst and prescriptiveAction in the example JSON', () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+    expect(brief).toMatch(/"readFirst":/)
+    expect(brief).toMatch(/"prescriptiveAction":/)
+  })
+})
+
+describe('composeTaskPrompt: readFirst and prescriptiveAction sections', () => {
+  const idea = {
+    id: 'idea-brief',
+    title: 'Better coder brief',
+    problem: 'coders re-orient instead of code',
+    solution: 'hand them a read list and exact action',
+    outOfScope: '',
+    notes: '',
+    userStories: [] as string[],
+  }
+
+  const baseSlice = {
+    title: 'Add readFirst to schema',
+    type: 'AFK' as const,
+    whatToBuild: 'Schema gains readFirst and prescriptiveAction.',
+    acceptanceCriteria: ['schema rejects empty readFirst'],
+    blockedBy: [] as number[],
+    modifies: [] as string[],
+    creates: [] as string[],
+    verifyCmd: null,
+    taskType: 'auto' as const,
+    readFirst: ['orchestrator/src/mastra/workflows/slice-workflow.ts'],
+    prescriptiveAction:
+      'In `slicerOutputSchema` (slice-workflow.ts:23), add `readFirst: z.array(z.string()).min(1)` and `prescriptiveAction: z.string().min(1)`.',
+  }
+
+  it('renders a Read first section with files as a numbered list', () => {
+    const slice = {
+      ...baseSlice,
+      readFirst: [
+        'orchestrator/src/mastra/workflows/slice-workflow.ts',
+        'orchestrator/src/mastra/workflows/__tests__/slice-workflow.test.ts',
+      ],
+    }
+    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    expect(prompt).toContain('## Read first')
+    expect(prompt).toContain(
+      '1. orchestrator/src/mastra/workflows/slice-workflow.ts',
+    )
+    expect(prompt).toContain(
+      '2. orchestrator/src/mastra/workflows/__tests__/slice-workflow.test.ts',
+    )
+  })
+
+  it('renders the prescriptiveAction verbatim in the prompt', () => {
+    const action =
+      'In `slicerOutputSchema` (slice-workflow.ts:23–49), add `readFirst: z.array(z.string()).min(1)` after `blockedBy`.'
+    const slice = { ...baseSlice, prescriptiveAction: action }
+    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    expect(prompt).toContain(action)
+  })
+
+  it('places the Read first section before the Files section when both are present', () => {
+    const slice = {
+      ...baseSlice,
+      readFirst: ['src/foo.ts'],
+      modifies: ['src/bar.ts'],
+      prescriptiveAction: 'Change doFoo() to doBar() in bar.ts.',
+    }
+    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    const readFirstIdx = prompt.indexOf('## Read first')
+    const filesIdx = prompt.indexOf('## Files')
+    expect(readFirstIdx).toBeGreaterThan(-1)
+    expect(filesIdx).toBeGreaterThan(-1)
+    expect(readFirstIdx).toBeLessThan(filesIdx)
+  })
+})
+
 describe('slicing brief: structured-write constraint', () => {
   const sampleIdea = {
     id: 'idea-1',
@@ -125,6 +374,8 @@ describe('slicerOutputSchema: modifies + creates', () => {
           whatToBuild: 'x',
           acceptanceCriteria: ['a'],
           blockedBy: [],
+          readFirst: ['src/existing.ts'],
+          prescriptiveAction: 'Edit fooFn in src/existing.ts to return number.',
           modifies: ['src/existing.ts'],
           creates: ['src/new.test.ts'],
           verifyCmd: 'cd src && npx vitest run new.test.ts',
@@ -137,6 +388,7 @@ describe('slicerOutputSchema: modifies + creates', () => {
   })
 
   it('defaults both modifies and creates to [] when the slicer omits them', () => {
+    // readFirst and prescriptiveAction are required; only modifies/creates default.
     const parsed = slicerOutputSchema.parse({
       slices: [
         {
@@ -145,6 +397,8 @@ describe('slicerOutputSchema: modifies + creates', () => {
           whatToBuild: 'x',
           acceptanceCriteria: ['a'],
           blockedBy: [],
+          readFirst: ['src/foo.ts'],
+          prescriptiveAction: 'Rename doFoo to doBar in src/foo.ts.',
         },
       ],
     })
@@ -161,6 +415,9 @@ describe('slicerOutputSchema: modifies + creates', () => {
           whatToBuild: 'x',
           acceptanceCriteria: ['a'],
           blockedBy: [],
+          readFirst: ['orchestrator/src/mastra/context.ts'],
+          prescriptiveAction:
+            'Create orchestrator/src/manifest/load.ts with a loadManifest() export.',
           modifies: [],
           creates: ['NEW: orchestrator/src/manifest/load.ts'],
         },
@@ -249,6 +506,9 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
           whatToBuild: 'x',
           acceptanceCriteria: ['a'],
           blockedBy: [],
+          readFirst: ['orchestrator/src/mastra/queue.ts'],
+          prescriptiveAction:
+            'Create loadManifest() in NEW: orchestrator/src/manifest/load.ts.',
           modifies: ['orchestrator/src/mastra/queue.ts'],
           creates: ['NEW: orchestrator/src/manifest/load.ts'],
         },
@@ -306,6 +566,8 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
         whatToBuild: 'x',
         acceptanceCriteria: ['a'],
         blockedBy: [] as number[],
+        readFirst: ['src/foo.ts'] as string[],
+        prescriptiveAction: 'In fooFn (src/foo.ts:1), change return type to void.',
         modifies: [] as string[],
         creates: [] as string[],
         verifyCmd: null,
@@ -811,6 +1073,8 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         whatToBuild: 'Edit the README to drop mentions of total_cost_usd',
         acceptanceCriteria: ['README updated'],
         blockedBy: [] as number[],
+        readFirst: ['README.md'] as string[],
+        prescriptiveAction: 'Remove the total_cost_usd column from the cost-tracking table in README.md.',
         modifies: [] as string[],
         creates: [] as string[],
         verifyCmd: null,
@@ -822,6 +1086,8 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         whatToBuild: 'Stop reading total_cost_usd from the parser output',
         acceptanceCriteria: ['parser no longer references total_cost_usd'],
         blockedBy: [] as number[],
+        readFirst: ['orchestrator/src/mastra/lib/claude-usage.ts'] as string[],
+        prescriptiveAction: 'Delete the total_cost_usd field from the ClaudeUsage type and its parser in claude-usage.ts.',
         modifies: [] as string[],
         creates: [] as string[],
         verifyCmd: null,
@@ -833,6 +1099,8 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         whatToBuild: 'Stop writing total_cost_usd through the storage layer',
         acceptanceCriteria: ['storage layer no longer writes total_cost_usd'],
         blockedBy: [] as number[],
+        readFirst: ['orchestrator/src/mastra/reflect-signals.ts'] as string[],
+        prescriptiveAction: 'Remove total_cost_usd from the INSERT statement and the ReflectSignal type in reflect-signals.ts.',
         modifies: [] as string[],
         creates: [] as string[],
         verifyCmd: null,
@@ -844,6 +1112,8 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         whatToBuild: 'Stop summing total_cost_usd in the aggregation query',
         acceptanceCriteria: ['aggregation no longer references total_cost_usd'],
         blockedBy: [] as number[],
+        readFirst: ['orchestrator/src/mastra/reflect-query.ts'] as string[],
+        prescriptiveAction: 'Remove `SUM(s.total_cost_usd)` from the SELECT in the aggregation query in reflect-query.ts.',
         modifies: [] as string[],
         creates: [] as string[],
         verifyCmd: null,
@@ -856,6 +1126,8 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         whatToBuild: 'Drop the total_cost_usd column from the tasks table',
         acceptanceCriteria: ['total_cost_usd column dropped'],
         blockedBy: [] as number[],
+        readFirst: ['orchestrator/src/mastra/queue.ts'] as string[],
+        prescriptiveAction: 'In queue.ts, remove the `total_cost_usd REAL` column definition from the CREATE TABLE tasks DDL and drop it from all INSERT/SELECT statements.',
         modifies: [] as string[],
         creates: [] as string[],
         verifyCmd: null,
@@ -951,6 +1223,11 @@ describe('composeTaskPrompt: parent digest replaces full PRD dump', () => {
     whatToBuild: 'Inline the PRD fields into the slice prompt.',
     acceptanceCriteria: ['prompt contains the PRD body'],
     blockedBy: [] as number[],
+    readFirst: [
+      'orchestrator/src/mastra/workflows/slice-workflow.ts',
+    ] as string[],
+    prescriptiveAction:
+      'In composeTaskPrompt (slice-workflow.ts), inline idea.title, idea.solution, and idea.outOfScope into the returned template string.',
     modifies: [] as string[],
     creates: [] as string[],
     verifyCmd: null,
@@ -1161,6 +1438,8 @@ describe('composeTaskPrompt: Files section', () => {
       whatToBuild: 'Render modifies paths as bullets.',
       acceptanceCriteria: ['Files section present'],
       blockedBy: [] as number[],
+      readFirst: ['src/foo.ts', 'src/bar.ts'] as string[],
+      prescriptiveAction: 'In fooFn (src/foo.ts:1), add logging.',
       modifies: ['src/foo.ts', 'src/bar.ts'],
       creates: [] as string[],
       verifyCmd: null,
@@ -1179,6 +1458,8 @@ describe('composeTaskPrompt: Files section', () => {
       whatToBuild: 'Render creates paths as bullets.',
       acceptanceCriteria: ['Files section present'],
       blockedBy: [] as number[],
+      readFirst: ['src/bar.ts'] as string[],
+      prescriptiveAction: 'Create src/new.test.ts with a test for barFn.',
       modifies: [] as string[],
       creates: ['src/new.test.ts'],
       verifyCmd: null,
@@ -1196,6 +1477,9 @@ describe('composeTaskPrompt: Files section', () => {
       whatToBuild: 'Render creates with NEW: prefix.',
       acceptanceCriteria: ['NEW: prefix preserved'],
       blockedBy: [] as number[],
+      readFirst: ['orchestrator/src/mastra/context.ts'] as string[],
+      prescriptiveAction:
+        'Create loadManifest() in NEW: orchestrator/src/manifest/load.ts.',
       modifies: [] as string[],
       creates: ['NEW: orchestrator/src/manifest/load.ts'],
       verifyCmd: null,
@@ -1213,6 +1497,8 @@ describe('composeTaskPrompt: Files section', () => {
       whatToBuild: 'No files named.',
       acceptanceCriteria: ['no crash'],
       blockedBy: [] as number[],
+      readFirst: ['src/index.ts'] as string[],
+      prescriptiveAction: 'Review src/index.ts and decide if changes needed.',
       modifies: [] as string[],
       creates: [] as string[],
       verifyCmd: null,
@@ -1231,6 +1517,9 @@ describe('composeTaskPrompt: Files section', () => {
       whatToBuild: 'Render all paths.',
       acceptanceCriteria: ['all paths present'],
       blockedBy: [] as number[],
+      readFirst: ['src/existing.ts'] as string[],
+      prescriptiveAction:
+        'Extend existingFn in src/existing.ts and create src/brand-new/load.ts.',
       modifies: ['src/existing.ts'],
       creates: ['NEW: src/brand-new/load.ts', 'src/another.test.ts'],
       verifyCmd: null,
@@ -1302,6 +1591,8 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
           whatToBuild: 'Create the core data model',
           acceptanceCriteria: ['data model is in place'],
           blockedBy: [] as number[],
+          readFirst: ['src/models/index.ts'] as string[],
+          prescriptiveAction: 'Create the DataModel interface in src/models/index.ts with id and name fields.',
           modifies: [] as string[],
           creates: [] as string[],
           verifyCmd: null,
@@ -1313,6 +1604,8 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
           whatToBuild: 'Wrap the data model in a service',
           acceptanceCriteria: ['service layer works'],
           blockedBy: [1] as number[],
+          readFirst: ['src/services/data.ts'] as string[],
+          prescriptiveAction: 'Create getDataModel() in src/services/data.ts returning DataModel from src/models/index.ts.',
           modifies: [] as string[],
           creates: [] as string[],
           verifyCmd: null,
@@ -1324,6 +1617,8 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
           whatToBuild: 'Display the service output in the UI',
           acceptanceCriteria: ['UI renders correctly end-to-end'],
           blockedBy: [2] as number[],
+          readFirst: ['src/components/DataView.tsx'] as string[],
+          prescriptiveAction: 'In DataView.tsx, call getDataModel() from src/services/data.ts and render model.name in an <h1>.',
           modifies: [] as string[],
           creates: [] as string[],
           verifyCmd: null,
@@ -1415,6 +1710,8 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
           whatToBuild: 'Independent work A',
           acceptanceCriteria: ['A done'],
           blockedBy: [] as number[],
+          readFirst: ['src/a.ts'] as string[],
+          prescriptiveAction: 'Add doA() export to src/a.ts.',
           modifies: [] as string[],
           creates: [] as string[],
           verifyCmd: null,
@@ -1426,6 +1723,8 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
           whatToBuild: 'Independent work B',
           acceptanceCriteria: ['B done'],
           blockedBy: [] as number[],
+          readFirst: ['src/b.ts'] as string[],
+          prescriptiveAction: 'Add doB() export to src/b.ts.',
           modifies: [] as string[],
           creates: [] as string[],
           verifyCmd: null,
@@ -1437,6 +1736,8 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
           whatToBuild: 'Independent work C',
           acceptanceCriteria: ['C done'],
           blockedBy: [] as number[],
+          readFirst: ['src/c.ts'] as string[],
+          prescriptiveAction: 'Add doC() export to src/c.ts.',
           modifies: [] as string[],
           creates: [] as string[],
           verifyCmd: null,
@@ -1515,6 +1816,11 @@ describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Tas
     whatToBuild: 'Stop prepending the TDD brief to the slice prompt.',
     acceptanceCriteria: ['per-task prompt has zero copies of the brief'],
     blockedBy: [] as number[],
+    readFirst: [
+      'orchestrator/src/mastra/workflows/slice-workflow.ts',
+    ] as string[],
+    prescriptiveAction:
+      'In composeTaskPrompt (slice-workflow.ts), remove any reference to TDD_WORKER_BRIEF from the returned template string.',
     modifies: [] as string[],
     creates: [] as string[],
     verifyCmd: null,
