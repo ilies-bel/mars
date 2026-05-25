@@ -11,6 +11,7 @@ import {
   injectSchemaDropBlockers,
   dropAlreadySatisfiedSlices,
   composeTaskPrompt,
+  subDeliverableSchema,
 } from '../slice-workflow'
 import {
   composePrompt,
@@ -215,6 +216,7 @@ describe('composeTaskPrompt: readFirst and prescriptiveAction sections', () => {
   const baseSlice = {
     title: 'Add readFirst to schema',
     type: 'AFK' as const,
+    kind: 'coder' as const,
     whatToBuild: 'Schema gains readFirst and prescriptiveAction.',
     acceptanceCriteria: ['schema rejects empty readFirst'],
     blockedBy: [] as number[],
@@ -1221,6 +1223,7 @@ describe('composeTaskPrompt: parent digest replaces full PRD dump', () => {
   const sampleSlice = {
     title: 'Inline PRD body',
     type: 'AFK' as const,
+    kind: 'coder' as const,
     whatToBuild: 'Inline the PRD fields into the slice prompt.',
     acceptanceCriteria: ['prompt contains the PRD body'],
     blockedBy: [] as number[],
@@ -1436,6 +1439,7 @@ describe('composeTaskPrompt: Files section', () => {
     const slice = {
       title: 'Add Files section',
       type: 'AFK' as const,
+      kind: 'coder' as const,
       whatToBuild: 'Render modifies paths as bullets.',
       acceptanceCriteria: ['Files section present'],
       blockedBy: [] as number[],
@@ -1456,6 +1460,7 @@ describe('composeTaskPrompt: Files section', () => {
     const slice = {
       title: 'Add Files section',
       type: 'AFK' as const,
+      kind: 'coder' as const,
       whatToBuild: 'Render creates paths as bullets.',
       acceptanceCriteria: ['Files section present'],
       blockedBy: [] as number[],
@@ -1475,6 +1480,7 @@ describe('composeTaskPrompt: Files section', () => {
     const slice = {
       title: 'Add Files section',
       type: 'AFK' as const,
+      kind: 'coder' as const,
       whatToBuild: 'Render creates with NEW: prefix.',
       acceptanceCriteria: ['NEW: prefix preserved'],
       blockedBy: [] as number[],
@@ -1495,6 +1501,7 @@ describe('composeTaskPrompt: Files section', () => {
     const slice = {
       title: 'Add Files section',
       type: 'AFK' as const,
+      kind: 'coder' as const,
       whatToBuild: 'No files named.',
       acceptanceCriteria: ['no crash'],
       blockedBy: [] as number[],
@@ -1515,6 +1522,7 @@ describe('composeTaskPrompt: Files section', () => {
     const slice = {
       title: 'Add Files section',
       type: 'AFK' as const,
+      kind: 'coder' as const,
       whatToBuild: 'Render all paths.',
       acceptanceCriteria: ['all paths present'],
       blockedBy: [] as number[],
@@ -1809,6 +1817,7 @@ describe('dropAlreadySatisfiedSlices: pre-flight drop of already-shipped slices'
   ) => ({
     title: 'Test slice',
     type: 'AFK' as const,
+    kind: 'coder' as const,
     whatToBuild: 'test',
     acceptanceCriteria: ['works'],
     blockedBy: [] as number[],
@@ -2000,6 +2009,270 @@ describe('dropAlreadySatisfiedSlices: pre-flight drop of already-shipped slices'
   })
 })
 
+describe('slicerOutputSchema: kind and subDeliverable', () => {
+  // Minimal valid base slice (without kind and subDeliverable) to reuse across tests.
+  const baseSliceInput = {
+    title: 'Some work',
+    type: 'AFK' as const,
+    whatToBuild: 'Do something useful.',
+    acceptanceCriteria: ['it works'],
+    blockedBy: [] as number[],
+    readFirst: ['src/foo.ts'] as string[],
+    prescriptiveAction: 'In fooFn (src/foo.ts:1), change x to y.',
+  }
+
+  const validSubDeliverable = {
+    title: 'Build a verify script',
+    whatToBuild: 'Write a shell script that the operator runs to confirm the release.',
+    acceptanceCriteria: ['script exits 0 when release page shows correct artifact'],
+    files: ['scripts/verify-release.sh'],
+  }
+
+  it('defaults kind to coder when the field is omitted', () => {
+    const parsed = slicerOutputSchema.parse({ slices: [baseSliceInput] })
+    expect(parsed.slices[0].kind).toBe('coder')
+  })
+
+  it('accepts kind=coder with no subDeliverable', () => {
+    const parsed = slicerOutputSchema.parse({
+      slices: [{ ...baseSliceInput, kind: 'coder' }],
+    })
+    expect(parsed.slices[0].kind).toBe('coder')
+    expect(parsed.slices[0].subDeliverable).toBeUndefined()
+  })
+
+  it('accepts kind=hitl with a complete subDeliverable spec', () => {
+    const parsed = slicerOutputSchema.parse({
+      slices: [
+        {
+          ...baseSliceInput,
+          kind: 'hitl',
+          subDeliverable: validSubDeliverable,
+        },
+      ],
+    })
+    expect(parsed.slices[0].kind).toBe('hitl')
+    expect(parsed.slices[0].subDeliverable).toMatchObject({
+      title: 'Build a verify script',
+      whatToBuild: expect.stringContaining('operator runs'),
+      acceptanceCriteria: expect.arrayContaining(['script exits 0 when release page shows correct artifact']),
+      files: ['scripts/verify-release.sh'],
+    })
+  })
+
+  it('rejects kind=hitl when subDeliverable is missing', () => {
+    expect(() =>
+      slicerOutputSchema.parse({
+        slices: [{ ...baseSliceInput, kind: 'hitl' }],
+      }),
+    ).toThrow(/hitl slices must include a subDeliverable/)
+  })
+
+  it('rejects kind=coder when a subDeliverable is attached', () => {
+    expect(() =>
+      slicerOutputSchema.parse({
+        slices: [
+          {
+            ...baseSliceInput,
+            kind: 'coder',
+            subDeliverable: validSubDeliverable,
+          },
+        ],
+      }),
+    ).toThrow(/coder slices must not include a subDeliverable/)
+  })
+
+  it('rejects a subDeliverable with an empty title', () => {
+    expect(() =>
+      subDeliverableSchema.parse({
+        title: '',
+        whatToBuild: 'something',
+        acceptanceCriteria: ['a criterion'],
+      }),
+    ).toThrow()
+  })
+
+  it('rejects a subDeliverable with no acceptanceCriteria', () => {
+    expect(() =>
+      subDeliverableSchema.parse({
+        title: 'A title',
+        whatToBuild: 'something',
+        acceptanceCriteria: [],
+      }),
+    ).toThrow()
+  })
+
+  it('accepts a subDeliverable with optional files omitted', () => {
+    const parsed = subDeliverableSchema.parse({
+      title: 'A title',
+      whatToBuild: 'something',
+      acceptanceCriteria: ['criterion'],
+    })
+    expect(parsed.files).toBeUndefined()
+  })
+
+  it('an all-coder PRD produces zero hitl slices — every slice defaults to kind=coder', () => {
+    // Simulates a standard all-coder PRD: no kind field supplied anywhere.
+    // Every parsed slice must default to kind='coder'.
+    const parsed = slicerOutputSchema.parse({
+      slices: [
+        { ...baseSliceInput, title: 'A' },
+        { ...baseSliceInput, title: 'B', blockedBy: [1] },
+      ],
+    })
+    for (const s of parsed.slices) {
+      expect(s.kind).toBe('coder')
+      expect(s.subDeliverable).toBeUndefined()
+    }
+  })
+})
+
+describe('slicer prompt: kind and human-only verbs', () => {
+  const sampleIdea = {
+    id: 'idea-1',
+    title: 'Some PRD',
+    problem: '',
+    solution: '',
+    outOfScope: '',
+    notes: '',
+    userStories: [],
+  }
+
+  it("enumerates at least four human-only verbs that trigger kind='hitl'", () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+    // The brief must name human-only actions explicitly — at least these four.
+    expect(brief).toMatch(/push|deploy/i)
+    expect(brief).toMatch(/observe|monitor/i)
+    expect(brief).toMatch(/download/i)
+    expect(brief).toMatch(/third.party UI|third-party UI/i)
+  })
+
+  it("instructs the slicer to attach a subDeliverable when kind='hitl'", () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+    expect(brief).toMatch(/subDeliverable/)
+    // The requirement must be stated: hitl without subDeliverable is an error.
+    expect(brief).toMatch(/MUST also emit a subDeliverable|MUST.*also.*emit.*subDeliverable/i)
+  })
+
+  it("forbids subDeliverable on coder slices", () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+    expect(brief).toMatch(/coder slice MUST NOT|coder slices.*MUST NOT/i)
+  })
+
+  it('documents kind in the Output shape section', () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+    // kind is listed as a named output field
+    expect(brief).toMatch(/- kind\s+—/)
+  })
+
+  it("includes kind='coder' in the example JSON", () => {
+    const brief = buildSlicerPrompt(sampleIdea)
+    expect(brief).toMatch(/"kind":"coder"/)
+  })
+})
+
+describe('enqueueTask round-trip: hitl slice kind and subDeliverable land on task row', () => {
+  let repo: string
+
+  const setupRepo = (): string => {
+    const r = mkdtempSync(resolve(tmpdir(), 'mars-slice-hitl-'))
+    execFileSync('git', ['init', '-q'], { cwd: r })
+    mkdirSync(resolve(r, '.mars'), { recursive: true })
+    return r
+  }
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('round-trips kind and subDeliverable from an hitl slice spec through enqueueTask', async () => {
+    vi.resetModules()
+    process.env.MARS_REPO = repo
+    const queue = await import('../../queue')
+    await queue.initQueue()
+
+    // Parse a slicer output that contains one hitl slice with a subDeliverable.
+    const hitlSlicerOutput = slicerOutputSchema.parse({
+      slices: [
+        {
+          title: 'Publish release to GitHub',
+          type: 'HITL' as const,
+          kind: 'hitl',
+          whatToBuild: 'Operator downloads the artifact and pushes a tag.',
+          acceptanceCriteria: [
+            'release page shows the correct artifact',
+            'tag is pushed to remote',
+          ],
+          blockedBy: [],
+          readFirst: ['scripts/release.sh'],
+          prescriptiveAction:
+            'In scripts/release.sh, add a step that pushes the release tag.',
+          subDeliverable: {
+            title: 'Release verification script',
+            whatToBuild:
+              'Write scripts/verify-release.sh that checks the release page and exits 0 if the correct artifact is present.',
+            acceptanceCriteria: [
+              'script exits 0 when artifact is present on the release page',
+              'script exits 1 when artifact is missing',
+            ],
+            files: ['scripts/verify-release.sh'],
+          },
+        },
+      ],
+    })
+
+    const slice = hitlSlicerOutput.slices[0]
+    const task = await queue.enqueueTask('p', undefined, {
+      spec: {
+        files: sliceFilesForPersistence(slice),
+        verifyCmd: slice.verifyCmd,
+        doneCriteria: slice.acceptanceCriteria,
+        taskType: slice.taskType,
+        sliceKind: slice.kind,
+        subDeliverable: slice.subDeliverable,
+      },
+    })
+
+    const reloaded = await queue.getTask(task.id)
+    // Both fields must survive the DB round-trip.
+    expect(reloaded?.spec?.sliceKind).toBe('hitl')
+    expect(reloaded?.spec?.subDeliverable).toMatchObject({
+      title: 'Release verification script',
+      whatToBuild: expect.stringContaining('verify-release.sh'),
+      acceptanceCriteria: expect.arrayContaining([
+        'script exits 0 when artifact is present on the release page',
+      ]),
+      files: ['scripts/verify-release.sh'],
+    })
+  })
+
+  it('coder slices without subDeliverable land with sliceKind=coder and no subDeliverable', async () => {
+    vi.resetModules()
+    process.env.MARS_REPO = repo
+    const queue = await import('../../queue')
+    await queue.initQueue()
+
+    const task = await queue.enqueueTask('p', undefined, {
+      spec: {
+        files: [],
+        verifyCmd: null,
+        doneCriteria: ['done'],
+        taskType: 'auto',
+        sliceKind: 'coder',
+      },
+    })
+
+    const reloaded = await queue.getTask(task.id)
+    expect(reloaded?.spec?.sliceKind).toBe('coder')
+    expect(reloaded?.spec?.subDeliverable).toBeUndefined()
+  })
+})
+
 describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Task text', () => {
   // The coder Worker used to re-absorb the ~150-line TDD brief at the top
   // of every per-Task prompt, and a retry replayed it verbatim — burning
@@ -2018,6 +2291,7 @@ describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Tas
   const slice = {
     title: 'Drop the brief from the per-task prompt',
     type: 'AFK' as const,
+    kind: 'coder' as const,
     whatToBuild: 'Stop prepending the TDD brief to the slice prompt.',
     acceptanceCriteria: ['per-task prompt has zero copies of the brief'],
     blockedBy: [] as number[],
