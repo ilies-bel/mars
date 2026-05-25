@@ -75,6 +75,18 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     match: /has uncommitted changes|tracked changes on paths the fast-forward would update/i,
   },
   {
+    // setup:preflight/dirty-main fires when the setup-worktree pre-flight
+    // finds the merge target dirty BEFORE any worktree is created or coder
+    // dispatched (DIRTY_MAIN_SETUP_MESSAGE in implement-workflow.ts). Kept
+    // distinct from `uncommitted-changes` (which is the merge-time variant)
+    // so the recovery recipe can operate on the merge target directly rather
+    // than on a failing task branch. The phrasing deliberately avoids the
+    // substring "has uncommitted changes" so it does not collide with the
+    // rule above.
+    errorClass: 'dirty-main',
+    match: /merge target is dirty before coding/i,
+  },
+  {
     errorClass: 'not-fast-forward',
     // Matches the pre-flight message emitted when the task branch has diverged
     // from integration before the VCS supervisor even runs (first-line match).

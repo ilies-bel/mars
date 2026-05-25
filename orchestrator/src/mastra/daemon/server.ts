@@ -339,7 +339,7 @@ export const startDaemon = async (
             : null,
         },
       })
-      const { isBlockersAbortError, isDirtyMainAbortError } = await import('../workflows/implement-workflow')
+      const { isBlockersAbortError, isDirtyMainSetupError } = await import('../workflows/implement-workflow')
       // Pass the raw error through: the detectors flatten the cause chain
       // and accept `unknown`, so the previous `instanceof Error` precondition
       // (which silently nulled out any wrapped/serialized error and dropped
@@ -350,19 +350,23 @@ export const startDaemon = async (
         log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
         return
       }
-      if (result.status === 'failed' && isDirtyMainAbortError(resultError)) {
-        log(`[implement] ${task.id} parked in blocked: merge target had uncommitted changes at setup; inbox item raised`)
+      // A dirty merge target at setup routes through the standard self-heal
+      // handler (setup:preflight/dirty-main): the source task is already
+      // parked `blocked` with a task_blockers edge to the shared recovery
+      // task. The step still throws to abort the run, so the result surfaces
+      // as `failed` — suppress the misleading `task.completed status=failed`
+      // emit and let the blocked state stand.
+      if (result.status === 'failed' && isDirtyMainSetupError(resultError)) {
+        log(`[implement] ${task.id} parked blocked: merge target dirty at setup; shared recovery task spawned/attached`)
         return
       }
       log(`[implement] ${task.id} -> ${result.status}`)
       bus.emit('task.completed', { taskId: task.id, status: result.status })
     } catch (err) {
       const message = (err as Error).message
-      const { isBlockersAbortError, isDirtyMainAbortError } = await import('../workflows/implement-workflow')
+      const { isBlockersAbortError } = await import('../workflows/implement-workflow')
       if (isBlockersAbortError(err)) {
         log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
-      } else if (isDirtyMainAbortError(err)) {
-        log(`[implement] ${task.id} parked in blocked: merge target had uncommitted changes at setup; inbox item raised`)
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
         try {
