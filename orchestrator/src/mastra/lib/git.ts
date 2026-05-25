@@ -1408,6 +1408,15 @@ export interface MergeArgs {
   integrationBranch: string
   lockTimeoutMs: number
   onSupervisorEvent?: (event: ClaudeEvent) => void | Promise<void>
+  /**
+   * Fired exactly once, the moment the deterministic fast-forward path fails
+   * and Vega (the vcs-supervisor) is about to be spawned to reconcile
+   * conflicts. A clean fast-forward never invokes this. Callers use it to flip
+   * the task from the idempotent `merging` status to `vega-reconciling`, so the
+   * operator can tell a safe-to-resume merge apart from one hosting a live
+   * Claude session.
+   */
+  onVegaStart?: () => void | Promise<void>
 }
 
 export interface MergeResult {
@@ -1550,6 +1559,7 @@ export const mergeBranch = async ({
   integrationBranch,
   lockTimeoutMs,
   onSupervisorEvent,
+  onVegaStart,
 }: MergeArgs): Promise<MergeResult> => {
   const release = await acquireLock(
     resolve(getStateDir(), '.merge.lock'),
@@ -1568,6 +1578,12 @@ export const mergeBranch = async ({
     } catch (rebaseError: unknown) {
       const e = rebaseError as { stdout?: string; stderr?: string }
       output += (e.stdout ?? '') + (e.stderr ?? '')
+
+      // Deterministic fast-forward has failed: we are about to hand the
+      // conflict to a live Vega (Claude) session. Signal the transition out of
+      // the idempotent `merging` phase before spawning, so the task shows as
+      // `vega-reconciling` for the full duration of the session.
+      await onVegaStart?.()
 
       const supervisorTimeoutMs = 30 * 60 * 1000
       const sup = await invokeVcsSupervisor(

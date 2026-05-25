@@ -36,7 +36,7 @@ export const findInFlightSelfHealBySignature = async (
     sql: `SELECT id FROM tasks
            WHERE failure_signature = ?
              AND fix_for_task_id IS NOT NULL
-             AND status IN ('queued','running','verifying','merging')
+             AND status IN ('queued','running','verifying','merging','vega-reconciling')
            ORDER BY created_at DESC
            LIMIT 1`,
     args: [failureSignature],

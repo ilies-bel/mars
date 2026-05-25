@@ -16,6 +16,7 @@ const IN_FLIGHT_STATUSES: ReadonlySet<TaskStatus> = new Set([
   'running',
   'verifying',
   'merging',
+  'vega-reconciling',
 ])
 
 export type Verdict =
