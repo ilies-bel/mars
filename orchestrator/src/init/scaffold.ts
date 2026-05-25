@@ -1,12 +1,5 @@
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  statSync,
-} from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { dirname, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
@@ -20,7 +13,6 @@ const TEMPLATES_DIR = resolve(
   'templates',
 )
 
-const TEMPLATE_CLAUDE_DIR = resolve(TEMPLATES_DIR, 'claude')
 const TEMPLATE_CLAUDE_MD = resolve(TEMPLATES_DIR, 'CLAUDE.md')
 
 export interface ScaffoldClaudeOptions {
@@ -42,48 +34,27 @@ interface PlannedCopy {
   rel: string
 }
 
-const walkFiles = (dir: string, out: string[] = []): string[] => {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name)
-    if (entry.isDirectory()) {
-      walkFiles(full, out)
-    } else if (entry.isFile()) {
-      out.push(full)
-    }
-  }
-  return out
-}
-
 /**
  * Compute the full set of files `scaffoldClaudeConfig` would write into
  * `repoRoot`. Exported so `runInit` can pre-flight conflicts before the
  * workflow starts producing partial output.
+ *
+ * Note: the `.claude/` config tree (skills, agents, hooks, settings) is
+ * intentionally NOT included here. Those files are delivered to consumers
+ * via the Mars Claude Code plugin registered in ~/.claude/settings.json at
+ * install time. Only the repository-bound `CLAUDE.md` is scaffolded.
  */
 export const planClaudeCopies = (repoRoot: string): PlannedCopy[] => {
-  const copies: PlannedCopy[] = []
+  if (!existsSync(TEMPLATE_CLAUDE_MD)) return []
 
-  if (existsSync(TEMPLATE_CLAUDE_DIR)) {
-    for (const src of walkFiles(TEMPLATE_CLAUDE_DIR)) {
-      const relToClaude = relative(TEMPLATE_CLAUDE_DIR, src)
-      const dest = resolve(repoRoot, '.claude', relToClaude)
-      copies.push({
-        src,
-        dest,
-        rel: relative(repoRoot, dest),
-      })
-    }
-  }
-
-  if (existsSync(TEMPLATE_CLAUDE_MD)) {
-    const dest = resolve(repoRoot, 'CLAUDE.md')
-    copies.push({
+  const dest = resolve(repoRoot, 'CLAUDE.md')
+  return [
+    {
       src: TEMPLATE_CLAUDE_MD,
       dest,
       rel: relative(repoRoot, dest),
-    })
-  }
-
-  return copies
+    },
+  ]
 }
 
 /**
@@ -97,33 +68,15 @@ export const planClaudeConflicts = (repoRoot: string): string[] => {
     .map((c) => c.rel)
 }
 
-const HOOKS_PREFIX = '.claude/hooks/'
-
-const isHookFile = (relPath: string): boolean =>
-  relPath.startsWith(HOOKS_PREFIX) || relPath.startsWith('.claude\\hooks\\')
-
-const sourceMode = (src: string): number => {
-  try {
-    return statSync(src).mode & 0o777
-  } catch {
-    return 0o644
-  }
-}
-
-const targetMode = (rel: string, src: string): number => {
-  if (isHookFile(rel)) return 0o755
-  return sourceMode(src)
-}
-
 /**
- * Copy the bundled Claude Code config (`.claude/**` + root `CLAUDE.md`) into
+ * Copy the repository-bound Claude Code config (root `CLAUDE.md`) into
  * `opts.repoRoot`. Refuses to overwrite by default; pass `force: true` to
- * replace existing files. `dryRun: true` returns the would-write set without
- * touching disk.
+ * replace an existing file. `dryRun: true` returns the would-write set
+ * without touching disk.
  *
- * Files under `.claude/hooks/` are always written with mode `0755` so the
- * `mars init` smoke test can immediately exec the hook scripts even on
- * filesystems that drop the executable bit on copy (e.g. npm tarballs).
+ * The `.claude/` config tree (skills, agents, hooks, settings) is NOT copied
+ * here — it is delivered to consumers via the Mars Claude Code plugin
+ * registered in ~/.claude/settings.json at install time.
  */
 export const scaffoldClaudeConfig = (
   opts: ScaffoldClaudeOptions,
@@ -145,12 +98,6 @@ export const scaffoldClaudeConfig = (
     if (!dryRun) {
       mkdirSync(dirname(c.dest), { recursive: true })
       copyFileSync(c.src, c.dest)
-      try {
-        chmodSync(c.dest, targetMode(c.rel, c.src))
-      } catch {
-        // best-effort: chmod may fail on exotic filesystems; the file is
-        // still copied, which is what matters for the conflict check
-      }
     }
     written.push(c.rel)
   }
