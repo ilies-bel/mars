@@ -1,3 +1,7 @@
+import { execFile } from 'node:child_process'
+import { access } from 'node:fs/promises'
+import { constants as fsConstants } from 'node:fs'
+import { promisify } from 'node:util'
 import { internalBus } from '../internal-bus'
 import {
   getRetryBudget,
@@ -8,9 +12,146 @@ import { getClient, getTask, initQueue, updateTask } from './queue'
 import { raiseInboxItem, supersedeInboxItemsForOrigin } from './lib/inbox'
 import { publish } from './lib/outbox'
 
+const execFileP = promisify(execFile)
+
 export const CANCELLED_CASCADE_INBOX_KIND = 'cancelled-blocker-cascade'
 export const CANCELLED_FAILURE_REASON = 'cancelled'
 const CANCELLED_CASCADE_FAILURE_REASON = 'cancelled-blocker-cascade'
+export const WORKTREE_AHEAD_FAILURE_REASON =
+  'worktree_ahead_of_integration_at_unblock'
+export const WORKTREE_AHEAD_INBOX_KIND = 'worktree-ahead-of-integration'
+
+const integrationBranchName = (): string =>
+  process.env.INTEGRATION_BRANCH ?? 'main'
+
+/**
+ * Refusal sentinel: a dependent's worktree branch has commits ahead of the
+ * integration branch at re-dispatch time. Per the slice contract we never
+ * auto-rebase — the operator must resolve manually.
+ */
+export class WorktreeAheadOfIntegrationError extends Error {
+  readonly taskId: string
+  readonly worktreePath: string
+  readonly aheadCount: number
+  readonly integrationBranch: string
+  constructor(
+    taskId: string,
+    worktreePath: string,
+    aheadCount: number,
+    integrationBranch: string,
+  ) {
+    super(
+      `worktree for task ${taskId} at ${worktreePath} is ${aheadCount} commit(s) ahead of ${integrationBranch}; refusing to reset`,
+    )
+    this.taskId = taskId
+    this.worktreePath = worktreePath
+    this.aheadCount = aheadCount
+    this.integrationBranch = integrationBranch
+    this.name = 'WorktreeAheadOfIntegrationError'
+  }
+}
+
+const worktreeExists = async (worktreePath: string): Promise<boolean> => {
+  try {
+    await access(worktreePath, fsConstants.F_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Hard-reset a dependent's worktree branch to the current integration HEAD
+ * before re-dispatching it, so the dispatched implementor observes a tree
+ * that already contains its blocker's landed commits.
+ *
+ * No-op when the worktree row has no path yet, or the path is missing on
+ * disk — the implement workflow's setup step will create a fresh worktree
+ * off the integration branch in that case.
+ *
+ * Refuses (throws WorktreeAheadOfIntegrationError) if the dependent branch
+ * has its own commits ahead of the integration branch. We never auto-rebase
+ * here; the operator must resolve the divergence explicitly.
+ *
+ * Best-effort `git fetch origin <integration>` first so a tracked remote
+ * advances the local ref; in the orchestrator's local-only test repos the
+ * fetch is expected to fail and is silently ignored.
+ */
+export const resetDependentWorktreeToIntegration = async (
+  taskId: string,
+  worktreePath: string | null,
+  integrationBranch: string,
+): Promise<{ reset: boolean; reason: 'no-worktree' | 'worktree-missing' | 'reset' }> => {
+  if (!worktreePath) return { reset: false, reason: 'no-worktree' }
+  if (!(await worktreeExists(worktreePath))) {
+    return { reset: false, reason: 'worktree-missing' }
+  }
+  try {
+    await execFileP('git', ['fetch', 'origin', integrationBranch], {
+      cwd: worktreePath,
+    })
+  } catch {
+    /* local-only repo / transient remote error — proceed with local ref */
+  }
+  const ahead = await execFileP(
+    'git',
+    ['rev-list', '--count', `${integrationBranch}..HEAD`],
+    { cwd: worktreePath },
+  )
+  const aheadCount = Number(ahead.stdout.trim())
+  if (aheadCount > 0) {
+    throw new WorktreeAheadOfIntegrationError(
+      taskId,
+      worktreePath,
+      aheadCount,
+      integrationBranch,
+    )
+  }
+  await execFileP('git', ['reset', '--hard', integrationBranch], {
+    cwd: worktreePath,
+  })
+  return { reset: true, reason: 'reset' }
+}
+
+const raiseWorktreeAheadInbox = async (
+  taskId: string,
+  worktreePath: string,
+  aheadCount: number,
+  integrationBranch: string,
+): Promise<void> => {
+  try {
+    await raiseInboxItem({
+      kind: WORKTREE_AHEAD_INBOX_KIND,
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Task ${taskId} worktree is ahead of ${integrationBranch} at unblock`,
+      body:
+        `Task ${taskId} was about to be re-dispatched after its blocker(s) resolved, ` +
+        `but its worktree at ${worktreePath} is ${aheadCount} commit(s) ahead of ` +
+        `${integrationBranch}. Mars refuses to auto-rebase a dependent that has ` +
+        `its own work on the branch.\n\n` +
+        `Resolve manually: inspect the worktree, decide whether to land or drop ` +
+        `those commits, then \`mars restart ${taskId}\` (or \`mars purge ${taskId}\`).`,
+      payload: {
+        taskId,
+        worktreePath,
+        aheadCount,
+        integrationBranch,
+        failureReason: WORKTREE_AHEAD_FAILURE_REASON,
+      },
+      context: { repoRoot: process.env.MARS_REPO ?? null },
+      raisedBy: 'agent:blocker-resolution',
+      signature: `${taskId}:worktree-ahead`,
+      originTaskId: taskId,
+      occurrence: {
+        at: new Date().toISOString(),
+        aheadCount,
+      },
+    })
+  } catch {
+    /* best-effort: inbox failure must not block the cascade */
+  }
+}
 
 export interface UnblockOutcome {
   taskId: string
@@ -96,6 +237,7 @@ export const onBlockerTaskCompleted = async (
 
   const budget = getRetryBudget()
   const outcomes: UnblockOutcome[] = []
+  const integrationBranch = integrationBranchName()
 
   for (const row of r.rows as unknown as BlockedDependentRow[]) {
     const retryCount = Number(row.retry_count ?? 0)
@@ -122,6 +264,35 @@ export const onBlockerTaskCompleted = async (
     if (incomplete.rows.length > 0) {
       outcomes.push({ taskId: row.id, outcome: 'noop', retryCount })
       continue
+    }
+    // Reset the dependent's worktree to integration HEAD BEFORE flipping it
+    // to 'queued' — if the reset is refused (commits ahead) the dependent must
+    // never enter the dispatch queue.
+    const dep = await getTask(row.id)
+    try {
+      await resetDependentWorktreeToIntegration(
+        row.id,
+        dep?.worktreePath ?? null,
+        integrationBranch,
+      )
+    } catch (err: unknown) {
+      if (err instanceof WorktreeAheadOfIntegrationError) {
+        await raiseWorktreeAheadInbox(
+          err.taskId,
+          err.worktreePath,
+          err.aheadCount,
+          err.integrationBranch,
+        )
+        await markTaskFailed(row.id, WORKTREE_AHEAD_FAILURE_REASON)
+        outcomes.push({
+          taskId: row.id,
+          outcome: 'failed',
+          retryCount,
+          failureReason: WORKTREE_AHEAD_FAILURE_REASON,
+        })
+        continue
+      }
+      throw err
     }
     const tx = await c.transaction('write')
     let flipped = false
@@ -263,6 +434,7 @@ export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
   const results: UnblockByTaskResult[] = []
   const budget = getRetryBudget()
   const now = new Date().toISOString()
+  const integrationBranch = integrationBranchName()
   for (const row of r.rows as unknown as BlockedDependentRow[]) {
     const retryCount = Number(row.retry_count ?? 0)
     const outcomes: UnblockOutcome[] = []
@@ -276,6 +448,40 @@ export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
         failureReason: RETRY_BUDGET_FAILURE_REASON,
       })
     } else {
+      // Same reset-before-flip discipline as onBlockerTaskCompleted, so the
+      // startup reconciler path stays in lock-step with the live path.
+      const dep = await getTask(row.id)
+      let refused = false
+      try {
+        await resetDependentWorktreeToIntegration(
+          row.id,
+          dep?.worktreePath ?? null,
+          integrationBranch,
+        )
+      } catch (err: unknown) {
+        if (err instanceof WorktreeAheadOfIntegrationError) {
+          await raiseWorktreeAheadInbox(
+            err.taskId,
+            err.worktreePath,
+            err.aheadCount,
+            err.integrationBranch,
+          )
+          await markTaskFailed(row.id, WORKTREE_AHEAD_FAILURE_REASON)
+          outcomes.push({
+            taskId: row.id,
+            outcome: 'failed',
+            retryCount,
+            failureReason: WORKTREE_AHEAD_FAILURE_REASON,
+          })
+          refused = true
+        } else {
+          throw err
+        }
+      }
+      if (refused) {
+        results.push({ blockerTaskId: '(recovered)', outcomes })
+        continue
+      }
       const tx = await c.transaction('write')
       let flipped = false
       try {
