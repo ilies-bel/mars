@@ -25,6 +25,7 @@ import {
   markTaskFailed,
   raiseRetryBudgetExhaustedInbox,
 } from './queue-retry'
+import type { TaskStore } from './lib/task-store'
 
 const truncate = (s: string, max: number): string =>
   s.length <= max ? s : `${s.slice(0, max)}…`
@@ -650,6 +651,12 @@ export interface HandleTaskFailureViaTaskInput {
    * multi-language and full-stack failures produce accurate repro hints.
    */
   ranVerifySteps?: readonly RanVerifyStep[]
+  /**
+   * TaskStore threaded in from the workflow composition root. When
+   * provided, getTask and updateTask calls inside this handler route
+   * through the store rather than calling getClient() directly.
+   */
+  store?: TaskStore
 }
 
 export interface HandleTaskFailureViaTaskResult {
@@ -693,8 +700,9 @@ export const CANCELLED_FAILURE_REASON = 'cancelled'
 export const handleTaskFailureWithFixTask = async (
   input: HandleTaskFailureViaTaskInput,
 ): Promise<HandleTaskFailureViaTaskResult> => {
-  await initQueue()
-  const task: Task | null = await getTask(input.taskId)
+  const { store } = input
+  if (!store) await initQueue()
+  const task: Task | null = await getTask(input.taskId, store)
   if (!task) return { outcome: 'noop' }
 
   // PRD slice 2/4 (mars-9234e1b2): cancellation gate. When the
@@ -746,7 +754,7 @@ export const handleTaskFailureWithFixTask = async (
     await updateTask(input.taskId, {
       status: 'failed',
       error: `recovery_failed:${failureSignature}: ${truncatedError.slice(0, 500)}`,
-    })
+    }, store)
 
     const originId = task.originId
     const inboxSignature = `${originId}:${failureSignature}`
@@ -877,12 +885,17 @@ export const handleTaskFailureWithFixTask = async (
     // survives until explicitly cleared by `mars unblock`, so this branch
     // re-stamps a status the row already has.
     const now = new Date().toISOString()
-    await getClient().execute({
+    const blockStmt = {
       sql: `UPDATE tasks
                SET status = 'blocked', updated_at = ?
              WHERE id = ?`,
       args: [now, input.taskId],
-    })
+    }
+    if (store) {
+      await store.execute(blockStmt)
+    } else {
+      await getClient().execute(blockStmt)
+    }
 
     const inboxItemId = await raiseInboxItem({
       kind: FIX_FAIL_LOOP_INBOX_KIND,

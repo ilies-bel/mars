@@ -28,6 +28,8 @@ import {
   type Task,
   type UnblockTaskResult,
 } from '../queue'
+import { RequestContext } from '@mastra/core/di'
+import { getDefaultTaskStore } from '../lib/task-store'
 import { listProposals, promoteProposal } from '../proposals'
 import {
   CANCELLED_FAILURE_REASON,
@@ -327,6 +329,12 @@ export const startDaemon = async (
       const { mastra } = await import('../index')
       const wf = mastra.getWorkflow('implementWorkflow')
       const run = await wf.createRun()
+      // Wire the TaskStore from the composition root into the workflow so
+      // every step can route its queue reads/writes through the store
+      // rather than calling getClient() directly (ADR-0021 seam, slice 2).
+      const taskStore = await getDefaultTaskStore()
+      const requestContext = new RequestContext()
+      requestContext.set('taskStore', taskStore)
       const result = await run.start({
         inputData: {
           taskId: task.id,
@@ -350,6 +358,7 @@ export const startDaemon = async (
               }
             : null,
         },
+        requestContext,
       })
       const { isBlockersAbortError, isDirtyMainSetupError } = await import('../workflows/implement-workflow')
       // Pass the raw error through: the detectors flatten the cause chain

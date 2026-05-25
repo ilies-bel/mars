@@ -5,6 +5,7 @@ import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
 import { dismissAlertsOnStatusChange } from './lib/inbox'
 import { openLibsql } from './lib/libsql'
+import type { TaskStore } from './lib/task-store'
 
 export type TaskStatus =
   | 'draft'
@@ -728,14 +729,13 @@ export interface UpsertTranscriptInput {
 
 export const upsertTranscript = async (
   input: UpsertTranscriptInput,
+  store?: TaskStore,
 ): Promise<void> => {
-  await initQueue()
-  const c = getClient()
   const now = new Date().toISOString()
 
   if (input.conversationJson !== undefined) {
     const capped = capConversationJson(input.conversationJson)
-    await c.execute({
+    const stmt = {
       sql: `INSERT INTO task_transcripts
               (task_id, conversation_json, verify_output, bytes, recorded_at)
             VALUES (?, ?, ?, ?, ?)
@@ -744,7 +744,13 @@ export const upsertTranscript = async (
               bytes             = excluded.bytes,
               recorded_at       = excluded.recorded_at`,
       args: [input.taskId, capped, input.verifyOutput ?? null, capped.length, now],
-    })
+    }
+    if (store) {
+      await store.execute(stmt)
+    } else {
+      await initQueue()
+      await getClient().execute(stmt)
+    }
     return
   }
 
@@ -755,12 +761,18 @@ export const upsertTranscript = async (
         : input.verifyOutput.length > 64 * 1024
           ? input.verifyOutput.slice(0, 64 * 1024)
           : input.verifyOutput
-    await c.execute({
+    const stmt = {
       sql: `UPDATE task_transcripts
               SET verify_output = ?, recorded_at = ?
             WHERE task_id = ?`,
       args: [cappedVerify, now, input.taskId],
-    })
+    }
+    if (store) {
+      await store.execute(stmt)
+    } else {
+      await initQueue()
+      await getClient().execute(stmt)
+    }
   }
 }
 
@@ -1034,6 +1046,7 @@ export const updateTask = async (
       | 'failureReason'
     >
   >,
+  store?: TaskStore,
 ): Promise<void> => {
   const fields: string[] = []
   const args: unknown[] = []
@@ -1042,11 +1055,9 @@ export const updateTask = async (
   // transitions (patch.status === existing status ⇒ no-op, skip dismissals).
   let previousStatus: string | null = null
   if (patch.status !== undefined) {
-    const c = getClient()
-    const before = await c.execute({
-      sql: `SELECT status FROM tasks WHERE id = ?`,
-      args: [id],
-    })
+    const before = store
+      ? await store.query({ sql: `SELECT status FROM tasks WHERE id = ?`, args: [id] })
+      : await getClient().execute({ sql: `SELECT status FROM tasks WHERE id = ?`, args: [id] })
     previousStatus =
       before.rows.length > 0
         ? ((before.rows[0] as unknown as { status: string }).status ?? null)
@@ -1099,7 +1110,6 @@ export const updateTask = async (
   args.push(new Date().toISOString())
   args.push(id)
 
-  const c = getClient()
   const appendSessionId =
     patch.claudeSessionId !== undefined &&
     patch.claudeSessionId !== null &&
@@ -1111,6 +1121,9 @@ export const updateTask = async (
     // Two concurrent retry workers racing on the same task each see a
     // serialised view and both append, so the array is the full
     // append-only history.
+    // Note: TaskStore.atomic() lands in a subsequent slice; until then
+    // the session-id path still uses the raw client transaction.
+    const c = getClient()
     const tx = await c.transaction('write')
     try {
       await tx.execute({
@@ -1143,10 +1156,15 @@ export const updateTask = async (
       throw error
     }
   } else {
-    await c.execute({
+    const stmt = {
       sql: `UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`,
       args: args as never,
-    })
+    }
+    if (store) {
+      await store.execute(stmt)
+    } else {
+      await getClient().execute(stmt)
+    }
   }
 
   // Dismiss open inbox alerts and stale-worktree dismissal rows whenever
@@ -1162,10 +1180,15 @@ export const updateTask = async (
   }
 
   if (patch.status === 'done') {
-    const dependents = await c.execute({
-      sql: `SELECT DISTINCT task_id FROM task_blockers WHERE blocker_task_id = ?`,
-      args: [id],
-    })
+    const dependents = store
+      ? await store.query({
+          sql: `SELECT DISTINCT task_id FROM task_blockers WHERE blocker_task_id = ?`,
+          args: [id],
+        })
+      : await getClient().execute({
+          sql: `SELECT DISTINCT task_id FROM task_blockers WHERE blocker_task_id = ?`,
+          args: [id],
+        })
     for (const row of dependents.rows) {
       const dependentId = (row as unknown as { task_id: string }).task_id
       await promoteDraftToQueued(dependentId)
@@ -1173,12 +1196,15 @@ export const updateTask = async (
   }
 }
 
-export const getTask = async (id: string): Promise<Task | null> => {
-  await initQueue()
-  const r = await getClient().execute({
-    sql: `SELECT * FROM tasks WHERE id = ?`,
-    args: [id],
-  })
+export const getTask = async (id: string, store?: TaskStore): Promise<Task | null> => {
+  const stmt = { sql: `SELECT * FROM tasks WHERE id = ?`, args: [id] }
+  let r
+  if (store) {
+    r = await store.query(stmt)
+  } else {
+    await initQueue()
+    r = await getClient().execute(stmt)
+  }
   if (r.rows.length === 0) return null
   return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
 }
@@ -1729,9 +1755,8 @@ export const listBlockers = async (taskId: string): Promise<string[]> => {
   return r.rows.map((row) => (row as unknown as { id: string }).id)
 }
 
-export const hasIncompleteBlockers = async (taskId: string): Promise<boolean> => {
-  await initQueue()
-  const r = await getClient().execute({
+export const hasIncompleteBlockers = async (taskId: string, store?: TaskStore): Promise<boolean> => {
+  const stmt = {
     sql: `SELECT 1
             FROM task_blockers b
             JOIN tasks t ON t.id = b.blocker_task_id
@@ -1739,7 +1764,14 @@ export const hasIncompleteBlockers = async (taskId: string): Promise<boolean> =>
              AND b.state IN ('confirmed', 'pending-review')
            LIMIT 1`,
     args: [taskId],
-  })
+  }
+  let r
+  if (store) {
+    r = await store.query(stmt)
+  } else {
+    await initQueue()
+    r = await getClient().execute(stmt)
+  }
   return r.rows.length > 0
 }
 
