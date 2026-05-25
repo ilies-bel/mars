@@ -24,6 +24,7 @@ import {
 } from '../../init/scaffold'
 import { writeSlimInit, writePerFolderClaudeMds, purgeStaleSupervisorMds, type VerifyStepEntry } from '../../init/writer'
 import { writeDetectionReport } from '../../init/write-detection-report'
+import { readInitManifest, writeInitManifest } from '../../init/init-manifest'
 import { relative, resolve } from 'node:path'
 
 const verifyStepSchema = z.object({
@@ -285,6 +286,7 @@ const writeStep = createStep({
     })
     const perFolderResult = writePerFolderClaudeMds({
       repoRoot: ctx.repoRoot,
+      marsDir: ctx.stateDir,
       supervisors: inputData.rendered.map((r) => r.spec),
     })
     return { written: [...slimResult.written, ...perFolderResult.written] }
@@ -343,7 +345,25 @@ const initDatabasesStep = createStep({
       relative(ctx.repoRoot, ctx.queueDbPath),
       relative(ctx.repoRoot, ctx.stateDbPath),
     ]
-    return { written: [...inputData.written, ...dbWrites] }
+
+    // Merge any root-level CLAUDE.md (written by scaffold) into the init
+    // manifest so it is listed alongside the per-folder CLAUDE.md files that
+    // writePerFolderClaudeMds already recorded. The per-folder manifest was
+    // written earlier in writeStep; here we only extend it with paths that
+    // scaffold produced (i.e. those ending in 'CLAUDE.md' and not already
+    // present in the manifest).
+    const allWritten = [...inputData.written, ...dbWrites]
+    const rootClaudePaths = allWritten.filter((p) => p.endsWith('CLAUDE.md'))
+    if (rootClaudePaths.length > 0) {
+      const existing = readInitManifest(ctx.stateDir)
+      const existingSet = new Set(existing)
+      const toAdd = rootClaudePaths.filter((p) => !existingSet.has(p))
+      if (toAdd.length > 0) {
+        writeInitManifest(ctx.stateDir, [...existing, ...toAdd])
+      }
+    }
+
+    return { written: allWritten }
   },
 })
 
