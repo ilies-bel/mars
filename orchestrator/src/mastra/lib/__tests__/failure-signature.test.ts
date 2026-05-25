@@ -267,6 +267,13 @@ describe('errorClassRules registry', () => {
 })
 
 describe('causeForSignature', () => {
+  it('renders an operator-owned cause for the setup-time dirty-main signature directing operator to clean main and restart', () => {
+    const cause = causeForSignature('setup:preflight/dirty-main', 'mars-1234abcd')
+    expect(cause).not.toBeNull()
+    expect(cause!.toLowerCase()).toContain('dirty')
+    expect(cause).toContain('mars restart mars-1234abcd')
+  })
+
   it('renders an operator-owned cause for the dirty-integration-branch signature naming clean main + restart', () => {
     const cause = causeForSignature(
       'merge:preflight/uncommitted-changes',

@@ -297,8 +297,14 @@ export const isUnclassifiedSignature = (signature: string): boolean =>
 type CauseRenderer = (taskId: string) => string
 
 const causeSentencesBySignature: Readonly<Record<string, CauseRenderer>> = {
+  // Operator-owned: merge target was dirty before the agent ran (setup-time check).
+  // Distinct from merge:preflight/uncommitted-changes (which fires at merge time).
+  'setup:preflight/dirty-main': (taskId) =>
+    `merge target was dirty before coding started — clean main, then mars restart ${taskId}`,
+  // Operator-owned: merge target had uncommitted changes when the merge-time pre-flight ran.
   'merge:preflight/uncommitted-changes': (taskId) =>
     `integration branch has uncommitted changes — clean it, then mars restart ${taskId}`,
+  // Agent-owned: the coder ran but produced no commits on the task branch.
   'verify:has-diff/no-commits-ahead': () =>
     `task branch has no commits ahead of integration — the agent didn't commit; needs a new task or restart`,
 }
