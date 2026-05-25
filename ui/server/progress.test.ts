@@ -125,8 +125,8 @@ describe('GET /api/progress — column-view cluster contract', () => {
 
   beforeEach(async () => {
     repo = setupRepo()
-    queueDbPath = resolve(repo, '.mars/queue.db')
-    const stateDbPath = resolve(repo, '.mars/state.db')
+    queueDbPath = resolve(repo, '.mars/mars.db')
+    const stateDbPath = resolve(repo, '.mars/mars.db')
     const qc = await createQueueSchema(queueDbPath)
     const sc = await createStateSchema(stateDbPath)
     qc.close()
@@ -214,7 +214,7 @@ describe('GET /api/progress — column-view cluster contract', () => {
     const qc = createClient({ url: `file:${queueDbPath}` })
     await insertTask(qc, 't-running', 'running')
     qc.close()
-    const sc = createClient({ url: `file:${resolve(repo, '.mars/state.db')}` })
+    const sc = createClient({ url: `file:${resolve(repo, '.mars/mars.db')}` })
     await insertProposal(sc, 'proposal-1')
     await insertProposal(sc, 'proposal-2')
     sc.close()
@@ -293,8 +293,8 @@ describe('GET /api/progress — proposal nodes for DAG view', () => {
 
   beforeEach(async () => {
     repo = setupRepo()
-    queueDbPath = resolve(repo, '.mars/queue.db')
-    stateDbPath = resolve(repo, '.mars/state.db')
+    queueDbPath = resolve(repo, '.mars/mars.db')
+    stateDbPath = resolve(repo, '.mars/mars.db')
     const qc = await createQueueSchema(queueDbPath)
     // Add parent_proposal_id column for provenance tracking
     await qc.execute(`ALTER TABLE tasks ADD COLUMN parent_proposal_id TEXT`)

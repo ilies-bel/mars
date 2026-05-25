@@ -77,11 +77,11 @@ export const startServer = async (
   await stateDb.init()
 
   const hub = new SseHub()
+  // queueDbPath and stateDbPath now resolve to the same `.mars/mars.db`
+  // file (see resolveRepo), so a single watcher covers both task and
+  // proposal/inbox mutations — broadcast every affected channel from it.
   watchQueue(ctx.queueDbPath, () => {
     hub.broadcast('tasks')
-    hub.broadcast('todo')
-  })
-  watchQueue(ctx.stateDbPath, () => {
     hub.broadcast('todo')
   })
 

@@ -31,10 +31,10 @@ const setupRepo = (): string => {
   return repo
 }
 
-// The UI server reads tasks from queue.db and proposals/dismissals from
-// state.db (see resolveRepo). The derived view reads worktrees from disk.
-const queueDbPath = (repo: string): string => resolve(repo, '.mars/queue.db')
-const stateDbPath = (repo: string): string => resolve(repo, '.mars/state.db')
+// Tasks, proposals and dismissals now share one .mars/mars.db file
+// (see resolveRepo). The derived view reads worktrees from disk.
+const queueDbPath = (repo: string): string => resolve(repo, '.mars/mars.db')
+const stateDbPath = (repo: string): string => resolve(repo, '.mars/mars.db')
 
 const createQueueSchema = async (path: string): Promise<Client> => {
   const c = createClient({ url: `file:${path}` })
