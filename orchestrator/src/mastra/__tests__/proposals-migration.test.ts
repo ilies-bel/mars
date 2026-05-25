@@ -50,8 +50,8 @@ describe('ideas -> proposals schema migration on startup', () => {
   })
 
   it('renames a legacy ideas table to proposals with no ideas table left', async () => {
-    const stateDb = `file:${repo}/.mars/state.db`
-    const queueDb = `file:${repo}/.mars/queue.db`
+    const stateDb = `file:${repo}/.mars/mars.db`
+    const queueDb = `file:${repo}/.mars/mars.db`
 
     const s = createClient({ url: stateDb })
     await s.execute(`CREATE TABLE ideas (
@@ -113,7 +113,7 @@ describe('ideas -> proposals schema migration on startup', () => {
   })
 
   it('creates a proposals table directly on a fresh repo', async () => {
-    const stateDb = `file:${repo}/.mars/state.db`
+    const stateDb = `file:${repo}/.mars/mars.db`
     const { initProposals } = await import('../proposals')
     await initProposals()
 
