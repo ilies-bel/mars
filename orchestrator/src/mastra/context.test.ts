@@ -82,4 +82,11 @@ describe('resolveContext repo-root detection', () => {
     const ctx = resolveContext(realRepo)
     expect(ctx.repoRoot).toBe(realRepo)
   })
+
+  it("places Mars's trace-event store in a separate file from the framework's observability store", () => {
+    const ctx = resolveContext(realRepo)
+    expect(ctx.traceDbPath).toBe(resolve(realRepo, '.mars', 'mars-trace.duckdb'))
+    // Physically distinct from the framework's observability store.
+    expect(ctx.traceDbPath).not.toBe(ctx.observabilityDbPath)
+  })
 })
