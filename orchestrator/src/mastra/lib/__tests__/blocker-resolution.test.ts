@@ -159,9 +159,9 @@ describe('blocker-resolution (task_blockers)', () => {
       listInboxItems: typeof import('../inbox').listInboxItems
     }
     const open = await inbox.listInboxItems('open')
-    const taskBlocked = open.filter((i) => i.kind.startsWith('task-blocked('))
+    const taskBlocked = open.filter((i) => i.kind === 'failed' && i.payload.taskId === dep.id)
     expect(taskBlocked).toHaveLength(1)
-    expect(taskBlocked[0].kind).toBe(`task-blocked(${dep.id})`)
+    expect(taskBlocked[0].kind).toBe('failed')
     expect(taskBlocked[0].signature).toBe(dep.id)
     expect(taskBlocked[0].payload.taskId).toBe(dep.id)
   })
@@ -188,9 +188,9 @@ describe('blocker-resolution (task_blockers)', () => {
       listInboxItems: typeof import('../inbox').listInboxItems
     }
     const open = await inbox.listInboxItems('open')
-    const taskBlocked = open.filter((i) => i.kind.startsWith('task-blocked('))
+    const taskBlocked = open.filter((i) => i.kind === 'failed' && i.payload.taskId === dep.id)
     expect(taskBlocked).toHaveLength(1)
-    expect(taskBlocked[0].kind).toBe(`task-blocked(${dep.id})`)
+    expect(taskBlocked[0].kind).toBe('failed')
   })
 
   it('onBlockerTaskCompleted queues a never-run dependent (retry_count=0, default budget=0) instead of failing it', async () => {
@@ -220,7 +220,7 @@ describe('blocker-resolution (task_blockers)', () => {
       listInboxItems: typeof import('../inbox').listInboxItems
     }
     const open = await inbox.listInboxItems('open')
-    const taskBlocked = open.filter((i) => i.kind.startsWith('task-blocked('))
+    const taskBlocked = open.filter((i) => i.kind === 'failed')
     expect(taskBlocked).toHaveLength(0)
   })
 
@@ -248,7 +248,7 @@ describe('blocker-resolution (task_blockers)', () => {
       listInboxItems: typeof import('../inbox').listInboxItems
     }
     const open = await inbox.listInboxItems('open')
-    const taskBlocked = open.filter((i) => i.kind.startsWith('task-blocked('))
+    const taskBlocked = open.filter((i) => i.kind === 'failed')
     expect(taskBlocked).toHaveLength(0)
   })
 
@@ -329,7 +329,7 @@ describe('blocker-resolution (task_blockers)', () => {
       listInboxItems: typeof import('../inbox').listInboxItems
     }
     const open = await inbox.listInboxItems('open')
-    const item = open.find((i) => i.kind === `task-blocked(${dep.id})`)
+    const item = open.find((i) => i.kind === 'failed' && i.payload.taskId === dep.id)
     expect(item).toBeDefined()
     expect(item!.payload.lastStep).toBe('blocked-dependent')
     expect(item!.payload.lastStep).not.toBe('unblock')
@@ -360,7 +360,7 @@ describe('blocker-resolution (task_blockers)', () => {
       listInboxItems: typeof import('../inbox').listInboxItems
     }
     const open = await inbox.listInboxItems('open')
-    const item = open.find((i) => i.kind === `task-blocked(${dep.id})`)
+    const item = open.find((i) => i.kind === 'failed' && i.payload.taskId === dep.id)
     expect(item).toBeDefined()
     expect(item!.payload.lastStep).toBe('verify:test')
     expect(item!.body).toContain('at step `verify:test`')
@@ -478,11 +478,9 @@ describe('blocker-resolution (task_blockers)', () => {
         listInboxItems: typeof import('../inbox').listInboxItems
       }
       const open = await inbox.listInboxItems('open')
-      const prereqItems = open.filter((i) =>
-        i.kind.startsWith('prerequisite-failed('),
-      )
+      const prereqItems = open.filter((i) => i.kind === 'cancelled-blocker-cascade')
       expect(prereqItems).toHaveLength(1)
-      expect(prereqItems[0].kind).toBe(`prerequisite-failed(${b.id})`)
+      expect(prereqItems[0].kind).toBe('cancelled-blocker-cascade')
       expect(prereqItems[0].payload.dependentTaskId).toBe(b.id)
       expect(prereqItems[0].payload.failedBlockerTaskId).toBe(a.id)
     })
@@ -630,7 +628,7 @@ describe('blocker-resolution (task_blockers)', () => {
         args: [origin.id],
       })
       await inbox.raiseInboxItem({
-        kind: 'recovery-failed',
+        kind: 'failed',
         category: 'orchestrator',
         priority: 'high',
         title: 'recovery failed',
@@ -647,7 +645,7 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(result.originFlipped).toBe(false)
       expect(result.inboxItemsClosed).toBe(1)
       const open = await inbox.listInboxItems('open')
-      expect(open.find((r) => r.kind === 'recovery-failed')).toBeUndefined()
+      expect(open.find((r) => r.kind === 'failed')).toBeUndefined()
     })
 
     it('returns no-op when origin does not exist', async () => {
@@ -665,7 +663,7 @@ describe('blocker-resolution (task_blockers)', () => {
       const { br, inbox } = await loadModules(repo)
       const orphanOriginId = '1d4d2e62-add-an-events-view-and-an-inbox-view-to'
       await inbox.raiseInboxItem({
-        kind: 'recovery-failed',
+        kind: 'failed',
         category: 'orchestrator',
         priority: 'high',
         title: 'recovery failed',
@@ -772,7 +770,7 @@ describe('blocker-resolution (task_blockers)', () => {
       }
       const open = await inbox.listInboxItems('open')
       const ahead = open.find(
-        (i) => i.kind === 'worktree-ahead-of-integration',
+        (i) => i.kind === 'dirty-main-at-setup',
       )
       expect(ahead).toBeDefined()
       expect(ahead!.payload.taskId).toBe(dep.id)

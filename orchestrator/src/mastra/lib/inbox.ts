@@ -7,8 +7,20 @@ export type InboxCategory = 'orchestrator' | 'reflector' | 'daemon' | 'user'
 export type InboxPriority = 'urgent' | 'high' | 'normal' | 'low'
 export type InboxState = 'open' | 'acknowledged' | 'resolved' | 'dismissed'
 
+export const INBOX_KINDS = [
+  'failed',
+  'cancelled-blocker-cascade',
+  'dirty-main-at-setup',
+  'diagnose-inconclusive',
+] as const
+
+export type InboxKind = (typeof INBOX_KINDS)[number]
+
+export const isInboxKind = (s: unknown): s is InboxKind =>
+  INBOX_KINDS.includes(s as InboxKind)
+
 export interface RaiseInboxItem {
-  kind: string
+  kind: InboxKind
   category: InboxCategory | string
   priority: InboxPriority
   title: string
@@ -46,7 +58,7 @@ export interface InboxHistoryEntry {
 
 export interface InboxItem {
   id: string
-  kind: string
+  kind: InboxKind
   category: string
   priority: InboxPriority
   state: InboxState
@@ -176,6 +188,9 @@ const parseJsonObject = (
   }
 }
 
+const toKind = (raw: unknown): InboxKind =>
+  isInboxKind(raw) ? raw : 'failed'
+
 const toPriority = (raw: unknown): InboxPriority => {
   if (raw === 'urgent' || raw === 'high' || raw === 'normal' || raw === 'low') {
     return raw
@@ -271,7 +286,7 @@ const rowToInboxItem = (
       : null
   return {
     id: row.id as string,
-    kind: row.kind as string,
+    kind: toKind(row.kind),
     category: (row.category as string | null) ?? '',
     priority: toPriority(row.priority),
     state,
@@ -442,8 +457,8 @@ export const getInboxItem = async (
 }
 
 export interface ListInboxOptions {
-  /** Filter by item kind (exact match). E.g. `recovery-failed`, `no-recipe`. */
-  kind?: string
+  /** Filter by item kind (exact match). */
+  kind?: InboxKind
 }
 
 export const listInboxItems = async (

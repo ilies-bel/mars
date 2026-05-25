@@ -2972,18 +2972,17 @@ const main = async (): Promise<void> => {
       return '-'
     }
 
-    // Normalize the kind for grouping. task-blocked rows embed the task
-    // id in the kind (e.g. `task-blocked(mars-bf2ae21b)`); strip the
-    // suffix so siblings collapse.
+    // Normalize the kind for grouping. Kinds are now a closed enum with no
+    // embedded task IDs, so this is effectively a pass-through.
     const normalizeKind = (kind: string): string => {
       const paren = kind.indexOf('(')
       return paren === -1 ? kind : kind.slice(0, paren)
     }
 
     // Extract the failure signature (step + reason) without the task id.
-    // recovery-failed signatures look like `<taskId>:<step>/<reason>`; we
-    // drop the leading task-id segment. task-blocked signatures are just
-    // the task id, so we fall back to payload.lastErrorSignature.
+    // Signatures may look like `<taskId>:<step>/<reason>`; we drop the
+    // leading task-id segment when present, falling back to
+    // payload.lastErrorSignature.
     const extractSignature = (row: InboxItem): string => {
       const sig = row.signature ?? ''
       if (sig.includes(':')) return sig.slice(sig.indexOf(':') + 1)
@@ -3194,15 +3193,23 @@ const main = async (): Promise<void> => {
         )
         process.exit(1)
       }
-      const kind = flags['--kind']
-      const rows = await inbox.listInboxItems(
-        state as never,
-        kind === undefined ? {} : { kind },
-      )
+      const kindRaw = flags['--kind']
+      let kindFilter: { kind?: import('./mastra/lib/inbox').InboxKind } = {}
+      if (kindRaw !== undefined) {
+        if (inbox.isInboxKind(kindRaw)) {
+          kindFilter = { kind: kindRaw }
+        } else {
+          console.error(
+            `Unknown inbox kind: ${kindRaw}. Valid: ${inbox.INBOX_KINDS.join(', ')}`,
+          )
+          process.exit(1)
+        }
+      }
+      const rows = await inbox.listInboxItems(state as never, kindFilter)
       // Drafts surface alongside inbox rows for the human-attention views.
       // --kind filters inbox kinds only, so suppress drafts when it's set.
       const draftStatusForState =
-        kind === undefined
+        kindRaw === undefined
           ? state === 'open' || state === 'all'
             ? 'draft'
             : state === 'dismissed'

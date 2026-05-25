@@ -9,7 +9,7 @@ import {
   hasRecipe,
   type FixRecipeContext,
 } from './lib/fix-recipes'
-import { raiseInboxItem } from './lib/inbox'
+import { type InboxKind, raiseInboxItem } from './lib/inbox'
 import { truncateFailure } from './lib/truncate-failure'
 import { internalBus } from '../internal-bus'
 import {
@@ -34,9 +34,9 @@ const FIX_TASK_AUTHOR_KIND = 'agent'
 const FIX_TASK_AUTHOR_NAME = 'fail-fix-handler'
 const INVESTIGATOR_AUTHOR_NAME = 'agent:investigator'
 
-export const RECOVERY_FAILED_INBOX_KIND = 'recovery-failed'
-export const NO_RECIPE_INBOX_KIND = 'no-recipe'
-export const FIX_FAIL_LOOP_INBOX_KIND = 'fix-fail-loop'
+export const RECOVERY_FAILED_INBOX_KIND: InboxKind = 'failed'
+export const NO_RECIPE_INBOX_KIND: InboxKind = 'failed'
+export const FIX_FAIL_LOOP_INBOX_KIND: InboxKind = 'failed'
 
 const DEFAULT_MAX_FIX_ATTEMPTS = 2
 
