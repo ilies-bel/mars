@@ -39,19 +39,7 @@ export const FIXER_BACKLOG_DENIED_TOOLS: readonly string[] = [
   'Bash(mars draft*)',
 ] as const
 
-// Writer worktree-edit denial set. The Writer Worker lands glossary and ADR
-// changes through the daemon's structured-write verbs (`mars glossary
-// set/remove`, `mars adr add`). Direct edits to `CONTEXT.md` or `docs/adr/**`
-// from a coding worktree are forbidden by CLAUDE.md; denying the in-worktree
-// editors leaves the daemon verbs as the only way for a Writer to land
-// documentation, which is exactly what the routing is for.
-export const WRITER_DENIED_TOOLS: readonly string[] = [
-  'Edit',
-  'Write',
-  'NotebookEdit',
-] as const
-
-export type WorkerName = 'Coder' | 'Planner' | 'Slicer' | 'Triager' | 'Fixer' | 'Writer'
+export type WorkerName = 'Coder' | 'Planner' | 'Slicer' | 'Triager' | 'Fixer'
 
 // Execution runtime for a Worker. 'headless' is the current default and only
 // supported value — the Worker runs via `claude -p` in a non-interactive
@@ -166,15 +154,14 @@ export interface Worker {
 
 const CLAUDE_OPUS_MODEL = 'claude-opus-4-7'
 const CLAUDE_SONNET_MODEL = 'claude-sonnet-4-6'
-const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 
 // Resolve the effective model for the Coder Worker. When `MARS_WORKER_MODEL`
 // is set, it overrides the pinned default — useful for one-off sessions that
 // need Opus reasoning (e.g. a complex architectural migration) without editing
 // code. The env var is read at process start and affects every Coder run for
 // the lifetime of that daemon process; there is no per-task override.
-// Writer and Planner/Slicer are NOT affected — they always use their pinned
-// model for cost/safety reasons.
+// Planner/Slicer/Fixer are NOT affected — they always use their pinned model
+// for cost/safety reasons.
 export const CODER_MODEL: string =
   process.env.MARS_WORKER_MODEL ?? CLAUDE_SONNET_MODEL
 
@@ -257,26 +244,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     maxMessages: resolveWorkerMaxMessages(),
     runtime: 'headless',
   },
-  // Writer lands glossary/ADR slices via the daemon's structured-write verbs
-  // rather than direct worktree edits. Haiku is enough for the
-  // canonical-one-liner work these slices produce; permissionMode='default'
-  // so the wrapper does not pass --dangerously-skip-permissions (the work
-  // happens via Bash CLI calls and requires no broad file-edit grant).
-  // Edit/Write/NotebookEdit denied so the agent cannot bypass the
-  // structured-write seam by editing CONTEXT.md or docs/adr/** in the
-  // worktree.
-  Writer: {
-    name: 'Writer',
-    model: CLAUDE_HAIKU_MODEL,
-    effort: 'medium',
-    permissionMode: 'default',
-    bare: false,
-    disallowedTools: WRITER_DENIED_TOOLS,
-    outputFormat: 'stream-json',
-    defaultTimeoutMs: 20 * 60 * 1000,
-    maxMessages: resolveWorkerMaxMessages(),
-    runtime: 'headless',
-  },
 } as const
 
 // Construction-time guard. `claude -p` cannot accept both --system-prompt
@@ -331,19 +298,17 @@ export const Workers: Readonly<Record<WorkerName, Worker>> = {
   Slicer: buildWorker(WORKER_CONFIGS.Slicer),
   Triager: buildWorker(WORKER_CONFIGS.Triager),
   Fixer: buildWorker(WORKER_CONFIGS.Fixer),
-  Writer: buildWorker(WORKER_CONFIGS.Writer),
 } as const
 
 export const getWorker = (name: WorkerName): Worker => Workers[name]
 
 // Single, audited mapping from a Task's tag to the Worker that implements it.
-// Adding a tag here is the only way a new Worker becomes reachable from
-// `mars task add --tag`; conversely, removing a mapping rejects every task
-// row that names it at dispatch. The implement workflow's run-claude-code
-// step calls this to pick a Worker.
+// The structured-write accommodation lane (tag='writer' → Writer Worker) was
+// removed by ADR 0019; 'coder' is now the only valid tag and every tag
+// resolves to the default Coder Worker. The seam is preserved so future tags
+// can be added by extending TaskTag and adding a row here.
 const TAG_TO_WORKER: Readonly<Record<TaskTag, WorkerName>> = {
   coder: 'Coder',
-  writer: 'Writer',
 } as const
 
 export const getWorkerForTag = (tag: TaskTag): Worker =>

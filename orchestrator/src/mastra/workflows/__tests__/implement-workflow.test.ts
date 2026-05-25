@@ -6,8 +6,6 @@ import { resolve } from 'node:path'
 import {
   COMMIT_FOOTER,
   CODING_DISCIPLINE,
-  WRITER_FOOTER,
-  WRITER_SYSTEM_PROMPT,
   BLOCKERS_ABORT_MESSAGE,
   DIRTY_MAIN_SETUP_MESSAGE,
   DEVIATION_RULES,
@@ -84,57 +82,41 @@ describe('composePrompt — coder default', () => {
   })
 })
 
-describe('composePrompt — writer routing', () => {
-  it('appends the writer footer (not the coder commit footer) when tag is "writer"', () => {
-    const out = composePrompt('add glossary terms', null, 'writer')
-    expect(out.endsWith(WRITER_FOOTER)).toBe(true)
-    expect(out).not.toContain(COMMIT_FOOTER)
+// The 'composePrompt — writer routing' describe block was removed by ADR 0019.
+// The structured-write Writer lane no longer exists; every dispatched task
+// uses the uniform Coder path (COMMIT_FOOTER, CODING_DISCIPLINE, diff gate).
+
+describe('composePrompt — uniform commit-footer gate (ADR 0019)', () => {
+  it('always ends with COMMIT_FOOTER regardless of input', () => {
+    // The writer-footer escape hatch is removed; every task gets the commit
+    // footer so the diff gate fires uniformly on every dispatched run.
+    expect(composePrompt('do the thing', null).endsWith(COMMIT_FOOTER)).toBe(true)
+    expect(composePrompt('do the thing', null, 'coder').endsWith(COMMIT_FOOTER)).toBe(true)
   })
 
-  it('writer footer names the canonical structured-write verbs', () => {
-    expect(WRITER_FOOTER).toContain('mars glossary set')
-    expect(WRITER_FOOTER).toContain('mars glossary remove')
-    expect(WRITER_FOOTER).toContain('mars adr add')
-  })
-
-  it('writer footer makes clear the agent does not commit from the worktree', () => {
-    expect(WRITER_FOOTER).toMatch(/daemon owns the commit|do not run `git/i)
-  })
-
-  it('writer system prompt disables Edit/Write/NotebookEdit explicitly', () => {
-    expect(WRITER_SYSTEM_PROMPT).toContain('Edit, Write, and NotebookEdit are disabled')
-  })
-
-  it('writer system prompt names every supported verb so the agent has a closed list', () => {
-    expect(WRITER_SYSTEM_PROMPT).toContain('mars glossary set')
-    expect(WRITER_SYSTEM_PROMPT).toContain('mars glossary remove')
-    expect(WRITER_SYSTEM_PROMPT).toContain('mars adr add')
-  })
-
-  it('writer task prompt does NOT contain deviation-rules text', () => {
-    const out = composePrompt('add glossary terms', null, 'writer')
-    expect(out).not.toContain('## Deviation rules')
+  it('always includes CODING_DISCIPLINE regardless of input', () => {
+    // Before ADR 0019, writer tasks skipped CODING_DISCIPLINE. Now every task
+    // includes it — there is no special-case branch.
+    expect(composePrompt('do the thing', null)).toContain('## Coding discipline')
+    expect(composePrompt('do the thing', null, 'coder')).toContain('## Coding discipline')
   })
 })
 
 describe('shouldWireReadSpanWatcher — read-span guard exemption', () => {
-  it("wires the watcher for an ordinary coder task (tag='coder', kind='task')", () => {
-    expect(shouldWireReadSpanWatcher('coder', 'task')).toBe(true)
+  it("wires the watcher for an ordinary task (kind='task')", () => {
+    // After ADR 0019 the tag parameter is gone — the watcher fires for every
+    // dispatched run regardless of tag (since 'coder' is the only tag).
+    expect(shouldWireReadSpanWatcher('task')).toBe(true)
   })
 
-  it("wires the watcher for a recovery fix-task (tag='coder', kind='fix')", () => {
-    expect(shouldWireReadSpanWatcher('coder', 'fix')).toBe(true)
+  it("wires the watcher for a recovery fix-task (kind='fix')", () => {
+    expect(shouldWireReadSpanWatcher('fix')).toBe(true)
   })
 
-  it("does NOT wire the watcher for a diagnose Chore (tag='coder', kind='diagnose')", () => {
+  it("does NOT wire the watcher for a diagnose Chore (kind='diagnose')", () => {
     // PRD 06e677fb: heavy reading is the diagnose Chore's actual job;
     // its only backstop is the existing time/turn cap.
-    expect(shouldWireReadSpanWatcher('coder', 'diagnose')).toBe(false)
-  })
-
-  it("does NOT wire the watcher for a writer task (tag='writer')", () => {
-    expect(shouldWireReadSpanWatcher('writer', 'task')).toBe(false)
-    expect(shouldWireReadSpanWatcher('writer', 'diagnose')).toBe(false)
+    expect(shouldWireReadSpanWatcher('diagnose')).toBe(false)
   })
 })
 
@@ -152,7 +134,6 @@ describe('composePrompt — diagnose Chore short-circuit', () => {
     )
     expect(out).toBe(prompt.trim())
     expect(out).not.toContain(COMMIT_FOOTER)
-    expect(out).not.toContain(WRITER_FOOTER)
   })
 
   it("does not inject the worktree orientation block when kind is 'diagnose'", () => {
@@ -172,20 +153,25 @@ describe('composePrompt — diagnose Chore short-circuit', () => {
   })
 })
 
-describe('resolveWorkerSystemPrompt — deviation rules in coder standing instructions', () => {
-  it('coder standing instructions contain the full deviation-rules text', () => {
+describe('resolveWorkerSystemPrompt — uniform Coder standing instructions (ADR 0019)', () => {
+  it('standing instructions contain the full deviation-rules text', () => {
     const prompt = resolveWorkerSystemPrompt('coder')
     expect(prompt).toContain('## Deviation rules')
     expect(prompt).toContain('do NOT quit silently')
   })
 
-  it('writer standing instructions are byte-identical to WRITER_SYSTEM_PROMPT', () => {
-    expect(resolveWorkerSystemPrompt('writer')).toBe(WRITER_SYSTEM_PROMPT)
+  it('DEVIATION_RULES is not injected as a standalone section — it is embedded in the system prompt', () => {
+    const prompt = resolveWorkerSystemPrompt('coder')
+    expect(prompt).toContain(DEVIATION_RULES)
   })
 
-  it('DEVIATION_RULES is not injected as a standalone section — it is embedded in CODER_SYSTEM_PROMPT', () => {
+  it('every task tag resolves to the same Coder standing instructions (no writer branch)', () => {
+    // The structured-write Writer system prompt was removed by ADR 0019.
+    // resolveWorkerSystemPrompt now returns the Coder instructions for every tag.
     const coderPrompt = resolveWorkerSystemPrompt('coder')
-    expect(coderPrompt).toContain(DEVIATION_RULES)
+    expect(coderPrompt).toContain('## Deviation rules')
+    // Verify the function is deterministic and returns the coder prompt for every valid tag.
+    expect(resolveWorkerSystemPrompt('coder')).toBe(coderPrompt)
   })
 })
 
@@ -220,10 +206,10 @@ describe('resolveWorkerSystemPrompt — read-span guard budget in standing instr
     expect(instructions).not.toContain('**5**')
   })
 
-  it('writer standing instructions are unchanged — no read-span guard section', () => {
-    const instructions = resolveWorkerSystemPrompt('writer')
-    expect(instructions).toBe(WRITER_SYSTEM_PROMPT)
-    expect(WRITER_SYSTEM_PROMPT).not.toMatch(/Read.span guard/i)
+  it('every tag resolves to the same standing instructions including the read-span guard section', () => {
+    // After ADR 0019 there is no writer-specific prompt without the guard.
+    const instructions = resolveWorkerSystemPrompt('coder')
+    expect(instructions).toMatch(/Read.span guard/i)
   })
 })
 
@@ -314,11 +300,6 @@ describe('composePrompt — coding discipline', () => {
     const footerIdx = out.indexOf(COMMIT_FOOTER)
     expect(disciplineIdx).toBeGreaterThan(-1)
     expect(footerIdx).toBeGreaterThan(disciplineIdx)
-  })
-
-  it('does NOT include coding discipline in writer task prompts', () => {
-    const out = composePrompt('add glossary terms', null, 'writer')
-    expect(out).not.toContain('## Coding discipline')
   })
 
   it('does NOT include coding discipline in diagnose prompts', () => {
@@ -564,11 +545,7 @@ describe('resolveWorkerSystemPrompt — Explore-trust rule inside deviation-rule
     )
   })
 
-  it('the Writer system prompt does not contain the Explore-trust rule', () => {
-    expect(WRITER_SYSTEM_PROMPT).not.toContain(
-      'treat that summary as authoritative orientation',
-    )
-  })
+  // The Writer system prompt test was removed by ADR 0019 (Writer Worker no longer exists).
 })
 
 describe('buildCoderSystemPrompt — context-gathering discipline brief', () => {
@@ -606,10 +583,11 @@ describe('buildCoderSystemPrompt — context-gathering discipline brief', () => 
     expect(CONTEXT_GATHERING_BRIEF).toMatch(/Explore/i)
   })
 
-  it('writer standing instructions do NOT contain the context-gathering discipline brief', () => {
-    // Writer is exempt; only Coder and Fixer (which share the Coder path) carry the brief.
-    const writerInstructions = resolveWorkerSystemPrompt('writer')!
-    expect(writerInstructions).not.toContain(CONTEXT_GATHERING_BRIEF)
+  it('every dispatched task carries the context-gathering discipline brief (no exempt tag)', () => {
+    // After ADR 0019 every tag resolves to the Coder standing instructions,
+    // so the brief is present for all dispatched tasks.
+    const instructions = resolveWorkerSystemPrompt('coder')
+    expect(instructions).toContain(CONTEXT_GATHERING_BRIEF)
   })
 })
 

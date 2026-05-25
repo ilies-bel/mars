@@ -141,16 +141,14 @@ Commands:
                                 ayush-that/sub-agents.directory over HTTPS, cached
                                 under .mars/cache/sub-agents/ (7-day TTL).
                                 --verbose lists each discovered manifest on stderr.
-  task add "<prompt>" [--author kind:name] [--blocked-by <id>] [--tag coder|writer] [plan flags]
+  task add "<prompt>" [--author kind:name] [--blocked-by <id>] [--tag coder] [plan flags]
                                 enqueue a runnable task directly (status='queued',
                                 skips triage; can be picked up by agent runners).
                                 --blocked-by <id> is repeatable; every id must
                                 already exist. The task will not dispatch until
                                 every listed blocker reaches 'done'. --tag picks
                                 the Worker that implements the task: 'coder'
-                                (default) edits the worktree; 'writer' lands
-                                glossary/ADR changes via the structured-write
-                                daemon (no in-worktree edits).
+                                (default, only valid value) edits the worktree.
   proposal add "<goal>" [--author kind:name]
                                 create a proposal/plan in .mars/state.db. Author
                                 is detected from env/git when omitted: human if
@@ -983,7 +981,7 @@ const main = async (): Promise<void> => {
     skipTriage: boolean,
     blockerIds?: readonly string[],
     priority?: number,
-    tag?: 'coder' | 'writer',
+    tag?: 'coder',
     spec?: {
       files: readonly string[]
       verifyCmd: string | null
@@ -1068,7 +1066,7 @@ const main = async (): Promise<void> => {
       const prompt = rest.slice(1).join(' ')
       if (!prompt) {
         console.error(
-          'usage: mars task add "<prompt>" [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder|writer] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [plan flags]',
+          'usage: mars task add "<prompt>" [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [plan flags]',
         )
         process.exit(1)
       }
@@ -1084,10 +1082,10 @@ const main = async (): Promise<void> => {
         priority = n
       }
       const tagRaw = flags['--tag']
-      let tag: 'coder' | 'writer' | undefined
+      let tag: 'coder' | undefined
       if (tagRaw !== undefined) {
-        if (tagRaw !== 'coder' && tagRaw !== 'writer') {
-          console.error(`tag must be one of coder, writer; got '${tagRaw}'`)
+        if (tagRaw !== 'coder') {
+          console.error(`tag must be one of coder; got '${tagRaw}'`)
           process.exit(1)
         }
         tag = tagRaw
