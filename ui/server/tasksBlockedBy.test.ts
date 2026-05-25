@@ -103,6 +103,70 @@ const insertBlocker = async (
   })
 }
 
+/**
+ * Edge-case: when the queue DB was created before the task_blockers table was
+ * added (older schema), the server must still return `blockedBy: []` rather
+ * than a missing field or null.
+ */
+describe('GET /api/tasks — blockedBy field (no task_blockers table)', () => {
+  let repo: string
+  let server: ReturnType<typeof Bun.serve> | null = null
+  let baseUrl: string
+  let queueDbPath: string
+
+  beforeEach(async () => {
+    repo = setupRepo()
+    queueDbPath = resolve(repo, '.mars/queue.db')
+    const stateDbPath = resolve(repo, '.mars/state.db')
+    // Create schema WITHOUT task_blockers to simulate an older deployment.
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await qc.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY,
+      prompt TEXT NOT NULL,
+      status TEXT NOT NULL,
+      plan_functional TEXT,
+      plan_technical TEXT,
+      branch TEXT,
+      worktree_path TEXT,
+      claude_session_id TEXT,
+      error TEXT,
+      drop_reason TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`)
+    qc.close()
+    const sc = await createStateSchema(stateDbPath)
+    sc.close()
+
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' })
+    baseUrl = `http://${server.hostname}:${server.port}`
+  })
+
+  afterEach(() => {
+    if (server) server.stop(true)
+    server = null
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns blockedBy: [] for all tasks when task_blockers table is absent', async () => {
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at)
+            VALUES ('t-legacy', 'legacy task', 'queued', 0, ?, ?)`,
+      args: [new Date().toISOString(), new Date().toISOString()],
+    })
+    qc.close()
+
+    const res = await fetch(`${baseUrl}/api/tasks`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as TasksBody
+    expect(body.tasks).toHaveLength(1)
+    expect(Array.isArray(body.tasks[0]!.blockedBy)).toBe(true)
+    expect(body.tasks[0]!.blockedBy).toEqual([])
+  })
+})
+
 describe('GET /api/tasks — blockedBy field', () => {
   let repo: string
   let server: ReturnType<typeof Bun.serve> | null = null
