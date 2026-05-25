@@ -82,6 +82,51 @@ describe('fix-recipes', () => {
     })
   })
 
+  describe('setup:preflight/dirty-main recipe', () => {
+    const ctx = {
+      targetPath: '/tmp/main-checkout',
+      statusOutput: ' M orchestrator/src/foo.ts\n?? new-file.txt\n',
+      targetBranch: 'main',
+      originalPrompt: '',
+    }
+
+    it('is registered and marked shared (one recovery, many edges)', () => {
+      expect(hasRecipe('setup:preflight/dirty-main')).toBe(true)
+      expect(getRecipe('setup:preflight/dirty-main').shared).toBe(true)
+    })
+
+    it('produces a stable title naming the merge target', () => {
+      const recipe = getRecipe('setup:preflight/dirty-main')
+      expect(recipe.title(ctx)).toBe(
+        'Auto-commit dirty changes on main blocking task setup',
+      )
+    })
+
+    it('auto-commits via git -C on the merge target without judgement', () => {
+      const recipe = getRecipe('setup:preflight/dirty-main')
+      const prompt = recipe.buildPrompt(ctx)
+      // Operates on the merge target directly, never a worktree, never cd.
+      expect(prompt).toContain(`git -C ${ctx.targetPath} add -A`)
+      expect(prompt).toContain(`git -C ${ctx.targetPath} commit`)
+      expect(prompt).toContain(`git -C ${ctx.targetPath} status --porcelain`)
+      expect(prompt).toMatch(/Do NOT `cd`/)
+      // Auto-commit, not the triage/discard judgement of the merge-time recipe.
+      expect(prompt).toContain('auto-commits without judgement')
+      expect(prompt).not.toContain('discard files that are clearly transient')
+      // No push; commit lands on the merge target branch in place.
+      expect(prompt).toContain('Do NOT push')
+      expect(prompt).toContain(ctx.statusOutput.trim())
+    })
+
+    it('re-checks first and no-ops if the tree is already clean', () => {
+      const recipe = getRecipe('setup:preflight/dirty-main')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('STEP 1')
+      expect(prompt).toMatch(/Exit successfully/i)
+      expect(prompt).toContain('may be stale')
+    })
+  })
+
   describe('setup:install/install-frozen-lockfile recipe', () => {
     const ctx = {
       targetPath: '/tmp/worktree/orchestrator',

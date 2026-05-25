@@ -44,6 +44,19 @@ describe('computeFailureSignature', () => {
     ).toBe('merge:preflight/not-fast-forward')
   })
 
+  it('classifies the setup-time dirty merge target as dirty-main, distinct from the merge-time uncommitted-changes', () => {
+    // setupStep emits `merge target is dirty before coding on <branch>` as
+    // the first line. It must classify as `dirty-main` (its own recipe),
+    // NOT `uncommitted-changes` (the merge-time variant) — the phrasing
+    // deliberately omits "has uncommitted changes" to avoid the collision.
+    expect(
+      computeFailureSignature(
+        'setup:preflight',
+        'merge target is dirty before coding on main\n\n M orchestrator/src/foo.ts',
+      ),
+    ).toBe('setup:preflight/dirty-main')
+  })
+
   it('returns the unclassified slug when no rule matches', () => {
     const sig = computeFailureSignature(
       'verify:test',
