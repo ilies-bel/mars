@@ -12,7 +12,7 @@ const tabClass = (active: boolean): string =>
   ].join(' ')
 
 /**
- * Tab strip rendered above the Kanban body. Selecting a tab calls
+ * Tab strip rendered above the Progress body. Selecting a tab calls
  * `onSelect` — the strip is a controlled component, parent owns the
  * active tab so it can keep the choice in component state without
  * mutating the URL/hash.
@@ -20,7 +20,7 @@ const tabClass = (active: boolean): string =>
 export const TabStrip = ({ active, onSelect }: TabStripProps) => (
   <div
     role="tablist"
-    aria-label="Kanban views"
+    aria-label="Progress views"
     className="flex items-center gap-2 border-b border-iron/30 bg-bg px-4 py-1.5"
   >
     {TABS.map((tab) => {
