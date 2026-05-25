@@ -2913,206 +2913,75 @@ const main = async (): Promise<void> => {
     const subRest = lean ? rest.filter((a) => a !== '--lean') : rest
     const sub = subRest[0]
     const inbox = await import('./mastra/lib/inbox')
-    type InboxItem = Awaited<ReturnType<typeof inbox.listInboxItems>>[number]
+    const derived = await import('./mastra/lib/derived-inbox')
+    const dismissals = await import('./mastra/lib/inbox-dismissals')
+    type DerivedRow = import('./mastra/lib/derived-inbox').DerivedInboxRow
+    type DagNode = import('./mastra/lib/derived-inbox').DagNode
 
-    interface DraftRow {
-      id: string
-      title: string
-      source: string
-      status: 'draft' | 'dismissed'
-      createdAt: number
-    }
+    const LEAN_PREVIEW = 3
 
-    const printList = (rows: InboxItem[], drafts: DraftRow[]): void => {
-      if (rows.length === 0 && drafts.length === 0) {
+    const printList = (rows: DerivedRow[]): void => {
+      if (rows.length === 0) {
         console.log('inbox empty')
         return
       }
       for (const row of rows) {
-        const idShort = row.id.slice(0, 8)
-        const sig = row.signature ? `(${row.signature})` : '()'
+        const flag = row.dismissed ? 'dismissed' : 'open'
         console.log(
-          `${idShort}\t${row.state}\t${row.priority}\t×${row.seenCount}\t${row.kind}${sig}\t${row.title}`,
-        )
-      }
-      for (const d of drafts) {
-        const idShort = d.id.slice(0, 8)
-        const title = d.title.replace(/\s+/g, ' ').trim() || '(no title)'
-        console.log(
-          `${idShort}\t${d.status === 'draft' ? 'open' : 'dismissed'}\t-\t-\tdraft(${d.source})\t${title}`,
+          `${row.id}\t${flag}\t${row.priority}\t${row.kind}\t${row.title}`,
         )
       }
     }
 
-    interface LeanDraft {
-      id: string
-      title: string
-    }
-
-    interface BlockerGroup {
-      kind: string
-      signature: string
-      count: number
-      latestTaskId: string
-      latestRaisedAt: string
-    }
-
-    const LEAN_PREVIEW = 3
-
-    // Pull the upstream task id out of an inbox payload. recovery-failed
-    // items use `originTaskId`; task-blocked items use `taskId`. Fall back
-    // to '-' so the group row stays renderable.
-    const extractTaskId = (payload: Record<string, unknown>): string => {
-      const origin = payload.originTaskId
-      if (typeof origin === 'string' && origin.length > 0) return origin
-      const taskId = payload.taskId
-      if (typeof taskId === 'string' && taskId.length > 0) return taskId
-      return '-'
-    }
-
-    // Normalize the kind for grouping. Kinds are now a closed enum with no
-    // embedded task IDs, so this is effectively a pass-through.
-    const normalizeKind = (kind: string): string => {
-      const paren = kind.indexOf('(')
-      return paren === -1 ? kind : kind.slice(0, paren)
-    }
-
-    // Extract the failure signature (step + reason) without the task id.
-    // Signatures may look like `<taskId>:<step>/<reason>`; we drop the
-    // leading task-id segment when present, falling back to
-    // payload.lastErrorSignature.
-    const extractSignature = (row: InboxItem): string => {
-      const sig = row.signature ?? ''
-      if (sig.includes(':')) return sig.slice(sig.indexOf(':') + 1)
-      const fallback = row.payload.lastErrorSignature
-      if (typeof fallback === 'string' && fallback.length > 0) return fallback
-      return '-'
-    }
-
-    const groupBlockers = (rows: InboxItem[]): BlockerGroup[] => {
-      const byKey = new Map<string, BlockerGroup>()
-      for (const row of rows) {
-        const kind = normalizeKind(row.kind)
-        const signature = extractSignature(row)
-        const key = `${kind}|${signature}`
-        const taskId = extractTaskId(row.payload)
-        const existing = byKey.get(key)
-        if (existing === undefined) {
-          byKey.set(key, {
-            kind,
-            signature,
-            count: 1,
-            latestTaskId: taskId,
-            latestRaisedAt: row.raisedAt,
-          })
-          continue
-        }
-        existing.count += 1
-        // listInboxItems returns raised_at DESC, so the first row we see
-        // for a group is already the latest. Guard anyway in case ordering
-        // changes upstream.
-        if (row.raisedAt > existing.latestRaisedAt) {
-          existing.latestRaisedAt = row.raisedAt
-          existing.latestTaskId = taskId
-        }
-      }
-      return [...byKey.values()].sort((a, b) => {
-        if (b.count !== a.count) return b.count - a.count
-        return b.latestRaisedAt.localeCompare(a.latestRaisedAt)
-      })
-    }
-
-    const printLean = (rows: InboxItem[], drafts: LeanDraft[]): void => {
-      if (rows.length === 0 && drafts.length === 0) {
+    const printLean = (rows: DerivedRow[]): void => {
+      if (rows.length === 0) {
         console.log('inbox empty')
         return
       }
       const counts: Record<string, number> = {}
       for (const row of rows) {
-        counts[row.priority] = (counts[row.priority] ?? 0) + 1
+        counts[row.kind] = (counts[row.kind] ?? 0) + 1
       }
-      const order = ['high', 'medium', 'low']
-      const seen = new Set(order)
-      const parts = [
-        ...order.filter((p) => counts[p]).map((p) => `${p}:${counts[p]}`),
-        ...Object.keys(counts)
-          .filter((p) => !seen.has(p))
-          .map((p) => `${p}:${counts[p]}`),
-      ]
-      const summary =
-        parts.length > 0
-          ? `inbox ${rows.length} open (${parts.join(', ')})`
-          : `inbox ${rows.length} open`
-      console.log(summary)
-
-      if (rows.length > 0) {
-        const groups = groupBlockers(rows)
-        const header =
-          groups.length < rows.length
-            ? `blockers (${groups.length} groups, ${rows.length} items):`
-            : `blockers (${rows.length}):`
-        console.log(header)
-        for (const g of groups.slice(0, LEAN_PREVIEW)) {
-          console.log(
-            `  ${g.kind}  ${g.signature}  x${g.count}  latest ${g.latestTaskId}`,
-          )
-        }
-        const overflow = groups.length - LEAN_PREVIEW
-        if (overflow > 0) {
-          console.log(`  ... +${overflow} more`)
-        }
+      const parts = Object.entries(counts).map(([k, n]) => `${k}:${n}`)
+      console.log(`inbox ${rows.length} (${parts.join(', ')})`)
+      for (const row of rows.slice(0, LEAN_PREVIEW)) {
+        console.log(`  ${row.id}  ${row.title}`)
       }
+      const overflow = rows.length - LEAN_PREVIEW
+      if (overflow > 0) console.log(`  ... +${overflow} more`)
+    }
 
-      if (drafts.length > 0) {
-        console.log(`drafts (${drafts.length}):`)
-        for (const d of drafts.slice(0, LEAN_PREVIEW)) {
-          const idShort = d.id.slice(0, 8)
-          console.log(`  ${idShort}  ${d.title}`)
-        }
+    const printDag = (label: string, nodes: DagNode[]): void => {
+      if (nodes.length === 0) return
+      console.log(`  ${label}:`)
+      for (const n of nodes) {
+        console.log(`    - ${n.id} (${n.status})  ${n.summary}`)
       }
     }
 
-    const printShow = (item: InboxItem): void => {
-      const sig = item.signature ?? '-'
-      console.log(`id:           ${item.id}`)
-      console.log(`kind:         ${item.kind} (${sig})`)
-      console.log(`category:     ${item.category}`)
-      console.log(`state:        ${item.state}`)
-      console.log(`priority:     ${item.priority}`)
-      console.log(`seen_count:   ${item.seenCount}`)
-      console.log(`raised_by:    ${item.raisedBy}`)
-      console.log(`raised_at:    ${item.raisedAt}`)
-      console.log(`last_seen_at: ${item.lastSeenAt}`)
+    const printShow = (row: DerivedRow): void => {
+      console.log(`id:        ${row.id}`)
+      console.log(`kind:      ${row.kind}`)
+      console.log(`entity:    ${row.entityId}`)
+      console.log(`priority:  ${row.priority}`)
+      console.log(`dismissed: ${row.dismissed}`)
+      console.log(`at:        ${row.at}`)
       console.log('')
-      console.log(item.body)
-      console.log('')
-      console.log('payload:')
-      const payloadJson = JSON.stringify(item.payload, null, 2)
-      for (const line of payloadJson.split('\n')) console.log(`  ${line}`)
-      console.log('context:')
-      const contextJson = JSON.stringify(item.context, null, 2)
-      for (const line of contextJson.split('\n')) console.log(`  ${line}`)
-      console.log('')
-      if (item.resolutionDetails) {
-        console.log('resolution:')
-        console.log(`  state:       ${item.resolutionDetails.state}`)
-        console.log(`  resolved_by: ${item.resolutionDetails.resolvedBy ?? '-'}`)
-        console.log(`  resolved_at: ${item.resolutionDetails.resolvedAt}`)
-        if (item.resolutionDetails.note) {
-          console.log(`  note:        ${item.resolutionDetails.note}`)
+      console.log(row.body)
+      if (row.dag) {
+        console.log('')
+        console.log('dag:')
+        if (row.dag.origin) {
+          console.log(
+            `  origin: ${row.dag.origin.id} (${row.dag.origin.status})`,
+          )
         }
-        if (item.resolutionDetails.rootCause) {
-          console.log(`  root_cause:  ${item.resolutionDetails.rootCause}`)
+        if (row.dag.proposalId) {
+          console.log(`  proposal: ${row.dag.proposalId}`)
         }
-      }
-      if (item.history.length > 0) {
-        console.log('history:')
-        for (const h of item.history) {
-          const from = h.fromState ?? '-'
-          const by = h.by ?? '-'
-          const note = h.note ? ` note=${JSON.stringify(h.note)}` : ''
-          console.log(`  ${h.at}\t${from} -> ${h.toState}\tby=${by}${note}`)
-        }
+        printDag('blockers (waits on)', row.dag.blockers)
+        printDag('blocking (waited on by)', row.dag.blocking)
+        printDag('descendants (recovery)', row.dag.descendants)
       }
     }
 
@@ -3176,78 +3045,22 @@ const main = async (): Promise<void> => {
     }
 
     if (sub === undefined || sub === 'list') {
-      const stateRaw = sub === 'list' ? subRest[1] : 'open'
-      const state = stateRaw ?? 'open'
-      const allowed = new Set([
-        'open',
-        'acknowledged',
-        'resolved',
-        'dismissed',
-        'all',
-      ])
-      if (!allowed.has(state)) {
-        console.error(
-          `usage: mars inbox list [open|acknowledged|resolved|dismissed|all] [--kind <kind>] [--lean]`,
-        )
+      const filterRaw = sub === 'list' ? subRest[1] : 'open'
+      const filter = filterRaw ?? 'open'
+      const allowed = new Set(['open', 'dismissed', 'all'])
+      if (!allowed.has(filter)) {
+        console.error('usage: mars inbox list [open|dismissed|all] [--lean]')
         process.exit(1)
       }
-      const kindRaw = flags['--kind']
-      let kindFilter: { kind?: import('./mastra/lib/inbox').InboxKind } = {}
-      if (kindRaw !== undefined) {
-        if (inbox.isInboxKind(kindRaw)) {
-          kindFilter = { kind: kindRaw }
-        } else {
-          console.error(
-            `Unknown inbox kind: ${kindRaw}. Valid: ${inbox.INBOX_KINDS.join(', ')}`,
-          )
-          process.exit(1)
-        }
-      }
-      const rows = await inbox.listInboxItems(state as never, kindFilter)
-      // Drafts surface alongside inbox rows for the human-attention views.
-      // --kind filters inbox kinds only, so suppress drafts when it's set.
-      const draftStatusForState =
-        kindRaw === undefined
-          ? state === 'open' || state === 'all'
-            ? 'draft'
-            : state === 'dismissed'
-              ? 'dismissed'
-              : null
-          : null
-      const draftIdeas =
-        draftStatusForState === null
-          ? []
-          : await (async () => {
-              const { listProposals } = await import('./mastra/proposals')
-              return listProposals({ status: draftStatusForState })
-            })()
+      const rows = await derived.listDerivedInbox({
+        filter: filter as 'open' | 'dismissed' | 'all',
+      })
       if (lean) {
-        // listProposals returns newest first; reverse for FIFO (oldest first).
-        const drafts: LeanDraft[] = [...draftIdeas].reverse().map((i) => ({
-          id: i.id,
-          title: i.title.replace(/\s+/g, ' ').trim() || '(no title)',
-        }))
-        printLean(rows, drafts)
+        printLean(rows)
       } else {
-        const drafts: DraftRow[] = draftIdeas.map((i) => ({
-          id: i.id,
-          title: i.title,
-          source: i.source,
-          status: i.status === 'dismissed' ? 'dismissed' : 'draft',
-          createdAt: i.createdAt,
-        }))
-        printList(rows, drafts)
+        printList(rows)
       }
       return
-    }
-
-    // Drafts surface in `mars inbox list`, but the inbox verbs don't own
-    // their lifecycle — point the caller at `mars proposal ...` instead of
-    // failing with a generic "no inbox item" message.
-    const isDraftId = async (id: string): Promise<boolean> => {
-      const { resolveProposalId } = await import('./mastra/proposals')
-      const resolved = await resolveProposalId(id)
-      return resolved.kind === 'unique'
     }
 
     if (sub === 'show') {
@@ -3256,97 +3069,50 @@ const main = async (): Promise<void> => {
         console.error('usage: mars inbox show <id>')
         process.exit(1)
       }
-      const item = await inbox.getInboxItem(id)
-      if (!item) {
-        if (await isDraftId(id)) {
-          console.error(
-            `${id} is a draft proposal, not an inbox item. Use \`mars proposal show ${id}\`.`,
-          )
-        } else {
-          console.error(`no inbox item matching ${id}`)
-        }
+      const row = await derived.getDerivedInboxRow(id)
+      if (!row) {
+        console.error(`no inbox item matching ${id}`)
         process.exit(1)
       }
-      printShow(item)
+      printShow(row)
       return
     }
 
-    if (sub === 'ack' || sub === 'resolve' || sub === 'dismiss') {
+    if (sub === 'dismiss' || sub === 'undismiss') {
       const id = subRest[1]
       if (!id) {
         console.error(`usage: mars inbox ${sub} <id>`)
         process.exit(1)
       }
-      const targetState =
-        sub === 'ack' ? 'acknowledged' : sub === 'resolve' ? 'resolved' : 'dismissed'
-      const note = flags['--note']
-      const rootCause = flags['--root-cause']
-      if (sub !== 'resolve' && rootCause !== undefined) {
-        console.error('--root-cause is only valid with `mars inbox resolve`')
+      const row = await derived.getDerivedInboxRow(id)
+      if (!row) {
+        console.error(`no inbox item matching ${id}`)
         process.exit(1)
       }
-      const before = await inbox.getInboxItem(id)
-      if (!before) {
-        if (await isDraftId(id)) {
-          const hint =
-            sub === 'dismiss'
-              ? `Use \`mars proposal reject ${id}\` or \`mars proposal delete ${id}\`.`
-              : sub === 'resolve'
-                ? `Promote it with \`mars proposal promote ${id}\` or enqueue via \`mars task add\`.`
-                : `Shape it with \`/mars:grill ${id}\` or promote via \`mars proposal promote\`.`
-          console.error(
-            `${id} is a draft proposal, not an inbox item. ${hint}`,
-          )
-        } else {
-          console.error(`no inbox item matching ${id}`)
-        }
-        process.exit(1)
-      }
-      const isAlreadyTerminal =
-        before.state === 'resolved' || before.state === 'dismissed'
-      if (isAlreadyTerminal) {
-        console.error(
-          `inbox item ${before.id.slice(0, 8)} is already ${before.state}; no change`,
+      const entityKind = derived.dismissalKindForRow(row.kind)
+      if (sub === 'dismiss') {
+        const { resolveAuthor, formatAuthor } = await import('./mastra/author')
+        const by = formatAuthor(resolveAuthor(flags['--author']))
+        const note = flags['--note']
+        await dismissals.dismissEntity(entityKind, row.entityId, {
+          by,
+          ...(note !== undefined ? { note } : {}),
+        })
+        console.log(`dismiss ${row.id}`)
+      } else {
+        const removed = await dismissals.undismissEntity(
+          entityKind,
+          row.entityId,
         )
-        return
+        console.log(
+          removed ? `undismiss ${row.id}` : `${row.id} was not dismissed`,
+        )
       }
-      const { resolveAuthor, formatAuthor } = await import('./mastra/author')
-      const author = resolveAuthor(flags['--author'])
-      const opts: {
-        by?: string
-        note?: string
-        rootCause?: string
-        resolution?: string
-      } = { by: formatAuthor(author) }
-      if (note !== undefined) opts.note = note
-      if (rootCause !== undefined) opts.rootCause = rootCause
-      if (sub === 'resolve' || sub === 'dismiss') {
-        opts.resolution = targetState
-      }
-      await inbox.setInboxState(before.id, targetState, opts)
-      console.log(`${sub} ${before.id.slice(0, 8)} (${targetState})`)
-      return
-    }
-
-    if (sub === 'reconcile') {
-      const { listTasks } = await import('./mastra/queue')
-      const [doneTasks, droppedTasks] = await Promise.all([
-        listTasks('done'),
-        listTasks('dropped'),
-      ])
-      const terminatedTasks = [
-        ...doneTasks.map((t) => ({ id: t.id, status: 'done' as const })),
-        ...droppedTasks.map((t) => ({ id: t.id, status: 'dropped' as const })),
-      ]
-      const { closed } = await inbox.reconcileStaleInboxItems(terminatedTasks)
-      console.log(
-        `reconcile: closed ${closed} stale inbox item${closed === 1 ? '' : 's'}`,
-      )
       return
     }
 
     console.error(
-      'usage: mars inbox [list [state] [--lean] | show <id> | ack <id> | resolve <id> [--note <text>] [--root-cause <text>] | dismiss <id> [--note <text>] | raise --from <-|path> | watch | reconcile]',
+      'usage: mars inbox [list [open|dismissed|all] [--lean] | show <id> | dismiss <id> [--note <text>] | undismiss <id> | raise --from <-|path> | watch]',
     )
     process.exit(1)
   }
