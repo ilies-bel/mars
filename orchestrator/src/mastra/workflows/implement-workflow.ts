@@ -1050,12 +1050,20 @@ const verifyStep = createStep({
     // task branch is correctly 0 commits ahead of integration and the
     // has-diff check would reject a perfectly successful Writer run.
     // Skip has-diff for writer; the typecheck/test/lint gates still apply.
+    //
+    // Fix tasks (kind='fix') have a no-op-is-legitimate contract: the
+    // dirty-main recipe, for one, explicitly tells the agent to exit
+    // clean when main is already clean. The race between the recipe
+    // firing and main self-cleaning makes a zero-commit exit the
+    // correct outcome in that branch. If a fix task exits with no
+    // commits and the underlying problem isn't actually resolved, the
+    // origin's next verify cycle re-fails and spawns another recovery.
     const r = await verifyChanges({
       cwd: verifyCwd,
       steps,
       branch: inputData.branch,
       integrationBranch: inputData.integrationBranch,
-      skipDiffCheck: inputData.tag === 'writer',
+      skipDiffCheck: inputData.tag === 'writer' || inputData.kind === 'fix',
     })
 
     if (!isReflectDisabled()) {
