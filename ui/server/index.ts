@@ -4,6 +4,7 @@ import { loadAgents } from './agents.ts'
 import { StateDb, TaskDb } from './db.ts'
 import { listTerminalEvents } from './events.ts'
 import { aggregateInbox } from './inbox.ts'
+import { listInboxItems, parseSourceParam } from './inboxItems.ts'
 import { resolveRepo } from './repo.ts'
 import { SseHub } from './sse.ts'
 import { watchQueue } from './watch.ts'
@@ -154,6 +155,21 @@ export const startServer = async (
         try {
           const inbox = await aggregateInbox(db, stateDb)
           return jsonResponse(200, inbox)
+        } catch (err) {
+          return jsonResponse(500, { error: (err as Error).message })
+        }
+      }
+
+      if (path === '/api/inbox/items') {
+        try {
+          const source = parseSourceParam(url.searchParams.get('source'))
+          if (source === 'invalid') {
+            return jsonResponse(400, {
+              error: "source must be one of 'draft', 'blocked', 'failed'",
+            })
+          }
+          const items = await listInboxItems(db, stateDb, source)
+          return jsonResponse(200, items)
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }
