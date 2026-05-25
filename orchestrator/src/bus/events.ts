@@ -112,14 +112,6 @@ export const EventMap = {
     taskId: z.string(),
     kind: z.string(),
   }),
-  'question.raised': z.object({
-    questionId: z.string(),
-    taskId: z.string(),
-    category: z.string(),
-  }),
-  'question.answered': z.object({
-    taskId: z.string(),
-  }),
 } as const;
 
 /** Union of every registered event type name. */
