@@ -11,6 +11,7 @@ interface InboxModule {
   setInboxState: typeof import('./inbox').setInboxState
   setRecoveryFindings: typeof import('./inbox').setRecoveryFindings
   supersedeInboxItemsForOrigin: typeof import('./inbox').supersedeInboxItemsForOrigin
+  reconcileStaleInboxItems: typeof import('./inbox').reconcileStaleInboxItems
 }
 
 const setupRepo = (): string => {
@@ -476,5 +477,123 @@ describe('inbox', () => {
     expect(open).toHaveLength(1)
     expect(open[0].id).toBe(b)
     expect(open[0].seenCount).toBe(1)
+  })
+
+  describe('reconcileStaleInboxItems', () => {
+    it('closes open items whose origin task is done', async () => {
+      const inbox = await loadModule(repo)
+      const doneTaskId = 'task-done-1'
+      const itemId = await inbox.raiseInboxItem(
+        baseItem({ kind: 'recovery-failed', signature: 'sig-done', originTaskId: doneTaskId }),
+      )
+
+      const result = await inbox.reconcileStaleInboxItems([
+        { id: doneTaskId, status: 'done' },
+      ])
+
+      expect(result.closed).toBe(1)
+      const item = await inbox.getInboxItem(itemId)
+      expect(item!.state).toBe('resolved')
+      expect(item!.resolution).toBe('superseded')
+      expect(item!.resolutionNote).toBe('superseded: origin-done')
+    })
+
+    it('closes open items whose origin task is dropped', async () => {
+      const inbox = await loadModule(repo)
+      const droppedTaskId = 'task-dropped-1'
+      const itemId = await inbox.raiseInboxItem(
+        baseItem({ kind: 'task-blocked', signature: 'sig-dropped', originTaskId: droppedTaskId }),
+      )
+
+      const result = await inbox.reconcileStaleInboxItems([
+        { id: droppedTaskId, status: 'dropped' },
+      ])
+
+      expect(result.closed).toBe(1)
+      const item = await inbox.getInboxItem(itemId)
+      expect(item!.state).toBe('resolved')
+      expect(item!.resolutionNote).toBe('superseded: origin-dropped')
+    })
+
+    it('leaves open items whose origin task is failed', async () => {
+      const inbox = await loadModule(repo)
+      const failedTaskId = 'task-failed-1'
+      const itemId = await inbox.raiseInboxItem(
+        baseItem({ kind: 'recovery-failed', signature: 'sig-failed', originTaskId: failedTaskId }),
+      )
+
+      // Failed tasks are not passed to reconcile — only done/dropped are
+      const result = await inbox.reconcileStaleInboxItems([])
+
+      expect(result.closed).toBe(0)
+      const item = await inbox.getInboxItem(itemId)
+      expect(item!.state).toBe('open')
+    })
+
+    it('leaves open items whose origin task is still live (running, queued, etc.)', async () => {
+      const inbox = await loadModule(repo)
+      const liveTaskId = 'task-running-1'
+      const itemId = await inbox.raiseInboxItem(
+        baseItem({ kind: 'no-recipe', signature: 'sig-live', originTaskId: liveTaskId }),
+      )
+
+      // Live tasks are not passed to reconcile
+      const result = await inbox.reconcileStaleInboxItems([
+        { id: 'some-other-done-task', status: 'done' },
+      ])
+
+      expect(result.closed).toBe(0)
+      const item = await inbox.getInboxItem(itemId)
+      expect(item!.state).toBe('open')
+    })
+
+    it('is idempotent: re-running closes zero additional items', async () => {
+      const inbox = await loadModule(repo)
+      const taskId = 'task-done-idem'
+      await inbox.raiseInboxItem(
+        baseItem({ kind: 'recovery-failed', signature: 'sig-idem', originTaskId: taskId }),
+      )
+
+      const first = await inbox.reconcileStaleInboxItems([{ id: taskId, status: 'done' }])
+      expect(first.closed).toBe(1)
+
+      const second = await inbox.reconcileStaleInboxItems([{ id: taskId, status: 'done' }])
+      expect(second.closed).toBe(0)
+    })
+
+    it('reports accurate count across multiple tasks', async () => {
+      const inbox = await loadModule(repo)
+      await inbox.raiseInboxItem(
+        baseItem({ kind: 'recovery-failed', signature: 'sig-t1', originTaskId: 'task-t1' }),
+      )
+      await inbox.raiseInboxItem(
+        baseItem({ kind: 'no-recipe', signature: 'sig-t2', originTaskId: 'task-t2' }),
+      )
+      await inbox.raiseInboxItem(
+        baseItem({ kind: 'task-blocked', signature: 'sig-t3', originTaskId: 'task-t3' }),
+      )
+
+      const result = await inbox.reconcileStaleInboxItems([
+        { id: 'task-t1', status: 'done' },
+        { id: 'task-t2', status: 'dropped' },
+        // task-t3 not included — still open
+      ])
+
+      expect(result.closed).toBe(2)
+      const open = await inbox.listInboxItems('open')
+      expect(open).toHaveLength(1)
+      expect(open[0].payload).toMatchObject({})
+    })
+
+    it('returns closed=0 when no inbox items exist for the given tasks', async () => {
+      const inbox = await loadModule(repo)
+
+      const result = await inbox.reconcileStaleInboxItems([
+        { id: 'no-such-task-1', status: 'done' },
+        { id: 'no-such-task-2', status: 'dropped' },
+      ])
+
+      expect(result.closed).toBe(0)
+    })
   })
 })

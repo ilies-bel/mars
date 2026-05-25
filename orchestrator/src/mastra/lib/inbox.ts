@@ -619,6 +619,36 @@ export const supersedeInboxItemsForOrigin = async (
 }
 
 /**
+ * One-time reconciliation pass: closes every open inbox item whose origin
+ * task is already in a successful terminal state (done or dropped). Items
+ * about tasks in `failed` or any live state are NOT included in the input,
+ * so they remain open after the call.
+ *
+ * Idempotent — re-running when items are already closed is a silent no-op
+ * because `supersedeInboxItemsForOrigin` only touches open rows.
+ *
+ * @param terminatedTasks  Tasks that have reached done or dropped. The
+ *   caller is responsible for fetching these from the task queue.
+ * @returns The number of inbox items closed by this pass.
+ */
+export const reconcileStaleInboxItems = async (
+  terminatedTasks: ReadonlyArray<{ id: string; status: 'done' | 'dropped' }>,
+): Promise<{ closed: number }> => {
+  let closed = 0
+  for (const task of terminatedTasks) {
+    const reason: SupersedeReason =
+      task.status === 'done' ? 'origin-done' : 'origin-dropped'
+    const ids = await supersedeInboxItemsForOrigin(
+      task.id,
+      reason,
+      'reconcile:one-time',
+    )
+    closed += ids.length
+  }
+  return { closed }
+}
+
+/**
  * Delete the stale-worktree dismissal row for a task so a future
  * stale-worktree alert can re-fire cleanly if the task becomes stale again.
  * No-op when no row exists.
