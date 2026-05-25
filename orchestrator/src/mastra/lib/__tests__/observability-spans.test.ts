@@ -105,5 +105,7 @@ describe('querySpanEvents', () => {
     const [row] = rows
     expect(row.traceId).toBe('t1')
     expect(row.spanId).toBe('s1')
+    // Verify JSON columns are returned as strings by the helper.
+    expect(String(row.metadata)).toContain('"originId"')
   })
 })
