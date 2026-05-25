@@ -1,4 +1,5 @@
 import { getClient, initQueue } from '../queue'
+import type { TaskStore } from './task-store'
 import type { UsageTotals } from './claude-usage'
 
 export const isReflectDisabled = (): boolean =>
@@ -8,11 +9,11 @@ export const recordSignals = async (
   taskId: string,
   stepId: string,
   totals: UsageTotals,
+  store?: TaskStore,
 ): Promise<void> => {
   if (isReflectDisabled()) return
-  await initQueue()
   const now = new Date().toISOString()
-  await getClient().execute({
+  const stmt = {
     sql: `INSERT INTO task_signals
             (task_id, step_id, input_tokens, output_tokens,
              cache_create_tokens, cache_read_tokens, total_cost_usd,
@@ -40,7 +41,13 @@ export const recordSignals = async (
       totals.messageCount,
       now,
     ],
-  })
+  }
+  if (store) {
+    await store.execute(stmt)
+  } else {
+    await initQueue()
+    await getClient().execute(stmt)
+  }
 }
 
 export interface TaskSignalRow {

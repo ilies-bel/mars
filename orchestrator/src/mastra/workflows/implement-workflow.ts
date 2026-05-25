@@ -40,6 +40,7 @@ import {
 } from '../queue'
 import { handleTaskFailureWithFixTask } from '../queue-fix-tasks'
 import { resolveOriginIdForTask } from '../lib/origin'
+import { type TaskStore, getDefaultTaskStore } from '../lib/task-store'
 
 export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} has incomplete blockers; aborting dispatch (task remains queued)`
@@ -602,7 +603,8 @@ const setupStep = createStep({
     resumeFrom: resumeFromSchema,
     spec: specSchema,
   }),
-  execute: async ({ inputData, tracingContext }) => {
+  execute: async ({ inputData, tracingContext, requestContext }) => {
+    const store: TaskStore = (requestContext.get('taskStore') as TaskStore | undefined) ?? await getDefaultTaskStore()
     const originId = await resolveOriginIdForTask(inputData.taskId)
     tracingContext?.currentSpan?.update({
       metadata: { originId, taskId: inputData.taskId },
@@ -613,7 +615,7 @@ const setupStep = createStep({
     // the planner emits ideas, not questions, and a task progresses through
     // draft → queued → running purely on plan completeness (PRD eb6f8cc6).
     // Do not reintroduce question-gating here.
-    if (await hasIncompleteBlockers(inputData.taskId)) {
+    if (await hasIncompleteBlockers(inputData.taskId, store)) {
       throw new Error(BLOCKERS_ABORT_MESSAGE(inputData.taskId))
     }
 
@@ -621,7 +623,7 @@ const setupStep = createStep({
     // existing branch+worktree. Skip worktree creation and dep install;
     // re-use whatever the previous run committed.
     if (resumeRank(inputData.resumeFrom) > STEP_ORDER.indexOf('setup-worktree')) {
-      const persisted = await getTask(inputData.taskId)
+      const persisted = await getTask(inputData.taskId, store)
       if (!persisted?.branch || !persisted?.worktreePath) {
         throw new Error(
           `task ${inputData.taskId} has resumeFrom=${inputData.resumeFrom} but no branch/worktree on the row; refusing to resume`,
@@ -656,6 +658,7 @@ const setupStep = createStep({
           failingStep: 'setup:preflight',
           errorOutput,
           branch: inputData.integrationBranch,
+          store,
           recipeContext: {
             // The dirty files live on the merge target itself, in the repo
             // root — NOT in a worktree (none was created). The recovery
@@ -692,7 +695,7 @@ const setupStep = createStep({
       )
     }
 
-    await updateTask(inputData.taskId, { status: 'running' })
+    await updateTask(inputData.taskId, { status: 'running' }, store)
     const ref = await createWorktree({
       taskId: inputData.taskId,
       integrationBranch: inputData.integrationBranch,
@@ -700,7 +703,7 @@ const setupStep = createStep({
     await updateTask(inputData.taskId, {
       branch: ref.branch,
       worktreePath: ref.path,
-    })
+    }, store)
 
     // Capture the integration HEAD SHA at setup time so the task row records
     // which commit the worktree branched from. Non-fatal: a missed capture
@@ -713,7 +716,7 @@ const setupStep = createStep({
         ['rev-parse', inputData.integrationBranch],
         { cwd: repoRoot },
       )
-      await updateTask(inputData.taskId, { integrationHeadSha: stdout.trim() })
+      await updateTask(inputData.taskId, { integrationHeadSha: stdout.trim() }, store)
     } catch {
       // Non-fatal: leave integration_head_sha as null.
     }
@@ -738,7 +741,7 @@ const setupStep = createStep({
         status: 'failed',
         error: summary,
         failedPhase: 'code',
-      })
+      }, store)
       await handleTaskFailureWithFixTask({
         taskId: inputData.taskId,
         failingStep: 'setup:install',
@@ -746,6 +749,7 @@ const setupStep = createStep({
         // raw error via recipeContext.statusOutput.
         errorOutput: `frozen-lockfile install failed\n${errorOutput}`,
         branch: ref.branch,
+        store,
         recipeContext: {
           targetPath: isInstallErr ? error.site.dir : ref.path,
           statusOutput: errorOutput,
@@ -790,7 +794,8 @@ const codeStep = createStep({
     claudeExitCode: z.number(),
     resumeFrom: resumeFromSchema,
   }),
-  execute: async ({ inputData, writer, tracingContext }) => {
+  execute: async ({ inputData, writer, tracingContext, requestContext }) => {
+    const store: TaskStore = (requestContext.get('taskStore') as TaskStore | undefined) ?? await getDefaultTaskStore()
     // Resume short-circuit: the worker already ran in a previous attempt
     // and committed its work. Skip the claude-code invocation entirely;
     // pass-through with a synthetic exit code 0.
@@ -929,16 +934,16 @@ const codeStep = createStep({
       },
     })
     if (r.sessionId) {
-      await updateTask(inputData.taskId, { claudeSessionId: r.sessionId })
+      await updateTask(inputData.taskId, { claudeSessionId: r.sessionId }, store)
     }
-    await recordSignals(inputData.taskId, 'run-claude-code', usage).catch(() => {
+    await recordSignals(inputData.taskId, 'run-claude-code', usage, store).catch(() => {
       // signal capture must never fail the task
     })
     if (!isReflectDisabled()) {
       await upsertTranscript({
         taskId: inputData.taskId,
         conversationJson: JSON.stringify(conversation),
-      }).catch(() => {
+      }, store).catch(() => {
         // transcript capture must never fail the task
       })
     }
@@ -982,7 +987,8 @@ const verifyStep = createStep({
       sampling: { type: 'ratio', rate: 1 },
     },
   },
-  execute: async ({ inputData, tracingContext }) => {
+  execute: async ({ inputData, tracingContext, requestContext }) => {
+    const store: TaskStore = (requestContext.get('taskStore') as TaskStore | undefined) ?? await getDefaultTaskStore()
     const originId = await resolveOriginIdForTask(inputData.taskId)
     tracingContext?.currentSpan?.update({
       metadata: { originId, taskId: inputData.taskId },
@@ -1025,7 +1031,7 @@ const verifyStep = createStep({
       status: 'verifying',
       failedPhase: null,
       resumeFrom: null,
-    })
+    }, store)
     const verifyCwd = resolveVerifyCwd(inputData.path)
     const ctx = resolveContext()
     // Scope-aware verify-step selection: look at the files the task
@@ -1059,7 +1065,7 @@ const verifyStep = createStep({
       await upsertTranscript({
         taskId: inputData.taskId,
         verifyOutput,
-      }).catch(() => {
+      }, store).catch(() => {
         // transcript capture must never fail the task
       })
     }
@@ -1093,13 +1099,14 @@ const verifyStep = createStep({
         status: 'failed',
         error: summary,
         failedPhase: 'verify',
-      })
+      }, store)
       await handleTaskFailureWithFixTask({
         taskId: inputData.taskId,
         failingStep: `verify:${firstFailedName}`,
         errorOutput: firstFailedOutput,
         branch: inputData.branch,
         ranVerifySteps,
+        store,
         recipeContext: {
           targetPath: inputData.path,
           statusOutput: firstFailedOutput,
@@ -1150,7 +1157,8 @@ const mergeStep = createStep({
       sampling: { type: 'ratio', rate: 1 },
     },
   },
-  execute: async ({ inputData, writer, tracingContext }) => {
+  execute: async ({ inputData, writer, tracingContext, requestContext }) => {
+    const store: TaskStore = (requestContext.get('taskStore') as TaskStore | undefined) ?? await getDefaultTaskStore()
     const originId = await resolveOriginIdForTask(inputData.taskId)
     tracingContext?.currentSpan?.update({
       metadata: { originId, taskId: inputData.taskId },
@@ -1170,7 +1178,7 @@ const mergeStep = createStep({
     // would otherwise contend for the merge lock for a guaranteed no-op.
     if (inputData.tag === 'writer') {
       await removeWorktree({ path: inputData.path, branch: inputData.branch }, true)
-      await updateTask(inputData.taskId, { status: 'done', failedPhase: null })
+      await updateTask(inputData.taskId, { status: 'done', failedPhase: null }, store)
       return {
         taskId: inputData.taskId,
         success: true,
@@ -1186,7 +1194,7 @@ const mergeStep = createStep({
     // task.completed event in daemon/server.ts.
     if (inputData.kind === 'diagnose') {
       await removeWorktree({ path: inputData.path, branch: inputData.branch }, true)
-      await updateTask(inputData.taskId, { status: 'done', failedPhase: null })
+      await updateTask(inputData.taskId, { status: 'done', failedPhase: null }, store)
       return {
         taskId: inputData.taskId,
         success: true,
@@ -1204,7 +1212,7 @@ const mergeStep = createStep({
         status: 'merging',
         failedPhase: null,
         resumeFrom: null,
-      })
+      }, store)
 
       const targetStatus = await checkMergeTargetStatus({
         integrationBranch: inputData.integrationBranch,
@@ -1226,13 +1234,14 @@ const mergeStep = createStep({
           status: 'failed',
           error: errorMsg,
           failedPhase: 'merge',
-        })
+        }, store)
         await handleTaskFailureWithFixTask({
           taskId: inputData.taskId,
           failingStep: 'merge:preflight',
           // Classifier-friendly lead line; raw porcelain via recipeContext.
           errorOutput: `merge target ${targetStatus.targetPath} has uncommitted changes blocking fast-forward\n${targetStatus.statusOutput}`,
           branch: inputData.branch,
+          store,
           recipeContext: {
             targetPath: targetStatus.targetPath,
             statusOutput: targetStatus.statusOutput,
@@ -1257,7 +1266,7 @@ const mergeStep = createStep({
           status: 'failed',
           error: `merge pre-flight git status failed: ${targetStatus.error.message}`.slice(0, 1000),
           failedPhase: 'merge',
-        })
+        }, store)
         return {
           taskId: inputData.taskId,
           success: false,
@@ -1287,12 +1296,13 @@ const mergeStep = createStep({
           status: 'failed',
           error: leakMsg.slice(0, 1000),
           failedPhase: 'merge',
-        })
+        }, store)
         await handleTaskFailureWithFixTask({
           taskId: inputData.taskId,
           failingStep: 'merge:preflight/template-leakage',
           errorOutput: leakMsg,
           branch: inputData.branch,
+          store,
           recipeContext: {
             targetPath: inputData.path,
             statusOutput: leakingTemplatePaths.join('\n'),
@@ -1322,7 +1332,7 @@ const mergeStep = createStep({
           // Fast-forward failed; a live Vega session is being spawned. Leave
           // the idempotent `merging` phase so `mars list`/`mars show` surface
           // the conflict-resolution session as `vega-reconciling`.
-          await updateTask(inputData.taskId, { status: 'vega-reconciling' })
+          await updateTask(inputData.taskId, { status: 'vega-reconciling' }, store)
         },
         onSupervisorEvent: async (event) => {
           supervisorConversation.push(event)
@@ -1341,7 +1351,7 @@ const mergeStep = createStep({
             supervisorUsage,
           },
         })
-        await recordSignals(inputData.taskId, 'vcs-supervisor', supervisorUsage).catch(() => {
+        await recordSignals(inputData.taskId, 'vcs-supervisor', supervisorUsage, store).catch(() => {
           // signal capture must never fail the task
         })
       }
@@ -1352,12 +1362,13 @@ const mergeStep = createStep({
           status: 'failed',
           error: errorMsg,
           failedPhase: 'merge',
-        })
+        }, store)
         await handleTaskFailureWithFixTask({
           taskId: inputData.taskId,
           failingStep: 'merge:vcs-supervisor-aborted',
           errorOutput: m.output,
           branch: inputData.branch,
+          store,
         }).catch((err) => {
           console.error(
             `[failure-handler] task ${inputData.taskId} merge abort handling errored:`,
@@ -1372,7 +1383,7 @@ const mergeStep = createStep({
       }
 
       await removeWorktree({ path: inputData.path, branch: inputData.branch }, true)
-      await updateTask(inputData.taskId, { status: 'done', failedPhase: null })
+      await updateTask(inputData.taskId, { status: 'done', failedPhase: null }, store)
 
       return {
         taskId: inputData.taskId,
@@ -1388,12 +1399,13 @@ const mergeStep = createStep({
         status: 'failed',
         error: `merge step crashed: ${message}`.slice(0, 1000),
         failedPhase: 'merge',
-      })
+      }, store)
       await handleTaskFailureWithFixTask({
         taskId: inputData.taskId,
         failingStep: 'merge:crashed',
         errorOutput: message,
         branch: inputData.branch,
+        store,
       }).catch((err) => {
         console.error(
           `[failure-handler] task ${inputData.taskId} merge crash handling errored:`,
