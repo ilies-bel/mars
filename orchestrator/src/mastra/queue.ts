@@ -1168,6 +1168,7 @@ export const updateTask = async (
       | 'resumeFrom'
       | 'integrationHeadSha'
       | 'failureReason'
+      | 'failureSignature'
     >
   >,
   store?: TaskStore,
@@ -1229,6 +1230,10 @@ export const updateTask = async (
   if (patch.failureReason !== undefined) {
     fields.push('failure_reason = ?')
     args.push(patch.failureReason)
+  }
+  if (patch.failureSignature !== undefined) {
+    fields.push('failure_signature = ?')
+    args.push(patch.failureSignature)
   }
   fields.push('updated_at = ?')
   args.push(new Date().toISOString())
