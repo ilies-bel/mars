@@ -21,7 +21,7 @@ import {
 } from '../implement-workflow'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 import { buildDiagnoseChorePrompt } from '../../lib/diagnose-chore'
-import { resolveReadSpanLimit } from '../../lib/read-span-watch'
+import { resolveReadSpanLimit, createReadSpanWatcher } from '../../lib/read-span-watch'
 import type { ReadSpanTrace } from '../../lib/read-span-watch'
 import { RequestContext } from '@mastra/core/di'
 import { createLibsqlTaskStore } from '../../lib/task-store'
@@ -117,6 +117,40 @@ describe('shouldWireReadSpanWatcher — read-span guard exemption', () => {
     // PRD 06e677fb: heavy reading is the diagnose Chore's actual job;
     // its only backstop is the existing time/turn cap.
     expect(shouldWireReadSpanWatcher('diagnose')).toBe(false)
+  })
+
+  it('diagnose kind produces a null watcher at the call site — no abort can trigger regardless of read count', () => {
+    // Replicates the exact conditional used in codeStep:
+    //   const watcher = shouldWireReadSpanWatcher(kind) ? createReadSpanWatcher(...) : null
+    // When kind='diagnose' the watcher is null; watcher?.thresholdEverReached is
+    // undefined (falsy) so the guard branch `watcher?.thresholdEverReached && ...`
+    // never fires no matter how many consecutive reads the agent issues.
+    const watcher = shouldWireReadSpanWatcher('diagnose')
+      ? createReadSpanWatcher({ limit: resolveReadSpanLimit(), onThreshold: () => {} })
+      : null
+    expect(watcher).toBeNull()
+    expect(watcher?.thresholdEverReached).toBeUndefined()
+  })
+
+  it('ordinary task kind produces a live watcher that can trip the guard', () => {
+    // Contrasting case: for kind='task' the watcher is non-null, meaning
+    // the guard is active and consecutive reads will trip thresholdEverReached.
+    // ClaudeEvent wraps tool uses inside message.content (assistant turn).
+    const limit = 2
+    const watcher = shouldWireReadSpanWatcher('task')
+      ? createReadSpanWatcher({ limit, onThreshold: () => {} })
+      : null
+    expect(watcher).not.toBeNull()
+    // Feed enough read events to exceed the limit (each is an assistant turn
+    // with one Read tool_use block, matching what extractToolUses expects).
+    const readEvent = {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/src/foo.ts' } }],
+      },
+    }
+    for (let i = 0; i < limit + 1; i++) watcher!.observe(readEvent)
+    expect(watcher!.thresholdEverReached).toBe(true)
   })
 })
 
