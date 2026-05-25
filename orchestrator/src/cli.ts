@@ -513,6 +513,8 @@ the worker already landed on the task branch.
 Accepts one or more ids; processes them in order and stops on the first
 error (the failing id is printed to stderr and exit is non-zero).
 
+Flags: none in v1.
+
 Refuses (non-zero exit) when:
   - the task is not in 'failed' status
   - the task has no recorded failed_phase (legacy row)
