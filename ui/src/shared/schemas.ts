@@ -33,6 +33,17 @@ const taskPlanSchema = z
   })
   .nullable()
 
+const taskSpecSchema = z
+  .object({
+    files: z.array(z.string()),
+    readFirst: z.array(z.string()),
+    prescriptiveAction: z.string().nullable(),
+    verifyCmd: z.string().nullable(),
+    doneCriteria: z.array(z.string()),
+    taskType: z.string(),
+  })
+  .nullable()
+
 const taskSchema = z.object({
   id: z.string(),
   prompt: z.string(),
@@ -44,6 +55,7 @@ const taskSchema = z.object({
   dropReason: z.string().nullable(),
   retryCount: z.number(),
   blockerTaskId: z.string().nullable(),
+  spec: taskSpecSchema.optional().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })

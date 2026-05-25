@@ -335,6 +335,8 @@ export const startDaemon = async (
                 verifyCmd: task.spec.verifyCmd,
                 doneCriteria: [...task.spec.doneCriteria],
                 taskType: task.spec.taskType,
+                readFirst: [...(task.spec.readFirst ?? [])],
+                prescriptiveAction: task.spec.prescriptiveAction ?? null,
               }
             : null,
         },

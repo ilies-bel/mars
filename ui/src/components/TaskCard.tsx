@@ -23,6 +23,8 @@ export const TaskCard = ({ task, index }: Props) => {
     task.status === 'dropped' ||
     task.status === 'failed'
 
+  const spec = task.spec
+
   return (
     <article
       data-task-index={index}
@@ -69,6 +71,48 @@ export const TaskCard = ({ task, index }: Props) => {
           ) : (
             'Blocked'
           )}
+        </div>
+      ) : null}
+      {spec !== null ? (
+        <div className="flex flex-col gap-1 border-t border-border/50 pt-2 font-mono text-[10px] text-muted">
+          {spec.files.length > 0 ? (
+            <div>
+              <span className="font-semibold text-fg/60">files</span>
+              <ul className="mt-0.5 space-y-0.5">
+                {spec.files.map((f) => (
+                  <li key={f} className="truncate pl-2">
+                    {f}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {(spec.readFirst ?? []).length > 0 ? (
+            <div>
+              <span className="font-semibold text-fg/60">read first</span>
+              <ol className="mt-0.5 list-decimal space-y-0.5 pl-4">
+                {(spec.readFirst ?? []).map((f) => (
+                  <li key={f} className="truncate">
+                    {f}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
+          {spec.prescriptiveAction ? (
+            <div>
+              <span className="font-semibold text-fg/60">action</span>
+              <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap pl-2">
+                {spec.prescriptiveAction}
+              </p>
+            </div>
+          ) : null}
+          {spec.verifyCmd ? (
+            <div>
+              <span className="font-semibold text-fg/60">verify</span>
+              <code className="mt-0.5 block truncate pl-2">{spec.verifyCmd}</code>
+            </div>
+          ) : null}
         </div>
       ) : null}
       <div className="flex items-center justify-between gap-2">

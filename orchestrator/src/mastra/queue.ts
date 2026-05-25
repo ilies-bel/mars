@@ -158,6 +158,17 @@ export interface TaskSpec {
   verifyCmd: string | null
   doneCriteria: readonly string[]
   taskType: TaskType
+  /**
+   * Ordered list of files the implementor should read before editing.
+   * Populated by the slicer; absent or empty on ad-hoc rows.
+   */
+  readFirst?: readonly string[]
+  /**
+   * Prescriptive action description for the implementor, may contain concrete
+   * identifiers, file paths, and code-shaped language. Absent or null on
+   * ad-hoc rows.
+   */
+  prescriptiveAction?: string | null
 }
 
 export const EMPTY_TASK_SPEC: TaskSpec = {
@@ -453,6 +464,16 @@ export const initQueue = async (): Promise<void> => {
   }
   if (!names.has('task_type')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN task_type TEXT`)
+  }
+  // read_first_json: ordered list of files the implementor should read before
+  // editing. Populated by the slicer; NULL on ad-hoc rows.
+  if (!names.has('read_first_json')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN read_first_json TEXT`)
+  }
+  // prescriptive_action: prescriptive action text for the implementor. NULL on
+  // ad-hoc rows.
+  if (!names.has('prescriptive_action')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN prescriptive_action TEXT`)
   }
   // integration_head_sha: integration-branch HEAD SHA captured at setup time.
   // Null for tasks created before this column was added or that bypassed the
@@ -865,14 +886,23 @@ const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
   const rawVerify = (row.verify_cmd as string | null) ?? null
   const rawDone = (row.done_criteria_json as string | null) ?? null
   const rawType = (row.task_type as string | null) ?? null
+  const rawReadFirst = (row.read_first_json as string | null) ?? null
+  const rawPrescriptive = (row.prescriptive_action as string | null) ?? null
   const anySet =
-    rawFiles !== null || rawVerify !== null || rawDone !== null || rawType !== null
+    rawFiles !== null ||
+    rawVerify !== null ||
+    rawDone !== null ||
+    rawType !== null ||
+    rawReadFirst !== null ||
+    rawPrescriptive !== null
   if (!anySet) return null
   return {
     files: parseStringArray(rawFiles),
     verifyCmd: rawVerify,
     doneCriteria: parseStringArray(rawDone),
     taskType: isTaskType(rawType) ? rawType : 'auto',
+    readFirst: parseStringArray(rawReadFirst),
+    prescriptiveAction: rawPrescriptive,
   }
 }
 
@@ -950,8 +980,10 @@ export const enqueueTask = async (
   const verifyCmd = spec ? spec.verifyCmd : null
   const doneCriteriaJson = spec ? JSON.stringify(spec.doneCriteria) : null
   const taskType = spec ? spec.taskType : null
+  const readFirstJson = spec ? JSON.stringify(spec.readFirst ?? []) : null
+  const prescriptiveAction = spec ? (spec.prescriptiveAction ?? null) : null
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tag, kind, files_json, verify_cmd, done_criteria_json, task_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tag, kind, files_json, verify_cmd, done_criteria_json, task_type, read_first_json, prescriptive_action, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       promptText,
@@ -970,6 +1002,8 @@ export const enqueueTask = async (
       verifyCmd,
       doneCriteriaJson,
       taskType,
+      readFirstJson,
+      prescriptiveAction,
       now,
       now,
     ],
