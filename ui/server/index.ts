@@ -151,6 +151,15 @@ export const startServer = async (
         }
       }
 
+      if (path === '/api/inbox/action-queue') {
+        try {
+          const items = await stateDb.listOpenInboxItems()
+          return jsonResponse(200, items)
+        } catch (err) {
+          return jsonResponse(500, { error: (err as Error).message })
+        }
+      }
+
       if (path === '/api/inbox') {
         try {
           const inbox = await aggregateInbox(db, stateDb)

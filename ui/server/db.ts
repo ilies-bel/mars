@@ -445,6 +445,54 @@ export class StateDb {
     }
   }
 
+  /**
+   * Read all non-terminal (`open` or `acknowledged`) rows from `inbox_items`
+   * ordered by `raised_at DESC` — the same ordering `mars inbox list` uses.
+   *
+   * Returns an empty array when the table does not yet exist (fresh repo before
+   * any daemon has ever run).
+   */
+  async listOpenInboxItems(): Promise<
+    Array<{
+      id: string
+      kind: string
+      title: string
+      body: string
+      raisedAt: string
+      lastSeenAt: string
+      seenCount: number
+      priority: string
+    }>
+  > {
+    try {
+      const r = await this.client.execute(
+        `SELECT id, kind, title, body, priority, raised_at, last_seen_at, seen_count
+           FROM inbox_items
+          WHERE state IN ('open', 'acknowledged')
+          ORDER BY raised_at DESC`,
+      )
+      return r.rows.map((row) => {
+        const r0 = row as unknown as Record<string, unknown>
+        return {
+          id: r0.id as string,
+          kind: (r0.kind as string | null) ?? 'failed',
+          title: (r0.title as string | null) ?? '',
+          body: (r0.body as string | null) ?? '',
+          priority: (r0.priority as string | null) ?? 'normal',
+          raisedAt: (r0.raised_at as string | null) ?? '',
+          lastSeenAt:
+            (r0.last_seen_at as string | null) ??
+            (r0.raised_at as string | null) ??
+            '',
+          seenCount: Number(r0.seen_count ?? 1),
+        }
+      })
+    } catch {
+      // inbox_items table may not exist yet on a fresh repo.
+      return []
+    }
+  }
+
   async listDraftFeatures(): Promise<DraftFeature[]> {
     const r = await this.client.execute(
       `SELECT p.id, p.goal, p.story, p.technical, p.status, p.source,
