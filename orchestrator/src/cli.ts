@@ -244,6 +244,15 @@ Commands:
                                 <blocker-id> to reach 'done' before dispatch.
                                 All ids must already exist; self-blocking is
                                 rejected.
+  sweep                         read-only enumeration of local task/<id>
+                                branches whose id is absent from the queue.
+                                For each orphan branch, prints the branch
+                                name and its unique commits ahead of the
+                                integration branch (default 'main', override
+                                via INTEGRATION_BRANCH) as
+                                '<short-sha> <subject>' lines. Prints a
+                                single line saying so when no orphans exist.
+                                Makes no changes to git state or the queue.
   worktree clean [--dry-run] [--force] [--force-orphans]
                                 classify every directory under .mars/worktrees/
                                 (and legacy .worktrees/) against queue.db and
@@ -550,6 +559,16 @@ that got duplicated or is otherwise obsolete; 'mars purge <parent>'
 fails with a FK error because the recovery still references it via
 fix_for_task_id. 'mars drop <recovery>' followed by 'mars purge
 <parent>' (or 'mars drop <parent>') clears both.`,
+  sweep: `mars sweep
+
+Read-only enumeration of orphan task branches: local git branches whose
+name matches task/<id> but whose id has no row in the queue. For each
+orphan branch, prints the branch name followed by its unique commits
+ahead of the integration branch (default 'main', override via
+INTEGRATION_BRANCH) as '<short-sha> <subject>' lines. Prints
+'no orphan task branches' when there are none.
+
+Makes no changes to git state or the queue.`,
   worktree: `mars worktree clean [--dry-run] [--force] [--force-orphans]
 
 Walk .mars/worktrees/ (and legacy .worktrees/), classify each directory
@@ -2194,6 +2213,12 @@ const main = async (): Promise<void> => {
 
     console.error('usage: mars daemon <start|stop|kill|status|reload|set-flag> [flags]')
     process.exit(2)
+  }
+
+  if (cmd === 'sweep') {
+    const { runSweep } = await import('./mastra/lib/sweep')
+    await runSweep({ log: (line) => console.log(line) })
+    return
   }
 
   if (cmd === 'worktree') {
