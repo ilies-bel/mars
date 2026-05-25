@@ -22,7 +22,7 @@ import {
   planClaudeConflicts,
   scaffoldClaudeConfig,
 } from '../../init/scaffold'
-import { writeSlimInit, type VerifyStepEntry } from '../../init/writer'
+import { writeSlimInit, writePerFolderClaudeMds, type VerifyStepEntry } from '../../init/writer'
 import { writeDetectionReport } from '../../init/write-detection-report'
 import { relative, resolve } from 'node:path'
 
@@ -276,14 +276,18 @@ const writeStep = createStep({
   execute: async ({ inputData }) => {
     const ctx = resolveContext()
     const verifySteps = flattenVerifySteps(inputData.rendered)
-    const result = writeSlimInit({
+    const slimResult = writeSlimInit({
       repoRoot: ctx.repoRoot,
       verifyConfigPath: ctx.verifyConfigPath,
       contextPath: resolve(ctx.repoRoot, 'CONTEXT.md'),
       adrDir: resolve(ctx.repoRoot, 'docs', 'adr'),
       verifySteps,
     })
-    return { written: result.written }
+    const perFolderResult = writePerFolderClaudeMds({
+      repoRoot: ctx.repoRoot,
+      supervisors: inputData.rendered.map((r) => r.spec),
+    })
+    return { written: [...slimResult.written, ...perFolderResult.written] }
   },
 })
 

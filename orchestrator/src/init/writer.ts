@@ -6,6 +6,7 @@ import {
   upsertAgentsBlock,
 } from './agents-md'
 import type { SupervisorSpec } from './detect-stack'
+import { loadCatalogue, lookupCatalogue } from './per-stack-catalogue'
 
 export type SupervisorOutcomeKind = 'hit' | 'miss' | 'error'
 
@@ -232,4 +233,36 @@ ${entries.map((e) => `- **${e.name}** (${e.persona}) — ${e.kind} — scope: ${
       externalSource: e.externalSource,
     })),
   }
+}
+
+export interface PerFolderClaudeMdInput {
+  repoRoot: string
+  supervisors: ReadonlyArray<SupervisorSpec>
+}
+
+export interface PerFolderClaudeMdResult {
+  written: string[]
+}
+
+/**
+ * Write a per-folder CLAUDE.md into every detected manifest directory that
+ * is not the repo root. Content comes from the committed per-stack catalogue
+ * keyed by supervisor name; unknown supervisor names fall back to the generic
+ * baseline. No network access or fetch-specialist invocation is required.
+ */
+export const writePerFolderClaudeMds = (
+  input: PerFolderClaudeMdInput,
+): PerFolderClaudeMdResult => {
+  const catalogue = loadCatalogue()
+  const written: string[] = []
+  for (const supervisor of input.supervisors) {
+    if (supervisor.scope === '.') continue
+    const dir = resolve(input.repoRoot, supervisor.scope)
+    mkdirSync(dir, { recursive: true })
+    const filePath = resolve(dir, 'CLAUDE.md')
+    const content = lookupCatalogue(catalogue, supervisor.name)
+    writeFileSync(filePath, content, 'utf8')
+    written.push(relative(input.repoRoot, filePath))
+  }
+  return { written }
 }
