@@ -41,19 +41,15 @@ const SAMPLE_TRACE: readonly ReadSpanTrace[] = [
 
 describe('shouldWireReadSpanWatcher — read-span guard exemption', () => {
   it('does NOT wire the guard for diagnose Chores (AC1: prevents recursive spawning)', () => {
-    expect(shouldWireReadSpanWatcher('coder', 'diagnose')).toBe(false)
+    expect(shouldWireReadSpanWatcher('diagnose')).toBe(false)
   })
 
-  it('wires the guard for ordinary coder tasks', () => {
-    expect(shouldWireReadSpanWatcher('coder', 'task')).toBe(true)
+  it('wires the guard for ordinary tasks', () => {
+    expect(shouldWireReadSpanWatcher('task')).toBe(true)
   })
 
-  it('wires the guard for coder fix tasks', () => {
-    expect(shouldWireReadSpanWatcher('coder', 'fix')).toBe(true)
-  })
-
-  it('does not wire the guard for writer tasks (surface too narrow to stall on reads)', () => {
-    expect(shouldWireReadSpanWatcher('writer', 'task')).toBe(false)
+  it('wires the guard for fix tasks', () => {
+    expect(shouldWireReadSpanWatcher('fix')).toBe(true)
   })
 })
 
