@@ -318,6 +318,86 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(item!.body).not.toContain('never ran')
   })
 
+  describe('recoverBlockedTasks — startup origin-flip reconciler', () => {
+    it('flips origin to done and unblocks siblings when fix-task is already done (crash-recovery scenario)', async () => {
+      // Simulates: daemon crashed after the fix-task merged but before
+      // markOriginDoneFromRecovery fired. On restart, recoverBlockedTasks
+      // must detect the done fix-task and flip the origin + unblock siblings.
+      const { q, br } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      const sibling = await q.enqueueTask('sibling', undefined, { skipTriage: true })
+      // sibling is blocked waiting on origin
+      await q.addBlockers(sibling.id, [origin.id])
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'blocked', retry_count = 0 WHERE id = ?`,
+        args: [sibling.id],
+      })
+      // origin is in a non-terminal state (blocked — waiting for fix)
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+        args: [origin.id],
+      })
+      // fix-task is done+merged but markOriginDoneFromRecovery never fired
+      const fix = await q.enqueueTask('fix-task', undefined, { skipTriage: true })
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET kind = 'fix', fix_for_task_id = ?, status = 'done' WHERE id = ?`,
+        args: [origin.id, fix.id],
+      })
+
+      // Invoke the startup reconciler — no live completion event fires
+      await br.recoverBlockedTasks()
+
+      // Origin must be flipped to done by the reconciler alone
+      expect((await q.getTask(origin.id))?.status).toBe('done')
+      // Sibling waiting only on that origin must leave blocked
+      expect((await q.getTask(sibling.id))?.status).toBe('queued')
+    })
+
+    it('leaves origin unchanged when fix-task is not yet done (merge not yet landed)', async () => {
+      // A fix-task in 'merging' (or any non-done phase) has not landed its
+      // branch yet. The origin must remain in its prior state; the merge
+      // reconciler that runs after recoverBlockedTasks will handle this.
+      const { q, br } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+        args: [origin.id],
+      })
+      const fix = await q.enqueueTask('fix-task', undefined, { skipTriage: true })
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET kind = 'fix', fix_for_task_id = ?, status = 'merging' WHERE id = ?`,
+        args: [origin.id, fix.id],
+      })
+
+      await br.recoverBlockedTasks()
+
+      // Origin must stay in its prior non-terminal state
+      expect((await q.getTask(origin.id))?.status).toBe('blocked')
+    })
+
+    it('leaves an origin already in a terminal state untouched even when its fix-task is done', async () => {
+      // AC4: if the origin is already terminal (done, failed, dropped) the
+      // reconciler must not touch it. The SQL filter excludes such rows, and
+      // markOriginDoneFromRecovery is also idempotent for terminal origins.
+      const { q, br } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [origin.id],
+      })
+      const fix = await q.enqueueTask('fix-task', undefined, { skipTriage: true })
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET kind = 'fix', fix_for_task_id = ?, status = 'done' WHERE id = ?`,
+        args: [origin.id, fix.id],
+      })
+
+      await br.recoverBlockedTasks()
+
+      // Origin must remain done — no status change
+      expect((await q.getTask(origin.id))?.status).toBe('done')
+    })
+  })
+
   describe('markOriginDoneFromRecovery', () => {
     const makeRecoveryRow = async (
       q: QueueModule,
