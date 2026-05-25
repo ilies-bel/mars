@@ -11,16 +11,20 @@ import {
   BLOCKERS_ABORT_MESSAGE,
   DIRTY_MAIN_SETUP_MESSAGE,
   DEVIATION_RULES,
+  TOO_HARD_ABORT_MESSAGE,
   composePrompt,
   detectPostCoderState,
   failureExcerpt,
   isBlockersAbortError,
   isDirtyMainSetupError,
+  isTooHardAbortError,
   resolveWorkerSystemPrompt,
   shouldWireReadSpanWatcher,
 } from '../implement-workflow'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
+import { buildDiagnoseChorePrompt } from '../../lib/diagnose-chore'
 import { resolveReadSpanLimit } from '../../lib/read-span-watch'
+import type { ReadSpanTrace } from '../../lib/read-span-watch'
 import { RequestContext } from '@mastra/core/di'
 import { createLibsqlTaskStore } from '../../lib/task-store'
 import { createClient } from '@libsql/client'
@@ -759,5 +763,103 @@ describe('TaskStore context injection', () => {
     // When no store is set, the step falls back to getDefaultTaskStore().
     // Here we just verify the get returns undefined/falsy so the ?? fallback fires.
     expect(extracted == null || extracted === undefined).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Sentinel helpers for the read-span guard → diagnose Chore path
+// ---------------------------------------------------------------------------
+
+describe('isTooHardAbortError — read-span sentinel', () => {
+  it('recognises the sentinel message emitted by the codeStep', () => {
+    const err = new Error(TOO_HARD_ABORT_MESSAGE('mars-abc12345'))
+    expect(isTooHardAbortError(err)).toBe(true)
+  })
+
+  it('does not false-positive on an unrelated error', () => {
+    expect(isTooHardAbortError(new Error('some other failure'))).toBe(false)
+    expect(isTooHardAbortError(new Error('blockers; aborting dispatch'))).toBe(false)
+  })
+
+  it('recognises the sentinel through a Mastra-wrapped cause chain', () => {
+    const cause = new Error(TOO_HARD_ABORT_MESSAGE('mars-abc12345'))
+    const wrapped = new Error('Step run-claude-code failed: something')
+    Object.assign(wrapped, { cause })
+    expect(isTooHardAbortError(wrapped)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Diagnose Chore spawn — prompt contract
+//
+// The read-span guard spawns a diagnose Chore carrying buildDiagnoseChorePrompt.
+// These tests assert that the spawned prompt enforces the diagnose-only
+// contract and that no legacy three-way wording ("note OR surgical change OR
+// file an idea") remains. See PRD 06e677fb and acceptance criteria slice 2.
+// ---------------------------------------------------------------------------
+
+const SAMPLE_TRACE: readonly ReadSpanTrace[] = [
+  { tool: 'Read', target: 'src/foo.ts' },
+  { tool: 'Read', target: 'src/bar.ts' },
+  { tool: 'Grep', target: 'fooImpl' },
+  { tool: 'Read', target: 'src/baz.ts' },
+  { tool: 'Glob', target: 'src/**/*.ts' },
+]
+
+describe('read-span trip — diagnose Chore prompt contract', () => {
+  it('spawned prompt explicitly forbids attempting the parent task', () => {
+    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
+    expect(prompt).toMatch(/MUST NOT/)
+    expect(prompt).toMatch(/attempt the parent task/)
+  })
+
+  it('spawned prompt explicitly forbids making the fix', () => {
+    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
+    expect(prompt).toMatch(/make the fix yourself/)
+  })
+
+  it('spawned prompt instructs verdict recording via mars diagnose set', () => {
+    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
+    expect(prompt).toMatch(/mars diagnose set mars-parent01/)
+    expect(prompt).toMatch(/"kind": "root-cause-found"/)
+    expect(prompt).toMatch(/"kind": "inconclusive"/)
+  })
+
+  it('spawned prompt includes the parent task prompt verbatim', () => {
+    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
+    expect(prompt).toContain('do the original work')
+  })
+
+  it('spawned prompt includes the read trail that preceded the abort', () => {
+    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
+    expect(prompt).toContain('## Read trail before abort')
+    expect(prompt).toContain('src/foo.ts')
+    expect(prompt).toContain('Grep')
+  })
+
+  it('does NOT offer the legacy "produce a concise note" option', () => {
+    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
+    expect(prompt).not.toMatch(/produce a concise note/i)
+  })
+
+  it('does NOT offer the legacy "small surgical change" option', () => {
+    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
+    expect(prompt).not.toMatch(/small surgical change/i)
+  })
+
+  it('does NOT offer the legacy "mars proposal add" / "file a mars proposal" option', () => {
+    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
+    expect(prompt).not.toMatch(/mars proposal add/i)
+    expect(prompt).not.toMatch(/file a `mars proposal/i)
+  })
+
+  it('spawned child is exempt from the read-span guard (stated in the prompt)', () => {
+    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
+    expect(prompt).toMatch(/exempt from the read-span guard/)
+  })
+
+  it('forbids spawning another diagnose Chore (terminality invariant)', () => {
+    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
+    expect(prompt).toMatch(/spawn another diagnose Chore|any other follow-up task/)
   })
 })
