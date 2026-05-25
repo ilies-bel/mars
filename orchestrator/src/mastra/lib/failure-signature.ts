@@ -266,3 +266,41 @@ export const computeFailureSignature = (
 
 export const isUnclassifiedSignature = (signature: string): boolean =>
   signature.endsWith(`/${UNCLASSIFIED_ERROR_CLASS}`)
+
+/**
+ * Operator-facing cause sentences keyed by the full `<failingStep>/<error-class>`
+ * signature. Each entry renders a one-line plain-English sentence that names
+ * who owns the next action (operator vs agent) so triage doesn't have to parse
+ * the slug.
+ *
+ * Keying by full signature (not by error-class alone) lets the same error class
+ * fired from different steps carry different sentences when the action differs.
+ *
+ * IMPORTANT: missing entries return `null` — the renderer omits the line
+ * entirely rather than emitting a confusing 'unknown' placeholder.
+ *
+ * Add a new entry HERE in the same file as the signature's error-class rule
+ * so a contributor wiring a new signature can attach its sentence without
+ * hunting through render code.
+ */
+type CauseRenderer = (taskId: string) => string
+
+const causeSentencesBySignature: Readonly<Record<string, CauseRenderer>> = {
+  'merge:preflight/uncommitted-changes': (taskId) =>
+    `integration branch has uncommitted changes — clean it, then mars restart ${taskId}`,
+  'verify:has-diff/no-commits-ahead': () =>
+    `task branch has no commits ahead of integration — the agent didn't commit; needs a new task or restart`,
+}
+
+/**
+ * Render a human-readable cause sentence for a failure signature, or `null`
+ * when no sentence is registered. Callers should omit the line entirely on
+ * `null` — never substitute a placeholder.
+ */
+export const causeForSignature = (
+  signature: string,
+  taskId: string,
+): string | null => {
+  const renderer = causeSentencesBySignature[signature]
+  return renderer ? renderer(taskId) : null
+}
