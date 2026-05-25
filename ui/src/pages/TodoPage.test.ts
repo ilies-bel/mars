@@ -47,9 +47,9 @@ const makeIdea = (
   id,
   draft: {
     id,
-    goal: 'ship the feature',
-    story: 'as a user, I want this done',
-    technical: 'implement with hooks',
+    title: 'ship the feature',
+    problem: 'as a user, I want this done',
+    solution: 'implement with hooks',
     status: 'draft',
     source: 'human',
     createdAt: Date.now(),
@@ -124,28 +124,28 @@ describe('filterAlertItems', () => {
 // ---------------------------------------------------------------------------
 
 describe('filterIdeaItems', () => {
-  it('filters Proposals by goal substring', () => {
+  it('filters Proposals by title substring', () => {
     const ideas = [
-      makeIdea('d1', { goal: 'add search feature' }),
-      makeIdea('d2', { goal: 'fix bug' }),
+      makeIdea('d1', { title: 'add search feature' }),
+      makeIdea('d2', { title: 'fix bug' }),
     ]
     const result = filterIdeaItems(ideas, 'search')
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('d1')
   })
 
-  it('filters Proposals by story substring', () => {
+  it('filters Proposals by problem substring', () => {
     const ideas = [
-      makeIdea('d1', { story: 'as a power user I want search' }),
-      makeIdea('d2', { story: 'basic requirement' }),
+      makeIdea('d1', { problem: 'as a power user I want search' }),
+      makeIdea('d2', { problem: 'basic requirement' }),
     ]
     expect(filterIdeaItems(ideas, 'power user')).toHaveLength(1)
   })
 
-  it('filters by technical substring', () => {
+  it('filters by solution substring', () => {
     const ideas = [
-      makeIdea('d1', { technical: 'use websockets' }),
-      makeIdea('d2', { technical: 'use polling' }),
+      makeIdea('d1', { solution: 'use websockets' }),
+      makeIdea('d2', { solution: 'use polling' }),
     ]
     expect(filterIdeaItems(ideas, 'websocket')).toHaveLength(1)
   })

@@ -5,9 +5,9 @@ import type { DraftFeature } from '@/shared/schemas'
 
 const draftProposal = (overrides: Partial<DraftFeature> = {}): DraftFeature => ({
   id: 'prop-1',
-  goal: 'Fill in the Proposal drawer content',
-  story: '',
-  technical: '',
+  title: 'Fill in the Proposal drawer content',
+  problem: '',
+  solution: '',
   status: 'draft',
   source: 'reflection',
   createdAt: Date.now(),

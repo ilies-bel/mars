@@ -50,9 +50,9 @@ const createStateSchema = async (path: string): Promise<Client> => {
   const c = createClient({ url: `file:${path}` })
   await c.execute(`CREATE TABLE proposals (
     id TEXT PRIMARY KEY,
-    goal TEXT NOT NULL,
-    story TEXT NOT NULL DEFAULT '',
-    technical TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    problem TEXT NOT NULL DEFAULT '',
+    solution TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'draft',
     source TEXT NOT NULL DEFAULT 'human',
     created_at INTEGER NOT NULL,
