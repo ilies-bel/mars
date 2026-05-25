@@ -1641,6 +1641,32 @@ export const mergeBranch = async ({
         supervisorConversation,
       }
     }
+
+    // Step 3: re-sync the merge target's checkout to the advanced ref.
+    // `update-ref` moved refs/heads/<integrationBranch> without touching any
+    // working tree — by design, so a dirty/other-branch checkout cannot block
+    // the merge. But when the main repo IS checked out on integrationBranch,
+    // its index + working tree still reflect the OLD HEAD, so every file the
+    // merge introduced now shows as a phantom staged change. That dirty index
+    // then trips the setup:preflight/dirty-main guard and mass-fails the whole
+    // queue (one success poisons every subsequent dispatch). `git reset --keep`
+    // fast-forwards the checkout to the new HEAD while preserving genuine local
+    // modifications (and aborting if they'd be clobbered), leaving the tree
+    // clean when there were none. Failure here is non-fatal: the merge already
+    // landed via the ref update; log and continue.
+    try {
+      const headBranch = (
+        await exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoRoot() })
+      ).stdout.trim()
+      if (headBranch === integrationBranch) {
+        const reset = await exec('git', ['reset', '--keep', taskSha], { cwd: repoRoot() })
+        output += reset.stdout + reset.stderr
+      }
+    } catch (resyncError: unknown) {
+      const e = resyncError as { stdout?: string; stderr?: string; message?: string }
+      output += `\n[mergeBranch] post-merge checkout re-sync failed (merge already landed): ${(e.stderr ?? e.message ?? '').slice(0, 300)}`
+    }
+
     return {
       merged: true,
       conflictResolved,
