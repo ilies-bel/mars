@@ -15,7 +15,6 @@ export interface DeepReflectSession {
     outputTokens: number
     cacheCreateTokens: number
     cacheReadTokens: number
-    totalCostUsd: number
     cacheHitRatio: number
   }
   scores: Record<string, TaskScoreEntry>
@@ -26,7 +25,7 @@ export interface DeepReflectSession {
 interface PickReason {
   taskId: string
   status: string
-  costUsd: number
+  weightedTokens: number
   reason: string
 }
 
@@ -41,14 +40,14 @@ interface TranscriptCostRow {
   task_id: string
   status: string
   created_at: string
-  total_cost_usd: number | null
+  weighted_tokens: number
 }
 
 const fetchTranscriptCostRows = async (): Promise<TranscriptCostRow[]> => {
   const c = getClient()
   const r = await c.execute(`
     SELECT t.id AS task_id, t.status AS status, t.created_at AS created_at,
-           COALESCE(SUM(s.total_cost_usd), 0) AS total_cost_usd
+           COALESCE(SUM(s.input_tokens + s.output_tokens + s.cache_create_tokens + CAST(s.cache_read_tokens AS REAL) * 0.1), 0) AS weighted_tokens
       FROM tasks t
       JOIN task_transcripts tt ON tt.task_id = t.id
       LEFT JOIN task_signals s ON s.task_id = t.id
@@ -62,10 +61,10 @@ const fetchTranscriptCostRows = async (): Promise<TranscriptCostRow[]> => {
       task_id: r0.task_id as string,
       status: r0.status as string,
       created_at: r0.created_at as string,
-      total_cost_usd:
-        r0.total_cost_usd === null || r0.total_cost_usd === undefined
+      weighted_tokens:
+        r0.weighted_tokens === null || r0.weighted_tokens === undefined
           ? 0
-          : Number(r0.total_cost_usd),
+          : Number(r0.weighted_tokens),
     }
   })
 }
@@ -83,22 +82,22 @@ export const pickDeepReflectCandidate = async (): Promise<PickResult | null> => 
       reason: {
         taskId: failed.task_id,
         status: failed.status,
-        costUsd: failed.total_cost_usd ?? 0,
+        weightedTokens: failed.weighted_tokens,
         reason: 'most recent failure',
       },
     }
   }
 
-  // Rule 2: highest-cost done task in the last 7 days, cost ≥ 2× median.
+  // Rule 2: highest weighted-token done task in the last 7 days, tokens ≥ 2× median.
   const cutoff = Date.now() - SEVEN_DAYS_MS
   const recentDone = rows.filter(
     (r) => r.status === 'done' && new Date(r.created_at).getTime() >= cutoff,
   )
   if (recentDone.length > 0) {
-    const med = median(recentDone.map((r) => r.total_cost_usd ?? 0))
+    const med = median(recentDone.map((r) => r.weighted_tokens))
     const expensive = recentDone
-      .filter((r) => med > 0 && (r.total_cost_usd ?? 0) >= 2 * med)
-      .sort((a, b) => (b.total_cost_usd ?? 0) - (a.total_cost_usd ?? 0))
+      .filter((r) => med > 0 && r.weighted_tokens >= 2 * med)
+      .sort((a, b) => b.weighted_tokens - a.weighted_tokens)
     const top = expensive[0]
     if (top) {
       return {
@@ -106,8 +105,8 @@ export const pickDeepReflectCandidate = async (): Promise<PickResult | null> => 
         reason: {
           taskId: top.task_id,
           status: top.status,
-          costUsd: top.total_cost_usd ?? 0,
-          reason: `highest-cost done task in last 7d (≥ 2× median $${med.toFixed(4)})`,
+          weightedTokens: top.weighted_tokens,
+          reason: `highest weighted-token done task in last 7d (≥ 2× median ${med.toFixed(0)} tokens)`,
         },
       }
     }
@@ -121,7 +120,7 @@ export const pickDeepReflectCandidate = async (): Promise<PickResult | null> => 
       reason: {
         taskId: done.task_id,
         status: done.status,
-        costUsd: done.total_cost_usd ?? 0,
+        weightedTokens: done.weighted_tokens,
         reason: 'most recent done task',
       },
     }
@@ -166,7 +165,6 @@ export const loadDeepReflectSession = async (
     outputTokens: s.outputTokens,
     cacheCreateTokens: s.cacheCreateTokens,
     cacheReadTokens: s.cacheReadTokens,
-    totalCostUsd: s.totalCostUsd,
     messageCount: s.messageCount,
   }))
   const sums = signals.reduce(
@@ -175,14 +173,12 @@ export const loadDeepReflectSession = async (
       outputTokens: acc.outputTokens + s.outputTokens,
       cacheCreateTokens: acc.cacheCreateTokens + s.cacheCreateTokens,
       cacheReadTokens: acc.cacheReadTokens + s.cacheReadTokens,
-      totalCostUsd: acc.totalCostUsd + s.totalCostUsd,
     }),
     {
       inputTokens: 0,
       outputTokens: 0,
       cacheCreateTokens: 0,
       cacheReadTokens: 0,
-      totalCostUsd: 0,
     },
   )
   const cacheDenom = sums.cacheCreateTokens + sums.cacheReadTokens
@@ -227,7 +223,6 @@ export interface ArcTaskEntry {
     outputTokens: number
     cacheCreateTokens: number
     cacheReadTokens: number
-    totalCostUsd: number
     cacheHitRatio: number
   }
   scores: Record<string, TaskScoreEntry>
@@ -246,7 +241,7 @@ export interface DeepReflectArc {
     outputTokens: number
     cacheCreateTokens: number
     cacheReadTokens: number
-    totalCostUsd: number
+    totalWeightedTokens: number
     cacheHitRatio: number
     eventCount: number
   }
@@ -322,7 +317,6 @@ const summariseSignals = (rows: ReadonlyArray<TaskSignalRow>) => {
     outputTokens: s.outputTokens,
     cacheCreateTokens: s.cacheCreateTokens,
     cacheReadTokens: s.cacheReadTokens,
-    totalCostUsd: s.totalCostUsd,
     messageCount: s.messageCount,
   }))
   const sums = signals.reduce(
@@ -331,14 +325,12 @@ const summariseSignals = (rows: ReadonlyArray<TaskSignalRow>) => {
       outputTokens: acc.outputTokens + s.outputTokens,
       cacheCreateTokens: acc.cacheCreateTokens + s.cacheCreateTokens,
       cacheReadTokens: acc.cacheReadTokens + s.cacheReadTokens,
-      totalCostUsd: acc.totalCostUsd + s.totalCostUsd,
     }),
     {
       inputTokens: 0,
       outputTokens: 0,
       cacheCreateTokens: 0,
       cacheReadTokens: 0,
-      totalCostUsd: 0,
     },
   )
   const cacheDenom = sums.cacheCreateTokens + sums.cacheReadTokens
@@ -396,7 +388,6 @@ export const loadDeepReflectArc = async (
       outputTokens: acc.outputTokens + t.totals.outputTokens,
       cacheCreateTokens: acc.cacheCreateTokens + t.totals.cacheCreateTokens,
       cacheReadTokens: acc.cacheReadTokens + t.totals.cacheReadTokens,
-      totalCostUsd: acc.totalCostUsd + t.totals.totalCostUsd,
       eventCount: acc.eventCount + t.conversation.length,
     }),
     {
@@ -404,7 +395,6 @@ export const loadDeepReflectArc = async (
       outputTokens: 0,
       cacheCreateTokens: 0,
       cacheReadTokens: 0,
-      totalCostUsd: 0,
       eventCount: 0,
     },
   )
@@ -412,6 +402,11 @@ export const loadDeepReflectArc = async (
   const totals = {
     ...arcSums,
     cacheHitRatio: cacheDenom === 0 ? 0 : arcSums.cacheReadTokens / cacheDenom,
+    totalWeightedTokens:
+      arcSums.inputTokens +
+      arcSums.outputTokens +
+      arcSums.cacheCreateTokens +
+      arcSums.cacheReadTokens * 0.1,
   }
 
   const lastActivity = tasks.reduce((latest, t) => {
@@ -436,7 +431,6 @@ export interface ArcCandidate {
   failureCount: number
   doneCount: number
   totalTokens: number
-  totalCostUsd: number
   lastActivity: string
   rankScore: number
 }
@@ -449,7 +443,6 @@ interface ArcAggregateRow {
   updated_at: string
   total_input: number
   total_output: number
-  total_cost_usd: number
   has_transcript: number
 }
 
@@ -463,7 +456,6 @@ const fetchArcAggregateRows = async (): Promise<ArcAggregateRow[]> => {
            t.updated_at AS updated_at,
            COALESCE(SUM(s.input_tokens), 0) AS total_input,
            COALESCE(SUM(s.output_tokens), 0) AS total_output,
-           COALESCE(SUM(s.total_cost_usd), 0) AS total_cost_usd,
            CASE WHEN MAX(tt.task_id) IS NULL THEN 0 ELSE 1 END AS has_transcript
       FROM tasks t
       LEFT JOIN task_signals s ON s.task_id = t.id
@@ -480,7 +472,6 @@ const fetchArcAggregateRows = async (): Promise<ArcAggregateRow[]> => {
       updated_at: (r0.updated_at as string | null) ?? (r0.created_at as string),
       total_input: Number(r0.total_input ?? 0),
       total_output: Number(r0.total_output ?? 0),
-      total_cost_usd: Number(r0.total_cost_usd ?? 0),
       has_transcript: Number(r0.has_transcript ?? 0),
     }
   })
@@ -505,7 +496,6 @@ export const listDeepReflectArcCandidates = async (
       failureCount: 0,
       doneCount: 0,
       totalTokens: 0,
-      totalCostUsd: 0,
       lastActivity: '',
       rankScore: 0,
     }
@@ -514,7 +504,6 @@ export const listDeepReflectArcCandidates = async (
     if (row.status === 'failed') entry.failureCount += 1
     if (row.status === 'done') entry.doneCount += 1
     entry.totalTokens += row.total_input + row.total_output
-    entry.totalCostUsd += row.total_cost_usd
     if (row.has_transcript === 1) {
       // Track which arcs have at least one transcript via the rankScore
       // sentinel; finalised below.

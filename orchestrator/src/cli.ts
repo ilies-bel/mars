@@ -2663,7 +2663,7 @@ const main = async (): Promise<void> => {
     }
     const cs = corpus.costSummary
     console.log(
-      `reflecting over ${corpus.entries.length} task(s) — total spend $${cs.totalCostUsd.toFixed(4)} (${cs.successCount} done / ${cs.failureCount} failed)…`,
+      `reflecting over ${corpus.entries.length} task(s) — ${cs.totalWeightedTokens.toFixed(0)} weighted tokens (${cs.successCount} done / ${cs.failureCount} failed)…`,
     )
     const result = await runReflector(corpus)
     if (result.costAnalysis) {
@@ -2743,7 +2743,7 @@ const main = async (): Promise<void> => {
         return
       }
       chosenId = pick.taskId
-      pickLine = `task ${pick.reason.taskId} (status=${pick.reason.status}, cost=$${pick.reason.costUsd.toFixed(4)}, picked: ${pick.reason.reason})`
+      pickLine = `task ${pick.reason.taskId} (status=${pick.reason.status}, weighted-tokens=${pick.reason.weightedTokens.toFixed(0)}, picked: ${pick.reason.reason})`
     }
 
     const session = await loadDeepReflectSession(chosenId)
@@ -2849,7 +2849,7 @@ const main = async (): Promise<void> => {
         .map(([k, v]) => `${k}=${v}`)
         .join(', ')
       console.log(
-        `arc ${originId}: ${arc.taskCount} task(s) [${statusMixStr}], ${arc.totals.eventCount} event(s), $${arc.totals.totalCostUsd.toFixed(4)} total`,
+        `arc ${originId}: ${arc.taskCount} task(s) [${statusMixStr}], ${arc.totals.eventCount} event(s), ${arc.totals.totalWeightedTokens.toFixed(0)} weighted tokens total`,
       )
 
       const result = await runDeepReflectorArc(arc)
@@ -2951,14 +2951,13 @@ const main = async (): Promise<void> => {
     }
 
     // Text output: header + rows
-    console.log('originId\ttasks\tdone\tfailed\ttokens\tcostUsd\tlastActivity')
+    console.log('originId\ttasks\tdone\tfailed\ttokens\tlastActivity')
     for (const arc of candidates) {
       const done = arc.statusMix.done ?? 0
       const failed = arc.statusMix.failed ?? 0
       const tokens = arc.totalTokens.toLocaleString('en-US')
-      const costUsd = `$${arc.totalCostUsd.toFixed(4)}`
       console.log(
-        `${arc.originId}\t${arc.taskCount}\t${done}\t${failed}\t${tokens}\t${costUsd}\t${arc.lastActivity}`,
+        `${arc.originId}\t${arc.taskCount}\t${done}\t${failed}\t${tokens}\t${arc.lastActivity}`,
       )
     }
     return

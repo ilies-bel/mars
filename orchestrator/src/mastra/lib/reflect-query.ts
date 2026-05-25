@@ -16,42 +16,36 @@ export interface ReflectCorpusEntry {
     outputTokens: number
     cacheCreateTokens: number
     cacheReadTokens: number
-    totalCostUsd: number
     cacheHitRatio: number
   }
 }
 
 export interface ReflectCostSummary {
-  totalCostUsd: number
+  totalWeightedTokens: number
   taskCount: number
   successCount: number
   failureCount: number
-  avgCostPerTaskUsd: number
-  avgCostPerSuccessUsd: number
-  avgCostPerFailureUsd: number
-  medianCostPerTaskUsd: number
-  costStdDevUsd: number
   cacheHitRatio: number
-  topExpensiveTasks: ReadonlyArray<{
+  topTokenHeavyTasks: ReadonlyArray<{
     taskId: string
     status: string
-    costUsd: number
+    weightedTokens: number
     timesMedian: number
   }>
   topExpensiveSteps: ReadonlyArray<{
     taskId: string
     stepId: string
-    costUsd: number
+    weightedTokens: number
     inputTokens: number
     outputTokens: number
     cacheCreateTokens: number
     cacheReadTokens: number
   }>
-  costByStep: ReadonlyArray<{
+  tokensByStep: ReadonlyArray<{
     stepId: string
-    totalCostUsd: number
+    totalWeightedTokens: number
     invocations: number
-    avgCostUsd: number
+    avgWeightedTokens: number
   }>
 }
 
@@ -159,37 +153,30 @@ export const loadScoresForTasks = async (
   return scoresByTask
 }
 
-const stdDev = (values: readonly number[]): number => {
-  if (values.length === 0) return 0
-  const mean = values.reduce((a, b) => a + b, 0) / values.length
-  const variance =
-    values.reduce((acc, v) => acc + (v - mean) ** 2, 0) / values.length
-  return Math.sqrt(variance)
-}
-
 const buildCostSummary = (entries: readonly ReflectCorpusEntry[]): ReflectCostSummary => {
   const taskCount = entries.length
   if (taskCount === 0) {
     return {
-      totalCostUsd: 0,
+      totalWeightedTokens: 0,
       taskCount: 0,
       successCount: 0,
       failureCount: 0,
-      avgCostPerTaskUsd: 0,
-      avgCostPerSuccessUsd: 0,
-      avgCostPerFailureUsd: 0,
-      medianCostPerTaskUsd: 0,
-      costStdDevUsd: 0,
       cacheHitRatio: 0,
-      topExpensiveTasks: [],
+      topTokenHeavyTasks: [],
       topExpensiveSteps: [],
-      costByStep: [],
+      tokensByStep: [],
     }
   }
 
-  const costs = entries.map((e) => e.totals.totalCostUsd)
-  const totalCostUsd = costs.reduce((a, b) => a + b, 0)
-  const med = median(costs)
+  const entryWeights = entries.map(
+    (e) =>
+      e.totals.inputTokens +
+      e.totals.outputTokens +
+      e.totals.cacheCreateTokens +
+      e.totals.cacheReadTokens * 0.1,
+  )
+  const totalWeightedTokens = entryWeights.reduce((a, b) => a + b, 0)
+  const med = median(entryWeights)
   const successes = entries.filter((e) => e.status === 'done')
   const failures = entries.filter((e) => e.status === 'failed')
   const totalCacheCreate = entries.reduce((a, e) => a + e.totals.cacheCreateTokens, 0)
@@ -197,24 +184,21 @@ const buildCostSummary = (entries: readonly ReflectCorpusEntry[]): ReflectCostSu
   const cacheDenom = totalCacheCreate + totalCacheRead
   const cacheHitRatio = cacheDenom === 0 ? 0 : totalCacheRead / cacheDenom
 
-  const topExpensiveTasks = entries
-    .map((e) => ({
+  const topTokenHeavyTasks = entries
+    .map((e, i) => ({
       taskId: e.taskId,
       status: e.status,
-      costUsd: e.totals.totalCostUsd,
-      timesMedian: med === 0 ? 0 : e.totals.totalCostUsd / med,
+      weightedTokens: entryWeights[i] ?? 0,
+      timesMedian: med === 0 ? 0 : (entryWeights[i] ?? 0) / med,
     }))
-    .sort((a, b) => b.costUsd - a.costUsd)
+    .sort((a, b) => b.weightedTokens - a.weightedTokens)
     .slice(0, 5)
 
-  const stepBuckets = new Map<
-    string,
-    { totalCostUsd: number; invocations: number }
-  >()
+  const stepBuckets = new Map<string, { totalWeightedTokens: number; invocations: number }>()
   const allSteps: Array<{
     taskId: string
     stepId: string
-    costUsd: number
+    weightedTokens: number
     inputTokens: number
     outputTokens: number
     cacheCreateTokens: number
@@ -222,14 +206,16 @@ const buildCostSummary = (entries: readonly ReflectCorpusEntry[]): ReflectCostSu
   }> = []
   for (const entry of entries) {
     for (const s of entry.signals) {
-      const bucket = stepBuckets.get(s.stepId) ?? { totalCostUsd: 0, invocations: 0 }
-      bucket.totalCostUsd += s.totalCostUsd
+      const sw =
+        s.inputTokens + s.outputTokens + s.cacheCreateTokens + s.cacheReadTokens * 0.1
+      const bucket = stepBuckets.get(s.stepId) ?? { totalWeightedTokens: 0, invocations: 0 }
+      bucket.totalWeightedTokens += sw
       bucket.invocations += 1
       stepBuckets.set(s.stepId, bucket)
       allSteps.push({
         taskId: entry.taskId,
         stepId: s.stepId,
-        costUsd: s.totalCostUsd,
+        weightedTokens: sw,
         inputTokens: s.inputTokens,
         outputTokens: s.outputTokens,
         cacheCreateTokens: s.cacheCreateTokens,
@@ -237,36 +223,29 @@ const buildCostSummary = (entries: readonly ReflectCorpusEntry[]): ReflectCostSu
       })
     }
   }
-  const costByStep = Array.from(stepBuckets.entries())
+  const tokensByStep = Array.from(stepBuckets.entries())
     .map(([stepId, b]) => ({
       stepId,
-      totalCostUsd: b.totalCostUsd,
+      totalWeightedTokens: b.totalWeightedTokens,
       invocations: b.invocations,
-      avgCostUsd: b.invocations === 0 ? 0 : b.totalCostUsd / b.invocations,
+      avgWeightedTokens:
+        b.invocations === 0 ? 0 : b.totalWeightedTokens / b.invocations,
     }))
-    .sort((a, b) => b.totalCostUsd - a.totalCostUsd)
+    .sort((a, b) => b.totalWeightedTokens - a.totalWeightedTokens)
 
   const topExpensiveSteps = allSteps
-    .sort((a, b) => b.costUsd - a.costUsd)
+    .sort((a, b) => b.weightedTokens - a.weightedTokens)
     .slice(0, 5)
 
-  const sumSuccess = successes.reduce((a, e) => a + e.totals.totalCostUsd, 0)
-  const sumFailure = failures.reduce((a, e) => a + e.totals.totalCostUsd, 0)
-
   return {
-    totalCostUsd,
+    totalWeightedTokens,
     taskCount,
     successCount: successes.length,
     failureCount: failures.length,
-    avgCostPerTaskUsd: totalCostUsd / taskCount,
-    avgCostPerSuccessUsd: successes.length === 0 ? 0 : sumSuccess / successes.length,
-    avgCostPerFailureUsd: failures.length === 0 ? 0 : sumFailure / failures.length,
-    medianCostPerTaskUsd: med,
-    costStdDevUsd: stdDev(costs),
     cacheHitRatio,
-    topExpensiveTasks,
+    topTokenHeavyTasks,
     topExpensiveSteps,
-    costByStep,
+    tokensByStep,
   }
 }
 
@@ -306,7 +285,7 @@ export const loadRecentTaskCorpus = async (
 
   const signalRows = await queue.query({
     sql: `SELECT task_id, step_id, input_tokens, output_tokens,
-                 cache_create_tokens, cache_read_tokens, total_cost_usd,
+                 cache_create_tokens, cache_read_tokens,
                  message_count
             FROM task_signals
            WHERE task_id IN (${placeholders})`,
@@ -324,7 +303,6 @@ export const loadRecentTaskCorpus = async (
       outputTokens: Number(r.output_tokens ?? 0),
       cacheCreateTokens: Number(r.cache_create_tokens ?? 0),
       cacheReadTokens: Number(r.cache_read_tokens ?? 0),
-      totalCostUsd: Number(r.total_cost_usd ?? 0),
       messageCount: Number(r.message_count ?? 0),
     })
     signalsByTask.set(taskId, list)
@@ -342,14 +320,12 @@ export const loadRecentTaskCorpus = async (
         outputTokens: acc.outputTokens + s.outputTokens,
         cacheCreateTokens: acc.cacheCreateTokens + s.cacheCreateTokens,
         cacheReadTokens: acc.cacheReadTokens + s.cacheReadTokens,
-        totalCostUsd: acc.totalCostUsd + s.totalCostUsd,
       }),
       {
         inputTokens: 0,
         outputTokens: 0,
         cacheCreateTokens: 0,
         cacheReadTokens: 0,
-        totalCostUsd: 0,
       },
     )
     const cacheDenom = sums.cacheCreateTokens + sums.cacheReadTokens

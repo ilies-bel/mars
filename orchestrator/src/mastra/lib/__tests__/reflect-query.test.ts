@@ -30,7 +30,6 @@ const TASK_SIGNALS_DDL = `
     output_tokens INTEGER NOT NULL DEFAULT 0,
     cache_create_tokens INTEGER NOT NULL DEFAULT 0,
     cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-    total_cost_usd REAL NOT NULL DEFAULT 0,
     message_count INTEGER NOT NULL DEFAULT 0,
     recorded_at TEXT NOT NULL,
     PRIMARY KEY (task_id, step_id)
@@ -77,16 +76,15 @@ const insertSignal = async (
     outputTokens?: number
     cacheCreateTokens?: number
     cacheReadTokens?: number
-    totalCostUsd?: number
     messageCount?: number
   },
 ): Promise<void> => {
   await store.execute({
     sql: `INSERT INTO task_signals
             (task_id, step_id, input_tokens, output_tokens,
-             cache_create_tokens, cache_read_tokens, total_cost_usd,
+             cache_create_tokens, cache_read_tokens,
              message_count, recorded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       opts.taskId,
       opts.stepId,
@@ -94,7 +92,6 @@ const insertSignal = async (
       opts.outputTokens ?? 0,
       opts.cacheCreateTokens ?? 0,
       opts.cacheReadTokens ?? 0,
-      opts.totalCostUsd ?? 0,
       opts.messageCount ?? 0,
       '2026-01-01T00:00:01Z',
     ],
@@ -111,7 +108,7 @@ describe('loadRecentTaskCorpus', () => {
 
     expect(corpus.entries).toHaveLength(0)
     expect(corpus.costSummary.taskCount).toBe(0)
-    expect(corpus.costSummary.totalCostUsd).toBe(0)
+    expect(corpus.costSummary.totalWeightedTokens).toBe(0)
   })
 
   it('returns entries for done and failed tasks', async () => {
@@ -138,7 +135,6 @@ describe('loadRecentTaskCorpus', () => {
       outputTokens: 500,
       cacheCreateTokens: 200,
       cacheReadTokens: 100,
-      totalCostUsd: 0.05,
     })
 
     const corpus = await loadRecentTaskCorpus({ store })
@@ -149,7 +145,6 @@ describe('loadRecentTaskCorpus', () => {
     expect(entry.totals.outputTokens).toBe(500)
     expect(entry.totals.cacheCreateTokens).toBe(200)
     expect(entry.totals.cacheReadTokens).toBe(100)
-    expect(entry.totals.totalCostUsd).toBeCloseTo(0.05)
   })
 
   it('sums signal tokens across multiple steps for one task', async () => {
@@ -160,14 +155,12 @@ describe('loadRecentTaskCorpus', () => {
       stepId: 'code',
       inputTokens: 1000,
       outputTokens: 200,
-      totalCostUsd: 0.03,
     })
     await insertSignal(store, {
       taskId: 'task-multi',
       stepId: 'verify',
       inputTokens: 500,
       outputTokens: 100,
-      totalCostUsd: 0.01,
     })
 
     const corpus = await loadRecentTaskCorpus({ store })
@@ -175,7 +168,6 @@ describe('loadRecentTaskCorpus', () => {
     const entry = corpus.entries[0]
     expect(entry.totals.inputTokens).toBe(1500)
     expect(entry.totals.outputTokens).toBe(300)
-    expect(entry.totals.totalCostUsd).toBeCloseTo(0.04)
     expect(entry.signals).toHaveLength(2)
   })
 
@@ -226,14 +218,16 @@ describe('loadRecentTaskCorpus', () => {
     const store = await makeStore()
     await insertTask(store, { id: 'task-a', status: 'done' })
     await insertTask(store, { id: 'task-b', status: 'failed' })
-    await insertSignal(store, { taskId: 'task-a', stepId: 'code', totalCostUsd: 0.10 })
-    await insertSignal(store, { taskId: 'task-b', stepId: 'code', totalCostUsd: 0.05 })
+    await insertSignal(store, { taskId: 'task-a', stepId: 'code', inputTokens: 1000 })
+    await insertSignal(store, { taskId: 'task-b', stepId: 'code', inputTokens: 500 })
 
     const corpus = await loadRecentTaskCorpus({ store })
 
     expect(corpus.costSummary.taskCount).toBe(2)
     expect(corpus.costSummary.successCount).toBe(1)
     expect(corpus.costSummary.failureCount).toBe(1)
-    expect(corpus.costSummary.totalCostUsd).toBeCloseTo(0.15)
+    // weighted_tokens = input*1 + output*1 + cache_create*1 + cache_read*0.1
+    // task-a: 1000, task-b: 500, total: 1500
+    expect(corpus.costSummary.totalWeightedTokens).toBeCloseTo(1500)
   })
 })
