@@ -34,6 +34,20 @@ export const parseTaskRoute = (hash: string): string | null => {
 }
 
 /**
+ * Parses an optional `#/proposal/<id>` overlay route. Proposal rows route here
+ * instead of `#/task/<id>` so the App can render the proposal drawer while task
+ * rows keep opening the task drawer unchanged.
+ *
+ * Mirrors `parseTaskRoute`: trailing slashes and empty ids normalise to `null`.
+ */
+export const parseProposalRoute = (hash: string): string | null => {
+  const m = /^#\/proposal\/([^/?#]+)/.exec(hash)
+  if (!m) return null
+  const id = decodeURIComponent(m[1])
+  return id.length > 0 ? id : null
+}
+
+/**
  * Badge count for the Action queue nav entry — stale worktrees only.
  * Drafts are surfaced inline in the Action queue and must not appear here.
  */
