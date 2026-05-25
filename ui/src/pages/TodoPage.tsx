@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import type { ActionQueueItem } from '@/shared/schemas'
+import type { ActionQueueItem, DagNode } from '@/shared/schemas'
 
 // ---- Helpers ----
 
@@ -13,9 +13,16 @@ const formatTime = (iso: string): string => {
 }
 
 const priorityBadgeClass = (priority: string): string => {
-  if (priority === 'urgent') return 'text-[#ff4f4f]'
-  if (priority === 'high') return 'text-[#ff944d]'
+  if (priority === 'high') return 'text-[#ff4f4f]'
+  if (priority === 'normal') return 'text-[#ff944d]'
   return 'text-iron/60'
+}
+
+const KIND_LABEL: Record<ActionQueueItem['kind'], string> = {
+  'failed-task': 'failed',
+  'blocked-task': 'blocked',
+  'stale-worktree': 'stale wt',
+  'draft-proposal': 'draft',
 }
 
 // ---- Row ----
@@ -35,8 +42,11 @@ const ActionQueueRow = ({ item, active, onSelect }: RowProps) => {
   return (
     <li className={baseClass} onClick={onSelect}>
       <div className="flex items-baseline gap-2">
-        <span className="break-all font-mono text-[11px] uppercase text-iron">
-          {item.id}
+        <span className="shrink-0 font-mono text-[9px] uppercase text-iron/80">
+          {KIND_LABEL[item.kind]}
+        </span>
+        <span className="break-all font-mono text-[10px] text-iron">
+          {item.entityId}
         </span>
         <span
           className={`ml-auto shrink-0 font-mono text-[9px] uppercase ${priorityBadgeClass(item.priority)}`}
@@ -48,9 +58,38 @@ const ActionQueueRow = ({ item, active, onSelect }: RowProps) => {
         {item.title || '(no title)'}
       </div>
       <div className="mt-1 font-mono text-[10px] text-iron/70">
-        {formatTime(item.lastSeenAt)}
+        {formatTime(item.at)}
+        {item.dismissed ? ' · dismissed' : ''}
       </div>
     </li>
+  )
+}
+
+// ---- DAG sub-panel ----
+
+interface DagListProps {
+  label: string
+  nodes: DagNode[]
+}
+
+const DagList = ({ label, nodes }: DagListProps) => {
+  if (nodes.length === 0) return null
+  return (
+    <div>
+      <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+        {label}
+      </dt>
+      <dd>
+        <ul className="flex flex-col gap-1">
+          {nodes.map((n) => (
+            <li key={n.id} className="text-fg">
+              <span className="text-iron">{n.id}</span>{' '}
+              <span className="text-iron/60">({n.status})</span> {n.summary}
+            </li>
+          ))}
+        </ul>
+      </dd>
+    </div>
   )
 }
 
@@ -65,10 +104,10 @@ const ActionQueueDetail = ({ item }: DetailProps) => (
     <header className="border-b border-iron/30 px-6 py-4">
       <div className="flex items-baseline gap-3">
         <span className="break-all font-mono text-[11px] uppercase text-iron">
-          {item.id}
+          {item.entityId}
         </span>
         <span className="shrink-0 font-mono text-[10px] uppercase text-iron/80">
-          {item.kind}
+          {KIND_LABEL[item.kind]}
         </span>
         <span
           className={`ml-auto font-mono text-[10px] uppercase ${priorityBadgeClass(item.priority)}`}
@@ -93,26 +132,33 @@ const ActionQueueDetail = ({ item }: DetailProps) => (
             )}
           </dd>
         </div>
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            Latest failure
-          </dt>
-          <dd className="text-fg">{formatTime(item.lastSeenAt)}</dd>
-        </div>
-        <div>
-          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-            First raised
-          </dt>
-          <dd className="text-fg">{formatTime(item.raisedAt)}</dd>
-        </div>
-        {item.seenCount > 1 && (
-          <div>
-            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Occurrences
-            </dt>
-            <dd className="text-fg">{item.seenCount}</dd>
-          </div>
+        {item.dag && (
+          <>
+            {item.dag.proposalId && (
+              <div>
+                <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+                  From proposal
+                </dt>
+                <dd className="text-fg">{item.dag.proposalId}</dd>
+              </div>
+            )}
+            <DagList label="Waits on (blockers)" nodes={item.dag.blockers} />
+            <DagList
+              label="Waited on by (blocking)"
+              nodes={item.dag.blocking}
+            />
+            <DagList
+              label="Recovery descendants"
+              nodes={item.dag.descendants}
+            />
+          </>
         )}
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Last updated
+          </dt>
+          <dd className="text-fg">{formatTime(item.at)}</dd>
+        </div>
       </dl>
     </main>
   </div>
