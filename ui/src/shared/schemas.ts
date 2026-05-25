@@ -117,21 +117,34 @@ export const todoResponseSchema = z.object({
   staleWorktrees: z.array(staleWorktreeSchema),
 })
 
-export const inboxResponseSchema = z.object({
-  drafts: z.array(draftFeatureSchema),
-  blocked: z.array(taskSchema),
-  failed: z.array(taskSchema),
+export const dagNodeSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  summary: z.string(),
+})
+
+export const dagContextSchema = z.object({
+  blockers: z.array(dagNodeSchema),
+  blocking: z.array(dagNodeSchema),
+  descendants: z.array(dagNodeSchema),
+  proposalId: z.string().nullable(),
 })
 
 export const actionQueueItemSchema = z.object({
   id: z.string(),
-  kind: z.string(),
+  kind: z.enum([
+    'failed-task',
+    'blocked-task',
+    'stale-worktree',
+    'draft-proposal',
+  ]),
+  entityId: z.string(),
+  priority: z.enum(['high', 'normal', 'low']),
   title: z.string(),
   body: z.string(),
-  raisedAt: z.string(),
-  lastSeenAt: z.string(),
-  seenCount: z.number(),
-  priority: z.string(),
+  at: z.string(),
+  dag: dagContextSchema.nullable(),
+  dismissed: z.boolean(),
 })
 
 export const actionQueueResponseSchema = z.array(actionQueueItemSchema)
@@ -152,7 +165,8 @@ export const agentsResponseSchema = z.object({
 })
 
 export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
-export type InboxPayload = z.infer<typeof inboxResponseSchema>
+export type DagNode = z.infer<typeof dagNodeSchema>
+export type DagContext = z.infer<typeof dagContextSchema>
 export type TaskStatus = z.infer<typeof taskStatusSchema>
 export type ProposalSource = z.infer<typeof proposalSourceSchema>
 export type DraftFeature = z.infer<typeof draftFeatureSchema>

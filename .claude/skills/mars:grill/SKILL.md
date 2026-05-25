@@ -38,10 +38,7 @@ codebase instead of asking the user.
 
 **Parse `$ARGUMENTS` before doing anything else:**
 
-1. Look for a `--inbox <inbox-id>` token anywhere in the string. Extract
-   `<inbox-id>` and strip the `--inbox <inbox-id>` token from the string.
-   If absent, `inbox-id` is empty.
-2. Treat the remainder (trimmed) as the `<proposal-id>`.
+Treat the trimmed `$ARGUMENTS` as the `<proposal-id>`.
 
 `<proposal-id>` should be a draft proposal id. If it is missing or empty
 after parsing, stop immediately and tell the user to pass an id — picking
@@ -217,19 +214,17 @@ producing new branches, and the language has stabilised.
 
 When you're there, announce the handoff in one short line and **invoke
 the `mars:to-prd` skill via the Skill tool yourself**, passing the
-proposal id as `args`. If an `--inbox <inbox-id>` was parsed from
-`$ARGUMENTS`, forward it in the args so `mars:to-prd` can resolve the
-inbox row after the PRD is synthesised:
+proposal id as `args`:
 
 > *"I think we have a shared understanding — synthesising the PRD now."*
 
 ```
-// No inbox id:
 Skill({ skill: "mars:to-prd", args: "<id>" })
-
-// With inbox id (inbox resolution is handled by to-prd after synthesis):
-Skill({ skill: "mars:to-prd", args: "<id> --inbox <inbox-id>" })
 ```
+
+The inbox needs no separate cleanup — once the proposal is promoted out
+of `draft`, its derived `draft-proposal:<id>` inbox row disappears on the
+next `mars inbox` read.
 
 Do not ask the user to type `/mars:to-prd` — invoke it for them. The
 user's next interaction should be confirming the synthesised PRD inside
@@ -270,7 +265,5 @@ Those are `to-prd`'s job. The only writes you may issue here are
 
 The user passed: `$ARGUMENTS`
 
-Parse as described in Step 0: strip any `--inbox <inbox-id>` token
-first; the remainder is the draft proposal id. Both are carried through
-the full skill — the proposal id for the grill conversation, the inbox
-id for forwarding to `mars:to-prd` at handoff.
+The trimmed argument is the draft proposal id, carried through the grill
+conversation and forwarded to `mars:to-prd` at handoff.

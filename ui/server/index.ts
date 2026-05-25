@@ -2,9 +2,13 @@ import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { loadAgents } from './agents.ts'
 import { StateDb, TaskDb } from './db.ts'
+import {
+  type DerivedInboxFilter,
+  type DerivedInboxKind,
+  dismissalKindForRow,
+  listDerivedInbox,
+} from './derivedInbox.ts'
 import { listTerminalEvents } from './events.ts'
-import { aggregateInbox } from './inbox.ts'
-import { listInboxItems, parseSourceParam } from './inboxItems.ts'
 import { resolveRepo } from './repo.ts'
 import { SseHub } from './sse.ts'
 import { watchQueue } from './watch.ts'
@@ -160,32 +164,40 @@ export const startServer = async (
 
       if (path === '/api/inbox/action-queue') {
         try {
-          const items = await stateDb.listOpenInboxItems()
+          const filterRaw = url.searchParams.get('filter')
+          const filter: DerivedInboxFilter =
+            filterRaw === 'dismissed' || filterRaw === 'all'
+              ? filterRaw
+              : 'open'
+          const items = await listDerivedInbox(
+            db,
+            stateDb,
+            ctx.repoRoot,
+            filter,
+          )
           return jsonResponse(200, items)
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }
       }
 
-      if (path === '/api/inbox') {
+      if (path === '/api/inbox/dismiss' && req.method === 'POST') {
         try {
-          const inbox = await aggregateInbox(db, stateDb)
-          return jsonResponse(200, inbox)
-        } catch (err) {
-          return jsonResponse(500, { error: (err as Error).message })
-        }
-      }
-
-      if (path === '/api/inbox/items') {
-        try {
-          const source = parseSourceParam(url.searchParams.get('source'))
-          if (source === 'invalid') {
+          const body = (await req.json()) as { id?: unknown }
+          const id = body.id
+          if (typeof id !== 'string' || !id.includes(':')) {
             return jsonResponse(400, {
-              error: "source must be one of 'draft', 'blocked', 'failed'",
+              error: 'id is required and must be a "<kind>:<entityId>" string',
             })
           }
-          const items = await listInboxItems(db, stateDb, source)
-          return jsonResponse(200, items)
+          const [kind, ...rest] = id.split(':')
+          const entityId = rest.join(':')
+          const entityKind = dismissalKindForRow(kind as DerivedInboxKind)
+          if (entityKind === null) {
+            return jsonResponse(400, { error: `unknown inbox kind: ${kind}` })
+          }
+          await stateDb.dismissInboxEntity(entityKind, entityId)
+          return jsonResponse(200, { ok: true })
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }

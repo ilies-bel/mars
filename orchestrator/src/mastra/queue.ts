@@ -4,6 +4,7 @@ import { resolveContext } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
 import { dismissAlertsOnStatusChange } from './lib/inbox'
+import { clearDismissalForEntity } from './lib/inbox-dismissals'
 import { openLibsql } from './lib/libsql'
 import type { TaskStore } from './lib/task-store'
 
@@ -1300,6 +1301,10 @@ export const updateTask = async (
     patch.status !== previousStatus
   ) {
     await dismissAlertsOnStatusChange(id, patch.status)
+    // The derived inbox honours one persistent operator opinion — a
+    // dismissal. Wipe it on any real status change so a dismissed-then-
+    // restarted task resurfaces if it gets stuck again.
+    await clearDismissalForEntity('task', id)
   }
 
   if (patch.status === 'done') {
