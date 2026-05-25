@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import type { Mock } from 'bun:test'
-import { fetchAgents, fetchTasks, fetchTodo } from './api'
+import { fetchAgents, fetchProgress, fetchTasks, fetchTodo } from './api'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -219,5 +219,71 @@ describe('fetchTodo', () => {
   it('throws when staleWorktrees key is absent', async () => {
     fetchSpy.mockResolvedValue(json({ drafts: [] }))
     await expect(fetchTodo()).rejects.toThrow('schema validation')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// fetchProgress
+// ---------------------------------------------------------------------------
+
+const minProgressTask = (overrides: Record<string, unknown> = {}) => ({
+  id: 'task-1',
+  prompt: 'do something',
+  status: 'running',
+  cluster: 'In progress',
+  plan: null,
+  branch: null,
+  worktreePath: null,
+  error: null,
+  dropReason: null,
+  retryCount: 0,
+  blockerTaskId: null,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  ...overrides,
+})
+
+describe('fetchProgress', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('calls /api/progress without a query string when no failedWindowMs is given', async () => {
+    fetchSpy.mockResolvedValue(json({ tasks: [], proposals: [] }))
+    await fetchProgress()
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).not.toContain('failedWindow')
+  })
+
+  it('appends ?failedWindow=<ms> when a numeric failedWindowMs is given', async () => {
+    fetchSpy.mockResolvedValue(json({ tasks: [], proposals: [] }))
+    await fetchProgress(3_600_000)
+    const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).toContain('failedWindow=3600000')
+  })
+
+  it('appends ?failedWindow=all when failedWindowMs is null', async () => {
+    fetchSpy.mockResolvedValue(json({ tasks: [], proposals: [] }))
+    await fetchProgress(null)
+    const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).toContain('failedWindow=all')
+  })
+
+  it('returns typed tasks and proposals on a valid response', async () => {
+    fetchSpy.mockResolvedValue(
+      json({ tasks: [minProgressTask()], proposals: [] }),
+    )
+    const result = await fetchProgress()
+    expect(result.tasks).toHaveLength(1)
+    expect(result.tasks[0].cluster).toBe('In progress')
+    expect(result.proposals).toEqual([])
   })
 })

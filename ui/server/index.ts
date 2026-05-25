@@ -123,7 +123,15 @@ export const startServer = async (
 
       if (path === '/api/progress') {
         try {
-          const tasks = await db.listProgressTasks()
+          const failedWindowParam = url.searchParams.get('failedWindow')
+          let windowMs: number | null = 24 * 60 * 60 * 1000
+          if (failedWindowParam === 'all') {
+            windowMs = null
+          } else if (failedWindowParam !== null) {
+            const parsed = Number(failedWindowParam)
+            if (!Number.isNaN(parsed) && parsed > 0) windowMs = parsed
+          }
+          const tasks = await db.listProgressTasks(Date.now(), windowMs)
           // Collect unique proposal IDs referenced by in-scope tasks
           const proposalIds = [
             ...new Set(
