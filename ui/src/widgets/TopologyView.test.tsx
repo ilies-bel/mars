@@ -156,3 +156,87 @@ describe('TopologyView – provenance edges', () => {
     expect(html).not.toMatch(/data-edge-kind="provenance"/)
   })
 })
+
+describe('TopologyView – cluster ghosting', () => {
+  it('ghosts a task node whose cluster is in ghostedClusters', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'Blocked', status: 'blocked' })]}
+        proposals={[]}
+        ghostedClusters={new Set(['Blocked'])}
+      />,
+    )
+    expect(html).toContain('data-ghosted="true"')
+  })
+
+  it('does not ghost a task node whose cluster is not in ghostedClusters', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'In progress', status: 'running' })]}
+        proposals={[]}
+        ghostedClusters={new Set(['Blocked'])}
+      />,
+    )
+    expect(html).not.toContain('data-ghosted="true"')
+  })
+
+  it('ghosts a proposal node when "Proposal" is in ghostedClusters', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'In progress', parentProposalId: 'p1' })]}
+        proposals={[proposal('p1', 'My goal')]}
+        ghostedClusters={new Set(['Proposal'])}
+      />,
+    )
+    expect(html).toContain('data-ghosted="true"')
+  })
+
+  it('does not ghost task nodes when only "Proposal" is in ghostedClusters', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'In progress', status: 'running' })]}
+        proposals={[]}
+        ghostedClusters={new Set(['Proposal'])}
+      />,
+    )
+    expect(html).not.toContain('data-ghosted="true"')
+  })
+
+  it('does not ghost any nodes when ghostedClusters is empty', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'Failed', status: 'failed' })]}
+        proposals={[proposal('p1')]}
+        ghostedClusters={new Set()}
+      />,
+    )
+    expect(html).not.toContain('data-ghosted="true"')
+  })
+
+  it('does not ghost any nodes when ghostedClusters is not provided', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'Failed', status: 'failed' })]}
+        proposals={[proposal('p1')]}
+      />,
+    )
+    expect(html).not.toContain('data-ghosted="true"')
+  })
+
+  it('ghosts multiple clusters simultaneously', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[
+          task({ id: 't1', cluster: 'In progress', status: 'running' }),
+          task({ id: 't2', cluster: 'Blocked', status: 'blocked' }),
+          task({ id: 't3', cluster: 'Failed', status: 'failed' }),
+        ]}
+        proposals={[]}
+        ghostedClusters={new Set(['Blocked', 'Failed'])}
+      />,
+    )
+    const ghostedCount = (html.match(/data-ghosted="true"/g) ?? []).length
+    expect(ghostedCount).toBe(2)
+    expect(html).not.toContain('data-cluster="In progress" data-ghosted')
+  })
+})
