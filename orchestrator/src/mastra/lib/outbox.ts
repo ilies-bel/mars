@@ -15,5 +15,6 @@
  * helper, the arch test in `__tests__/db-writes-eventful.test.ts`
  * flips its `it.todo` assertions to real `it()`.
  */
-export { publish } from '../../bus/publisher.js'
+export { publish, publishWithRetry } from '../../bus/publisher.js'
+export type { RetryOpts } from '../../bus/publisher.js'
 export type { EventName, EventPayload } from '../../bus/events.js'
