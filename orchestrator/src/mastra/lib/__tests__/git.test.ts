@@ -956,6 +956,95 @@ describe('mergeBranch — onVegaStart fires when fast-forward fails (conflict)',
   })
 })
 
+describe('mergeBranch — tree-truth: aborted:false when Vega resolves rebase despite supervisor exit 1', () => {
+  let repo: string
+  let worktreeDir: string
+  let stubDir: string
+  let prevClaudeBin: string | undefined
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-merge-tree-truth-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+    writeFileSync(resolve(repo, 'src.ts'), 'const x = 1\n')
+    execFileSync('git', ['add', '.'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+
+    // Diverge: task changes x to 2, main changes x to 999 — guaranteed conflict
+    execFileSync('git', ['checkout', '-q', '-b', 'task/tree-truth'], { cwd: repo })
+    writeFileSync(resolve(repo, 'src.ts'), 'const x = 2\n')
+    execFileSync('git', ['commit', '-q', '-am', 'task edit'], { cwd: repo })
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+    writeFileSync(resolve(repo, 'src.ts'), 'const x = 999\n')
+    execFileSync('git', ['commit', '-q', '-am', 'main edit'], { cwd: repo })
+
+    worktreeDir = mkdtempSync(resolve(tmpdir(), 'mars-merge-tree-truth-wt-'))
+    rmSync(worktreeDir, { recursive: true, force: true })
+    execFileSync('git', ['worktree', 'add', worktreeDir, 'task/tree-truth'], { cwd: repo })
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+
+    // Stub Vega: resolves the conflict by writing the task-side content, stages
+    // it, runs `git rebase --continue` to completion, then exits 1 (simulates a
+    // rate-limit or tool error that hits after the rebase finishes). The
+    // orchestrator must use git-tree truth — preSha != postSha, rebase dir gone,
+    // tree clean — and return merged:true despite the non-zero exit code.
+    stubDir = mkdtempSync(resolve(tmpdir(), 'mars-vega-tree-truth-stub-'))
+    const stubPath = resolve(stubDir, 'claude')
+    const stubScript = `#!/usr/bin/env node
+const { execFileSync } = require('child_process');
+const { writeFileSync } = require('fs');
+// Resolve the conflict: accept the task version of the file
+writeFileSync('src.ts', 'const x = 2\\n');
+// Stage the resolved file
+execFileSync('git', ['add', 'src.ts'], { stdio: 'pipe' });
+// Complete the rebase — GIT_EDITOR=true accepts the commit message without prompting
+execFileSync('git', ['rebase', '--continue'], {
+  env: { ...process.env, GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' },
+  stdio: 'pipe',
+});
+// Emit the Claude stream result event (stdout is parsed as JSON by the orchestrator)
+process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', session_id: 'tree-truth-stub' }) + '\\n');
+// Exit non-zero — simulates a rate-limit or CLI crash that lands AFTER the rebase finishes
+process.exit(1);
+`
+    writeFileSync(stubPath, stubScript, 'utf8')
+    chmodSync(stubPath, 0o755)
+    prevClaudeBin = process.env.MARS_CLAUDE_BIN
+    process.env.MARS_CLAUDE_BIN = stubPath
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    if (prevClaudeBin === undefined) delete process.env.MARS_CLAUDE_BIN
+    else process.env.MARS_CLAUDE_BIN = prevClaudeBin
+    try {
+      execFileSync('git', ['worktree', 'remove', '--force', worktreeDir], { cwd: repo })
+    } catch {}
+    rmSync(worktreeDir, { recursive: true, force: true })
+    rmSync(stubDir, { recursive: true, force: true })
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns merged:true when Vega resolves the rebase despite supervisor exiting with code 1', async () => {
+    const { mergeBranch } = await import('../git')
+    const result = await mergeBranch({
+      branch: 'task/tree-truth',
+      worktreePath: worktreeDir,
+      integrationBranch: 'main',
+      lockTimeoutMs: 5_000,
+    })
+    // Tree-truth: preSha !== postSha, rebase dir gone, tree clean → success,
+    // even though the supervisor CLI exited with code 1.
+    expect(result.merged).toBe(true)
+    expect(result.aborted).toBe(false)
+    // The resolved content (task version) must be present
+    expect(readFileSync(resolve(repo, 'src.ts'), 'utf8')).toBe('const x = 2\n')
+  })
+})
+
 describe('detectTemplatePaths (unit)', () => {
   it('returns an empty array when no paths are under the template prefix', () => {
     expect(detectTemplatePaths(['src/foo.ts', 'README.md', 'orchestrator/src/init/scaffold.ts'])).toEqual([])

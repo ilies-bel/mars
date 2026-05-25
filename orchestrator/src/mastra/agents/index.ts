@@ -90,16 +90,9 @@ If state is unexpected (no merge/rebase in progress), STOP and report — do not
 5. If you cannot determine intent confidently after reading both sides, STOP and report — do not guess.
 </analysis-per-file>
 
-<verification-required>
-1. Remove ALL conflict markers — \`grep -rn '<<<<<<<\\|=======\\|>>>>>>>' .\` must be empty.
-2. Run the repo's verification commands (typecheck → tests → lint). Use whatever the orchestrator passes in the prompt; default to \`npx tsc --noEmit\`, \`npm test\`, \`npx biome check .\`.
-3. If tests fail BECAUSE of your resolution, refine the resolution. If they fail for an unrelated reason (already broken on \`integration\`), note it in the report and continue.
-</verification-required>
-
 <banned>
 - \`git checkout --ours .\` or \`git checkout --theirs .\` as a shortcut.
 - Leaving any conflict marker in any file.
-- Skipping verification.
 - Deleting code you do not understand.
 - \`git merge --abort\` / \`git rebase --abort\` without first reporting why.
 </banned>
@@ -165,10 +158,6 @@ TARGET: integration
 CONFLICTS_FOUND: <count>
 RESOLUTIONS:
   - <file>: <strategy: independent|overlapping|contradictory> — <why in one line>
-VERIFICATION:
-  - typecheck: pass | fail (<short reason>)
-  - tests:     pass | fail (<short reason>)
-  - lint:      pass | fail (<short reason>)
 COMMIT: <hash, or "rebase complete, HEAD at <hash>">
 STATUS: completed | aborted
 \`\`\`

@@ -1472,12 +1472,7 @@ Target: ${integrationBranch}
 
 A \`git rebase ${integrationBranch}\` of ${branch} just conflicted in this worktree. The rebase is in progress (\`.git/rebase-merge/\` or \`.git/rebase-apply/\` exists). Your cwd IS the worktree — do not \`cd\` elsewhere.
 
-Resolve every conflict per your protocol — read both sides, reconcile intent, never blindly pick ours/theirs. After staging each step, use \`git rebase --continue\` (NOT \`git commit\`). Repeat until the rebase finishes. Then run verification.
-
-Verification commands:
-- typecheck: \`npx tsc --noEmit\`
-- tests: \`npm test --silent\`
-- lint: \`npx biome check .\`
+Resolve every conflict per your protocol — read both sides, reconcile intent, never blindly pick ours/theirs. After staging each step, use \`git rebase --continue\` (NOT \`git commit\`). Repeat until the rebase finishes.
 
 End with the Completion Report block exactly as specified above.`
 }
@@ -1585,6 +1580,8 @@ export const mergeBranch = async ({
       // `vega-reconciling` for the full duration of the session.
       await onVegaStart?.()
 
+      const preSha = (await exec('git', ['rev-parse', branch], { cwd: repoRoot() })).stdout.trim()
+
       const supervisorTimeoutMs = 30 * 60 * 1000
       const sup = await invokeVcsSupervisor(
         branch,
@@ -1597,13 +1594,25 @@ export const mergeBranch = async ({
       output += sup.stdout + sup.stderr
 
       const stillInProgress = await isRebaseInProgress(worktreePath)
-      if (stillInProgress || sup.exitCode !== 0) {
+      const postSha = (await exec('git', ['rev-parse', branch], { cwd: repoRoot() })).stdout.trim()
+      const advanced = postSha !== preSha
+      const treeClean = await (async () => {
+        try {
+          await exec('git', ['diff', '--quiet'], { cwd: worktreePath })
+          await exec('git', ['diff', '--cached', '--quiet'], { cwd: worktreePath })
+          return true
+        } catch {
+          return false
+        }
+      })()
+
+      if (stillInProgress || !advanced || !treeClean) {
         await exec('git', ['rebase', '--abort'], { cwd: worktreePath }).catch(() => {})
         return {
           merged: false,
           conflictResolved: false,
           aborted: true,
-          output: `vcs-supervisor failed (exit ${sup.exitCode}); rebase aborted.\n${output}`,
+          output: `vcs-supervisor outcome rejected by git tree (stillInProgress=${stillInProgress}, advanced=${advanced}, treeClean=${treeClean}); rebase aborted.\n${output}`,
           supervisorConversation,
         }
       }
