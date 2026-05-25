@@ -38,7 +38,6 @@ import {
   updateTask,
   upsertTranscript,
 } from '../queue'
-import { raiseInboxItem } from '../lib/inbox'
 import { handleTaskFailureWithFixTask } from '../queue-fix-tasks'
 import { resolveOriginIdForTask } from '../lib/origin'
 
@@ -71,15 +70,23 @@ export const isBlockersAbortError = (err: unknown): boolean =>
 
 // Thrown by setupStep when the merge target (integration branch) has
 // uncommitted tracked changes at the moment the worktree would be created.
-// The task is parked as `blocked` and an inbox item is raised so the
-// operator can clean up. The sentinel keeps the dispatcher from routing
-// this through the generic failure-handler (which would spawn a fix-task
-// and stamp `failed`, masking the blocked state).
-export const DIRTY_MAIN_ABORT_MESSAGE = (taskId: string): string =>
-  `task ${taskId} setup aborted: merge target has uncommitted changes; task parked blocked`
+// The leading phrase is classified as `dirty-main` by failure-signature.ts,
+// producing signature `setup:preflight/dirty-main`, which the shared
+// `dirtyMainAtSetupRecipe` in fix-recipes.ts handles by auto-committing the
+// dirty files on the merge target. Routing through the standard
+// failure-handler means the source task is parked `blocked` WITH a
+// task_blockers edge to the recovery task — no empty-blocker exception.
+// The first task to hit it spawns the recovery; every later task attaches
+// an edge via `findSharedFixTask`, so one commit unblocks the herd.
+export const DIRTY_MAIN_SETUP_MESSAGE =
+  'merge target is dirty before coding'
 
-export const isDirtyMainAbortError = (err: unknown): boolean =>
-  errorHaystack(err).includes('setup aborted: merge target has uncommitted changes')
+// True when an error (possibly Mastra-wrapped) is the dirty-main setup abort
+// thrown by setupStep. The daemon uses it to suppress the misleading
+// `task.completed status=failed` emit — the failure-handler has already
+// parked the source `blocked` with a real task_blockers edge.
+export const isDirtyMainSetupError = (err: unknown): boolean =>
+  errorHaystack(err).includes('setup:preflight/dirty-main')
 
 import { verifyPassedScorer } from '../scorers/verify-passed'
 import { mergeCleanScorer } from '../scorers/merge-clean'
@@ -625,54 +632,47 @@ const setupStep = createStep({
       const preflight = await checkSetupPreflight(preflightRoot)
       if (preflight.dirty) {
         const dirtyFiles = preflight.dirtyLines
-        // AUDIT (mars-88a4e657): this is a known violation of the
-        // "blocked-implies-edge" invariant. We park the task in 'blocked' but
-        // never insert a `task_blockers` row — there is no concrete blocker
-        // task to wait on; recovery is `mars restart` after the operator
-        // cleans the merge target. The correct terminal here is `'failed'`
-        // + the inbox item below, NOT `'blocked'` with zero edges. Tracked
-        // as a follow-up; see lib/blocker-invariant.ts for the helper that
-        // a future fix will route through.
-        const errorMsg = `setup:preflight/dirty-main: ${inputData.integrationBranch} has uncommitted changes; task parked blocked`
-        await updateTask(inputData.taskId, { status: 'blocked', error: errorMsg })
-        await raiseInboxItem({
-          kind: 'dirty-main-at-setup',
-          category: 'orchestrator',
-          priority: 'high',
-          title: `Task ${inputData.taskId} blocked: merge target has uncommitted changes before coding`,
-          body: [
-            `The merge target (\`${inputData.integrationBranch}\`) has uncommitted changes. The coding agent was NOT dispatched — no compute cost was incurred.`,
-            '',
-            '## Dirty files',
-            '',
-            dirtyFiles.join('\n'),
-            '',
-            `Resolve the uncommitted changes on \`${inputData.integrationBranch}\`, then restart with:`,
-            '```',
-            `mars restart ${inputData.taskId}`,
-            '```',
-          ].join('\n'),
-          payload: {
-            taskId: inputData.taskId,
-            dirtyFiles,
+        // Detection only — no inbox-raise, no manual status write. Hand the
+        // failure to the standard self-heal pipeline so it spawns (or
+        // attaches to) the shared `setup:preflight/dirty-main` recovery
+        // task and parks THIS task `blocked` with a real task_blockers edge.
+        // No empty-blocker exception: blocked always implies an edge.
+        const errorOutput = `${DIRTY_MAIN_SETUP_MESSAGE} on ${inputData.integrationBranch}\n\n${dirtyFiles.join('\n')}`
+        await handleTaskFailureWithFixTask({
+          taskId: inputData.taskId,
+          failingStep: 'setup:preflight',
+          errorOutput,
+          branch: inputData.integrationBranch,
+          recipeContext: {
+            // The dirty files live on the merge target itself, in the repo
+            // root — NOT in a worktree (none was created). The recovery
+            // recipe operates there via `git -C <targetPath>`.
+            targetPath: preflightRoot,
+            statusOutput: dirtyFiles.join('\n'),
+            targetBranch: inputData.integrationBranch,
             integrationBranch: inputData.integrationBranch,
+            originalPrompt: '',
           },
-          context: {},
-          raisedBy: 'implement-workflow',
-          signature: `dirty-main-at-setup:${inputData.taskId}`,
         }).catch((err) => {
           console.error(
-            `[setup:preflight] task ${inputData.taskId} failed to raise inbox item:`,
+            `[setup:preflight] task ${inputData.taskId} dirty-main handling errored:`,
             err,
           )
         })
-        throw new Error(DIRTY_MAIN_ABORT_MESSAGE(inputData.taskId))
+        throw new Error(
+          `task ${inputData.taskId} setup:preflight/dirty-main: ${DIRTY_MAIN_SETUP_MESSAGE}`,
+        )
       }
     } catch (gitErr) {
-      // Re-throw only our own dirty-main sentinel. Git/IO failures are swallowed:
-      // the pre-flight is best-effort — if we cannot determine the target's state
-      // we proceed and let the merge-time check catch it.
-      if (gitErr instanceof Error && isDirtyMainAbortError(gitErr)) throw gitErr
+      // Re-throw only our own dirty-main abort. Git/IO failures are swallowed:
+      // the pre-flight is best-effort — if we cannot determine the target's
+      // state we proceed and let the merge-time check catch it.
+      if (
+        gitErr instanceof Error &&
+        gitErr.message.includes('setup:preflight/dirty-main')
+      ) {
+        throw gitErr
+      }
       console.warn(
         `[setup:preflight] task ${inputData.taskId} dirty-main pre-flight threw, continuing:`,
         gitErr,
