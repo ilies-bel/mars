@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
 import {
   agentsMdPathForScope,
@@ -265,4 +265,25 @@ export const writePerFolderClaudeMds = (
     written.push(relative(input.repoRoot, filePath))
   }
   return { written }
+}
+
+export interface PurgeStaleMdsResult {
+  purged: string[]
+}
+
+/**
+ * Delete every `.md` file in the supervisors directory — these are briefing
+ * files written by the old per-stack supervisor system and are no longer
+ * produced by `writeSlimInit`.  Non-`.md` files (e.g. `manifest.json`,
+ * `detection-report.json`) are left untouched.
+ */
+export const purgeStaleSupervisorMds = (supervisorsDir: string): PurgeStaleMdsResult => {
+  if (!existsSync(supervisorsDir)) return { purged: [] }
+  const purged: string[] = []
+  for (const name of readdirSync(supervisorsDir)) {
+    if (!name.endsWith('.md')) continue
+    rmSync(resolve(supervisorsDir, name), { force: true })
+    purged.push(name)
+  }
+  return { purged }
 }
