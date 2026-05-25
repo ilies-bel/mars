@@ -22,9 +22,9 @@ const read = (name: string): string =>
 describe('PRD 948691d0 slice 4 — stages route through named Workers', () => {
   it('implement workflow dispatches through Coder/Fixer via the Workers registry', () => {
     const src = read('implement-workflow.ts')
-    // Fixer for kind='fix', Worker-by-tag for everything else (Coder is the
-    // 'coder' tag, Writer is the 'writer' tag). Both branches go through the
-    // role registry — not a raw `runClaudeCode` call.
+    // Fixer for kind='fix', Coder for everything else (via getWorkerForTag;
+    // 'coder' is the only valid tag after ADR 0019). Both branches go through
+    // the role registry — not a raw `runClaudeCode` call.
     expect(src).toMatch(/Workers\.Fixer/)
     expect(src).toMatch(/getWorkerForTag/)
     expect(src).toMatch(/worker\.run\(/)

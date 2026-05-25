@@ -46,17 +46,6 @@ describe('task tag', () => {
     expect(fetched?.tag).toBe('coder')
   })
 
-  it('persists tag="writer" when provided at enqueue', async () => {
-    const q = await loadQueue(repo)
-    const t = await q.enqueueTask('glossary slice', undefined, {
-      skipTriage: true,
-      tag: 'writer',
-    })
-    expect(t.tag).toBe('writer')
-    const fetched = await q.getTask(t.id)
-    expect(fetched?.tag).toBe('writer')
-  })
-
   it('rejects an unknown tag at enqueue with a precise message', async () => {
     const q = await loadQueue(repo)
     await expect(
@@ -68,10 +57,22 @@ describe('task tag', () => {
     ).rejects.toThrow(/tag/)
   })
 
-  it('isTaskTag narrows valid tag literals', async () => {
+  it('rejects the retired "writer" tag at enqueue (structured-write lane removed, ADR 0019)', async () => {
+    const q = await loadQueue(repo)
+    await expect(
+      q.enqueueTask('glossary slice', undefined, {
+        skipTriage: true,
+        // @ts-expect-error -- intentionally bypassing the type guard
+        tag: 'writer',
+      }),
+    ).rejects.toThrow(/tag/)
+  })
+
+  it('isTaskTag narrows valid tag literals — "coder" only after ADR 0019', async () => {
     const q = await loadQueue(repo)
     expect(q.isTaskTag('coder')).toBe(true)
-    expect(q.isTaskTag('writer')).toBe(true)
+    // 'writer' is no longer a valid tag — the structured-write lane was removed.
+    expect(q.isTaskTag('writer')).toBe(false)
     expect(q.isTaskTag('reviewer')).toBe(false)
     expect(q.isTaskTag(null)).toBe(false)
   })

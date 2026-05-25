@@ -106,24 +106,19 @@ export type TaskKind = 'task' | 'fix' | 'diagnose'
  * workflow to pick a Worker from the registry. Adding a tag never widens
  * what a Worker can do — each tag maps to a single, pinned Worker.
  *
- *   - `'coder'`  → default. Routes to the Coder Worker (opus, bypass,
- *                  full tool surface). Slices that need to edit code in
- *                  the worktree pick this.
- *   - `'writer'` → routes to the Writer Worker. Used for slices whose
- *                  acceptance criteria require calls to the daemon's
- *                  structured-write verbs (`mars glossary set/remove`,
- *                  `mars adr add`) — direct worktree edits to
- *                  `CONTEXT.md` or `docs/adr/**` are forbidden.
+ *   - `'coder'` → default. Routes to the Coder Worker (sonnet, bypass,
+ *                 full tool surface). The only valid tag since the
+ *                 structured-write accommodation lane was removed (ADR 0019).
  *
  * Untagged rows default to `'coder'` at the read boundary, preserving the
  * "quick escape hatch" behaviour for hand-written `mars task add` calls.
+ * Legacy rows with `tag='writer'` are coerced to `'coder'` at read time.
  */
-export type TaskTag = 'coder' | 'writer'
+export type TaskTag = 'coder'
 
-export const TASK_TAGS: readonly TaskTag[] = ['coder', 'writer'] as const
+export const TASK_TAGS: readonly TaskTag[] = ['coder'] as const
 
-export const isTaskTag = (value: unknown): value is TaskTag =>
-  value === 'coder' || value === 'writer'
+export const isTaskTag = (value: unknown): value is TaskTag => value === 'coder'
 
 /**
  * The phase that stamped a `'failed'` task. Set on the failure transition

@@ -17,7 +17,6 @@ import {
   composePrompt,
   resolveWorkerSystemPrompt,
   CODER_SYSTEM_PROMPT,
-  WRITER_SYSTEM_PROMPT,
 } from '../implement-workflow'
 import { TDD_WORKER_BRIEF } from '../tdd-brief'
 
@@ -2346,16 +2345,13 @@ describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Tas
     expect(second).not.toContain(TDD_WORKER_BRIEF)
   })
 
-  it('leaves the Writer Worker untouched — same standing instructions, same per-Task surface', () => {
-    // Writer standing instructions are unchanged and never carried the brief.
-    expect(resolveWorkerSystemPrompt('writer')).toBe(WRITER_SYSTEM_PROMPT)
-    expect(WRITER_SYSTEM_PROMPT).not.toContain(TDD_WORKER_BRIEF)
-
-    // Writer per-Task prompt gains/loses nothing: no brief, stable across
-    // a re-dispatch.
-    const w1 = composePrompt('writer task body', null, 'writer', spec, 'mars-w')
-    const w2 = composePrompt('writer task body', null, 'writer', spec, 'mars-w')
-    expect(w2).toBe(w1)
-    expect(w1).not.toContain(TDD_WORKER_BRIEF)
+  it('standing instructions do not vary between dispatches — same prompt, no brief in per-Task body', () => {
+    // After ADR 0019 every tag resolves to the Coder standing instructions.
+    // The TDD brief is in the standing instructions (system prompt), not the
+    // per-Task prompt body — composePrompt must not embed it.
+    const p1 = composePrompt('task body', null, 'coder', spec, 'mars-t')
+    const p2 = composePrompt('task body', null, 'coder', spec, 'mars-t')
+    expect(p2).toBe(p1)
+    expect(p1).not.toContain(TDD_WORKER_BRIEF)
   })
 })

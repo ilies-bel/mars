@@ -141,15 +141,14 @@ const kindSchema = z.enum(['task', 'fix', 'diagnose']).default('task')
  * read-span watcher around a Worker run. Exported so the rule is testable
  * in isolation — the actual call site reproduces this expression literally.
  *
- * - Writer runs are exempt: Writer's tool surface is too narrow to stall
- *   on reads, and wiring the watcher there would only add false positives.
  * - Diagnose Chores are exempt: their whole job is reading (PRD 06e677fb).
  *   Their backstop is the Worker harness's existing time/turn cap.
+ * - Every other dispatched task (Coder and Fixer) gets the watcher.
+ *   The structured-write Writer exemption was removed with ADR 0019.
  */
 export const shouldWireReadSpanWatcher = (
-  tag: TaskTag,
   kind: 'task' | 'fix' | 'diagnose',
-): boolean => tag === 'coder' && kind !== 'diagnose'
+): boolean => kind !== 'diagnose'
 
 // Phases that the workflow can be resumed from. Mirrors {@link FailedPhase}
 // in queue.ts but the workflow only ever resumes from a verify-or-later
@@ -220,47 +219,6 @@ export const COMMIT_FOOTER = [
   'The orchestrator does not commit on your behalf.',
 ].join('\n')
 
-// Footer for Writer tasks. The Writer lands its work via `mars glossary
-// set/remove` and `mars adr add`, both of which route through the daemon's
-// structured-write path and commit on the integration branch directly —
-// there is no worktree commit to make. Telling the Writer to run
-// `git add -A && git commit` (the Coder footer) would be a no-op at best
-// and confuse the agent into thinking it failed at worst. Instead, the
-// Writer footer names the canonical verbs and reminds it that the
-// daemon, not the worktree, owns the commit.
-export const WRITER_FOOTER = [
-  '## Save your work',
-  '',
-  'You are a Writer worker. You cannot edit files in this worktree directly. Land every change through the canonical daemon verbs:',
-  '',
-  '- `mars glossary set "<term>" "<definition>"` to add or update a glossary term.',
-  '- `mars glossary remove "<term>"` to retire a glossary term.',
-  '- `mars adr add --title "<title>" --body "<body>"` to record an ADR.',
-  '',
-  'Each call routes through the structured-write daemon, which performs the file edit on its own internal worktree and merges into the integration branch. You do not run `git add` or `git commit` yourself — the daemon owns the commit.',
-  '',
-  'After every call succeeds, verify the change took effect (e.g. `mars glossary show "<term>"` or `mars adr show <NNNN>`) before moving to the next acceptance criterion. When every criterion is satisfied, exit.',
-].join('\n')
-
-// System prompt injected on top of the worker's default for Writer Sessions.
-// Pins the agent's mental model to the structured-write verbs so it does not
-// reach for Edit/Write (which are denied at the wrapper layer anyway) when
-// asked to update CONTEXT.md or docs/adr/**.
-export const WRITER_SYSTEM_PROMPT = [
-  'You are the Writer worker.',
-  '',
-  'You land documentation changes (glossary terms, ADRs) by calling the Mars CLI verbs that route through the structured-write daemon, NOT by editing files in this worktree.',
-  '',
-  'The only mutation verbs available to you are:',
-  '  - mars glossary set "<term>" "<definition>" [--aliases "<alias1>,<alias2>"]',
-  '  - mars glossary remove "<term>"',
-  '  - mars adr add --title "<title>" --body "<body>"',
-  '',
-  'You may read freely (Read, Grep, Glob, Bash for read-only commands). Edit, Write, and NotebookEdit are disabled — attempting to edit CONTEXT.md or docs/adr/** in the worktree will fail.',
-  '',
-  'When every acceptance criterion is satisfied via the verbs above, exit cleanly. The daemon commits each verb on the integration branch on your behalf.',
-].join('\n')
-
 // Deviation-rules brief delivered to every Coder session. The rules are a
 // near-verbatim port of gsd-build/get-shit-done's gsd-executor contract —
 // they force the agent to reclassify off-plan findings into one of four
@@ -303,8 +261,7 @@ export const DEVIATION_RULES = [
 // (mars-07988fba, mars-8304c7d9). Delivered per-Task in the composePrompt
 // body (not the standing Session instructions) so the rules are visible in
 // the task context window without relying on the agent recalling them from
-// a long system prompt. Coder-only: not injected for writer tasks or
-// diagnose Chores.
+// a long system prompt. Not injected for diagnose Chores.
 export const CODING_DISCIPLINE = [
   '## Coding discipline',
   '',
@@ -347,25 +304,25 @@ export const buildCoderSystemPrompt = (readSpanLimit: number): string => {
 export const CODER_SYSTEM_PROMPT = buildCoderSystemPrompt(resolveReadSpanLimit())
 
 // Resolve the standing Session instructions a dispatched Worker is launched
-// with, by routing tag. Coder carries the TDD operating philosophy, the
-// read-span guard budget (dynamic — read from env at call time), and the
-// deviation rules; Writer keeps its structured-write mental model (unchanged).
+// with. Every dispatched task uses the Coder standing instructions: TDD
+// operating philosophy, read-span guard budget (dynamic — read from env at
+// call time), and deviation rules. The structured-write accommodation lane
+// (Writer system prompt) was removed by ADR 0019.
 // Centralised here so codeStep does not assemble the system prompt inline and
-// the per-tag surface is a single auditable seam.
+// the surface is a single auditable seam.
 export const resolveWorkerSystemPrompt = (
-  tag: TaskTag,
-): string | undefined =>
-  tag === 'writer' ? WRITER_SYSTEM_PROMPT : buildCoderSystemPrompt(resolveReadSpanLimit())
+  _tag: TaskTag,
+): string => buildCoderSystemPrompt(resolveReadSpanLimit())
 
 /**
  * Pick the Worker that should handle a dispatched Task.
  *
  * Routing rules (highest priority first):
  *  1. kind === 'fix'  → Fixer  (recovery resilience; Opus, backlog-mutation denied)
- *  2. otherwise       → Coder  (default implementation worker)
+ *  2. otherwise       → Coder  (default implementation worker; 'coder' is the only tag)
  *
- * Writer routing is handled separately via `tag` in the codeStep call site;
- * this helper only covers the kind-based override so it is testable in isolation.
+ * The structured-write Writer routing via tag was removed by ADR 0019.
+ * This helper covers the kind-based override and is testable in isolation.
  */
 export const pickWorkerForTask = (task: Pick<Task, 'kind'>): WorkerName =>
   task.kind === 'fix' ? 'Fixer' : 'Coder'
@@ -493,12 +450,11 @@ export const composePrompt = (
   }
   const specBlock = renderSpec(spec, taskId)
   if (specBlock !== null) sections.push(specBlock)
-  // Coding discipline rules are coder-only: skip for writer tasks.
   // Deviation rules are NOT included here — they are part of
   // CODER_SYSTEM_PROMPT (standing Session instructions) and must not
   // appear in the per-Task prompt.
-  if (tag !== 'writer') sections.push(CODING_DISCIPLINE)
-  sections.push(tag === 'writer' ? WRITER_FOOTER : COMMIT_FOOTER)
+  sections.push(CODING_DISCIPLINE)
+  sections.push(COMMIT_FOOTER)
   return sections.join('\n\n')
 }
 
@@ -869,20 +825,19 @@ const codeStep = createStep({
     )
     const conversation: ClaudeEvent[] = []
     // Kind-aware routing: fix tasks go to the Fixer Worker (Opus, backlog-
-    // mutation denied); writer tasks stay on Writer via tag; everything else
-    // uses Coder. Kind takes precedence over tag for the fix → Fixer path
-    // because a recovery task must always land on the higher-resilience Worker
-    // regardless of what tag the row carries.
+    // mutation denied); everything else uses Coder via tag (the only valid
+    // tag is 'coder' after ADR 0019). Kind takes precedence over tag for the
+    // fix → Fixer path because a recovery task must always land on the
+    // higher-resilience Worker regardless of what tag the row carries.
     const worker =
       inputData.kind === 'fix' ? Workers.Fixer : getWorkerForTag(tag)
     // Read/Grep span watcher (gsd-style analysis-paralysis signal). When the
     // threshold is reached AND the agent has taken zero actions for the entire
     // run, a single diagnose Chore is spawned and the original task is parked
-    // in `blocked` behind it (see the post-run check below). Skipped for
-    // Writer runs (surface too narrow to stall on reads) and for diagnose
-    // Chores (whose job IS heavy reading; PRD 06e677fb — exempt entirely from
-    // the guard; their backstop is the time/turn cap).
-    const watcher = shouldWireReadSpanWatcher(tag, inputData.kind)
+    // in `blocked` behind it (see the post-run check below). Diagnose Chores
+    // are exempt (their job IS heavy reading; PRD 06e677fb — their backstop
+    // is the time/turn cap). Every other dispatched task gets the watcher.
+    const watcher = shouldWireReadSpanWatcher(inputData.kind)
       ? createReadSpanWatcher({
           limit: resolveReadSpanLimit(),
           onThreshold: (info) => {
@@ -1106,25 +1061,15 @@ const verifyStep = createStep({
       inputData.branch,
     )
     const steps = selectVerifySteps(scopes, changedFiles)
-    // Writer tasks land their changes on the integration branch via the
-    // daemon's structured-write path, not on the task branch — so the
-    // task branch is correctly 0 commits ahead of integration and the
-    // has-diff check would reject a perfectly successful Writer run.
-    // Skip has-diff for writer; the typecheck/test/lint gates still apply.
-    //
-    // Fix tasks (kind='fix') have a no-op-is-legitimate contract: the
-    // dirty-main recipe, for one, explicitly tells the agent to exit
-    // clean when main is already clean. The race between the recipe
-    // firing and main self-cleaning makes a zero-commit exit the
-    // correct outcome in that branch. If a fix task exits with no
-    // commits and the underlying problem isn't actually resolved, the
-    // origin's next verify cycle re-fails and spawns another recovery.
+    // The diff / commits-ahead gate runs for every dispatched task — there is
+    // no skip option (ADR 0019). A task that exits with a clean tree and zero
+    // commits ahead of integration fails with the uniform no-commits-ahead
+    // outcome rather than being blessed as a success.
     const r = await verifyChanges({
       cwd: verifyCwd,
       steps,
       branch: inputData.branch,
       integrationBranch: inputData.integrationBranch,
-      skipDiffCheck: inputData.tag === 'writer' || inputData.kind === 'fix',
     })
 
     if (!isReflectDisabled()) {
@@ -1237,21 +1182,6 @@ const mergeStep = createStep({
         taskId: inputData.taskId,
         success: false,
         message: 'verification failed; worktree retained for inspection',
-      }
-    }
-
-    // Writer short-circuit: the daemon's structured-write path already
-    // committed every change on the integration branch, so the task
-    // branch is identical to integration and there is nothing to merge.
-    // Clean up the worktree and mark the task done; the merge primitive
-    // would otherwise contend for the merge lock for a guaranteed no-op.
-    if (inputData.tag === 'writer') {
-      await removeWorktree({ path: inputData.path, branch: inputData.branch }, true)
-      await updateTask(inputData.taskId, { status: 'done', failedPhase: null }, store)
-      return {
-        taskId: inputData.taskId,
-        success: true,
-        message: 'writer task: changes landed on integration via structured-write daemon',
       }
     }
 
