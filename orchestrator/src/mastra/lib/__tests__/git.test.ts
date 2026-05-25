@@ -764,6 +764,39 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
     expect(mainTipAfter).toBe(taskTip)
   })
 
+  it('leaves the integration checkout CLEAN when the main repo is on the integration branch', async () => {
+    // Regression: update-ref advances refs/heads/main without touching the
+    // checkout's index. When the main repo IS on main, the merged files then
+    // show as phantom staged changes, tripping setup:preflight/dirty-main and
+    // mass-failing the queue. mergeBranch's post-merge `git reset --keep` must
+    // re-sync the checkout so `git status` is clean.
+    const { execFile: execFileCb } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const execP = promisify(execFileCb)
+
+    // Put the main repo's checkout ON main with a clean tree (the developer/wip
+    // setup from beforeEach leaves us elsewhere; switch to main cleanly).
+    await execP('git', ['checkout', '-q', '-f', 'main'], { cwd: repo })
+
+    const { mergeBranch } = await import('../git')
+    const result = await mergeBranch({
+      branch: 'task/ff-test',
+      worktreePath: worktreeDir,
+      integrationBranch: 'main',
+      lockTimeoutMs: 5_000,
+    })
+    expect(result.merged).toBe(true)
+
+    // The checkout must be clean — no phantom staged/unstaged changes.
+    const status = (
+      await execP('git', ['status', '--porcelain'], { cwd: repo })
+    ).stdout.trim()
+    expect(status).toBe('')
+
+    // And the merged content is actually present on disk.
+    expect(readFileSync(resolve(repo, 'src.ts'), 'utf8')).toBe('const x = 2\n')
+  })
+
   it('returns merged:false aborted:true when integration advanced concurrently (CAS failure)', async () => {
     // Simulate a CAS failure: after mergeBranch reads integrationSha but before
     // it does update-ref, another process advances main. We cannot inject state
