@@ -9,4 +9,10 @@ export interface SessionHandle {
   id: string;
   /** The pseudo-terminal process instance. */
   pty: IPty;
+  /**
+   * Register a handler that receives every chunk the PTY emits.
+   * Multiple subscribers each receive the same chunks.
+   * Returns a function that removes this handler; calling it is idempotent.
+   */
+  onData(handler: (chunk: string) => void): () => void;
 }
