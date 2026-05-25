@@ -6,6 +6,7 @@ import {
   upsertAgentsBlock,
 } from './agents-md'
 import type { SupervisorSpec } from './detect-stack'
+import { readInitManifest, writeInitManifest } from './init-manifest'
 import { loadCatalogue, lookupCatalogue } from './per-stack-catalogue'
 
 export type SupervisorOutcomeKind = 'hit' | 'miss' | 'error'
@@ -211,6 +212,19 @@ export const writeSupervisors = (
 
 export interface PerFolderClaudeMdInput {
   repoRoot: string
+  /**
+   * Path to the `.mars` state directory.  When provided, the function reads
+   * the init manifest to determine which CLAUDE.md files it previously wrote
+   * (Mars-owned) vs. files the user created by hand.  On a re-run, existing
+   * CLAUDE.md files that are NOT in the manifest are left untouched.  After
+   * writing, the manifest is updated to reflect the current set of per-folder
+   * CLAUDE.md paths.
+   *
+   * When omitted (e.g. in tests that exercise the raw write behaviour), no
+   * manifest reading or writing takes place and every supervisor directory
+   * gets a CLAUDE.md regardless of pre-existing content.
+   */
+  marsDir?: string
   supervisors: ReadonlyArray<SupervisorSpec>
 }
 
@@ -223,21 +237,51 @@ export interface PerFolderClaudeMdResult {
  * is not the repo root. Content comes from the committed per-stack catalogue
  * keyed by supervisor name; unknown supervisor names fall back to the generic
  * baseline. No network access or fetch-specialist invocation is required.
+ *
+ * When `marsDir` is provided the function consults the init manifest:
+ * - First run (no manifest yet): all supervisor CLAUDE.md files are written.
+ * - Re-run (manifest exists): a CLAUDE.md that already exists on disk and was
+ *   NOT in the manifest is treated as hand-written and left untouched; a
+ *   CLAUDE.md that IS in the manifest (Mars-owned) is overwritten with the
+ *   latest catalogue content; a new supervisor directory that has no CLAUDE.md
+ *   yet gets one written regardless.
+ * After writing, the manifest is updated to reflect the per-folder CLAUDE.md
+ * paths written on this run.
  */
 export const writePerFolderClaudeMds = (
   input: PerFolderClaudeMdInput,
 ): PerFolderClaudeMdResult => {
   const catalogue = loadCatalogue()
+
+  // Determine which CLAUDE.md paths were written by mars init previously.
+  const manifestExists =
+    input.marsDir ? existsSync(resolve(input.marsDir, 'init-manifest.json')) : false
+  const marsOwned = new Set(
+    manifestExists ? readInitManifest(input.marsDir!) : [],
+  )
+
   const written: string[] = []
   for (const supervisor of input.supervisors) {
     if (supervisor.scope === '.') continue
     const dir = resolve(input.repoRoot, supervisor.scope)
     mkdirSync(dir, { recursive: true })
     const filePath = resolve(dir, 'CLAUDE.md')
+    const relPath = relative(input.repoRoot, filePath)
+
+    // On a re-run: skip CLAUDE.md files that exist but were not written by
+    // mars init (treat them as hand-written and leave them untouched).
+    if (manifestExists && existsSync(filePath) && !marsOwned.has(relPath)) continue
+
     const content = lookupCatalogue(catalogue, supervisor.name)
     writeFileSync(filePath, content, 'utf8')
-    written.push(relative(input.repoRoot, filePath))
+    written.push(relPath)
   }
+
+  // Persist the manifest so the next run knows which files mars owns.
+  if (input.marsDir !== undefined) {
+    writeInitManifest(input.marsDir, written)
+  }
+
   return { written }
 }
 
