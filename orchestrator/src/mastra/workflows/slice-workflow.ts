@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
 import { getProposal, getProposalsClient, markProposalSliced } from '../proposals'
@@ -295,6 +297,95 @@ export const injectSchemaDropBlockers = (
 }
 
 /**
+ * Drop slices whose every `creates` file already exists on disk and already
+ * exports every backtick-declared symbol found in `prescriptiveAction`.
+ * Blocker edges pointing at dropped slices are removed from surviving slices;
+ * surviving slice indices are re-numbered so `blockedBy` stays valid (1-based
+ * into the returned slice list).
+ *
+ * Only `creates` files are examined — `modifies` paths are not checked because
+ * a slice that edits an existing file may still have pending work even when
+ * the file exists. Partial symbol coverage (file exists but a symbol is
+ * missing) is intentionally NOT dropped — the slice must still land that
+ * symbol.
+ *
+ * Exported for unit testing.
+ */
+export const dropAlreadySatisfiedSlices = (
+  slices: SliceSpec[],
+  repoRoot: string,
+): SliceSpec[] => {
+  const droppedOriginal = new Set<number>() // 0-based positions
+
+  for (let i = 0; i < slices.length; i++) {
+    const slice = slices[i]
+    // Only slices that declare files to create can be pre-flight-dropped.
+    if (slice.creates.length === 0) continue
+
+    // Extract backtick-delimited leading identifiers from prescriptiveAction.
+    const symbols = [
+      ...new Set(
+        [
+          ...slice.prescriptiveAction.matchAll(
+            /`([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
+          ),
+        ].map((m) => m[1]),
+      ),
+    ]
+    // No declared symbols → can't confirm coverage; leave the slice.
+    if (symbols.length === 0) continue
+
+    // All creates files must exist on disk.
+    const allExist = slice.creates.every((f) => {
+      try {
+        return existsSync(resolve(repoRoot, f))
+      } catch {
+        return false
+      }
+    })
+    if (!allExist) continue
+
+    // Every creates file must export every declared symbol.
+    const allExported = slice.creates.every((f) => {
+      try {
+        const content = readFileSync(resolve(repoRoot, f), 'utf-8')
+        return symbols.every((sym) =>
+          new RegExp(`\\bexport\\b[^\\n]*\\b${sym}\\b`).test(content),
+        )
+      } catch {
+        return false
+      }
+    })
+    if (!allExported) continue
+
+    droppedOriginal.add(i)
+  }
+
+  if (droppedOriginal.size === 0) return slices
+
+  // Build old (1-based) → new (1-based) index mapping for surviving slices.
+  const oldToNew = new Map<number, number>()
+  let newIdx = 0
+  for (let i = 0; i < slices.length; i++) {
+    if (!droppedOriginal.has(i)) {
+      newIdx++
+      oldToNew.set(i + 1, newIdx)
+    }
+  }
+
+  // Filter out dropped slices and re-index blockedBy.
+  return slices
+    .filter((_, i) => !droppedOriginal.has(i))
+    .map((slice) => ({
+      ...slice,
+      blockedBy: slice.blockedBy
+        .filter((dep) => !droppedOriginal.has(dep - 1))
+        .map((dep) => oldToNew.get(dep)!)
+        .sort((a, b) => a - b),
+    }))
+}
+
+/**
  * Maximum characters for the goal line inside the per-slice parent digest.
  * Exported so tests can verify that long solutions are truncated.
  */
@@ -448,6 +539,10 @@ const generateStep = createStep({
     // the validation loop runs (the injected indices are always in
     // range, so validation still passes).
     injectSchemaDropBlockers(parsed.slices)
+    // Pre-flight drop: remove any slice whose creates files already exist
+    // on disk and already export every backtick-declared symbol. Blocker
+    // edges pointing at dropped slices are removed from surviving slices.
+    parsed.slices = dropAlreadySatisfiedSlices(parsed.slices, getRepoRoot())
     const total = parsed.slices.length
 
     // Validate dependency indices before any DB writes.
