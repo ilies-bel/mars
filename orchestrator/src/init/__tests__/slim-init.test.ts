@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { writeSlimInit, type VerifyStepEntry } from '../writer'
+import { writeSlimInit, purgeStaleSupervisorMds, type VerifyStepEntry } from '../writer'
 import {
   compileVerifyStepsFromScopes,
   validateScopes,
@@ -191,5 +191,88 @@ describe('validateScopes', () => {
     expect(scopes).toEqual([
       { path: 'web', stack: 'react', verify: { test: 'vitest run' } },
     ])
+  })
+})
+
+describe('purgeStaleSupervisorMds', () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(resolve(tmpdir(), 'mars-purge-test-'))
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('deletes all .md files found in the supervisors dir', () => {
+    const supervisorsDir = resolve(root, '.mars', 'supervisors')
+    mkdirSync(supervisorsDir, { recursive: true })
+    writeFileSync(resolve(supervisorsDir, 'node-backend-supervisor.md'), '# Node Backend\n')
+    writeFileSync(resolve(supervisorsDir, 'react-supervisor.md'), '# React\n')
+
+    purgeStaleSupervisorMds(supervisorsDir)
+
+    expect(existsSync(resolve(supervisorsDir, 'node-backend-supervisor.md'))).toBe(false)
+    expect(existsSync(resolve(supervisorsDir, 'react-supervisor.md'))).toBe(false)
+  })
+
+  it('returns the filenames of every purged file so the caller can print a summary', () => {
+    const supervisorsDir = resolve(root, '.mars', 'supervisors')
+    mkdirSync(supervisorsDir, { recursive: true })
+    writeFileSync(resolve(supervisorsDir, 'foo-supervisor.md'), '# Foo\n')
+
+    const { purged } = purgeStaleSupervisorMds(supervisorsDir)
+
+    expect(purged).toEqual(['foo-supervisor.md'])
+  })
+
+  it('leaves non-.md files (manifest.json, detection-report.json) untouched', () => {
+    const supervisorsDir = resolve(root, '.mars', 'supervisors')
+    mkdirSync(supervisorsDir, { recursive: true })
+    writeFileSync(resolve(supervisorsDir, 'manifest.json'), '{}')
+    writeFileSync(resolve(supervisorsDir, 'detection-report.json'), '{}')
+    writeFileSync(resolve(supervisorsDir, 'stale.md'), '# Stale\n')
+
+    purgeStaleSupervisorMds(supervisorsDir)
+
+    expect(existsSync(resolve(supervisorsDir, 'manifest.json'))).toBe(true)
+    expect(existsSync(resolve(supervisorsDir, 'detection-report.json'))).toBe(true)
+  })
+
+  it('does not touch verify.json — pre-existing verifySteps survive identical', () => {
+    const marsDir = resolve(root, '.mars')
+    const supervisorsDir = resolve(marsDir, 'supervisors')
+    mkdirSync(supervisorsDir, { recursive: true })
+
+    const steps = [{ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true }]
+    const verifyContent =
+      JSON.stringify({ version: 1, generatedAt: '2026-01-01T00:00:00.000Z', verifySteps: steps }, null, 2) + '\n'
+    const verifyPath = resolve(marsDir, 'verify.json')
+    writeFileSync(verifyPath, verifyContent, 'utf8')
+    writeFileSync(resolve(supervisorsDir, 'stale.md'), '# Old supervisor\n')
+
+    purgeStaleSupervisorMds(supervisorsDir)
+
+    expect(readFileSync(verifyPath, 'utf8')).toBe(verifyContent)
+  })
+
+  it('is a no-op when no .md files are present (second consecutive init)', () => {
+    const supervisorsDir = resolve(root, '.mars', 'supervisors')
+    mkdirSync(supervisorsDir, { recursive: true })
+    writeFileSync(resolve(supervisorsDir, 'manifest.json'), '{}')
+
+    const { purged } = purgeStaleSupervisorMds(supervisorsDir)
+
+    expect(purged).toEqual([])
+  })
+
+  it('is a no-op when the supervisors directory does not exist', () => {
+    const supervisorsDir = resolve(root, '.mars', 'supervisors')
+    // directory intentionally absent
+
+    const { purged } = purgeStaleSupervisorMds(supervisorsDir)
+
+    expect(purged).toEqual([])
   })
 })
