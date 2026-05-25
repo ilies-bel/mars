@@ -529,7 +529,13 @@ export const startDaemon = async (
     log(`[refine] ${taskId} dispatching (refresh=${refresh})`)
     try {
       const { runPlan } = await import('../workflows/plan-workflow')
-      const result = await runPlan(taskId, refresh)
+      // Wire the TaskStore from the composition root into the workflow so
+      // the generate step routes its queue reads through the store
+      // rather than calling getClient() directly (ADR-0021 seam, slice 2).
+      const taskStore = await getDefaultTaskStore()
+      const requestContext = new RequestContext()
+      requestContext.set('taskStore', taskStore)
+      const result = await runPlan(taskId, refresh, requestContext)
       log(
         `[refine] ${taskId} -> suggestions=${result.suggestionCount}`,
       )

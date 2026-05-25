@@ -5,6 +5,8 @@ import { createProposal } from '../proposals'
 import { Workers } from '../workers'
 import { parseClaudeJsonResult } from '../lib/claude-json'
 import { getRepoRoot } from '../context'
+import { type TaskStore, getDefaultTaskStore } from '../lib/task-store'
+import { RequestContext } from '@mastra/core/di'
 
 const planInputSchema = z.object({
   taskId: z.string(),
@@ -56,8 +58,9 @@ const generateStep = createStep({
   id: 'generate-plan',
   inputSchema: planInputSchema,
   outputSchema: planOutputSchema,
-  execute: async ({ inputData, tracingContext }) => {
-    const task = await getTask(inputData.taskId)
+  execute: async ({ inputData, tracingContext, requestContext }) => {
+    const store: TaskStore = (requestContext.get('taskStore') as TaskStore | undefined) ?? await getDefaultTaskStore()
+    const task = await getTask(inputData.taskId, store)
     if (!task) throw new Error(`task ${inputData.taskId} not found`)
 
     tracingContext?.currentSpan?.update({
@@ -107,9 +110,10 @@ export interface RunPlanResult {
 export const runPlan = async (
   taskId: string,
   refresh = false,
+  requestContext?: RequestContext,
 ): Promise<RunPlanResult> => {
   const run = await planWorkflow.createRun()
-  const result = await run.start({ inputData: { taskId, refresh } })
+  const result = await run.start({ inputData: { taskId, refresh }, requestContext })
   if (result.status !== 'success') {
     throw new Error(`plan workflow ${result.status}`)
   }
