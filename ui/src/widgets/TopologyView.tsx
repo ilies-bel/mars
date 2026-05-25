@@ -76,7 +76,7 @@ const buildGraph = (
       (p): ProposalNode => ({
         kind: 'proposal',
         id: p.id,
-        label: p.goal.slice(0, 36),
+        label: p.title.slice(0, 36),
       }),
     ),
   ]

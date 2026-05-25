@@ -163,9 +163,9 @@ describe('GET /api/inbox/action-queue (derived view)', () => {
     const c = createClient({ url: `file:${stateDbPath(repo)}` })
     await c.execute(`CREATE TABLE IF NOT EXISTS proposals (
       id TEXT PRIMARY KEY,
-      goal TEXT NOT NULL,
-      story TEXT NOT NULL DEFAULT '',
-      technical TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      problem TEXT NOT NULL DEFAULT '',
+      solution TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'draft',
       source TEXT NOT NULL DEFAULT 'human',
       created_at INTEGER NOT NULL,
@@ -177,8 +177,8 @@ describe('GET /api/inbox/action-queue (derived view)', () => {
     )`)
     const now = Date.now()
     await c.execute({
-      sql: `INSERT INTO proposals (id, goal, status, created_at, updated_at)
-            VALUES ('p-1', 'some draft goal', 'draft', ?, ?)`,
+      sql: `INSERT INTO proposals (id, title, status, created_at, updated_at)
+            VALUES ('p-1', 'some draft title', 'draft', ?, ?)`,
       args: [now, now],
     })
     c.close()

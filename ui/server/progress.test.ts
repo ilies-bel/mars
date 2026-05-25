@@ -62,9 +62,9 @@ const createStateSchema = async (path: string): Promise<Client> => {
   const c = createClient({ url: `file:${path}` })
   await c.execute(`CREATE TABLE proposals (
     id TEXT PRIMARY KEY,
-    goal TEXT NOT NULL,
-    story TEXT NOT NULL DEFAULT '',
-    technical TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    problem TEXT NOT NULL DEFAULT '',
+    solution TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'draft',
     source TEXT NOT NULL DEFAULT 'human',
     created_at INTEGER NOT NULL,
@@ -98,9 +98,9 @@ const insertProposal = async (
 ): Promise<void> => {
   const now = Date.now()
   await c.execute({
-    sql: `INSERT INTO proposals (id, goal, status, source, created_at, updated_at)
+    sql: `INSERT INTO proposals (id, title, status, source, created_at, updated_at)
           VALUES (?, ?, 'draft', 'human', ?, ?)`,
-    args: [id, `goal for ${id}`, now, now],
+    args: [id, `title for ${id}`, now, now],
   })
 }
 
@@ -281,7 +281,7 @@ describe('GET /api/progress — column-view cluster contract', () => {
 
 interface ProgressBodyWithProposals {
   tasks: ProgressTaskBody[]
-  proposals: Array<{ id: string; goal: string; source: string; status: string }>
+  proposals: Array<{ id: string; title: string; source: string; status: string }>
 }
 
 describe('GET /api/progress — proposal nodes for DAG view', () => {
@@ -332,7 +332,7 @@ describe('GET /api/progress — proposal nodes for DAG view', () => {
     expect(body.proposals).toBeDefined()
     expect(body.proposals.length).toBe(1)
     expect(body.proposals[0]!.id).toBe('p-abc')
-    expect(body.proposals[0]!.goal).toBe('goal for p-abc')
+    expect(body.proposals[0]!.title).toBe('title for p-abc')
   })
 
   it('returns an empty proposals array when no in-scope task has a parent_proposal_id', async () => {

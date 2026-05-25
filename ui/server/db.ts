@@ -31,16 +31,16 @@ type ProposalSource = 'reflection' | 'human' | 'planner'
  */
 export interface ProposalNode {
   id: string
-  goal: string
+  title: string
   source: ProposalSource
   status: string
 }
 
 export interface DraftFeature {
   id: string
-  goal: string
-  story: string
-  technical: string
+  title: string
+  problem: string
+  solution: string
   status: string
   source: ProposalSource
   createdAt: number
@@ -534,7 +534,7 @@ export class StateDb {
 
   async listDraftFeatures(): Promise<DraftFeature[]> {
     const r = await this.client.execute(
-      `SELECT p.id, p.goal, p.story, p.technical, p.status, p.source,
+      `SELECT p.id, p.title, p.problem, p.solution, p.status, p.source,
               p.created_at, p.updated_at,
               (SELECT COUNT(*) FROM proposal_user_stories s WHERE s.proposal_id = p.id) AS acceptance_count
        FROM proposals p
@@ -545,9 +545,9 @@ export class StateDb {
       const r0 = row as unknown as Record<string, unknown>
       return {
         id: r0.id as string,
-        goal: (r0.goal as string | null) ?? '',
-        story: (r0.story as string | null) ?? '',
-        technical: (r0.technical as string | null) ?? '',
+        title: (r0.title as string | null) ?? '',
+        problem: (r0.problem as string | null) ?? '',
+        solution: (r0.solution as string | null) ?? '',
         status: (r0.status as string | null) ?? 'draft',
         source: normaliseSource(r0.source),
         createdAt: Number(r0.created_at ?? 0),
@@ -568,7 +568,7 @@ export class StateDb {
     if (!exists) return []
     const placeholders = ids.map(() => '?').join(', ')
     const r = await this.client.execute({
-      sql: `SELECT id, goal, status, source
+      sql: `SELECT id, title, status, source
               FROM proposals
              WHERE id IN (${placeholders})`,
       args: ids,
@@ -577,7 +577,7 @@ export class StateDb {
       const r0 = row as unknown as Record<string, unknown>
       return {
         id: r0.id as string,
-        goal: (r0.goal as string | null) ?? '',
+        title: (r0.title as string | null) ?? '',
         status: (r0.status as string | null) ?? 'draft',
         source: normaliseSource(r0.source),
       }

@@ -47,7 +47,7 @@ export const ProposalDetailDrawer = ({
             data-testid="proposal-detail-title"
             className="break-words font-mono text-sm text-fg"
           >
-            {proposal.goal}
+            {proposal.title}
           </h2>
           <div className="flex items-center gap-2">
             <span

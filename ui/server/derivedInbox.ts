@@ -243,7 +243,7 @@ export const listDerivedInbox = async (
       kind: 'draft-proposal',
       entityId: d.id,
       priority: 'low',
-      title: `Draft: ${summarize(d.goal || d.story, 60)}`,
+      title: `Draft: ${summarize(d.title || d.problem, 60)}`,
       body:
         `Draft proposal awaiting shaping.\n\n` +
         `Next actions:\n` +

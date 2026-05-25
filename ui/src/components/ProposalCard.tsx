@@ -21,7 +21,7 @@ export const ProposalCard = ({ proposal }: Props) => (
       </span>
     </div>
     <div className="text-[14px] font-medium leading-snug text-fg">
-      {truncate(proposal.goal, 120)}
+      {truncate(proposal.title, 120)}
     </div>
     <div className="font-mono text-[11px] text-muted">{proposal.source}</div>
   </article>
