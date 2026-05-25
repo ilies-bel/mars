@@ -23,6 +23,8 @@ interface ActionQueueItemBody {
   } | null
   dismissed: boolean
   ackState: 'ack' | 'resolved' | 'dismissed' | null
+  errorKind: string
+  actions: Array<{ id: string; label: string; op: string }>
 }
 
 const setupRepo = (): string => {
@@ -140,6 +142,36 @@ describe('GET /api/inbox/action-queue (derived view)', () => {
     expect(byEntity.get('t-failed')?.kind).toBe('failed-task')
     expect(byEntity.get('t-failed')?.priority).toBe('high')
     expect(byEntity.get('t-failed')?.id).toBe('failed-task:t-failed')
+    // No daemon running in this test → registry empty → no actions attached.
+    expect(byEntity.get('t-failed')?.errorKind).toBe('failed-task')
+    expect(byEntity.get('t-failed')?.actions).toEqual([])
+  })
+
+  it('resolves a daemon-killed failure to the daemon-killed error kind', async () => {
+    const c = createClient({ url: `file:${queueDbPath(repo)}` })
+    // The shared test schema omits failure_signature; add it so the row can
+    // carry the daemon-killed signature the resolver keys on.
+    await c.execute(`ALTER TABLE tasks ADD COLUMN failure_signature TEXT`)
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, error, failure_signature, created_at, updated_at)
+            VALUES (?, ?, 'failed', ?, 'daemon-killed', ?, ?)`,
+      args: [
+        't-killed',
+        'killed work',
+        'killed by `mars daemon kill`',
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ],
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.entityId === 't-killed')
+    expect(row).toBeDefined()
+    // Row kind stays 'failed-task' (it IS a failed task), but the error-kind
+    // key it resolves to is the requeue-framed 'daemon-killed'.
+    expect(row?.kind).toBe('failed-task')
+    expect(row?.errorKind).toBe('daemon-killed')
   })
 
   it('surfaces blocked tasks with their blocker DAG', async () => {
