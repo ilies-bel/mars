@@ -461,7 +461,7 @@ const buildNoRecipeBody = (input: {
     `  - Decide the failure is unrecoverable: run 'mars unblock ${input.originTaskId}'.`,
     `Then close this item: 'mars inbox resolve <item-id>'.`,
     '',
-    `Why you're seeing this: task ${input.sourceTaskId} (origin ${input.originTaskId}) failed with signature \`${input.failureSignature}\` and no recovery recipe is registered for it. Investigator ${input.investigatorTaskId} is queued to propose one — it does not fix the failing task. Task ${input.sourceTaskId} stays 'blocked' until you act.`,
+    `Why you're seeing this: task ${input.sourceTaskId} (origin ${input.originTaskId}) failed with signature \`${input.failureSignature}\` and no recovery recipe is registered for it. Investigator ${input.investigatorTaskId} is queued to propose one — it does not fix the failing task. Task ${input.sourceTaskId} is marked 'failed'; use mars continue or mars restart to retry once a recipe is available.`,
     '',
     'Context:',
     `  Failing step: ${input.failingStep}`,
@@ -570,19 +570,13 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
         now,
       ],
     })
-    // AUDIT (mars-88a4e657): this is the second known violation of the
-    // "blocked-implies-edge" invariant. The source is parked in 'blocked'
-    // with no `task_blockers` row by design — merging the investigator's
-    // recipe does not "complete" the past failure, so wiring an edge
-    // would put the source back on the unblock-on-done path incorrectly.
-    // The correct terminal here is `'failed'` + the inbox item raised
-    // below. Tracked as a follow-up; see lib/blocker-invariant.ts.
-    //
-    // Source task: park it in blocked. No task_blockers row — there is
-    // nothing to unblock against. Human resolves via mars continue/restart/unblock.
+    // Source task: mark it failed. There is no task_blockers edge to wait on —
+    // the investigator does not unblock the source (a merged recipe doesn't
+    // retroactively fix the past failure). Human resolves via mars continue /
+    // mars restart once the investigator merges a recipe.
     await tx.execute({
       sql: `UPDATE tasks
-               SET status = 'blocked',
+               SET status = 'failed',
                    retry_count = retry_count + 1,
                    error = ?,
                    updated_at = ?
@@ -594,13 +588,6 @@ const spawnInvestigatorAndRaiseInbox = async (input: {
     tx.close()
     throw error
   }
-
-  internalBus().emit('task.blocked', {
-    taskId: input.sourceTask.id,
-    fixTaskId: null,
-    failureSignature: input.failureSignature,
-    failingStep: input.failingStep,
-  })
 
   const inboxItemId = await raiseInboxItem({
     kind: NO_RECIPE_INBOX_KIND,
@@ -690,7 +677,7 @@ export interface HandleTaskFailureViaTaskResult {
  *     set). Recovery has a retry budget of 0; we mark it failed and
  *     raise a `recovery-failed` inbox item for human attention.
  *  - `no-recipe`: signature has no recipe registered. Original task →
- *     blocked, an Investigator task is queued to propose a draft recipe,
+ *     failed, an Investigator task is queued to propose a draft recipe,
  *     and a `no-recipe` inbox item is raised.
  *  - `fix-fail-loop`: (sourceTaskId, failureSignature) pair has already
  *     burned its fix-task attempts cap (`MARS_MAX_FIX_ATTEMPTS`, default
@@ -847,7 +834,7 @@ export const handleTaskFailureWithFixTask = async (
   //     with spec.files + pre-computed integration re-run results,
   //     since classifyError today only sees errorOutput.
   // No recipe for this signature — do NOT fall back to a generic prompt
-  // (that's what produced the cascade). Park the source in 'blocked',
+  // (that's what produced the cascade). Mark the source 'failed',
   // queue an Investigator task to propose a draft recipe, and raise an
   // inbox item.
   if (!hasRecipe(failureSignature)) {
