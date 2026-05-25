@@ -294,3 +294,7 @@ An author-supplied label on a Task that materialises a fixed set of Definition-o
 
 **Definition of Done**:
 The list of criteria a Task must satisfy before verify passes; materialised from the Task's Tags at enqueue time.
+
+**Status transition**:
+A legal from-to edge between two task statuses; the set of all legal edges forms the task lifecycle's transition map.
+_Avoid_: state change, status update, status write
