@@ -121,7 +121,7 @@ describe('GET /api/todo — stale-worktree inbox items', () => {
 
   beforeEach(async () => {
     repo = setupRepo()
-    stateDbPath = resolve(repo, '.mars/state.db')
+    stateDbPath = resolve(repo, '.mars/mars.db')
     await seedInboxItems(stateDbPath)
 
     server = await startServer({

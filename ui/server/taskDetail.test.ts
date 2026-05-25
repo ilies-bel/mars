@@ -69,8 +69,8 @@ describe('GET /api/tasks/:id', () => {
 
   beforeEach(async () => {
     repo = setupRepo()
-    const queueDbPath = resolve(repo, '.mars/queue.db')
-    const stateDbPath = resolve(repo, '.mars/state.db')
+    const queueDbPath = resolve(repo, '.mars/mars.db')
+    const stateDbPath = resolve(repo, '.mars/mars.db')
     const qc = await createQueueSchema(queueDbPath)
     const sc = await createStateSchema(stateDbPath)
     qc.close()
@@ -99,7 +99,7 @@ describe('GET /api/tasks/:id', () => {
   })
 
   it('returns 200 with the task when the id exists', async () => {
-    const qc = createClient({ url: `file:${resolve(repo, '.mars/queue.db')}` })
+    const qc = createClient({ url: `file:${resolve(repo, '.mars/mars.db')}` })
     await insertTask(qc, 'task-1', 'queued')
     qc.close()
 

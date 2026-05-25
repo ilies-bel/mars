@@ -100,8 +100,8 @@ describe('GET /api/events', () => {
 
   beforeEach(async () => {
     repo = setupRepo()
-    queueDbPath = resolve(repo, '.mars/queue.db')
-    const stateDbPath = resolve(repo, '.mars/state.db')
+    queueDbPath = resolve(repo, '.mars/mars.db')
+    const stateDbPath = resolve(repo, '.mars/mars.db')
     const qc = await createQueueSchema(queueDbPath)
     const sc = await createStateSchema(stateDbPath)
     qc.close()

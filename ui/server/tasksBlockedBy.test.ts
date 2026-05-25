@@ -116,8 +116,8 @@ describe('GET /api/tasks — blockedBy field (no task_blockers table)', () => {
 
   beforeEach(async () => {
     repo = setupRepo()
-    queueDbPath = resolve(repo, '.mars/queue.db')
-    const stateDbPath = resolve(repo, '.mars/state.db')
+    queueDbPath = resolve(repo, '.mars/mars.db')
+    const stateDbPath = resolve(repo, '.mars/mars.db')
     // Create schema WITHOUT task_blockers to simulate an older deployment.
     const qc = createClient({ url: `file:${queueDbPath}` })
     await qc.execute(`CREATE TABLE tasks (
@@ -175,8 +175,8 @@ describe('GET /api/tasks — blockedBy field', () => {
 
   beforeEach(async () => {
     repo = setupRepo()
-    queueDbPath = resolve(repo, '.mars/queue.db')
-    const stateDbPath = resolve(repo, '.mars/state.db')
+    queueDbPath = resolve(repo, '.mars/mars.db')
+    const stateDbPath = resolve(repo, '.mars/mars.db')
     const qc = await createQueueSchema(queueDbPath)
     const sc = await createStateSchema(stateDbPath)
     qc.close()
