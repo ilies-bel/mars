@@ -361,7 +361,7 @@ export const startDaemon = async (
         },
         requestContext,
       })
-      const { isBlockersAbortError, isDirtyMainSetupError } = await import('../workflows/implement-workflow')
+      const { isBlockersAbortError, isDirtyMainSetupError, isTooHardAbortError } = await import('../workflows/implement-workflow')
       // Pass the raw error through: the detectors flatten the cause chain
       // and accept `unknown`, so the previous `instanceof Error` precondition
       // (which silently nulled out any wrapped/serialized error and dropped
@@ -380,6 +380,15 @@ export const startDaemon = async (
       // emit and let the blocked state stand.
       if (result.status === 'failed' && isDirtyMainSetupError(resultError)) {
         log(`[implement] ${task.id} parked blocked: merge target dirty at setup; shared recovery task spawned/attached`)
+        return
+      }
+      // A read-span guard trip parks the original task `blocked` with a
+      // task_blockers edge to the diagnose Chore. The step throws the sentinel
+      // to abort the run, so the result surfaces as `failed` — suppress the
+      // misleading `task.completed status=failed` emit and let the blocked
+      // state stand.
+      if (result.status === 'failed' && isTooHardAbortError(resultError)) {
+        log(`[implement] ${task.id} parked blocked: read-span guard tripped; diagnose Chore spawned as blocker`)
         return
       }
       log(`[implement] ${task.id} -> ${result.status}`)

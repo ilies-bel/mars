@@ -33,6 +33,8 @@ import {
 } from '../lib/worktree-install'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import {
+  enqueueTask,
+  addBlockers,
   getTask,
   hasIncompleteBlockers,
   updateTask,
@@ -89,6 +91,17 @@ export const DIRTY_MAIN_SETUP_MESSAGE =
 export const isDirtyMainSetupError = (err: unknown): boolean =>
   errorHaystack(err).includes('setup:preflight/dirty-main')
 
+// Thrown by codeStep when the read-span guard trips (agent read without
+// acting) and we successfully spawn a diagnose Chore and park the original
+// task in `blocked`. The daemon uses it to suppress the misleading
+// `task.completed status=failed` emit — the task is already parked
+// `blocked` with a real task_blockers edge to the diagnose Chore.
+export const TOO_HARD_ABORT_MESSAGE = (taskId: string): string =>
+  `task ${taskId} aborted by read-span guard: diagnose Chore spawned, parent parked in blocked`
+
+export const isTooHardAbortError = (err: unknown): boolean =>
+  errorHaystack(err).includes('aborted by read-span guard: diagnose Chore spawned')
+
 import { verifyPassedScorer } from '../scorers/verify-passed'
 import { mergeCleanScorer } from '../scorers/merge-clean'
 import { summarizeUsage } from '../lib/claude-usage'
@@ -102,6 +115,7 @@ import {
 } from '../lib/read-span-watch'
 import { TDD_WORKER_BRIEF } from './tdd-brief'
 import { CONTEXT_GATHERING_BRIEF } from './context-gathering-brief'
+import { buildDiagnoseChorePrompt } from '../lib/diagnose-chore'
 
 const planSchema = z
   .object({
@@ -861,14 +875,13 @@ const codeStep = createStep({
     // regardless of what tag the row carries.
     const worker =
       inputData.kind === 'fix' ? Workers.Fixer : getWorkerForTag(tag)
-    // Read/Grep span watcher (gsd-style analysis-paralysis signal). Log-
-    // only on threshold breach (no SIGKILL, no child spawn — see commit
-    // 48bb929). Skipped for Writer runs (surface too narrow to stall on
-    // reads) and for diagnose Chores (whose job IS heavy reading; PRD
-    // 06e677fb). The diagnose-Chore exemption is dormant today because
-    // the watcher no longer fires any branch, but it remains correct: if
-    // a future trigger ever runs a diagnose Chore through this workflow,
-    // the watcher should not even observe its read pattern.
+    // Read/Grep span watcher (gsd-style analysis-paralysis signal). When the
+    // threshold is reached AND the agent has taken zero actions for the entire
+    // run, a single diagnose Chore is spawned and the original task is parked
+    // in `blocked` behind it (see the post-run check below). Skipped for
+    // Writer runs (surface too narrow to stall on reads) and for diagnose
+    // Chores (whose job IS heavy reading; PRD 06e677fb — exempt entirely from
+    // the guard; their backstop is the time/turn cap).
     const watcher = shouldWireReadSpanWatcher(tag, inputData.kind)
       ? createReadSpanWatcher({
           limit: resolveReadSpanLimit(),
@@ -895,6 +908,54 @@ const codeStep = createStep({
       console.log(
         `[span-summary] task ${inputData.taskId}: maxStreak=${watcher.maxStreak} totalReads=${watcher.totalReads} totalActions=${watcher.totalActions} tripped=${watcher.thresholdEverReached}`,
       )
+    }
+    // Read-span guard: if the agent tripped the threshold AND never took any
+    // action during the entire run, spawn a single diagnose Chore and park the
+    // original task behind it. The Chore has a bounded contract: investigate
+    // only, record one structured verdict, never attempt the parent's work.
+    // See PRD 06e677fb; the old three-way free-form instruction is gone.
+    if (watcher?.thresholdEverReached && watcher.totalActions === 0) {
+      const diagnosePrompt = buildDiagnoseChorePrompt(
+        inputData.taskId,
+        inputData.prompt,
+        watcher.trace,
+      )
+      try {
+        const child = await enqueueTask(diagnosePrompt, undefined, {
+          skipTriage: true,
+          kind: 'diagnose',
+          originId,
+        })
+        const errorSummary =
+          `too_hard:no-action-after-reads: maxStreak=${watcher.maxStreak}; diagnose Chore=${child.id}`.slice(0, 1000)
+        await updateTask(
+          inputData.taskId,
+          { status: 'blocked', error: errorSummary, failedPhase: 'code' },
+          store,
+        )
+        await addBlockers(inputData.taskId, [child.id])
+        console.log(
+          `[span] task ${inputData.taskId}: ${watcher.maxStreak} reads without action; spawned diagnose Chore ${child.id} as blocker; parent → blocked`,
+        )
+        throw new Error(TOO_HARD_ABORT_MESSAGE(inputData.taskId))
+      } catch (err) {
+        if (err instanceof Error && isTooHardAbortError(err)) throw err
+        // Spawn failed — park the task failed; don't silently swallow.
+        console.error(
+          `[span] task ${inputData.taskId}: failed to spawn diagnose Chore:`,
+          err,
+        )
+        await updateTask(
+          inputData.taskId,
+          {
+            status: 'failed',
+            error: `diagnose Chore spawn failed: ${String(err).slice(0, 500)}`,
+            failedPhase: 'code',
+          },
+          store,
+        ).catch(() => {})
+        throw err instanceof Error ? err : new Error(String(err))
+      }
     }
     // Classify the worktree end-state. Only the 'dirty-no-commits' case is
     // worth a log line — it's the new failure mode the post-test commit
