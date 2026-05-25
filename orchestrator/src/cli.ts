@@ -218,8 +218,11 @@ Commands:
   restart <id> [<id> ...]       wipe worktree+branch and re-queue failed/done
                                 task(s) from setup (full pipeline re-run).
                                 Stops on the first error.
-  purge <id> [<id> ...]         delete failed/done task(s) entirely
-                                (worktree+branch+row). Stops on the first error.
+  purge <id> [<id> ...] [--force] delete failed/done task(s) entirely
+                                (worktree+branch+row). Refuses if the branch
+                                has unique commits ahead of the integration
+                                branch unless --force is passed. Stops on
+                                the first error.
   drop <id> [--force]           delete any task regardless of status: clears
                                 task_blockers edges (both directions), nulls
                                 sibling fix_for_task_id pointers, removes the
@@ -526,10 +529,19 @@ and branch first, then runs the full pipeline (setup -> code -> verify
 
 Accepts one or more ids; processes them in order and stops on the first
 error.`,
-  purge: `mars purge <id> [<id> ...]
+  purge: `mars purge <id> [<id> ...] [--force]
 
 Delete failed/done task(s) entirely (worktree + branch + row). Refuses
 in-flight tasks.
+
+Without --force, refuses if the task branch has commits ahead of the
+integration branch (default 'main', override via INTEGRATION_BRANCH) to
+prevent accidental loss of unique work. The refusal message lists each
+unique commit so you can decide whether to cherry-pick before purging.
+
+Pass --force to skip the commit-ahead check and delete unconditionally,
+even when the branch carries unique commits not yet on the integration
+branch.
 
 Accepts one or more ids; processes them in order and stops on the first
 error.`,
@@ -1885,7 +1897,7 @@ const main = async (): Promise<void> => {
     process.exit(1)
   }
 
-  if (cmd === 'continue' || cmd === 'restart' || cmd === 'purge') {
+  if (cmd === 'continue' || cmd === 'restart') {
     const ids = rest.filter((a) => !a.startsWith('--'))
     if (ids.length === 0) {
       console.error(`usage: mars ${cmd} <id> [<id> ...]`)
@@ -1902,10 +1914,29 @@ const main = async (): Promise<void> => {
       const verb =
         cmd === 'continue'
           ? `queued ${id} to continue from the failed phase`
-          : cmd === 'restart'
-            ? `queued ${id} for restart from setup`
-            : `purged ${id}`
+          : `queued ${id} for restart from setup`
       console.log(verb)
+    }
+    return
+  }
+
+  if (cmd === 'purge') {
+    const flags = new Set(rest.filter((a) => a.startsWith('--')))
+    const ids = rest.filter((a) => !a.startsWith('--'))
+    if (ids.length === 0) {
+      console.error(`usage: mars purge <id> [<id> ...] [--force]`)
+      process.exit(1)
+    }
+    const force = flags.has('--force')
+    const { sendRequest } = await import('./mastra/daemon/client')
+    for (const id of ids) {
+      try {
+        await sendRequest({ op: 'purge', id, force })
+      } catch (err) {
+        console.error(`${id}: ${(err as Error).message}`)
+        process.exit(1)
+      }
+      console.log(`purged ${id}`)
     }
     return
   }

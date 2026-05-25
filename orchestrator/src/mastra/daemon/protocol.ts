@@ -30,7 +30,7 @@ export type DaemonRequest =
     }
   | { op: 'continue'; id: string }
   | { op: 'restart'; id: string }
-  | { op: 'purge'; id: string }
+  | { op: 'purge'; id: string; force?: boolean }
   | { op: 'drop'; id: string; force?: boolean }
   | { op: 'unblock'; id: string }
   | { op: 'block'; id: string; blockerIds: readonly string[] }
