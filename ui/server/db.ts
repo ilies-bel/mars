@@ -25,6 +25,17 @@ export interface ProgressTask extends Task {
 
 type ProposalSource = 'reflection' | 'human' | 'planner'
 
+/**
+ * Minimal proposal representation used as a DAG node in the Topology view.
+ * Only proposals with at least one in-scope task are returned.
+ */
+export interface ProposalNode {
+  id: string
+  goal: string
+  source: ProposalSource
+  status: string
+}
+
 export interface DraftFeature {
   id: string
   goal: string
@@ -51,6 +62,7 @@ interface TaskRow {
   retry_count: number | null
   blocker_task_id: string | null
   blocker_task_ids: string | null
+  parent_proposal_id: string | null
   created_at: string
   updated_at: string
   files_json: string | null
@@ -89,6 +101,11 @@ export interface Task {
    * round-trip.
    */
   blockedBy: string[]
+  /**
+   * The proposal this task was sliced from. Null for ad-hoc tasks.
+   * Drives provenance edges in the Topology DAG view.
+   */
+  parentProposalId: string | null
   /**
    * Structured-task contract. Null for ad-hoc tasks enqueued without
    * --files/--verify/--done flags or slicer-generated spec.
@@ -152,6 +169,7 @@ const rowToTask = (row: TaskRow): Task => {
     retryCount: Number(row.retry_count ?? 0),
     blockerTaskId: row.blocker_task_id ?? null,
     blockedBy: parseBlockedBy(row.blocker_task_ids ?? null),
+    parentProposalId: row.parent_proposal_id ?? null,
     spec,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -218,6 +236,7 @@ export class TaskDb {
     const hasVerifyCmd = colNames.has('verify_cmd')
     const hasDoneCriteriaJson = colNames.has('done_criteria_json')
     const hasTaskType = colNames.has('task_type')
+    const hasParentProposalId = colNames.has('parent_proposal_id')
 
     const select: string[] = [
       't.id',
@@ -240,6 +259,8 @@ export class TaskDb {
       hasDoneCriteriaJson ? 't.done_criteria_json' : `NULL AS done_criteria_json`,
       hasTaskType ? 't.task_type' : `NULL AS task_type`,
     ]
+
+    select.push(hasParentProposalId ? 't.parent_proposal_id' : 'NULL AS parent_proposal_id')
 
     const blockersTableExists = await this.blockersTableExists()
     // For blocked tasks, surface the first blocker task id (if any) so the
@@ -514,6 +535,33 @@ export class StateDb {
         createdAt: Number(r0.created_at ?? 0),
         updatedAt: Number(r0.updated_at ?? 0),
         acceptanceCount: Number(r0.acceptance_count ?? 0),
+      }
+    })
+  }
+
+  /**
+   * Returns ProposalNode data for each of the given proposal IDs.
+   * IDs not found in the proposals table are silently omitted.
+   * Falls back to an empty array when the proposals table does not exist.
+   */
+  async listProposalsByIds(ids: string[]): Promise<ProposalNode[]> {
+    if (ids.length === 0) return []
+    const exists = await this.proposalsTableExists()
+    if (!exists) return []
+    const placeholders = ids.map(() => '?').join(', ')
+    const r = await this.client.execute({
+      sql: `SELECT id, goal, status, source
+              FROM proposals
+             WHERE id IN (${placeholders})`,
+      args: ids,
+    })
+    return r.rows.map((row) => {
+      const r0 = row as unknown as Record<string, unknown>
+      return {
+        id: r0.id as string,
+        goal: (r0.goal as string | null) ?? '',
+        status: (r0.status as string | null) ?? 'draft',
+        source: normaliseSource(r0.source),
       }
     })
   }
