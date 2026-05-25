@@ -682,6 +682,155 @@ describe('blocker-resolution (task_blockers)', () => {
     })
   })
 
+  describe('diagnose Chore verdict-driven branch (PRD 06e677fb)', () => {
+    interface DiagnoseModule {
+      setDiagnosis: typeof import('../diagnose').setDiagnosis
+    }
+    interface InboxListModule {
+      listInboxItems: typeof import('../inbox').listInboxItems
+    }
+
+    const loadModulesWithDiagnose = async (
+      repoPath: string,
+    ): Promise<{
+      q: QueueModule
+      br: BlockerModule
+      d: DiagnoseModule
+      inbox: InboxListModule
+    }> => {
+      vi.resetModules()
+      process.env.MARS_REPO = repoPath
+      const q = (await import('../../queue')) as unknown as QueueModule
+      await q.initQueue()
+      const br = (await import(
+        '../../blocker-resolution'
+      )) as unknown as BlockerModule
+      const d = (await import('../diagnose')) as unknown as DiagnoseModule
+      const inbox = (await import('../inbox')) as unknown as InboxListModule
+      return { q, br, d, inbox }
+    }
+
+    const seedParkedParent = async (
+      q: QueueModule,
+      parentPrompt = 'do the original work',
+    ): Promise<{ parentId: string; choreId: string }> => {
+      const parent = await q.enqueueTask(parentPrompt, undefined, {
+        skipTriage: true,
+      })
+      const chore = await q.enqueueTask(
+        '# Diagnose-only Chore for ' + parent.id,
+        undefined,
+        { skipTriage: true, kind: 'diagnose', originId: parent.id },
+      )
+      await q.updateTask(chore.id, { status: 'done' })
+      await q.addBlockers(parent.id, [chore.id])
+      await q.updateTask(parent.id, { status: 'blocked', failedPhase: 'code' })
+      return { parentId: parent.id, choreId: chore.id }
+    }
+
+    it('root-cause verdict: dispatches exactly one fix attempt seeded with the diagnosis and parks the parent behind it', async () => {
+      const { q, br, d } = await loadModulesWithDiagnose(repo)
+      const { parentId, choreId } = await seedParkedParent(q)
+      await d.setDiagnosis(choreId, {
+        kind: 'root-cause-found',
+        evidence: 'helper foo() is not exported from src/utils.ts',
+        involvedFiles: ['src/utils.ts', 'src/consumer.ts'],
+        fixDirection: 'add `export` to foo and re-run the consumer',
+      })
+
+      const r = await br.onBlockerTaskCompleted(choreId)
+
+      // The intercept returns an empty outcome list — the verdict-driven
+      // branch owns the state transitions, not the generic unblock loop.
+      expect(r.outcomes).toHaveLength(0)
+
+      // Exactly one fix attempt was enqueued, seeded with the recorded diagnosis.
+      const all = await q.getClient().execute({ sql: `SELECT * FROM tasks`, args: [] })
+      const tasks = all.rows as unknown as Array<{ kind: string | null; prompt: string }>
+      const fixes = tasks.filter((t) => t.kind === 'task' && t.prompt.includes('foo()'))
+      expect(fixes).toHaveLength(1)
+      expect(fixes[0].prompt).toContain('helper foo() is not exported')
+      expect(fixes[0].prompt).toContain('src/utils.ts')
+      expect(fixes[0].prompt).toContain('add `export` to foo')
+
+      // The parent is parked blocked behind the fix — NOT queued.
+      expect((await q.getTask(parentId))?.status).toBe('blocked')
+      // No second diagnose Chore was spawned.
+      const allKinds = tasks.map((t) => t.kind)
+      expect(allKinds.filter((k) => k === 'diagnose')).toHaveLength(1)
+    })
+
+    it('inconclusive verdict: parks the parent failed and raises exactly one actionable inbox item, no fix dispatched', async () => {
+      const { q, br, d, inbox } = await loadModulesWithDiagnose(repo)
+      const { parentId, choreId } = await seedParkedParent(q)
+      await d.setDiagnosis(choreId, {
+        kind: 'inconclusive',
+        whatChecked: 'walked src/foo, src/bar, looked for the missing helper',
+        whyUnscoped: 'task references a module that does not exist in the repo',
+      })
+
+      await br.onBlockerTaskCompleted(choreId)
+
+      // Parent must be failed, not queued.
+      expect((await q.getTask(parentId))?.status).toBe('failed')
+
+      // Exactly one inbox item of kind 'diagnose-inconclusive' was raised.
+      const open = await inbox.listInboxItems('open')
+      const diagnoseItems = open.filter((i) => i.kind === 'diagnose-inconclusive')
+      expect(diagnoseItems).toHaveLength(1)
+      expect(diagnoseItems[0].body).toContain('walked src/foo')
+      expect(diagnoseItems[0].body).toContain('does not exist in the repo')
+
+      // No fix attempt was created.
+      const all = await q.getClient().execute({ sql: `SELECT kind FROM tasks`, args: [] })
+      const kinds = (all.rows as unknown as Array<{ kind: string | null }>).map((r) => r.kind)
+      expect(kinds.filter((k) => k === 'task')).toHaveLength(1) // only the original parent
+    })
+
+    it('no-verdict: treated as inconclusive — parent failed, one inbox item, no fix dispatched', async () => {
+      const { q, br, inbox } = await loadModulesWithDiagnose(repo)
+      const { parentId, choreId } = await seedParkedParent(q)
+      // Deliberately omit setDiagnosis — emulate a Chore that exited cleanly
+      // without recording a verdict.
+
+      await br.onBlockerTaskCompleted(choreId)
+
+      expect((await q.getTask(parentId))?.status).toBe('failed')
+
+      const open = await inbox.listInboxItems('open')
+      const diagnoseItems = open.filter((i) => i.kind === 'diagnose-inconclusive')
+      expect(diagnoseItems).toHaveLength(1)
+      expect(diagnoseItems[0].title).toMatch(/no verdict/i)
+
+      // No fix was dispatched.
+      const all = await q.getClient().execute({ sql: `SELECT kind FROM tasks`, args: [] })
+      const kinds = (all.rows as unknown as Array<{ kind: string | null }>).map((r) => r.kind)
+      expect(kinds.filter((k) => k === 'diagnose')).toHaveLength(1) // only the original chore
+    })
+
+    it('generic tasks are not intercepted — an ordinary done task still unblocks dependents normally', async () => {
+      process.env.MARS_FIX_RETRY_BUDGET = '5'
+      const { q, br } = await loadModulesWithDiagnose(repo)
+      const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+      const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
+      await q.addBlockers(dep.id, [blocker.id])
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'blocked', retry_count = 0 WHERE id = ?`,
+        args: [dep.id],
+      })
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [blocker.id],
+      })
+
+      const r = await br.onBlockerTaskCompleted(blocker.id)
+
+      expect(r.outcomes).toHaveLength(1)
+      expect(r.outcomes[0].outcome).toBe('queued')
+      expect((await q.getTask(dep.id))?.status).toBe('queued')
+    })
+  })
+
   describe('worktree reset before re-dispatch (PRD a4deccc2 slice 1)', () => {
     it('onBlockerTaskCompleted hard-resets the dependent worktree to integration HEAD before flipping to queued', async () => {
       const { q, br } = await loadModules(repo)
