@@ -971,31 +971,10 @@ export const startDaemon = async (
     bus.emit('task.queued', { taskId: id })
   }
 
-  const handlePurge = async (id: string): Promise<void> => {
-    const task = await getTask(id)
-    if (!task) throw new Error(`task ${id} not found`)
-    if (task.status !== 'failed' && task.status !== 'done') {
-      throw new Error(`task ${id} is ${task.status}; refuse to purge in-flight tasks`)
-    }
-
-    const { existsSync: exists } = await import('node:fs')
-    const { execFile } = await import('node:child_process')
-    const { promisify } = await import('node:util')
-    const exec = promisify(execFile)
-    const { removeWorktree } = await import('../lib/git')
+  const handlePurge = async (id: string, force: boolean): Promise<void> => {
+    const { corePurgeTask } = await import('./purge-task')
     const { getRepoRoot } = await import('../context')
-
-    const branch = task.branch ?? `task/${task.id}`
-    if (task.worktreePath && exists(task.worktreePath)) {
-      await removeWorktree({ path: task.worktreePath, branch }, true).catch(() => {})
-    }
-    await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
-    // Use dropTask (the shared cleanup-then-delete helper) so blocker edges
-    // (task_blockers, task_proposal_blockers) and fix_for sibling pointers are
-    // all cleared atomically before the tasks row is removed. deleteTask does
-    // only a bare DELETE and will hit SQLITE_CONSTRAINT FOREIGN KEY whenever
-    // the task has any such references.
-    await dropTask(id)
+    await corePurgeTask(id, force, integrationBranch, getRepoRoot())
     try {
       const closed = await supersedeInboxItemsForOrigin(id, 'origin-purged')
       if (closed.length > 0) {
@@ -1406,7 +1385,7 @@ export const startDaemon = async (
           return { ok: true }
         }
         case 'purge': {
-          await handlePurge(req.id)
+          await handlePurge(req.id, req.force ?? false)
           return { ok: true }
         }
         case 'drop': {
