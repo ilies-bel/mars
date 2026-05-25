@@ -44,6 +44,26 @@ const loadQueue = async (repo: string): Promise<QueueModule> => {
   return q
 }
 
+/**
+ * task_proposal_blockers carries a real FK on proposal_id (ADR-0034),
+ * so any test that adds a proposal-blocker edge must first materialise
+ * the referenced proposal row. The proposals table is created by
+ * initQueue (minimal shape, sufficient for the FK target).
+ */
+const seedProposals = async (
+  q: QueueModule,
+  ids: string[],
+): Promise<void> => {
+  const now = Date.now()
+  for (const id of ids) {
+    await q.getClient().execute({
+      sql: `INSERT OR IGNORE INTO proposals (id, created_at, updated_at)
+            VALUES (?, ?, ?)`,
+      args: [id, now, now],
+    })
+  }
+}
+
 describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
   let repo: string
 
@@ -68,6 +88,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     await q.updateTask(task.id, { status: 'failed', error: 'test' })
 
     // Add a proposal-blocker edge: task_id FK → tasks(id) enforces a constraint.
+    await seedProposals(q, ['prop-abc123'])
     await q.addProposalBlockers(task.id, ['prop-abc123'])
 
     // Before: edge exists.
@@ -97,6 +118,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
       skipTriage: true,
     })
     await q.updateTask(task.id, { status: 'done' })
+    await seedProposals(q, ['prop-xyz999', 'prop-abc000'])
     await q.addProposalBlockers(task.id, ['prop-xyz999', 'prop-abc000'])
 
     await expect(q.dropTask(task.id)).resolves.toMatchObject({
@@ -221,6 +243,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     await q.addBlockers(waiter.id, [target.id])
 
     // Proposal blocker: target is also gated on a proposal.
+    await seedProposals(q, ['prop-combined'])
     await q.addProposalBlockers(target.id, ['prop-combined'])
 
     // Sibling fix_for pointer: another task points back at target.

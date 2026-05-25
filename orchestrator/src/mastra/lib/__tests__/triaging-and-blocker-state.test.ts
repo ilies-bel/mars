@@ -38,7 +38,7 @@ describe('Triaging status + Blocker state schema', () => {
     const { initQueue } = await import('../../queue')
     await initQueue()
 
-    const c = createClient({ url: `file:${repo}/.mars/queue.db` })
+    const c = createClient({ url: `file:${repo}/.mars/mars.db` })
     try {
       const cols = await c.execute(`PRAGMA table_info(tasks)`)
       const names = new Set(
@@ -166,6 +166,13 @@ describe('Triaging status + Blocker state schema', () => {
       args: [now, now],
     })
     await addBlockers('a', ['b'])
+    // ADR-0034: task_proposal_blockers.proposal_id is a real FK, so
+    // seed a proposal row before the blocker insert.
+    await c.execute({
+      sql: `INSERT OR IGNORE INTO proposals (id, created_at, updated_at)
+            VALUES ('idea-xyz', ?, ?)`,
+      args: [Date.now(), Date.now()],
+    })
     await addProposalBlockers('a', ['idea-xyz'])
 
     const blockers = await listAllBlockers('a')
@@ -182,7 +189,7 @@ describe('Triaging status + Blocker state schema', () => {
 
   it('migrates a legacy task_blockers row (no state column) into state=confirmed', async () => {
     // Set up a legacy queue.db that predates the `state` column.
-    const queueDb = `file:${repo}/.mars/queue.db`
+    const queueDb = `file:${repo}/.mars/mars.db`
     const q = createClient({ url: queueDb })
     await q.execute(`CREATE TABLE tasks (
       id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,

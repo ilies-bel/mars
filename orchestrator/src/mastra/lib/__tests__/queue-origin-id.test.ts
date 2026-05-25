@@ -37,7 +37,7 @@ describe('queue.origin_id migration', () => {
     await q.initQueue()
     await q.initQueue()
 
-    const dbPath = resolve(repo, '.mars/queue.db')
+    const dbPath = resolve(repo, '.mars/mars.db')
     const direct = createClient({ url: `file:${dbPath}` })
     const cols = await direct.execute(`PRAGMA table_info(tasks)`)
     const originIdCols = cols.rows.filter(
@@ -51,7 +51,7 @@ describe('queue.origin_id migration', () => {
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
     expect(t.originId).toBe(t.id)
 
-    const dbPath = resolve(repo, '.mars/queue.db')
+    const dbPath = resolve(repo, '.mars/mars.db')
     const direct = createClient({ url: `file:${dbPath}` })
     const r = await direct.execute({
       sql: `SELECT origin_id FROM tasks WHERE id = ?`,
@@ -73,7 +73,7 @@ describe('queue.origin_id migration', () => {
   it('backfills origin_id on legacy rows (column added on stale DB → origin_id = id)', async () => {
     // Simulate a pre-migration DB by creating tasks WITHOUT origin_id and
     // dropping the column before initQueue runs the migration.
-    const dbPath = resolve(repo, '.mars/queue.db')
+    const dbPath = resolve(repo, '.mars/mars.db')
     const direct = createClient({ url: `file:${dbPath}` })
     const now = new Date().toISOString()
     // Mimic the legacy schema (no origin_id column).

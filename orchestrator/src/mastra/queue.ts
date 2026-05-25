@@ -613,23 +613,90 @@ export const initQueue = async (): Promise<void> => {
   //
   // DB placement: this table conceptually GATES DISPATCH — the dispatcher
   // must not run a task while a row here references an un-promoted proposal.
-  // The dispatch gate (`task_blockers`) lives in queue.db, so co-locating
-  // here keeps the gate check a single-db read and, critically, lets the
-  // ADR-0015 promote transfer (delete this row + insert the `task_blockers`
-  // row) execute as ONE libSQL write transaction — both writes are in
-  // queue.db. `proposals` lives in the SEPARATE state.db, so a SQL FK on
-  // `proposal_id` is impossible across databases; it is a plain TEXT column
-  // and proposal existence is validated in application code at edge-add
-  // time. `task_id` keeps a real FK to local `tasks(id)`.
+  // Per ADR-0034 `tasks` and `proposals` now share a single `mars.db` file,
+  // so both `task_id` and `proposal_id` carry real foreign keys with
+  // `ON DELETE CASCADE` on the proposal side (dropping a promoted/dismissed
+  // proposal collapses its dispatch gates atomically). The ADR-0015 promote
+  // transfer (delete this row + insert the `task_blockers` row) still
+  // executes as a single libSQL transaction — both writes land in the same
+  // file. The earlier "pseudo-FK validated in application code" workaround
+  // is gone.
+  // Since proposals now lives in the SAME file as tasks (ADR-0034), the FK
+  // target must exist before any insert into `task_proposal_blockers`. The
+  // canonical creator is `initProposals` (proposals.ts), but it runs AFTER
+  // `initQueue` in `initDatabases`, and many call sites init only the queue
+  // (tests, ad-hoc utilities) — so we pre-create the proposals table here
+  // with the minimal `id PRIMARY KEY` shape needed to satisfy the FK.
+  // `initProposals` keeps full ownership of column shape: its own
+  // `CREATE TABLE IF NOT EXISTS proposals (...)` becomes a no-op, and the
+  // additional columns it expects already exist (when initProposals follows
+  // initQueue in the standard path) OR get ALTERed in if a caller bypassed
+  // initProposals entirely. The minimal stub here is forward-compatible.
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS proposals (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT '',
+      problem TEXT NOT NULL DEFAULT '',
+      solution TEXT NOT NULL DEFAULT '',
+      out_of_scope TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'draft',
+      source TEXT NOT NULL DEFAULT 'human',
+      created_at INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL DEFAULT 0
+    )
+  `)
   await c.execute(`
     CREATE TABLE IF NOT EXISTS task_proposal_blockers (
       task_id TEXT NOT NULL,
       proposal_id TEXT NOT NULL,
       created_at TEXT NOT NULL,
       PRIMARY KEY (task_id, proposal_id),
-      FOREIGN KEY (task_id) REFERENCES tasks(id)
+      FOREIGN KEY (task_id) REFERENCES tasks(id),
+      FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE
     )
   `)
+  // Upgrade path: an existing repo created the table before the FK landed.
+  // Detect a missing `proposal_id` FK and rebuild via the standard SQLite
+  // table-rebuild dance (CREATE … new + INSERT SELECT + DROP + RENAME).
+  // Only runs when `proposals` exists in the same DB — fresh installs
+  // get the FK baked in by the CREATE above and skip the rebuild.
+  const proposalsCheck = await c.execute(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='proposals'`,
+  )
+  if (proposalsCheck.rows.length > 0) {
+    const fkList = await c.execute(
+      `PRAGMA foreign_key_list(task_proposal_blockers)`,
+    )
+    const hasProposalFk = fkList.rows.some((r) => {
+      const row = r as unknown as { table: string; from: string }
+      return row.table === 'proposals' && row.from === 'proposal_id'
+    })
+    if (!hasProposalFk) {
+      await c.execute(`
+        CREATE TABLE task_proposal_blockers_new (
+          task_id TEXT NOT NULL,
+          proposal_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (task_id, proposal_id),
+          FOREIGN KEY (task_id) REFERENCES tasks(id),
+          FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE
+        )
+      `)
+      // Drop orphan rows (proposal_id pointing nowhere) before copy —
+      // they would fail the new FK check otherwise.
+      await c.execute(`
+        INSERT INTO task_proposal_blockers_new (task_id, proposal_id, created_at)
+          SELECT b.task_id, b.proposal_id, b.created_at
+            FROM task_proposal_blockers b
+            JOIN proposals p ON p.id = b.proposal_id
+      `)
+      await c.execute(`DROP TABLE task_proposal_blockers`)
+      await c.execute(
+        `ALTER TABLE task_proposal_blockers_new RENAME TO task_proposal_blockers`,
+      )
+    }
+  }
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_proposal_blockers_task ON task_proposal_blockers(task_id)
   `)

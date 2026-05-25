@@ -94,7 +94,7 @@ describe('tasks.claude_session_ids (append-only history)', () => {
   it('backfills claude_session_ids from a legacy row with only claude_session_id set', async () => {
     // Lay down a row before the new column exists, then run the
     // migration via initQueue() and confirm the array gets seeded.
-    const queueDb = `file:${repo}/.mars/queue.db`
+    const queueDb = `file:${repo}/.mars/mars.db`
     const c = createClient({ url: queueDb })
     await c.execute(`CREATE TABLE tasks (
       id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
