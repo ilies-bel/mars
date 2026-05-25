@@ -14,6 +14,7 @@ export const SseInvalidator = () => {
       void qc.invalidateQueries({ queryKey: ['tasks'] })
       void qc.invalidateQueries({ queryKey: ['progress'] })
       void qc.invalidateQueries({ queryKey: ['inbox'] })
+      void qc.invalidateQueries({ queryKey: ['action-queue'] })
       // Refetch the open drawer's task alongside Progress so the status
       // chip and section data update in place. Switching the drawer to a
       // different id automatically retargets here because `getOpenTaskId`
@@ -26,6 +27,7 @@ export const SseInvalidator = () => {
     es.addEventListener('todo', () => {
       void qc.invalidateQueries({ queryKey: ['todo'] })
       void qc.invalidateQueries({ queryKey: ['inbox'] })
+      void qc.invalidateQueries({ queryKey: ['action-queue'] })
     })
     es.onerror = () => setSseConnected(false)
     return () => {

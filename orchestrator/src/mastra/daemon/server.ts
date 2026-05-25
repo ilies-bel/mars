@@ -157,7 +157,7 @@ export const startDaemon = async (
 ): Promise<DaemonHandle> => {
   const integrationBranch =
     opts.integrationBranch ?? process.env.INTEGRATION_BRANCH ?? 'main'
-  const { socket: socketPath, pidFile, logFile } = daemonPaths()
+  const { socket: socketPath, pidFile, logFile, httpPortFile } = daemonPaths()
   const log = (line: string): void => {
     writeLog(logFile, line)
     opts.log?.(line)
@@ -1212,6 +1212,22 @@ export const startDaemon = async (
       log(`[reconcile-unblock] failed: ${(err as Error).message}`)
     }
 
+    // Daemon-killed tasks: tasks SIGKILL'd with a prior daemon are stamped
+    // `failureSignature: 'daemon-killed'` and left in `failed`. We do NOT
+    // auto-requeue them — raise one alert-only inbox item per task so the
+    // operator decides (Requeue now / Restart daemon).
+    try {
+      const { detectAndRaiseDaemonKilled } = await import('./daemon-killed-sweep')
+      const raised = await detectAndRaiseDaemonKilled()
+      if (raised.length > 0) {
+        log(
+          `[reconcile] raised ${raised.length} daemon-killed alert(s) (alert-only; not auto-requeued)`,
+        )
+      }
+    } catch (err) {
+      log(`[reconcile] daemon-killed sweep failed: ${(err as Error).message}`)
+    }
+
     const drafts = await listTasks('draft')
     for (const t of drafts) bus.emit('task.added', { taskId: t.id })
 
@@ -1617,7 +1633,7 @@ export const startDaemon = async (
           // setTimeout so the response flush actually lands on the wire.
           setTimeout(() => {
             try {
-              for (const f of [socketPath, pidFile]) {
+              for (const f of [socketPath, pidFile, httpPortFile]) {
                 if (existsSync(f)) {
                   try {
                     unlinkSync(f)
@@ -1696,10 +1712,13 @@ export const startDaemon = async (
   writeFileSync(pidFile, String(process.pid), 'utf8')
   log(`daemon listening on ${socketPath} (pid ${process.pid}, repo ${resolveContext().repoRoot})`)
 
-  // ── Local HTTP restart endpoint ───────────────────────────────────────────
-  // Bound to 127.0.0.1 only; port is OS-assigned. The UI and any local
-  // tooling can POST /tasks/:id/restart to trigger the same code path as
-  // `mars restart <id>` (i.e. coreRestartTask with the 'failed' allowed set).
+  // ── Local HTTP action endpoint ────────────────────────────────────────────
+  // Bound to 127.0.0.1 only; port is OS-assigned and published to
+  // `.mars/http.port` so the read-only UI can discover it. The UI and any local
+  // tooling resolve an error-kind action's `op` to a route here; the daemon —
+  // the single writer — performs the state transition. Verbs mirror the CLI:
+  // restart/unblock/purge and a worktree prune, plus a process-level
+  // daemon restart. GET /error-kinds serves the action-menu registry.
   const { startHttpServer } = await import('./http-server')
   const { coreRestartTask: coreRestart } = await import('./restart-task')
   const httpHandle = await startHttpServer({
@@ -1707,9 +1726,40 @@ export const startDaemon = async (
       await coreRestart(id, new Set(['failed']))
       bus.emit('task.queued', { taskId: id })
     },
+    unblockTask: async (id) => {
+      await handleUnblock(id)
+    },
+    purgeTask: async (id) => {
+      await handlePurge(id, false)
+    },
+    pruneWorktree: async (id) => {
+      const { removeWorktree } = await import('../lib/git')
+      const { getRepoRoot } = await import('../context')
+      const { join } = await import('node:path')
+      const path = join(getRepoRoot(), '.mars', 'worktrees', id)
+      // keepBranch=true: leave the branch ref for post-mortem; ignoreMissing
+      // so a half-gone worktree still prunes cleanly.
+      await removeWorktree({ path, branch: `task/${id}` }, true, true)
+    },
+    restartDaemon: async () => {
+      // Re-exec a detached `mars daemon start` and let this process drain +
+      // exit. Spawned detached so it survives our shutdown.
+      const { spawn } = await import('node:child_process')
+      const { resolveLaunchCommand } = await import('./paths')
+      const { command, baseArgs } = resolveLaunchCommand()
+      const child = spawn(command, [...baseArgs, 'daemon', 'start'], {
+        detached: true,
+        stdio: 'ignore',
+      })
+      child.unref()
+      log(`restart-daemon requested; spawned replacement, draining self`)
+      // Trigger our own graceful shutdown after the response flushes.
+      setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
+    },
     isAcceptingWork: () => acceptingWork,
   })
-  log(`HTTP restart endpoint on http://127.0.0.1:${httpHandle.port}/tasks/:id/restart`)
+  writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
+  log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
 
   // Boot reconcile after server is listening (so any reconcile-driven dispatch
   // is fully wired) — fire-and-forget; errors logged inside.
@@ -1818,7 +1868,7 @@ export const startDaemon = async (
     // restart can reopen it (process.exit below would also free it, but be
     // explicit so the lock never lingers if exit is delayed).
     traceStore?.close()
-    for (const f of [socketPath, pidFile]) {
+    for (const f of [socketPath, pidFile, httpPortFile]) {
       if (existsSync(f)) {
         try {
           unlinkSync(f)

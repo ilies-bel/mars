@@ -1,6 +1,7 @@
 import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { loadAgents } from './agents.ts'
+import { fetchErrorKinds, proxyAction } from './daemonHttp.ts'
 import { StateDb, TaskDb } from './db.ts'
 import {
   type DerivedInboxFilter,
@@ -177,11 +178,15 @@ export const startServer = async (
             filterRaw === 'dismissed' || filterRaw === 'all'
               ? filterRaw
               : 'open'
+          // Fetch the action-menu registry from the daemon (empty if the
+          // daemon is down — rows then render without buttons).
+          const errorKinds = await fetchErrorKinds(ctx.stateDir)
           const items = await listDerivedInbox(
             db,
             stateDb,
             ctx.repoRoot,
             filter,
+            errorKinds,
           )
           return jsonResponse(200, items)
         } catch (err) {
@@ -217,6 +222,29 @@ export const startServer = async (
             await stateDb.dismissInboxEntity(entityKind, entityId)
           }
           return jsonResponse(200, { ok: true })
+        } catch (err) {
+          return jsonResponse(500, { error: (err as Error).message })
+        }
+      }
+
+      // Recovery actions: the UI's only write path. Forwards a registry `op`
+      // (and optional entity id) to the daemon, which performs the state
+      // transition. `restart-daemon` is process-level and carries no entity id.
+      if (path === '/api/actions' && req.method === 'POST') {
+        try {
+          const body = (await req.json()) as {
+            op?: unknown
+            entityId?: unknown
+          }
+          const { op, entityId } = body
+          if (typeof op !== 'string' || op.length === 0) {
+            return jsonResponse(400, { error: 'op is required and must be a string' })
+          }
+          if (entityId !== undefined && typeof entityId !== 'string') {
+            return jsonResponse(400, { error: 'entityId must be a string when present' })
+          }
+          const result = await proxyAction(ctx.stateDir, op, entityId)
+          return jsonResponse(result.status, result.body)
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }

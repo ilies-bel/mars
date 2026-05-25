@@ -130,6 +130,14 @@ export const dagContextSchema = z.object({
   proposalId: z.string().nullable(),
 })
 
+export const actionDescriptorSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  op: z.string(),
+  needsConfirm: z.boolean().optional(),
+  hint: z.string().optional(),
+})
+
 export const actionQueueItemSchema = z.object({
   id: z.string(),
   kind: z.enum([
@@ -151,6 +159,12 @@ export const actionQueueItemSchema = z.object({
    * 'resolved' and 'dismissed' items are hidden from it.
    */
   ackState: z.enum(['ack', 'resolved', 'dismissed']).nullable(),
+  // Machine-readable error-kind key the row resolves to (a superset of `kind`:
+  // a daemon-killed failure resolves to 'daemon-killed', not 'failed-task').
+  errorKind: z.string(),
+  // Recovery actions composed from the error-kind registry. Empty when the
+  // daemon is unreachable.
+  actions: z.array(actionDescriptorSchema),
 })
 
 export const actionQueueResponseSchema = z.array(actionQueueItemSchema)
@@ -171,6 +185,7 @@ export const agentsResponseSchema = z.object({
 })
 
 export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
+export type ActionDescriptor = z.infer<typeof actionDescriptorSchema>
 export type DagNode = z.infer<typeof dagNodeSchema>
 export type DagContext = z.infer<typeof dagContextSchema>
 export type TaskStatus = z.infer<typeof taskStatusSchema>

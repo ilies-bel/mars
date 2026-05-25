@@ -1,6 +1,16 @@
 import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { ActionDescriptor, ErrorKind } from './daemonHttp.ts'
 import type { StateDb, Task, TaskDb, TaskStatus } from './db.ts'
+
+/**
+ * Machine-readable failure signature the orchestrator stamps on a task that was
+ * SIGKILL'd with the daemon. A `failed-task` row carrying this resolves to the
+ * `daemon-killed` error kind (requeue-framed action menu) instead of the
+ * generic one. Kept as a local literal so the UI never imports orchestrator
+ * code; it must match `DAEMON_KILLED_SIGNATURE` in the orchestrator.
+ */
+const DAEMON_KILLED_SIGNATURE = 'daemon-killed'
 
 /**
  * Derived inbox for the web UI — the read-only mirror of the orchestrator's
@@ -41,6 +51,13 @@ export interface DagContext {
   proposalId: string | null
 }
 
+/**
+ * The error-kind key a row resolves to. A superset of `DerivedInboxKind`:
+ * `failed-task` fans out to `daemon-killed` when the task carries the
+ * daemon-killed signature, so the right (requeue-framed) action menu is chosen.
+ */
+export type ErrorKindKey = DerivedInboxKind | 'daemon-killed'
+
 export interface DerivedInboxRow {
   id: string
   kind: DerivedInboxKind
@@ -63,7 +80,37 @@ export interface DerivedInboxRow {
    *   - `'dismissed'` — dismissed; hidden from the open filter
    */
   ackState: 'ack' | 'resolved' | 'dismissed' | null
+  /** Machine-readable error-kind key this row resolves to. */
+  errorKind: ErrorKindKey
+  /**
+   * Recovery actions for this row, composed from the error-kind registry the
+   * UI server fetched from the daemon. Empty when the daemon is unreachable.
+   */
+  actions: ActionDescriptor[]
 }
+
+/**
+ * Resolve a row's error-kind key. Mirrors the orchestrator's `errorKindForRow`:
+ * a `failed-task` whose task carries the daemon-killed signature becomes
+ * `daemon-killed`; everything else maps straight from its row kind.
+ */
+export const resolveErrorKind = (
+  rowKind: DerivedInboxKind,
+  failureSignature: string | null,
+): ErrorKindKey =>
+  rowKind === 'failed-task' && failureSignature === DAEMON_KILLED_SIGNATURE
+    ? 'daemon-killed'
+    : rowKind
+
+/**
+ * Compose recovery actions for a resolved error-kind key from a registry keyed
+ * by `kind`. Returns an empty list when the registry has no matching entry
+ * (e.g. daemon unreachable) so the UI simply renders no buttons.
+ */
+const actionsForKind = (
+  errorKind: ErrorKindKey,
+  registry: Map<string, ErrorKind>,
+): ActionDescriptor[] => registry.get(errorKind)?.recoveryActions ?? []
 
 const PRIORITY_RANK: Record<DerivedInboxPriority, number> = {
   high: 0,
@@ -161,10 +208,16 @@ export const listDerivedInbox = async (
   stateDb: StateDb,
   repoRoot: string,
   filter: DerivedInboxFilter = 'open',
+  errorKinds: ErrorKind[] = [],
 ): Promise<DerivedInboxRow[]> => {
   const tasksExist = await db.tableExists()
   const allTasks = tasksExist ? await db.listTasks() : []
   const byId = new Map<string, Task>(allTasks.map((t) => [t.id, t]))
+
+  // Registry keyed by error-kind key, for composing each row's action menu.
+  const registry = new Map<string, ErrorKind>(
+    errorKinds.map((e) => [e.kind, e]),
+  )
 
   // Reverse blocker edges: blocker_task_id -> [task_id...].
   const blockingMap = new Map<string, string[]>()
@@ -229,6 +282,7 @@ export const listDerivedInbox = async (
       descendants: [],
       proposalId: task.parentProposalId,
     }
+    const errorKind = resolveErrorKind(kind, task.failureSignature)
     rows.push({
       id: `${kind}:${task.id}`,
       kind,
@@ -243,6 +297,8 @@ export const listDerivedInbox = async (
       dag,
       dismissed: isDismissed('task', task.id),
       ackState: getAckState('task', task.id),
+      errorKind,
+      actions: actionsForKind(errorKind, registry),
     })
   }
 
@@ -263,6 +319,8 @@ export const listDerivedInbox = async (
       dag: null,
       dismissed: isDismissed('worktree', name),
       ackState: getAckState('worktree', name),
+      errorKind: 'stale-worktree',
+      actions: actionsForKind('stale-worktree', registry),
     })
   }
 
@@ -286,6 +344,8 @@ export const listDerivedInbox = async (
       dag: null,
       dismissed: isDismissed('proposal', d.id),
       ackState: getAckState('proposal', d.id),
+      errorKind: 'draft-proposal',
+      actions: actionsForKind('draft-proposal', registry),
     })
   }
 

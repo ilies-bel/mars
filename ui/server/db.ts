@@ -58,6 +58,7 @@ interface TaskRow {
   worktree_path: string | null
   claude_session_id: string | null
   error: string | null
+  failure_signature: string | null
   drop_reason: string | null
   retry_count: number | null
   blocker_task_id: string | null
@@ -90,6 +91,13 @@ export interface Task {
   branch: string | null
   worktreePath: string | null
   error: string | null
+  /**
+   * Machine-readable failure signature stamped at failure time (e.g.
+   * `'daemon-killed'`). Drives the error-kind an inbox row resolves to — a
+   * `daemon-killed` signature surfaces the requeue-framed action menu rather
+   * than the generic failed-task menu. Null for non-failed or legacy rows.
+   */
+  failureSignature: string | null
   dropReason: string | null
   retryCount: number
   blockerTaskId: string | null
@@ -165,6 +173,7 @@ const rowToTask = (row: TaskRow): Task => {
     branch: row.branch,
     worktreePath: row.worktree_path,
     error: row.error,
+    failureSignature: row.failure_signature ?? null,
     dropReason: row.drop_reason ?? null,
     retryCount: Number(row.retry_count ?? 0),
     blockerTaskId: row.blocker_task_id ?? null,
@@ -235,6 +244,7 @@ export class TaskDb {
       cols.rows.map((r) => (r as unknown as { name: string }).name),
     )
     const hasDropReason = colNames.has('drop_reason')
+    const hasFailureSignature = colNames.has('failure_signature')
     const hasRetryCount = colNames.has('retry_count')
     const hasFilesJson = colNames.has('files_json')
     const hasReadFirstJson = colNames.has('read_first_json')
@@ -254,6 +264,7 @@ export class TaskDb {
       't.worktree_path',
       't.claude_session_id',
       't.error',
+      hasFailureSignature ? 't.failure_signature' : `NULL AS failure_signature`,
       hasDropReason ? 't.drop_reason' : `NULL AS drop_reason`,
       hasRetryCount ? 't.retry_count' : `0 AS retry_count`,
       't.created_at',

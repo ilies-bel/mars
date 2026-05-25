@@ -1,13 +1,29 @@
 import { createServer, type Server } from 'node:http'
+import { listErrorKinds } from '../lib/error-kinds'
 import type { RestartTaskError } from './restart-task'
 
+/**
+ * Handlers the daemon supplies for each recovery verb the local HTTP server
+ * exposes. Each should throw {@link RestartTaskError} (with `code` set to
+ * `'NOT_FOUND'` or `'WRONG_STATUS'`) for known validation failures; any other
+ * error surfaces as a 500.
+ *
+ * These back the `op`s declared in the error-kind registry: the read-only UI
+ * resolves an action's `op` to one of these routes and the daemon — the single
+ * writer — performs the state transition.
+ */
 export interface HttpServerDeps {
-  /**
-   * Called to restart a task. Should throw {@link RestartTaskError} (with
-   * `code` set to `'NOT_FOUND'` or `'WRONG_STATUS'`) for known validation
-   * failures; any other error is surfaced as a 500.
-   */
+  /** Tear down + re-queue a task from setup (the `restart`/`requeue` verb). */
   restartTask: (id: string) => Promise<void>
+  /** Phantom-recover a blocked task: clear edges and flip it to failed. */
+  unblockTask: (id: string) => Promise<void>
+  /** Drop a task and its worktree permanently. */
+  purgeTask: (id: string) => Promise<void>
+  /** Remove a leftover worktree by its id (terminal/absent task). */
+  pruneWorktree: (id: string) => Promise<void>
+  /** Process-level: re-exec the daemon itself. Resolves once the re-exec is
+   * scheduled; the current process exits shortly after. */
+  restartDaemon: () => Promise<void>
   /** Returns `true` while the daemon is accepting work (draining → `false`). */
   isAcceptingWork: () => boolean
 }
@@ -42,33 +58,67 @@ const sendJson = (
   res.end(JSON.stringify(body))
 }
 
+/** Map a thrown error onto the right HTTP status + JSON envelope. */
+const sendError = (
+  res: import('node:http').ServerResponse,
+  err: unknown,
+): void => {
+  if (isRestartTaskError(err)) {
+    if (err.code === 'NOT_FOUND') {
+      sendJson(res, 404, { ok: false, error: err.message, errorCode: 'NOT_FOUND' })
+    } else {
+      sendJson(res, 409, { ok: false, error: err.message, errorCode: 'WRONG_STATUS' })
+    }
+    return
+  }
+  const message = err instanceof Error ? err.message : String(err)
+  sendJson(res, 500, { ok: false, error: message })
+}
+
 /**
- * Start a local HTTP server bound to `127.0.0.1` only. Exposes a single
- * verb:
+ * The per-entity action routes, keyed by the `op` the error-kind registry
+ * declares. Each maps `POST /actions/:op/:id` to the matching daemon handler.
+ * `restart-daemon` is handled separately (it has no `:id`).
+ */
+type EntityOp = 'restart' | 'unblock' | 'purge' | 'prune-worktree'
+
+/**
+ * Start a local HTTP server bound to `127.0.0.1` only. Exposes:
  *
- *   POST /tasks/:id/restart
+ *   GET  /error-kinds            → the error-kind registry (action menus)
+ *   POST /actions/restart/:id    → re-queue a failed/daemon-killed task
+ *   POST /actions/unblock/:id    → phantom-recover a blocked task
+ *   POST /actions/purge/:id      → drop a task + worktree
+ *   POST /actions/prune-worktree/:id → remove a stale worktree
+ *   POST /actions/restart-daemon → re-exec the daemon
  *
- * The server uses an OS-assigned port (port 0). Callers discover the port
- * via the returned {@link HttpServerHandle}.
+ * The server uses an OS-assigned port (port 0). Callers discover the port via
+ * the returned {@link HttpServerHandle}, which the daemon also writes to
+ * `.mars/http.port` for the read-only UI to read.
  */
 export const startHttpServer = async (
   deps: HttpServerDeps,
 ): Promise<HttpServerHandle> => {
+  const entityHandlers: Record<EntityOp, (id: string) => Promise<void>> = {
+    restart: deps.restartTask,
+    unblock: deps.unblockTask,
+    purge: deps.purgeTask,
+    'prune-worktree': deps.pruneWorktree,
+  }
+
   const server: Server = createServer((req, res) => {
+    // GET /error-kinds — the action-menu registry. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/error-kinds') {
+      sendJson(res, 200, { ok: true, errorKinds: listErrorKinds() })
+      return
+    }
+
     if (req.method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' })
       return
     }
 
-    // Route: POST /tasks/:id/restart
-    const match = req.url?.match(/^\/tasks\/([^/]+)\/restart$/)
-    if (!match || !match[1]) {
-      sendJson(res, 404, { ok: false, error: 'Not found' })
-      return
-    }
-
-    const id = match[1]
-
+    // Every mutating verb is refused while the daemon is draining.
     if (!deps.isAcceptingWork()) {
       sendJson(res, 503, {
         ok: false,
@@ -78,24 +128,32 @@ export const startHttpServer = async (
       return
     }
 
-    deps
-      .restartTask(id)
-      .then(() => {
-        sendJson(res, 200, { ok: true })
-      })
-      .catch((err: unknown) => {
-        if (isRestartTaskError(err)) {
-          if (err.code === 'NOT_FOUND') {
-            sendJson(res, 404, { ok: false, error: err.message, errorCode: 'NOT_FOUND' })
-          } else {
-            // WRONG_STATUS
-            sendJson(res, 409, { ok: false, error: err.message, errorCode: 'WRONG_STATUS' })
-          }
-        } else {
-          const message = err instanceof Error ? err.message : String(err)
-          sendJson(res, 500, { ok: false, error: message })
-        }
-      })
+    // POST /actions/restart-daemon — process-level, no :id.
+    if (req.url === '/actions/restart-daemon') {
+      deps
+        .restartDaemon()
+        .then(() => sendJson(res, 200, { ok: true }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /actions/:op/:id — per-entity verbs.
+    const match = req.url?.match(/^\/actions\/([^/]+)\/([^/]+)$/)
+    if (!match || !match[1] || !match[2]) {
+      sendJson(res, 404, { ok: false, error: 'Not found' })
+      return
+    }
+    const op = match[1]
+    const id = decodeURIComponent(match[2])
+    const handler = entityHandlers[op as EntityOp]
+    if (!handler) {
+      sendJson(res, 404, { ok: false, error: `Unknown action op: ${op}` })
+      return
+    }
+
+    handler(id)
+      .then(() => sendJson(res, 200, { ok: true }))
+      .catch((err: unknown) => sendError(res, err))
   })
 
   await new Promise<void>((resolve, reject) => {

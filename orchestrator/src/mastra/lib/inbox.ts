@@ -12,6 +12,7 @@ export const INBOX_KINDS = [
   'cancelled-blocker-cascade',
   'dirty-main-at-setup',
   'diagnose-inconclusive',
+  'daemon-killed',
 ] as const
 
 export type InboxKind = (typeof INBOX_KINDS)[number]
