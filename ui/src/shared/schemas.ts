@@ -97,6 +97,19 @@ export const inboxResponseSchema = z.object({
   failed: z.array(taskSchema),
 })
 
+export const actionQueueItemSchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  title: z.string(),
+  body: z.string(),
+  raisedAt: z.string(),
+  lastSeenAt: z.string(),
+  seenCount: z.number(),
+  priority: z.string(),
+})
+
+export const actionQueueResponseSchema = z.array(actionQueueItemSchema)
+
 export const agentSchema = z.object({
   name: z.string(),
   model: z.string(),
@@ -112,6 +125,7 @@ export const agentsResponseSchema = z.object({
   agents: z.array(agentSchema),
 })
 
+export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
 export type InboxPayload = z.infer<typeof inboxResponseSchema>
 export type TaskStatus = z.infer<typeof taskStatusSchema>
 export type ProposalSource = z.infer<typeof proposalSourceSchema>
