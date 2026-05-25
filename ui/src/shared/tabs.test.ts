@@ -21,9 +21,14 @@ describe('tabs – default', () => {
 // ---------------------------------------------------------------------------
 
 describe('tabs – entries', () => {
-  it('strip contains both Board and Events entries', () => {
+  it('strip contains Board, Topology, and Events entries', () => {
     expect(TABS).toContain('board')
+    expect(TABS).toContain('topology')
     expect(TABS).toContain('events')
+  })
+
+  it('board appears before topology in the strip', () => {
+    expect(TABS.indexOf('board')).toBeLessThan(TABS.indexOf('topology'))
   })
 
   it('board appears before events in the strip', () => {
@@ -38,6 +43,10 @@ describe('tabs – entries', () => {
 describe('tabLabel', () => {
   it('board tab carries the label "Board"', () => {
     expect(tabLabel('board')).toBe('Board')
+  })
+
+  it('topology tab carries the label "Topology"', () => {
+    expect(tabLabel('topology')).toBe('Topology')
   })
 
   it('events tab carries the label "Events"', () => {
