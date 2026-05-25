@@ -305,6 +305,32 @@ export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
     }
     results.push({ blockerTaskId: '(recovered)', outcomes })
   }
+
+  // Catch the crash-recovery scenario: a fix-task reached 'done' (its branch
+  // merged into the integration branch) while the daemon was offline, but
+  // markOriginDoneFromRecovery never fired because the daemon went down between
+  // the fix-task's merge landing and the live completion handler running.
+  //
+  // Only 'done' fix-tasks qualify — a fix-task still in 'merging' (or any
+  // earlier phase) has not yet landed and will be handled by the merge
+  // reconciler that runs after this function during the startup sequence.
+  //
+  // Origins already in a terminal state ('done', 'failed', 'dropped') are
+  // excluded by the JOIN filter; markOriginDoneFromRecovery is also idempotent
+  // for terminal origins, so the guards compose safely.
+  const fixDone = await c.execute(`
+    SELECT DISTINCT f.fix_for_task_id AS origin_id
+      FROM tasks f
+      JOIN tasks o ON o.id = f.fix_for_task_id
+     WHERE f.kind = 'fix'
+       AND f.status = 'done'
+       AND f.fix_for_task_id IS NOT NULL
+       AND o.status NOT IN ('done', 'failed', 'dropped')
+  `)
+  for (const fixRow of fixDone.rows as unknown as Array<{ origin_id: string }>) {
+    await markOriginDoneFromRecovery(fixRow.origin_id)
+  }
+
   return results
 }
 
