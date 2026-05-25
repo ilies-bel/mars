@@ -32,9 +32,12 @@ export const TaskCard = ({ task, index }: Props) => {
       className={`flex flex-col gap-2 rounded-md border border-border bg-surface p-3 ${accent}`}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="break-all font-mono text-[11px] text-muted">
+        <a
+          href={`#/task/${encodeURIComponent(task.id)}`}
+          className="break-all font-mono text-[11px] text-muted hover:text-fg hover:underline"
+        >
           {task.id}
-        </div>
+        </a>
         <div className="flex shrink-0 items-center gap-1.5">
           {task.retryCount > 0 ? (
             <span

@@ -16,7 +16,7 @@ type LoadState =
   | { kind: 'loading' }
   | { kind: 'not-found' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready' }
+  | { kind: 'ready'; taskStatus: string }
 
 /**
  * Slice 7 tracer-bullet implementation: only the not-found empty state is
@@ -53,7 +53,8 @@ export const TaskDetailDrawer = ({
           setState({ kind: 'error', message: `HTTP ${res.status}` })
           return
         }
-        setState({ kind: 'ready' })
+        const data = (await res.json()) as { task: { status: string } }
+        setState({ kind: 'ready', taskStatus: data.task.status })
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -97,6 +98,27 @@ export const TaskDetailDrawer = ({
           <p className="max-w-[40ch] text-center font-mono text-sm text-iron">
             Task not found. It may have been purged.
           </p>
+        </div>
+      ) : null}
+
+      {state.kind === 'ready' ? (
+        <div
+          data-testid="task-detail-body"
+          className="flex-1 overflow-y-auto p-4"
+        >
+          <dl className="flex flex-col gap-3">
+            <div>
+              <dt className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+                Status
+              </dt>
+              <dd
+                data-testid="task-detail-status"
+                className="mt-1 font-mono text-sm text-fg"
+              >
+                {state.taskStatus}
+              </dd>
+            </div>
+          </dl>
         </div>
       ) : null}
     </aside>

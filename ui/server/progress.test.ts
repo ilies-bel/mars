@@ -241,4 +241,26 @@ describe('GET /api/progress — column-view cluster contract', () => {
       expect(['In progress', 'Blocked', 'Failed']).toContain(c)
     }
   })
+
+  it('task detail endpoint returns the granular status for In-progress tasks so the card drawer can surface it', async () => {
+    // A 'running' task collapses into the 'In progress' cluster in the
+    // column view — the header shows one integer for the cluster, not
+    // 'running' vs 'queued'. The card drawer hits /api/tasks/:id to
+    // display the granular status so the operator can distinguish them.
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await insertTask(qc, 't-running', 'running')
+    qc.close()
+
+    const progressRes = await fetch(`${baseUrl}/api/progress`)
+    const progressBody = (await progressRes.json()) as ProgressBody
+    const col = progressBody.tasks.find((t) => t.id === 't-running')
+    expect(col?.cluster).toBe('In progress')
+
+    // The task detail endpoint (powering the drawer) returns the granular
+    // 'running' status — the cluster label 'In progress' is not exposed.
+    const detailRes = await fetch(`${baseUrl}/api/tasks/t-running`)
+    expect(detailRes.status).toBe(200)
+    const detailBody = (await detailRes.json()) as { task: { status: string } }
+    expect(detailBody.task.status).toBe('running')
+  })
 })
