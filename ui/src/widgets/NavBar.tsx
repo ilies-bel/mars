@@ -1,6 +1,6 @@
 import { useAgents } from '@/hooks/useAgents'
 import { useProgress } from '@/hooks/useProgress'
-import { useTodo } from '@/hooks/useTodo'
+import { useTodo } from '@/entities/todo/useTodo'
 import { detectRoute, actionQueueCount } from '@/shared/routing'
 
 interface NavBarProps {
