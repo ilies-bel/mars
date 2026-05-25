@@ -348,6 +348,11 @@ Commands:
                                 .ts scripts under orchestrator/scripts/.
   inbox watch                   live terminal UI for the todo feed
                                 (drafts + stale worktrees)
+  inbox reconcile               one-time pass: close every open inbox item
+                                whose referenced task is already done or
+                                dropped. Items about failed or live tasks
+                                are left open. Idempotent — re-running is
+                                a no-op. Prints how many items were closed.
   diagnose set <task-id> --from <-|path>
                                 record a diagnose Chore's verdict against a
                                 stuck task. Input is a JSON object with kind
@@ -3256,8 +3261,25 @@ const main = async (): Promise<void> => {
       return
     }
 
+    if (sub === 'reconcile') {
+      const { listTasks } = await import('./mastra/queue')
+      const [doneTasks, droppedTasks] = await Promise.all([
+        listTasks('done'),
+        listTasks('dropped'),
+      ])
+      const terminatedTasks = [
+        ...doneTasks.map((t) => ({ id: t.id, status: 'done' as const })),
+        ...droppedTasks.map((t) => ({ id: t.id, status: 'dropped' as const })),
+      ]
+      const { closed } = await inbox.reconcileStaleInboxItems(terminatedTasks)
+      console.log(
+        `reconcile: closed ${closed} stale inbox item${closed === 1 ? '' : 's'}`,
+      )
+      return
+    }
+
     console.error(
-      'usage: mars inbox [list [state] [--lean] | show <id> | ack <id> | resolve <id> [--note <text>] [--root-cause <text>] | dismiss <id> [--note <text>] | raise --from <-|path> | watch]',
+      'usage: mars inbox [list [state] [--lean] | show <id> | ack <id> | resolve <id> [--note <text>] [--root-cause <text>] | dismiss <id> [--note <text>] | raise --from <-|path> | watch | reconcile]',
     )
     process.exit(1)
   }
