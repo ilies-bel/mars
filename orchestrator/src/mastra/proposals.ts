@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { resolveContext } from './context'
 import type { Author, AuthorKind } from './author'
 import { openLibsql } from './lib/libsql'
-import { publish } from '../bus/publisher.js'
+import { publishWithRetry } from '../bus/publisher.js'
 import type { EventName, EventPayload } from '../bus/events.js'
 
 export type ProposalSource = 'reflection' | 'human' | 'planner'
@@ -59,13 +59,7 @@ async function emitProposalBusEvent<T extends EventName>(
   try {
     const { initQueue, getClient: getQueueClient } = await import('./queue')
     await initQueue()
-    const tx = await getQueueClient().transaction('write')
-    try {
-      await publish(tx, type, payload)
-      await tx.commit()
-    } catch {
-      tx.close()
-    }
+    await publishWithRetry(getQueueClient(), type, payload)
   } catch {
     // Non-fatal: proposal state change already committed in state.db.
   }
