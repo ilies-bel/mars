@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
+import { ProposalCard } from '@/components/ProposalCard'
+import { useTodo } from '@/entities/todo/useTodo'
 import { useProgress } from '@/hooks/useProgress'
 import type { Cluster, ProgressTask } from '@/shared/schemas'
 import { DEFAULT_TAB, type Tab } from '@/shared/tabs'
@@ -54,6 +56,7 @@ const CLUSTERS: readonly Cluster[] = ['In progress', 'Blocked', 'Failed']
 
 export const ProgressPage = () => {
   const { byCluster, tasks, error, connected } = useProgress()
+  const { drafts } = useTodo()
   const [activeTab, setActiveTab] = useState<Tab>(DEFAULT_TAB)
 
   const totalTasks = tasks?.length ?? 0
@@ -85,6 +88,23 @@ export const ProgressPage = () => {
             />
           )
         })}
+        {drafts.length > 0 ? (
+          <section className="flex h-full min-h-0 w-full flex-col gap-2 rounded-lg border border-border bg-panel p-3">
+            <header className="flex items-center justify-between px-1 py-0.5">
+              <span className="font-sans text-[11px] font-semibold tracking-[0.1em] text-muted">
+                Proposals
+              </span>
+              <span className="font-mono text-[11px] font-semibold text-muted">
+                {drafts.length}
+              </span>
+            </header>
+            <div className="flex flex-1 flex-col gap-2 overflow-y-auto">
+              {drafts.map((proposal) => (
+                <ProposalCard key={proposal.id} proposal={proposal} />
+              ))}
+            </div>
+          </section>
+        ) : null}
       </main>
       {error ? (
         <div className="border-t border-iron/40 bg-iron/10 px-6 py-1.5 font-mono text-[11px] text-iron">
