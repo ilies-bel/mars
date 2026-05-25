@@ -20,6 +20,11 @@ interface BlockerModule {
   markOriginDoneFromRecovery: typeof import('../../blocker-resolution').markOriginDoneFromRecovery
 }
 
+interface InboxModule {
+  raiseInboxItem: typeof import('../inbox').raiseInboxItem
+  listInboxItems: typeof import('../inbox').listInboxItems
+}
+
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-blocker-test-'))
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
@@ -71,7 +76,7 @@ const headSha = (cwd: string): string =>
 
 const loadModules = async (
   repo: string,
-): Promise<{ q: QueueModule; br: BlockerModule }> => {
+): Promise<{ q: QueueModule; br: BlockerModule; inbox: InboxModule }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
@@ -79,7 +84,8 @@ const loadModules = async (
   const br = (await import(
     '../../blocker-resolution'
   )) as unknown as BlockerModule
-  return { q, br }
+  const inbox = (await import('../inbox')) as unknown as InboxModule
+  return { q, br, inbox }
 }
 
 const blockTask = async (
@@ -610,11 +616,71 @@ describe('blocker-resolution (task_blockers)', () => {
       expect((await q.getTask(origin.id))?.status).toBe('failed')
     })
 
+    // Bug guard: a recovery-failed inbox row keyed to an origin that is
+    // already terminal (origin parked in `failed` by the retry-budget
+    // guard before recovery finished) must still be closed when the
+    // recovery itself reaches done. Previously the early-return on
+    // terminal-origin skipped supersedeInboxItemsForOrigin entirely and
+    // stranded the row.
+    it('closes inbox rows keyed to a terminal origin even though it cannot flip status', async () => {
+      const { q, br, inbox } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
+        args: [origin.id],
+      })
+      await inbox.raiseInboxItem({
+        kind: 'recovery-failed',
+        category: 'orchestrator',
+        priority: 'high',
+        title: 'recovery failed',
+        body: 'test',
+        payload: {},
+        context: {},
+        raisedBy: 'test',
+        signature: 'verify:has-diff/no-commits-ahead',
+        originTaskId: origin.id,
+      })
+
+      const result = await br.markOriginDoneFromRecovery(origin.id)
+
+      expect(result.originFlipped).toBe(false)
+      expect(result.inboxItemsClosed).toBe(1)
+      const open = await inbox.listInboxItems('open')
+      expect(open.find((r) => r.kind === 'recovery-failed')).toBeUndefined()
+    })
+
     it('returns no-op when origin does not exist', async () => {
       const { br } = await loadModules(repo)
       const result = await br.markOriginDoneFromRecovery('missing-id')
       expect(result.originFlipped).toBe(false)
       expect(result.unblock).toBeNull()
+    })
+
+    // Bug guard companion: when the recovery's fixForTaskId is a PRD
+    // slug rather than a real task row (real failure mode seen in the
+    // 2026-05-25 dirty-main cluster), the origin lookup returns null but
+    // any inbox rows keyed to that origin string must still close.
+    it('closes inbox rows keyed to a missing origin id', async () => {
+      const { br, inbox } = await loadModules(repo)
+      const orphanOriginId = '1d4d2e62-add-an-events-view-and-an-inbox-view-to'
+      await inbox.raiseInboxItem({
+        kind: 'recovery-failed',
+        category: 'orchestrator',
+        priority: 'high',
+        title: 'recovery failed',
+        body: 'test',
+        payload: {},
+        context: {},
+        raisedBy: 'test',
+        signature: 'setup:preflight/dirty-main',
+        originTaskId: orphanOriginId,
+      })
+
+      const result = await br.markOriginDoneFromRecovery(orphanOriginId)
+
+      expect(result.originFlipped).toBe(false)
+      expect(result.inboxItemsClosed).toBe(1)
     })
   })
 
