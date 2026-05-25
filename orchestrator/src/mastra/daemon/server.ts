@@ -40,6 +40,7 @@ import {
   recoverBlockedTasks,
 } from '../blocker-resolution'
 import { supersedeInboxItemsForOrigin } from '../lib/inbox'
+import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { openTraceEventStore, type TraceEventStore } from '../lib/trace-store'
 import { internalBus } from '../../internal-bus'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
@@ -1596,6 +1597,7 @@ export const startDaemon = async (
               await updateTask(v.taskId, {
                 status: 'failed',
                 error: 'killed by `mars daemon kill`',
+                failureSignature: DAEMON_KILLED_SIGNATURE,
               })
             } catch {
               // best-effort
