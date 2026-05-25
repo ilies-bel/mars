@@ -1,6 +1,6 @@
 import * as pty from 'node-pty';
 import type { SessionHandle } from './session.js';
-import { getSession, registerSession } from './registry.js';
+import { getSession, registerSession, removeSession } from './registry.js';
 
 export interface StartOptions {
   /** Caller-supplied identifier for this session. */
@@ -53,6 +53,16 @@ export async function start(opts: StartOptions): Promise<SessionHandle> {
     for (const h of handlers) h(chunk);
   });
 
+  let resolveExited!: (code: number) => void;
+  const exited = new Promise<number>((resolve) => {
+    resolveExited = resolve;
+  });
+
+  proc.onExit(({ exitCode }) => {
+    removeSession(id);
+    resolveExited(exitCode);
+  });
+
   const handle: SessionHandle = {
     id,
     pty: proc,
@@ -60,6 +70,7 @@ export async function start(opts: StartOptions): Promise<SessionHandle> {
       handlers.add(handler);
       return () => { handlers.delete(handler); };
     },
+    exited,
   };
   registerSession(handle);
 
