@@ -162,7 +162,49 @@ Do not offer the ack/resolve/dismiss menu for this kind. The grill
 skill (and subsequently `mars:to-prd`) owns the interaction and will
 resolve the inbox row when the PRD is synthesised.
 
-## 3c — Any other kind
+## 3c — kind wraps a `failed` task (`recovery-failed`, `no-recipe`, `fix-fail-loop`)
+
+The inbox row wraps a task currently in the `failed` status because
+self-heal exhausted its options (no fix recipe, the recovery attempt
+itself failed, or a fix loop tripped the fail-loop guard). For these
+kinds, Restart is the operator's primary action.
+
+Extract the failed task id from the row's `payload.taskId` /
+`context.taskId` field in the `mars inbox show <inbox-id>` output you
+just printed (the kind string does NOT embed the task id for these
+kinds — unlike `task-blocked(<task-id>)`).
+
+Offer the four terminal actions via **one** `AskUserQuestion`, with
+**Restart listed first as the primary action**:
+
+- **Restart** — `mars restart <task-id>`. Wipes the worktree+branch and
+  re-queues the failed task from setup (full pipeline re-run). The
+  task transitions out of `failed` and `updateTask`'s
+  `dismissAlertsOnStatusChange` auto-closes the inbox row on that
+  status change — no separate `mars inbox` call is needed. **Always
+  invoke `mars restart`** rather than reimplementing the restart logic
+  inline so the slash-command and the CLI share a single underlying
+  function.
+- **Acknowledge** — `mars inbox ack <inbox-id>`. The operator has read
+  the failure but is not ready to restart yet.
+- **Resolve** — `mars inbox resolve <inbox-id> [--note <text>] [--root-cause <text>]`.
+  The failure is known-handled out of band (already restarted manually,
+  superseded by other work, etc.).
+- **Dismiss** — `mars inbox dismiss <inbox-id> [--note <text>]`. The
+  failure is noise / a false positive.
+- **Skip** — do nothing and stop.
+
+Run the chosen verb via Bash; print whatever the CLI reports verbatim.
+Stop after the dispatch.
+
+Do NOT offer Restart for `cancelled-blocker-cascade` (the operator
+explicitly cancelled the blocker — restarting bypasses that intent),
+`dirty-main-at-setup` (the merge target needs operator cleanup before
+any restart can succeed), or `diagnose-inconclusive` (diagnostic
+information, not a recoverable failure). Those kinds fall through to
+3d below.
+
+## 3d — Any other kind
 
 Offer the three terminal actions via **one** `AskUserQuestion`:
 
