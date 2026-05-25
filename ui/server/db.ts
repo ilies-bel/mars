@@ -52,6 +52,21 @@ interface TaskRow {
   blocker_task_ids: string | null
   created_at: string
   updated_at: string
+  files_json: string | null
+  read_first_json: string | null
+  prescriptive_action: string | null
+  verify_cmd: string | null
+  done_criteria_json: string | null
+  task_type: string | null
+}
+
+export interface TaskSpec {
+  files: string[]
+  readFirst?: string[]
+  prescriptiveAction?: string | null
+  verifyCmd: string | null
+  doneCriteria: string[]
+  taskType: string
 }
 
 export interface Task {
@@ -73,6 +88,11 @@ export interface Task {
    * round-trip.
    */
   blockedBy: string[]
+  /**
+   * Structured-task contract. Null for ad-hoc tasks enqueued without
+   * --files/--verify/--done flags or slicer-generated spec.
+   */
+  spec: TaskSpec | null
   createdAt: string
   updatedAt: string
 }
@@ -82,9 +102,43 @@ const parseBlockedBy = (raw: string | null): string[] => {
   return raw.split(',').filter((id) => id.length > 0)
 }
 
+const parseJsonArray = (raw: string | null): string[] => {
+  if (raw === null || raw === '') return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((v): v is string => typeof v === 'string')
+  } catch {
+    return []
+  }
+}
+
 const rowToTask = (row: TaskRow): Task => {
   const f = row.plan_functional
   const t = row.plan_technical
+  const filesJson = row.files_json ?? null
+  const readFirstJson = row.read_first_json ?? null
+  const prescriptiveAction = row.prescriptive_action ?? null
+  const verifyCmd = row.verify_cmd ?? null
+  const doneCriteriaJson = row.done_criteria_json ?? null
+  const taskType = row.task_type ?? null
+  const anySpec =
+    filesJson !== null ||
+    readFirstJson !== null ||
+    prescriptiveAction !== null ||
+    verifyCmd !== null ||
+    doneCriteriaJson !== null ||
+    taskType !== null
+  const spec: TaskSpec | null = anySpec
+    ? {
+        files: parseJsonArray(filesJson),
+        readFirst: parseJsonArray(readFirstJson),
+        prescriptiveAction,
+        verifyCmd,
+        doneCriteria: parseJsonArray(doneCriteriaJson),
+        taskType: taskType ?? 'auto',
+      }
+    : null
   return {
     id: row.id,
     prompt: row.prompt,
@@ -97,6 +151,7 @@ const rowToTask = (row: TaskRow): Task => {
     retryCount: Number(row.retry_count ?? 0),
     blockerTaskId: row.blocker_task_id ?? null,
     blockedBy: parseBlockedBy(row.blocker_task_ids ?? null),
+    spec,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -154,6 +209,12 @@ export class TaskDb {
     )
     const hasDropReason = colNames.has('drop_reason')
     const hasRetryCount = colNames.has('retry_count')
+    const hasFilesJson = colNames.has('files_json')
+    const hasReadFirstJson = colNames.has('read_first_json')
+    const hasPrescriptiveAction = colNames.has('prescriptive_action')
+    const hasVerifyCmd = colNames.has('verify_cmd')
+    const hasDoneCriteriaJson = colNames.has('done_criteria_json')
+    const hasTaskType = colNames.has('task_type')
 
     const select: string[] = [
       't.id',
@@ -169,6 +230,12 @@ export class TaskDb {
       hasRetryCount ? 't.retry_count' : `0 AS retry_count`,
       't.created_at',
       't.updated_at',
+      hasFilesJson ? 't.files_json' : `NULL AS files_json`,
+      hasReadFirstJson ? 't.read_first_json' : `NULL AS read_first_json`,
+      hasPrescriptiveAction ? 't.prescriptive_action' : `NULL AS prescriptive_action`,
+      hasVerifyCmd ? 't.verify_cmd' : `NULL AS verify_cmd`,
+      hasDoneCriteriaJson ? 't.done_criteria_json' : `NULL AS done_criteria_json`,
+      hasTaskType ? 't.task_type' : `NULL AS task_type`,
     ]
 
     const blockersTableExists = await this.blockersTableExists()

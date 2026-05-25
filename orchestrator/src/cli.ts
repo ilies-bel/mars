@@ -953,6 +953,8 @@ const main = async (): Promise<void> => {
       verifyCmd: string | null
       doneCriteria: readonly string[]
       taskType: 'auto' | 'checkpoint'
+      readFirst?: readonly string[]
+      prescriptiveAction?: string | null | undefined
     },
   ): Promise<void> => {
     const { detectNoCommitMarker } = await import('./mastra/lib/no-commit-marker')
@@ -1126,6 +1128,29 @@ const main = async (): Promise<void> => {
       console.log(task.plan?.functional ?? '(empty)')
       console.log(`technical:`)
       console.log(task.plan?.technical ?? '(empty)')
+      if (task.spec) {
+        if (task.spec.files.length > 0) {
+          console.log(`files:`)
+          for (const f of task.spec.files) console.log(`  - ${f}`)
+        }
+        const readFirst = task.spec.readFirst ?? []
+        if (readFirst.length > 0) {
+          console.log(`readFirst:`)
+          readFirst.forEach((f, i) => console.log(`  ${i + 1}. ${f}`))
+        }
+        const prescriptiveAction = task.spec.prescriptiveAction ?? null
+        if (prescriptiveAction) {
+          console.log(`prescriptiveAction:`)
+          console.log(prescriptiveAction)
+        }
+        if (task.spec.verifyCmd) {
+          console.log(`verifyCmd: ${task.spec.verifyCmd}`)
+        }
+        if (task.spec.doneCriteria.length > 0) {
+          console.log(`doneCriteria:`)
+          for (const c of task.spec.doneCriteria) console.log(`  - [ ] ${c}`)
+        }
+      }
       if (task.error) {
         console.log(`error:`)
         console.log(task.error)
@@ -1701,6 +1726,29 @@ const main = async (): Promise<void> => {
       console.log(task.plan?.functional ?? '(empty)')
       console.log(`technical:`)
       console.log(task.plan?.technical ?? '(empty)')
+      if (task.spec) {
+        if (task.spec.files.length > 0) {
+          console.log(`files:`)
+          for (const f of task.spec.files) console.log(`  - ${f}`)
+        }
+        const readFirst = task.spec.readFirst ?? []
+        if (readFirst.length > 0) {
+          console.log(`readFirst:`)
+          readFirst.forEach((f, i) => console.log(`  ${i + 1}. ${f}`))
+        }
+        const prescriptiveAction = task.spec.prescriptiveAction ?? null
+        if (prescriptiveAction) {
+          console.log(`prescriptiveAction:`)
+          console.log(prescriptiveAction)
+        }
+        if (task.spec.verifyCmd) {
+          console.log(`verifyCmd: ${task.spec.verifyCmd}`)
+        }
+        if (task.spec.doneCriteria.length > 0) {
+          console.log(`doneCriteria:`)
+          for (const c of task.spec.doneCriteria) console.log(`  - [ ] ${c}`)
+        }
+      }
       if (task.error) {
         console.log(`error:`)
         console.log(task.error)
