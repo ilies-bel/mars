@@ -2188,6 +2188,12 @@ const main = async (): Promise<void> => {
     }
 
     if (sub === 'status') {
+      const { isDaemonAlive } = await import('./mastra/daemon/paths')
+      const liveness = await isDaemonAlive()
+      if (!liveness.alive) {
+        console.error(`daemon not running (${liveness.reason})`)
+        process.exit(1)
+      }
       const { sendRequest } = await import('./mastra/daemon/client')
       const data = (await sendRequest({ op: 'status' }, { autoSpawn: false })) as {
         pid: number

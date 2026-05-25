@@ -1,9 +1,8 @@
 import { spawn } from 'node:child_process'
-import { existsSync, unlinkSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import {
   daemonPaths,
-  isProcessAlive,
+  isDaemonAlive,
   readDaemonPid,
   resolveLaunchCommand,
   tryConnectSocket,
@@ -18,26 +17,6 @@ const CONNECT_TIMEOUT_MS = 5_000
 interface ClientOptions {
   autoSpawn?: boolean
   onSpawnNotice?: (pid: number, logFile: string) => void
-}
-
-const reclaimStale = (): void => {
-  const { socket, pidFile } = daemonPaths()
-  const pid = readDaemonPid(pidFile)
-  if (pid !== null && isProcessAlive(pid)) return
-  if (existsSync(pidFile)) {
-    try {
-      unlinkSync(pidFile)
-    } catch {
-      // best-effort
-    }
-  }
-  if (existsSync(socket)) {
-    try {
-      unlinkSync(socket)
-    } catch {
-      // best-effort
-    }
-  }
 }
 
 const spawnDaemon = async (
@@ -70,13 +49,11 @@ const spawnDaemon = async (
 }
 
 const ensureRunning = async (opts: ClientOptions): Promise<void> => {
-  const { socket } = daemonPaths()
-  reclaimStale()
-  const alreadyUp = await tryConnectSocket(socket)
-  if (!alreadyUp) {
+  const liveness = await isDaemonAlive()
+  if (!liveness.alive) {
     if (opts.autoSpawn === false) {
       throw new Error(
-        `mars daemon not running and auto-spawn disabled. Start it with: mars daemon start`,
+        `mars daemon not running (${liveness.reason}) and auto-spawn disabled. Start it with: mars daemon start`,
       )
     }
     await spawnDaemon(opts.onSpawnNotice)
