@@ -150,6 +150,18 @@ describe('runUninstall — partial-state: source clone already absent', () => {
     })
     await expect(runUninstall(WRAPPER, CLONE, deps)).resolves.not.toThrow()
   })
+
+  it('prints a shell rc PATH reminder when source clone is already absent', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([WRAPPER]),
+    })
+    await runUninstall(WRAPPER, CLONE, deps)
+
+    const reminder = deps.logged.some((msg) =>
+      /shell\s+rc|\.bashrc|\.zshrc|PATH/i.test(msg),
+    )
+    expect(reminder).toBe(true)
+  })
 })
 
 describe('runUninstall — partial-state: wrapper already absent', () => {
@@ -173,6 +185,18 @@ describe('runUninstall — partial-state: wrapper already absent', () => {
       /wrapper already absent/i.test(msg),
     )
     expect(mentioned).toBe(true)
+  })
+
+  it('prints a shell rc PATH reminder when wrapper is already absent', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([CLONE]),
+    })
+    await runUninstall(WRAPPER, CLONE, deps)
+
+    const reminder = deps.logged.some((msg) =>
+      /shell\s+rc|\.bashrc|\.zshrc|PATH/i.test(msg),
+    )
+    expect(reminder).toBe(true)
   })
 })
 
