@@ -58,6 +58,12 @@ chmod +x "$WRAPPER"
 
 echo "installed: $WRAPPER -> $ENTRY (via $TSX_BIN)"
 
+# Register the framework's .claude/ directory as a Claude Code plugin in
+# ~/.claude/settings.json so the mars:* skills, agents, and hooks become
+# available in Claude Code without writing anything into consumer repos.
+PLUGIN_DIR="$REPO_ROOT/.claude"
+"$TSX_BIN" "$ENTRY" plugin activate "$PLUGIN_DIR"
+
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *)
