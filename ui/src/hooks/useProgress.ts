@@ -11,6 +11,15 @@ interface State {
   connected: boolean
 }
 
+interface UseProgressOptions {
+  /**
+   * Recency window for the Failed cluster in milliseconds. `null` means "all"
+   * (no cutoff). `undefined` uses the server default (24h). Changing this
+   * value re-fetches /api/progress with an updated ?failedWindow parameter.
+   */
+  failedWindowMs?: number | null
+}
+
 const emptyByCluster = (): Record<Cluster, ProgressTask[]> => ({
   Queued: [],
   'In progress': [],
@@ -18,11 +27,12 @@ const emptyByCluster = (): Record<Cluster, ProgressTask[]> => ({
   Failed: [],
 })
 
-export const useProgress = (): State => {
+export const useProgress = (options: UseProgressOptions = {}): State => {
+  const { failedWindowMs } = options
   const connected = useSseConnected()
   const query = useQuery({
-    queryKey: ['progress'],
-    queryFn: fetchProgress,
+    queryKey: ['progress', failedWindowMs ?? 'default'],
+    queryFn: () => fetchProgress(failedWindowMs),
   })
 
   const tasks = query.data?.tasks ?? null

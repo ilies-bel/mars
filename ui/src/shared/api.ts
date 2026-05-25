@@ -49,12 +49,17 @@ export const fetchTasks = async (): Promise<Task[]> => {
   return json.tasks
 }
 
-export const fetchProgress = async (): Promise<{
-  tasks: ProgressTask[]
-  proposals: ProgressProposalNode[]
-}> => {
-  const json = await fetchJson('/api/progress', progressResponseSchema)
-  return { tasks: json.tasks, proposals: json.proposals }
+export const fetchProgress = async (
+  failedWindowMs?: number | null,
+): Promise<{ tasks: ProgressTask[]; proposals: ProgressProposalNode[] }> => {
+  let path = '/api/progress'
+  if (failedWindowMs === null) {
+    path += '?failedWindow=all'
+  } else if (failedWindowMs !== undefined) {
+    path += `?failedWindow=${failedWindowMs}`
+  }
+  const data = await fetchJson(path, progressResponseSchema)
+  return { tasks: data.tasks, proposals: data.proposals }
 }
 
 export const fetchTodo = async (): Promise<TodoPayload> => {
