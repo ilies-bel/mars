@@ -398,26 +398,33 @@ export class StateDb {
   }
 
   /**
-   * Read operator inbox dismissals as a set of `"<entityKind>:<entityId>"`
-   * keys. The derived inbox uses this to hide rows the operator has chosen
-   * to suppress. Tolerates a missing table (fresh repo) by returning empty.
+   * Read operator inbox dismissals as a map of `"<entityKind>:<entityId>"` →
+   * note. The note encodes the operator action:
+   *   - `null`        — dismissed (classic, no note)
+   *   - `'dismissed'` — dismissed explicitly
+   *   - `'ack'`       — acknowledged; still visible in the open filter
+   *   - `'resolved'`  — resolved; hidden from the open filter
+   *
+   * The derived inbox uses this map to compute `dismissed` and `ackState` for
+   * each row. Tolerates a missing table (fresh repo) by returning empty.
    */
-  async listInboxDismissals(): Promise<Set<string>> {
+  async listInboxDismissals(): Promise<Map<string, string | null>> {
     try {
       const r = await this.client.execute(
-        `SELECT entity_kind, entity_id FROM inbox_dismissals`,
+        `SELECT entity_kind, entity_id, note FROM inbox_dismissals`,
       )
-      return new Set(
-        r.rows.map((row) => {
-          const r0 = row as unknown as {
-            entity_kind: string
-            entity_id: string
-          }
-          return `${r0.entity_kind}:${r0.entity_id}`
-        }),
-      )
+      const out = new Map<string, string | null>()
+      for (const row of r.rows) {
+        const r0 = row as unknown as {
+          entity_kind: string
+          entity_id: string
+          note: string | null
+        }
+        out.set(`${r0.entity_kind}:${r0.entity_id}`, r0.note ?? null)
+      }
+      return out
     } catch {
-      return new Set()
+      return new Map()
     }
   }
 
@@ -454,9 +461,50 @@ export class StateDb {
   ): Promise<void> {
     await this.ensureInboxDismissalsTable()
     await this.client.execute({
-      sql: `INSERT INTO inbox_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by)
-            VALUES (?, ?, ?, 'ui')
-            ON CONFLICT(entity_kind, entity_id) DO UPDATE SET dismissed_at = excluded.dismissed_at`,
+      sql: `INSERT INTO inbox_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by, note)
+            VALUES (?, ?, ?, 'ui', NULL)
+            ON CONFLICT(entity_kind, entity_id) DO UPDATE SET
+              dismissed_at = excluded.dismissed_at,
+              note = excluded.note`,
+      args: [entityKind, entityId, new Date().toISOString()],
+    })
+  }
+
+  /**
+   * Acknowledge a derived-inbox row: marks it as seen without hiding it from
+   * the open filter. Sets `note = 'ack'` so the row remains visible in the
+   * default open view but carries an acknowledgement stamp.
+   */
+  async ackInboxEntity(
+    entityKind: 'task' | 'worktree' | 'proposal',
+    entityId: string,
+  ): Promise<void> {
+    await this.ensureInboxDismissalsTable()
+    await this.client.execute({
+      sql: `INSERT INTO inbox_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by, note)
+            VALUES (?, ?, ?, 'ui', 'ack')
+            ON CONFLICT(entity_kind, entity_id) DO UPDATE SET
+              dismissed_at = excluded.dismissed_at,
+              note = excluded.note`,
+      args: [entityKind, entityId, new Date().toISOString()],
+    })
+  }
+
+  /**
+   * Resolve a derived-inbox row: hides it from the open filter and marks it
+   * as operator-resolved. Sets `note = 'resolved'`.
+   */
+  async resolveInboxEntity(
+    entityKind: 'task' | 'worktree' | 'proposal',
+    entityId: string,
+  ): Promise<void> {
+    await this.ensureInboxDismissalsTable()
+    await this.client.execute({
+      sql: `INSERT INTO inbox_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by, note)
+            VALUES (?, ?, ?, 'ui', 'resolved')
+            ON CONFLICT(entity_kind, entity_id) DO UPDATE SET
+              dismissed_at = excluded.dismissed_at,
+              note = excluded.note`,
       args: [entityKind, entityId, new Date().toISOString()],
     })
   }

@@ -79,6 +79,34 @@ export const dismissInboxItem = async (id: string): Promise<void> => {
   }
 }
 
+export const ackInboxItem = async (id: string): Promise<void> => {
+  const r = await fetch(`${BASE}/api/inbox/ack`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  })
+  if (!r.ok) {
+    const text = await r.text().catch(() => '')
+    throw new Error(
+      `POST /api/inbox/ack → ${r.status}${text ? `: ${text}` : ''}`,
+    )
+  }
+}
+
+export const resolveInboxItem = async (id: string): Promise<void> => {
+  const r = await fetch(`${BASE}/api/inbox/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  })
+  if (!r.ok) {
+    const text = await r.text().catch(() => '')
+    throw new Error(
+      `POST /api/inbox/resolve → ${r.status}${text ? `: ${text}` : ''}`,
+    )
+  }
+}
+
 export const fetchAgents = async (): Promise<Agent[]> => {
   const json = await fetchJson('/api/agents', agentsResponseSchema)
   return json.agents

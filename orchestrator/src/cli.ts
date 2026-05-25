@@ -3134,6 +3134,24 @@ const main = async (): Promise<void> => {
       return
     }
 
+    if (sub === 'ack' || sub === 'resolve') {
+      const id = subRest[1]
+      if (!id) {
+        console.error(`usage: mars inbox ${sub} <id>`)
+        process.exit(1)
+      }
+      const row = await derived.getDerivedInboxRow(id)
+      if (!row) {
+        console.error(`no inbox item matching ${id}`)
+        process.exit(1)
+      }
+      const entityKind = derived.dismissalKindForRow(row.kind)
+      const note = sub === 'ack' ? 'ack' : 'resolved'
+      await dismissals.dismissEntity(entityKind, row.entityId, { note })
+      console.log(`${sub} ${row.id}`)
+      return
+    }
+
     if (sub === 'dismiss' || sub === 'undismiss') {
       const id = subRest[1]
       if (!id) {
@@ -3168,7 +3186,7 @@ const main = async (): Promise<void> => {
     }
 
     console.error(
-      'usage: mars inbox [list [open|dismissed|all] [--lean] | show <id> | dismiss <id> [--note <text>] | undismiss <id> | raise --from <-|path> | watch]',
+      'usage: mars inbox [list [open|dismissed|all] [--lean] | show <id> | ack <id> | resolve <id> | dismiss <id> [--note <text>] | undismiss <id> | raise --from <-|path> | watch]',
     )
     process.exit(1)
   }
