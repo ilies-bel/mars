@@ -15,7 +15,7 @@ _Avoid_: watch process, watcher, mars watch
 Background component that manages worktree cleanup, removing finished or abandoned task worktrees under .worktrees/ and .mars/worktrees/.
 
 **Arc**:
-The full tree of work sharing a single originId, from the first proposal (idea or direct task) through every promoted/spawned task and every Workflow instance to the merged commit(s); the unit of analysis for mars deep-reflect.
+The full tree of work sharing a single originId, from the first proposal (idea or direct task) through every promoted/spawned task and every Workflow instance to the merged commit(s); the unit of analysis for mars arc reflect.
 
 **Events**:
 A read-only, passive activity feed in the ui/ frontend tracking progress of completed tasks (and other terminal-state lifecycle moments) for situational awareness, with no acknowledgement or action required from the user.
