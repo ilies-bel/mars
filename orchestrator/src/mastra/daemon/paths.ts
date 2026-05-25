@@ -72,7 +72,21 @@ export const readDaemonPid = (pidFile: string): number | null => {
   }
 }
 
-export type DaemonLiveness = { alive: true; pid: number } | { alive: false }
+/**
+ * Why the daemon is not reachable.
+ *
+ * - `no-pid`        – neither socket nor pid file found; daemon was never
+ *                     started or shut down cleanly.
+ * - `dead-pid`      – pid file found but the process is gone and the socket
+ *                     is missing; partial cleanup after an unclean exit.
+ * - `no-socket`     – pid file found and process is still alive, but the
+ *                     socket file has disappeared; rare, indicates the socket
+ *                     was externally removed while the process ran.
+ * - `connect-failed` – socket file exists but the connection was refused or
+ *                     errored; the daemon crashed and left a stale socket.
+ */
+export type DaemonLivenessReason = 'no-pid' | 'dead-pid' | 'no-socket' | 'connect-failed'
+export type DaemonLiveness = { alive: true; pid: number } | { alive: false; reason: DaemonLivenessReason }
 
 /**
  * Shared liveness check for `mars daemon`.
@@ -81,25 +95,51 @@ export type DaemonLiveness = { alive: true; pid: number } | { alive: false }
  * daemon is healthy). The pid comes from the pid file; 0 is used as a
  * sentinel when the pid file is absent.
  *
- * When the socket is not connectable (e.g. after a kill -9), any stale
- * socket and pid files are removed so a fresh spawn won't collide, then
- * `{ alive: false }` is returned.
+ * When the socket is not connectable, stale files are cleaned up and
+ * `{ alive: false, reason }` is returned with a reason that explains why:
+ * - `connect-failed`: socket file present but connection refused/errored.
+ * - `dead-pid`:       no socket, but a pid file whose process is gone.
+ * - `no-socket`:      no socket, but a pid file whose process is still alive
+ *                     (rare; socket externally removed).
+ * - `no-pid`:         neither socket nor pid file present (clean state).
  */
 export const isDaemonAlive = async (): Promise<DaemonLiveness> => {
   const { socket, pidFile } = daemonPaths()
-  if (await tryConnectSocket(socket)) {
-    const pid = readDaemonPid(pidFile) ?? 0
-    return { alive: true, pid }
-  }
-  // Not connectable — clean up any stale files so a fresh spawn can start cleanly.
-  for (const f of [socket, pidFile]) {
-    if (existsSync(f)) {
-      try {
-        unlinkSync(f)
-      } catch {
-        // best-effort; ignore races with concurrent cleanup
+
+  if (existsSync(socket)) {
+    // Socket file present — attempt a connection.
+    const connected = await tryConnectSocket(socket)
+    if (connected) {
+      const pid = readDaemonPid(pidFile) ?? 0
+      return { alive: true, pid }
+    }
+    // Stale socket (exists but dead) — clean up both files.
+    for (const f of [socket, pidFile]) {
+      if (existsSync(f)) {
+        try {
+          unlinkSync(f)
+        } catch {
+          // best-effort; ignore races with concurrent cleanup
+        }
       }
     }
+    return { alive: false, reason: 'connect-failed' }
   }
-  return { alive: false }
+
+  // No socket file — consult the pid file for additional context.
+  const pid = readDaemonPid(pidFile)
+  if (pid === null) {
+    return { alive: false, reason: 'no-pid' }
+  }
+  if (isProcessAlive(pid)) {
+    // Process alive but socket gone — unusual; leave pid file intact.
+    return { alive: false, reason: 'no-socket' }
+  }
+  // Process dead and socket already gone — clean up the stale pid file.
+  try {
+    unlinkSync(pidFile)
+  } catch {
+    // best-effort
+  }
+  return { alive: false, reason: 'dead-pid' }
 }
