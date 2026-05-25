@@ -946,4 +946,65 @@ describe('blocker-resolution (task_blockers)', () => {
       expect((await q.getTask(dep.id))?.status).toBe('queued')
     })
   })
+
+  // publish() call sites in this module are all legitimate co-commits: each
+  // opens a single transaction that atomically flips a task status AND writes
+  // the outbox event. None are standalone "publish-only" transactions, so none
+  // are rewired to publishWithRetry. These tests guard that atomicity: if the
+  // co-commit is ever accidentally split, the event row would disappear while
+  // the task row stays — a regression these assertions would catch.
+  describe('outbox event publication — publish() co-commits are atomic with status flips', () => {
+    it('onBlockerTaskCompleted writes a task.unblocked event to the outbox atomically with the queued flip', async () => {
+      const { q, br } = await loadModules(repo)
+      const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+      const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+      await blockTask(q, dep.id, fix.id, 0)
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [fix.id],
+      })
+
+      await br.onBlockerTaskCompleted(fix.id)
+
+      const events = await q.getClient().execute({
+        sql: `SELECT type, payload FROM events WHERE type = 'task.unblocked' ORDER BY id DESC LIMIT 1`,
+        args: [],
+      })
+      expect(events.rows).toHaveLength(1)
+      const payload = JSON.parse(events.rows[0].payload as string) as {
+        taskId: string
+        blockerTaskId: string
+      }
+      expect(payload.taskId).toBe(dep.id)
+      expect(payload.blockerTaskId).toBe(fix.id)
+      // State and event must both be present — they committed in the same tx.
+      expect((await q.getTask(dep.id))?.status).toBe('queued')
+    })
+
+    it('markOriginDoneFromRecovery writes a task.completed event to the outbox atomically with the done flip', async () => {
+      const { q, br } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+        args: [origin.id],
+      })
+
+      const result = await br.markOriginDoneFromRecovery(origin.id)
+
+      expect(result.originFlipped).toBe(true)
+      const events = await q.getClient().execute({
+        sql: `SELECT type, payload FROM events WHERE type = 'task.completed' ORDER BY id DESC LIMIT 1`,
+        args: [],
+      })
+      expect(events.rows).toHaveLength(1)
+      const payload = JSON.parse(events.rows[0].payload as string) as {
+        taskId: string
+        result: { via: string }
+      }
+      expect(payload.taskId).toBe(origin.id)
+      expect(payload.result.via).toBe('recovery')
+      // State and event must both be present — they committed in the same tx.
+      expect((await q.getTask(origin.id))?.status).toBe('done')
+    })
+  })
 })
