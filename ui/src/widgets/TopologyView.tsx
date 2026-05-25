@@ -211,9 +211,15 @@ const nodeStyle = (node: PositionedNode): NodeStyle => {
 export interface TopologyViewProps {
   tasks: ProgressTask[]
   proposals: ProgressProposalNode[]
+  /**
+   * Set of cluster names (e.g. "Blocked", "Failed") or "Proposal" whose nodes
+   * should be rendered with a ghosted (low-opacity) style.  Drives the
+   * per-cluster toggle controls on the Progress tab.
+   */
+  ghostedClusters?: Set<string>
 }
 
-export const TopologyView = ({ tasks, proposals }: TopologyViewProps) => {
+export const TopologyView = ({ tasks, proposals, ghostedClusters }: TopologyViewProps) => {
   const { nodes, edges } = buildGraph(tasks, proposals)
 
   if (nodes.length === 0) {
@@ -275,11 +281,18 @@ export const TopologyView = ({ tasks, proposals }: TopologyViewProps) => {
         {/* Nodes */}
         {positioned.map((node) => {
           const s = nodeStyle(node)
+          const ghosted =
+            ghostedClusters != null &&
+            (node.kind === 'proposal'
+              ? ghostedClusters.has('Proposal')
+              : ghostedClusters.has(node.cluster))
           return (
             <g
               key={node.id}
               data-node-kind={node.kind}
               {...(node.kind === 'task' ? { 'data-cluster': node.cluster } : {})}
+              {...(ghosted ? { 'data-ghosted': 'true' } : {})}
+              opacity={ghosted ? 0.2 : 1}
               transform={`translate(${node.x}, ${node.y})`}
             >
               <rect
