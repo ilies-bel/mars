@@ -7,19 +7,14 @@ import {
 import type { ReflectCorpus } from '../reflect-query'
 
 const emptySummary = {
-  totalCostUsd: 0,
+  totalWeightedTokens: 0,
   taskCount: 0,
   successCount: 0,
   failureCount: 0,
-  avgCostPerTaskUsd: 0,
-  avgCostPerSuccessUsd: 0,
-  avgCostPerFailureUsd: 0,
-  medianCostPerTaskUsd: 0,
-  costStdDevUsd: 0,
   cacheHitRatio: 0,
-  topExpensiveTasks: [],
+  topTokenHeavyTasks: [],
   topExpensiveSteps: [],
-  costByStep: [],
+  tokensByStep: [],
 }
 
 const fixtureCorpus: ReflectCorpus = {
@@ -37,7 +32,6 @@ const fixtureCorpus: ReflectCorpus = {
         outputTokens: 500,
         cacheCreateTokens: 200,
         cacheReadTokens: 100,
-        totalCostUsd: 0,
         cacheHitRatio: 0.33,
       },
     },
@@ -48,9 +42,7 @@ const fixtureCorpus: ReflectCorpus = {
 describe('reflector prompt', () => {
   it('contains no "USD" references in instruction prose', () => {
     const prompt = buildPrompt(fixtureCorpus)
-    // We allow the JSON corpus payload (which still carries legacy
-    // `totalCostUsd` fields from upstream slices) to contain those
-    // substrings; the *instruction* portion of the prompt — everything
+    // Only the *instruction* portion of the prompt — everything
     // before the corpus payload — must be USD-free.
     const instructionPortion = prompt.split('Cost summary')[0]
     expect(instructionPortion).not.toMatch(/USD/)

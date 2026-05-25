@@ -16,15 +16,14 @@ export const recordSignals = async (
   const stmt = {
     sql: `INSERT INTO task_signals
             (task_id, step_id, input_tokens, output_tokens,
-             cache_create_tokens, cache_read_tokens, total_cost_usd,
+             cache_create_tokens, cache_read_tokens,
              message_count, recorded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(task_id, step_id) DO UPDATE SET
             input_tokens        = excluded.input_tokens,
             output_tokens       = excluded.output_tokens,
             cache_create_tokens = excluded.cache_create_tokens,
             cache_read_tokens   = excluded.cache_read_tokens,
-            total_cost_usd      = excluded.total_cost_usd,
             message_count       = excluded.message_count,
             recorded_at         = excluded.recorded_at`,
     args: [
@@ -34,10 +33,6 @@ export const recordSignals = async (
       totals.outputTokens,
       totals.cacheCreateTokens,
       totals.cacheReadTokens,
-      // PRD 1b7498f6: USD cost is dropped at the parser layer. The
-      // `total_cost_usd` column is kept for now so existing rows stay
-      // readable; a later slice removes the column and this argument.
-      0,
       totals.messageCount,
       now,
     ],
@@ -57,7 +52,6 @@ export interface TaskSignalRow {
   outputTokens: number
   cacheCreateTokens: number
   cacheReadTokens: number
-  totalCostUsd: number
   messageCount: number
   recordedAt: string
 }
@@ -66,7 +60,7 @@ export const listTaskSignals = async (taskId: string): Promise<TaskSignalRow[]> 
   await initQueue()
   const r = await getClient().execute({
     sql: `SELECT task_id, step_id, input_tokens, output_tokens,
-                 cache_create_tokens, cache_read_tokens, total_cost_usd,
+                 cache_create_tokens, cache_read_tokens,
                  message_count, recorded_at
             FROM task_signals
            WHERE task_id = ?
@@ -82,7 +76,6 @@ export const listTaskSignals = async (taskId: string): Promise<TaskSignalRow[]> 
       outputTokens: Number(r0.output_tokens ?? 0),
       cacheCreateTokens: Number(r0.cache_create_tokens ?? 0),
       cacheReadTokens: Number(r0.cache_read_tokens ?? 0),
-      totalCostUsd: Number(r0.total_cost_usd ?? 0),
       messageCount: Number(r0.message_count ?? 0),
       recordedAt: r0.recorded_at as string,
     }
