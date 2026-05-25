@@ -1,14 +1,8 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
-import {
-  addBlockers,
-  clearBlockers,
-  getTask,
-  listBlockers,
-  listTasks,
-  promoteDraftToQueued,
-  type Task,
-} from '../queue'
+import { RequestContext } from '@mastra/core/di'
+import { type Task } from '../queue'
+import { type DomainTaskStore, getDefaultDomainTaskStore } from '../store/task-store'
 import { Workers } from '../workers'
 import { parseClaudeJsonResult } from '../lib/claude-json'
 import { getRepoRoot } from '../context'
@@ -82,15 +76,19 @@ const generateStep = createStep({
   id: 'generate-triage',
   inputSchema: triageInputSchema,
   outputSchema: triageOutputSchema,
-  execute: async ({ inputData, tracingContext }) => {
-    const task = await getTask(inputData.taskId)
+  execute: async ({ inputData, tracingContext, requestContext }) => {
+    const store: DomainTaskStore =
+      (requestContext.get('taskStore') as DomainTaskStore | undefined) ??
+      getDefaultDomainTaskStore()
+
+    const task = await store.getTask(inputData.taskId)
     if (!task) throw new Error(`task ${inputData.taskId} not found`)
 
     tracingContext?.currentSpan?.update({
       metadata: { originId: task.originId, taskId: task.id },
     })
 
-    const allTasks = await listTasks()
+    const allTasks = await store.listTasks()
     const knownIds = new Set(allTasks.map((t) => t.id))
     const taskGraph = buildTaskGraph(allTasks, task.id)
 
@@ -109,13 +107,13 @@ const generateStep = createStep({
       .filter((id) => id !== task.id && knownIds.has(id))
       .slice(0, MAX_BLOCKERS)
 
-    await clearBlockers(task.id)
-    await addBlockers(task.id, filteredBlockers)
+    await store.clearBlockers(task.id)
+    await store.addBlockers(task.id, filteredBlockers)
 
     if (parsed.actionable) {
-      const remaining = await listBlockers(task.id)
+      const remaining = await store.listBlockers(task.id)
       if (remaining.length === 0) {
-        await promoteDraftToQueued(task.id)
+        await store.promoteDraftToQueued(task.id)
       }
     }
 
@@ -143,9 +141,14 @@ export interface TriageResult {
   reason: string
 }
 
-export const runTriage = async (taskId: string): Promise<TriageResult> => {
+export const runTriage = async (
+  taskId: string,
+  store?: DomainTaskStore,
+): Promise<TriageResult> => {
   const run = await triageWorkflow.createRun()
-  const result = await run.start({ inputData: { taskId } })
+  const requestContext = new RequestContext()
+  if (store) requestContext.set('taskStore', store)
+  const result = await run.start({ inputData: { taskId }, requestContext })
   if (result.status !== 'success') {
     const cause =
       'error' in result && result.error instanceof Error
