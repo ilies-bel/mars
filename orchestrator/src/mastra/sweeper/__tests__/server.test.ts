@@ -232,6 +232,66 @@ describe('sweeper/server', () => {
     cleanup()
   })
 
+  it('skips enqueue when the per-(parent,signature) retry budget is exhausted', async () => {
+    const { q, rc, sw } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'sweep-budget-sig')
+    const parentA = await q.enqueueTask('task a', undefined, { skipTriage: true })
+    const parentB = await q.enqueueTask('task b', undefined, { skipTriage: true })
+
+    // First sweep for parentA: zero prior attempts → enqueues normally.
+    const first = await sw.sweepOne({
+      taskId: parentA.id,
+      failureSignature: 'sweep-budget-sig',
+      failingStep: 'verify:typecheck',
+      truncatedError: 'err',
+      branch: null,
+      recipeContext: defaultCtx,
+    })
+    expect(first.kind).toBe('enqueued')
+
+    // Second sweep, same parent + signature: with default budget of 1, the
+    // one outstanding attempt already exhausts the budget. Skip path fires.
+    const logLines: string[] = []
+    const second = await sw.sweepOne(
+      {
+        taskId: parentA.id,
+        failureSignature: 'sweep-budget-sig',
+        failingStep: 'verify:typecheck',
+        truncatedError: 'err',
+        branch: null,
+        recipeContext: defaultCtx,
+      },
+      (line) => logLines.push(line),
+    )
+    expect(second.kind).toBe('skipped-budget-exhausted')
+    if (second.kind !== 'skipped-budget-exhausted') throw new Error('unreachable')
+    expect(second.attempts).toBeGreaterThanOrEqual(second.budget)
+
+    // Log line records the budget skip and includes the signature.
+    const skipLog = logLines.join('\n')
+    expect(skipLog).toMatch(/budget/i)
+    expect(skipLog).toContain('sweep-budget-sig')
+
+    // Parent task status untouched by the skip — no new lifecycle status.
+    const afterSkip = await q.getTask(parentA.id)
+    expect(afterSkip?.status).toBe('blocked')
+
+    // Different parent with same signature, zero prior attempts: still
+    // allowed one attempt. Falls through the budget check and lands on the
+    // in-flight check (returning skipped-in-flight, not budget-exhausted).
+    const third = await sw.sweepOne({
+      taskId: parentB.id,
+      failureSignature: 'sweep-budget-sig',
+      failingStep: 'verify:typecheck',
+      truncatedError: 'err',
+      branch: null,
+      recipeContext: defaultCtx,
+    })
+    expect(third.kind).not.toBe('skipped-budget-exhausted')
+
+    cleanup()
+  })
+
   it('skip path emits a log line containing the signature and in-flight task id', async () => {
     const { q, rc, sw } = await loadModules(repo)
     const cleanup = registerTestRecipe(rc, 'sweep-sig4')
