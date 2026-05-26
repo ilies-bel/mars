@@ -33,6 +33,10 @@ import {
   drainAlertDismissals,
   ensureAlertDismisser,
 } from './alert-dismisser'
+import {
+  drainInboxRepopulations,
+  ensureInboxRepopulator,
+} from './inbox-repopulator'
 import { RequestContext } from '@mastra/core/di'
 import { getDefaultTaskStore } from '../lib/task-store'
 import { getDefaultDomainTaskStore } from '../store/task-store'
@@ -1763,6 +1767,19 @@ export const startDaemon = async (
     }
   })()
 
+  // Boot drain for the inbox-repopulator outbox subscriber: register it and
+  // apply any inbox mutations for events published while the daemon was down.
+  void (async () => {
+    try {
+      await ensureInboxRepopulator(getClient())
+      const { processed } = await drainInboxRepopulations(getClient(), log)
+      if (processed > 0)
+        log(`[inbox-repopulator] applied ${processed} inbox mutation(s) on boot`)
+    } catch (err) {
+      log(`[inbox-repopulator] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // ── Poll-fallback tick ────────────────────────────────────────────────────
   // drain() is otherwise purely event-driven (bus 'task.added'/'task.queued'
   // and dispatcher finally-blocks). If a drain pass throws and exits, or a
@@ -1840,6 +1857,24 @@ export const startDaemon = async (
   }, ALERT_DRAIN_MS)
   alertDrain.unref()
 
+  // ── Inbox-repopulator drain ───────────────────────────────────────────────
+  // Polls the outbox for task/proposal lifecycle events and applies the
+  // corresponding inbox_items mutations. .unref() so it never holds the
+  // process open.
+  const INBOX_REPOPULATOR_DRAIN_MS = Number(
+    process.env.MARS_INBOX_REPOPULATOR_DRAIN_MS ?? 30_000,
+  )
+  const inboxRepopulatorDrain = setInterval(() => {
+    void (async () => {
+      try {
+        await drainInboxRepopulations(getClient(), log)
+      } catch (err) {
+        log(`[inbox-repopulator] drain errored: ${(err as Error).message}`)
+      }
+    })()
+  }, INBOX_REPOPULATOR_DRAIN_MS)
+  inboxRepopulatorDrain.unref()
+
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
@@ -1848,6 +1883,7 @@ export const startDaemon = async (
     clearInterval(pollFallback)
     clearInterval(staleSweep)
     clearInterval(alertDrain)
+    clearInterval(inboxRepopulatorDrain)
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.
