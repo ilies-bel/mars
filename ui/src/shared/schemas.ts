@@ -142,7 +142,6 @@ export const actionQueueItemSchema = z.object({
   id: z.string(),
   kind: z.enum([
     'failed-task',
-    'blocked-task',
     'stale-worktree',
     'draft-proposal',
   ]),

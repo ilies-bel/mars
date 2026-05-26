@@ -107,7 +107,7 @@ describe('derived inbox — failed/blocked task title (no 60-char cap)', () => {
     expect(row?.title).not.toContain('…')
   })
 
-  it('blocked task title carries the full prompt beyond 60 chars with no ellipsis', async () => {
+  it('blocked task produces no inbox row', async () => {
     const longPrompt =
       'Route hitl slice to operator inbox plus one Coder sub-task for the longer description here'
     const c = createClient({ url: `file:${resolve(repo, '.mars/mars.db')}` })
@@ -115,10 +115,9 @@ describe('derived inbox — failed/blocked task title (no 60-char cap)', () => {
     c.close()
 
     const rows = await fetchQueue()
-    const row = rows.find((r) => r.entityId === 't-blocked-long')
-    expect(row).toBeDefined()
-    expect(row?.title).toBe(`Blocked: ${longPrompt}`)
-    expect(row?.title).not.toContain('…')
+    // Blocked tasks auto-unblock when their blockers reach 'done' — they are
+    // normal DAG state and must NOT surface as inbox rows.
+    expect(rows.find((r) => r.entityId === 't-blocked-long')).toBeUndefined()
   })
 
   it('multi-line failed task prompt collapses to a single whitespace-normalised line', async () => {

@@ -20,7 +20,6 @@ const DAEMON_KILLED_SIGNATURE = 'daemon-killed'
  *
  * Row sources (≤ 1 row per underlying entity):
  *   - failed task    — status in (failed, dropped)
- *   - blocked task   — status = blocked
  *   - stale worktree — a `.mars/worktrees/<id>` dir whose task is terminal
  *                      (done/dropped) or absent; a finished task should have
  *                      removed its own worktree.
@@ -32,7 +31,6 @@ const DAEMON_KILLED_SIGNATURE = 'daemon-killed'
 
 export type DerivedInboxKind =
   | 'failed-task'
-  | 'blocked-task'
   | 'stale-worktree'
   | 'draft-proposal'
 
@@ -157,19 +155,6 @@ const failedBody = (task: Task): string => {
   )
 }
 
-const blockedBody = (task: Task, blockers: DagNode[]): string => {
-  const waiting =
-    blockers.length > 0
-      ? blockers.map((b) => `  - ${b.id} (${b.status})`).join('\n')
-      : '  (no live blockers — may be a phantom block)'
-  return (
-    `Task ${task.id} is blocked, waiting on:\n${waiting}\n\n` +
-    `Next actions:\n` +
-    `  • Remove one edge:    mars unblock ${task.id} <blocker-id>\n` +
-    `  • Phantom-recover:    mars unblock ${task.id}`
-  )
-}
-
 const staleWorktreeBody = (entityId: string, taskStatus: string): string =>
   `Worktree .mars/worktrees/${entityId} exists but its task is ${taskStatus}.\n` +
   `A finished task should have removed its own worktree, so this is leftover state.\n\n` +
@@ -188,7 +173,6 @@ export const dismissalKindForRow = (
 ): 'task' | 'worktree' | 'proposal' | null => {
   switch (kind) {
     case 'failed-task':
-    case 'blocked-task':
       return 'task'
     case 'stale-worktree':
       return 'worktree'
@@ -262,17 +246,9 @@ export const listDerivedInbox = async (
 
   const rows: DerivedInboxRow[] = []
 
-  // --- failed + blocked tasks ---
+  // --- failed tasks ---
   for (const task of allTasks) {
-    let kind: DerivedInboxKind | null = null
-    let priority: DerivedInboxPriority = 'normal'
-    if (task.status === 'failed' || task.status === 'dropped') {
-      kind = 'failed-task'
-      priority = 'high'
-    } else if (task.status === 'blocked') {
-      kind = 'blocked-task'
-    }
-    if (kind === null) continue
+    if (task.status !== 'failed' && task.status !== 'dropped') continue
 
     const blockers = task.blockedBy.map(toNode)
     const blocking = (blockingMap.get(task.id) ?? []).map(toNode)
@@ -282,17 +258,14 @@ export const listDerivedInbox = async (
       descendants: [],
       proposalId: task.parentProposalId,
     }
-    const errorKind = resolveErrorKind(kind, task.failureSignature)
+    const errorKind = resolveErrorKind('failed-task', task.failureSignature)
     rows.push({
-      id: `${kind}:${task.id}`,
-      kind,
+      id: `failed-task:${task.id}`,
+      kind: 'failed-task',
       entityId: task.id,
-      priority,
-      title:
-        kind === 'failed-task'
-          ? `Failed: ${task.prompt.replace(/\s+/g, ' ').trim()}`
-          : `Blocked: ${task.prompt.replace(/\s+/g, ' ').trim()}`,
-      body: kind === 'failed-task' ? failedBody(task) : blockedBody(task, blockers),
+      priority: 'high',
+      title: `Failed: ${task.prompt.replace(/\s+/g, ' ').trim()}`,
+      body: failedBody(task),
       at: task.updatedAt,
       dag,
       dismissed: isDismissed('task', task.id),
