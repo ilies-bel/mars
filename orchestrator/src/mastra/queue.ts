@@ -6,7 +6,7 @@ import type { Author, AuthorKind } from './author'
 import { dismissAlertsOnStatusChange } from './lib/inbox'
 import { clearDismissalForEntity } from './lib/inbox-dismissals'
 import { openLibsql } from './lib/libsql'
-import { publish, publishWithRetry } from './lib/outbox'
+import { buildEventInsert, withWriteTx } from './lib/outbox'
 import type { TaskStore } from './lib/task-store'
 
 export type TaskStatus =
@@ -1235,118 +1235,91 @@ export const updateTask = async (
     patch.claudeSessionId !== null &&
     patch.claudeSessionId.length > 0
 
+  // Build the event INSERT statement upfront (validates payload via Zod;
+  // throws before any DB write if the payload is invalid).  null means no
+  // event should be emitted for this call (unchanged-status or non-status
+  // write).
+  let eventStmt: InStatement | null = null
+  if (isStatusChange) {
+    if (patch.status === 'failed') {
+      eventStmt = buildEventInsert('task.failed', {
+        taskId: id,
+        error: patch.error ?? patch.failureReason ?? '',
+      })
+    } else if (patch.status === 'dropped') {
+      eventStmt = buildEventInsert('task.dropped', {
+        taskId: id,
+        dropReason: patch.failureReason ?? '',
+      })
+    } else if (patch.status === 'queued') {
+      eventStmt = buildEventInsert('task.queued', { taskId: id })
+    } else if (patch.status === 'blocked') {
+      eventStmt = buildEventInsert('task.blocked', {
+        taskId: id,
+        fixTaskId: null,
+        failureSignature: patch.failureSignature ?? '',
+        failingStep: patch.failedPhase ?? '',
+      })
+    } else if (patch.status === 'done') {
+      eventStmt = buildEventInsert('task.completed', { taskId: id, result: null })
+    }
+  }
+
+  const updateStmt: InStatement = {
+    sql: `UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`,
+    args: args as never,
+  }
+
   if (appendSessionId) {
-    // Atomically (a) apply the field updates and (b) append the new
-    // session id to claude_session_ids if it isn't already in the array.
-    // Two concurrent retry workers racing on the same task each see a
-    // serialised view and both append, so the array is the full
-    // append-only history.
-    // Note: TaskStore.atomic() lands in a subsequent slice; until then
-    // the session-id path still uses the raw client transaction.
-    const c = getClient()
-    const tx = await c.transaction('write')
-    try {
-      await tx.execute({
-        sql: `UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`,
-        args: args as never,
-      })
-      await tx.execute({
-        sql: `UPDATE tasks
-                 SET claude_session_ids =
-                       json_insert(
-                         claude_session_ids,
-                         '$[#]',
-                         ?
-                       )
-               WHERE id = ?
-                 AND NOT EXISTS (
-                   SELECT 1
-                     FROM json_each(claude_session_ids)
-                    WHERE value = ?
-                 )`,
-        args: [
-          patch.claudeSessionId as string,
-          id,
-          patch.claudeSessionId as string,
-        ],
-      })
-      // Emit the matching outbox event atomically with the state row.
-      // Wrapped in a nested try/catch so a publish failure (e.g. Zod schema
-      // mismatch) does not roll back the already-correct state mutation.
-      if (isStatusChange) {
-        try {
-          if (patch.status === 'failed') {
-            await publish(tx, 'task.failed', {
-              taskId: id,
-              error: patch.error ?? patch.failureReason ?? '',
-            })
-          } else if (patch.status === 'dropped') {
-            await publish(tx, 'task.dropped', {
-              taskId: id,
-              dropReason: patch.failureReason ?? '',
-            })
-          } else if (patch.status === 'queued') {
-            await publish(tx, 'task.queued', { taskId: id })
-          } else if (patch.status === 'blocked') {
-            await publish(tx, 'task.blocked', {
-              taskId: id,
-              fixTaskId: null,
-              failureSignature: patch.failureSignature ?? '',
-              failingStep: patch.failedPhase ?? '',
-            })
-          } else if (patch.status === 'done') {
-            await publish(tx, 'task.completed', { taskId: id, result: null })
-          }
-        } catch {
-          // best-effort: state mutation still commits
-        }
-      }
-      await tx.commit()
-    } catch (error: unknown) {
-      tx.close()
-      throw error
+    // Atomically (a) apply the field updates, (b) append the new session id
+    // to claude_session_ids if it isn't already present, and (c) insert the
+    // outbox event row.  All three writes share one write transaction so a
+    // crash between any two leaves the DB consistent (either everything
+    // committed or nothing).
+    //
+    // Note: TaskStore.atomic() lands in a subsequent slice; until then the
+    // session-id path still uses the raw client transaction via withWriteTx.
+    const sessionIdStmt: InStatement = {
+      sql: `UPDATE tasks
+               SET claude_session_ids =
+                     json_insert(
+                       claude_session_ids,
+                       '$[#]',
+                       ?
+                     )
+             WHERE id = ?
+               AND NOT EXISTS (
+                 SELECT 1
+                   FROM json_each(claude_session_ids)
+                  WHERE value = ?
+               )`,
+      args: [
+        patch.claudeSessionId as string,
+        id,
+        patch.claudeSessionId as string,
+      ],
     }
+    await withWriteTx(getClient(), async (tx) => {
+      await tx.execute(updateStmt)
+      await tx.execute(sessionIdStmt)
+      // Event INSERT shares the same transaction: if it throws the whole
+      // transaction rolls back (no orphan state row without event).
+      if (eventStmt) await tx.execute(eventStmt)
+    })
+  } else if (store) {
+    // store.batch runs all statements atomically (BEGIN IMMEDIATE … COMMIT)
+    // so the state write and event insert are in the same commit.
+    const stmts: InStatement[] = [updateStmt]
+    if (eventStmt) stmts.push(eventStmt)
+    await store.batch(stmts, 'write')
   } else {
-    const stmt = {
-      sql: `UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`,
-      args: args as never,
-    }
-    if (store) {
-      await store.execute(stmt)
-    } else {
-      await getClient().execute(stmt)
-    }
-    // Emit the outbox event after the state row commits (best-effort:
-    // emission failure must not surface as a state-mutation error).
-    if (isStatusChange) {
-      try {
-        const c = getClient()
-        if (patch.status === 'failed') {
-          await publishWithRetry(c, 'task.failed', {
-            taskId: id,
-            error: patch.error ?? patch.failureReason ?? '',
-          })
-        } else if (patch.status === 'dropped') {
-          await publishWithRetry(c, 'task.dropped', {
-            taskId: id,
-            dropReason: patch.failureReason ?? '',
-          })
-        } else if (patch.status === 'queued') {
-          await publishWithRetry(c, 'task.queued', { taskId: id })
-        } else if (patch.status === 'blocked') {
-          await publishWithRetry(c, 'task.blocked', {
-            taskId: id,
-            fixTaskId: null,
-            failureSignature: patch.failureSignature ?? '',
-            failingStep: patch.failedPhase ?? '',
-          })
-        } else if (patch.status === 'done') {
-          await publishWithRetry(c, 'task.completed', { taskId: id, result: null })
-        }
-      } catch {
-        // best-effort
-      }
-    }
+    // Common path: wrap state write and event insert in a single write
+    // transaction.  withWriteTx retries on SQLITE_BUSY so a transient lock
+    // contention doesn't drop the event.
+    await withWriteTx(getClient(), async (tx) => {
+      await tx.execute(updateStmt)
+      if (eventStmt) await tx.execute(eventStmt)
+    })
   }
 
   // Dismiss open inbox alerts and stale-worktree dismissal rows whenever
