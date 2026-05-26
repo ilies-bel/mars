@@ -253,17 +253,15 @@ Commands:
                                 '<short-sha> <subject>' lines. Prints a
                                 single line saying so when no orphans exist.
                                 Makes no changes to git state or the queue.
-  worktree clean [--dry-run] [--force] [--force-orphans]
+  worktree clean [--dry-run] [--force-orphans]
                                 classify every directory under .mars/worktrees/
                                 (and legacy .worktrees/) against queue.db and
                                 remove the safe ones: done+merged branches,
                                 failed/dropped+zero-commit branches, and orphan
                                 rows whose branch never advanced. Skips
                                 in-flight tasks and desyncs (done+not-merged).
-                                Refuses if the daemon is running unless
-                                --force is also passed; --force-orphans extends
-                                removal to orphan worktrees that did contribute
-                                commits.
+                                --force-orphans extends removal to orphan
+                                worktrees that did contribute commits.
   daemon <start|stop|restart|kill|status|reload|set-flag> [flags]
                                 run the orchestration daemon. 'start' forks to
                                 background (also --detach). 'stop' stops
@@ -580,7 +578,7 @@ INTEGRATION_BRANCH) as '<short-sha> <subject>' lines. Prints
 'no orphan task branches' when there are none.
 
 Makes no changes to git state or the queue.`,
-  worktree: `mars worktree clean [--dry-run] [--force] [--force-orphans]
+  worktree: `mars worktree clean [--dry-run] [--force-orphans]
 
 Walk .mars/worktrees/ (and legacy .worktrees/), classify each directory
 by joining against the matching queue.db row, and remove the safe ones.
@@ -597,7 +595,6 @@ Classifications:
 
 Flags:
   --dry-run         print what would happen, change nothing, exit 0.
-  --force           run even if the daemon is up. Otherwise refused.
   --force-orphans   also remove orphan worktrees whose branches contributed
                     commits (work is dropped — use with care).
 
@@ -2328,29 +2325,14 @@ const main = async (): Promise<void> => {
   if (cmd === 'worktree') {
     const sub = rest[0]
     if (sub !== 'clean') {
-      console.error('usage: mars worktree clean [--dry-run] [--force] [--force-orphans]')
+      console.error('usage: mars worktree clean [--dry-run] [--force-orphans]')
       process.exit(1)
     }
     const wtFlags = new Set(rest.slice(1).filter((a) => a.startsWith('--')))
     const dryRun = wtFlags.has('--dry-run')
-    const force = wtFlags.has('--force')
     const forceOrphans = wtFlags.has('--force-orphans')
 
-    const { daemonPaths } = await import('./mastra/daemon/paths')
-    const { isDaemonRunning, runWorktreeClean } = await import(
-      './mastra/lib/worktree-clean'
-    )
-    if (await isDaemonRunning(daemonPaths().socket)) {
-      if (!force) {
-        console.error(
-          'mars daemon is running; refusing to clean worktrees. Stop it (mars daemon stop) or pass --force to override.',
-        )
-        process.exit(1)
-      }
-      console.error(
-        'warning: mars daemon is running; --force in effect. Concurrent sweeps may race.',
-      )
-    }
+    const { runWorktreeClean } = await import('./mastra/lib/worktree-clean')
 
     const summary = await runWorktreeClean({
       dryRun,
