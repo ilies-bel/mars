@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs'
-import { resolveContext } from './mastra/context'
 import { MARS_VERSION } from './version'
 
 // Silently swallow broken-pipe ('EPIPE') errors on stdout/stderr.
@@ -918,6 +917,7 @@ const main = async (): Promise<void> => {
     return
   }
 
+  const { resolveContext } = await import('./mastra/context')
   const ctx = resolveContext(repo)
 
   if (cmd === 'where') {

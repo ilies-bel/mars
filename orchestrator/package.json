@@ -17,6 +17,7 @@
     "build": "mastra build",
     "start": "mastra start",
     "cli": "tsx src/cli.ts",
+    "build:binary": "bash scripts/build-binary.sh",
     "typecheck": "tsc --noEmit",
     "knip": "knip --no-exit-code"
   },
