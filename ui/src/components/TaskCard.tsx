@@ -29,7 +29,12 @@ export const TaskCard = ({ task, index }: Props) => {
     <article
       data-task-index={index}
       data-task-status={task.status}
-      className={`flex flex-col gap-2 rounded-md border border-border bg-surface p-3 ${accent}`}
+      className={`flex flex-col gap-2 rounded-md border border-border bg-surface p-3 cursor-pointer ${accent}`}
+      onClick={(e) => {
+        // Let inner anchors (e.g. the blocker link) handle their own navigation
+        if ((e.target as HTMLElement).closest('a') !== null) return
+        window.location.hash = `#/task/${encodeURIComponent(task.id)}`
+      }}
     >
       <div className="flex items-start justify-between gap-2">
         <a
