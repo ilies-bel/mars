@@ -135,6 +135,72 @@ describe('TopologyView – blocker edges', () => {
   })
 })
 
+describe('TopologyView – proposal filter (ghost non-matching nodes)', () => {
+  it('ghosts task nodes that do not belong to the selected proposal', () => {
+    const t1 = task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' })
+    const t2 = task({ id: 't2', cluster: 'Queued', parentProposalId: null })
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[t1, t2]} proposals={[]} selectedProposalId="p1" />,
+    )
+    expect(html).toContain('data-ghosted="true"')
+  })
+
+  it('does not ghost the task that belongs to the selected proposal', () => {
+    const t1 = task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' })
+    const t2 = task({ id: 't2', cluster: 'Queued', parentProposalId: null })
+    const p1 = proposal('p1', 'Feature A')
+    // Only render t1 + p1 (both match p1); t2 would be ghosted but is absent here
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[t1]} proposals={[p1]} selectedProposalId="p1" />,
+    )
+    expect(html).not.toContain('data-ghosted="true"')
+  })
+
+  it('does not ghost the selected proposal node itself', () => {
+    const t1 = task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' })
+    const p1 = proposal('p1', 'Feature A')
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[t1]} proposals={[p1]} selectedProposalId="p1" />,
+    )
+    expect(html).not.toContain('data-ghosted="true"')
+  })
+
+  it('ghosts non-selected proposal nodes when a proposal is selected', () => {
+    const t1 = task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' })
+    const t2 = task({ id: 't2', cluster: 'Queued', parentProposalId: 'p2' })
+    const p1 = proposal('p1', 'Feature A')
+    const p2 = proposal('p2', 'Feature B')
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[t1, t2]} proposals={[p1, p2]} selectedProposalId="p1" />,
+    )
+    expect(html).toContain('data-ghosted="true"')
+  })
+
+  it('renders all nodes without ghosting when selectedProposalId is null', () => {
+    const t1 = task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' })
+    const p1 = proposal('p1', 'Feature A')
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[t1]} proposals={[p1]} selectedProposalId={null} />,
+    )
+    expect(html).not.toContain('data-ghosted="true"')
+  })
+
+  it('does not reflow the layout when a filter is active (positions are unchanged)', () => {
+    const t1 = task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' })
+    const t2 = task({ id: 't2', cluster: 'Queued', parentProposalId: 'p2' })
+    const p1 = proposal('p1', 'Feature A')
+    const htmlFiltered = renderToStaticMarkup(
+      <TopologyView tasks={[t1, t2]} proposals={[p1]} selectedProposalId="p1" />,
+    )
+    const htmlUnfiltered = renderToStaticMarkup(
+      <TopologyView tasks={[t1, t2]} proposals={[p1]} selectedProposalId={null} />,
+    )
+    // Extract translate values — same node count means same layout
+    const translates = (h: string) => h.match(/translate\([^)]+\)/g) ?? []
+    expect(translates(htmlFiltered)).toEqual(translates(htmlUnfiltered))
+  })
+})
+
 describe('TopologyView – provenance edges', () => {
   it('renders a provenance edge from proposal to sliced task', () => {
     const html = renderToStaticMarkup(
