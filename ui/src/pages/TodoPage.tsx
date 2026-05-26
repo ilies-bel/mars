@@ -62,7 +62,7 @@ const ActionQueueRow = ({ item, active, onSelect }: RowProps) => {
           {item.priority}
         </span>
       </div>
-      <div className="mt-1 truncate font-mono text-[12px] text-fg">
+      <div className="mt-1 break-words font-mono text-[12px] text-fg">
         {item.title || '(no title)'}
       </div>
       <div className="mt-1 font-mono text-[10px] text-iron/70">
