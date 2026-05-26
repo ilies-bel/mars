@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { parseDeepReflectionReport, runDeepReflectorArc } from '../deep-reflector'
-import type { DeepReflectArc } from '../deep-reflect-query'
+import { buildPrompt, parseDeepReflectionReport, runDeepReflectorArc } from '../deep-reflector'
+import type { DeepReflectArc, DeepReflectSession } from '../deep-reflect-query'
 
 describe('parseDeepReflectionReport', () => {
   it('parses a well-formed reflector output', () => {
@@ -246,5 +246,57 @@ describe('runDeepReflectorArc', () => {
   it('is exported and callable', () => {
     // Structural check: the function is exported from deep-reflector
     expect(typeof runDeepReflectorArc).toBe('function')
+  })
+})
+
+// Minimal DeepReflectSession stub for prompt-assembly tests
+const makeSession = (overrides: Partial<DeepReflectSession> = {}): DeepReflectSession => ({
+  taskId: 'mars-test0001',
+  status: 'done',
+  prompt: 'implement thing',
+  error: null,
+  createdAt: '2025-01-01T00:00:00.000Z',
+  signals: [],
+  totals: {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreateTokens: 0,
+    cacheReadTokens: 0,
+    cacheHitRatio: 0,
+  },
+  scores: {},
+  conversation: [],
+  verifyOutput: null,
+  ...overrides,
+})
+
+describe('buildPrompt', () => {
+  it('without originContext does not include origin arc section', () => {
+    const prompt = buildPrompt(makeSession())
+    expect(prompt).not.toMatch(/Origin arc context/)
+  })
+
+  it('with originContext includes it in the prompt', () => {
+    const origin = 'Origin arc mars-abc123: 2 task(s), 1 retries, 1 verify failure(s)'
+    const prompt = buildPrompt(makeSession(), origin)
+    expect(prompt).toMatch(/Origin arc context/)
+    expect(prompt).toContain(origin)
+  })
+
+  it('originContext appears before the session metadata block', () => {
+    const origin = 'Origin arc mars-xyz: 1 task(s), 0 retries, 0 verify failure(s)'
+    const prompt = buildPrompt(makeSession(), origin)
+    const originPos = prompt.indexOf('Origin arc context')
+    const metaPos = prompt.indexOf('Session metadata')
+    expect(originPos).toBeGreaterThan(-1)
+    expect(metaPos).toBeGreaterThan(-1)
+    expect(originPos).toBeLessThan(metaPos)
+  })
+
+  it('session taskId and status appear in the prompt', () => {
+    const session = makeSession({ taskId: 'mars-check99', status: 'failed' })
+    const prompt = buildPrompt(session)
+    expect(prompt).toContain('mars-check99')
+    expect(prompt).toContain('failed')
   })
 })
