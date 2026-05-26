@@ -306,3 +306,35 @@ describe('TopologyView – cluster ghosting', () => {
     expect(html).not.toContain('data-cluster="In progress" data-ghosted')
   })
 })
+
+describe('TopologyView – task node drawer link', () => {
+  it('each task node is wrapped in a link to the task drawer', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 'mars-abc123', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('href="#/task/mars-abc123"')
+  })
+
+  it('URL-encodes special characters in the task id within the drawer link', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 'mars/task id', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('href="#/task/mars%2Ftask%20id"')
+  })
+
+  it('does not create a task-drawer link for proposal nodes', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'In progress', parentProposalId: 'p1' })]}
+        proposals={[proposal('p1')]}
+      />,
+    )
+    expect(html).not.toContain('href="#/task/p1"')
+  })
+})

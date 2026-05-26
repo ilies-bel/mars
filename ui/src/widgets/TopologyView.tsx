@@ -310,7 +310,8 @@ export const TopologyView = ({
               : ghostedClusters.has(node.cluster))
           const proposalGhosted = matchingIds !== null && !matchingIds.has(node.id)
           const ghosted = clusterGhosted || proposalGhosted
-          return (
+
+          const g = (
             <g
               key={node.id}
               data-node-kind={node.kind}
@@ -338,6 +339,22 @@ export const TopologyView = ({
               </text>
             </g>
           )
+
+          // A task node is wrapped in a link that opens the Task drawer.
+          // Proposal node click behaviour is handled in a later slice.
+          if (node.kind === 'task') {
+            return (
+              <a
+                key={node.id}
+                href={`#/task/${encodeURIComponent(node.id)}`}
+                style={{ cursor: 'pointer' }}
+              >
+                {g}
+              </a>
+            )
+          }
+
+          return g
         })}
       </svg>
     </main>
