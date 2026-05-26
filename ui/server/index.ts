@@ -7,7 +7,6 @@ import {
   type DerivedInboxFilter,
   type DerivedInboxKind,
   dismissalKindForRow,
-  listDerivedInbox,
 } from './derivedInbox.ts'
 import { listTerminalEvents } from './events.ts'
 import { resolveRepo } from './repo.ts'
@@ -178,17 +177,218 @@ export const startServer = async (
             filterRaw === 'dismissed' || filterRaw === 'all'
               ? filterRaw
               : 'open'
+
           // Fetch the action-menu registry from the daemon (empty if the
           // daemon is down — rows then render without buttons).
           const errorKinds = await fetchErrorKinds(ctx.stateDir)
-          const items = await listDerivedInbox(
-            db,
-            stateDb,
-            ctx.repoRoot,
-            filter,
-            errorKinds,
+          const registry = new Map(errorKinds.map((e) => [e.kind, e]))
+
+          // Read all open inbox rows from the persisted store.
+          // This replaces the on-demand derived scan (no .mars/worktrees readdir/stat).
+          const persistedRows = await stateDb.listOpenInboxItems()
+          const dismissalMap = await stateDb.listInboxDismissals()
+
+          // Load tasks for DAG enrichment (still a DB query, not a disk scan).
+          const tasksExist = await db.tableExists()
+          const allTasks = tasksExist ? await db.listTasks() : []
+          const taskById = new Map(allTasks.map((t) => [t.id, t]))
+          const blockingMap = new Map<string, string[]>()
+          for (const t of allTasks) {
+            for (const blkId of t.blockedBy) {
+              const arr = blockingMap.get(blkId) ?? []
+              arr.push(t.id)
+              blockingMap.set(blkId, arr)
+            }
+          }
+
+          // Map a persisted InboxKind to the ActionQueueItem `kind` vocabulary.
+          const toUiKind = (k: string): DerivedInboxKind => {
+            if (k === 'stale-worktree') return 'stale-worktree'
+            if (k === 'draft-proposal') return 'draft-proposal'
+            return 'failed-task'
+          }
+
+          // Map a persisted InboxKind to the dismissal entity kind.
+          const toEntityKind = (
+            uiKind: DerivedInboxKind,
+          ): 'task' | 'worktree' | 'proposal' =>
+            uiKind === 'stale-worktree'
+              ? 'worktree'
+              : uiKind === 'draft-proposal'
+                ? 'proposal'
+                : 'task'
+
+          // Extract the entity id (task id, worktree id, or proposal id) from
+          // a raw inbox row. Prefers payload/context fields written by known
+          // raisers; falls back to the stored signature, then the row id.
+          const extractEntityId = (
+            row: { kind: string; payload: Record<string, unknown>; context: Record<string, unknown>; id: string },
+          ): string => {
+            if (row.kind === 'stale-worktree') {
+              if (typeof row.context.taskId === 'string') return row.context.taskId
+            }
+            if (row.kind === 'draft-proposal') {
+              if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+            }
+            if (typeof row.payload.taskId === 'string') return row.payload.taskId
+            if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
+            return row.id
+          }
+
+          // Map persisted priority to the ActionQueueItem three-tier vocabulary.
+          const toUiPriority = (p: string): 'high' | 'normal' | 'low' => {
+            if (p === 'urgent' || p === 'high') return 'high'
+            if (p === 'low') return 'low'
+            return 'normal'
+          }
+
+          // Resolve the errorKind key: 'failed' maps to 'failed-task' for
+          // backwards compat with the action registry; all other kinds pass through.
+          const toErrorKind = (k: string): string =>
+            k === 'failed' ? 'failed-task' : k
+
+          const noteToAckState = (
+            note: string | null,
+          ): 'ack' | 'resolved' | 'dismissed' => {
+            if (note === 'ack') return 'ack'
+            if (note === 'resolved') return 'resolved'
+            return 'dismissed'
+          }
+
+          const toNode = (id: string) => {
+            const t = taskById.get(id)
+            const summarize = (prompt: string): string => {
+              const oneLine = prompt.replace(/\s+/g, ' ').trim()
+              return oneLine.length <= 80 ? oneLine : `${oneLine.slice(0, 79)}…`
+            }
+            return {
+              id,
+              status: (t?.status ?? 'dropped') as string,
+              summary: t ? summarize(t.prompt) : '(unknown task)',
+            }
+          }
+
+          type ActionQueueRow = {
+            id: string
+            kind: DerivedInboxKind
+            entityId: string
+            priority: 'high' | 'normal' | 'low'
+            title: string
+            body: string
+            at: string
+            dag: {
+              blockers: ReturnType<typeof toNode>[]
+              blocking: ReturnType<typeof toNode>[]
+              descendants: ReturnType<typeof toNode>[]
+              proposalId: string | null
+            } | null
+            dismissed: boolean
+            ackState: 'ack' | 'resolved' | 'dismissed' | null
+            errorKind: string
+            actions: ReturnType<typeof registry.get> extends undefined
+              ? never[]
+              : { id: string; label: string; op: string }[]
+          }
+
+          const rows: ActionQueueRow[] = []
+
+          for (const row of persistedRows) {
+            const uiKind = toUiKind(row.kind)
+            const entityId = extractEntityId(row)
+            const entityKind = toEntityKind(uiKind)
+            const dismissalKey = `${entityKind}:${entityId}`
+            const ackState: 'ack' | 'resolved' | 'dismissed' | null =
+              dismissalMap.has(dismissalKey)
+                ? noteToAckState(dismissalMap.get(dismissalKey) ?? null)
+                : null
+            const dismissed =
+              ackState === 'resolved' || ackState === 'dismissed'
+            const errorKind = toErrorKind(row.kind)
+            const actions =
+              (registry.get(errorKind)?.recoveryActions ?? []) as {
+                id: string
+                label: string
+                op: string
+              }[]
+
+            // DAG enrichment for task-backed rows.
+            let dag: ActionQueueRow['dag'] = null
+            if (uiKind === 'failed-task') {
+              const task = taskById.get(entityId)
+              if (task) {
+                const blockers = task.blockedBy.map(toNode)
+                const blocking = (blockingMap.get(entityId) ?? []).map(toNode)
+                dag = {
+                  blockers,
+                  blocking,
+                  descendants: [],
+                  proposalId: task.parentProposalId,
+                }
+              }
+            }
+
+            rows.push({
+              id: row.id,
+              kind: uiKind,
+              entityId,
+              priority: toUiPriority(row.priority),
+              title: row.title,
+              body: row.body,
+              at: row.lastSeenAt,
+              dag,
+              dismissed,
+              ackState,
+              errorKind,
+              actions,
+            })
+          }
+
+          const PRIORITY_RANK: Record<'high' | 'normal' | 'low', number> = {
+            high: 0, normal: 1, low: 2,
+          }
+          const filtered =
+            filter === 'all'
+              ? rows
+              : filter === 'dismissed'
+                ? rows.filter((r) => r.dismissed)
+                : rows.filter((r) => !r.dismissed)
+
+          filtered.sort((a, b) => {
+            const pr = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
+            return pr !== 0 ? pr : b.at.localeCompare(a.at)
+          })
+
+          // When ≥2 daemon-killed rows are visible, prepend a batch-restart row.
+          const daemonKilledVisible = filtered.filter(
+            (r) => r.errorKind === 'daemon-killed',
           )
-          return jsonResponse(200, items)
+          if (daemonKilledVisible.length >= 2) {
+            const batchActions = (
+              registry.get('daemon-killed-batch')?.recoveryActions ?? []
+            ) as { id: string; label: string; op: string }[]
+            const newest = daemonKilledVisible[0]!
+            filtered.unshift({
+              id: 'failed-task:__daemon-killed-batch__',
+              kind: 'failed-task',
+              entityId: '__daemon-killed-batch__',
+              priority: 'high',
+              title: `Restart all daemon-killed tasks (${daemonKilledVisible.length})`,
+              body:
+                `${daemonKilledVisible.length} tasks were in flight when the daemon was killed.\n` +
+                `None of these failures are task faults — a fresh dispatch is very likely to succeed.\n\n` +
+                `Next actions:\n` +
+                `  • Restart all at once:  mars restart ${daemonKilledVisible.map((r) => r.entityId).join(' ')}\n` +
+                `  • Or use the button above to restart all in one click.`,
+              at: newest.at,
+              dag: null,
+              dismissed: false,
+              ackState: null,
+              errorKind: 'daemon-killed-batch',
+              actions: batchActions,
+            })
+          }
+
+          return jsonResponse(200, filtered)
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }

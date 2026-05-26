@@ -2959,76 +2959,84 @@ const main = async (): Promise<void> => {
     const subRest = lean ? rest.filter((a) => a !== '--lean') : rest
     const sub = subRest[0]
     const inbox = await import('./mastra/lib/inbox')
-    const derived = await import('./mastra/lib/derived-inbox')
     const dismissals = await import('./mastra/lib/inbox-dismissals')
-    type DerivedRow = import('./mastra/lib/derived-inbox').DerivedInboxRow
-    type DagNode = import('./mastra/lib/derived-inbox').DagNode
+    type InboxItem = import('./mastra/lib/inbox').InboxItem
 
     const LEAN_PREVIEW = 3
 
-    const printList = (rows: DerivedRow[]): void => {
-      if (rows.length === 0) {
+    // Map a persisted InboxKind to the dismissal entity kind.
+    const inboxKindToEntityKind = (
+      kind: string,
+    ): 'task' | 'worktree' | 'proposal' => {
+      if (kind === 'stale-worktree') return 'worktree'
+      if (kind === 'draft-proposal') return 'proposal'
+      return 'task'
+    }
+
+    // Extract the identifying entity id from a persisted inbox row.
+    const extractEntityId = (item: InboxItem): string => {
+      if (item.kind === 'stale-worktree') {
+        if (typeof item.context.taskId === 'string') return item.context.taskId
+      }
+      if (item.kind === 'draft-proposal') {
+        if (typeof item.payload.proposalId === 'string')
+          return item.payload.proposalId
+      }
+      if (typeof item.payload.taskId === 'string') return item.payload.taskId
+      if (typeof item.payload.originTaskId === 'string')
+        return item.payload.originTaskId
+      return item.signature ?? item.id
+    }
+
+    const printList = (items: InboxItem[]): void => {
+      if (items.length === 0) {
         console.log('inbox empty')
         return
       }
-      for (const row of rows) {
-        const flag = row.dismissed ? 'dismissed' : 'open'
+      for (const item of items) {
+        const flag =
+          item.state === 'dismissed' || item.state === 'resolved'
+            ? 'dismissed'
+            : 'open'
+        const priority =
+          item.priority === 'urgent' ? 'high' : item.priority
         console.log(
-          `${row.id}\t${flag}\t${row.priority}\t${row.kind}\t${row.title}`,
+          `${item.id}\t${flag}\t${priority}\t${item.kind}\t${item.title}`,
         )
       }
     }
 
-    const printLean = (rows: DerivedRow[]): void => {
-      if (rows.length === 0) {
+    const printLean = (items: InboxItem[]): void => {
+      if (items.length === 0) {
         console.log('inbox empty')
         return
       }
       const counts: Record<string, number> = {}
-      for (const row of rows) {
-        counts[row.kind] = (counts[row.kind] ?? 0) + 1
+      for (const item of items) {
+        counts[item.kind] = (counts[item.kind] ?? 0) + 1
       }
       const parts = Object.entries(counts).map(([k, n]) => `${k}:${n}`)
-      console.log(`inbox ${rows.length} (${parts.join(', ')})`)
-      for (const row of rows.slice(0, LEAN_PREVIEW)) {
-        console.log(`  ${row.id}  ${row.title}`)
+      console.log(`inbox ${items.length} (${parts.join(', ')})`)
+      for (const item of items.slice(0, LEAN_PREVIEW)) {
+        console.log(`  ${item.id}  ${item.title}`)
       }
-      const overflow = rows.length - LEAN_PREVIEW
+      const overflow = items.length - LEAN_PREVIEW
       if (overflow > 0) console.log(`  ... +${overflow} more`)
     }
 
-    const printDag = (label: string, nodes: DagNode[]): void => {
-      if (nodes.length === 0) return
-      console.log(`  ${label}:`)
-      for (const n of nodes) {
-        console.log(`    - ${n.id} (${n.status})  ${n.summary}`)
-      }
-    }
-
-    const printShow = (row: DerivedRow): void => {
-      console.log(`id:        ${row.id}`)
-      console.log(`kind:      ${row.kind}`)
-      console.log(`entity:    ${row.entityId}`)
-      console.log(`priority:  ${row.priority}`)
-      console.log(`dismissed: ${row.dismissed}`)
-      console.log(`at:        ${row.at}`)
+    const printShow = (item: InboxItem): void => {
+      const entityId = extractEntityId(item)
+      const dismissed =
+        item.state === 'dismissed' || item.state === 'resolved'
+      const priority = item.priority === 'urgent' ? 'high' : item.priority
+      console.log(`id:        ${item.id}`)
+      console.log(`kind:      ${item.kind}`)
+      console.log(`entity:    ${entityId}`)
+      console.log(`priority:  ${priority}`)
+      console.log(`dismissed: ${dismissed}`)
+      console.log(`at:        ${item.lastSeenAt ?? item.raisedAt}`)
       console.log('')
-      console.log(row.body)
-      if (row.dag) {
-        console.log('')
-        console.log('dag:')
-        if (row.dag.origin) {
-          console.log(
-            `  origin: ${row.dag.origin.id} (${row.dag.origin.status})`,
-          )
-        }
-        if (row.dag.proposalId) {
-          console.log(`  proposal: ${row.dag.proposalId}`)
-        }
-        printDag('blockers (waits on)', row.dag.blockers)
-        printDag('blocking (waited on by)', row.dag.blocking)
-        printDag('descendants (recovery)', row.dag.descendants)
-      }
+      console.log(item.body)
     }
 
     if (sub === 'watch') {
@@ -3098,13 +3106,20 @@ const main = async (): Promise<void> => {
         console.error('usage: mars inbox list [open|dismissed|all] [--lean]')
         process.exit(1)
       }
-      const rows = await derived.listDerivedInbox({
-        filter: filter as 'open' | 'dismissed' | 'all',
-      })
+      // Map filter to the inbox_items state vocabulary.
+      // 'open' → only state='open'; 'dismissed' → state='dismissed';
+      // 'all' → no state filter (acknowledged + open + dismissed).
+      const stateFilter =
+        filter === 'dismissed'
+          ? ('dismissed' as const)
+          : filter === 'all'
+            ? ('all' as const)
+            : ('open' as const)
+      const items = await inbox.listInboxItems(stateFilter)
       if (lean) {
-        printLean(rows)
+        printLean(items)
       } else {
-        printList(rows)
+        printList(items)
       }
       return
     }
@@ -3115,12 +3130,12 @@ const main = async (): Promise<void> => {
         console.error('usage: mars inbox show <id>')
         process.exit(1)
       }
-      const row = await derived.getDerivedInboxRow(id)
-      if (!row) {
+      const item = await inbox.getInboxItem(id)
+      if (!item) {
         console.error(`no inbox item matching ${id}`)
         process.exit(1)
       }
-      printShow(row)
+      printShow(item)
       return
     }
 
@@ -3130,15 +3145,16 @@ const main = async (): Promise<void> => {
         console.error(`usage: mars inbox ${sub} <id>`)
         process.exit(1)
       }
-      const row = await derived.getDerivedInboxRow(id)
-      if (!row) {
+      const item = await inbox.getInboxItem(id)
+      if (!item) {
         console.error(`no inbox item matching ${id}`)
         process.exit(1)
       }
-      const entityKind = derived.dismissalKindForRow(row.kind)
+      const entityKind = inboxKindToEntityKind(item.kind)
+      const entityId = extractEntityId(item)
       const note = sub === 'ack' ? 'ack' : 'resolved'
-      await dismissals.dismissEntity(entityKind, row.entityId, { note })
-      console.log(`${sub} ${row.id}`)
+      await dismissals.dismissEntity(entityKind, entityId, { note })
+      console.log(`${sub} ${item.id}`)
       return
     }
 
@@ -3148,28 +3164,28 @@ const main = async (): Promise<void> => {
         console.error(`usage: mars inbox ${sub} <id>`)
         process.exit(1)
       }
-      const row = await derived.getDerivedInboxRow(id)
-      if (!row) {
+      const item = await inbox.getInboxItem(id)
+      if (!item) {
         console.error(`no inbox item matching ${id}`)
         process.exit(1)
       }
-      const entityKind = derived.dismissalKindForRow(row.kind)
+      const entityKind = inboxKindToEntityKind(item.kind)
+      const entityId = extractEntityId(item)
       if (sub === 'dismiss') {
         const { resolveAuthor, formatAuthor } = await import('./mastra/author')
         const by = formatAuthor(resolveAuthor(flags['--author']))
         const note = flags['--note']
-        await dismissals.dismissEntity(entityKind, row.entityId, {
+        await dismissals.dismissEntity(entityKind, entityId, {
           by,
           ...(note !== undefined ? { note } : {}),
         })
-        console.log(`dismiss ${row.id}`)
+        console.log(`dismiss ${item.id}`)
       } else {
-        const removed = await dismissals.undismissEntity(
-          entityKind,
-          row.entityId,
-        )
+        const removed = await dismissals.undismissEntity(entityKind, entityId)
         console.log(
-          removed ? `undismiss ${row.id}` : `${row.id} was not dismissed`,
+          removed
+            ? `undismiss ${item.id}`
+            : `${item.id} was not dismissed`,
         )
       }
       return
