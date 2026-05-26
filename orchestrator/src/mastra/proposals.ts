@@ -1031,6 +1031,7 @@ export const deleteProposal = async (idOrPrefix: string): Promise<string> => {
   if (r.rowsAffected === 0) {
     throw new Error(`proposal ${id} not found`)
   }
+  await emitProposalBusEvent('proposal.deleted', { proposalId: id })
   return id
 }
 
