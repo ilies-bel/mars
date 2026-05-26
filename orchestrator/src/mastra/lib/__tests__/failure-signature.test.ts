@@ -237,6 +237,31 @@ describe('matchFull rules are checked against full output', () => {
     )
   })
 
+  it('computeFailureSignature produces verify:test/test-no-suite-found for the real vitest empty-file error shape', () => {
+    // The actual error captured when vitest discovers a file that matches its
+    // test-file glob but contains no describe/it/test blocks (a comment-only
+    // placeholder left behind by a coding agent).
+    const errorOutput = [
+      '⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯',
+      '',
+      ' FAIL  src/mastra/agents/__tests__/registry.test.ts [ src/mastra/agents/__tests__/registry.test.ts ]',
+      'Error: No test suite found in file /Users/dev/repo/orchestrator/src/mastra/agents/__tests__/registry.test.ts',
+      '⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯',
+    ].join('\n')
+    expect(computeFailureSignature('verify:test', errorOutput)).toBe(
+      'verify:test/test-no-suite-found',
+    )
+  })
+
+  it('test-no-suite-found does not interfere with AssertionError classification', () => {
+    // An AssertionError that happens to mention "No test suite" should still
+    // classify as test-assertion-error (AssertionError rule comes first).
+    const assertionWithSuiteText = [
+      'AssertionError: expected No test suite found to be defined',
+    ].join('\n')
+    expect(classifyError(assertionWithSuiteText)).toBe('test-assertion-error')
+  })
+
   it('test-libsql-no-such-table does not interfere with AssertionError classification', () => {
     // An AssertionError that happens to contain "no such table" text should still
     // classify as test-assertion-error (AssertionError rule comes first in the list).

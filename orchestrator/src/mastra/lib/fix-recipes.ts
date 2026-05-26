@@ -871,6 +871,97 @@ const testLibsqlNoSuchTableRecipe: FixRecipe = {
   },
 }
 
+const testNoSuiteFoundRecipe: FixRecipe = {
+  signature: 'verify:test/test-no-suite-found',
+  title: (ctx) =>
+    `Remove or populate the empty test file blocking verify:test on ${ctx.targetBranch}`,
+  buildPrompt: (ctx) => {
+    const integration = ctx.integrationBranch ?? 'main'
+    const countCmd = `git rev-list --count ${integration}..HEAD`
+    const sanitizedBranch = ctx.targetBranch.replace(/[^a-zA-Z0-9-]/g, '-')
+    const patchFile = `/tmp/recover-${sanitizedBranch}.patch`
+    const failureOutput =
+      ctx.statusOutput.length > 0
+        ? ctx.statusOutput
+        : '(no test output captured)'
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `The previous attempt on branch ${ctx.targetBranch} failed the verify:test step with "No test suite found in file <path>". Vitest discovered a file that matches its test-file glob (e.g. \`**/*.test.ts\`) but contains no \`describe\`/\`it\`/\`test\` blocks — typically a comment-only placeholder left behind after the real tests were written elsewhere.`,
+      '',
+      `You are running in a FRESH recovery worktree on a FRESH branch (not ${ctx.targetBranch}). Your job is to leave a commit HERE — in your own cwd, on your own branch. Do NOT \`cd\` into ${ctx.targetPath} and do NOT edit files there: that is the failing tree, inspect it read-only only.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `STEP 1 — sanity-check first. From your current working directory, run \`${countCmd}\` to count commits on your recovery branch not yet on ${integration}. The output is a plain integer.`,
+      ` - If it prints a non-zero integer, your recovery branch already has commits: this is a false positive — do NOT modify files, exit successfully.`,
+      ` - If it prints \`0\`, your branch is genuinely empty: proceed to STEP 2.`,
+      '',
+      `Do not use \`git log\` or any other command to make this decision — only the integer from \`rev-list --count\` is authoritative.`,
+      '',
+      `STEP 2 — Lift the failing worktree's diff into YOUR recovery worktree. Only enter this step when \`${countCmd}\` printed \`0\`.`,
+      '',
+      `Inspect what the previous agent did (read-only against the failing worktree):`,
+      '',
+      '```',
+      `git -C ${ctx.targetPath} diff ${integration}..HEAD --stat`,
+      `git -C ${ctx.targetPath} diff ${integration}..HEAD`,
+      '```',
+      '',
+      ` 1. Capture: \`git -C ${ctx.targetPath} diff ${integration}..HEAD > ${patchFile}\``,
+      ` 2. Apply: \`git apply --3way ${patchFile}\` (resolve any \`.rej\` files by hand if needed).`,
+      ` 3. **Commit immediately**: \`git add -A && git commit -m "recover: lift diff from ${ctx.targetBranch}"\`. Do this BEFORE inspecting or fixing anything.`,
+      ` 4. Re-run \`${countCmd}\`. It MUST now print a non-zero integer. If it still prints \`0\`, fix that before anything else.`,
+      '',
+      `STEP 3 — Identify and fix the empty test file. Use the captured test output at the bottom of this prompt to find the file path from the "No test suite found in file <path>" message.`,
+      '',
+      `Read that file in YOUR current worktree. It will be a file that either:`,
+      ` (a) contains only comments and whitespace (a placeholder left behind by the previous agent), OR`,
+      ` (b) contains import statements but no test blocks.`,
+      '',
+      `Now check the directory of the empty file for OTHER test files covering the same module:`,
+      ` - Look for sibling \`*.test.ts\` files in the same directory or in the parent directory that test the same module.`,
+      ` - If a sibling test file exists that covers the same subject: **delete the empty file**. Example: if \`__tests__/registry.test.ts\` is empty but \`registry.test.ts\` already exists in the same parent directory with real tests, delete \`__tests__/registry.test.ts\`.`,
+      ` - If NO sibling test file exists: **populate the empty file** with a minimal test suite that imports and exercises the module under test. At minimum, write one test that asserts the module's public export exists and returns the expected type.`,
+      '',
+      `STEP 4 — Run the full test suite to confirm the error is gone:`,
+      '',
+      '```',
+      `cd orchestrator && npm test`,
+      '```',
+      '',
+      ` - The "No test suite found" error must no longer appear.`,
+      ` - If you populated a test file, every test you wrote must pass.`,
+      '',
+      `STEP 5 — Commit the fix: \`git add -A && git commit -m "fix: remove/populate empty test file that caused No test suite found"\``,
+      '',
+      `## Important constraints`,
+      ` - Do NOT delete a test file that contains real tests — only delete a file that is empty or comment-only.`,
+      ` - Do NOT modify the module's implementation to make the error go away — fix the test file only.`,
+      ` - If the file is a \`__tests__/\` placeholder whose comment says "tests live at <path>", check that exact path first before deciding to delete or populate.`,
+      ` - If you cannot determine the right fix within two attempts, raise a high-priority inbox item via \`mars inbox raise --from -\` explaining what you found, then exit.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (for context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only — \`git -C ${ctx.targetPath} ...\` for inspection only, never edit there): ${ctx.targetPath}`,
+      `Integration branch: ${integration}`,
+      '',
+      'Captured test failure output (use the "No test suite found in file <path>" line to identify the empty file):',
+      '```',
+      failureOutput,
+      '```',
+      '',
+      `Save your work. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 // NOTE — intentionally absent entries (documented so future investigators don't
 // re-open these):
 //
@@ -992,6 +1083,7 @@ const recipeList: readonly FixRecipe[] = [
   typecheckCannotFindNameRecipe,
   testAssertionErrorRecipe,
   testLibsqlNoSuchTableRecipe,
+  testNoSuiteFoundRecipe,
 ]
 
 /**
