@@ -1,9 +1,8 @@
 /**
- * Inbox dismissals — the only persistent operator opinion the derived
- * inbox honours.
+ * Inbox dismissals — the only persistent operator opinion the inbox honours.
  *
- * The derived inbox ({@link ./derived-inbox}) is a pure state view: a row
- * exists iff its entity is currently stuck. A *dismissal* lets the operator
+ * The inbox is a per-slice state view: a row exists iff its entity is
+ * currently stuck (raised into `inbox_items`). A *dismissal* lets the operator
  * say "I have seen this one, hide it for now" without changing the entity's
  * state. The dismissal is keyed on `(entityKind, entityId)` and is wiped the
  * moment the entity's state changes — see `clearDismissalForEntity`, called

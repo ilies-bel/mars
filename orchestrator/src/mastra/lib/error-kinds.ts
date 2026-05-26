@@ -24,8 +24,13 @@
  * intent.
  */
 
-import type { DerivedInboxKind } from './derived-inbox'
 import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
+
+/**
+ * The inbox row kind a matching row surfaces as. Mirrors the three persisted
+ * inbox row kinds raised by the orchestrator into `inbox_items`.
+ */
+type DerivedInboxKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
 
 /**
  * The verbs an action can ask the daemon to perform. Each maps to a route on
@@ -86,7 +91,7 @@ export interface ActionDescriptor {
 export interface ErrorKind {
   /** Stable identifier this kind dispatches on. */
   kind: ErrorKindId
-  /** The derived-inbox row kind a matching row surfaces as. */
+  /** The inbox row kind a matching row surfaces as. */
   rowKind: DerivedInboxKind
   /** How this error is detected / raised. */
   trigger: string
@@ -225,7 +230,7 @@ export const listErrorKinds = (): ErrorKind[] => Object.values(ERROR_KINDS)
 export const getErrorKind = (kind: ErrorKindId): ErrorKind => ERROR_KINDS[kind]
 
 /**
- * Resolve the error kind for a derived-inbox row. A row's kind is not always
+ * Resolve the error kind for an inbox row. A row's kind is not always
  * enough: a `failed-task` row whose task carries the daemon-killed signature
  * resolves to `daemon-killed` (a requeue-framed menu), not the generic
  * `failed-task` menu. Everything else maps straight from its row kind.
