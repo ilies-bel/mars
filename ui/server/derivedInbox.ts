@@ -290,8 +290,8 @@ export const listDerivedInbox = async (
       priority,
       title:
         kind === 'failed-task'
-          ? `Failed: ${summarize(task.prompt, 60)}`
-          : `Blocked: ${summarize(task.prompt, 60)}`,
+          ? `Failed: ${task.prompt.replace(/\s+/g, ' ').trim()}`
+          : `Blocked: ${task.prompt.replace(/\s+/g, ' ').trim()}`,
       body: kind === 'failed-task' ? failedBody(task) : blockedBody(task, blockers),
       at: task.updatedAt,
       dag,
