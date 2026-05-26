@@ -193,3 +193,18 @@ export const getDefaultTaskStore = async (): Promise<TaskStore> => {
 export const __resetDefaultTaskStoreForTests = (): void => {
   cachedDefaultStore = null
 }
+
+/**
+ * Return the raw libsql `Client` after ensuring the queue migrations have run.
+ *
+ * Prefer `getDefaultTaskStore()` when possible. This escape-hatch is provided
+ * solely for callers that need to open a raw libsql write-transaction so they
+ * can pass a `Transaction` handle to `publish()` inside the same atomic unit.
+ * Once the `TaskStore.atomic(fn)` method lands (per ADR-0021 subsequent slice),
+ * all callers should migrate to `atomic()` and this helper should be deleted.
+ */
+export const getDefaultQueueClient = async (): Promise<Client> => {
+  const { initQueue, getClient } = await import('../queue')
+  await initQueue()
+  return getClient()
+}

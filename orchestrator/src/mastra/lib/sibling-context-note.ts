@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { getTask, initQueue, updateTask } from '../queue'
+import { getDefaultDomainTaskStore } from '../store/task-store'
 
 /**
  * Short-circuit recovery when sibling CONTEXT note already exists.
@@ -64,8 +64,8 @@ export interface ShortCircuitResult {
 export const tryShortCircuitOnSiblingContextNote = async (
   parentTaskId: string,
 ): Promise<ShortCircuitResult> => {
-  await initQueue()
-  const parent = await getTask(parentTaskId)
+  const store = getDefaultDomainTaskStore()
+  const parent = await store.getTask(parentTaskId)
   if (!parent || !parent.worktreePath) {
     return { shortCircuited: false, notePath: null }
   }
@@ -73,7 +73,7 @@ export const tryShortCircuitOnSiblingContextNote = async (
   if (notePath === null) {
     return { shortCircuited: false, notePath: null }
   }
-  await updateTask(parentTaskId, {
+  await store.updateTask(parentTaskId, {
     status: 'done',
     // Record the existing note as the artifact. The `error` column is the
     // only free-form metadata slot on a Task today; the prefix makes it

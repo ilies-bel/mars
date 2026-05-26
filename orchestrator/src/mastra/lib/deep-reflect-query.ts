@@ -1,4 +1,4 @@
-import { getClient, initQueue } from '../queue'
+import { getDefaultTaskStore } from './task-store'
 import type { ClaudeEvent } from './claude-stream'
 import { listTaskSignals, type TaskSignalRow } from './reflect-signals'
 import { loadScoresForTasks, median, type TaskScoreEntry } from './reflect-query'
@@ -43,9 +43,10 @@ interface TranscriptCostRow {
   weighted_tokens: number
 }
 
-const fetchTranscriptCostRows = async (): Promise<TranscriptCostRow[]> => {
-  const c = getClient()
-  const r = await c.execute(`
+const fetchTranscriptCostRows = async (
+  store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
+): Promise<TranscriptCostRow[]> => {
+  const r = await store.query(`
     SELECT t.id AS task_id, t.status AS status, t.created_at AS created_at,
            COALESCE(SUM(s.input_tokens + s.output_tokens + s.cache_create_tokens + CAST(s.cache_read_tokens AS REAL) * 0.1), 0) AS weighted_tokens
       FROM tasks t
@@ -70,8 +71,8 @@ const fetchTranscriptCostRows = async (): Promise<TranscriptCostRow[]> => {
 }
 
 export const pickDeepReflectCandidate = async (): Promise<PickResult | null> => {
-  await initQueue()
-  const rows = await fetchTranscriptCostRows()
+  const store = await getDefaultTaskStore()
+  const rows = await fetchTranscriptCostRows(store)
   if (rows.length === 0) return null
 
   // Rule 1: most recent failed task with a transcript.
@@ -132,17 +133,16 @@ export const pickDeepReflectCandidate = async (): Promise<PickResult | null> => 
 export const loadDeepReflectSession = async (
   taskId: string,
 ): Promise<DeepReflectSession | null> => {
-  await initQueue()
-  const c = getClient()
+  const store = await getDefaultTaskStore()
 
-  const taskRes = await c.execute({
+  const taskRes = await store.query({
     sql: `SELECT id, status, prompt, error, created_at FROM tasks WHERE id = ?`,
     args: [taskId],
   })
   if (taskRes.rows.length === 0) return null
   const task = taskRes.rows[0] as unknown as Record<string, unknown>
 
-  const transcriptRes = await c.execute({
+  const transcriptRes = await store.query({
     sql: `SELECT conversation_json, verify_output FROM task_transcripts WHERE task_id = ?`,
     args: [taskId],
   })
@@ -259,9 +259,11 @@ interface ArcTaskRow {
   fix_for_task_id: string | null
 }
 
-const fetchArcTaskRows = async (originId: string): Promise<ArcTaskRow[]> => {
-  const c = getClient()
-  const r = await c.execute({
+const fetchArcTaskRows = async (
+  store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
+  originId: string,
+): Promise<ArcTaskRow[]> => {
+  const r = await store.query({
     sql: `SELECT id, status, prompt, error, created_at, updated_at, kind, fix_for_task_id
             FROM tasks
            WHERE COALESCE(origin_id, id) = ?
@@ -284,10 +286,10 @@ const fetchArcTaskRows = async (originId: string): Promise<ArcTaskRow[]> => {
 }
 
 const loadTaskTranscript = async (
+  store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
   taskId: string,
 ): Promise<{ conversation: ClaudeEvent[]; verifyOutput: string | null; hasTranscript: boolean }> => {
-  const c = getClient()
-  const r = await c.execute({
+  const r = await store.query({
     sql: `SELECT conversation_json, verify_output FROM task_transcripts WHERE task_id = ?`,
     args: [taskId],
   })
@@ -346,8 +348,8 @@ const summariseSignals = (rows: ReadonlyArray<TaskSignalRow>) => {
 export const loadDeepReflectArc = async (
   originId: string,
 ): Promise<DeepReflectArc | null> => {
-  await initQueue()
-  const rows = await fetchArcTaskRows(originId)
+  const store = await getDefaultTaskStore()
+  const rows = await fetchArcTaskRows(store, originId)
   if (rows.length === 0) return null
 
   const taskIds = rows.map((r) => r.id)
@@ -357,7 +359,7 @@ export const loadDeepReflectArc = async (
   for (const row of rows) {
     const [signalRows, transcript] = await Promise.all([
       listTaskSignals(row.id),
-      loadTaskTranscript(row.id),
+      loadTaskTranscript(store, row.id),
     ])
     const { signals, totals } = summariseSignals(signalRows)
     const derivedKind = row.kind ?? (row.fix_for_task_id ? 'fix' : 'task')
@@ -446,9 +448,10 @@ interface ArcAggregateRow {
   has_transcript: number
 }
 
-const fetchArcAggregateRows = async (): Promise<ArcAggregateRow[]> => {
-  const c = getClient()
-  const r = await c.execute(`
+const fetchArcAggregateRows = async (
+  store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
+): Promise<ArcAggregateRow[]> => {
+  const r = await store.query(`
     SELECT t.id AS task_id,
            COALESCE(t.origin_id, t.id) AS origin_id,
            t.status AS status,
@@ -483,8 +486,8 @@ export const listDeepReflectArcCandidates = async (
   const limit = opts.limit ?? 5
   const withTranscriptOnly = opts.withTranscriptOnly ?? true
 
-  await initQueue()
-  const rows = await fetchArcAggregateRows()
+  const store = await getDefaultTaskStore()
+  const rows = await fetchArcAggregateRows(store)
   if (rows.length === 0) return []
 
   const byOrigin = new Map<string, ArcCandidate>()
@@ -534,8 +537,8 @@ export const listDeepReflectArcCandidates = async (
 export const resolveOriginIdForTaskOrSelf = async (
   taskId: string,
 ): Promise<string> => {
-  await initQueue()
-  const r = await getClient().execute({
+  const store = await getDefaultTaskStore()
+  const r = await store.query({
     sql: `SELECT COALESCE(origin_id, id) AS origin_id FROM tasks WHERE id = ?`,
     args: [taskId],
   })
