@@ -239,7 +239,10 @@ Rules:
   omit the entry.
 - Quote text verbatim in evidence; do not paraphrase.`
 
-const buildPrompt = (session: DeepReflectSession): string => {
+export const buildPrompt = (
+  session: DeepReflectSession,
+  originContext?: string,
+): string => {
   const head = {
     taskId: session.taskId,
     status: session.status,
@@ -259,7 +262,10 @@ const buildPrompt = (session: DeepReflectSession): string => {
   const verifyBlock = session.verifyOutput
     ? `\n\nVerify output (raw):\n\`\`\`\n${session.verifyOutput}\n\`\`\``
     : '\n\n(verify output: none recorded)'
-  return `${SYNTHESIS_INSTRUCTIONS_SINGLE}
+  const originBlock = originContext
+    ? `\n\nOrigin arc context:\n${originContext}`
+    : ''
+  return `${SYNTHESIS_INSTRUCTIONS_SINGLE}${originBlock}
 
 Session metadata:
 ${headJson}
@@ -524,11 +530,12 @@ const emptyReport = (): DeepReflectionReport => ({
 export const runDeepReflector = async (
   session: DeepReflectSession,
   timeoutMs: number = 10 * 60 * 1000,
+  originContext?: string,
 ): Promise<DeepReflectionResult> => {
   const model = process.env.MARS_DEEP_REFLECT_MODEL ?? 'opus'
   const r = await runClaudeCode({
     cwd: getRepoRoot(),
-    prompt: buildPrompt(session),
+    prompt: buildPrompt(session, originContext),
     timeoutMs,
     model,
   })
