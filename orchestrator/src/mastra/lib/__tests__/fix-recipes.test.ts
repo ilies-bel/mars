@@ -678,7 +678,7 @@ describe('fix-recipes', () => {
     const ctx = {
       targetPath: '/tmp/worktrees/task-abc',
       statusOutput:
-        "src/mastra/lib/__tests__/reflector.test.ts(40,9): error TS2353: Object literal may only specify known properties, and 'totalCostUsd' does not exist in type '{ inputTokens: number; outputTokens: number; cacheCreateTokens: number; cacheReadTokens: number; cacheHitRatio: number; }'.\nCommand failed: npx tsc --noEmit\n",
+        "src/mastra/lib/__tests__/reflector.test.ts(40,9): error TS2353: Object literal may only specify known properties, and 'removedField' does not exist in type '{ inputTokens: number; outputTokens: number; cacheCreateTokens: number; cacheReadTokens: number; cacheHitRatio: number; }'.\nCommand failed: npx tsc --noEmit\n",
       targetBranch: 'task/abc',
       integrationBranch: 'main',
       originalPrompt: '',
@@ -739,15 +739,15 @@ describe('fix-recipes', () => {
       const promptWithSource = recipe.buildPrompt({
         ...ctx,
         originalPrompt:
-          'remove totalCostUsd from reflect-query aggregation so callers receive token totals only',
+          'remove removedField from SomeType and all call sites',
       })
       expect(promptWithSource).toContain(
-        'remove totalCostUsd from reflect-query aggregation so callers receive token totals only',
+        'remove removedField from SomeType and all call sites',
       )
       expect(promptWithSource).toMatch(/inlined/i)
       const promptWithout = recipe.buildPrompt(ctx)
       expect(promptWithout).not.toContain(
-        'remove totalCostUsd from reflect-query aggregation so callers receive token totals only',
+        'remove removedField from SomeType and all call sites',
       )
       expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
     })
@@ -763,7 +763,7 @@ describe('fix-recipes', () => {
     const ctx = {
       targetPath: '/tmp/worktrees/task-abc',
       statusOutput:
-        "src/mastra/lib/deep-reflect-query.ts(169,21): error TS2339: Property 'totalCostUsd' does not exist on type 'TaskSignalRow'.\nCommand failed: npx tsc --noEmit\n",
+        "src/mastra/lib/deep-reflect-query.ts(169,21): error TS2339: Property 'removedField' does not exist on type 'SomeType'.\nCommand failed: npx tsc --noEmit\n",
       targetBranch: 'task/abc',
       integrationBranch: 'main',
       originalPrompt: '',
@@ -825,15 +825,15 @@ describe('fix-recipes', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
       const promptWithSource = recipe.buildPrompt({
         ...ctx,
-        originalPrompt: 'remove totalCostUsd from TaskSignalRow and all call sites',
+        originalPrompt: 'remove removedField from SomeType and all call sites',
       })
       expect(promptWithSource).toContain(
-        'remove totalCostUsd from TaskSignalRow and all call sites',
+        'remove removedField from SomeType and all call sites',
       )
       expect(promptWithSource).toMatch(/inlined/i)
       const promptWithout = recipe.buildPrompt(ctx)
       expect(promptWithout).not.toContain(
-        'remove totalCostUsd from TaskSignalRow and all call sites',
+        'remove removedField from SomeType and all call sites',
       )
       expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
     })

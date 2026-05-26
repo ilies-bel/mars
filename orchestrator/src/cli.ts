@@ -700,7 +700,7 @@ Subcommands:
       without a proposal still appear as one-task arcs.
 
       Text output: header row, then one tab-separated row per arc:
-        originId  tasks  done  failed  tokens  costUsd  lastActivity
+        originId  tasks  done  failed  tokens  lastActivity
 
       Flags:
         --limit N              max arcs to return (default 10, clamped to [1, 100])
@@ -2661,32 +2661,32 @@ const main = async (): Promise<void> => {
       `reflecting over ${corpus.entries.length} task(s) — ${cs.totalWeightedTokens.toFixed(0)} weighted tokens (${cs.successCount} done / ${cs.failureCount} failed)…`,
     )
     const result = await runReflector(corpus)
-    if (result.costAnalysis) {
-      const ca = result.costAnalysis
-      console.log('\nCost analysis')
-      if (ca.headline) console.log(`  ${ca.headline}`)
-      if (ca.cacheHealth) {
+    if (result.tokenAnalysis) {
+      const ta = result.tokenAnalysis
+      console.log('\nToken analysis')
+      if (ta.headline) console.log(`  ${ta.headline}`)
+      if (ta.cacheHealth) {
         console.log(
-          `  cache: ratio=${ca.cacheHealth.ratio.toFixed(2)} (${ca.cacheHealth.verdict}) — ${ca.cacheHealth.evidence}`,
+          `  cache: ratio=${ta.cacheHealth.ratio.toFixed(2)} (${ta.cacheHealth.verdict}) — ${ta.cacheHealth.evidence}`,
         )
       }
-      if (ca.successVsFailureSpend) {
-        const s = ca.successVsFailureSpend
+      if (ta.successVsFailureTokens) {
+        const s = ta.successVsFailureTokens
         console.log(
-          `  success vs failure spend: $${s.successUsd.toFixed(4)} vs $${s.failureUsd.toFixed(4)} — ${s.verdict}`,
+          `  success vs failure tokens: ${s.successTokens} vs ${s.failureTokens} weighted tokens — ${s.verdict}`,
         )
       }
-      for (const t of ca.expensiveTasks) {
+      for (const t of ta.tokenHeavyTasks) {
         console.log(
-          `  expensive task ${t.taskId}: $${t.costUsd.toFixed(4)} (${t.multipleOfMedian.toFixed(1)}× median) — ${t.rootCause}`,
+          `  token-heavy task ${t.taskId}: ${t.weightedTokens} weighted tokens (${t.multipleOfMedian.toFixed(1)}× median) — ${t.rootCause}`,
         )
       }
-      for (const s of ca.expensiveSteps) {
+      for (const s of ta.tokenHeavySteps) {
         console.log(
-          `  expensive step ${s.stepId}: $${s.totalCostUsd.toFixed(4)} (${s.verdict}) — ${s.evidence}`,
+          `  token-heavy step ${s.stepId}: ${s.totalWeightedTokens} weighted tokens (${s.verdict}) — ${s.evidence}`,
         )
       }
-      if (ca.notes) console.log(`  notes: ${ca.notes}`)
+      if (ta.notes) console.log(`  notes: ${ta.notes}`)
     }
     if (result.suggestions.length === 0) {
       console.log('\nno suggestions produced')
