@@ -44,13 +44,13 @@ describe('reflector prompt', () => {
     const prompt = buildPrompt(fixtureCorpus)
     // Only the *instruction* portion of the prompt — everything
     // before the corpus payload — must be USD-free.
-    const instructionPortion = prompt.split('Cost summary')[0]
+    const instructionPortion = prompt.split('Token summary')[0]
     expect(instructionPortion).not.toMatch(/USD/)
   })
 
   it('contains no dollar-figure thresholds in instruction prose', () => {
     const prompt = buildPrompt(fixtureCorpus)
-    const instructionPortion = prompt.split('Cost summary')[0]
+    const instructionPortion = prompt.split('Token summary')[0]
     expect(instructionPortion).not.toMatch(/\$\d/)
   })
 
@@ -67,9 +67,110 @@ describe('reflector prompt', () => {
 
   it('asks the model to cite token counts rather than USD figures', () => {
     const prompt = buildPrompt(fixtureCorpus)
-    const instructionPortion = prompt.split('Cost summary')[0]
+    const instructionPortion = prompt.split('Token summary')[0]
     expect(instructionPortion).not.toMatch(/Cite USD/i)
     expect(instructionPortion).toMatch(/token/i)
+  })
+
+  it('explicitly forbids emitting dollar amounts', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    const instructionPortion = prompt.split('Token summary')[0]
+    // The prompt must instruct the model not to emit dollar/USD amounts.
+    expect(instructionPortion).toMatch(/Never emit USD|Do NOT emit.*dollar|Never.*dollar/i)
+  })
+})
+
+describe('tokenAnalysis output schema', () => {
+  it('exposes tokenAnalysis with tokenHeavyTasks, tokenHeavySteps, and successVsFailureTokens — no costAnalysis', () => {
+    const fixtureJson = JSON.stringify({
+      tokenAnalysis: {
+        headline: 'Token spend within normal band.',
+        tokenHeavyTasks: [
+          {
+            taskId: 'abcd1234',
+            weightedTokens: 42000,
+            multipleOfMedian: 3.2,
+            rootCause: 'code step burned 80k input tokens re-reading the same files',
+          },
+        ],
+        tokenHeavySteps: [
+          {
+            stepId: 'code',
+            totalWeightedTokens: 120000,
+            verdict: 'wasted',
+            evidence: '120k tokens spent on failed verify retries',
+          },
+        ],
+        cacheHealth: { ratio: 0.34, verdict: 'degraded', evidence: 'cache_read_tokens << cache_create_tokens' },
+        successVsFailureTokens: { successTokens: 12000, failureTokens: 30000, verdict: 'failure spend dominates' },
+        notes: '',
+      },
+      suggestions: [],
+    })
+
+    const parsed = extractFirstJsonDocument(fixtureJson) as Record<string, unknown>
+    expect(parsed).not.toBeNull()
+    expect(parsed).toHaveProperty('tokenAnalysis')
+    expect(parsed).not.toHaveProperty('costAnalysis')
+
+    const ta = parsed.tokenAnalysis as Record<string, unknown>
+    expect(ta).toHaveProperty('tokenHeavyTasks')
+    expect(ta).toHaveProperty('tokenHeavySteps')
+    expect(ta).toHaveProperty('successVsFailureTokens')
+    expect(ta).not.toHaveProperty('expensiveTasks')
+    expect(ta).not.toHaveProperty('expensiveSteps')
+    expect(ta).not.toHaveProperty('successVsFailureSpend')
+  })
+
+  it('output schema keys contain no "usd", "cost", or "$" entries', () => {
+    // This test MUST fail if any usd/cost/$ key reappears in the output schema.
+    const fixtureJson = JSON.stringify({
+      tokenAnalysis: {
+        headline: 'Token spend within normal band.',
+        tokenHeavyTasks: [
+          {
+            taskId: 'abcd1234',
+            weightedTokens: 42000,
+            multipleOfMedian: 3.2,
+            rootCause: 'code step burned 80k input tokens',
+          },
+        ],
+        tokenHeavySteps: [
+          {
+            stepId: 'code',
+            totalWeightedTokens: 120000,
+            verdict: 'wasted',
+            evidence: '120k tokens spent on failed verify retries',
+          },
+        ],
+        cacheHealth: null,
+        successVsFailureTokens: null,
+        notes: '',
+      },
+      suggestions: [],
+    })
+
+    const parsed = extractFirstJsonDocument(fixtureJson)
+    expect(parsed).not.toBeNull()
+
+    // Walk all keys recursively and confirm none match usd, cost, or $
+    const allKeys: string[] = []
+    const walk = (obj: unknown): void => {
+      if (!obj || typeof obj !== 'object') return
+      if (Array.isArray(obj)) {
+        for (const item of obj) walk(item)
+      } else {
+        for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+          allKeys.push(k)
+          walk(v)
+        }
+      }
+    }
+    walk(parsed)
+
+    expect(allKeys.some((k) => /usd/i.test(k))).toBe(false)
+    expect(allKeys.some((k) => /cost/i.test(k))).toBe(false)
+    expect(allKeys.some((k) => k.includes('$'))).toBe(false)
   })
 })
 
@@ -78,32 +179,32 @@ describe('runReflector output parsing (fixture)', () => {
     // Simulate the assistant text produced by a model that obeys the
     // updated prompt: rationale and analysis cite token counts only.
     const fixtureAssistantText = JSON.stringify({
-      costAnalysis: {
+      tokenAnalysis: {
         headline: 'Spend within band; one task ran hot on tokens.',
-        expensiveTasks: [
+        tokenHeavyTasks: [
           {
             taskId: 'abcd1234',
-            costUsd: 0,
+            weightedTokens: 42000,
             multipleOfMedian: 3.2,
             rootCause: 'code step burned 80k input tokens re-reading the same files',
           },
         ],
-        expensiveSteps: [
+        tokenHeavySteps: [
           {
             stepId: 'code',
-            totalCostUsd: 0,
+            totalWeightedTokens: 120000,
             verdict: 'wasted',
             evidence: '120k tokens spent on failed verify retries',
           },
         ],
         cacheHealth: { ratio: 0.34, verdict: 'degraded', evidence: 'cache_read_tokens << cache_create_tokens' },
-        successVsFailureSpend: { successUsd: 0, failureUsd: 0, verdict: 'failure spend dominates' },
+        successVsFailureTokens: { successTokens: 12000, failureTokens: 30000, verdict: 'failure spend dominates' },
         notes: '',
       },
       suggestions: [
         {
           title: 'Cap read-span on the code step',
-          category: 'cost',
+          category: 'token',
           prompt: 'Add a Read budget watcher to the code step. Save your work.',
           rationale: '120k tokens leaked on retries of task abcd1234',
         },

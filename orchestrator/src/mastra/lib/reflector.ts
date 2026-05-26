@@ -9,59 +9,63 @@ export interface ReflectionSuggestion {
   rationale: string | null
 }
 
-export interface CostAnalysis {
+export interface TokenAnalysis {
   headline: string
-  expensiveTasks: ReadonlyArray<{
+  tokenHeavyTasks: ReadonlyArray<{
     taskId: string
-    costUsd: number
+    weightedTokens: number
     multipleOfMedian: number
     rootCause: string
   }>
-  expensiveSteps: ReadonlyArray<{
+  tokenHeavySteps: ReadonlyArray<{
     stepId: string
-    totalCostUsd: number
+    totalWeightedTokens: number
     verdict: string
     evidence: string
   }>
   cacheHealth: { ratio: number; verdict: string; evidence: string } | null
-  successVsFailureSpend: { successUsd: number; failureUsd: number; verdict: string } | null
+  successVsFailureTokens: { successTokens: number; failureTokens: number; verdict: string } | null
   notes: string
 }
 
 export interface ReflectionResult {
-  costAnalysis: CostAnalysis | null
+  tokenAnalysis: TokenAnalysis | null
   suggestions: ReflectionSuggestion[]
   rawOutput: string
   exitCode: number
 }
 
-const SYNTHESIS_INSTRUCTIONS = `You are a workflow + cost optimizer for the Mars task orchestrator. You
-will be given a precomputed cost summary and a recent task corpus
-(prompts, final status, scorer scores, per-step token + cost totals,
+const SYNTHESIS_INSTRUCTIONS = `You are a workflow and token optimizer for the Mars task orchestrator. You
+will be given a precomputed token summary and a recent task corpus
+(prompts, final status, scorer scores, per-step token totals,
 error tails).
+
+IMPORTANT: Never emit monetary amounts, dollar figures, or currency symbols.
+Cite weighted tokens and multiples-of-median only.
 
 Your output has TWO sections:
 
-1. costAnalysis: a structured analysis of recent spend.
+1. tokenAnalysis: a structured analysis of recent token spend.
 2. suggestions: actionable Mars task drafts grounded in that analysis.
 
-For costAnalysis, ground every observation in the numbers from the
-provided costSummary. Specifically:
-- Identify any task whose cost is ≥ 2× the median cost per task. Cite
-  the task id, the multiple, and what made it expensive (which step,
-  which signal).
-- Identify the top 1–2 most expensive *steps* (not tasks). For each,
+For tokenAnalysis, ground every observation in the numbers from the
+provided tokenSummary. Specifically:
+- Identify any task whose weighted tokens are ≥ 2× the median weighted
+  tokens per task. Cite the task id, the multiple, and what made it
+  token-heavy (which step, which signal).
+- Identify the top 1–2 most token-heavy *steps* (not tasks). For each,
   state whether the spend is justified by outcome (success rate,
   scorer score) or wasted (failed verify / merge aborts).
 - Comment on cache health: if cacheHitRatio < 0.5, that is a red flag
   (we are paying to re-warm caches). Cite the ratio.
-- Compare avgCostPerSuccess vs avgCostPerFailure. If failures cost
-  ≥ 70% of a success, the loop is leaking money on dead ends.
+- Compare weighted tokens on successful tasks vs failed tasks. If failed
+  tasks consume ≥ 70% of a success's tokens, the loop is leaking tokens
+  on dead ends.
 
-For each suggestion, prefer cost-grounded ones over generic cleanups.
+For each suggestion, prefer token-grounded ones over generic cleanups.
 Categories, in priority order:
-(a) **cost sinks**: a specific step or task pattern that is burning
-    tokens relative to its value. Cite token counts.
+(a) **token sinks**: a specific step or task pattern that is burning
+    tokens relative to its value. Cite weighted token counts.
 (b) **failure clusters**: tasks sharing a verify-failed root cause
     (typecheck vs test vs lint) or repeated merge aborts. Quantify the
     wasted spend in tokens (sum of failed-task token totals).
@@ -71,32 +75,32 @@ Categories, in priority order:
     patterns that consistently fail.
 
 If total token spend across the window is non-trivial, you MUST produce
-at least one cost-grounded suggestion. If a single task is > 3× the
+at least one token-grounded suggestion. If a single task is > 3× the
 median token spend, you MUST either suggest investigating it or
-explicitly justify ignoring it in costAnalysis.notes.
+explicitly justify ignoring it in tokenAnalysis.notes.
 
 Output a single JSON document on stdout, with no prose, no code fences,
 no markdown — just the JSON. Shape:
 
 {
-  "costAnalysis": {
-    "headline": "1-sentence summary of the spend health",
-    "expensiveTasks": [
-      { "taskId": "abcd1234", "costUsd": 0.42, "multipleOfMedian": 3.1, "rootCause": "..." }
+  "tokenAnalysis": {
+    "headline": "1-sentence summary of token-spend health",
+    "tokenHeavyTasks": [
+      { "taskId": "abcd1234", "weightedTokens": 42000, "multipleOfMedian": 3.1, "rootCause": "..." }
     ],
-    "expensiveSteps": [
-      { "stepId": "code", "totalCostUsd": 1.20, "verdict": "justified|wasted", "evidence": "..." }
+    "tokenHeavySteps": [
+      { "stepId": "code", "totalWeightedTokens": 120000, "verdict": "justified|wasted", "evidence": "..." }
     ],
     "cacheHealth": { "ratio": 0.34, "verdict": "healthy|degraded|broken", "evidence": "..." },
-    "successVsFailureSpend": { "successUsd": 0.12, "failureUsd": 0.30, "verdict": "..." },
+    "successVsFailureTokens": { "successTokens": 12000, "failureTokens": 30000, "verdict": "..." },
     "notes": "anything else, or empty string"
   },
   "suggestions": [
     {
       "title": "short imperative title (≤ 60 chars)",
-      "category": "cost|failure|cache|drift",
+      "category": "token|failure|cache|drift",
       "prompt": "self-contained Mars task prompt that a fresh agent can act on without further context. Include file paths, the symptom, the suggested fix, and the verification command. End with 'Save your work.'",
-      "rationale": "1–2 sentences citing the evidence: task ids, token counts, error patterns"
+      "rationale": "1–2 sentences citing the evidence: task ids, weighted token counts, error patterns"
     }
   ]
 }
@@ -105,15 +109,17 @@ Rules:
 - At most 5 suggestions. Fewer is better.
 - Each suggestion must be actionable today, not aspirational.
 - Drop suggestions you cannot ground in the data.
+- Do NOT emit dollar amounts, monetary values, or currency symbols — cite
+  weighted tokens and multiples-of-median only.
 - If there are no high-quality suggestions, return {"suggestions": []}
-  but still fill costAnalysis.`
+  but still fill tokenAnalysis.`
 
 export const buildPrompt = (corpus: ReflectCorpus): string => {
   const summaryJson = JSON.stringify(corpus.costSummary, null, 2)
   const entriesJson = JSON.stringify(corpus.entries, null, 2)
   return `${SYNTHESIS_INSTRUCTIONS}
 
-Cost summary (precomputed — trust these numbers, do not recompute):
+Token summary (precomputed — trust these numbers, do not recompute):
 ${summaryJson}
 
 Recent task corpus (newest first):
@@ -122,32 +128,32 @@ ${entriesJson}`
 
 interface ParsedDocument {
   suggestions?: unknown
-  costAnalysis?: unknown
+  tokenAnalysis?: unknown
 }
 
-const parseCostAnalysis = (raw: unknown): CostAnalysis | null => {
+const parseTokenAnalysis = (raw: unknown): TokenAnalysis | null => {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
   const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
-  const expensiveTasks = asArray(o.expensiveTasks)
+  const tokenHeavyTasks = asArray(o.tokenHeavyTasks)
     .filter((t) => t && typeof t === 'object')
     .map((t) => {
       const r = t as Record<string, unknown>
       return {
         taskId: typeof r.taskId === 'string' ? r.taskId : '',
-        costUsd: typeof r.costUsd === 'number' ? r.costUsd : 0,
+        weightedTokens: typeof r.weightedTokens === 'number' ? r.weightedTokens : 0,
         multipleOfMedian: typeof r.multipleOfMedian === 'number' ? r.multipleOfMedian : 0,
         rootCause: typeof r.rootCause === 'string' ? r.rootCause : '',
       }
     })
     .filter((t) => t.taskId)
-  const expensiveSteps = asArray(o.expensiveSteps)
+  const tokenHeavySteps = asArray(o.tokenHeavySteps)
     .filter((s) => s && typeof s === 'object')
     .map((s) => {
       const r = s as Record<string, unknown>
       return {
         stepId: typeof r.stepId === 'string' ? r.stepId : '',
-        totalCostUsd: typeof r.totalCostUsd === 'number' ? r.totalCostUsd : 0,
+        totalWeightedTokens: typeof r.totalWeightedTokens === 'number' ? r.totalWeightedTokens : 0,
         verdict: typeof r.verdict === 'string' ? r.verdict : '',
         evidence: typeof r.evidence === 'string' ? r.evidence : '',
       }
@@ -158,27 +164,25 @@ const parseCostAnalysis = (raw: unknown): CostAnalysis | null => {
     cacheHealthRaw && typeof cacheHealthRaw === 'object'
       ? {
           ratio: typeof cacheHealthRaw.ratio === 'number' ? cacheHealthRaw.ratio : 0,
-          verdict:
-            typeof cacheHealthRaw.verdict === 'string' ? cacheHealthRaw.verdict : '',
-          evidence:
-            typeof cacheHealthRaw.evidence === 'string' ? cacheHealthRaw.evidence : '',
+          verdict: typeof cacheHealthRaw.verdict === 'string' ? cacheHealthRaw.verdict : '',
+          evidence: typeof cacheHealthRaw.evidence === 'string' ? cacheHealthRaw.evidence : '',
         }
       : null
-  const svfRaw = o.successVsFailureSpend as Record<string, unknown> | null | undefined
-  const successVsFailureSpend =
+  const svfRaw = o.successVsFailureTokens as Record<string, unknown> | null | undefined
+  const successVsFailureTokens =
     svfRaw && typeof svfRaw === 'object'
       ? {
-          successUsd: typeof svfRaw.successUsd === 'number' ? svfRaw.successUsd : 0,
-          failureUsd: typeof svfRaw.failureUsd === 'number' ? svfRaw.failureUsd : 0,
+          successTokens: typeof svfRaw.successTokens === 'number' ? svfRaw.successTokens : 0,
+          failureTokens: typeof svfRaw.failureTokens === 'number' ? svfRaw.failureTokens : 0,
           verdict: typeof svfRaw.verdict === 'string' ? svfRaw.verdict : '',
         }
       : null
   return {
     headline: typeof o.headline === 'string' ? o.headline : '',
-    expensiveTasks,
-    expensiveSteps,
+    tokenHeavyTasks,
+    tokenHeavySteps,
     cacheHealth,
-    successVsFailureSpend,
+    successVsFailureTokens,
     notes: typeof o.notes === 'string' ? o.notes : '',
   }
 }
@@ -255,7 +259,7 @@ export const runReflector = async (
   corpus: ReflectCorpus,
 ): Promise<ReflectionResult> => {
   if (corpus.entries.length === 0) {
-    return { costAnalysis: null, suggestions: [], rawOutput: '', exitCode: 0 }
+    return { tokenAnalysis: null, suggestions: [], rawOutput: '', exitCode: 0 }
   }
 
   // No wall-clock timeout: reflect synthesis must run to completion.
@@ -271,13 +275,13 @@ export const runReflector = async (
   const parsed = extractFirstJsonDocument(text) as ParsedDocument | null
   if (!parsed || !Array.isArray(parsed.suggestions)) {
     return {
-      costAnalysis: parseCostAnalysis(parsed?.costAnalysis),
+      tokenAnalysis: parseTokenAnalysis(parsed?.tokenAnalysis),
       suggestions: [],
       rawOutput: text,
       exitCode: r.exitCode,
     }
   }
-  const costAnalysis = parseCostAnalysis(parsed.costAnalysis)
+  const tokenAnalysis = parseTokenAnalysis(parsed.tokenAnalysis)
 
   const suggestions: ReflectionSuggestion[] = []
   for (const raw of parsed.suggestions) {
@@ -291,7 +295,7 @@ export const runReflector = async (
   }
 
   return {
-    costAnalysis,
+    tokenAnalysis,
     suggestions: suggestions.slice(0, 5),
     rawOutput: text,
     exitCode: r.exitCode,

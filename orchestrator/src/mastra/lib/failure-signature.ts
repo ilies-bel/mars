@@ -128,7 +128,7 @@ export const errorClassRules: readonly ErrorClassRule[] = [
   {
     // TS2339: Property 'X' does not exist on type 'Y'.
     // Fired when a task removes a field from a type definition (e.g. drops
-    // `totalCostUsd` from `TaskSignalRow`) but leaves behind call sites that
+    // `removedField` from `SomeType`) but leaves behind call sites that
     // still access that field. A recovery agent can inspect the original task
     // prompt to determine whether the intent was deletion (complete the
     // deletion at all call sites) or addition (add the missing field).
@@ -172,7 +172,7 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     // source code includes a field that was removed from the type in the
     // same task (TypeScript's excess-property check). The canonical cause
     // is a partial type cleanup: the implementation updated the type to drop
-    // a field (e.g. `totalCostUsd`) but the object literal(s) that create
+    // a field (e.g. `removedField`) but the object literal(s) that create
     // instances of that type were not updated. Fix: remove the excess
     // property from the object literal — do NOT revert the type change.
     errorClass: 'typecheck-excess-property',

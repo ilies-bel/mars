@@ -362,7 +362,7 @@ const typecheckPropertyNotExistRecipe: FixRecipe = {
     return [
       `TypeScript reported TS2339 ("Property 'X' does not exist on type 'Y'") or TS2353 ("Object literal may only specify known properties, and 'X' does not exist in type 'Y'") during the typecheck step. Both errors mean code is accessing or declaring a field that has been removed from (or was never added to) a type definition.`,
       '',
-      `The most common cause in this codebase is an **incomplete refactoring**: a task removed a field from a type (e.g. \`totalCostUsd\` from \`TaskSignalRow\`) but did not update every call site that reads, writes, or spreads that field. The failing task's original prompt (inlined below) describes what was being changed — use it to determine whether the fix is to complete the deletion or to add the missing field.`,
+      `The most common cause in this codebase is an **incomplete refactoring**: a task removed a field from a type (e.g. \`removedField\` from \`SomeType\`) but did not update every call site that reads, writes, or spreads that field. The failing task's original prompt (inlined below) describes what was being changed — use it to determine whether the fix is to complete the deletion or to add the missing field.`,
       '',
       ...renderReproSection(ctx.reproCommand),
       `## How to fix`,
@@ -645,7 +645,7 @@ const typecheckExcessPropertyRecipe: FixRecipe = {
     return [
       `TypeScript reported TS2353 ("Object literal may only specify known properties, and 'X' does not exist in type 'Y'") during the typecheck step. This is TypeScript's excess-property check: an object literal includes a field that no longer exists in the type it is being assigned to.`,
       '',
-      `The canonical cause in this codebase is a **partial type cleanup**: the original task updated a type to remove a field (for example, removing \`totalCostUsd\` as part of a USD-removal pass), but one or more object literals that construct that type (often in test fixtures) were not updated to match. The type change is correct and intentional — do NOT revert it.`,
+      `The canonical cause in this codebase is a **partial type cleanup**: the original task updated a type to remove a field (for example, removing \`removedField\` from \`SomeType\`), but one or more object literals that construct that type (often in test fixtures) were not updated to match. The type change is correct and intentional — do NOT revert it.`,
       '',
       ...renderReproSection(ctx.reproCommand),
       `## How to fix`,
@@ -683,7 +683,7 @@ const typecheckExcessPropertyRecipe: FixRecipe = {
       '',
       `## If the property appears in a fixture shared by multiple test cases`,
       '',
-      `Shared test fixtures (e.g. \`const emptySummary = { ..., totalCostUsd: 0, ... }\`) are common in this codebase. Remove the excess property from the fixture constant and from every spread or direct usage of that constant that TypeScript flags.`,
+      `Shared test fixtures (e.g. \`const emptySummary = { ..., removedField: 0, ... }\`) are common in this codebase. Remove the excess property from the fixture constant and from every spread or direct usage of that constant that TypeScript flags.`,
       '',
       ...sourcePromptSection,
       `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
