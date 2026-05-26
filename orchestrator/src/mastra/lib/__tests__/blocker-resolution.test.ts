@@ -478,9 +478,9 @@ describe('blocker-resolution (task_blockers)', () => {
         listInboxItems: typeof import('../inbox').listInboxItems
       }
       const open = await inbox.listInboxItems('open')
-      const prereqItems = open.filter((i) => i.kind === 'cancelled-blocker-cascade')
+      const prereqItems = open.filter((i) => i.kind === 'prerequisite-failed')
       expect(prereqItems).toHaveLength(1)
-      expect(prereqItems[0].kind).toBe('cancelled-blocker-cascade')
+      expect(prereqItems[0].kind).toBe('prerequisite-failed')
       expect(prereqItems[0].payload.dependentTaskId).toBe(b.id)
       expect(prereqItems[0].payload.failedBlockerTaskId).toBe(a.id)
     })
@@ -919,7 +919,7 @@ describe('blocker-resolution (task_blockers)', () => {
       }
       const open = await inbox.listInboxItems('open')
       const ahead = open.find(
-        (i) => i.kind === 'dirty-main-at-setup',
+        (i) => i.kind === 'worktree-ahead',
       )
       expect(ahead).toBeDefined()
       expect(ahead!.payload.taskId).toBe(dep.id)
