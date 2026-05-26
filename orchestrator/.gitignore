@@ -11,3 +11,8 @@ dist
 *.duckdb.wal
 .netlify
 .vercel
+
+# Bun compile build outputs
+*.bun-build
+mars-darwin-*
+mars-linux-*
