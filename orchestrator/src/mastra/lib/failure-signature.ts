@@ -216,6 +216,18 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /AssertionError:/,
   },
   {
+    // verify:test/test-no-suite-found fires when vitest discovers a test file
+    // (matching its include glob) that contains no describe/it/test blocks —
+    // vitest exits non-zero with "No test suite found in file <path>".
+    // The canonical cause is a coding agent that left a comment-only placeholder
+    // file behind instead of deleting it (the real tests were written elsewhere
+    // in the same directory). Fix: read the empty file, check for sibling test
+    // files covering the same module, then delete the placeholder. If no sibling
+    // tests exist, populate the file with a minimal test suite instead.
+    errorClass: 'test-no-suite-found',
+    matchFull: /No test suite found in file/,
+  },
+  {
     // verify:test/test-libsql-no-such-table fires when a test opens a libsql
     // client with an in-memory URL (`createClient({ url: ':memory:' })`),
     // creates a schema via `client.execute()`, then starts concurrent write

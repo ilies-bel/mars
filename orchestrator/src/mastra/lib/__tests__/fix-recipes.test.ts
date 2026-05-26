@@ -1391,3 +1391,83 @@ describe('handleTaskFailureWithFixTask investigator path flows originalPrompt', 
     expect(row.prompt).toMatch(/## Original task prompt/i)
   })
 })
+
+describe('verify:test/test-no-suite-found recipe', () => {
+  const ctx = {
+    targetPath: '/tmp/worktrees/task-abc',
+    statusOutput: [
+      '⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯',
+      '',
+      ' FAIL  src/mastra/agents/__tests__/registry.test.ts',
+      'Error: No test suite found in file /tmp/worktrees/task-abc/orchestrator/src/mastra/agents/__tests__/registry.test.ts',
+    ].join('\n'),
+    targetBranch: 'task/abc',
+    integrationBranch: 'main',
+    originalPrompt: '',
+  }
+
+  it('is registered under the correct signature', () => {
+    expect(hasRecipe('verify:test/test-no-suite-found')).toBe(true)
+  })
+
+  it('produces a stable title naming the failing branch', () => {
+    const recipe = getRecipe('verify:test/test-no-suite-found')
+    expect(recipe.title(ctx)).toBe(
+      'Remove or populate the empty test file blocking verify:test on task/abc',
+    )
+  })
+
+  it('prompt instructs the agent to identify the empty file from the failure output', () => {
+    const recipe = getRecipe('verify:test/test-no-suite-found')
+    const prompt = recipe.buildPrompt(ctx)
+    expect(prompt).toContain('No test suite found in file')
+    expect(prompt).toContain(ctx.statusOutput)
+    expect(prompt).toMatch(/identify.*empty.*file/i)
+  })
+
+  it('prompt instructs the agent to check for sibling test files before deciding to delete or populate', () => {
+    const recipe = getRecipe('verify:test/test-no-suite-found')
+    const prompt = recipe.buildPrompt(ctx)
+    expect(prompt).toMatch(/sibling.*test.*file|other.*test.*file/i)
+    expect(prompt).toMatch(/delete.*empty.*file|delete.*placeholder/i)
+    expect(prompt).toMatch(/populate/i)
+  })
+
+  it('prompt includes the standard lift-diff steps to avoid an empty recovery branch', () => {
+    const recipe = getRecipe('verify:test/test-no-suite-found')
+    const prompt = recipe.buildPrompt(ctx)
+    expect(prompt).toContain(`git -C ${ctx.targetPath} diff`)
+    expect(prompt).toMatch(/commit immediately/i)
+    expect(prompt).toContain('git add -A && git commit')
+  })
+
+  it('prompt gates exit-successfully on a non-zero rev-list count', () => {
+    const recipe = getRecipe('verify:test/test-no-suite-found')
+    const prompt = recipe.buildPrompt(ctx)
+    const exitLine = prompt
+      .split('\n')
+      .find((line) => /exit successfully/i.test(line))
+    expect(exitLine).toBeDefined()
+    expect(exitLine).toMatch(/non-zero/i)
+  })
+
+  it('prompt embeds the failing worktree path and integration branch', () => {
+    const recipe = getRecipe('verify:test/test-no-suite-found')
+    const prompt = recipe.buildPrompt(ctx)
+    expect(prompt).toContain(ctx.targetPath)
+    expect(prompt).toContain(ctx.integrationBranch)
+    expect(prompt).toContain('Save your work')
+  })
+
+  it('inlines the original task prompt when provided', () => {
+    const recipe = getRecipe('verify:test/test-no-suite-found')
+    const promptWithSource = recipe.buildPrompt({
+      ...ctx,
+      originalPrompt: 'add agent registry with writer entry',
+    })
+    expect(promptWithSource).toContain('add agent registry with writer entry')
+    expect(promptWithSource).toMatch(/inlined/i)
+    const promptWithout = recipe.buildPrompt(ctx)
+    expect(promptWithout).not.toContain('add agent registry with writer entry')
+  })
+})
