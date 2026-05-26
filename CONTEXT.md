@@ -302,3 +302,12 @@ _Avoid_: state change, status update, status write
 **Transition seam**:
 The single TaskStore entry point through which every task.status write must pass, validating the from-to edge against the legal transition map.
 _Avoid_: status setter, updateTask, transition function
+
+**Criterion**:
+A single free-text outcome the agent must validate or waive before verify can pass.
+
+**validate**:
+The agent's verb for marking a Criterion satisfied.
+
+**waive**:
+The agent's verb for skipping a Criterion with a recorded reason.
