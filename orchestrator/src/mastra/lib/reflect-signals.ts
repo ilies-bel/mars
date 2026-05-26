@@ -1,5 +1,4 @@
-import { getClient, initQueue } from '../queue'
-import type { TaskStore } from './task-store'
+import { getDefaultTaskStore, type TaskStore } from './task-store'
 import type { UsageTotals } from './claude-usage'
 
 export const isReflectDisabled = (): boolean =>
@@ -37,12 +36,8 @@ export const recordSignals = async (
       now,
     ],
   }
-  if (store) {
-    await store.execute(stmt)
-  } else {
-    await initQueue()
-    await getClient().execute(stmt)
-  }
+  const s = store ?? (await getDefaultTaskStore())
+  await s.execute(stmt)
 }
 
 export interface TaskSignalRow {
@@ -57,8 +52,8 @@ export interface TaskSignalRow {
 }
 
 export const listTaskSignals = async (taskId: string): Promise<TaskSignalRow[]> => {
-  await initQueue()
-  const r = await getClient().execute({
+  const store = await getDefaultTaskStore()
+  const r = await store.query({
     sql: `SELECT task_id, step_id, input_tokens, output_tokens,
                  cache_create_tokens, cache_read_tokens,
                  message_count, recorded_at

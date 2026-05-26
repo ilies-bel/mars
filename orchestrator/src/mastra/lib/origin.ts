@@ -1,10 +1,10 @@
-import { getClient, initQueue } from '../queue'
+import { getDefaultTaskStore } from './task-store'
 
 export const resolveOriginIdForTask = async (
   taskId: string,
 ): Promise<string> => {
-  await initQueue()
-  const r = await getClient().execute({
+  const store = await getDefaultTaskStore()
+  const r = await store.query({
     sql: `SELECT origin_id, id FROM tasks WHERE id = ?`,
     args: [taskId],
   })

@@ -1,6 +1,6 @@
 import { type InboxKind, raiseInboxItem } from './lib/inbox'
 import { publish } from './lib/outbox'
-import { getClient, initQueue } from './queue'
+import { getDefaultQueueClient } from './lib/task-store'
 
 export const DEFAULT_RETRY_BUDGET = 0
 
@@ -18,9 +18,8 @@ export const markTaskDropped = async (
   taskId: string,
   reason: string,
 ): Promise<void> => {
-  await initQueue()
   const now = new Date().toISOString()
-  const c = getClient()
+  const c = await getDefaultQueueClient()
   const tx = await c.transaction('write')
   try {
     await tx.execute({
@@ -50,9 +49,8 @@ export const markTaskFailed = async (
   taskId: string,
   reason: string,
 ): Promise<void> => {
-  await initQueue()
   const now = new Date().toISOString()
-  const c = getClient()
+  const c = await getDefaultQueueClient()
   const tx = await c.transaction('write')
   try {
     await tx.execute({
