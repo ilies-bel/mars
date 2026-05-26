@@ -1061,6 +1061,97 @@ describe('fix-recipes', () => {
     })
   })
 
+  describe('verify:typecheck/typecheck-type-mismatch recipe', () => {
+    const ctx = {
+      targetPath: '/tmp/worktrees/task-eda2d54c',
+      statusOutput: [
+        "src/mastra/lib/error-kinds.ts(119,7): error TS2322: Type 'Readonly<...>' is not assignable to type 'Readonly<Record<...>>'.",
+        "  The types of '\"stale-worktree\".recoveryActions' are incompatible between these types.",
+        "    Type '{ id: string; label: string; op: \"investigate\"; }[]' is not assignable to type 'ActionDescriptor[]'.",
+        "      Type '{ id: string; label: string; op: \"investigate\"; }' is not assignable to type 'ActionDescriptor'.",
+        "        Types of property 'op' are incompatible.",
+        "          Type '\"investigate\"' is not assignable to type 'ActionOp'.",
+        'Command failed: npx tsc --noEmit',
+      ].join('\n'),
+      targetBranch: 'task/mars-eda2d54c',
+      integrationBranch: 'main',
+      originalPrompt: '',
+    }
+
+    it('is registered under the correct signature', () => {
+      expect(hasRecipe('verify:typecheck/typecheck-type-mismatch')).toBe(true)
+    })
+
+    it('produces a stable title', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
+      expect(recipe.title(ctx)).toBe(
+        'Fix type-mismatch error(s) to resolve TS2322 typecheck failure',
+      )
+    })
+
+    it('prompt contains TS2322, step instructions, and constraint against ts-ignore', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('TS2322')
+      expect(prompt).toContain('STEP 1')
+      expect(prompt).toContain('STEP 2')
+      expect(prompt).toContain('STEP 3')
+      expect(prompt).toMatch(/do NOT add.*@ts-ignore/i)
+      expect(prompt).toContain('Save your work')
+    })
+
+    it('explains the most common cause — partial union extension omitting a new literal', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/partial union extension/i)
+      expect(prompt).toMatch(/extend the union/i)
+    })
+
+    it('gives concrete guidance on intentionally-new vs wrong value', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/intentionally new value/i)
+      expect(prompt).toMatch(/wrong value/i)
+    })
+
+    it('warns to check exhaustive switch handlers when extending a union', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/switch/i)
+      expect(prompt).toMatch(/exhaustive/i)
+    })
+
+    it('embeds the failing branch and worktree path', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain(ctx.targetBranch)
+      expect(prompt).toContain(ctx.targetPath)
+    })
+
+    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
+      const promptWithSource = recipe.buildPrompt({
+        ...ctx,
+        originalPrompt: "add 'investigate' daemon action for stale worktrees",
+      })
+      expect(promptWithSource).toContain(
+        "add 'investigate' daemon action for stale worktrees",
+      )
+      expect(promptWithSource).toMatch(/inlined/i)
+      const promptWithout = recipe.buildPrompt(ctx)
+      expect(promptWithout).not.toContain(
+        "add 'investigate' daemon action for stale worktrees",
+      )
+      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
+    })
+
+    it('instructs agent to not narrow the value to an existing member when the new value is intentional', () => {
+      const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toMatch(/do NOT narrow.*existing union member/i)
+    })
+  })
+
   describe('intentionally absent recipes (documented investigation outcomes)', () => {
     it('merge:crashed/index-lock-contention has no recipe — environmental transient failure; operator restarts with `mars restart`', () => {
       // Investigated 2026-05-18 (task 5c15a8e1). Root cause: git checkout main
