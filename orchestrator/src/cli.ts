@@ -2717,9 +2717,14 @@ const main = async (): Promise<void> => {
     }
     const explicitId = rest[0] && !rest[0].startsWith('--') ? rest[0] : null
     const {
-      pickDeepReflectCandidate,
       loadDeepReflectSession,
+      resolveOriginIdForTaskOrSelf,
     } = await import('./mastra/lib/deep-reflect-query')
+    const {
+      loadOriginTimeline,
+      pickTopOrigin,
+      formatOriginTimeline,
+    } = await import('./mastra/lib/origin-timeline')
     const { runDeepReflector } = await import('./mastra/lib/deep-reflector')
     const { applyVerdicts } = await import('./mastra/lib/reflector')
     const { insertReflectionTask } = await import('./mastra/queue')
@@ -2727,32 +2732,41 @@ const main = async (): Promise<void> => {
     let chosenId: string
     let pickLine: string
     if (explicitId) {
-      chosenId = explicitId
-      pickLine = `task ${explicitId} (explicit selection)`
+      const originId = await resolveOriginIdForTaskOrSelf(explicitId)
+      chosenId = originId
+      pickLine =
+        originId !== explicitId
+          ? `origin ${originId} (resolved from task ${explicitId}, explicit selection)`
+          : `origin ${originId} (explicit selection)`
     } else {
-      const pick = await pickDeepReflectCandidate()
+      const pick = await pickTopOrigin()
       if (!pick) {
         console.log(
-          'no eligible session found (need at least one done/failed task with a stored transcript)',
+          'no eligible origin found (need at least one done/failed task)',
         )
         return
       }
-      chosenId = pick.taskId
-      pickLine = `task ${pick.reason.taskId} (status=${pick.reason.status}, weighted-tokens=${pick.reason.weightedTokens.toFixed(0)}, picked: ${pick.reason.reason})`
+      chosenId = pick.originId
+      pickLine = `origin ${pick.originId} (score=${pick.score}, auto-picked by span+retry+verify_failure)`
     }
 
-    const session = await loadDeepReflectSession(chosenId)
+    const [session, timeline] = await Promise.all([
+      loadDeepReflectSession(chosenId),
+      loadOriginTimeline(chosenId),
+    ])
     if (!session) {
-      console.error(`no transcript found for task ${chosenId}`)
+      console.error(`no transcript found for origin ${chosenId}`)
       process.exit(1)
     }
 
+    const originContext = timeline ? formatOriginTimeline(timeline) : undefined
+
     console.log(pickLine)
     console.log(
-      `loading transcript: ${session.conversation.length} event(s), verifyOutput=${session.verifyOutput ? `${session.verifyOutput.length} chars` : 'none'}`,
+      `loading transcript: ${session.conversation.length} event(s), verifyOutput=${session.verifyOutput ? `${session.verifyOutput.length} chars` : 'none'}${timeline ? `, arc=${timeline.spanCount} task(s)` : ''}`,
     )
 
-    const result = await runDeepReflector(session)
+    const result = await runDeepReflector(session, 10 * 60 * 1000, originContext)
     const report = result.report
 
     const sourceTaskId = await insertReflectionTask(1)
