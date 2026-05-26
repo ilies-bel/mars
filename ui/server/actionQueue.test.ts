@@ -174,7 +174,7 @@ describe('GET /api/inbox/action-queue (derived view)', () => {
     expect(row?.errorKind).toBe('daemon-killed')
   })
 
-  it('surfaces blocked tasks with their blocker DAG', async () => {
+  it('does not surface a blocked task in the action queue', async () => {
     const c = createClient({ url: `file:${queueDbPath(repo)}` })
     await insertTask(c, { id: 't-blocked', status: 'blocked' })
     await insertTask(c, { id: 't-blocker', status: 'running' })
@@ -187,9 +187,7 @@ describe('GET /api/inbox/action-queue (derived view)', () => {
 
     const body = await fetchQueue()
     const row = body.find((r) => r.entityId === 't-blocked')
-    expect(row).toBeDefined()
-    expect(row?.kind).toBe('blocked-task')
-    expect(row?.dag?.blockers.map((b) => b.id)).toEqual(['t-blocker'])
+    expect(row).toBeUndefined()
   })
 
   it('surfaces a draft proposal as a row', async () => {
