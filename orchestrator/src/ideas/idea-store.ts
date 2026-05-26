@@ -85,8 +85,12 @@ export const addIdea = async (text: string): Promise<Idea> => {
 export const listIdeas = async (): Promise<Idea[]> => {
   await initIdeas()
   const c = getClient()
+  // Tie-break on the implicit rowid so two ideas added within the same
+  // millisecond still sort deterministically newest-first (higher rowid =
+  // inserted later). Without this, ties fall back to ascending rowid order
+  // and the older idea surfaces first.
   const r = await c.execute(
-    `SELECT id, slug, text, created_at FROM ideas ORDER BY created_at DESC`,
+    `SELECT id, slug, text, created_at FROM ideas ORDER BY created_at DESC, rowid DESC`,
   )
   return r.rows.map((row) => rowToIdea(row as unknown as IdeaRow))
 }
