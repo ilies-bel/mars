@@ -8,6 +8,7 @@ import { AgentsPage } from '@/pages/AgentsPage'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/TodoPage'
 import { EventsPage } from '@/pages/EventsPage'
+import { GraphView } from '@/views/Graph'
 
 const clearTaskHash = (): void => {
   if (typeof window === 'undefined') return
@@ -38,6 +39,8 @@ const App = () => {
           <ProgressPage />
         ) : route === 'events' ? (
           <EventsPage />
+        ) : route === 'graph' ? (
+          <GraphView />
         ) : (
           <ActionQueuePage />
         )}
