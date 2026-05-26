@@ -602,6 +602,66 @@ export class StateDb {
     }
   }
 
+  /**
+   * Read ALL open inbox items from `inbox_items` and return raw rows for the
+   * UI action-queue handler. Cheaper than a derived scan: one bounded SELECT
+   * instead of an N-task SQL scan + a .mars/worktrees readdir/stat fan-out.
+   *
+   * Falls back to an empty array when the table does not yet exist (fresh repo
+   * before any daemon has ever run), matching listOpenStaleWorktreeAlerts().
+   */
+  async listOpenInboxItems(): Promise<
+    Array<{
+      id: string
+      kind: string
+      priority: string
+      title: string
+      body: string
+      payload: Record<string, unknown>
+      context: Record<string, unknown>
+      raisedAt: string
+      lastSeenAt: string
+    }>
+  > {
+    try {
+      const r = await this.client.execute(
+        `SELECT id, kind, priority, title, body, payload, context, raised_at, last_seen_at
+           FROM inbox_items
+          WHERE state = 'open'
+          ORDER BY raised_at DESC`,
+      )
+      return r.rows.map((row) => {
+        const r0 = row as unknown as Record<string, unknown>
+        const parseJsonObj = (raw: unknown): Record<string, unknown> => {
+          if (typeof raw !== 'string' || !raw) return {}
+          try {
+            const p = JSON.parse(raw)
+            return p && typeof p === 'object' && !Array.isArray(p)
+              ? (p as Record<string, unknown>)
+              : {}
+          } catch {
+            return {}
+          }
+        }
+        return {
+          id: r0.id as string,
+          kind: r0.kind as string,
+          priority: r0.priority as string,
+          title: r0.title as string,
+          body: r0.body as string,
+          payload: parseJsonObj(r0.payload),
+          context: parseJsonObj(r0.context),
+          raisedAt: r0.raised_at as string,
+          lastSeenAt:
+            (r0.last_seen_at as string | null) ?? (r0.raised_at as string),
+        }
+      })
+    } catch {
+      // inbox_items table may not exist yet on a fresh repo.
+      return []
+    }
+  }
+
   async listDraftFeatures(): Promise<DraftFeature[]> {
     const r = await this.client.execute(
       `SELECT p.id, p.title, p.problem, p.solution, p.status, p.source,
