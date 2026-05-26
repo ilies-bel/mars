@@ -10,9 +10,12 @@ export type InboxState = 'open' | 'acknowledged' | 'resolved' | 'dismissed'
 export const INBOX_KINDS = [
   'failed',
   'cancelled-blocker-cascade',
-  'dirty-main-at-setup',
   'diagnose-inconclusive',
   'daemon-killed',
+  'stale-worktree',
+  'worktree-ahead',
+  'prerequisite-failed',
+  'draft-proposal',
 ] as const
 
 export type InboxKind = (typeof INBOX_KINDS)[number]

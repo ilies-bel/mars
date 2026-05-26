@@ -1,4 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  RECOVERY_FAILED_INBOX_KIND,
+  NO_RECIPE_INBOX_KIND,
+  FIX_FAIL_LOOP_INBOX_KIND,
+} from '../queue-fix-tasks'
+import { TASK_BLOCKED_INBOX_KIND } from '../queue-retry'
+import { DAEMON_KILLED_INBOX_KIND } from '../daemon/daemon-killed-sweep'
+import { STALE_WORKTREE_KIND } from '../daemon/stale-worktree-sweep'
+import {
+  WORKTREE_AHEAD_INBOX_KIND,
+  PREREQUISITE_FAILED_INBOX_KIND,
+  CANCELLED_CASCADE_INBOX_KIND,
+} from '../blocker-resolution'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -595,5 +608,28 @@ describe('inbox', () => {
 
       expect(result.closed).toBe(0)
     })
+  })
+})
+
+describe('INBOX_KINDS membership — writer kind constants', () => {
+  it('every raiseInboxItem writer kind constant is a member of INBOX_KINDS', async () => {
+    // Import INBOX_KINDS fresh so any module-cache state is irrelevant.
+    const { isInboxKind } = await import('./inbox')
+
+    const writerKinds: [string, string][] = [
+      ['RECOVERY_FAILED_INBOX_KIND', RECOVERY_FAILED_INBOX_KIND],
+      ['NO_RECIPE_INBOX_KIND', NO_RECIPE_INBOX_KIND],
+      ['FIX_FAIL_LOOP_INBOX_KIND', FIX_FAIL_LOOP_INBOX_KIND],
+      ['TASK_BLOCKED_INBOX_KIND', TASK_BLOCKED_INBOX_KIND],
+      ['DAEMON_KILLED_INBOX_KIND', DAEMON_KILLED_INBOX_KIND],
+      ['STALE_WORKTREE_KIND', STALE_WORKTREE_KIND],
+      ['WORKTREE_AHEAD_INBOX_KIND', WORKTREE_AHEAD_INBOX_KIND],
+      ['PREREQUISITE_FAILED_INBOX_KIND', PREREQUISITE_FAILED_INBOX_KIND],
+      ['CANCELLED_CASCADE_INBOX_KIND', CANCELLED_CASCADE_INBOX_KIND],
+    ]
+
+    for (const [name, kind] of writerKinds) {
+      expect(isInboxKind(kind), `${name} ("${kind}") must be in INBOX_KINDS`).toBe(true)
+    }
   })
 })
