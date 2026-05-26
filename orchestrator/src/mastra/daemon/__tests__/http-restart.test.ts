@@ -38,6 +38,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   purgeTask: async () => {},
   pruneWorktree: async () => {},
   restartDaemon: async () => {},
+  restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
   ...overrides,
 })
@@ -131,6 +132,80 @@ describe('HTTP action endpoint', () => {
       })
       expect(res.status).toBe(200)
       expect(unblocked).toBe('mars-x')
+    } finally {
+      await close()
+    }
+  })
+
+  // ── Bulk restart ─────────────────────────────────────────────────────────
+
+  it('restart-all-daemon-killed restarts only daemon-killed tasks and leaves ordinary failed tasks untouched', async () => {
+    const { queue, httpServer, restartTask } = await loadModules(repo)
+
+    // Seed two daemon-killed tasks and one ordinary failed task.
+    const t1 = await queue.enqueueTask('daemon-killed task 1', undefined, {
+      skipTriage: true,
+    })
+    const t2 = await queue.enqueueTask('daemon-killed task 2', undefined, {
+      skipTriage: true,
+    })
+    const t3 = await queue.enqueueTask('ordinary failed task', undefined, {
+      skipTriage: true,
+    })
+    await queue.updateTask(t1.id, {
+      status: 'failed',
+      failureSignature: 'daemon-killed',
+    })
+    await queue.updateTask(t2.id, {
+      status: 'failed',
+      failureSignature: 'daemon-killed',
+    })
+    await queue.updateTask(t3.id, { status: 'failed', error: 'regular failure' })
+
+    const { port, close } = await httpServer.startHttpServer(
+      makeDeps({
+        restartAllDaemonKilled: async () => {
+          // Inline implementation matching what server.ts wires up:
+          // list all failed tasks with the daemon-killed signature and restart
+          // each via coreRestartTask.
+          const all = await queue.listTasks('failed')
+          const killed = all.filter((t) => t.failureSignature === 'daemon-killed')
+          const restarted: string[] = []
+          for (const task of killed) {
+            await restartTask.coreRestartTask(task.id, new Set(['failed']))
+            restarted.push(task.id)
+          }
+          return restarted
+        },
+      }),
+    )
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/actions/restart-all-daemon-killed`,
+        { method: 'POST' },
+      )
+
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        ok: boolean
+        restarted: string[]
+      }
+      expect(body.ok).toBe(true)
+      // Both daemon-killed tasks must be in the restarted list.
+      expect(body.restarted).toContain(t1.id)
+      expect(body.restarted).toContain(t2.id)
+      // The ordinary failed task must NOT be in the list.
+      expect(body.restarted).not.toContain(t3.id)
+
+      // Verify DB state: daemon-killed tasks flipped to queued.
+      const r1 = await queue.getTask(t1.id)
+      const r2 = await queue.getTask(t2.id)
+      const r3 = await queue.getTask(t3.id)
+      expect(r1?.status).toBe('queued')
+      expect(r2?.status).toBe('queued')
+      // Ordinary failed task must remain failed and untouched.
+      expect(r3?.status).toBe('failed')
     } finally {
       await close()
     }

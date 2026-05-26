@@ -31,15 +31,21 @@ import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
  * The verbs an action can ask the daemon to perform. Each maps to a route on
  * the daemon's local HTTP server (see `daemon/http-server.ts`).
  *
- * - `restart`        — tear down the worktree/branch and re-queue from setup
- *                      (per-task). The "requeue a failed task" verb.
- * - `unblock`        — phantom-recover a blocked task: clear its edges and flip
- *                      it to failed so it can be restarted or purged.
- * - `purge`          — drop the task and its worktree permanently.
- * - `prune-worktree` — remove a leftover worktree whose task is terminal/absent.
- * - `restart-daemon` — process-level: re-exec the daemon itself.
- * - `shape`          — no daemon verb; a hint to run a skill (`/mars:grill`).
- *                      Rendered as guidance, not a one-click button.
+ * - `restart`                  — tear down the worktree/branch and re-queue
+ *                                from setup (per-task). The "requeue a failed
+ *                                task" verb.
+ * - `unblock`                  — phantom-recover a blocked task: clear its
+ *                                edges and flip it to failed so it can be
+ *                                restarted or purged.
+ * - `purge`                    — drop the task and its worktree permanently.
+ * - `prune-worktree`           — remove a leftover worktree whose task is
+ *                                terminal/absent.
+ * - `restart-daemon`           — process-level: re-exec the daemon itself.
+ * - `restart-all-daemon-killed`— batch: re-queue every failed task that carries
+ *                                the daemon-killed signature in one request.
+ * - `shape`                    — no daemon verb; a hint to run a skill
+ *                                (`/mars:grill`). Rendered as guidance, not a
+ *                                one-click button.
  */
 export type ActionOp =
   | 'restart'
@@ -47,6 +53,7 @@ export type ActionOp =
   | 'purge'
   | 'prune-worktree'
   | 'restart-daemon'
+  | 'restart-all-daemon-killed'
   | 'shape'
 
 /**
@@ -105,6 +112,7 @@ export interface ErrorKind {
 export const ERROR_KIND_IDS = [
   'failed-task',
   'daemon-killed',
+  'daemon-killed-batch',
   'stale-worktree',
   'draft-proposal',
 ] as const
@@ -150,6 +158,26 @@ const ERROR_KINDS: Readonly<Record<ErrorKindId, ErrorKind>> = Object.freeze({
         label: 'Restart daemon',
         op: 'restart-daemon',
         needsConfirm: true,
+      },
+    ],
+  },
+  'daemon-killed-batch': {
+    kind: 'daemon-killed-batch',
+    rowKind: 'failed-task',
+    trigger:
+      'Two or more tasks were in flight when the daemon was killed. Each carries ' +
+      `\`failureSignature: '${DAEMON_KILLED_SIGNATURE}'\` and is left in \`failed\`. ` +
+      'This batch affordance groups them so they can be re-queued in one click.',
+    recipe:
+      'None of these failures are task faults — the workers died with the daemon, ' +
+      'not because the work was bad. A single batch restart re-queues every affected ' +
+      'task from setup. Per-task "Requeue now" actions are still available on each ' +
+      'individual alert for selective recovery.',
+    recoveryActions: [
+      {
+        id: 'restart-all',
+        label: 'Restart all daemon-killed',
+        op: 'restart-all-daemon-killed',
       },
     ],
   },

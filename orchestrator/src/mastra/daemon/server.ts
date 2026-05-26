@@ -1744,6 +1744,29 @@ export const startDaemon = async (
       // Trigger our own graceful shutdown after the response flushes.
       setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
     },
+    restartAllDaemonKilled: async () => {
+      // Find every failed task stamped with the daemon-killed signature and
+      // re-queue each one. Partial failures are tolerated: tasks that fail to
+      // restart (e.g. wrong status race) are skipped; only successfully
+      // restarted ids are returned.
+      const failed = await listTasks('failed')
+      const killed = failed.filter(
+        (t) => t.failureSignature === DAEMON_KILLED_SIGNATURE,
+      )
+      const restarted: string[] = []
+      for (const task of killed) {
+        try {
+          await coreRestart(task.id, new Set(['failed']))
+          bus.emit('task.queued', { taskId: task.id })
+          restarted.push(task.id)
+        } catch {
+          // Skip tasks that can't be restarted (e.g. raced to a different
+          // status between the list and the restart). The others still proceed.
+        }
+      }
+      log(`restart-all-daemon-killed: restarted ${restarted.length}/${killed.length} task(s)`)
+      return restarted
+    },
     isAcceptingWork: () => acceptingWork,
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')

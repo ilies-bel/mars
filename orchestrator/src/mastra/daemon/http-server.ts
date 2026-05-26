@@ -24,6 +24,11 @@ export interface HttpServerDeps {
   /** Process-level: re-exec the daemon itself. Resolves once the re-exec is
    * scheduled; the current process exits shortly after. */
   restartDaemon: () => Promise<void>
+  /**
+   * Batch restart: re-queue every failed task that carries the daemon-killed
+   * failure signature. Returns the IDs that were re-queued.
+   */
+  restartAllDaemonKilled: () => Promise<string[]>
   /** Returns `true` while the daemon is accepting work (draining → `false`). */
   isAcceptingWork: () => boolean
 }
@@ -133,6 +138,15 @@ export const startHttpServer = async (
       deps
         .restartDaemon()
         .then(() => sendJson(res, 200, { ok: true }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /actions/restart-all-daemon-killed — batch re-queue, no :id.
+    if (req.url === '/actions/restart-all-daemon-killed') {
+      deps
+        .restartAllDaemonKilled()
+        .then((restarted) => sendJson(res, 200, { ok: true, restarted }))
         .catch((err: unknown) => sendError(res, err))
       return
     }
