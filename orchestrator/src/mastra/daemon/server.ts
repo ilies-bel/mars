@@ -16,6 +16,7 @@ import {
   deleteTask,
   dropTask,
   enqueueTask,
+  getClient,
   getTask,
   hasIncompleteBlockers,
   initQueue,
@@ -28,6 +29,10 @@ import {
   type Task,
   type UnblockTaskResult,
 } from '../queue'
+import {
+  drainAlertDismissals,
+  ensureAlertDismisser,
+} from './alert-dismisser'
 import { RequestContext } from '@mastra/core/di'
 import { getDefaultTaskStore } from '../lib/task-store'
 import { listProposals, promoteProposal } from '../proposals'
@@ -1765,6 +1770,20 @@ export const startDaemon = async (
   // is fully wired) — fire-and-forget; errors logged inside.
   void reconcile().catch((err) => log(`[reconcile] failed: ${(err as Error).message}`))
 
+  // Boot drain for the alert-dismisser outbox subscriber: register it (no
+  // replay — chokepoint already reconciles history) and clear alerts for any
+  // status changes published while the daemon was down.
+  void (async () => {
+    try {
+      await ensureAlertDismisser(getClient())
+      const { processed } = await drainAlertDismissals(getClient(), log)
+      if (processed > 0)
+        log(`[alert-dismisser] cleared alerts for ${processed} status change(s) on boot`)
+    } catch (err) {
+      log(`[alert-dismisser] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // ── Poll-fallback tick ────────────────────────────────────────────────────
   // drain() is otherwise purely event-driven (bus 'task.added'/'task.queued'
   // and dispatcher finally-blocks). If a drain pass throws and exits, or a
@@ -1825,6 +1844,23 @@ export const startDaemon = async (
   }, STALE_SWEEP_MS)
   staleSweep.unref()
 
+  // ── Alert-dismisser drain ─────────────────────────────────────────────────
+  // Polls the outbox for status-transition events and clears the implicated
+  // task's action-queue alert(s). This keeps the "status change clears
+  // alerts" invariant whole for raw-SQL status writes that bypass the
+  // updateTask chokepoint. .unref() so it never holds the process open.
+  const ALERT_DRAIN_MS = Number(process.env.MARS_ALERT_DRAIN_MS ?? 30_000)
+  const alertDrain = setInterval(() => {
+    void (async () => {
+      try {
+        await drainAlertDismissals(getClient(), log)
+      } catch (err) {
+        log(`[alert-dismisser] drain errored: ${(err as Error).message}`)
+      }
+    })()
+  }, ALERT_DRAIN_MS)
+  alertDrain.unref()
+
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
@@ -1832,6 +1868,7 @@ export const startDaemon = async (
     shuttingDown = true
     clearInterval(pollFallback)
     clearInterval(staleSweep)
+    clearInterval(alertDrain)
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.
