@@ -473,9 +473,9 @@ export class StateDb {
   }
 
   /**
-   * Dismiss a derived-inbox row: persist a `(entityKind, entityId)` row so the
-   * derived view hides it until the entity's state changes (which clears the
-   * dismissal via the orchestrator's `updateTask` hook).
+   * Dismiss an inbox row: persist a `(entityKind, entityId)` row so the inbox
+   * view hides it until the entity's state changes (which clears the dismissal
+   * via the orchestrator's `updateTask` hook).
    */
   async dismissInboxEntity(
     entityKind: 'task' | 'worktree' | 'proposal',
@@ -493,9 +493,9 @@ export class StateDb {
   }
 
   /**
-   * Acknowledge a derived-inbox row: marks it as seen without hiding it from
-   * the open filter. Sets `note = 'ack'` so the row remains visible in the
-   * default open view but carries an acknowledgement stamp.
+   * Acknowledge an inbox row: marks it as seen without hiding it from the open
+   * filter. Sets `note = 'ack'` so the row remains visible in the default open
+   * view but carries an acknowledgement stamp.
    */
   async ackInboxEntity(
     entityKind: 'task' | 'worktree' | 'proposal',
@@ -513,8 +513,8 @@ export class StateDb {
   }
 
   /**
-   * Resolve a derived-inbox row: hides it from the open filter and marks it
-   * as operator-resolved. Sets `note = 'resolved'`.
+   * Resolve an inbox row: hides it from the open filter and marks it as
+   * operator-resolved. Sets `note = 'resolved'`.
    */
   async resolveInboxEntity(
     entityKind: 'task' | 'worktree' | 'proposal',

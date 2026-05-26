@@ -3,15 +3,16 @@ import { extname, join, normalize, resolve } from 'node:path'
 import { loadAgents } from './agents.ts'
 import { fetchErrorKinds, proxyAction } from './daemonHttp.ts'
 import { StateDb, TaskDb } from './db.ts'
-import {
-  type DerivedInboxFilter,
-  type DerivedInboxKind,
-  dismissalKindForRow,
-} from './derivedInbox.ts'
 import { listTerminalEvents } from './events.ts'
 import { resolveRepo } from './repo.ts'
 import { SseHub } from './sse.ts'
 import { watchQueue } from './watch.ts'
+
+/** The three inbox row kinds the action-queue handler maps persisted rows to. */
+type DerivedInboxKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
+
+/** Filter parameter accepted by GET /api/inbox/action-queue. */
+type DerivedInboxFilter = 'open' | 'dismissed' | 'all'
 
 interface CliArgs {
   repo?: string
@@ -410,7 +411,11 @@ export const startServer = async (
           }
           const [kind, ...rest] = id.split(':')
           const entityId = rest.join(':')
-          const entityKind = dismissalKindForRow(kind as DerivedInboxKind)
+          const entityKind: 'task' | 'worktree' | 'proposal' | null =
+            kind === 'failed-task' ? 'task'
+            : kind === 'stale-worktree' ? 'worktree'
+            : kind === 'draft-proposal' ? 'proposal'
+            : null
           if (entityKind === null) {
             return jsonResponse(400, { error: `unknown inbox kind: ${kind}` })
           }
