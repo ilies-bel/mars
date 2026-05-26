@@ -6,6 +6,7 @@ import type { Author, AuthorKind } from './author'
 import { dismissAlertsOnStatusChange } from './lib/inbox'
 import { clearDismissalForEntity } from './lib/inbox-dismissals'
 import { openLibsql } from './lib/libsql'
+import { publish, publishWithRetry } from './lib/outbox'
 import type { TaskStore } from './lib/task-store'
 
 export type TaskStatus =
@@ -1224,6 +1225,11 @@ export const updateTask = async (
   args.push(new Date().toISOString())
   args.push(id)
 
+  const isStatusChange =
+    patch.status !== undefined &&
+    previousStatus !== null &&
+    patch.status !== previousStatus
+
   const appendSessionId =
     patch.claudeSessionId !== undefined &&
     patch.claudeSessionId !== null &&
@@ -1264,6 +1270,37 @@ export const updateTask = async (
           patch.claudeSessionId as string,
         ],
       })
+      // Emit the matching outbox event atomically with the state row.
+      // Wrapped in a nested try/catch so a publish failure (e.g. Zod schema
+      // mismatch) does not roll back the already-correct state mutation.
+      if (isStatusChange) {
+        try {
+          if (patch.status === 'failed') {
+            await publish(tx, 'task.failed', {
+              taskId: id,
+              error: patch.error ?? patch.failureReason ?? '',
+            })
+          } else if (patch.status === 'dropped') {
+            await publish(tx, 'task.dropped', {
+              taskId: id,
+              dropReason: patch.failureReason ?? '',
+            })
+          } else if (patch.status === 'queued') {
+            await publish(tx, 'task.queued', { taskId: id })
+          } else if (patch.status === 'blocked') {
+            await publish(tx, 'task.blocked', {
+              taskId: id,
+              fixTaskId: null,
+              failureSignature: patch.failureSignature ?? '',
+              failingStep: patch.failedPhase ?? '',
+            })
+          } else if (patch.status === 'done') {
+            await publish(tx, 'task.completed', { taskId: id, result: null })
+          }
+        } catch {
+          // best-effort: state mutation still commits
+        }
+      }
       await tx.commit()
     } catch (error: unknown) {
       tx.close()
@@ -1278,6 +1315,37 @@ export const updateTask = async (
       await store.execute(stmt)
     } else {
       await getClient().execute(stmt)
+    }
+    // Emit the outbox event after the state row commits (best-effort:
+    // emission failure must not surface as a state-mutation error).
+    if (isStatusChange) {
+      try {
+        const c = getClient()
+        if (patch.status === 'failed') {
+          await publishWithRetry(c, 'task.failed', {
+            taskId: id,
+            error: patch.error ?? patch.failureReason ?? '',
+          })
+        } else if (patch.status === 'dropped') {
+          await publishWithRetry(c, 'task.dropped', {
+            taskId: id,
+            dropReason: patch.failureReason ?? '',
+          })
+        } else if (patch.status === 'queued') {
+          await publishWithRetry(c, 'task.queued', { taskId: id })
+        } else if (patch.status === 'blocked') {
+          await publishWithRetry(c, 'task.blocked', {
+            taskId: id,
+            fixTaskId: null,
+            failureSignature: patch.failureSignature ?? '',
+            failingStep: patch.failedPhase ?? '',
+          })
+        } else if (patch.status === 'done') {
+          await publishWithRetry(c, 'task.completed', { taskId: id, result: null })
+        }
+      } catch {
+        // best-effort
+      }
     }
   }
 

@@ -2,6 +2,30 @@ import { type Client } from '@libsql/client'
 import { createHash, randomUUID } from 'node:crypto'
 import { resolveContext } from '../context'
 import { openLibsql } from './libsql'
+import { publishWithRetry } from './outbox'
+import type { EventName, EventPayload } from './outbox'
+
+/**
+ * Emit an inbox lifecycle event to the queue.db events outbox.
+ *
+ * inbox_items live in state.db; the events outbox lives in queue.db.
+ * Cross-DB atomicity is not available via libsql transactions, so this
+ * emits in a separate write transaction on queue.db after the state.db
+ * write has committed. Emission failures are non-fatal: the inbox
+ * operation succeeds regardless.
+ */
+async function emitInboxBusEvent<T extends EventName>(
+  type: T,
+  payload: EventPayload<T>,
+): Promise<void> {
+  try {
+    const { initQueue, getClient: getQueueClient } = await import('../queue')
+    await initQueue()
+    await publishWithRetry(getQueueClient(), type, payload)
+  } catch {
+    // Non-fatal: inbox state change already committed in state.db.
+  }
+}
 
 export type InboxCategory = 'orchestrator' | 'reflector' | 'daemon' | 'user'
 export type InboxPriority = 'urgent' | 'high' | 'normal' | 'low'
@@ -393,6 +417,13 @@ export const raiseInboxItem = async (
     ],
   })
   await insertHistory(c, id, null, 'open', item.raisedBy, null)
+  await emitInboxBusEvent('inbox.raised', {
+    itemId: id,
+    kind: item.kind,
+    category: item.category,
+    priority: item.priority,
+    signature: item.signature,
+  })
   return id
 }
 
@@ -589,6 +620,15 @@ export const setInboxState = async (
     opts?.by ?? null,
     opts?.note ?? null,
   )
+
+  if (isTerminal(state)) {
+    await emitInboxBusEvent('inbox.resolved', {
+      itemId: resolvedId,
+      fromState: currentState,
+      toState: state,
+      by: opts?.by ?? '',
+    })
+  }
 }
 
 /**
