@@ -1,13 +1,11 @@
 /**
- * Tests for the failed/blocked task title in the derived inbox, and for
- * the grouped 'restart all daemon-killed' affordance.
+ * Tests for the action-queue handler behaviour that previously required a
+ * derived-inbox-style scan:
+ *   - daemon-killed-batch grouped affordance
+ *   - title and body pass-through from inbox_items
  *
- * The title must carry the FULL collapsed first line of the task prompt
- * — no 60-char cap, no trailing '…'. Multi-line prompts collapse to a
- * single whitespace-normalised line.
- *
- * The grouped affordance appears as a synthetic 'daemon-killed-batch' row
- * when ≥2 daemon-killed tasks are present, and is absent when fewer exist.
+ * After the slice-5 migration both of these are exercised via the persisted
+ * inbox_items table. The handler reads inbox_items; no task/worktree scan.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
@@ -59,22 +57,60 @@ const createSchema = async (path: string): Promise<Client> => {
     created_at TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (task_id, blocker_task_id)
   )`)
+  await c.execute(`CREATE TABLE IF NOT EXISTS inbox_items (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'orchestrator',
+    priority TEXT NOT NULL DEFAULT 'high',
+    state TEXT NOT NULL DEFAULT 'open',
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    payload TEXT NOT NULL DEFAULT '{}',
+    context TEXT NOT NULL DEFAULT '{}',
+    raised_by TEXT NOT NULL DEFAULT 'test',
+    raised_at TEXT NOT NULL,
+    last_seen_at TEXT,
+    seen_count INTEGER NOT NULL DEFAULT 1,
+    fingerprint TEXT,
+    signature TEXT,
+    resolved_at TEXT,
+    resolution TEXT,
+    resolution_note TEXT,
+    root_cause TEXT,
+    resolved_by TEXT
+  )`)
   return c
 }
 
-const insertTask = async (
+const insertInboxItem = async (
   c: Client,
-  opts: { id: string; status: string; prompt: string; failureSignature?: string },
+  opts: {
+    id: string
+    kind: string
+    priority?: string
+    title?: string
+    payload?: Record<string, unknown>
+    context?: Record<string, unknown>
+  },
 ): Promise<void> => {
   const now = new Date().toISOString()
   await c.execute({
-    sql: `INSERT INTO tasks (id, prompt, status, failure_signature, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?)`,
-    args: [opts.id, opts.prompt, opts.status, opts.failureSignature ?? null, now, now],
+    sql: `INSERT INTO inbox_items (id, kind, priority, title, payload, context, raised_at, last_seen_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      opts.id,
+      opts.kind,
+      opts.priority ?? 'high',
+      opts.title ?? `item ${opts.id}`,
+      JSON.stringify(opts.payload ?? {}),
+      JSON.stringify(opts.context ?? {}),
+      now,
+      now,
+    ],
   })
 }
 
-describe('derived inbox — daemon-killed-batch grouped affordance', () => {
+describe('action-queue handler — daemon-killed-batch grouped affordance (persisted)', () => {
   let repo: string
   let server: ReturnType<typeof Bun.serve> | null = null
   let baseUrl: string
@@ -99,19 +135,19 @@ describe('derived inbox — daemon-killed-batch grouped affordance', () => {
     return (await res.json()) as InboxRow[]
   }
 
-  it('shows a daemon-killed-batch banner when >=2 daemon-killed tasks exist', async () => {
+  it('shows a daemon-killed-batch banner when >=2 daemon-killed rows are in inbox_items', async () => {
     const c = createClient({ url: `file:${resolve(repo, '.mars/mars.db')}` })
-    await insertTask(c, {
-      id: 't-dk-1',
-      status: 'failed',
-      prompt: 'first daemon-killed task',
-      failureSignature: 'daemon-killed',
+    await insertInboxItem(c, {
+      id: 'dk-1',
+      kind: 'daemon-killed',
+      title: 'daemon-killed task 1',
+      payload: { taskId: 't-dk-1' },
     })
-    await insertTask(c, {
-      id: 't-dk-2',
-      status: 'failed',
-      prompt: 'second daemon-killed task',
-      failureSignature: 'daemon-killed',
+    await insertInboxItem(c, {
+      id: 'dk-2',
+      kind: 'daemon-killed',
+      title: 'daemon-killed task 2',
+      payload: { taskId: 't-dk-2' },
     })
     c.close()
 
@@ -122,13 +158,12 @@ describe('derived inbox — daemon-killed-batch grouped affordance', () => {
     expect(batchRow?.title).toContain('2')
   })
 
-  it('is absent when only 1 daemon-killed task exists', async () => {
+  it('is absent when only 1 daemon-killed row exists in inbox_items', async () => {
     const c = createClient({ url: `file:${resolve(repo, '.mars/mars.db')}` })
-    await insertTask(c, {
-      id: 't-dk-only',
-      status: 'failed',
-      prompt: 'single daemon-killed task',
-      failureSignature: 'daemon-killed',
+    await insertInboxItem(c, {
+      id: 'dk-only',
+      kind: 'daemon-killed',
+      payload: { taskId: 't-dk-only' },
     })
     c.close()
 
@@ -137,18 +172,17 @@ describe('derived inbox — daemon-killed-batch grouped affordance', () => {
     expect(batchRow).toBeUndefined()
   })
 
-  it('is absent when daemon-killed tasks are mixed with ordinary failed tasks but count < 2', async () => {
+  it('is absent when daemon-killed and ordinary failed rows together total < 2 daemon-killed', async () => {
     const c = createClient({ url: `file:${resolve(repo, '.mars/mars.db')}` })
-    await insertTask(c, {
-      id: 't-dk-one',
-      status: 'failed',
-      prompt: 'daemon-killed task',
-      failureSignature: 'daemon-killed',
+    await insertInboxItem(c, {
+      id: 'dk-one',
+      kind: 'daemon-killed',
+      payload: { taskId: 't-dk-one' },
     })
-    await insertTask(c, {
-      id: 't-ordinary',
-      status: 'failed',
-      prompt: 'ordinary failed task',
+    await insertInboxItem(c, {
+      id: 'ord-one',
+      kind: 'failed',
+      payload: { taskId: 't-ord' },
     })
     c.close()
 
@@ -157,19 +191,17 @@ describe('derived inbox — daemon-killed-batch grouped affordance', () => {
     expect(batchRow).toBeUndefined()
   })
 
-  it('banner appears before individual daemon-killed rows (high priority, sorted first)', async () => {
+  it('banner appears before individual daemon-killed rows (sorted first)', async () => {
     const c = createClient({ url: `file:${resolve(repo, '.mars/mars.db')}` })
-    await insertTask(c, {
-      id: 't-dk-a',
-      status: 'failed',
-      prompt: 'daemon-killed A',
-      failureSignature: 'daemon-killed',
+    await insertInboxItem(c, {
+      id: 'dk-a',
+      kind: 'daemon-killed',
+      payload: { taskId: 't-dk-a' },
     })
-    await insertTask(c, {
-      id: 't-dk-b',
-      status: 'failed',
-      prompt: 'daemon-killed B',
-      failureSignature: 'daemon-killed',
+    await insertInboxItem(c, {
+      id: 'dk-b',
+      kind: 'daemon-killed',
+      payload: { taskId: 't-dk-b' },
     })
     c.close()
 
@@ -182,7 +214,7 @@ describe('derived inbox — daemon-killed-batch grouped affordance', () => {
   })
 })
 
-describe('derived inbox — failed/blocked task title (no 60-char cap)', () => {
+describe('action-queue handler — title and body pass-through from inbox_items', () => {
   let repo: string
   let server: ReturnType<typeof Bun.serve> | null = null
   let baseUrl: string
@@ -207,43 +239,34 @@ describe('derived inbox — failed/blocked task title (no 60-char cap)', () => {
     return (await res.json()) as InboxRow[]
   }
 
-  it('failed task title carries the full prompt beyond 60 chars with no ellipsis', async () => {
-    const longPrompt =
-      'Route hitl slice to operator inbox plus one Coder sub-task for the longer description here'
+  it('returns the persisted title verbatim (no truncation or normalisation)', async () => {
+    const longTitle =
+      'Failed: Route hitl slice to operator inbox plus one Coder sub-task for the longer description here'
     const c = createClient({ url: `file:${resolve(repo, '.mars/mars.db')}` })
-    await insertTask(c, { id: 't-failed-long', status: 'failed', prompt: longPrompt })
+    await insertInboxItem(c, {
+      id: 'row-long-title',
+      kind: 'failed',
+      title: longTitle,
+      payload: { taskId: 't-failed-long' },
+    })
     c.close()
 
     const rows = await fetchQueue()
     const row = rows.find((r) => r.entityId === 't-failed-long')
     expect(row).toBeDefined()
-    expect(row?.title).toBe(`Failed: ${longPrompt}`)
+    expect(row?.title).toBe(longTitle)
+    // Title comes from inbox_items, so no ellipsis is added by the handler.
     expect(row?.title).not.toContain('…')
   })
 
-  it('blocked task produces no inbox row', async () => {
-    const longPrompt =
-      'Route hitl slice to operator inbox plus one Coder sub-task for the longer description here'
+  it('blocked task does not surface (inbox_items only contains stuck items)', async () => {
+    // A blocked task never gets an inbox_items row (the outbox consumer never
+    // raises for task.blocked), so no row appears in the action-queue.
     const c = createClient({ url: `file:${resolve(repo, '.mars/mars.db')}` })
-    await insertTask(c, { id: 't-blocked-long', status: 'blocked', prompt: longPrompt })
+    // Do NOT insert into inbox_items — just confirm nothing appears.
     c.close()
 
     const rows = await fetchQueue()
-    // Blocked tasks auto-unblock when their blockers reach 'done' — they are
-    // normal DAG state and must NOT surface as inbox rows.
     expect(rows.find((r) => r.entityId === 't-blocked-long')).toBeUndefined()
-  })
-
-  it('multi-line failed task prompt collapses to a single whitespace-normalised line', async () => {
-    const multiLinePrompt = 'First line of the prompt\nSecond line\n  Third line with indent'
-    const c = createClient({ url: `file:${resolve(repo, '.mars/mars.db')}` })
-    await insertTask(c, { id: 't-failed-multi', status: 'failed', prompt: multiLinePrompt })
-    c.close()
-
-    const rows = await fetchQueue()
-    const row = rows.find((r) => r.entityId === 't-failed-multi')
-    expect(row).toBeDefined()
-    expect(row?.title).toBe('Failed: First line of the prompt Second line Third line with indent')
-    expect(row?.title).not.toContain('\n')
   })
 })

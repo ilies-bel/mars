@@ -34,12 +34,10 @@ const setupRepo = (): string => {
   return repo
 }
 
-// Tasks, proposals and dismissals now share one .mars/mars.db file
-// (see resolveRepo). The derived view reads worktrees from disk.
-const queueDbPath = (repo: string): string => resolve(repo, '.mars/mars.db')
-const stateDbPath = (repo: string): string => resolve(repo, '.mars/mars.db')
+const dbPath = (repo: string): string => resolve(repo, '.mars/mars.db')
 
-const createQueueSchema = async (path: string): Promise<Client> => {
+/** Create the inbox_items table (and tasks for DAG enrichment). */
+const createSchema = async (path: string): Promise<Client> => {
   const c = createClient({ url: `file:${path}` })
   await c.execute(`CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
@@ -64,44 +62,70 @@ const createQueueSchema = async (path: string): Promise<Client> => {
     created_at TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (task_id, blocker_task_id)
   )`)
+  await c.execute(`CREATE TABLE IF NOT EXISTS inbox_items (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'orchestrator',
+    priority TEXT NOT NULL DEFAULT 'high',
+    state TEXT NOT NULL DEFAULT 'open',
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    payload TEXT NOT NULL DEFAULT '{}',
+    context TEXT NOT NULL DEFAULT '{}',
+    raised_by TEXT NOT NULL DEFAULT 'test',
+    raised_at TEXT NOT NULL,
+    last_seen_at TEXT,
+    seen_count INTEGER NOT NULL DEFAULT 1,
+    fingerprint TEXT,
+    signature TEXT,
+    resolved_at TEXT,
+    resolution TEXT,
+    resolution_note TEXT,
+    root_cause TEXT,
+    resolved_by TEXT
+  )`)
   return c
 }
 
-const insertTask = async (
+const insertInboxItem = async (
   c: Client,
   opts: {
     id: string
-    status: string
-    prompt?: string
-    error?: string
-    parentProposalId?: string
-    updatedAt?: string
+    kind: string
+    priority?: string
+    title?: string
+    body?: string
+    payload?: Record<string, unknown>
+    context?: Record<string, unknown>
+    raisedAt?: string
   },
 ): Promise<void> => {
-  const now = opts.updatedAt ?? new Date().toISOString()
+  const now = opts.raisedAt ?? new Date().toISOString()
   await c.execute({
-    sql: `INSERT INTO tasks (id, prompt, status, error, parent_proposal_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO inbox_items (id, kind, priority, title, body, payload, context, raised_at, last_seen_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       opts.id,
-      opts.prompt ?? `prompt for ${opts.id}`,
-      opts.status,
-      opts.error ?? null,
-      opts.parentProposalId ?? null,
+      opts.kind,
+      opts.priority ?? 'high',
+      opts.title ?? `inbox item ${opts.id}`,
+      opts.body ?? '',
+      JSON.stringify(opts.payload ?? {}),
+      JSON.stringify(opts.context ?? {}),
       now,
       now,
     ],
   })
 }
 
-describe('GET /api/inbox/action-queue (derived view)', () => {
+describe('GET /api/inbox/action-queue (persisted view)', () => {
   let repo: string
   let server: ReturnType<typeof Bun.serve> | null = null
   let baseUrl: string
 
   beforeEach(async () => {
     repo = setupRepo()
-    const c = await createQueueSchema(queueDbPath(repo))
+    const c = await createSchema(dbPath(repo))
     c.close()
     server = await startServer({ repo, port: 0, host: '127.0.0.1' })
     baseUrl = `http://${server.hostname}:${server.port}`
@@ -122,199 +146,251 @@ describe('GET /api/inbox/action-queue (derived view)', () => {
     return (await res.json()) as ActionQueueItemBody[]
   }
 
-  it('returns an empty array when nothing needs attention', async () => {
+  it('returns an empty array when inbox_items is empty', async () => {
     const body = await fetchQueue()
     expect(body).toEqual([])
   })
 
-  it('surfaces failed and dropped tasks as one high-priority row each', async () => {
-    const c = createClient({ url: `file:${queueDbPath(repo)}` })
-    await insertTask(c, { id: 't-failed', status: 'failed', error: 'boom' })
-    await insertTask(c, { id: 't-dropped', status: 'dropped' })
-    await insertTask(c, { id: 't-done', status: 'done' })
-    c.close()
-
-    const body = await fetchQueue()
-    const byEntity = new Map(body.map((r) => [r.entityId, r]))
-    expect(byEntity.has('t-failed')).toBe(true)
-    expect(byEntity.has('t-dropped')).toBe(true)
-    expect(byEntity.has('t-done')).toBe(false)
-    expect(byEntity.get('t-failed')?.kind).toBe('failed-task')
-    expect(byEntity.get('t-failed')?.priority).toBe('high')
-    expect(byEntity.get('t-failed')?.id).toBe('failed-task:t-failed')
-    // No daemon running in this test → registry empty → no actions attached.
-    expect(byEntity.get('t-failed')?.errorKind).toBe('failed-task')
-    expect(byEntity.get('t-failed')?.actions).toEqual([])
-  })
-
-  it('resolves a daemon-killed failure to the daemon-killed error kind', async () => {
-    const c = createClient({ url: `file:${queueDbPath(repo)}` })
-    // The shared test schema omits failure_signature; add it so the row can
-    // carry the daemon-killed signature the resolver keys on.
-    await c.execute(`ALTER TABLE tasks ADD COLUMN failure_signature TEXT`)
-    await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, error, failure_signature, created_at, updated_at)
-            VALUES (?, ?, 'failed', ?, 'daemon-killed', ?, ?)`,
-      args: [
-        't-killed',
-        'killed work',
-        'killed by `mars daemon kill`',
-        new Date().toISOString(),
-        new Date().toISOString(),
-      ],
+  it('maps a seeded inbox_items row to a valid ActionQueueItem', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'test-row-1',
+      kind: 'failed',
+      priority: 'high',
+      title: 'Task t-failed failed',
+      body: 'Some failure body',
+      payload: { taskId: 't-failed', eventType: 'task.failed' },
     })
     c.close()
 
     const body = await fetchQueue()
-    const row = body.find((r) => r.entityId === 't-killed')
+    const row = body.find((r) => r.id === 'test-row-1')
     expect(row).toBeDefined()
-    // Row kind stays 'failed-task' (it IS a failed task), but the error-kind
-    // key it resolves to is the requeue-framed 'daemon-killed'.
+    // Persisted id (UUID) is used as the row id, not kind:entityId
+    expect(row?.id).toBe('test-row-1')
+    // Persisted 'failed' kind maps to UI 'failed-task'
     expect(row?.kind).toBe('failed-task')
+    // entityId extracted from payload.taskId
+    expect(row?.entityId).toBe('t-failed')
+    expect(row?.priority).toBe('high')
+    expect(row?.title).toBe('Task t-failed failed')
+    expect(row?.body).toBe('Some failure body')
+    expect(row?.dismissed).toBe(false)
+    expect(row?.ackState).toBeNull()
+    // errorKind preserved from persisted kind
+    expect(row?.errorKind).toBe('failed-task')
+    expect(row?.actions).toEqual([])
+  })
+
+  it('maps daemon-killed kind to errorKind daemon-killed', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'dk-row-1',
+      kind: 'daemon-killed',
+      priority: 'high',
+      title: 'Task was daemon-killed',
+      payload: { taskId: 't-killed' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'dk-row-1')
+    expect(row).toBeDefined()
+    expect(row?.kind).toBe('failed-task')
+    expect(row?.entityId).toBe('t-killed')
+    // daemon-killed is preserved as errorKind so the right action menu is shown
     expect(row?.errorKind).toBe('daemon-killed')
   })
 
-  it('does not surface a blocked task in the action queue', async () => {
-    const c = createClient({ url: `file:${queueDbPath(repo)}` })
-    await insertTask(c, { id: 't-blocked', status: 'blocked' })
-    await insertTask(c, { id: 't-blocker', status: 'running' })
-    await c.execute({
-      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
-            VALUES ('t-blocked', 't-blocker', 'confirmed', '2025-01-01')`,
-      args: [],
+  it('maps stale-worktree kind from context.taskId', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'sw-row-1',
+      kind: 'stale-worktree',
+      priority: 'low',
+      title: 'Stale worktree: mars-abc',
+      context: { taskId: 'mars-abc' },
     })
     c.close()
 
     const body = await fetchQueue()
-    const row = body.find((r) => r.entityId === 't-blocked')
-    expect(row).toBeUndefined()
-  })
-
-  it('surfaces a draft proposal as a row', async () => {
-    const c = createClient({ url: `file:${stateDbPath(repo)}` })
-    await c.execute(`CREATE TABLE IF NOT EXISTS proposals (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL DEFAULT '',
-      problem TEXT NOT NULL DEFAULT '',
-      solution TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'draft',
-      source TEXT NOT NULL DEFAULT 'human',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    )`)
-    await c.execute(`CREATE TABLE IF NOT EXISTS proposal_user_stories (
-      proposal_id TEXT NOT NULL,
-      story TEXT NOT NULL DEFAULT ''
-    )`)
-    const now = Date.now()
-    await c.execute({
-      sql: `INSERT INTO proposals (id, title, status, created_at, updated_at)
-            VALUES ('p-1', 'some draft title', 'draft', ?, ?)`,
-      args: [now, now],
-    })
-    c.close()
-
-    const body = await fetchQueue()
-    const row = body.find((r) => r.entityId === 'p-1')
-    expect(row).toBeDefined()
-    expect(row?.kind).toBe('draft-proposal')
-  })
-
-  it('surfaces a worktree on disk whose task is terminal as a stale-worktree row', async () => {
-    const c = createClient({ url: `file:${queueDbPath(repo)}` })
-    await insertTask(c, { id: 'wt-done', status: 'done' })
-    c.close()
-    mkdirSync(resolve(repo, '.mars/worktrees/wt-done'), { recursive: true })
-
-    const body = await fetchQueue()
-    const row = body.find((r) => r.id === 'stale-worktree:wt-done')
+    const row = body.find((r) => r.id === 'sw-row-1')
     expect(row).toBeDefined()
     expect(row?.kind).toBe('stale-worktree')
+    expect(row?.entityId).toBe('mars-abc')
     expect(row?.priority).toBe('low')
+    expect(row?.errorKind).toBe('stale-worktree')
   })
 
-  it('does NOT flag a worktree whose task is still live', async () => {
-    const c = createClient({ url: `file:${queueDbPath(repo)}` })
-    await insertTask(c, { id: 'wt-live', status: 'running' })
+  it('maps draft-proposal kind from payload.proposalId', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'dp-row-1',
+      kind: 'draft-proposal',
+      priority: 'low',
+      title: 'Draft: some proposal',
+      payload: { proposalId: 'prop-123', source: 'human' },
+    })
     c.close()
-    mkdirSync(resolve(repo, '.mars/worktrees/wt-live'), { recursive: true })
 
     const body = await fetchQueue()
-    expect(body.find((r) => r.id === 'stale-worktree:wt-live')).toBeUndefined()
+    const row = body.find((r) => r.id === 'dp-row-1')
+    expect(row).toBeDefined()
+    expect(row?.kind).toBe('draft-proposal')
+    expect(row?.entityId).toBe('prop-123')
+    expect(row?.errorKind).toBe('draft-proposal')
+    expect(row?.dag).toBeNull()
   })
 
-  it('hides dismissed rows under the default filter and shows them under all', async () => {
-    const c = createClient({ url: `file:${queueDbPath(repo)}` })
-    await insertTask(c, { id: 't-failed', status: 'failed' })
+  it('maps urgent priority to high', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'prio-row-1',
+      kind: 'failed',
+      priority: 'urgent',
+      payload: { taskId: 't-urgent' },
+    })
     c.close()
 
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'prio-row-1')
+    expect(row?.priority).toBe('high')
+  })
+
+  it('hides dismissed rows from the open filter and shows them under dismissed filter', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'dis-row-1',
+      kind: 'failed',
+      priority: 'high',
+      payload: { taskId: 't-to-dismiss' },
+    })
+    c.close()
+
+    // Dismiss via the ack/dismiss API using kind:entityId format
     const dismissRes = await fetch(`${baseUrl}/api/inbox/dismiss`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: 'failed-task:t-failed' }),
+      body: JSON.stringify({ id: 'failed-task:t-to-dismiss' }),
     })
     expect(dismissRes.status).toBe(200)
 
+    // Should not appear in open filter
     const open = await fetchQueue()
-    expect(open.find((r) => r.entityId === 't-failed')).toBeUndefined()
+    expect(open.find((r) => r.id === 'dis-row-1')).toBeUndefined()
 
-    const all = await fetchQueue('all')
-    const row = all.find((r) => r.entityId === 't-failed')
+    // Should appear under dismissed filter
+    const dismissed = await fetchQueue('dismissed')
+    const row = dismissed.find((r) => r.id === 'dis-row-1')
+    expect(row).toBeDefined()
     expect(row?.dismissed).toBe(true)
     expect(row?.ackState).toBe('dismissed')
+
+    // Should appear under all filter
+    const all = await fetchQueue('all')
+    expect(all.find((r) => r.id === 'dis-row-1')).toBeDefined()
   })
 
-  it('ack keeps row visible in open filter and sets ackState; resolve hides it — UI→seam→UI round trip', async () => {
-    const c = createClient({ url: `file:${queueDbPath(repo)}` })
-    await insertTask(c, { id: 't-round', status: 'failed', error: 'oops' })
+  it('ack keeps row visible in open filter; resolve hides it — round trip', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'ack-row-1',
+      kind: 'failed',
+      priority: 'high',
+      payload: { taskId: 't-ack' },
+    })
     c.close()
 
-    // Baseline: item appears in open filter with no ackState
+    // Baseline: appears in open filter with no ackState
     const before = await fetchQueue()
-    const row0 = before.find((r) => r.entityId === 't-round')
+    const row0 = before.find((r) => r.id === 'ack-row-1')
     expect(row0).toBeDefined()
     expect(row0?.ackState).toBeNull()
     expect(row0?.dismissed).toBe(false)
 
-    // Ack from the web UI
+    // Ack
     const ackRes = await fetch(`${baseUrl}/api/inbox/ack`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: 'failed-task:t-round' }),
+      body: JSON.stringify({ id: 'failed-task:t-ack' }),
     })
     expect(ackRes.status).toBe(200)
 
-    // After ack: item STILL shows in open filter (not hidden), but carries ackState
+    // After ack: still shows in open filter, but ackState='ack'
     const afterAck = await fetchQueue()
-    const rowAck = afterAck.find((r) => r.entityId === 't-round')
+    const rowAck = afterAck.find((r) => r.id === 'ack-row-1')
     expect(rowAck).toBeDefined()
     expect(rowAck?.ackState).toBe('ack')
     expect(rowAck?.dismissed).toBe(false)
 
-    // Resolve from the web UI (the "CLI sees it" surface is the same shared DB)
+    // Resolve
     const resolveRes = await fetch(`${baseUrl}/api/inbox/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: 'failed-task:t-round' }),
+      body: JSON.stringify({ id: 'failed-task:t-ack' }),
     })
     expect(resolveRes.status).toBe(200)
 
-    // After resolve: item is HIDDEN from open filter
+    // After resolve: hidden from open filter
     const afterResolve = await fetchQueue()
-    expect(afterResolve.find((r) => r.entityId === 't-round')).toBeUndefined()
+    expect(afterResolve.find((r) => r.id === 'ack-row-1')).toBeUndefined()
 
-    // But visible under ?filter=all with resolved ackState (what 'mars inbox list all' would show)
+    // But visible under all with resolved ackState
     const allRows = await fetchQueue('all')
-    const rowResolved = allRows.find((r) => r.entityId === 't-round')
+    const rowResolved = allRows.find((r) => r.id === 'ack-row-1')
     expect(rowResolved?.ackState).toBe('resolved')
     expect(rowResolved?.dismissed).toBe(true)
   })
 
-  it('returns 200 with empty array on a fresh repo (no tasks table)', async () => {
-    const c = createClient({ url: `file:${queueDbPath(repo)}` })
-    await c.execute(`DROP TABLE IF EXISTS tasks`)
+  it('returns 200 with empty array when inbox_items table does not exist', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await c.execute(`DROP TABLE IF EXISTS inbox_items`)
     c.close()
     const body = await fetchQueue()
     expect(body).toEqual([])
+  })
+
+  it('does not include rows where state is not open', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'closed-row',
+      kind: 'failed',
+      payload: { taskId: 't-closed' },
+    })
+    // Mark it as resolved at the inbox_items level
+    await c.execute({
+      sql: `UPDATE inbox_items SET state = 'resolved' WHERE id = ?`,
+      args: ['closed-row'],
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    expect(body.find((r) => r.id === 'closed-row')).toBeUndefined()
+
+    // Also not in dismissed filter (inbox_dismissals is empty)
+    const dismissed = await fetchQueue('dismissed')
+    expect(dismissed.find((r) => r.id === 'closed-row')).toBeUndefined()
+  })
+
+  it('produces a daemon-killed-batch synthetic row when ≥2 daemon-killed rows are open', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'dk-1',
+      kind: 'daemon-killed',
+      priority: 'high',
+      payload: { taskId: 'task-dk-1' },
+    })
+    await insertInboxItem(c, {
+      id: 'dk-2',
+      kind: 'daemon-killed',
+      priority: 'high',
+      payload: { taskId: 'task-dk-2' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const batchRow = body.find((r) => r.entityId === '__daemon-killed-batch__')
+    expect(batchRow).toBeDefined()
+    expect(batchRow?.errorKind).toBe('daemon-killed-batch')
   })
 })
