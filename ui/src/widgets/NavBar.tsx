@@ -60,6 +60,11 @@ export const NavBar = ({ hash }: NavBarProps) => {
           Events
         </a>
       </span>
+      <span className="relative">
+        <a className={linkClass(route === 'graph')} href="#/graph">
+          Graph
+        </a>
+      </span>
     </nav>
   )
 }
