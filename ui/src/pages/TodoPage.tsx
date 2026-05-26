@@ -2,12 +2,7 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import {
-  ackInboxItem,
-  dismissInboxItem,
-  invokeAction,
-  resolveInboxItem,
-} from '@/shared/api'
+import { invokeAction } from '@/shared/api'
 import type { ActionDescriptor, ActionQueueItem, DagNode } from '@/shared/schemas'
 
 // ---- Helpers ----
@@ -197,13 +192,6 @@ interface DetailProps {
 }
 
 const ActionQueueDetail = ({ item }: DetailProps) => {
-  const queryClient = useQueryClient()
-
-  const runAction = async (action: () => Promise<void>): Promise<void> => {
-    await action()
-    await queryClient.invalidateQueries({ queryKey: ['action-queue'] })
-  }
-
   return (
     <div className="flex h-full flex-col overflow-auto">
       <header className="border-b border-iron/30 px-6 py-4">
@@ -267,43 +255,6 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
           </div>
         </dl>
       </main>
-
-      <footer className="border-t border-iron/30 px-6 py-3">
-        {item.ackState !== null && (
-          <p className="mb-2 font-mono text-[10px] text-iron/70">
-            Status: {ACK_STATE_LABEL[item.ackState]}
-          </p>
-        )}
-        <div className="flex gap-2">
-          {item.ackState === null && (
-            <button
-              data-testid="inbox-ack"
-              onClick={() => runAction(() => ackInboxItem(item.id))}
-              className="border border-iron/40 px-3 py-1 font-mono text-[11px] text-fg hover:bg-iron/10"
-            >
-              Ack
-            </button>
-          )}
-          {(item.ackState === null || item.ackState === 'ack') && (
-            <button
-              data-testid="inbox-resolve"
-              onClick={() => runAction(() => resolveInboxItem(item.id))}
-              className="border border-iron/40 px-3 py-1 font-mono text-[11px] text-fg hover:bg-iron/10"
-            >
-              Resolve
-            </button>
-          )}
-          {!item.dismissed && (
-            <button
-              data-testid="inbox-dismiss"
-              onClick={() => runAction(() => dismissInboxItem(item.id))}
-              className="border border-iron/40 px-3 py-1 font-mono text-[11px] text-fg hover:bg-iron/10"
-            >
-              Dismiss
-            </button>
-          )}
-        </div>
-      </footer>
     </div>
   )
 }
