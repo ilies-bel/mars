@@ -20,7 +20,7 @@ export const CANCELLED_FAILURE_REASON = 'cancelled'
 const CANCELLED_CASCADE_FAILURE_REASON = 'cancelled-blocker-cascade'
 export const WORKTREE_AHEAD_FAILURE_REASON =
   'worktree_ahead_of_integration_at_unblock'
-export const WORKTREE_AHEAD_INBOX_KIND: InboxKind = 'dirty-main-at-setup'
+export const WORKTREE_AHEAD_INBOX_KIND: InboxKind = 'worktree-ahead'
 
 const integrationBranchName = (): string =>
   process.env.INTEGRATION_BRANCH ?? 'main'
@@ -154,7 +154,7 @@ const raiseWorktreeAheadInbox = async (
   }
 }
 
-export const PREREQUISITE_FAILED_INBOX_KIND: InboxKind = 'cancelled-blocker-cascade'
+export const PREREQUISITE_FAILED_INBOX_KIND: InboxKind = 'prerequisite-failed'
 
 export interface BlockByFailureOutcome {
   taskId: string

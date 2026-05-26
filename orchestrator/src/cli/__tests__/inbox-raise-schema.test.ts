@@ -86,7 +86,7 @@ describe('inboxRaiseSchema', () => {
   })
 
   it('accepts every valid InboxKind value', () => {
-    const kinds = ['failed', 'cancelled-blocker-cascade', 'dirty-main-at-setup', 'diagnose-inconclusive'] as const
+    const kinds = ['failed', 'cancelled-blocker-cascade', 'diagnose-inconclusive', 'daemon-killed', 'stale-worktree', 'worktree-ahead', 'prerequisite-failed', 'draft-proposal'] as const
     for (const kind of kinds) {
       const result = inboxRaiseSchema.safeParse({ ...validBase, kind })
       expect(result.success).toBe(true)
