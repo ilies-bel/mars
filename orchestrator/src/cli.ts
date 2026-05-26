@@ -60,6 +60,7 @@ const FLAGS_WITH_VALUES = new Set([
   '--done',
   '--type',
   '--wrapper',
+  '--session',
 ])
 
 const REPEATABLE_FLAGS = new Set(['--blocked-by', '--files', '--done'])
@@ -307,13 +308,6 @@ Commands:
                                 inserted as drafts — never auto-run. Disable
                                 signal capture entirely with the env var
                                 MARS_REFLECT_DISABLED=1.
-  deep-reflect [<task-id>]      deep, single-session post-mortem on one task.
-                                Walks the stored claude -p transcript event-by
-                                -event to surface dissonant tool calls (success
-                                ful tool calls that did not achieve their stated
-                                intent), verify-claim mismatches, and thrashing
-                                patterns. Auto-picks a candidate when no id is
-                                given. Requires a stored transcript.
   arc list [--limit N] [--json] [--with-transcript-only]
                                 list task arcs grouped by COALESCE(origin_id, id).
                                 Each arc covers an origin task plus any recovery
@@ -321,9 +315,13 @@ Commands:
                                 --json emits the raw ArcCandidate[] as a JSON array.
                                 --with-transcript-only restricts to arcs that have
                                 at least one stored transcript.
-  arc reflect <id>              deep, arc-level post-mortem. Accepts an originId
-                                or any task id in the arc (resolved automatically).
-                                Writes report to .mars/deep-reflections/arc-<id>-<iso>.json.
+  arc reflect [<originId>]      deep, arc-level post-mortem. With no argument,
+                                prints the arc list and prompts for an originId.
+                                Accepts an originId or any task id in the arc
+                                (resolved automatically). --session <task-id>
+                                reflects on exactly one Worker session without
+                                Arc selection. Writes report to
+                                .mars/deep-reflections/arc-<id>-<iso>.json.
   inbox                         alias for 'inbox list open'
   inbox list [state] [--kind <kind>] [--lean]
                                 list inbox items. state one of:
@@ -707,20 +705,30 @@ Subcommands:
         --json                 emit a JSON array of ArcCandidate objects
         --with-transcript-only only include arcs with at least one stored transcript
 
-  reflect <originId-or-task-id>
-      Deep, arc-level post-mortem across every task in a single Mars arc.
-      Accepts either an originId or any task id that belongs to the arc;
-      the origin is resolved automatically via COALESCE(origin_id, id).
+  reflect [<originId-or-task-id>] [--session <task-id>]
+      Deep post-mortem on a Mars arc or a single Worker session.
 
-      Walks every stored transcript event-by-event and reasons across tasks
-      to surface cross-task patterns (recovery tasks that repeated a failing
-      strategy, work undone across tasks, etc.). Identical findings to
-      'mars deep-reflect' but scoped to the full arc instead of a single session.
+      When called with no arguments, prints the arc list (same output as
+      'mars arc list') and prompts the operator to pick an originId. The
+      picker is interactive: type the originId and press Enter.
 
-      Output: findings printed to stdout, full JSON report persisted to
-      .mars/deep-reflections/arc-<originId>-<iso>.json.
+      Positional argument (arc mode):
+        <originId-or-task-id>   Run arc-level reflection across every task in
+                                the arc. Accepts an originId or any task id
+                                that belongs to the arc; the origin is resolved
+                                automatically via COALESCE(origin_id, id).
+                                Output: .mars/deep-reflections/arc-<id>-<iso>.json
 
-      Requires at least one stored transcript in the arc. Disabled by
+      --session <task-id>       Escape hatch: reflect on exactly one Worker
+                                session (a single task) without going through
+                                Arc selection. Equivalent to the old
+                                'mars deep-reflect <task-id>' behaviour.
+                                Output: .mars/deep-reflections/<task-id>-<iso>.json
+
+      Both modes walk every stored transcript event-by-event to surface
+      dissonant tool calls, verify-claim mismatches, and thrashing patterns.
+
+      Requires at least one stored transcript. Disabled by
       MARS_REFLECT_DISABLED=1. Model defaults to opus; override with
       MARS_DEEP_REFLECT_MODEL.`,
   reflect: `mars reflect [--since <iso>] [--limit <n>]
@@ -734,33 +742,6 @@ MARS_REFLECT_DISABLED=1.
 Flags:
   --since <iso>   only reflect on tasks completed after this ISO timestamp
   --limit <n>     max number of tasks to include (default: 10)`,
-  'deep-reflect': `mars deep-reflect [<task-id>]
-
-Deep, single-session post-mortem on one Mars task. Walks the stored
-claude -p transcript event-by-event to surface things 'mars reflect'
-cannot see — in particular, tool calls that succeeded at the call site
-but did not achieve the assistant's stated intent (e.g. an Edit that
-landed on the wrong line, a Bash 'git commit' that printed "nothing to
-commit", a verify step that reported pass with "0 passed, 0 failed").
-
-Cross-references end-of-turn assistant claims against the recorded
-verify output. Identifies thrashing patterns (same file Read 5+ times,
-Edit-and-revert pairs, repeated identical Bash invocations).
-
-Output: structured findings printed to stdout, full JSON report
-persisted to .mars/deep-reflections/<task-id>-<iso>.json (gitignored).
-Suggestions are filtered through save|absorb|drop verdicts and only
-"save" verdicts land as draft proposals with source='reflection'.
-
-When no <task-id> is given, the candidate is auto-picked:
-  1. most recent failed task with a stored transcript;
-  2. else, highest-cost done task in last 7 days (cost ≥ 2× median);
-  3. else, most recent done task with a transcript;
-  4. else, prints "no eligible session found" and exits 0.
-
-Requires a stored transcript (captured automatically by the implement
-workflow unless MARS_REFLECT_DISABLED=1 is set). The model defaults to
-opus; override with MARS_DEEP_REFLECT_MODEL.`,
   inbox: `mars inbox <subcommand> ...
 
 Subcommands:
@@ -2710,122 +2691,6 @@ const main = async (): Promise<void> => {
     return
   }
 
-  if (cmd === 'deep-reflect') {
-    if (process.env.MARS_REFLECT_DISABLED === '1') {
-      console.log('reflection disabled via MARS_REFLECT_DISABLED=1')
-      return
-    }
-    const explicitId = rest[0] && !rest[0].startsWith('--') ? rest[0] : null
-    const {
-      loadDeepReflectSession,
-      resolveOriginIdForTaskOrSelf,
-    } = await import('./mastra/lib/deep-reflect-query')
-    const {
-      loadOriginTimeline,
-      pickTopOrigin,
-      formatOriginTimeline,
-    } = await import('./mastra/lib/origin-timeline')
-    const { runDeepReflector } = await import('./mastra/lib/deep-reflector')
-    const { applyVerdicts } = await import('./mastra/lib/reflector')
-    const { insertReflectionTask } = await import('./mastra/queue')
-
-    let chosenId: string
-    let pickLine: string
-    if (explicitId) {
-      const originId = await resolveOriginIdForTaskOrSelf(explicitId)
-      chosenId = originId
-      pickLine =
-        originId !== explicitId
-          ? `origin ${originId} (resolved from task ${explicitId}, explicit selection)`
-          : `origin ${originId} (explicit selection)`
-    } else {
-      const pick = await pickTopOrigin()
-      if (!pick) {
-        console.log(
-          'no eligible origin found (need at least one done/failed task)',
-        )
-        return
-      }
-      chosenId = pick.originId
-      pickLine = `origin ${pick.originId} (score=${pick.score}, auto-picked by span+retry+verify_failure)`
-    }
-
-    const [session, timeline] = await Promise.all([
-      loadDeepReflectSession(chosenId),
-      loadOriginTimeline(chosenId),
-    ])
-    if (!session) {
-      console.error(`no transcript found for origin ${chosenId}`)
-      process.exit(1)
-    }
-
-    const originContext = timeline ? formatOriginTimeline(timeline) : undefined
-
-    console.log(pickLine)
-    console.log(
-      `loading transcript: ${session.conversation.length} event(s), verifyOutput=${session.verifyOutput ? `${session.verifyOutput.length} chars` : 'none'}${timeline ? `, arc=${timeline.spanCount} task(s)` : ''}`,
-    )
-
-    const result = await runDeepReflector(session, 10 * 60 * 1000, originContext)
-    const report = result.report
-
-    const sourceTaskId = await insertReflectionTask(1)
-    const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
-
-    const { mkdir, writeFile } = await import('node:fs/promises')
-    const { resolve: resolvePath } = await import('node:path')
-    const { getStateDir } = await import('./mastra/context')
-    const outDir = resolvePath(getStateDir(), 'deep-reflections')
-    await mkdir(outDir, { recursive: true })
-    const isoStamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const outPath = resolvePath(outDir, `${chosenId}-${isoStamp}.json`)
-    const fullDoc = {
-      taskId: chosenId,
-      recordedAt: new Date().toISOString(),
-      report,
-      sourceTaskId,
-      verdictResult: {
-        saved: verdictResult.saved,
-        absorbed: verdictResult.absorbed,
-        dropped: verdictResult.dropped,
-      },
-      rawOutput: result.rawOutput,
-    }
-    await writeFile(outPath, JSON.stringify(fullDoc, null, 2), 'utf8')
-
-    console.log('')
-    if (report.summary) console.log(`Summary: ${report.summary}`)
-    console.log(
-      `Tool calls: ${report.toolCallStats.total} total — ${
-        Object.entries(report.toolCallStats.byName)
-          .map(([k, v]) => `${k}=${v}`)
-          .join(', ') || 'none'
-      }`,
-    )
-    console.log(
-      `Dissonant calls: ${report.dissonantCalls.length}${
-        report.verifyMismatch ? ` | verify mismatch: ${report.verifyMismatch.severity}` : ''
-      }`,
-    )
-    if (report.dissonantCalls.length > 0) {
-      console.log('Top dissonant calls:')
-      for (const d of report.dissonantCalls.slice(0, 3)) {
-        console.log(
-          `  [${d.severity}] event ${d.eventIndex} ${d.tool}: ${d.statedIntent} → ${d.actualOutcome}`,
-        )
-      }
-    }
-    if (report.rootCause) console.log(`Root cause: ${report.rootCause}`)
-    console.log(
-      `Suggestions: ${verdictResult.saved} saved, ${verdictResult.absorbed} absorbed, ${verdictResult.dropped} dropped`,
-    )
-    console.log(`Full report: ${outPath}`)
-    if (result.exitCode !== 0) {
-      console.error(`deep-reflector exit code ${result.exitCode}`)
-    }
-    return
-  }
-
   if (cmd === 'arc') {
     const sub = rest[0]
 
@@ -2834,11 +2699,128 @@ const main = async (): Promise<void> => {
         console.log('reflection disabled via MARS_REFLECT_DISABLED=1')
         return
       }
-      const inputId = rest[1]
-      if (!inputId || inputId.startsWith('--')) {
-        console.error('usage: mars arc reflect <originId-or-task-id>')
-        process.exit(1)
+
+      const sessionId = flags['--session']
+      // positional originId: first element of rest after 'reflect' that isn't a flag
+      const inputId = rest.slice(1).find((r) => !r.startsWith('--')) ?? null
+
+      // --session <id>: single-session reflection (no arc selection)
+      if (sessionId) {
+        const { loadDeepReflectSession } = await import('./mastra/lib/deep-reflect-query')
+        const { runDeepReflector } = await import('./mastra/lib/deep-reflector')
+        const { applyVerdicts } = await import('./mastra/lib/reflector')
+        const { insertReflectionTask } = await import('./mastra/queue')
+
+        const session = await loadDeepReflectSession(sessionId)
+        if (!session) {
+          console.error(`no transcript found for task ${sessionId}`)
+          process.exit(1)
+        }
+
+        console.log(
+          `session ${sessionId}: ${session.conversation.length} event(s), verifyOutput=${session.verifyOutput ? `${session.verifyOutput.length} chars` : 'none'}`,
+        )
+
+        const result = await runDeepReflector(session)
+        const report = result.report
+
+        const sourceTaskId = await insertReflectionTask(1)
+        const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
+
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const { resolve: resolvePath } = await import('node:path')
+        const { getStateDir } = await import('./mastra/context')
+        const outDir = resolvePath(getStateDir(), 'deep-reflections')
+        await mkdir(outDir, { recursive: true })
+        const isoStamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const outPath = resolvePath(outDir, `${sessionId}-${isoStamp}.json`)
+        const fullDoc = {
+          taskId: sessionId,
+          recordedAt: new Date().toISOString(),
+          report,
+          sourceTaskId,
+          verdictResult: {
+            saved: verdictResult.saved,
+            absorbed: verdictResult.absorbed,
+            dropped: verdictResult.dropped,
+          },
+          rawOutput: result.rawOutput,
+        }
+        await writeFile(outPath, JSON.stringify(fullDoc, null, 2), 'utf8')
+
+        console.log('')
+        if (report.summary) console.log(`Summary: ${report.summary}`)
+        console.log(
+          `Tool calls: ${report.toolCallStats.total} total — ${
+            Object.entries(report.toolCallStats.byName)
+              .map(([k, v]) => `${k}=${v}`)
+              .join(', ') || 'none'
+          }`,
+        )
+        console.log(
+          `Dissonant calls: ${report.dissonantCalls.length}${
+            report.verifyMismatch ? ` | verify mismatch: ${report.verifyMismatch.severity}` : ''
+          }`,
+        )
+        if (report.dissonantCalls.length > 0) {
+          console.log('Top dissonant calls:')
+          for (const d of report.dissonantCalls.slice(0, 3)) {
+            console.log(
+              `  [${d.severity}] event ${d.eventIndex} ${d.tool}: ${d.statedIntent} → ${d.actualOutcome}`,
+            )
+          }
+        }
+        if (report.rootCause) console.log(`Root cause: ${report.rootCause}`)
+        console.log(
+          `Suggestions: ${verdictResult.saved} saved, ${verdictResult.absorbed} absorbed, ${verdictResult.dropped} dropped`,
+        )
+        console.log(`Full report: ${outPath}`)
+        if (result.exitCode !== 0) {
+          console.error(`deep-reflector exit code ${result.exitCode}`)
+        }
+        return
       }
+
+      // Determine arc origin: from positional arg or interactive picker
+      let chosenOriginInput: string
+      if (inputId) {
+        chosenOriginInput = inputId
+      } else {
+        // Interactive picker: print the arc list then prompt for selection
+        const { listDeepReflectArcCandidates } = await import('./mastra/lib/deep-reflect-query')
+        const candidates = await listDeepReflectArcCandidates({ limit: 10, withTranscriptOnly: false })
+
+        console.log('originId\ttasks\tdone\tfailed\ttokens\tlastActivity')
+        for (const arc of candidates) {
+          const done = arc.statusMix.done ?? 0
+          const failed = arc.statusMix.failed ?? 0
+          const tokens = arc.totalTokens.toLocaleString('en-US')
+          console.log(
+            `${arc.originId}\t${arc.taskCount}\t${done}\t${failed}\t${tokens}\t${arc.lastActivity}`,
+          )
+        }
+
+        const { createInterface } = await import('node:readline')
+        const rl = createInterface({ input: process.stdin, output: process.stdout })
+        const answer = await new Promise<string>((resolve) => {
+          let answered = false
+          rl.question('Enter originId: ', (a) => {
+            answered = true
+            rl.close()
+            resolve(a.trim())
+          })
+          rl.once('close', () => {
+            if (!answered) resolve('')
+          })
+        })
+
+        if (!answer) {
+          console.error('no arc selected; re-run with: mars arc reflect <originId>')
+          process.exit(1)
+        }
+        chosenOriginInput = answer
+      }
+
       const {
         loadDeepReflectArc,
         resolveOriginIdForTaskOrSelf,
@@ -2847,7 +2829,7 @@ const main = async (): Promise<void> => {
       const { applyVerdicts } = await import('./mastra/lib/reflector')
       const { insertReflectionTask } = await import('./mastra/queue')
 
-      const originId = await resolveOriginIdForTaskOrSelf(inputId)
+      const originId = await resolveOriginIdForTaskOrSelf(chosenOriginInput)
       const arc = await loadDeepReflectArc(originId)
       if (!arc) {
         console.error(`no arc found for ${originId}`)
