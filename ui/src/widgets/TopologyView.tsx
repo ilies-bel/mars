@@ -217,9 +217,20 @@ export interface TopologyViewProps {
    * per-cluster toggle controls on the Progress tab.
    */
   ghostedClusters?: Set<string>
+  /**
+   * When set, only the named proposal and the tasks it sliced stay
+   * highlighted; every other node (including non-selected proposals) ghosts.
+   * Combines with ghostedClusters — a node ghosts if either rule applies.
+   */
+  selectedProposalId?: string | null
 }
 
-export const TopologyView = ({ tasks, proposals, ghostedClusters }: TopologyViewProps) => {
+export const TopologyView = ({
+  tasks,
+  proposals,
+  ghostedClusters,
+  selectedProposalId,
+}: TopologyViewProps) => {
   const { nodes, edges } = buildGraph(tasks, proposals)
 
   if (nodes.length === 0) {
@@ -229,6 +240,17 @@ export const TopologyView = ({ tasks, proposals, ghostedClusters }: TopologyView
       </main>
     )
   }
+
+  // When a proposal is selected, build the set of matching node IDs:
+  // the proposal itself + all tasks sliced from it. Everything else ghosts.
+  const matchingIds: Set<string> | null = selectedProposalId
+    ? new Set([
+        selectedProposalId,
+        ...tasks
+          .filter((t) => t.parentProposalId === selectedProposalId)
+          .map((t) => t.id),
+      ])
+    : null
 
   const positioned = layoutNodes(nodes, edges)
   const posById = new Map(positioned.map((n) => [n.id, n]))
@@ -281,11 +303,13 @@ export const TopologyView = ({ tasks, proposals, ghostedClusters }: TopologyView
         {/* Nodes */}
         {positioned.map((node) => {
           const s = nodeStyle(node)
-          const ghosted =
+          const clusterGhosted =
             ghostedClusters != null &&
             (node.kind === 'proposal'
               ? ghostedClusters.has('Proposal')
               : ghostedClusters.has(node.cluster))
+          const proposalGhosted = matchingIds !== null && !matchingIds.has(node.id)
+          const ghosted = clusterGhosted || proposalGhosted
           return (
             <g
               key={node.id}
