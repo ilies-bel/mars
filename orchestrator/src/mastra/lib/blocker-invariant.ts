@@ -1,5 +1,5 @@
 import type { Client } from '@libsql/client'
-import { getClient, initQueue } from '../queue'
+import { getDefaultQueueClient } from './task-store'
 
 /**
  * Invariant helper: a task should only be `status='blocked'` when there is at
@@ -47,8 +47,7 @@ export const countBlockerEdges = async (
   taskId: string,
   opts: BlockerInvariantOptions = {},
 ): Promise<number> => {
-  await initQueue()
-  const c = opts.client ?? getClient()
+  const c = opts.client ?? (await getDefaultQueueClient())
   const r = await c.execute({
     sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
     args: [taskId],

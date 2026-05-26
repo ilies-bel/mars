@@ -8,7 +8,8 @@ import {
   markTaskFailed,
   raiseRetryBudgetExhaustedInbox,
 } from './queue-retry'
-import { getClient, getTask, initQueue, updateTask } from './queue'
+import { getTask, updateTask } from './queue'
+import { getDefaultQueueClient } from './lib/task-store'
 import { type InboxKind, raiseInboxItem, supersedeInboxItemsForOrigin } from './lib/inbox'
 import { publish } from './lib/outbox'
 
@@ -241,8 +242,6 @@ const raiseInboxForBlockedTask = async (taskId: string): Promise<void> => {
 export const onBlockerTaskCompleted = async (
   blockerTaskId: string,
 ): Promise<UnblockByTaskResult> => {
-  await initQueue()
-
   // Diagnose Chore intercept — must run before the generic blocker loop so
   // the parent is never flipped to 'queued' through the ordinary path.
   const completingTask = await getTask(blockerTaskId)
@@ -258,7 +257,7 @@ export const onBlockerTaskCompleted = async (
     return { blockerTaskId, outcomes: [] }
   }
 
-  const c = getClient()
+  const c = await getDefaultQueueClient()
   const now = new Date().toISOString()
 
   const r = await c.execute({
@@ -386,8 +385,7 @@ export const onBlockerTaskCompleted = async (
 export const onBlockerTaskFailed = async (
   failedBlockerTaskId: string,
 ): Promise<BlockByFailureResult> => {
-  await initQueue()
-  const c = getClient()
+  const c = await getDefaultQueueClient()
   const now = new Date().toISOString()
 
   const r = await c.execute({
@@ -477,8 +475,7 @@ export const onBlockerTaskFailed = async (
 export const onBlockerTaskCancelled = async (
   blockerTaskId: string,
 ): Promise<UnblockByTaskResult> => {
-  await initQueue()
-  const c = getClient()
+  const c = await getDefaultQueueClient()
 
   const r = await c.execute({
     sql: `SELECT t.id AS id, t.retry_count AS retry_count
@@ -544,8 +541,7 @@ export const onBlockerTaskCancelled = async (
  * died between a blocker task completing and the unblock running.
  */
 export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
-  await initQueue()
-  const c = getClient()
+  const c = await getDefaultQueueClient()
   const r = await c.execute(`
     SELECT t.id AS id, t.retry_count AS retry_count
       FROM tasks t
@@ -690,7 +686,6 @@ export interface PropagateRecoveryDoneResult {
 export const markOriginDoneFromRecovery = async (
   originTaskId: string,
 ): Promise<PropagateRecoveryDoneResult> => {
-  await initQueue()
   const origin = await getTask(originTaskId)
 
   // Close any inbox row keyed to the origin regardless of whether we
@@ -724,7 +719,7 @@ export const markOriginDoneFromRecovery = async (
       inboxItemsClosed,
     }
   }
-  const c = getClient()
+  const c = await getDefaultQueueClient()
   const now = new Date().toISOString()
   const tx = await c.transaction('write')
   let originFlipped = false
