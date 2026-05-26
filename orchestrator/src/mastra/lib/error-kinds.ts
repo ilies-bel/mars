@@ -105,7 +105,6 @@ export interface ErrorKind {
 export const ERROR_KIND_IDS = [
   'failed-task',
   'daemon-killed',
-  'blocked-task',
   'stale-worktree',
   'draft-proposal',
 ] as const
@@ -150,25 +149,6 @@ const ERROR_KINDS: Readonly<Record<ErrorKindId, ErrorKind>> = Object.freeze({
         id: 'restart-daemon',
         label: 'Restart daemon',
         op: 'restart-daemon',
-        needsConfirm: true,
-      },
-    ],
-  },
-  'blocked-task': {
-    kind: 'blocked-task',
-    rowKind: 'blocked-task',
-    trigger:
-      'A task is in `blocked`, waiting on one or more blocker tasks that have ' +
-      'not all reached `done`.',
-    recipe:
-      'Check the blockers in the DAG context. If a blocker failed and will not ' +
-      'recover, the dependent will wait forever — phantom-recover it (clear its ' +
-      'edges and flip it to failed) so it can then be restarted or purged.',
-    recoveryActions: [
-      {
-        id: 'unblock',
-        label: 'Phantom-recover',
-        op: 'unblock',
         needsConfirm: true,
       },
     ],

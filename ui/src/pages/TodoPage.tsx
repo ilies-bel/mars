@@ -22,7 +22,6 @@ const priorityBadgeClass = (priority: string): string => {
 
 const KIND_LABEL: Record<ActionQueueItem['kind'], string> = {
   'failed-task': 'failed',
-  'blocked-task': 'blocked',
   'stale-worktree': 'stale wt',
   'draft-proposal': 'draft',
 }

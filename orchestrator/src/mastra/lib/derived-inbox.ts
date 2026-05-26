@@ -16,7 +16,6 @@
  *
  * Row sources (each yields at most one row per underlying entity):
  *   - failed task   — `tasks.status IN ('failed','dropped')`
- *   - blocked task  — `tasks.status = 'blocked'`
  *   - stale worktree — a `.mars/worktrees/<id>` dir on disk whose task is
  *                      terminal (done/dropped) or absent. A finished task
  *                      is supposed to clean up its own worktree, so the
@@ -37,10 +36,9 @@ import {
   listDismissals,
 } from './inbox-dismissals'
 
-/** The four kinds of thing the derived inbox can surface. */
+/** The three kinds of thing the derived inbox can surface. */
 export type DerivedInboxKind =
   | 'failed-task'
-  | 'blocked-task'
   | 'stale-worktree'
   | 'draft-proposal'
 
@@ -109,7 +107,6 @@ export interface DerivedInboxRow {
 
 const DISMISSAL_KIND_BY_ROW: Record<DerivedInboxKind, DismissalEntityKind> = {
   'failed-task': 'task',
-  'blocked-task': 'task',
   'stale-worktree': 'worktree',
   'draft-proposal': 'proposal',
 }
@@ -196,19 +193,6 @@ const failedBody = (task: Task): string => {
   )
 }
 
-const blockedBody = (task: Task, dag: DagContext): string => {
-  const waiting =
-    dag.blockers.length > 0
-      ? dag.blockers.map((b) => `  - ${b.id} (${b.status})`).join('\n')
-      : '  (no live blockers — may be a phantom block)'
-  return (
-    `Task ${task.id} is blocked, waiting on:\n${waiting}\n\n` +
-    `Next actions:\n` +
-    `  • Remove one edge:    mars unblock ${task.id} <blocker-id>\n` +
-    `  • Phantom-recover:    mars unblock ${task.id}`
-  )
-}
-
 const staleWorktreeBody = (entityId: string, taskStatus: string): string =>
   `Worktree .mars/worktrees/${entityId} exists but its task is ${taskStatus}.\n` +
   `A finished task should have removed its own worktree, so this is leftover state.\n\n` +
@@ -283,33 +267,19 @@ export const listDerivedInbox = async (
 
   const rows: DerivedInboxRow[] = []
 
-  // --- failed + blocked tasks ---
+  // --- failed tasks ---
   for (const task of allTasks) {
-    let kind: DerivedInboxKind | null = null
-    let priority: DerivedInboxPriority = 'normal'
-    if (task.status === 'failed' || task.status === 'dropped') {
-      kind = 'failed-task'
-      priority = 'high'
-    } else if (task.status === 'blocked') {
-      kind = 'blocked-task'
-      priority = 'normal'
-    }
-    if (kind === null) continue
+    if (task.status !== 'failed' && task.status !== 'dropped') continue
 
     const dag = await buildDag(task, byId)
     dag.proposalId = await proposalIdForTask(task)
-    const body =
-      kind === 'failed-task' ? failedBody(task) : blockedBody(task, dag)
     rows.push({
-      id: `${kind}:${task.id}`,
-      kind,
+      id: `failed-task:${task.id}`,
+      kind: 'failed-task',
       entityId: task.id,
-      priority,
-      title:
-        kind === 'failed-task'
-          ? `Failed: ${summarize(task.prompt, 60)}`
-          : `Blocked: ${summarize(task.prompt, 60)}`,
-      body,
+      priority: 'high',
+      title: `Failed: ${summarize(task.prompt, 60)}`,
+      body: failedBody(task),
       at: task.updatedAt,
       dag,
       dismissed: isDismissed(`task:${task.id}`),

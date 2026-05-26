@@ -76,7 +76,7 @@ describe('derived-inbox', () => {
     expect(rows[0].entityId).toBe(t.id)
   })
 
-  it('surfaces a blocked task with its blocker DAG', async () => {
+  it('does not surface a blocked task in the inbox', async () => {
     const { queue, derived } = await loadModules(repo)
     const blocker = await queue.enqueueTask('blocker', undefined, {
       skipTriage: true,
@@ -88,10 +88,10 @@ describe('derived-inbox', () => {
     await queue.updateTask(blocked.id, { status: 'blocked' })
 
     const rows = await derived.listDerivedInbox()
-    const row = rows.find((r) => r.entityId === blocked.id)
-    expect(row?.kind).toBe('blocked-task')
-    expect(row?.dag?.blockers.map((b) => b.id)).toContain(blocker.id)
-    // The blocker task itself, being `queued`, is not in the inbox.
+    // Blocked tasks are normal DAG state — they auto-unblock when blockers
+    // reach 'done'. They must NOT produce an inbox row.
+    expect(rows.find((r) => r.entityId === blocked.id)).toBeUndefined()
+    // The blocker task itself, being `queued`, is also not in the inbox.
     expect(rows.find((r) => r.entityId === blocker.id)).toBeUndefined()
   })
 
