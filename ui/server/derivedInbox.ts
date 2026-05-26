@@ -53,8 +53,10 @@ export interface DagContext {
  * The error-kind key a row resolves to. A superset of `DerivedInboxKind`:
  * `failed-task` fans out to `daemon-killed` when the task carries the
  * daemon-killed signature, so the right (requeue-framed) action menu is chosen.
+ * `daemon-killed-batch` is a synthetic affordance surfaced when ≥2 daemon-killed
+ * rows are open — it lets the operator restart them all in one click.
  */
-export type ErrorKindKey = DerivedInboxKind | 'daemon-killed'
+export type ErrorKindKey = DerivedInboxKind | 'daemon-killed' | 'daemon-killed-batch'
 
 export interface DerivedInboxRow {
   id: string
@@ -333,5 +335,34 @@ export const listDerivedInbox = async (
     const pr = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
     return pr !== 0 ? pr : b.at.localeCompare(a.at)
   })
+
+  // When ≥2 daemon-killed rows are visible, prepend a single batch-restart
+  // suggestion so the operator can re-queue all of them in one click instead
+  // of acting on each alert individually.
+  const daemonKilledVisible = filtered.filter((r) => r.errorKind === 'daemon-killed')
+  if (daemonKilledVisible.length >= 2) {
+    const batchActions = actionsForKind('daemon-killed-batch', registry)
+    const newest = daemonKilledVisible[0]!
+    filtered.unshift({
+      id: 'failed-task:__daemon-killed-batch__',
+      kind: 'failed-task',
+      entityId: '__daemon-killed-batch__',
+      priority: 'high',
+      title: `Restart all daemon-killed tasks (${daemonKilledVisible.length})`,
+      body:
+        `${daemonKilledVisible.length} tasks were in flight when the daemon was killed.\n` +
+        `None of these failures are task faults — a fresh dispatch is very likely to succeed.\n\n` +
+        `Next actions:\n` +
+        `  • Restart all at once:  mars restart ${daemonKilledVisible.map((r) => r.entityId).join(' ')}\n` +
+        `  • Or use the button above to restart all in one click.`,
+      at: newest.at,
+      dag: null,
+      dismissed: false,
+      ackState: null,
+      errorKind: 'daemon-killed-batch',
+      actions: batchActions,
+    })
+  }
+
   return filtered
 }
