@@ -1,5 +1,5 @@
 /**
- * Mastra-side re-export of the wire-bus `publish()` helper.
+ * Mastra-side re-export of the wire-bus `publish()` helpers.
  *
  * The implementation lives in `src/bus/publisher.ts` and is the only
  * sanctioned way to write to the `events` outbox table from inside a
@@ -15,6 +15,6 @@
  * helper, the arch test in `__tests__/db-writes-eventful.test.ts`
  * flips its `it.todo` assertions to real `it()`.
  */
-export { publish, publishWithRetry } from '../../bus/publisher.js'
+export { publish, publishWithRetry, buildEventInsert, withWriteTx } from '../../bus/publisher.js'
 export type { RetryOpts } from '../../bus/publisher.js'
 export type { EventName, EventPayload } from '../../bus/events.js'

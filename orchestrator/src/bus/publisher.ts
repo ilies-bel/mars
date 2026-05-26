@@ -1,5 +1,30 @@
-import type { Client, Transaction } from '@libsql/client';
+import type { Client, InStatement, Transaction } from '@libsql/client';
 import { EventMap, type EventName, type EventPayload } from './events.js';
+
+/**
+ * Validate `payload` against the registered Zod schema for `type` and
+ * return the `INSERT INTO events` statement ready to pass to a transaction
+ * or batch.
+ *
+ * Throws if the type is unknown or the payload fails Zod validation — let
+ * the caller decide whether to propagate or swallow. When called upfront
+ * (before opening a transaction), a validation error surfaces before any DB
+ * write is attempted.
+ */
+export function buildEventInsert<T extends EventName>(
+  type: T,
+  payload: EventPayload<T>,
+): InStatement {
+  const schema = EventMap[type];
+  if (!schema) {
+    throw new Error(`Unknown event type: ${String(type)}`);
+  }
+  const validated = schema.parse(payload);
+  return {
+    sql: 'INSERT INTO events (type, payload) VALUES (?, ?)',
+    args: [type as string, JSON.stringify(validated)],
+  };
+}
 
 /**
  * Publish an event to the outbox.
@@ -17,18 +42,11 @@ export async function publish<T extends EventName>(
   type: T,
   payload: EventPayload<T>,
 ): Promise<void> {
-  const schema = EventMap[type];
-  if (!schema) {
-    throw new Error(`Unknown event type: ${String(type)}`);
-  }
-  const validated = schema.parse(payload);
-  await tx.execute({
-    sql: 'INSERT INTO events (type, payload) VALUES (?, ?)',
-    args: [type, JSON.stringify(validated)],
-  });
+  const stmt = buildEventInsert(type, payload);
+  await tx.execute(stmt);
 }
 
-/** Options for {@link publishWithRetry}. All fields are optional; defaults match the PRD. */
+/** Options for {@link publishWithRetry} and {@link withWriteTx}. All fields are optional; defaults match the PRD. */
 export interface RetryOpts {
   /** Maximum number of attempts including the first (default 5). */
   attempts?: number;
@@ -47,21 +65,21 @@ function isSqliteBusy(err: unknown): boolean {
 }
 
 /**
- * Publish an event to the outbox, opening and committing its own write
- * transaction.
- *
- * On a SQLITE_BUSY error (code `'SQLITE_BUSY'` or message containing
- * `'database is locked'`) retries with bounded jittered exponential
- * backoff; rethrows the original error once all attempts are exhausted.
+ * Open a libsql write transaction on `client`, run `fn` inside it, then
+ * commit. On a SQLITE_BUSY error (code `'SQLITE_BUSY'` or message
+ * containing `'database is locked'`) retries with bounded jittered
+ * exponential backoff; rethrows the original error once all attempts are
+ * exhausted. Any non-busy error thrown by `fn` propagates immediately —
+ * the transaction is closed (rolled back) and the error surfaces to the
+ * caller.
  *
  * Default retry parameters: 5 attempts, 10 ms base, ±50% jitter, 200 ms cap.
  */
-export async function publishWithRetry<T extends EventName>(
+export async function withWriteTx<T>(
   client: Client,
-  type: T,
-  payload: EventPayload<T>,
+  fn: (tx: Transaction) => Promise<T>,
   opts?: RetryOpts,
-): Promise<void> {
+): Promise<T> {
   const maxAttempts = opts?.attempts ?? 5;
   const baseMs = opts?.baseMs ?? 10;
   const jitter = opts?.jitter ?? 0.5;
@@ -73,9 +91,9 @@ export async function publishWithRetry<T extends EventName>(
     try {
       const tx = await client.transaction('write');
       try {
-        await publish(tx, type, payload);
+        const result = await fn(tx);
         await tx.commit();
-        return;
+        return result;
       } catch (err) {
         tx.close();
         throw err;
@@ -102,4 +120,23 @@ export async function publishWithRetry<T extends EventName>(
   }
 
   throw firstBusyErr;
+}
+
+/**
+ * Publish an event to the outbox, opening and committing its own write
+ * transaction.
+ *
+ * On a SQLITE_BUSY error (code `'SQLITE_BUSY'` or message containing
+ * `'database is locked'`) retries with bounded jittered exponential
+ * backoff; rethrows the original error once all attempts are exhausted.
+ *
+ * Default retry parameters: 5 attempts, 10 ms base, ±50% jitter, 200 ms cap.
+ */
+export async function publishWithRetry<T extends EventName>(
+  client: Client,
+  type: T,
+  payload: EventPayload<T>,
+  opts?: RetryOpts,
+): Promise<void> {
+  return withWriteTx(client, (tx) => publish(tx, type, payload), opts);
 }
