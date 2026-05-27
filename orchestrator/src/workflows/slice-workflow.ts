@@ -2,12 +2,12 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
-import { getProposal, getProposalsClient, markProposalSliced } from '../proposals'
-import { enqueueTask } from '../queue'
-import { getDefaultTaskStore } from '../lib/task-store'
-import { Workers } from '../workers'
-import { parseClaudeJsonResult } from '../lib/claude-json'
-import { getRepoRoot } from '../context'
+import { getProposal, getProposalsClient, markProposalSliced } from '../mastra/proposals'
+import { enqueueTask } from '../mastra/queue'
+import { getDefaultTaskStore } from '../mastra/lib/task-store'
+import { Workers } from '../mastra/workers'
+import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
+import { getRepoRoot } from '../mastra/context'
 
 const sliceInputSchema = z.object({
   ideaId: z.string(),
@@ -762,7 +762,7 @@ const generateStep = createStep({
       // whole arc still gates on it transitively in the common chained
       // shape. True N-fan-out is deferred and called out in the report.
       if (taskIds.length > 0) {
-        const { transferProposalBlockerToTask } = await import('../queue')
+        const { transferProposalBlockerToTask } = await import('../mastra/queue')
         await transferProposalBlockerToTask(idea.id, taskIds[0])
       }
     } catch (error: unknown) {

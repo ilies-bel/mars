@@ -1,11 +1,11 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
 import { RequestContext } from '@mastra/core/di'
-import { type Task } from '../queue'
-import { type DomainTaskStore, getDefaultDomainTaskStore } from '../store/task-store'
-import { Workers } from '../workers'
-import { parseClaudeJsonResult } from '../lib/claude-json'
-import { getRepoRoot } from '../context'
+import { type Task } from '../mastra/queue'
+import { type DomainTaskStore, getDefaultDomainTaskStore } from '../mastra/store/task-store'
+import { Workers } from '../mastra/workers'
+import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
+import { getRepoRoot } from '../mastra/context'
 
 const TASK_GRAPH_LIMIT = 30
 const PROMPT_PREVIEW_CHARS = 200

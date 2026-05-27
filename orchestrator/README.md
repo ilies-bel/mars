@@ -63,7 +63,7 @@ Add `/.mars/` to the target repo's `.gitignore`.
 | `src/mastra/index.ts`           | Mastra registration                                |
 | `src/mastra/queue.ts`           | LibSQL-backed task queue                           |
 | `src/mastra/lib/git.ts`         | All shell side-effects (git, claude, verify)       |
-| `src/mastra/workflows/`         | `implementWorkflow`                                |
+| `src/workflows/`                | `implementWorkflow` (+ triage/plan/slice/init)     |
 | `src/mastra/tools/`             | Same primitives wrapped as Mastra tools            |
 | `src/prompts/vcs-supervisor.md` | Bundled supervisor spec, inlined into `claude -p`  |
 

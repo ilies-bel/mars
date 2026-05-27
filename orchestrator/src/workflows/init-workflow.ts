@@ -1,30 +1,30 @@
 import { existsSync } from 'node:fs'
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
-import { resolveContext } from '../context'
-import { initDatabases } from '../../init/databases'
+import { resolveContext } from '../mastra/context'
+import { initDatabases } from '../init/databases'
 import {
   detectStack,
   type ManifestFinding,
   type SupervisorSpec,
-} from '../../init/detect-stack'
+} from '../init/detect-stack'
 import {
   fetchTreesIndex,
   resolveSpecialist,
   type ResolvedSpecialist,
-} from '../../init/fetch-specialist'
+} from '../init/fetch-specialist'
 import {
   renderSupervisor,
   minimalRenderInput,
   validateSupervisor,
-} from '../../init/render'
+} from '../init/render'
 import {
   planClaudeConflicts,
   scaffoldClaudeConfig,
-} from '../../init/scaffold'
-import { writeSlimInit, writePerFolderClaudeMds, purgeStaleSupervisorMds, type VerifyStepEntry } from '../../init/writer'
-import { writeDetectionReport } from '../../init/write-detection-report'
-import { readInitManifest, writeInitManifest } from '../../init/init-manifest'
+} from '../init/scaffold'
+import { writeSlimInit, writePerFolderClaudeMds, purgeStaleSupervisorMds, type VerifyStepEntry } from '../init/writer'
+import { writeDetectionReport } from '../init/write-detection-report'
+import { readInitManifest, writeInitManifest } from '../init/init-manifest'
 import { relative, resolve } from 'node:path'
 
 const verifyStepSchema = z.object({
@@ -469,7 +469,7 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
     }
   }
 
-  const { mastra } = await import('../index')
+  const { mastra } = await import('../mastra/index')
   const wf = mastra.getWorkflow('initWorkflow')
   const run = await wf.createRun()
   const result = await run.start({

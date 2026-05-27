@@ -1,7 +1,7 @@
 import type { Socket } from 'node:net'
 import type { Author } from '../author'
 import type { Task, TaskPlan, TaskTag, TaskSpec } from '../queue'
-import type { RunInitOptions, RunInitResult } from '../workflows/init-workflow'
+import type { RunInitOptions, RunInitResult } from '../../workflows/init-workflow'
 
 export type DaemonRequest =
   | {
