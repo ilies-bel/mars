@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   RECOVERY_FAILED_INBOX_KIND,
-  NO_RECIPE_INBOX_KIND,
+  UNKNOWN_FAILURE_INBOX_KIND,
   FIX_FAIL_LOOP_INBOX_KIND,
 } from '../queue-fix-tasks'
 import { TASK_BLOCKED_INBOX_KIND } from '../queue-retry'
@@ -618,7 +618,7 @@ describe('INBOX_KINDS membership — writer kind constants', () => {
 
     const writerKinds: [string, string][] = [
       ['RECOVERY_FAILED_INBOX_KIND', RECOVERY_FAILED_INBOX_KIND],
-      ['NO_RECIPE_INBOX_KIND', NO_RECIPE_INBOX_KIND],
+      ['UNKNOWN_FAILURE_INBOX_KIND', UNKNOWN_FAILURE_INBOX_KIND],
       ['FIX_FAIL_LOOP_INBOX_KIND', FIX_FAIL_LOOP_INBOX_KIND],
       ['TASK_BLOCKED_INBOX_KIND', TASK_BLOCKED_INBOX_KIND],
       ['DAEMON_KILLED_INBOX_KIND', DAEMON_KILLED_INBOX_KIND],

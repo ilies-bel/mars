@@ -315,7 +315,13 @@ export const startDaemon = async (
         const t = await getTask(taskId)
         if (t?.status === 'queued') {
           if (await hasIncompleteBlockers(taskId)) {
-            log(`[triage] ${taskId} actionable but has incomplete blockers; not dispatching`)
+            // Park it 'blocked', not 'queued'. The unblock machinery
+            // (onBlockerTaskCompleted / recoverBlockedTasks) only re-evaluates
+            // tasks WHERE status='blocked', so a dependent left 'queued' here is
+            // invisible to it and would strand until a daemon restart. Flipping
+            // to 'blocked' wires it into the normal blocked→queued flow.
+            await updateTask(taskId, { status: 'blocked' })
+            log(`[triage] ${taskId} actionable but has incomplete blockers; parked blocked`)
           } else {
             bus.emit('task.queued', { taskId })
           }
@@ -1849,6 +1855,134 @@ export const startDaemon = async (
           })
 
           return { explanation }
+        } finally {
+          inProgress.delete(id)
+        }
+      }
+    })(),
+    diagnoseFailure: (() => {
+      // One active diagnosis per task id — a second concurrent POST returns
+      // immediately rather than spawning a second Sonnet process.
+      const inProgress = new Set<string>()
+
+      return async (id: string): Promise<{ diagnosis: string }> => {
+        if (inProgress.has(id)) {
+          return {
+            diagnosis: '(diagnosis already in progress — try again shortly)',
+          }
+        }
+        inProgress.add(id)
+        try {
+          const { join } = await import('node:path')
+          const { execFile } = await import('node:child_process')
+          const { promisify } = await import('node:util')
+          const { existsSync } = await import('node:fs')
+          const { getRepoRoot } = await import('../context')
+          const { runClaudeCode } = await import('../lib/git')
+          const { getTask } = await import('../queue')
+          const { patchOpenInboxPayload } = await import('../lib/inbox')
+
+          const repoRoot = getRepoRoot()
+          const worktreePath = join(repoRoot, '.mars', 'worktrees', id)
+          const localExec = promisify(execFile)
+
+          const task = await getTask(id)
+
+          // The worktree may have been cleaned up on a terminal failure. When
+          // it exists, run the diagnosis from inside it (the model can read the
+          // failing code); otherwise fall back to the repo root and diagnose
+          // from the stored failure context + session trace alone.
+          const worktreeExists = existsSync(worktreePath)
+          const cwd = worktreeExists ? worktreePath : repoRoot
+
+          let diffBody = ''
+          if (worktreeExists) {
+            let mergeBase = 'main'
+            try {
+              const { stdout } = await localExec(
+                'git',
+                ['merge-base', `task/${id}`, 'main'],
+                { cwd: repoRoot },
+              )
+              mergeBase = stdout.trim() || 'main'
+            } catch {
+              /* fall back to main */
+            }
+            try {
+              const { stdout } = await localExec('git', ['diff', mergeBase], {
+                cwd: worktreePath,
+              })
+              diffBody = stdout.slice(0, 20_000)
+            } catch {
+              /* ignore */
+            }
+          }
+
+          const promptParts: string[] = [
+            'You are diagnosing why a Mars task failed. This failure has no ' +
+              'registered recovery recipe, so a human asked for a root-cause ' +
+              'diagnosis. You are READ-ONLY: do not edit any files.',
+            '',
+          ]
+          if (task?.prompt) {
+            promptParts.push(`ORIGINAL TASK PROMPT:\n${task.prompt}\n`)
+          }
+          promptParts.push(
+            `FAILURE SIGNATURE: ${task?.failureSignature ?? '(unknown)'}`,
+          )
+          if (task?.error) {
+            promptParts.push(`STORED FAILURE REASON:\n${task.error}\n`)
+          }
+          if (worktreeExists && diffBody) {
+            promptParts.push(`WORKTREE DIFF (vs main branch point):\n${diffBody}\n`)
+          } else {
+            promptParts.push(
+              'The failing task worktree is no longer on disk. Diagnose from ' +
+                'the failure reason and original prompt above.\n',
+            )
+          }
+          if (task?.claudeSessionId) {
+            promptParts.push(
+              `If the failure reason is insufficient, the failing run's session ` +
+                `id is ${task.claudeSessionId} — reference its trace only if you ` +
+                `cannot otherwise explain the failure.\n`,
+            )
+          }
+          promptParts.push(
+            'Give a terse root-cause diagnosis: what failed, the most likely ' +
+              'cause, and whether a restart is likely to help or the task needs ' +
+              'reshaping. A short paragraph — this is a triage aid, not a fix.',
+          )
+
+          const result = await runClaudeCode({
+            cwd,
+            prompt: promptParts.join('\n'),
+            model: 'claude-sonnet-4-6',
+            // Read-only: default permission mode disallows file edits.
+            permissionMode: 'default',
+            // A few turns so it can read the worktree / trace if needed.
+            maxMessages: 12,
+          })
+
+          let diagnosis = '(no diagnosis generated)'
+          for (const event of result.conversation) {
+            if (
+              event.type === 'result' &&
+              typeof event.result === 'string' &&
+              !event.is_error
+            ) {
+              diagnosis = event.result as string
+            }
+          }
+
+          await patchOpenInboxPayload(id, {
+            diagnosis: {
+              text: diagnosis,
+              diagnosedAt: new Date().toISOString(),
+            },
+          })
+
+          return { diagnosis }
         } finally {
           inProgress.delete(id)
         }

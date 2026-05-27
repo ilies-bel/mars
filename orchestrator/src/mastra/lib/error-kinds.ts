@@ -45,6 +45,13 @@ type DerivedInboxKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
  * - `purge`                    — drop the task and its worktree permanently.
  * - `prune-worktree`           — remove a leftover worktree whose task is
  *                                terminal/absent.
+ * - `investigate`              — run a cheap Haiku read-only investigation over
+ *                                a stale worktree's diff; persists an
+ *                                explanation onto the inbox item.
+ * - `diagnose-failure`         — run a one-shot Sonnet root-cause diagnosis on a
+ *                                failed task whose failure signature has no
+ *                                registered recipe; persists a diagnosis onto
+ *                                the inbox item. Operator-triggered.
  * - `restart-daemon`           — process-level: re-exec the daemon itself.
  * - `restart-all-daemon-killed`— batch: re-queue every failed task that carries
  *                                the daemon-killed signature in one request.
@@ -58,6 +65,7 @@ export type ActionOp =
   | 'purge'
   | 'prune-worktree'
   | 'investigate'
+  | 'diagnose-failure'
   | 'restart-daemon'
   | 'restart-all-daemon-killed'
   | 'shape'
@@ -137,10 +145,13 @@ const ERROR_KINDS: Readonly<Record<ErrorKindId, ErrorKind>> = Object.freeze({
       'A task ended in `failed` (or `dropped`) — its code, verify, or merge ' +
       'phase errored and recovery did not finish the work.',
     recipe:
-      'Read the failure reason on the row. If the failure looks transient or ' +
-      'the worktree is salvageable, restart it from scratch. If the work is no ' +
-      'longer wanted, purge it to drop the task and its worktree.',
+      'Read the failure reason on the row. If the signature is unknown (no ' +
+      'recovery recipe), Investigate runs a one-shot root-cause diagnosis. If ' +
+      'the failure looks transient or the worktree is salvageable, restart it ' +
+      'from scratch. If the work is no longer wanted, purge it to drop the task ' +
+      'and its worktree.',
     recoveryActions: [
+      { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },
       { id: 'restart', label: 'Restart', op: 'restart' },
       { id: 'purge', label: 'Purge', op: 'purge', needsConfirm: true },
     ],

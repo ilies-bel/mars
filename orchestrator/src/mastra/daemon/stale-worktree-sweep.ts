@@ -30,7 +30,8 @@ const resolveThresholdHours = (): number => {
 }
 
 /**
- * Build the stale-worktree next-action template for the inbox item body.
+ * Build the stale-worktree inbox item body. Describes the stale state only;
+ * the recovery verbs (Investigate / Prune) are the card's action buttons.
  * Exported so tests can verify the exact template content without coupling
  * to the surrounding raise logic.
  */
@@ -39,11 +40,7 @@ export const buildNextActionBody = (
   ageHours: number,
   status: string,
 ): string =>
-  `Task ${taskId} has a stale worktree (status: ${status}, last updated ${ageHours}h ago).\n\n` +
-  `Next actions:\n` +
-  `  • Resume the task:   mars restart ${taskId}\n` +
-  `  • Drop the task:     mars drop ${taskId}\n` +
-  `  • Inspect worktree:  ls .mars/worktrees/${taskId}/`
+  `Task ${taskId} has a stale worktree (status: ${status}, last updated ${ageHours}h ago).`
 
 const TERMINAL_STATUSES = new Set(['done', 'failed', 'dropped'])
 
