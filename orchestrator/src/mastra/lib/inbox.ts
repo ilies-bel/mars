@@ -47,6 +47,19 @@ export type InboxKind = (typeof INBOX_KINDS)[number]
 export const isInboxKind = (s: unknown): s is InboxKind =>
   INBOX_KINDS.includes(s as InboxKind)
 
+/**
+ * Callback used by `getInboxItem` to fetch the current state of the origin
+ * task at the moment the inbox item is opened. Returning `null` means the
+ * task was not found (deleted or DB unavailable); `liveTaskStatus` will be
+ * `null` in that case.
+ *
+ * The default implementation calls `getTask` from `../queue`. Pass your own
+ * implementation in tests or any context where the queue DB is unavailable.
+ */
+export type LiveTaskLookup = (
+  taskId: string,
+) => Promise<{ status: string } | null>
+
 export interface RaiseInboxItem {
   kind: InboxKind
   category: InboxCategory | string
@@ -106,6 +119,18 @@ export interface InboxItem {
   resolutionNote: string | null
   rootCause: string | null
   history: InboxHistoryEntry[]
+  /**
+   * The task id this inbox item was raised for (origin-keyed items only).
+   * Stored in the DB at raise time; `null` for signature-keyed items.
+   */
+  originTaskId: string | null
+  /**
+   * Live status of the origin task, fetched from the queue at the moment
+   * `getInboxItem` is called. Always reflects current state — never a
+   * snapshot from raise time. `null` when `originTaskId` is absent, the
+   * task was not found, or the queue DB is unavailable.
+   */
+  liveTaskStatus: string | null
 }
 
 export interface SetInboxStateOptions {
@@ -187,6 +212,9 @@ export const initInbox = async (): Promise<void> => {
   }
   if (!colNames.has('resolved_by')) {
     await c.execute(`ALTER TABLE inbox_items ADD COLUMN resolved_by TEXT`)
+  }
+  if (!colNames.has('origin_task_id')) {
+    await c.execute(`ALTER TABLE inbox_items ADD COLUMN origin_task_id TEXT`)
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_inbox_fingerprint_state
@@ -335,6 +363,8 @@ const rowToInboxItem = (
     resolutionNote,
     rootCause,
     history,
+    originTaskId: (row.origin_task_id as string | null) ?? null,
+    liveTaskStatus: null,
   }
 }
 
@@ -398,8 +428,8 @@ export const raiseInboxItem = async (
     sql: `INSERT INTO inbox_items (
              id, kind, category, priority, state, title, body,
              payload, context, raised_by, raised_at, last_seen_at,
-             seen_count, fingerprint, signature
-           ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+             seen_count, fingerprint, signature, origin_task_id
+           ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
     args: [
       id,
       item.kind,
@@ -414,6 +444,7 @@ export const raiseInboxItem = async (
       now,
       fingerprint,
       item.signature,
+      item.originTaskId ?? null,
     ],
   })
   await insertHistory(c, id, null, 'open', item.raisedBy, null)
@@ -490,6 +521,31 @@ export const patchOpenInboxPayload = async (
   return row.id
 }
 
+/**
+ * Default live-task lookup: dynamically imports `getTask` from the queue
+ * module and returns `{ status }` for the task. Returns `null` when the task
+ * is not found or when the queue DB is unavailable (non-fatal degradation).
+ */
+const defaultLiveTaskLookup: LiveTaskLookup = async (taskId) => {
+  try {
+    const { getTask } = await import('../queue')
+    const task = await getTask(taskId)
+    if (!task) return null
+    return { status: task.status }
+  } catch {
+    return null
+  }
+}
+
+const enrichWithLiveStatus = async (
+  item: InboxItem,
+  liveTaskLookup: LiveTaskLookup,
+): Promise<InboxItem> => {
+  if (item.originTaskId === null) return item
+  const result = await liveTaskLookup(item.originTaskId)
+  return { ...item, liveTaskStatus: result?.status ?? null }
+}
+
 const fetchById = async (
   c: Client,
   id: string,
@@ -506,11 +562,12 @@ const fetchById = async (
 
 export const getInboxItem = async (
   idOrPrefix: string,
+  liveTaskLookup: LiveTaskLookup = defaultLiveTaskLookup,
 ): Promise<InboxItem | null> => {
   await initInbox()
   const c = getClient()
   const exact = await fetchById(c, idOrPrefix)
-  if (exact) return exact
+  if (exact) return enrichWithLiveStatus(exact, liveTaskLookup)
   if (idOrPrefix.length < 4) return null
   const prefixMatch = await c.execute({
     sql: `SELECT * FROM inbox_items WHERE id LIKE ? || '%' LIMIT 2`,
@@ -519,7 +576,7 @@ export const getInboxItem = async (
   if (prefixMatch.rows.length !== 1) return null
   const row = prefixMatch.rows[0] as unknown as Record<string, unknown>
   const history = await loadHistory(c, row.id as string)
-  return rowToInboxItem(row, history)
+  return enrichWithLiveStatus(rowToInboxItem(row, history), liveTaskLookup)
 }
 
 export interface ListInboxOptions {
