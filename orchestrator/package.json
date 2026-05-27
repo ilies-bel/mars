@@ -29,6 +29,7 @@
   "dependencies": {
     "@duckdb/node-api": "^1.5.2-r.1",
     "@libsql/client": "^0.17.3",
+    "@mars/workflow": "file:../packages/workflow",
     "ink": "^7.0.2",
     "react": "^19.2.0",
     "tsx": "^4.21.0",
