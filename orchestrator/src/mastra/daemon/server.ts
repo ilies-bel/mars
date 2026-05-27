@@ -367,7 +367,23 @@ export const startDaemon = async (
         }
       }
     } catch (err) {
-      log(`[triage] ${taskId} failed: ${(err as Error).message}`)
+      // One bad task must NEVER crash the daemon. dispatchTriage is invoked
+      // fire-and-forget (`void dispatchTriage(...)`), so any error that escapes
+      // this catch becomes an unhandledRejection that kills the process and
+      // triggers the crash-respawn loop. Convert the failure into a logged,
+      // persisted task failure + a `task.failed` emit, and let the finally run.
+      const message = err instanceof Error ? err.message : String(err)
+      log(`[triage] ${taskId} failed: ${message}`)
+      try {
+        await updateTask(taskId, { status: 'failed', error: message })
+      } catch {
+        // best-effort
+      }
+      try {
+        bus.emit('task.failed', { taskId, error: message })
+      } catch {
+        // best-effort
+      }
     } finally {
       releaseTracking()
       release(sems.triage)
@@ -472,9 +488,32 @@ export const startDaemon = async (
       log(`[implement] ${task.id} -> ${result.status}`)
       bus.emit('task.completed', { taskId: task.id, status: result.status })
     } catch (err) {
-      const message = (err as Error).message
-      const { isBlockersAbortError } = await import('../workflows/implement-workflow')
-      if (isBlockersAbortError(err)) {
+      // One bad task must NEVER crash the daemon. Everything from here on is
+      // defensive: the catch body itself must not throw, or the rejection
+      // escapes dispatchImplement (it is invoked fire-and-forget as
+      // `void dispatchImplement(t)`) and surfaces as an unhandledRejection
+      // that kills the process — the crash-respawn loop this guard exists to
+      // prevent. So the detector import, the failed-write, and the emit are
+      // each individually guarded; whatever happens, control reaches the
+      // `finally` and the function resolves.
+      const message = err instanceof Error ? err.message : String(err)
+      // The blockers-abort detector lives in the implement workflow module. A
+      // dynamic import can itself reject (module-resolution / eval error), and
+      // that rejection would escape this catch. Load it best-effort: if the
+      // import fails, treat the error as an ordinary failure rather than a
+      // benign blockers-abort — failing the task is the safe default.
+      let isBlockersAbort = false
+      try {
+        const { isBlockersAbortError } = await import('../workflows/implement-workflow')
+        isBlockersAbort = isBlockersAbortError(err)
+      } catch (importErr) {
+        log(
+          `[implement] ${task.id} could not load blockers-abort detector (${
+            importErr instanceof Error ? importErr.message : String(importErr)
+          }); treating as ordinary failure`,
+        )
+      }
+      if (isBlockersAbort) {
         log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
@@ -483,9 +522,21 @@ export const startDaemon = async (
         } catch {
           // best-effort
         }
-        bus.emit('task.failed', { taskId: task.id, error: message })
+        // bus.emit is synchronous, but a throwing listener would otherwise
+        // propagate out of the emit call. Guard it so a bad subscriber can't
+        // take the daemon down on the failure path either.
+        try {
+          bus.emit('task.failed', { taskId: task.id, error: message })
+        } catch {
+          // best-effort
+        }
       }
     } finally {
+      // The finally always runs even if an earlier `return` short-circuited
+      // the try (the blockers-abort / dirty-main / too-hard branches), so the
+      // semaphore slot and inFlight entry are released on every exit path and
+      // drain() re-arms the loop. drain() has its own internal catch, so the
+      // fire-and-forget `void` here can never leak a rejection.
       releaseTracking()
       release(sems.implement)
       void drain()
@@ -544,8 +595,17 @@ export const startDaemon = async (
         log(`[glossary-write] ${req.kind} "${req.term}" -> ${outcome.kind}`)
       }
     } catch (err) {
+      // One bad structured-write must NEVER crash the daemon. This dispatcher
+      // is invoked fire-and-forget (`void dispatchGlossaryWrite(...)`), so an
+      // escaping rejection becomes an unhandledRejection that kills the
+      // process. Log-only is correct here: a glossary write operates on a
+      // synthetic id (there is no queued task row to fail), so there is
+      // nothing to mark `failed` — we just record the failure and release the
+      // slot in finally. String() fallback keeps the catch body throw-proof.
       log(
-        `[glossary-write] ${req.kind} "${req.term}" failed: ${(err as Error).message}`,
+        `[glossary-write] ${req.kind} "${req.term}" failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
       )
     } finally {
       releaseTracking()
@@ -583,7 +643,18 @@ export const startDaemon = async (
         log(`[adr-add] "${req.title}" -> ${outcome.kind}`)
       }
     } catch (err) {
-      log(`[adr-add] "${req.title}" failed: ${(err as Error).message}`)
+      // One bad structured-write must NEVER crash the daemon. This dispatcher
+      // is invoked fire-and-forget (`void dispatchAdrAdd(...)`), so an escaping
+      // rejection becomes an unhandledRejection that kills the process.
+      // Log-only is correct: an ADR add operates on a synthetic id (no queued
+      // task row to fail), so there is nothing to mark `failed` — record the
+      // failure and release the slot in finally. String() fallback keeps the
+      // catch body throw-proof on a non-Error rejection value.
+      log(
+        `[adr-add] "${req.title}" failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
     } finally {
       releaseTracking()
       release(sems['adr-add'])
@@ -611,7 +682,15 @@ export const startDaemon = async (
         `[refine] ${taskId} -> suggestions=${result.suggestionCount}`,
       )
     } catch (err) {
-      log(`[refine] ${taskId} failed: ${(err as Error).message}`)
+      // One bad refine must NEVER crash the daemon. dispatchRefine runs
+      // fire-and-forget from the `task.refine` bus handler, so an escaping
+      // rejection would become an unhandledRejection and kill the process.
+      // We log-only here (no status flip): refine produces plan suggestions
+      // and must not fail the underlying task — a failed refine simply leaves
+      // the task in whatever status it already had. The finally always
+      // releases the slot. The String() fallback guarantees the catch body
+      // itself cannot throw on a non-Error rejection value.
+      log(`[refine] ${taskId} failed: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       releaseTracking()
       release(sems.refine)
