@@ -1,6 +1,40 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
+import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import { TaskDetailDrawer } from './TaskDetailDrawer'
+
+// ── Test helpers ──────────────────────────────────────────────────────────────
+
+const task = (
+  overrides: Partial<ProgressTask> & { id: string; cluster: ProgressTask['cluster'] },
+): ProgressTask => ({
+  id: overrides.id,
+  prompt: overrides.prompt ?? `Task ${overrides.id}`,
+  status: overrides.status ?? 'queued',
+  plan: null,
+  branch: null,
+  worktreePath: null,
+  error: null,
+  dropReason: null,
+  retryCount: 0,
+  blockerTaskId: null,
+  blockedBy: overrides.blockedBy ?? [],
+  spec: null,
+  createdAt: '2024-01-01T00:00:00Z',
+  updatedAt: '2024-01-01T00:00:00Z',
+  cluster: overrides.cluster,
+  parentProposalId: overrides.parentProposalId ?? null,
+  ...overrides,
+})
+
+const proposal = (id: string, title = `Goal ${id}`): ProgressProposalNode => ({
+  id,
+  title,
+  source: 'human',
+  status: 'prd-ready',
+})
+
+// ── Identity tests (pre-existing) ─────────────────────────────────────────────
 
 /**
  * The TaskDetailDrawer is the single detail surface for task nodes on the
@@ -46,5 +80,261 @@ describe('TaskDetailDrawer – identity (same surface from both views)', () => {
     expect(html2).toContain('data-testid="task-detail-drawer"')
     expect(html1).toContain('data-testid="task-detail-close"')
     expect(html2).toContain('data-testid="task-detail-close"')
+  })
+})
+
+// ── Subgraph: isolated task ───────────────────────────────────────────────────
+
+describe('TaskDetailDrawer – subgraph (isolated task)', () => {
+  it('renders the subgraph section and the focused task node when the task has no neighbours', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="task-solo"
+        onClose={() => {}}
+        tasks={[task({ id: 'task-solo', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('data-testid="task-detail-subgraph"')
+    expect(html).toContain('data-node-id="task-solo"')
+  })
+
+  it('renders exactly one node when the task has no blockers, dependents, or proposal', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="task-solo"
+        onClose={() => {}}
+        tasks={[task({ id: 'task-solo', cluster: 'In progress' })]}
+        proposals={[]}
+      />,
+    )
+    const nodeCount = (html.match(/data-node-id=/g) ?? []).length
+    expect(nodeCount).toBe(1)
+  })
+
+  it('does not render the subgraph section when tasks prop is not provided', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="task-solo" onClose={() => {}} />,
+    )
+    expect(html).not.toContain('data-testid="task-detail-subgraph"')
+  })
+})
+
+// ── Subgraph: upstream blocker chain ─────────────────────────────────────────
+
+describe('TaskDetailDrawer – subgraph (upstream blockers)', () => {
+  it('includes a direct upstream blocker in the subgraph', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="focus"
+        onClose={() => {}}
+        tasks={[
+          task({ id: 'blocker', cluster: 'In progress' }),
+          task({ id: 'focus', cluster: 'Blocked', blockedBy: ['blocker'] }),
+        ]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('data-node-id="blocker"')
+    expect(html).toContain('data-node-id="focus"')
+  })
+
+  it('includes the full upstream chain back to the root', () => {
+    // root → mid → focus
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="focus"
+        onClose={() => {}}
+        tasks={[
+          task({ id: 'root', cluster: 'Queued' }),
+          task({ id: 'mid', cluster: 'In progress', blockedBy: ['root'] }),
+          task({ id: 'focus', cluster: 'Blocked', blockedBy: ['mid'] }),
+        ]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('data-node-id="root"')
+    expect(html).toContain('data-node-id="mid"')
+    expect(html).toContain('data-node-id="focus"')
+  })
+
+  it('renders a blocker edge between the upstream blocker and the focused task', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="focus"
+        onClose={() => {}}
+        tasks={[
+          task({ id: 'blocker', cluster: 'In progress' }),
+          task({ id: 'focus', cluster: 'Blocked', blockedBy: ['blocker'] }),
+        ]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('data-edge-kind="blocker"')
+  })
+
+  it('excludes tasks unrelated to the focused task', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="focus"
+        onClose={() => {}}
+        tasks={[
+          task({ id: 'focus', cluster: 'Queued' }),
+          task({ id: 'unrelated', cluster: 'In progress' }),
+        ]}
+        proposals={[]}
+      />,
+    )
+    expect(html).not.toContain('data-node-id="unrelated"')
+  })
+})
+
+// ── Subgraph: one-hop downstream dependents ───────────────────────────────────
+
+describe('TaskDetailDrawer – subgraph (downstream dependents)', () => {
+  it('includes the immediate (one-hop) downstream dependent', () => {
+    // focus → child → grandchild; only child should appear
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="focus"
+        onClose={() => {}}
+        tasks={[
+          task({ id: 'focus', cluster: 'In progress' }),
+          task({ id: 'child', cluster: 'Blocked', blockedBy: ['focus'] }),
+          task({ id: 'grandchild', cluster: 'Queued', blockedBy: ['child'] }),
+        ]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('data-node-id="child"')
+    expect(html).not.toContain('data-node-id="grandchild"')
+  })
+})
+
+// ── Subgraph: originating proposal ───────────────────────────────────────────
+
+describe('TaskDetailDrawer – subgraph (originating proposal)', () => {
+  it('includes the originating proposal node when one exists', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="focus"
+        onClose={() => {}}
+        tasks={[task({ id: 'focus', cluster: 'Queued', parentProposalId: 'prop-1' })]}
+        proposals={[proposal('prop-1', 'Ship the feature')]}
+      />,
+    )
+    expect(html).toContain('data-node-id="prop-1"')
+    expect(html).toContain('data-node-kind="proposal"')
+  })
+
+  it('renders a provenance edge from the proposal to the focused task', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="focus"
+        onClose={() => {}}
+        tasks={[task({ id: 'focus', cluster: 'Queued', parentProposalId: 'prop-1' })]}
+        proposals={[proposal('prop-1')]}
+      />,
+    )
+    expect(html).toContain('data-edge-kind="provenance"')
+  })
+
+  it('does not include other tasks sliced from the same proposal', () => {
+    // prop-1 also sliced "sibling"; the drawer should not pull sibling in
+    // via the proposal — it is not upstream, downstream, or provenance of focus.
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="focus"
+        onClose={() => {}}
+        tasks={[
+          task({ id: 'focus', cluster: 'Queued', parentProposalId: 'prop-1' }),
+          task({ id: 'sibling', cluster: 'Queued', parentProposalId: 'prop-1' }),
+        ]}
+        proposals={[proposal('prop-1')]}
+      />,
+    )
+    expect(html).not.toContain('data-node-id="sibling"')
+  })
+})
+
+// ── Subgraph: cluster colours match main canvas ───────────────────────────────
+
+describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', () => {
+  it('colours a Queued task node with the Queued palette (same as TopologyView)', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    // Queued fill and stroke colours from TopologyView
+    expect(html).toContain('#1c1917') // fill
+    expect(html).toContain('#78716c') // stroke
+  })
+
+  it('colours a Failed task node with the Failed palette (same as TopologyView)', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Failed', status: 'failed' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('#450a0a') // fill
+    expect(html).toContain('#dc2626') // stroke
+  })
+
+  it('colours a Blocked task node with the Blocked palette (same as TopologyView)', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Blocked', status: 'blocked' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('#18181b') // fill
+    expect(html).toContain('#71717a') // stroke
+  })
+
+  it('colours an In progress task node with the In progress palette (same as TopologyView)', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'In progress', status: 'running' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('#431407') // fill
+    expect(html).toContain('#ea580c') // stroke
+  })
+
+  it('colours a proposal node with the purple proposal palette (same as TopologyView)', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' })]}
+        proposals={[proposal('p1')]}
+      />,
+    )
+    expect(html).toContain('#2e1065') // fill
+    expect(html).toContain('#7c3aed') // stroke
+  })
+
+  it('attaches data-cluster to task nodes for cluster identification', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Failed', status: 'failed' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('data-cluster="Failed"')
   })
 })

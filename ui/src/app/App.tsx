@@ -4,6 +4,7 @@ import { ProposalDetailDrawer } from '@/widgets/ProposalDetailDrawer'
 import { useHashRoute } from '@/shared/useHashRoute'
 import { parseProposalRoute, parseTaskRoute, resolvePageRoute } from '@/shared/routing'
 import { useTodo } from '@/entities/todo/useTodo'
+import { useProgress } from '@/hooks/useProgress'
 import { AgentsPage } from '@/pages/AgentsPage'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/TodoPage'
@@ -21,6 +22,9 @@ const App = () => {
   // Proposal fields come from the existing `/api/todo` drafts fetch — no new
   // endpoint is introduced for the drawer.
   const { drafts } = useTodo()
+  // Graph data for the task drawer's subgraph.  React Query deduplicates this
+  // against the identical call inside ProgressPage — no extra network request.
+  const { tasks, proposals } = useProgress()
   const proposal = proposalId
     ? (drafts.find((d) => d.id === proposalId) ?? null)
     : null
@@ -40,7 +44,12 @@ const App = () => {
         )}
       </div>
       {taskId ? (
-        <TaskDetailDrawer taskId={taskId} onClose={clearTaskHash} />
+        <TaskDetailDrawer
+          taskId={taskId}
+          onClose={clearTaskHash}
+          tasks={tasks ?? []}
+          proposals={proposals}
+        />
       ) : null}
       {proposal ? (
         <ProposalDetailDrawer proposal={proposal} onClose={clearTaskHash} />
