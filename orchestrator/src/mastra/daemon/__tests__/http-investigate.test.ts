@@ -1,0 +1,153 @@
+/**
+ * Tests for POST /actions/investigate/:id — the read-only Haiku triage action
+ * for stale worktrees. Exercises HTTP routing and the response contract.
+ *
+ * The debounce guard (skip-if-already-running) lives in the server.ts closure
+ * that wires up the investigateWorktree dep; the tests below verify the HTTP
+ * layer only contracts through the public interface (fetch + response body).
+ */
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import type { HttpServerDeps } from '../http-server'
+
+const setupRepo = (): string => {
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-http-investigate-'))
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  mkdirSync(resolve(repo, '.mars'), { recursive: true })
+  return repo
+}
+
+/** Build minimal deps with no-op defaults; override only what a test needs. */
+const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
+  restartTask: async () => {},
+  unblockTask: async () => {},
+  purgeTask: async () => {},
+  pruneWorktree: async () => {},
+  investigateWorktree: async () => ({ explanation: '' }),
+  restartDaemon: async () => {},
+  restartAllDaemonKilled: async () => [],
+  isAcceptingWork: () => true,
+  ...overrides,
+})
+
+describe('POST /actions/investigate/:id', () => {
+  let repo: string
+  let httpServer: typeof import('../http-server')
+
+  beforeEach(async () => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    const mod = await import('../http-server')
+    httpServer = mod
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  // ── Tracer bullet: routing + explanation passthrough ─────────────────────
+
+  it('routes POST /actions/investigate/:id to the investigateWorktree dep and returns explanation', async () => {
+    let capturedId: string | null = null
+    const { port, close } = await httpServer.startHttpServer(
+      makeDeps({
+        investigateWorktree: async (id) => {
+          capturedId = id
+          return { explanation: 'The task was adding a new CLI flag.' }
+        },
+      }),
+    )
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/actions/investigate/mars-abc123`,
+        { method: 'POST' },
+      )
+
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { ok: boolean; explanation: string }
+      expect(body.ok).toBe(true)
+      expect(body.explanation).toBe('The task was adding a new CLI flag.')
+      expect(capturedId).toBe('mars-abc123')
+    } finally {
+      await close()
+    }
+  })
+
+  // ── Draining guard applies to investigate too ────────────────────────────
+
+  it('returns 503 when the daemon is draining', async () => {
+    const { port, close } = await httpServer.startHttpServer(
+      makeDeps({ isAcceptingWork: () => false }),
+    )
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/actions/investigate/mars-xyz`,
+        { method: 'POST' },
+      )
+
+      expect(res.status).toBe(503)
+      const body = (await res.json()) as { ok: boolean; errorCode: string }
+      expect(body.ok).toBe(false)
+      expect(body.errorCode).toBe('DRAINING')
+    } finally {
+      await close()
+    }
+  })
+
+  // ── Error propagation ────────────────────────────────────────────────────
+
+  it('returns 500 when the investigateWorktree dep throws', async () => {
+    const { port, close } = await httpServer.startHttpServer(
+      makeDeps({
+        investigateWorktree: async () => {
+          throw new Error('git failed')
+        },
+      }),
+    )
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/actions/investigate/mars-fail`,
+        { method: 'POST' },
+      )
+
+      expect(res.status).toBe(500)
+      const body = (await res.json()) as { ok: boolean; error: string }
+      expect(body.ok).toBe(false)
+      expect(body.error).toContain('git failed')
+    } finally {
+      await close()
+    }
+  })
+
+  // ── The stale-worktree error kind advertises the investigate action ────────
+
+  it('error-kinds registry includes investigate as a stale-worktree recovery action', async () => {
+    const { port, close } = await httpServer.startHttpServer(makeDeps())
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/error-kinds`)
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        ok: boolean
+        errorKinds: Array<{ kind: string; recoveryActions: Array<{ op: string; id: string }> }>
+      }
+      const stale = body.errorKinds.find((k) => k.kind === 'stale-worktree')
+      expect(stale).toBeDefined()
+      const investigateAction = stale?.recoveryActions.find(
+        (a) => a.op === 'investigate',
+      )
+      expect(investigateAction).toBeDefined()
+      expect(investigateAction?.id).toBe('investigate')
+    } finally {
+      await close()
+    }
+  })
+})

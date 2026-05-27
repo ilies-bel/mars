@@ -21,6 +21,13 @@ export interface HttpServerDeps {
   purgeTask: (id: string) => Promise<void>
   /** Remove a leftover worktree by its id (terminal/absent task). */
   pruneWorktree: (id: string) => Promise<void>
+  /**
+   * Run a cheap Haiku investigation over the worktree diff, persist the result
+   * onto the inbox item payload, and return the explanation text. Read-only:
+   * never mutates the worktree. Concurrent calls for the same id must be
+   * guarded by the implementation (skip if already running).
+   */
+  investigateWorktree: (id: string) => Promise<{ explanation: string }>
   /** Process-level: re-exec the daemon itself. Resolves once the re-exec is
    * scheduled; the current process exits shortly after. */
   restartDaemon: () => Promise<void>
@@ -159,6 +166,17 @@ export const startHttpServer = async (
     }
     const op = match[1]
     const id = decodeURIComponent(match[2])
+
+    // investigate returns a payload — handled separately so the explanation
+    // is surfaced in the response body rather than discarded.
+    if (op === 'investigate') {
+      deps
+        .investigateWorktree(id)
+        .then(({ explanation }) => sendJson(res, 200, { ok: true, explanation }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     const handler = entityHandlers[op as EntityOp]
     if (!handler) {
       sendJson(res, 404, { ok: false, error: `Unknown action op: ${op}` })

@@ -57,6 +57,7 @@ export type ActionOp =
   | 'unblock'
   | 'purge'
   | 'prune-worktree'
+  | 'investigate'
   | 'restart-daemon'
   | 'restart-all-daemon-killed'
   | 'shape'
@@ -197,6 +198,11 @@ const ERROR_KINDS: Readonly<Record<ErrorKindId, ErrorKind>> = Object.freeze({
       'Inspect the worktree if you want to recover anything from it, then prune ' +
       'it to reclaim the directory and its branch registration.',
     recoveryActions: [
+      {
+        id: 'investigate',
+        label: 'Investigate',
+        op: 'investigate',
+      },
       {
         id: 'prune',
         label: 'Prune worktree',
