@@ -65,7 +65,7 @@ describe('triage workflow', () => {
     await queue.initQueue()
     const task = await queue.enqueueTask('implement X')
 
-    const triage = await import('../../workflows/triage-workflow')
+    const triage = await import('../../../workflows/triage-workflow')
     const result = await triage.runTriage(task.id)
 
     expect(result.actionable).toBe(true)
@@ -92,7 +92,7 @@ describe('triage workflow', () => {
       }),
     })
     const queue2 = await import('../../queue')
-    const triage = await import('../../workflows/triage-workflow')
+    const triage = await import('../../../workflows/triage-workflow')
     const result = await triage.runTriage(a.id)
 
     expect(result.actionable).toBe(false)
@@ -119,7 +119,7 @@ describe('triage workflow', () => {
       }),
     })
     const queue2 = await import('../../queue')
-    const triage = await import('../../workflows/triage-workflow')
+    const triage = await import('../../../workflows/triage-workflow')
     const result = await triage.runTriage(a.id)
 
     expect(result.blockerCount).toBe(0)

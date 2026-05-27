@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { RequestContext } from '@mastra/core/di'
 import { createClient } from '@libsql/client'
-import { createLibsqlTaskStore } from '../../lib/task-store'
+import { createLibsqlTaskStore } from '../../mastra/lib/task-store'
 
 describe('plan-workflow — TaskStore context injection', () => {
   it('a TaskStore set on RequestContext is retrievable by the step execute pattern', () => {

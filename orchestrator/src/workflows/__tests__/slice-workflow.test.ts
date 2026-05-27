@@ -468,7 +468,7 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
   it('persists modifies + creates concatenated into spec.files', async () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
-    const queue = await import('../../queue')
+    const queue = await import('../../mastra/queue')
     await queue.initQueue()
 
     const slice = {
@@ -494,7 +494,7 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
   it("round-trips a creates entry that uses the 'NEW: ' prefix verbatim", async () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
-    const queue = await import('../../queue')
+    const queue = await import('../../mastra/queue')
     await queue.initQueue()
 
     // Simulate a slicer output that uses the prefix to flag a brand-new
@@ -551,8 +551,8 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../lib/git')
-    vi.doUnmock('../../queue')
+    vi.doUnmock('../../mastra/lib/git')
+    vi.doUnmock('../../mastra/queue')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -581,7 +581,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
   // Seed a fresh idea in 'prd-ready' status (the precondition `generateStep`
   // checks) and return its id.
   const seedPrdReadyIdea = async (): Promise<string> => {
-    const proposals = await import('../../proposals')
+    const proposals = await import('../../mastra/proposals')
     await proposals.initProposals()
     const idea = await proposals.createProposal('t', {
       problem: 'p',
@@ -594,8 +594,8 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
   }
 
   const countTasksForIdea = async (ideaId: string): Promise<number> => {
-    const queue = await vi.importActual<typeof import('../../queue')>(
-      '../../queue',
+    const queue = await vi.importActual<typeof import('../../mastra/queue')>(
+      '../../mastra/queue',
     )
     await queue.initQueue()
     const rows = await queue.getClient().execute({
@@ -610,9 +610,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // NOT a valid slicerOutput JSON. parseSlicerOutput throws — that
     // throw lands BEFORE Phase 4 flips the idea, so the idea must still
     // be prd-ready and no tasks must have been inserted.
-    vi.doMock('../../lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../lib/git')>(
-        '../../lib/git',
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
       )
       return {
         ...actual,
@@ -631,7 +631,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     const slice = await import('../slice-workflow')
     await expect(slice.runSlice(ideaId)).rejects.toThrow()
 
-    const proposals = await import('../../proposals')
+    const proposals = await import('../../mastra/proposals')
     const after = await proposals.getProposal(ideaId)
     expect(after?.status).toBe('prd-ready')
     expect(await countTasksForIdea(ideaId)).toBe(0)
@@ -645,9 +645,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // We simulate that exact shape by stubbing the slicer to emit a
     // valid one-slice output AND forcing transferProposalBlockerToTask
     // to throw — the catch must now revert the idea AND clean tasks.
-    vi.doMock('../../lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../lib/git')>(
-        '../../lib/git',
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
       )
       return {
         ...actual,
@@ -660,9 +660,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
         })),
       }
     })
-    vi.doMock('../../queue', async () => {
-      const actual = await vi.importActual<typeof import('../../queue')>(
-        '../../queue',
+    vi.doMock('../../mastra/queue', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/queue')>(
+        '../../mastra/queue',
       )
       return {
         ...actual,
@@ -679,7 +679,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
       /phase 5 injected failure/,
     )
 
-    const proposals = await import('../../proposals')
+    const proposals = await import('../../mastra/proposals')
     const after = await proposals.getProposal(ideaId)
     // The whole point of the compensating revert: a Phase 5 failure
     // must not strand the idea at 'sliced'.
@@ -694,9 +694,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // write fires. The idea must remain prd-ready so the daemon's
     // auto-slice loop (which only picks up prd-ready ideas) can
     // retry once the slicer is healthy.
-    vi.doMock('../../lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../lib/git')>(
-        '../../lib/git',
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
       )
       return {
         ...actual,
@@ -715,7 +715,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     const slice = await import('../slice-workflow')
     await expect(slice.runSlice(ideaId)).rejects.toThrow()
 
-    const proposals = await import('../../proposals')
+    const proposals = await import('../../mastra/proposals')
     const after = await proposals.getProposal(ideaId)
     expect(after?.status).toBe('prd-ready')
     expect(await countTasksForIdea(ideaId)).toBe(0)
@@ -731,9 +731,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // is needed. This test pins that: a timeout must NOT set the proposal to
     // 'sliced', and `mars proposal slice` must be re-runnable without a manual
     // `mars proposal set <id> status prd-ready` poke.
-    vi.doMock('../../lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../lib/git')>(
-        '../../lib/git',
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
       )
       return {
         ...actual,
@@ -752,7 +752,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     const slice = await import('../slice-workflow')
     await expect(slice.runSlice(ideaId)).rejects.toThrow(/124/)
 
-    const proposals = await import('../../proposals')
+    const proposals = await import('../../mastra/proposals')
     const after = await proposals.getProposal(ideaId)
     // Must remain prd-ready — `mars proposal slice` must be directly re-runnable.
     expect(after?.status).toBe('prd-ready')
@@ -765,9 +765,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // slice-task creation. This test verifies the "happy path" invariant:
     // a successful runSlice must produce BOTH idea.status='sliced' AND
     // the expected tasks in the queue — not one without the other.
-    vi.doMock('../../lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../lib/git')>(
-        '../../lib/git',
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
       )
       return {
         ...actual,
@@ -787,7 +787,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     const result = await slice.runSlice(ideaId)
 
     // Status flip: the idea must now be 'sliced'.
-    const proposals = await import('../../proposals')
+    const proposals = await import('../../mastra/proposals')
     const after = await proposals.getProposal(ideaId)
     expect(after?.status).toBe('sliced')
 
@@ -808,9 +808,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // orphans, duplicating the queue work. The pre-flight must delete any
     // tasks with parent_proposal_id = idea.id before Phase 1 runs, so a
     // retry lands exactly N tasks — not N orphans + N fresh ones.
-    vi.doMock('../../lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../lib/git')>(
-        '../../lib/git',
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
       )
       return {
         ...actual,
@@ -829,8 +829,8 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // Simulate the crash: manually insert an orphaned task that claims
     // this idea as its parent (as if Phase 1 ran but the process died
     // before Phase 4 could flip the status).
-    const queue = await vi.importActual<typeof import('../../queue')>(
-      '../../queue',
+    const queue = await vi.importActual<typeof import('../../mastra/queue')>(
+      '../../mastra/queue',
     )
     await queue.initQueue()
     await queue.enqueueTask('orphaned task from crashed run', undefined, {
@@ -849,7 +849,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     expect(await countTasksForIdea(ideaId)).toBe(1)
 
     // And the idea must now be sliced (not prd-ready).
-    const proposals = await import('../../proposals')
+    const proposals = await import('../../mastra/proposals')
     const after = await proposals.getProposal(ideaId)
     expect(after?.status).toBe('sliced')
   })
@@ -1040,7 +1040,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../lib/git')
+    vi.doUnmock('../../mastra/lib/git')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -1049,7 +1049,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
     JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
   const seedPrdReadyIdea = async (): Promise<string> => {
-    const proposals = await import('../../proposals')
+    const proposals = await import('../../mastra/proposals')
     await proposals.initProposals()
     const idea = await proposals.createProposal('Remove total_cost_usd', {
       problem: 'p',
@@ -1139,9 +1139,9 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
   }
 
   it('persists blocker edges from the schema-drop slice onto every consumer slice', async () => {
-    vi.doMock('../../lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../lib/git')>(
-        '../../lib/git',
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
       )
       return {
         ...actual,
@@ -1162,7 +1162,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
     expect(result.taskIds).toHaveLength(5)
     const [readmeId, parserId, storageId, aggregationId, dropId] = result.taskIds
 
-    const queue = await import('../../queue')
+    const queue = await import('../../mastra/queue')
     await queue.initQueue()
     const rows = await queue.getClient().execute({
       sql: `SELECT task_id, blocker_task_id FROM task_blockers
@@ -1566,7 +1566,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../lib/git')
+    vi.doUnmock('../../mastra/lib/git')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -1575,7 +1575,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
     JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
   const seedPrdReadyIdea = async (): Promise<string> => {
-    const proposals = await import('../../proposals')
+    const proposals = await import('../../mastra/proposals')
     await proposals.initProposals()
     const idea = await proposals.createProposal('3-slice sequential PRD', {
       problem: 'p',
@@ -1635,9 +1635,9 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
       ],
     }
 
-    vi.doMock('../../lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../lib/git')>(
-        '../../lib/git',
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
       )
       return {
         ...actual,
@@ -1659,7 +1659,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
 
     const [task1Id, task2Id, task3Id] = result.taskIds
 
-    const queue = await import('../../queue')
+    const queue = await import('../../mastra/queue')
     await queue.initQueue()
 
     // Consecutive pair 1→2: task 2 must be blocked by task 1
@@ -1754,9 +1754,9 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
       ],
     }
 
-    vi.doMock('../../lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../lib/git')>(
-        '../../lib/git',
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
       )
       return {
         ...actual,
@@ -1776,7 +1776,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
     const result = await sliceModule.runSlice(ideaId)
     expect(result.taskIds).toHaveLength(3)
 
-    const queue = await import('../../queue')
+    const queue = await import('../../mastra/queue')
     await queue.initQueue()
 
     // Zero task_blockers rows across all 3 tasks
@@ -2192,7 +2192,7 @@ describe('enqueueTask round-trip: hitl slice kind and subDeliverable land on tas
   it('round-trips kind and subDeliverable from an hitl slice spec through enqueueTask', async () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
-    const queue = await import('../../queue')
+    const queue = await import('../../mastra/queue')
     await queue.initQueue()
 
     // Parse a slicer output that contains one hitl slice with a subDeliverable.
@@ -2253,7 +2253,7 @@ describe('enqueueTask round-trip: hitl slice kind and subDeliverable land on tas
   it('coder slices without subDeliverable land with sliceKind=coder and no subDeliverable', async () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
-    const queue = await import('../../queue')
+    const queue = await import('../../mastra/queue')
     await queue.initQueue()
 
     const task = await queue.enqueueTask('p', undefined, {

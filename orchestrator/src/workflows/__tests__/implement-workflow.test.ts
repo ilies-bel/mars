@@ -20,11 +20,11 @@ import {
   shouldWireReadSpanWatcher,
 } from '../implement-workflow'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
-import { buildDiagnoseChorePrompt } from '../../lib/diagnose-chore'
-import { resolveReadSpanLimit, createReadSpanWatcher } from '../../lib/read-span-watch'
-import type { ReadSpanTrace } from '../../lib/read-span-watch'
+import { buildDiagnoseChorePrompt } from '../../mastra/lib/diagnose-chore'
+import { resolveReadSpanLimit, createReadSpanWatcher } from '../../mastra/lib/read-span-watch'
+import type { ReadSpanTrace } from '../../mastra/lib/read-span-watch'
 import { RequestContext } from '@mastra/core/di'
-import { createLibsqlTaskStore } from '../../lib/task-store'
+import { createLibsqlTaskStore } from '../../mastra/lib/task-store'
 import { createClient } from '@libsql/client'
 
 describe('composePrompt — coder default', () => {

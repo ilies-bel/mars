@@ -24,7 +24,7 @@ npm run build # Build a production-ready server
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/mastra`           | Entry point for all Mastra-related code and configuration.                                                                               |
 | `src/mastra/agents`    | Define and configure your agents - their behavior, goals, and tools.                                                                     |
-| `src/mastra/workflows` | Define multi-step workflows that orchestrate agents and tools together.                                                                  |
+| `src/workflows`        | Imperative `@mars/workflow` pipelines (implement/triage/plan/slice/init).                                                                |
 | `src/mastra/tools`     | Create reusable tools that your agents can call                                                                                          |
 | `src/mastra/mcp`       | (Optional) Implement custom MCP servers to share your tools with external agents                                                         |
 | `src/mastra/scorers`   | (Optional) Define scorers for evaluating agent performance over time                                                                     |
