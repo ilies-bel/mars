@@ -106,11 +106,17 @@ interface ActionBarProps {
   item: ActionQueueItem
 }
 
+// Op string used in two places inside ActionBar; defined once to avoid drift.
+const INVESTIGATE_OP = 'investigate'
+
 /**
  * Renders one button per recovery action on the row. Clicking proxies the
  * action's `op` to the daemon (via `/api/actions`). `needsConfirm` actions
  * prompt first; destructive ops are styled accordingly. The `shape` op has no
  * daemon verb — it renders as a guidance chip showing the skill to run.
+ *
+ * For stale-worktree rows where `empty === true` the Investigate action is
+ * suppressed (nothing to analyse in an empty worktree).
  */
 const ActionBar = ({ item }: ActionBarProps) => {
   const qc = useQueryClient()
@@ -131,7 +137,17 @@ const ActionBar = ({ item }: ActionBarProps) => {
     onError: (err) => setErrorMsg((err as Error).message),
   })
 
-  if (item.actions.length === 0) return null
+  // Gate Investigate out for empty stale worktrees — there is nothing to analyse.
+  const visibleActions =
+    item.kind === 'stale-worktree' && item.staleWorktreeDetail?.empty === true
+      ? item.actions.filter((a) => a.op !== INVESTIGATE_OP)
+      : item.actions
+
+  if (visibleActions.length === 0) return null
+
+  // Show a specific label while the Investigate (Haiku) call is in-flight.
+  const isInvestigating =
+    mutation.isPending && mutation.variables?.action.op === INVESTIGATE_OP
 
   const run = (action: ActionDescriptor) => {
     if (mutation.isPending) return
@@ -150,7 +166,7 @@ const ActionBar = ({ item }: ActionBarProps) => {
         Recovery
       </dt>
       <dd className="flex flex-wrap gap-2">
-        {item.actions.map((action) =>
+        {visibleActions.map((action) =>
           action.op === 'shape' ? (
             <span
               key={action.id}
@@ -172,7 +188,9 @@ const ActionBar = ({ item }: ActionBarProps) => {
                   : 'border-iron/40 text-fg hover:bg-iron/20',
               ].join(' ')}
             >
-              {action.label}
+              {action.op === INVESTIGATE_OP && isInvestigating
+                ? 'Investigating…'
+                : action.label}
             </button>
           ),
         )}
@@ -215,6 +233,57 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
       <main className="flex-1 px-6 py-4">
         <dl className="flex flex-col gap-4 font-mono text-[12px]">
           <ActionBar item={item} />
+          {item.kind === 'stale-worktree' && (
+            <>
+              <div>
+                <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+                  Task prompt
+                </dt>
+                <dd className="whitespace-pre-wrap text-fg">
+                  {item.staleWorktreeDetail?.prompt ?? (
+                    <span className="text-iron/70">absent (no matching task)</span>
+                  )}
+                </dd>
+              </div>
+              {item.staleWorktreeDetail && (
+                <>
+                  <div>
+                    <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+                      Status · Age · Branch
+                    </dt>
+                    <dd className="text-fg">
+                      <span>{item.staleWorktreeDetail.status}</span>
+                      {' · '}
+                      <span>{item.staleWorktreeDetail.ageHours.toFixed(1)}h</span>
+                      {' · '}
+                      <span>{item.staleWorktreeDetail.branch ?? '—'}</span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+                      Investigation
+                    </dt>
+                    <dd>
+                      {item.staleWorktreeDetail.investigation ? (
+                        <>
+                          <p className="mb-1 text-[10px] text-iron/60">
+                            {formatTime(item.staleWorktreeDetail.updatedAt)}
+                          </p>
+                          <p className="whitespace-pre-wrap text-fg">
+                            {item.staleWorktreeDetail.investigation}
+                          </p>
+                        </>
+                      ) : item.staleWorktreeDetail.empty ? null : (
+                        <span className="text-iron/70">
+                          None yet — use Investigate to analyse this worktree.
+                        </span>
+                      )}
+                    </dd>
+                  </div>
+                </>
+              )}
+            </>
+          )}
           <div>
             <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
               Next action
