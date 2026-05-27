@@ -77,11 +77,6 @@ describe('detectRoute', () => {
     expect(detectRoute('#/events')).toBe('events')
     expect(detectRoute('#/events/anything')).toBe('events')
   })
-
-  it('returns graph for the #/graph hash', () => {
-    expect(detectRoute('#/graph')).toBe('graph')
-    expect(detectRoute('#/graph/anything')).toBe('graph')
-  })
 })
 
 // ---------------------------------------------------------------------------
