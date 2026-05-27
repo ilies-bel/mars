@@ -149,6 +149,52 @@ describe('Triaging status + Blocker state schema', () => {
     expect(await hasIncompleteBlockers('a')).toBe(false)
   })
 
+  it('parks a queued dependent with an incomplete blocker as blocked, then re-queues it when the blocker completes', async () => {
+    // Reproduces the daemon dispatcher invariant (server.ts dispatchTriage):
+    // an actionable, queued task that still has an incomplete blocker must be
+    // flipped to 'blocked', not left 'queued' — otherwise the unblock
+    // machinery (which only scans status='blocked') never re-evaluates it.
+    const { initQueue, addBlockers, hasIncompleteBlockers, updateTask, getClient } =
+      await import('../../queue')
+    const { onBlockerTaskCompleted } = await import('../../blocker-resolution')
+    await initQueue()
+    const now = new Date().toISOString()
+    const c = getClient()
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
+            VALUES ('dep', 'dependent', 'queued', 'dep', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      args: [now, now],
+    })
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
+            VALUES ('blk', 'blocker', 'queued', 'blk', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      args: [now, now],
+    })
+    await addBlockers('dep', ['blk'])
+
+    // The dispatcher's guard: incomplete blocker present → park 'blocked'.
+    expect(await hasIncompleteBlockers('dep')).toBe(true)
+    await updateTask('dep', { status: 'blocked' })
+
+    const blocked = await c.execute({
+      sql: `SELECT status FROM tasks WHERE id = 'dep'`,
+    })
+    expect((blocked.rows[0] as unknown as { status: string }).status).toBe(
+      'blocked',
+    )
+
+    // Blocker completes → onBlockerTaskCompleted re-queues the dependent.
+    await updateTask('blk', { status: 'done' })
+    await onBlockerTaskCompleted('blk')
+
+    const requeued = await c.execute({
+      sql: `SELECT status FROM tasks WHERE id = 'dep'`,
+    })
+    expect((requeued.rows[0] as unknown as { status: string }).status).toBe(
+      'queued',
+    )
+  })
+
   it('returns task-cause and idea-cause Blocker rows uniformly from listAllBlockers', async () => {
     const { initQueue, addBlockers, addProposalBlockers, listAllBlockers, getClient } =
       await import('../../queue')

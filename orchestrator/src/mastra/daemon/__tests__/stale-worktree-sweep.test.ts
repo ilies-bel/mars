@@ -107,7 +107,7 @@ describe('detectAndRaiseStaleWorktrees', () => {
     expect(item!.seenCount).toBe(2)
   })
 
-  it('the inbox item body contains the stale-worktree next-action template', async () => {
+  it('the inbox item body describes the stale-worktree state (recovery verbs are buttons, not body text)', async () => {
     const { q, inbox, sweep } = await loadModules(repo)
     const task = await q.enqueueTask('work', undefined, { skipTriage: true })
 
@@ -120,8 +120,10 @@ describe('detectAndRaiseStaleWorktrees', () => {
     await sweep.detectAndRaiseStaleWorktrees(repo)
 
     const items = await inbox.listInboxItems('open')
-    expect(items[0].body).toContain(`mars restart ${task.id}`)
-    expect(items[0].body).toContain(`mars drop ${task.id}`)
+    expect(items[0].body).toContain(`Task ${task.id} has a stale worktree`)
+    // The button-duplicating command footer is gone.
+    expect(items[0].body).not.toContain(`mars restart ${task.id}`)
+    expect(items[0].body).not.toContain(`mars drop ${task.id}`)
   })
 
   it('does not raise an item for tasks in terminal states (done, failed, dropped)', async () => {

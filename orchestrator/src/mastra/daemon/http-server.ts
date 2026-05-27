@@ -28,6 +28,15 @@ export interface HttpServerDeps {
    * guarded by the implementation (skip if already running).
    */
   investigateWorktree: (id: string) => Promise<{ explanation: string }>
+  /**
+   * Run a one-shot Sonnet root-cause diagnosis on a failed task whose failure
+   * signature has no registered recipe. Reads the worktree (if it still exists)
+   * and the session trace as needed, persists the diagnosis onto the inbox item
+   * payload, and returns the diagnosis text. Read-only: never mutates the
+   * worktree. Concurrent calls for the same id must be guarded by the
+   * implementation (skip if already running).
+   */
+  diagnoseFailure: (id: string) => Promise<{ diagnosis: string }>
   /** Process-level: re-exec the daemon itself. Resolves once the re-exec is
    * scheduled; the current process exits shortly after. */
   restartDaemon: () => Promise<void>
@@ -173,6 +182,15 @@ export const startHttpServer = async (
       deps
         .investigateWorktree(id)
         .then(({ explanation }) => sendJson(res, 200, { ok: true, explanation }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // diagnose-failure returns a payload too — surface the diagnosis text.
+    if (op === 'diagnose-failure') {
+      deps
+        .diagnoseFailure(id)
+        .then(({ diagnosis }) => sendJson(res, 200, { ok: true, diagnosis }))
         .catch((err: unknown) => sendError(res, err))
       return
     }
