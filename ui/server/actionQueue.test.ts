@@ -26,6 +26,15 @@ interface ActionQueueItemBody {
   ackState: 'ack' | 'resolved' | 'dismissed' | null
   errorKind: string
   actions: Array<{ id: string; label: string; op: string }>
+  staleWorktreeDetail: {
+    prompt: string | null
+    status: string
+    ageHours: number
+    updatedAt: string
+    branch: string | null
+    empty: boolean
+    investigation: string | null
+  } | null
 }
 
 const setupRepo = (): string => {
@@ -223,6 +232,185 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
     expect(row?.errorKind).toBe('stale-worktree')
   })
 
+  it('stale-worktree row has staleWorktreeDetail populated from payload', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'sw-detail-1',
+      kind: 'stale-worktree',
+      priority: 'low',
+      title: 'Stale worktree: task-detail',
+      context: { taskId: 'task-detail' },
+      payload: {
+        prompt: 'fix the bug in foo.ts',
+        status: 'running',
+        ageHours: 26.5,
+        branch: 'task/task-detail',
+        investigation: null,
+      },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'sw-detail-1')
+    expect(row).toBeDefined()
+    expect(row?.staleWorktreeDetail).not.toBeNull()
+    expect(row?.staleWorktreeDetail?.prompt).toBe('fix the bug in foo.ts')
+    expect(row?.staleWorktreeDetail?.status).toBe('running')
+    expect(row?.staleWorktreeDetail?.ageHours).toBe(26.5)
+    expect(row?.staleWorktreeDetail?.branch).toBe('task/task-detail')
+    // No worktree directory exists → conservative: empty=false
+    expect(row?.staleWorktreeDetail?.empty).toBe(false)
+    expect(row?.staleWorktreeDetail?.investigation).toBeNull()
+  })
+
+  it('stale-worktree row: investigation field passes through from payload', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'sw-invest-1',
+      kind: 'stale-worktree',
+      priority: 'low',
+      title: 'Stale worktree: task-invest',
+      context: { taskId: 'task-invest' },
+      payload: {
+        prompt: 'some task',
+        status: 'running',
+        ageHours: 30,
+        branch: null,
+        investigation: 'The agent got stuck on step 3 because of missing env var.',
+      },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'sw-invest-1')
+    expect(row?.staleWorktreeDetail?.investigation).toBe(
+      'The agent got stuck on step 3 because of missing env var.',
+    )
+  })
+
+  it('stale-worktree row: status falls back to absent sentinel when task row is missing', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'sw-absent-1',
+      kind: 'stale-worktree',
+      priority: 'low',
+      title: 'Stale worktree: no-task',
+      context: { taskId: 'no-such-task' },
+      payload: {},
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'sw-absent-1')
+    expect(row?.staleWorktreeDetail?.status).toBe('absent (no matching task)')
+    expect(row?.staleWorktreeDetail?.prompt).toBeNull()
+  })
+
+  it('non-stale-worktree rows have staleWorktreeDetail: null', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'failed-no-detail',
+      kind: 'failed',
+      priority: 'high',
+      title: 'Task failed',
+      payload: { taskId: 't-failed-2' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'failed-no-detail')
+    expect(row).toBeDefined()
+    expect(row?.staleWorktreeDetail).toBeNull()
+  })
+
+  it('stale-worktree row: empty=true for a worktree with no diff vs main', async () => {
+    const taskId = 'task-empty-wt'
+    const worktreeDir = resolve(repo, '.mars', 'worktrees', taskId)
+    mkdirSync(worktreeDir, { recursive: true })
+    // Set up a standalone git repo inside the worktree directory, mirroring
+    // how the orchestrator leaves a worktree after branching off main with
+    // no commits added by the agent.
+    execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: worktreeDir })
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: worktreeDir })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: worktreeDir })
+    execFileSync('git', ['commit', '--allow-empty', '-m', 'initial'], { cwd: worktreeDir })
+    // Branch off main — no additional commits; worktree is clean
+    execFileSync('git', ['checkout', '-b', `task/${taskId}`], { cwd: worktreeDir })
+
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'sw-empty-wt',
+      kind: 'stale-worktree',
+      priority: 'low',
+      title: `Stale worktree: ${taskId}`,
+      context: { taskId },
+      payload: { ageHours: 25, status: 'running' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'sw-empty-wt')
+    expect(row?.staleWorktreeDetail?.empty).toBe(true)
+  })
+
+  it('stale-worktree row: empty=false for a worktree with committed changes', async () => {
+    const taskId = 'task-nonempty-wt'
+    const worktreeDir = resolve(repo, '.mars', 'worktrees', taskId)
+    mkdirSync(worktreeDir, { recursive: true })
+    execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: worktreeDir })
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: worktreeDir })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: worktreeDir })
+    execFileSync('git', ['commit', '--allow-empty', '-m', 'initial'], { cwd: worktreeDir })
+    execFileSync('git', ['checkout', '-b', `task/${taskId}`], { cwd: worktreeDir })
+    // Add a real file change so the diff vs main is non-empty
+    Bun.write(resolve(worktreeDir, 'change.ts'), 'export const x = 1')
+    execFileSync('git', ['add', 'change.ts'], { cwd: worktreeDir })
+    execFileSync('git', ['commit', '-m', 'work done'], { cwd: worktreeDir })
+
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'sw-nonempty-wt',
+      kind: 'stale-worktree',
+      priority: 'low',
+      title: `Stale worktree: ${taskId}`,
+      context: { taskId },
+      payload: { ageHours: 25, status: 'running' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'sw-nonempty-wt')
+    expect(row?.staleWorktreeDetail?.empty).toBe(false)
+  })
+
+  it('stale-worktree row: empty=false for a worktree with untracked files', async () => {
+    const taskId = 'task-untracked-wt'
+    const worktreeDir = resolve(repo, '.mars', 'worktrees', taskId)
+    mkdirSync(worktreeDir, { recursive: true })
+    execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: worktreeDir })
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: worktreeDir })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: worktreeDir })
+    execFileSync('git', ['commit', '--allow-empty', '-m', 'initial'], { cwd: worktreeDir })
+    execFileSync('git', ['checkout', '-b', `task/${taskId}`], { cwd: worktreeDir })
+    // Add an untracked file (not committed, not staged)
+    Bun.write(resolve(worktreeDir, 'untracked.txt'), 'some work')
+
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'sw-untracked-wt',
+      kind: 'stale-worktree',
+      priority: 'low',
+      title: `Stale worktree: ${taskId}`,
+      context: { taskId },
+      payload: { ageHours: 25, status: 'running' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'sw-untracked-wt')
+    expect(row?.staleWorktreeDetail?.empty).toBe(false)
+  })
+
   it('maps draft-proposal kind from payload.proposalId', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
     await insertInboxItem(c, {
@@ -409,6 +597,7 @@ describe('actionQueueResponseSchema resilience', () => {
     ackState: null,
     errorKind: 'daemon-killed',
     actions: [],
+    staleWorktreeDetail: null,
   }
 
   it('parses a response array containing an unknown kind (daemon-killed) without throwing', () => {

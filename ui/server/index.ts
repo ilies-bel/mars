@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { loadAgents } from './agents.ts'
@@ -269,6 +270,16 @@ export const startServer = async (
             }
           }
 
+          type StaleWorktreeDetail = {
+            prompt: string | null
+            status: string
+            ageHours: number
+            updatedAt: string
+            branch: string | null
+            empty: boolean
+            investigation: string | null
+          }
+
           type ActionQueueRow = {
             id: string
             kind: DerivedInboxKind
@@ -289,6 +300,7 @@ export const startServer = async (
             actions: ReturnType<typeof registry.get> extends undefined
               ? never[]
               : { id: string; label: string; op: string }[]
+            staleWorktreeDetail: StaleWorktreeDetail | null
           }
 
           const rows: ActionQueueRow[] = []
@@ -328,6 +340,75 @@ export const startServer = async (
               }
             }
 
+            // Stale-worktree enrichment: extract task context from payload and
+            // compute a git-derived 'empty' flag (no diff vs merge-base with
+            // main AND no untracked files). Conservative default: false.
+            let staleWorktreeDetail: StaleWorktreeDetail | null = null
+            if (uiKind === 'stale-worktree') {
+              const task = taskById.get(entityId)
+              const worktreePath = join(ctx.repoRoot, '.mars', 'worktrees', entityId)
+              let empty = false
+              if (existsSync(worktreePath)) {
+                try {
+                  const base = execFileSync(
+                    'git',
+                    ['-C', worktreePath, 'merge-base', 'HEAD', 'main'],
+                    { encoding: 'utf8' },
+                  ).trim()
+                  let hasDiff = false
+                  try {
+                    execFileSync(
+                      'git',
+                      ['-C', worktreePath, 'diff', '--quiet', `${base}..HEAD`],
+                      { encoding: 'utf8' },
+                    )
+                  } catch {
+                    hasDiff = true
+                  }
+                  const porcelain = hasDiff
+                    ? 'X'
+                    : execFileSync(
+                        'git',
+                        ['-C', worktreePath, 'status', '--porcelain'],
+                        { encoding: 'utf8' },
+                      ).trim()
+                  empty = !hasDiff && porcelain === ''
+                } catch {
+                  // git unavailable or worktree not a git repo — conservative
+                  empty = false
+                }
+              }
+              staleWorktreeDetail = {
+                prompt:
+                  typeof row.payload.prompt === 'string'
+                    ? row.payload.prompt
+                    : (task?.prompt ?? null),
+                status:
+                  task?.status ??
+                  (typeof row.payload.status === 'string'
+                    ? row.payload.status
+                    : 'absent (no matching task)'),
+                ageHours:
+                  typeof row.payload.ageHours === 'number'
+                    ? row.payload.ageHours
+                    : 0,
+                updatedAt:
+                  task?.updatedAt ??
+                  (typeof row.payload.updatedAt === 'string'
+                    ? row.payload.updatedAt
+                    : row.lastSeenAt),
+                branch:
+                  typeof row.payload.branch === 'string'
+                    ? row.payload.branch
+                    : (task?.branch ?? null),
+                empty,
+                investigation:
+                  typeof row.payload.investigation === 'string'
+                    ? row.payload.investigation
+                    : null,
+              }
+            }
+
             rows.push({
               id: row.id,
               kind: uiKind,
@@ -341,6 +422,7 @@ export const startServer = async (
               ackState,
               errorKind,
               actions,
+              staleWorktreeDetail,
             })
           }
 
@@ -386,6 +468,7 @@ export const startServer = async (
               ackState: null,
               errorKind: 'daemon-killed-batch',
               actions: batchActions,
+              staleWorktreeDetail: null,
             })
           }
 
