@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { createWorkflow, createStep } from '@mastra/core/workflows'
+import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
+import { createQueueWorkflowStore } from './queue-workflow-store'
 import { getProposal, getProposalsClient, markProposalSliced } from '../mastra/proposals'
 import { enqueueTask } from '../mastra/queue'
 import { getDefaultTaskStore } from '../mastra/lib/task-store'
@@ -580,11 +581,19 @@ Save your work: stage and commit when verify passes.
 `
 }
 
-const generateStep = createStep({
-  id: 'generate-slices',
+type SliceInput = z.infer<typeof sliceInputSchema>
+type SliceOutput = z.infer<typeof sliceOutputSchema>
+
+// The slice workflow talks to proposals/queue via module-level clients
+// (getProposalsClient/getDefaultTaskStore), so no services need wiring.
+// One imperative step ('generate-slices', load-bearing as the trace-view
+// node label). Failures THROW; the engine records the step failed.
+export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
+  id: 'slice',
   inputSchema: sliceInputSchema,
-  outputSchema: sliceOutputSchema,
-  execute: async ({ inputData, tracingContext }) => {
+  fn: async (ctx: WorkflowCtx, input: SliceInput): Promise<SliceOutput> =>
+    ctx.step('generate-slices', async (): Promise<SliceOutput> => {
+    const inputData = input
     const idea = await getProposal(inputData.ideaId)
     if (!idea) throw new Error(`idea ${inputData.ideaId} not found`)
     if (idea.status !== 'prd-ready') {
@@ -592,10 +601,6 @@ const generateStep = createStep({
         `idea ${idea.id} is '${idea.status}'; only prd-ready ideas can be sliced`,
       )
     }
-
-    tracingContext?.currentSpan?.update({
-      metadata: { ideaId: idea.id, originId: idea.id },
-    })
 
     const r = await Workers.Slicer.run(buildSlicerPrompt(idea), {
       cwd: getRepoRoot(),
@@ -797,16 +802,8 @@ const generateStep = createStep({
     }
 
     return { ideaId: idea.id, status: 'sliced', taskIds }
-  },
+    }),
 })
-
-export const sliceWorkflow = createWorkflow({
-  id: 'slice',
-  inputSchema: sliceInputSchema,
-  outputSchema: sliceOutputSchema,
-})
-  .then(generateStep)
-  .commit()
 
 export interface RunSliceResult {
   ideaId: string
@@ -820,10 +817,10 @@ const MAX_SLICE_FAILURE_CHARS = 1000
 
 /**
  * Normalize an unknown error-ish value into a single human-readable line.
- * Mastra's `result.error` / step `error` is an `Error` in-process but a
- * serialized `{ name, message, stack }` object when the run is rehydrated
- * from storage, and older/other versions surface a bare string — handle
- * all three rather than assuming one shape.
+ * The @mars/workflow engine puts the thrown `Error` verbatim on
+ * `RunResult.error` in-process, but a run rehydrated from the store can
+ * surface a serialized `{ name, message, stack }` object, and a bare string
+ * is possible too — handle all three rather than assuming one shape.
  */
 const stringifyErrorLike = (value: unknown): string => {
   if (value == null) return ''
@@ -849,40 +846,18 @@ const stringifyErrorLike = (value: unknown): string => {
 }
 
 /**
- * Build a diagnostic message from a non-success slice workflow result.
- * Surfaces Mastra's top-level `result.error` and the first failing step's
- * error so a live slicer outage is diagnosable from the daemon log / CLI
- * instead of the content-free status word. Exported for unit testing.
+ * Build a diagnostic message from a non-completed slice workflow result.
+ * Surfaces the engine's `RunResult.error` (the thrown step error verbatim)
+ * so a live slicer outage is diagnosable from the daemon log / CLI instead
+ * of the content-free status word. Exported for unit testing.
  */
 export const describeSliceFailure = (result: unknown): string => {
-  const r = (result ?? {}) as {
-    status?: unknown
-    error?: unknown
-    steps?: unknown
-  }
+  const r = (result ?? {}) as { status?: unknown; error?: unknown }
   const status = typeof r.status === 'string' ? r.status : 'failed'
   const parts: string[] = [`slice workflow ${status}`]
 
   const topError = stringifyErrorLike(r.error)
   if (topError) parts.push(`error: ${topError}`)
-
-  if (r.steps && typeof r.steps === 'object') {
-    for (const [stepId, stepResult] of Object.entries(
-      r.steps as Record<string, unknown>,
-    )) {
-      if (
-        stepResult &&
-        typeof stepResult === 'object' &&
-        (stepResult as { status?: unknown }).status === 'failed'
-      ) {
-        const stepError = stringifyErrorLike(
-          (stepResult as { error?: unknown }).error,
-        )
-        parts.push(`step "${stepId}" failed${stepError ? `: ${stepError}` : ''}`)
-        break
-      }
-    }
-  }
 
   const message = parts.join(' — ')
   return message.length > MAX_SLICE_FAILURE_CHARS
@@ -891,10 +866,11 @@ export const describeSliceFailure = (result: unknown): string => {
 }
 
 export const runSlice = async (ideaId: string): Promise<RunSliceResult> => {
-  const run = await sliceWorkflow.createRun()
-  const result = await run.start({ inputData: { ideaId } })
-  if (result.status !== 'success') {
+  const result = await runWorkflow(sliceWorkflow, { ideaId }, {
+    store: createQueueWorkflowStore(),
+  })
+  if (result.status !== 'completed' || !result.output) {
     throw new Error(describeSliceFailure(result))
   }
-  return result.result
+  return result.output
 }
