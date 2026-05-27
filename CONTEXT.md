@@ -144,7 +144,7 @@ An entity identifier rendered as 'mars-<kind>-<hex>' (with an optional '-<slug>'
 _Avoid_: prefixed id, namespaced id
 
 **Bare id**:
-The hex-only portion of a Mars id, stored as the primary key on every entity table (tasks, ideas, etc.). All SQL indexes and foreign keys use the bare form; the 'mars-<kind>-' prefix is added on render and stripped on parse.
+The hex-only portion of a Mars id, stored as the primary key on every entity table (tasks, proposals, etc.). All SQL indexes and foreign keys use the bare form; the 'mars-<kind>-' prefix is added on render and stripped on parse.
 _Avoid_: short id, raw id, hex id
 
 **UI**:
