@@ -8,9 +8,9 @@ import {
   DefaultExporter,
   SensitiveDataFilter,
 } from '@mastra/observability'
-import { initWorkflow } from './workflows/init-workflow'
-import { triageWorkflow } from './workflows/triage-workflow'
-import { sliceWorkflow } from './workflows/slice-workflow'
+import { initWorkflow } from '../workflows/init-workflow'
+import { triageWorkflow } from '../workflows/triage-workflow'
+import { sliceWorkflow } from '../workflows/slice-workflow'
 import { resolveContext } from './context'
 
 const { mastraDbPath, observabilityDbPath } = resolveContext()

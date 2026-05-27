@@ -908,7 +908,7 @@ const main = async (): Promise<void> => {
         op: 'init',
         opts: { force, fetch, dryRun, refresh, verbose },
       })) as Awaited<
-        ReturnType<typeof import('./mastra/workflows/init-workflow').runInit>
+        ReturnType<typeof import('./workflows/init-workflow').runInit>
       >
     } catch (err: unknown) {
       const e = err as Error & { code?: string }
@@ -3185,7 +3185,7 @@ const main = async (): Promise<void> => {
 
   if (cmd === 'triage') {
     const id = rest[0]
-    const { runTriage } = await import('./mastra/workflows/triage-workflow')
+    const { runTriage } = await import('./workflows/triage-workflow')
     if (id) {
       const result = await runTriage(id)
       console.log(`[${result.taskId}] actionable=${result.actionable}`)

@@ -21,7 +21,7 @@ import {
   shouldWireReadSpanWatcher,
   isTooHardAbortError,
   TOO_HARD_ABORT_MESSAGE,
-} from '../workflows/implement-workflow'
+} from '../../workflows/implement-workflow'
 import { buildDiagnoseChorePrompt } from '../lib/diagnose-chore'
 import type { ReadSpanTrace } from '../lib/read-span-watch'
 

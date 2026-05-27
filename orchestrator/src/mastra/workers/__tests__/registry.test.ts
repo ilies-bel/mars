@@ -15,7 +15,7 @@ import {
   type WorkerName,
   type WorkerRuntime,
 } from '..'
-import { pickWorkerForTask } from '../../workflows/implement-workflow'
+import { pickWorkerForTask } from '../../../workflows/implement-workflow'
 import type { Task } from '../../queue'
 
 // Resolve the argv `claude -p` would receive for a given Worker. Behaviour

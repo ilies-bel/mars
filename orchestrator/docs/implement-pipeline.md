@@ -5,10 +5,10 @@ port off Mastra onto the in-house `@mars/workflow` engine — the real
 `ctx.step` sequence, the branches, how resume works, and how failures
 propagate. It describes what is in the code, not an idealized design.
 
-Source: `orchestrator/src/mastra/workflows/implement-workflow.ts`,
+Source: `orchestrator/src/workflows/implement-workflow.ts`,
 dispatched from `orchestrator/src/mastra/daemon/server.ts`
 (`dispatchImplement`), persisted via
-`orchestrator/src/mastra/workflows/queue-workflow-store.ts`.
+`orchestrator/src/workflows/queue-workflow-store.ts`.
 
 ## Shape
 

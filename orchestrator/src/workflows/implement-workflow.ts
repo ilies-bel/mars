@@ -16,8 +16,8 @@ import {
   mergeBranch,
   checkMergeTargetStatus,
   detectTemplatePaths,
-} from '../lib/git'
-import { getWorkerForTag, Workers, type WorkerName } from '../workers'
+} from '../mastra/lib/git'
+import { getWorkerForTag, Workers, type WorkerName } from '../mastra/workers'
 import {
   TASK_TAGS,
   isTaskTag,
@@ -25,23 +25,23 @@ import {
   type TaskTag,
   type TaskSpec,
   type Task,
-} from '../queue'
-import { resolveContext } from '../context'
+} from '../mastra/queue'
+import { resolveContext } from '../mastra/context'
 import {
   installWorktreeDeps,
   WorktreeInstallError,
-} from '../lib/worktree-install'
-import type { ClaudeEvent } from '../lib/claude-stream'
+} from '../mastra/lib/worktree-install'
+import type { ClaudeEvent } from '../mastra/lib/claude-stream'
 import {
   enqueueTask,
   addBlockers,
   hasIncompleteBlockers,
   updateTask,
   upsertTranscript,
-} from '../queue'
-import { handleTaskFailureWithFixTask } from '../queue-fix-tasks'
-import { resolveOriginIdForTask } from '../lib/origin'
-import { type TaskStore } from '../lib/task-store'
+} from '../mastra/queue'
+import { handleTaskFailureWithFixTask } from '../mastra/queue-fix-tasks'
+import { resolveOriginIdForTask } from '../mastra/lib/origin'
+import { type TaskStore } from '../mastra/lib/task-store'
 
 export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} has incomplete blockers; aborting dispatch (task remains queued)`
@@ -106,18 +106,18 @@ export const TOO_HARD_ABORT_MESSAGE = (taskId: string): string =>
 export const isTooHardAbortError = (err: unknown): boolean =>
   errorHaystack(err).includes('aborted by read-span guard: diagnose Chore spawned')
 
-import { summarizeUsage } from '../lib/claude-usage'
-import { recordSignals, isReflectDisabled } from '../lib/reflect-signals'
-import { resolveVerifyCwd, type RanVerifyStep } from '../lib/derive-repro-command'
-import { resolveTaskCwd } from '../lib/resolve-task-cwd'
+import { summarizeUsage } from '../mastra/lib/claude-usage'
+import { recordSignals, isReflectDisabled } from '../mastra/lib/reflect-signals'
+import { resolveVerifyCwd, type RanVerifyStep } from '../mastra/lib/derive-repro-command'
+import { resolveTaskCwd } from '../mastra/lib/resolve-task-cwd'
 import { relative } from 'node:path'
 import {
   createReadSpanWatcher,
   resolveReadSpanLimit,
-} from '../lib/read-span-watch'
+} from '../mastra/lib/read-span-watch'
 import { TDD_WORKER_BRIEF } from './tdd-brief'
 import { CONTEXT_GATHERING_BRIEF } from './context-gathering-brief'
-import { buildDiagnoseChorePrompt } from '../lib/diagnose-chore'
+import { buildDiagnoseChorePrompt } from '../mastra/lib/diagnose-chore'
 
 const planSchema = z
   .object({

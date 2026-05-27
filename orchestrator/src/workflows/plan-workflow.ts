@@ -1,11 +1,11 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
-import { getTask } from '../queue'
-import { createProposal } from '../proposals'
-import { Workers } from '../workers'
-import { parseClaudeJsonResult } from '../lib/claude-json'
-import { getRepoRoot } from '../context'
-import { type TaskStore, getDefaultTaskStore } from '../lib/task-store'
+import { getTask } from '../mastra/queue'
+import { createProposal } from '../mastra/proposals'
+import { Workers } from '../mastra/workers'
+import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
+import { getRepoRoot } from '../mastra/context'
+import { type TaskStore, getDefaultTaskStore } from '../mastra/lib/task-store'
 import { RequestContext } from '@mastra/core/di'
 
 const planInputSchema = z.object({

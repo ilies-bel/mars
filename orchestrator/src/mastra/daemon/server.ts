@@ -347,7 +347,7 @@ export const startDaemon = async (
     claimedTriage.delete(taskId)
     log(`[triage] ${taskId} dispatching`)
     try {
-      const { runTriage } = await import('../workflows/triage-workflow')
+      const { runTriage } = await import('../../workflows/triage-workflow')
       const result = await runTriage(taskId, getDefaultDomainTaskStore())
       log(`[triage] ${taskId} -> actionable=${result.actionable}`)
       if (result.actionable) {
@@ -400,8 +400,8 @@ export const startDaemon = async (
     log(`[implement] ${task.id} dispatching`)
     try {
       const { runWorkflow } = await import('@mars/workflow')
-      const { implementWorkflow } = await import('../workflows/implement-workflow')
-      const { createQueueWorkflowStore } = await import('../workflows/queue-workflow-store')
+      const { implementWorkflow } = await import('../../workflows/implement-workflow')
+      const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
       // The implement pipeline now runs on the in-house @mars/workflow engine
       // rather than Mastra. Two seams are wired here:
       //   - `store`    — the engine's run/step checkpoint persistence, backed
@@ -456,7 +456,7 @@ export const startDaemon = async (
           onEvent,
         },
       )
-      const { isBlockersAbortError, isDirtyMainSetupError, isTooHardAbortError } = await import('../workflows/implement-workflow')
+      const { isBlockersAbortError, isDirtyMainSetupError, isTooHardAbortError } = await import('../../workflows/implement-workflow')
       // Read the failure off RunResult.error (the engine puts the thrown Error
       // there verbatim on the `failed` path). The detectors flatten the cause
       // chain and accept `unknown`, so passing the raw error through is correct
@@ -504,7 +504,7 @@ export const startDaemon = async (
       // benign blockers-abort — failing the task is the safe default.
       let isBlockersAbort = false
       try {
-        const { isBlockersAbortError } = await import('../workflows/implement-workflow')
+        const { isBlockersAbortError } = await import('../../workflows/implement-workflow')
         isBlockersAbort = isBlockersAbortError(err)
       } catch (importErr) {
         log(
@@ -670,7 +670,7 @@ export const startDaemon = async (
     const releaseTracking = trackInFlight(taskId, 'refine')
     log(`[refine] ${taskId} dispatching (refresh=${refresh})`)
     try {
-      const { runPlan } = await import('../workflows/plan-workflow')
+      const { runPlan } = await import('../../workflows/plan-workflow')
       // Wire the TaskStore from the composition root into the workflow so
       // the generate step routes its queue reads through the store
       // rather than calling getClient() directly (ADR-0021 seam, slice 2).
@@ -1253,7 +1253,7 @@ export const startDaemon = async (
     ideaId: string,
   ): Promise<{ ideaId: string; status: string; taskIds: string[] }> => {
     assertProposalsSourceFresh(proposalsStamp)
-    const { runSlice } = await import('../workflows/slice-workflow')
+    const { runSlice } = await import('../../workflows/slice-workflow')
     const result = await runSlice(ideaId)
     // Newly-queued slice tasks need to enter the implement pool. Emit one
     // 'task.queued' per id; the bus subscriber pushes them into pendingImplement
@@ -1268,9 +1268,9 @@ export const startDaemon = async (
   }
 
   const handleInit = async (
-    opts: import('../workflows/init-workflow').RunInitOptions,
-  ): Promise<import('../workflows/init-workflow').RunInitResult> => {
-    const { runInit } = await import('../workflows/init-workflow')
+    opts: import('../../workflows/init-workflow').RunInitOptions,
+  ): Promise<import('../../workflows/init-workflow').RunInitResult> => {
+    const { runInit } = await import('../../workflows/init-workflow')
     log(`[init] dispatching (force=${opts.force} fetch=${opts.fetch} dryRun=${opts.dryRun} refresh=${opts.refresh})`)
     const result = await runInit(opts)
     log(`[init] -> ${result.status}`)
