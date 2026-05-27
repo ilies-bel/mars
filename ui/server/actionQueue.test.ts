@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 
+import { actionQueueResponseSchema } from '../src/shared/schemas.ts'
 import { startServer } from './index.ts'
 
 interface ActionQueueItemBody {
@@ -392,5 +393,51 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
     const batchRow = body.find((r) => r.entityId === '__daemon-killed-batch__')
     expect(batchRow).toBeDefined()
     expect(batchRow?.errorKind).toBe('daemon-killed-batch')
+  })
+})
+
+describe('actionQueueResponseSchema resilience', () => {
+  const minimalRow = {
+    id: 'test-id',
+    entityId: 'task-1',
+    priority: 'high' as const,
+    title: 'Test',
+    body: '',
+    at: new Date().toISOString(),
+    dag: null,
+    dismissed: false,
+    ackState: null,
+    errorKind: 'daemon-killed',
+    actions: [],
+  }
+
+  it('parses a response array containing an unknown kind (daemon-killed) without throwing', () => {
+    const raw = [{ ...minimalRow, kind: 'daemon-killed' }]
+    expect(() => actionQueueResponseSchema.parse(raw)).not.toThrow()
+  })
+
+  it('coerces an unknown kind to failed-task', () => {
+    const raw = [{ ...minimalRow, kind: 'daemon-killed' }]
+    const parsed = actionQueueResponseSchema.parse(raw)
+    expect(parsed[0].kind).toBe('failed-task')
+  })
+
+  it('preserves valid kinds unchanged', () => {
+    const validKinds = ['failed-task', 'stale-worktree', 'draft-proposal'] as const
+    for (const kind of validKinds) {
+      const parsed = actionQueueResponseSchema.parse([{ ...minimalRow, kind }])
+      expect(parsed[0].kind).toBe(kind)
+    }
+  })
+
+  it('does not discard other rows when one row has an unknown kind', () => {
+    const raw = [
+      { ...minimalRow, id: 'row-1', kind: 'daemon-killed' },
+      { ...minimalRow, id: 'row-2', kind: 'failed-task' },
+    ]
+    const parsed = actionQueueResponseSchema.parse(raw)
+    expect(parsed).toHaveLength(2)
+    expect(parsed[0].kind).toBe('failed-task')
+    expect(parsed[1].kind).toBe('failed-task')
   })
 })
