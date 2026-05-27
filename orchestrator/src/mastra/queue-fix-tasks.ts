@@ -30,10 +30,9 @@ const truncate = (s: string, max: number): string =>
 
 const FIX_TASK_AUTHOR_KIND = 'agent'
 const FIX_TASK_AUTHOR_NAME = 'fail-fix-handler'
-const INVESTIGATOR_AUTHOR_NAME = 'agent:investigator'
 
 export const RECOVERY_FAILED_INBOX_KIND: InboxKind = 'failed'
-export const NO_RECIPE_INBOX_KIND: InboxKind = 'failed'
+export const UNKNOWN_FAILURE_INBOX_KIND: InboxKind = 'failed'
 export const FIX_FAIL_LOOP_INBOX_KIND: InboxKind = 'failed'
 
 const DEFAULT_MAX_FIX_ATTEMPTS = 2
@@ -293,131 +292,6 @@ export const upsertFixTask = async (
   return { fixTaskId, created: true }
 }
 
-// TODO: the orchestrator's verify step should reject any commit whose diff
-// contains the `[DEBUG-` tag prefix produced by Phase 4 of this prompt.
-// That gate is tracked as a separate task; until it lands, Phase 6 here is
-// the only enforcement, and a missed grep-and-remove will only be caught
-// by code review.
-const buildInvestigatorPrompt = (input: {
-  sourceTaskId: string
-  originTaskId: string
-  failingStep: string
-  failureSignature: string
-  truncatedError: string
-  branch: string | null
-  worktreePath: string | null
-  reproCommand: string | null
-  originalPrompt: string
-}): string => {
-  const worktreeLine = input.worktreePath
-    ? `Worktree path (run repros from here): ${input.worktreePath}`
-    : `Worktree path: <unknown — the failing task's worktree may have been cleaned up. If you cannot reach it, treat the failure as not-locally-reproducible and prefer option (b).>`
-
-  const reproSection = input.reproCommand
-    ? ['## Reproduce', '', '```', input.reproCommand, '```', '']
-    : []
-
-  const originalPromptSection =
-    input.originalPrompt.trim().length > 0
-      ? [
-          `## Original task prompt`,
-          '',
-          `This is what the failing task was trying to do. Use it to judge whether the failure is a real product bug or a malformed task — outcome (b) is correct whenever the prompt itself is the problem (ambiguous, underspecified, or asking for the impossible).`,
-          '',
-          input.originalPrompt.trim(),
-          '',
-        ]
-      : []
-
-  return [
-    `# Investigator task — diagnose the failure, then decide`,
-    '',
-    `Task ${input.sourceTaskId} (origin ${input.originTaskId}) failed with a signature that has no registered recovery recipe. Your job is NOT to fix the failing task. Your job is to DIAGNOSE the failure first, and only then decide between two outcomes — both of which are equally first-class:`,
-    `  (a) the failure is mechanically recoverable by a coding agent and you can name a single root cause → propose a draft recipe by editing orchestrator/src/mastra/lib/fix-recipes.ts (and, if the signature ends in \`/unclassified\`, orchestrator/src/mastra/lib/failure-signature.ts), add a vitest test, and commit; or`,
-    `  (b) **no recipe is the right answer** → file an inbox item via \`mars inbox raise --from -\` with priority='high' explaining the diagnosis and why a recipe would be wrong here.`,
-    '',
-    `Outcome (b) is NOT a fallback. It is the correct outcome whenever the failure is environmental, requires human credentials, depends on a flaky external dependency, or stems from an underspecified original task prompt. Examples that MUST route to inbox: a flaky network call, a missing API key, an ambiguous task description, a real product bug in the target repo, a one-off race condition you cannot deterministically reproduce. Writing a recipe for any of these would produce a vibe-recipe that pattern-matches noise.`,
-    '',
-    `Read docs/adr/0002-recipe-per-failure-signature.md before editing — every recipe must obey the contract there (recipe binds to a technical-key signature, recovery has retry budget 0, etc.).`,
-    '',
-    `## Failure context`,
-    '',
-    `Failing step: ${input.failingStep}`,
-    `Failure signature: ${input.failureSignature}`,
-    input.branch ? `Branch: ${input.branch}` : null,
-    worktreeLine,
-    `Originally failing task: ${input.sourceTaskId}`,
-    `Origin task: ${input.originTaskId}`,
-    '',
-    'Last error output (tail-truncated):',
-    '```',
-    input.truncatedError,
-    '```',
-    '',
-    ...originalPromptSection,
-    ...reproSection,
-    `## Diagnose discipline — work in this order`,
-    '',
-    `### Phase 1 — feedback loop first`,
-    '',
-    `Before forming any hypothesis, identify the **deterministic command** that reproduces the failure from the worktree path above. This is the single most important step. A diagnosis without a feedback loop is a guess.`,
-    '',
-    ` - If you can find a repro command, run it and confirm it reproduces the failure deterministically (same exit code, same key error string). Record the exact command.`,
-    ` - If you CANNOT find a deterministic repro — e.g. the failure depends on network, on a credential you don't have, on timing, or on state that's already gone — say so explicitly in your commit message or inbox note and choose outcome (b). You MUST NOT draft a recipe without a repro. A recipe keyed to a failure you cannot trigger is a vibe-recipe.`,
-    '',
-    `### Phase 2 — 3–5 ranked falsifiable hypotheses`,
-    '',
-    `Before picking a signature slug or writing any recipe body, list 3–5 candidate root causes ranked by likelihood. Each hypothesis MUST be falsifiable and stated as:`,
-    '',
-    `> If <X> is the cause, then <Y> would change the outcome (running command Z, or observing signal W).`,
-    '',
-    `If you cannot phrase a candidate as a falsifiable "if/then", drop it — it's not a hypothesis, it's a vibe. Three sharp hypotheses beat five fuzzy ones.`,
-    '',
-    `Include this ranked list verbatim in the commit message (outcome a) OR in the inbox body (outcome b). The next person reading \`git log fix-recipes.ts\` or the inbox item must be able to see the alternatives you considered and ruled out.`,
-    '',
-    `### Phase 3 — pick the winning hypothesis by experiment, not by feel`,
-    '',
-    `Use the feedback loop from Phase 1 to falsify hypotheses one at a time, top-down. The first hypothesis whose "if/then" survives every check it predicts is your winner. If every hypothesis is falsified, return to Phase 2 with what you learned and generate new ones — do NOT pick the "least falsified" and pretend.`,
-    '',
-    `### Phase 4 — tagged debug logs (only if you instrument)`,
-    '',
-    `If you add any temporary logging, print statements, or instrumentation while diagnosing, prefix every such line with a unique tag of the form \`[DEBUG-<8hex>]\` (e.g. \`[DEBUG-a1b2c3d4]\`). Pick one tag for this entire session and reuse it. The tag makes the noise greppable and removable.`,
-    '',
-    `### Phase 5 — decide (a) or (b)`,
-    '',
-    `Apply the recipe test:`,
-    ` - Can you name a single mechanical root cause that a coding agent could fix in a deterministic, bounded sequence of edits? → (a).`,
-    ` - Is the cause environmental, credential-bound, human-judgement-bound, flaky, or rooted in an underspecified task prompt? → (b).`,
-    '',
-    `When in doubt, prefer (b). A missing recipe is recoverable next time the signature appears; a wrong recipe poisons every future occurrence.`,
-    '',
-    `### Phase 6 — grep-and-remove every \`[DEBUG-\` line BEFORE you commit`,
-    '',
-    `Run a search for your unique \`[DEBUG-<8hex>]\` tag across the worktree and remove every match. The orchestrator's verify step will reject any commit whose diff contains the \`[DEBUG-\` prefix, so a missed line will fail the merge. Re-grep after removal to confirm zero matches.`,
-    '',
-    `## What 'a draft recipe' means (outcome a only)`,
-    '',
-    `Add an entry to \`recipeList\` in orchestrator/src/mastra/lib/fix-recipes.ts. Its \`signature\` field MUST equal the signature above. Its \`buildPrompt\` returns the prompt for a recovery agent — concrete steps, exact paths, what to commit. Mirror the style of the existing recipes (\`merge:preflight/uncommitted-changes\`, \`setup:install/install-frozen-lockfile\`, \`verify:has-diff/no-commits-ahead\`).`,
-    '',
-    `If the signature ends in \`/unclassified\`, you must also add a rule to \`errorClassRules\` in orchestrator/src/mastra/lib/failure-signature.ts so future occurrences of this error map to a stable slug instead of \`unclassified\`. Pick the slug carefully — it becomes part of the technical-key signature contract.`,
-    '',
-    `## Commit message contract (outcome a only)`,
-    '',
-    `The commit that introduces the recipe MUST state, in plain prose, which of your ranked hypotheses the recipe is keyed to and why the others were ruled out. The next person reading \`git log fix-recipes.ts\` should learn the reasoning, not just see the recipe body. Include the deterministic repro command from Phase 1 in the commit message.`,
-    '',
-    `## Boundaries`,
-    '',
-    ` - Do NOT modify the original failing task's row, branch, or worktree.`,
-    ` - Do NOT add a generic catch-all recipe — recipes must be specific to a signature.`,
-    ` - Do NOT bypass the registry by editing the failure handler.`,
-    ` - Add a vitest test exercising the new recipe (mirror the existing tests in orchestrator/src/mastra/lib/__tests__/fix-recipes.test.ts).`,
-    '',
-    `Save your work: stage and commit your changes (recipe + test + any classifier rule).`,
-  ]
-    .filter((line) => line !== null)
-    .join('\n')
-}
-
 const buildRecoveryEscalationBody = (input: {
   recoveryTaskId: string
   originTaskId: string
@@ -429,12 +303,7 @@ const buildRecoveryEscalationBody = (input: {
   truncatedError: string
 }): string => {
   return [
-    'Do one of these now:',
-    `  - Fix the underlying issue in the worktree, then run 'mars continue ${input.recoveryTaskId}' to resume on the existing worktree, or 'mars restart ${input.recoveryTaskId}' to wipe and re-run from setup.`,
-    `  - Abandon the original task: run 'mars unblock ${input.originTaskId}'.`,
-    `Then close this item: 'mars inbox resolve <item-id>'.`,
-    '',
-    `Why you're seeing this: recovery task ${input.recoveryTaskId} failed and the orchestrator will not retry it (recovery budget is 0 by design — see ADR 0002). Task ${input.originTaskId} stays 'blocked' until you act.`,
+    `Recovery task ${input.recoveryTaskId} failed and the orchestrator will not retry it (recovery budget is 0 by design — see ADR 0002). Task ${input.originTaskId} stays 'blocked' until resolved.`,
     '',
     'Context:',
     `  Failing step: ${input.failingStep}`,
@@ -452,22 +321,15 @@ const buildRecoveryEscalationBody = (input: {
     .join('\n')
 }
 
-const buildNoRecipeBody = (input: {
+const buildUnknownFailureBody = (input: {
   sourceTaskId: string
-  originTaskId: string
-  investigatorTaskId: string
   failingStep: string
   failureSignature: string
   branch: string | null
   truncatedError: string
 }): string => {
   return [
-    `Wait for investigator task ${input.investigatorTaskId} to merge a draft recipe, then do one of these:`,
-    `  - Re-attempt with the new recipe: run 'mars continue ${input.sourceTaskId}' to resume on the existing worktree, or 'mars restart ${input.sourceTaskId}' to wipe and re-run from setup.`,
-    `  - Decide the failure is unrecoverable: run 'mars unblock ${input.originTaskId}'.`,
-    `Then close this item: 'mars inbox resolve <item-id>'.`,
-    '',
-    `Why you're seeing this: task ${input.sourceTaskId} (origin ${input.originTaskId}) failed with signature \`${input.failureSignature}\` and no recovery recipe is registered for it. Investigator ${input.investigatorTaskId} is queued to propose one — it does not fix the failing task. Task ${input.sourceTaskId} is marked 'failed'; use mars continue or mars restart to retry once a recipe is available.`,
+    `Task ${input.sourceTaskId} failed with a signature that has no registered recovery recipe, so the orchestrator did not auto-recover it.`,
     '',
     'Context:',
     `  Failing step: ${input.failingStep}`,
@@ -494,12 +356,7 @@ const buildFixFailLoopBody = (input: {
   cap: number
 }): string => {
   return [
-    'Do one of these now:',
-    `  - Diagnose the root cause from the source task and its recovery history, then run 'mars continue ${input.sourceTaskId}' to resume on the existing worktree, or 'mars restart ${input.sourceTaskId}' to wipe and re-run from setup.`,
-    `  - Abandon the source task: run 'mars unblock ${input.sourceTaskId}'.`,
-    `Then close this item: 'mars inbox resolve <item-id>'.`,
-    '',
-    `Why you're seeing this: task ${input.sourceTaskId} (origin ${input.originTaskId}) hit the fix-fail retry cap of ${input.cap} for signature \`${input.failureSignature}\` after ${input.attempts} attempt(s). The orchestrator has stopped auto-retrying this pair. Task ${input.sourceTaskId} stays 'blocked' until you act.`,
+    `Task ${input.sourceTaskId} (origin ${input.originTaskId}) hit the fix-fail retry cap of ${input.cap} for signature \`${input.failureSignature}\` after ${input.attempts} attempt(s). The orchestrator has stopped auto-retrying this pair. Task ${input.sourceTaskId} stays 'blocked' until resolved.`,
     '',
     'Context:',
     `  Failing step: ${input.failingStep}`,
@@ -515,123 +372,6 @@ const buildFixFailLoopBody = (input: {
   ]
     .filter((line) => line !== null)
     .join('\n')
-}
-
-interface SpawnInvestigatorResult {
-  investigatorTaskId: string
-  inboxItemId: string
-}
-
-const spawnInvestigatorAndRaiseInbox = async (input: {
-  sourceTask: Task
-  failingStep: string
-  failureSignature: string
-  branch: string | null
-  truncatedError: string
-  reproCommand: string | null
-  store?: TaskStore
-}): Promise<SpawnInvestigatorResult> => {
-  const s = input.store ?? (await getDefaultTaskStore())
-  const investigatorPrompt = buildInvestigatorPrompt({
-    sourceTaskId: input.sourceTask.id,
-    originTaskId: input.sourceTask.originId,
-    failingStep: input.failingStep,
-    failureSignature: input.failureSignature,
-    truncatedError: input.truncatedError,
-    branch: input.branch,
-    worktreePath: input.sourceTask.worktreePath,
-    reproCommand: input.reproCommand,
-    originalPrompt: input.sourceTask.prompt ?? '',
-  })
-
-  const investigatorTaskId = randomUUID().slice(0, 8)
-  const errorSummary = truncate(
-    `${input.failingStep}: ${input.truncatedError}`,
-    1000,
-  )
-  const now = new Date().toISOString()
-
-  await s.batch(
-    [
-      {
-        sql: `INSERT INTO tasks (
-              id, prompt, status,
-              author_kind, author_name,
-              fix_for_task_id, failure_signature,
-              retry_count, origin_id,
-              created_at, updated_at
-            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 0, ?, ?, ?)`,
-        args: [
-          investigatorTaskId,
-          investigatorPrompt,
-          FIX_TASK_AUTHOR_KIND,
-          INVESTIGATOR_AUTHOR_NAME,
-          // Investigator is not a fix-task for the source — it doesn't
-          // unblock it. Linking via fix_for_task_id would put the source
-          // back on the unblock-on-done path, which is wrong (a merged
-          // recipe doesn't fix the failure that already happened).
-          null,
-          input.failureSignature,
-          input.sourceTask.originId,
-          now,
-          now,
-        ],
-      },
-      // Source task: mark it failed. There is no task_blockers edge to wait on —
-      // the investigator does not unblock the source (a merged recipe doesn't
-      // retroactively fix the past failure). Human resolves via mars continue /
-      // mars restart once the investigator merges a recipe.
-      {
-        sql: `UPDATE tasks
-               SET status = 'failed',
-                   retry_count = retry_count + 1,
-                   error = ?,
-                   updated_at = ?
-             WHERE id = ?`,
-        args: [errorSummary, now, input.sourceTask.id],
-      },
-    ],
-    'write',
-  )
-
-  const inboxItemId = await raiseInboxItem({
-    kind: NO_RECIPE_INBOX_KIND,
-    category: 'orchestrator',
-    priority: 'high',
-    title: `Retry or abandon ${input.sourceTask.id}: no recovery recipe for ${input.failureSignature}`,
-    body: buildNoRecipeBody({
-      sourceTaskId: input.sourceTask.id,
-      originTaskId: input.sourceTask.originId,
-      investigatorTaskId,
-      failingStep: input.failingStep,
-      failureSignature: input.failureSignature,
-      branch: input.branch,
-      truncatedError: input.truncatedError,
-    }),
-    payload: {
-      sourceTaskId: input.sourceTask.id,
-      originTaskId: input.sourceTask.originId,
-      investigatorTaskId,
-      failingStep: input.failingStep,
-      failureSignature: input.failureSignature,
-      branch: input.branch,
-    },
-    context: {
-      repoRoot: process.env.MARS_REPO ?? null,
-    },
-    raisedBy: 'agent:fail-fix-handler',
-    // Dedup so a flapping signature doesn't spawn a herd of investigators.
-    signature: input.failureSignature,
-    // Collapse all failure-kinds for the same origin into one row.
-    originTaskId: input.sourceTask.originId,
-    occurrence: {
-      at: now,
-      sourceTaskId: input.sourceTask.id,
-      failingStep: input.failingStep,
-    },
-  })
-
-  return { investigatorTaskId, inboxItemId }
 }
 
 export interface HandleTaskFailureViaTaskInput {
@@ -675,7 +415,6 @@ export interface HandleTaskFailureViaTaskResult {
   failureSignature?: string
   retryCount?: number
   inboxItemId?: string
-  investigatorTaskId?: string
   attempts?: number
 }
 
@@ -688,8 +427,9 @@ export interface HandleTaskFailureViaTaskResult {
  *     set). Recovery has a retry budget of 0; we mark it failed and
  *     raise a `recovery-failed` inbox item for human attention.
  *  - `no-recipe`: signature has no recipe registered. Original task →
- *     failed, an Investigator task is queued to propose a draft recipe,
- *     and a `no-recipe` inbox item is raised.
+ *     failed and a trace-only inbox item is raised. The orchestrator does
+ *     NOT auto-diagnose; the operator triggers a one-shot diagnostic agent
+ *     from the inbox card (the `diagnose-failure` action).
  *  - `fix-fail-loop`: (sourceTaskId, failureSignature) pair has already
  *     burned its fix-task attempts cap (`MARS_MAX_FIX_ATTEMPTS`, default
  *     2). No new fix task is inserted; a deduped `fix-fail-loop` inbox
@@ -868,25 +608,57 @@ export const handleTaskFailureWithFixTask = async (
   //     with spec.files + pre-computed integration re-run results,
   //     since classifyError today only sees errorOutput.
   // No recipe for this signature — do NOT fall back to a generic prompt
-  // (that's what produced the cascade). Mark the source 'failed',
-  // queue an Investigator task to propose a draft recipe, and raise an
-  // inbox item.
+  // (that's what produced the cascade) and do NOT auto-diagnose. Mark the
+  // source 'failed' and raise a trace-only inbox item. The operator decides
+  // whether to diagnose (the card's `diagnose-failure` action spawns a
+  // one-shot Sonnet agent), restart, or purge.
   if (!hasRecipe(failureSignature)) {
-    const { investigatorTaskId, inboxItemId } =
-      await spawnInvestigatorAndRaiseInbox({
-        sourceTask: task,
+    const now = new Date().toISOString()
+    await updateTask(
+      input.taskId,
+      {
+        status: 'failed',
+        error: truncate(`${input.failingStep}: ${truncatedError}`, 1000),
+      },
+      s,
+    )
+
+    const inboxItemId = await raiseInboxItem({
+      kind: UNKNOWN_FAILURE_INBOX_KIND,
+      category: 'orchestrator',
+      priority: 'high',
+      title: `Task ${task.id} failed: unknown signature ${failureSignature}`,
+      body: buildUnknownFailureBody({
+        sourceTaskId: task.id,
         failingStep: input.failingStep,
         failureSignature,
         branch,
         truncatedError,
-        reproCommand,
-        store: s,
-      })
+      }),
+      payload: {
+        taskId: task.id,
+        originTaskId: task.originId,
+        failingStep: input.failingStep,
+        failureSignature,
+        branch,
+      },
+      context: {
+        repoRoot: process.env.MARS_REPO ?? null,
+      },
+      raisedBy: 'agent:fail-fix-handler',
+      // Dedup on signature so a flapping signature collapses to one row.
+      signature: failureSignature,
+      originTaskId: task.originId,
+      occurrence: {
+        at: now,
+        sourceTaskId: task.id,
+        failingStep: input.failingStep,
+      },
+    })
     return {
       outcome: 'no-recipe',
       failureSignature,
       retryCount: task.retryCount + 1,
-      investigatorTaskId,
       inboxItemId,
     }
   }

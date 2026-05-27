@@ -197,6 +197,16 @@ export const actionQueueItemSchema = z.object({
      */
     investigation: z.string().nullable(),
   }).nullish(),
+  /**
+   * Root-cause diagnosis written by the diagnose-failure action, or null when
+   * none has been run. Only populated for unknown-signature failed-task rows.
+   */
+  diagnosis: z
+    .object({
+      text: z.string(),
+      diagnosedAt: z.string(),
+    })
+    .nullish(),
 })
 
 export const actionQueueResponseSchema = z.array(actionQueueItemSchema)

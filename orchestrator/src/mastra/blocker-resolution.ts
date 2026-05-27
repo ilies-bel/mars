@@ -131,8 +131,8 @@ const raiseWorktreeAheadInbox = async (
         `but its worktree at ${worktreePath} is ${aheadCount} commit(s) ahead of ` +
         `${integrationBranch}. Mars refuses to auto-rebase a dependent that has ` +
         `its own work on the branch.\n\n` +
-        `Resolve manually: inspect the worktree, decide whether to land or drop ` +
-        `those commits, then \`mars restart ${taskId}\` (or \`mars purge ${taskId}\`).`,
+        `Resolve manually: inspect the worktree and decide whether to land or drop ` +
+        `those commits before retrying.`,
       payload: {
         taskId,
         worktreePath,
@@ -505,8 +505,7 @@ export const onBlockerTaskCancelled = async (
           `Task ${row.id} was waiting on blocker ${blockerTaskId}.\n\n` +
           `The blocker was cancelled by the user (stop-task RPC, failure_reason='cancelled'). ` +
           `Per the cancellation-cascade rule, this dependent has been marked failed ` +
-          `with failure_reason='${CANCELLED_CASCADE_FAILURE_REASON}' instead of being unblocked.\n\n` +
-          `Use \`mars restart ${row.id}\` to retry, or \`mars purge ${row.id}\` to drop it.`,
+          `with failure_reason='${CANCELLED_CASCADE_FAILURE_REASON}' instead of being unblocked.`,
         payload: {
           dependentTaskId: row.id,
           cancelledBlockerTaskId: blockerTaskId,

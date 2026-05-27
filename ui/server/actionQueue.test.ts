@@ -35,6 +35,7 @@ interface ActionQueueItemBody {
     empty: boolean
     investigation: string | null
   } | null
+  diagnosis: { text: string; diagnosedAt: string } | null
 }
 
 const setupRepo = (): string => {
@@ -581,6 +582,47 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
     const batchRow = body.find((r) => r.entityId === '__daemon-killed-batch__')
     expect(batchRow).toBeDefined()
     expect(batchRow?.errorKind).toBe('daemon-killed-batch')
+  })
+
+  it('failed-task row: diagnosis passes through from payload as { text, diagnosedAt }', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'diag-row-1',
+      kind: 'failed',
+      priority: 'high',
+      title: 'Task t-diag failed',
+      payload: {
+        taskId: 't-diag',
+        diagnosis: {
+          text: 'Migration ran against an already-migrated DB; not a real error.',
+          diagnosedAt: '2026-05-27T16:00:00.000Z',
+        },
+      },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'diag-row-1')
+    expect(row?.diagnosis?.text).toBe(
+      'Migration ran against an already-migrated DB; not a real error.',
+    )
+    expect(row?.diagnosis?.diagnosedAt).toBe('2026-05-27T16:00:00.000Z')
+  })
+
+  it('failed-task row: diagnosis is null when payload has none', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertInboxItem(c, {
+      id: 'nodiag-row-1',
+      kind: 'failed',
+      priority: 'high',
+      title: 'Task t-nodiag failed',
+      payload: { taskId: 't-nodiag' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'nodiag-row-1')
+    expect(row?.diagnosis).toBeNull()
   })
 })
 
