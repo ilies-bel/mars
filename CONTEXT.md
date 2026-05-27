@@ -132,7 +132,7 @@ _Avoid_: shared file, merged file, conflicted file
 A semver git tag (vMAJOR.MINOR.PATCH) on the mars-framework repository; the canonical identifier of a framework release and the source of truth consulted by 'mars update'. The version lives only as a git tag — there is no package.json version field and no VERSION file. The tag is autobumped on every release-worthy push to main, so 'mars update' always finds a fresh tag to pull.
 
 **Focus subgraph**:
-The slice of the Graph view's blocker DAG anchored at a selected node — by default the upstream blocker chain to its roots plus one downstream hop, with the selected node's originating Idea attached as a fixed provenance hop.
+The slice of the Graph view's blocker DAG anchored at a selected node — by default the upstream blocker chain to its roots plus one downstream hop, with the selected node's originating Proposal attached as a fixed provenance hop.
 _Avoid_: focus query, focus mode
 
 **Bundle**:
