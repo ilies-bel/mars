@@ -9,7 +9,6 @@ import {
   ClusterToggleBar,
   type ClusterToggle,
 } from '@/widgets/ClusterToggleBar'
-import { EventsView } from '@/widgets/EventsView'
 import { Footer } from '@/widgets/Footer'
 import {
   RecencySlider,
@@ -101,8 +100,6 @@ export const ProgressPage = () => {
           <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
             <ApiErrorPanel error={error} />
           </main>
-        ) : activeTab === 'events' ? (
-          <EventsView />
         ) : activeTab === 'topology' ? (
           <TopologyView
             tasks={tasks ?? []}
