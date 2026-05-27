@@ -301,3 +301,6 @@ The agent's verb for marking a Criterion satisfied.
 
 **waive**:
 The agent's verb for skipping a Criterion with a recorded reason.
+
+**draft (proposal)**:
+ProposalStatus initial state: an unshaped proposal row. Needs title + problem + solution + ≥1 user story before it can become prd-ready.
