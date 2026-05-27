@@ -1,56 +1,66 @@
 # AGENTS.md
 
-You are a TypeScript developer experienced with the Mastra framework. You build AI agents, tools, workflows, and scorers. You follow strict TypeScript practices and always consult up-to-date Mastra documentation before making changes.
-
-
-## CRITICAL: Load `mastra` skill
-
-**BEFORE doing ANYTHING with Mastra, load the `mastra` skill FIRST.** Never rely on cached knowledge as Mastra's APIs change frequently between versions. Use the skill to read up-to-date documentation from `node_modules`.
+You are a TypeScript developer building the Mars orchestrator. You write
+imperative, agentic, code-producing workflows on the in-house
+`@mars/workflow` engine. You follow strict TypeScript practices.
 
 ## Project Overview
 
-This is a **Mastra** project written in TypeScript. Mastra is a framework for building AI-powered applications and agents with a modern TypeScript stack. The Node.js runtime is `>=22.13.0`.
+This orchestrator runs headless Claude Code in parallel git worktrees and
+fast-forwards verified work into `main`. Workflows are plain imperative TS
+functions on the **`@mars/workflow`** engine (`packages/workflow/`): native
+control flow is the source of truth, `ctx.step(name, fn)` wraps each durable
+unit, durability is checkpoint-resume keyed on `runId`. The Node.js runtime
+is `>=22.13.0`.
+
+**Mastra is gone.** The orchestrator no longer depends on `@mastra/*`; do
+not reintroduce it. The `mastra` skill and Mastra docs are not relevant to
+this codebase any more (the only `@mastra` string that remains is a
+tech-detection literal in `src/init/detect-stack.ts`, which detects whether
+a *target* repo uses Mastra). See `docs/implement-pipeline.md` for the
+workflow-authoring pattern and `docs/migrations/0001-mastra-to-workflow-engine.md`
+for the migration record.
 
 ## Commands
 
 ```bash
-npm run dev # Start Mastra Studio at localhost:4111 (long-running, use a separate terminal)
-npm run build # Build a production-ready server
+npm run dev   # run the CLI from source (tsx src/cli.ts)
+npm test      # vitest run
+npm run typecheck
 ```
 
 ## Project Structure
 
-| Folder                 | Description                                                                                                                              |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/mastra`           | Entry point for all Mastra-related code and configuration.                                                                               |
-| `src/mastra/agents`    | Define and configure your agents - their behavior, goals, and tools.                                                                     |
-| `src/workflows`        | Imperative `@mars/workflow` pipelines (implement/triage/plan/slice/init).                                                                |
-| `src/mastra/tools`     | Create reusable tools that your agents can call                                                                                          |
-| `src/mastra/mcp`       | (Optional) Implement custom MCP servers to share your tools with external agents                                                         |
-| `src/mastra/scorers`   | (Optional) Define scorers for evaluating agent performance over time                                                                     |
-| `src/mastra/public`    | (Optional) Contents are copied into the `.build/output` directory during the build process, making them available for serving at runtime |
+| Folder              | Description                                                                  |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `src/workflows`     | Imperative `@mars/workflow` pipelines (implement/triage/plan/slice/init).    |
+| `src/mastra`        | The orchestrator's core (the dir name is vestigial — no Mastra here). Holds `queue.ts`, `proposals.ts`, `context.ts`, and the subdirs below. |
+| `src/mastra/agents` | Worker/agent specs and the agent registry.                                   |
+| `src/mastra/workers`| Role-pinned Worker primitives (Coder/Fixer/Triager/Planner/Slicer/Writer).   |
+| `src/mastra/daemon` | The long-lived daemon: dispatch loop, per-kind semaphores, socket protocol.  |
+| `src/mastra/lib`    | Non-AI side-effect helpers (git, verify, claude-stream, task-store).         |
+| `src/mastra/store`  | Domain task store.                                                           |
+| `src/init`          | `mars init`: stack detection, supervisor render, scaffolding, DB init.       |
 
 ### Top-level files
 
-Top-level files define how your Mastra project is configured, built, and connected to its environment.
-
-| File                  | Description                                                                                                       |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `src/mastra/index.ts` | Central entry point where you configure and initialize Mastra.                                                    |
-| `.env.example`        | Template for environment variables - copy and rename to `.env` to add your secret [model provider](/models) keys. |
-| `package.json`        | Defines project metadata, dependencies, and available npm scripts.                                                |
-| `tsconfig.json`       | Configures TypeScript options such as path aliases, compiler settings, and build output.                          |
+| File              | Description                                                              |
+| ----------------- | ------------------------------------------------------------------------ |
+| `src/cli.ts`      | The `mars` CLI entry point.                                              |
+| `package.json`    | Project metadata, dependencies, npm scripts.                            |
+| `tsconfig.json`   | TS options + the `@mars/workflow` path alias to `packages/workflow/src`. |
 
 ## Boundaries
 
 ### Always do
 
-- Load the `mastra` skill before any Mastra-related work
-- Register new agents, tools, workflows, and scorers in `src/mastra/index.ts`
-- Use schemas for tool inputs and outputs
-- Run `npm run build` to verify changes compile
-- Non-AI logic lives in `src/mastra/lib/` and is called from `createStep`
-  `execute`. Only wrap as `createTool` if an agent actually consumes it.
+- Author workflows on `@mars/workflow`: one `defineWorkflow({id, inputSchema,
+  fn})`, durable units wrapped in `await ctx.step(name, fn)`, failures THROW.
+  Copy the pattern in `docs/implement-pipeline.md`.
+- Use Zod schemas for workflow inputs.
+- Run `npm run typecheck` and `npm test` to verify changes.
+- Non-AI side-effect logic lives in `src/mastra/lib/` and is called from
+  inside a `ctx.step`.
 - Gate any new per-task signal-capture call site through
   `isReflectDisabled()` (or `recordSignals`, which already gates itself)
   so `MARS_REFLECT_DISABLED=1` stays a single, comprehensive disable
@@ -60,8 +70,6 @@ Top-level files define how your Mastra project is configured, built, and connect
   investigations. Leaving an uncommitted `raise-*.ts` in a worktree
   dirties the merge target and has previously blocked unrelated tasks
   from merging.
-- Non-AI logic lives in `src/mastra/lib/` and is called from `createStep`
-  `execute`. Only wrap as `createTool` if an agent actually consumes it.
 
 ### Daemon worker pool
 
@@ -94,9 +102,12 @@ single supervisor set:
 ### Never do
 
 - Never commit `.env` files or secrets
-- Never modify `node_modules` or Mastra's database files directly
+- Never modify `node_modules` directly
 - Never hardcode API keys (always use environment variables)
+- Never reintroduce `@mastra/*` — the orchestrator runs on `@mars/workflow`.
+
 ## Resources
 
-- [Mastra Documentation](https://mastra.ai/llms.txt)
-- [Mastra .well-known skills discovery](https://mastra.ai/.well-known/skills/index.json)
+- `docs/implement-pipeline.md` — the canonical `@mars/workflow` authoring pattern.
+- `docs/migrations/0001-mastra-to-workflow-engine.md` — the migration record.
+- `packages/workflow/` — the engine source + its own test suite.

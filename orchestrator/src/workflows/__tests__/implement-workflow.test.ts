@@ -23,9 +23,6 @@ import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 import { buildDiagnoseChorePrompt } from '../../mastra/lib/diagnose-chore'
 import { resolveReadSpanLimit, createReadSpanWatcher } from '../../mastra/lib/read-span-watch'
 import type { ReadSpanTrace } from '../../mastra/lib/read-span-watch'
-import { RequestContext } from '@mastra/core/di'
-import { createLibsqlTaskStore } from '../../mastra/lib/task-store'
-import { createClient } from '@libsql/client'
 
 describe('composePrompt — coder default', () => {
   it('appends the commit footer to a bare prompt', () => {
@@ -752,29 +749,6 @@ describe('composePrompt — read-first and prescriptive-action sections', () => 
     expect(out).not.toContain('<read_first>')
     expect(out).toContain('<prescriptive_action>')
     expect(out).toContain('Do the thing now.')
-  })
-})
-
-describe('TaskStore context injection', () => {
-  it('a TaskStore set on RequestContext is retrievable by the step execute pattern', () => {
-    // This verifies the composition-root wiring: the daemon puts a TaskStore
-    // into a RequestContext, which Mastra propagates to each step's execute
-    // params. Steps extract it with the same cast the step code uses.
-    const client = createClient({ url: ':memory:' })
-    const store = createLibsqlTaskStore(client)
-    const ctx = new RequestContext()
-    ctx.set('taskStore', store)
-    // Reproduce the exact extraction pattern used in each workflow step.
-    const extracted = (ctx.get('taskStore') as typeof store | undefined) ?? null
-    expect(extracted).toBe(store)
-  })
-
-  it('RequestContext.get returns undefined for an unset key, triggering the getDefaultTaskStore fallback', () => {
-    const ctx = new RequestContext()
-    const extracted = ctx.get('taskStore') as unknown
-    // When no store is set, the step falls back to getDefaultTaskStore().
-    // Here we just verify the get returns undefined/falsy so the ?? fallback fires.
-    expect(extracted == null || extracted === undefined).toBe(true)
   })
 })
 
