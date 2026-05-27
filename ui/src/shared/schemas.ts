@@ -168,6 +168,35 @@ export const actionQueueItemSchema = z.object({
   // Recovery actions composed from the error-kind registry. Empty when the
   // daemon is unreachable.
   actions: z.array(actionDescriptorSchema),
+  /**
+   * Populated only for stale-worktree rows; null for all other kinds.
+   * Carries the originating task context and a git-derived emptiness flag
+   * so the UI can decide which action buttons to show (prune-only vs
+   * prune + investigate).
+   */
+  staleWorktreeDetail: z.object({
+    /** Task prompt, or null when no matching task row exists. */
+    prompt: z.string().nullable(),
+    /** Task status string, or 'unknown' when the task row is absent. */
+    status: z.string(),
+    /** Worktree age in hours (derived from task updatedAt). */
+    ageHours: z.number(),
+    /** ISO timestamp of the task's last update. */
+    updatedAt: z.string(),
+    /** Worktree branch (task/<id>), or null when not resolvable. */
+    branch: z.string().nullable(),
+    /**
+     * True when the worktree has no diff against the merge-base with main
+     * AND no untracked files. False when git is unavailable or the worktree
+     * directory is absent (conservative: assume non-empty).
+     */
+    empty: z.boolean(),
+    /**
+     * Investigation text written by the investigate action, or null when
+     * no investigation has been run yet.
+     */
+    investigation: z.string().nullable(),
+  }).nullable(),
 })
 
 export const actionQueueResponseSchema = z.array(actionQueueItemSchema)
