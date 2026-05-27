@@ -29,7 +29,7 @@ const loadProposals = async (repo: string): Promise<Proposals> => {
   return mod as unknown as Proposals
 }
 
-describe('proposal_dependencies (ADR-0008 idea->idea planning graph)', () => {
+describe('proposal_dependencies (ADR-0008 proposal->proposal planning graph)', () => {
   let repo: string
 
   beforeEach(() => {
@@ -41,7 +41,7 @@ describe('proposal_dependencies (ADR-0008 idea->idea planning graph)', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('adds an idea->idea edge and lists it back', async () => {
+  it('adds a proposal->proposal edge and lists it back', async () => {
     const p = await loadProposals(repo)
     const a = await p.createProposal('a')
     const b = await p.createProposal('b')
@@ -73,7 +73,7 @@ describe('proposal_dependencies (ADR-0008 idea->idea planning graph)', () => {
     expect(await p.listProposalDependencies(a.id)).toEqual([b.id])
   })
 
-  it('rejects a self-edge (an idea cannot block itself)', async () => {
+  it('rejects a self-edge (a proposal cannot block itself)', async () => {
     const p = await loadProposals(repo)
     const a = await p.createProposal('a')
     await expect(p.addProposalDependencies(a.id, [a.id])).rejects.toThrow(

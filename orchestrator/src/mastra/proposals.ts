@@ -133,8 +133,8 @@ export const initProposals = async (): Promise<void> => {
   // lives here in state.db alongside `proposals`. Shape mirrors
   // `task_blockers` in queue.ts: (subject) waits on (blocker), composite PK,
   // FK on both endpoints, an index per endpoint. The ADR text names this
-  // `idea_dependencies`; the codebase renamed the `idea_*` vocabulary to
-  // `proposal_*`, so we follow the current convention.
+  // `idea_dependencies` in the original ADR text; the codebase now uses
+  // `proposal_*` vocabulary throughout, so we follow the current convention.
   await c.execute(`
     CREATE TABLE IF NOT EXISTS proposal_dependencies (
       proposal_id TEXT NOT NULL,
@@ -630,7 +630,7 @@ export const getProposal = async (
  * ADR-0008 planning-graph edge writer. Adds `proposal_dependencies` rows so
  * `proposalId` waits on each `blockerId`. Mirrors `addBlockers` in queue.ts:
  * the subject and every blocker id must already exist, self-edges are
- * rejected (an idea cannot block itself), duplicates are de-duped, and the
+ * rejected (a proposal cannot block itself), duplicates are de-duped, and the
  * insert is `INSERT OR IGNORE` so re-adding an existing edge is a no-op.
  * Ids are resolved through `resolveProposalId` so prefixes work like every
  * other proposal verb.
@@ -1051,7 +1051,7 @@ export const rejectProposal = async (
     throw new Error(`proposal ${idOrPrefix} not found`)
   }
   const id = resolved.id
-  // ADR-0015: refuse the dismiss while ANY task still depends on this idea
+  // ADR-0015: refuse the dismiss while ANY task still depends on this proposal
   // via task_proposal_blockers. Do NOT auto-cascade — surface the dependent
   // task ids so the user explicitly redirects or drops them. This check
   // runs BEFORE the status flip so a refused dismiss leaves the proposal
