@@ -105,9 +105,6 @@ IdeaStatus: a fully-shaped idea that has passed validateIdeaShaped(). Eligible f
 **sliced**:
 IdeaStatus terminal: the slicer has decomposed the idea into N tracer-bullet tasks (each linked back via parent_idea_id). The idea row stays alive as the PRD reference.
 
-**dismissed (idea)**:
-IdeaStatus terminal: the idea was decided against — no slicing, no tasks. Produced by 'mars idea reject' (verb name mismatch — it writes 'dismissed', not 'rejected').
-
 **open (inbox)**:
 InboxState initial: an inbox item that needs operator attention (stale-worktree alert, blocked task, failed task).
 
