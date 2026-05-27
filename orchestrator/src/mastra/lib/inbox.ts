@@ -459,6 +459,37 @@ export const setRecoveryFindings = async (
   return id
 }
 
+/**
+ * Merge `patch` into the payload JSON of the open inbox item keyed by
+ * `originTaskId`. Existing payload fields not present in `patch` are
+ * preserved. No-op (returns `null`) if no open item exists for that origin —
+ * the caller must raise the item first via `raiseInboxItem`. Returns the item
+ * id when the patch was applied.
+ */
+export const patchOpenInboxPayload = async (
+  originTaskId: string,
+  patch: Record<string, unknown>,
+): Promise<string | null> => {
+  await initInbox()
+  const c = getClient()
+  const fingerprint = computeOriginFingerprint(originTaskId)
+  const existing = await c.execute({
+    sql: `SELECT id, payload FROM inbox_items
+           WHERE fingerprint = ? AND state = 'open'
+           ORDER BY raised_at ASC
+           LIMIT 1`,
+    args: [fingerprint],
+  })
+  if (existing.rows.length === 0) return null
+  const row = existing.rows[0] as unknown as { id: string; payload: string | null }
+  const merged = { ...parseJsonObject(row.payload), ...patch }
+  await c.execute({
+    sql: `UPDATE inbox_items SET payload = ? WHERE id = ?`,
+    args: [JSON.stringify(merged), row.id],
+  })
+  return row.id
+}
+
 const fetchById = async (
   c: Client,
   id: string,

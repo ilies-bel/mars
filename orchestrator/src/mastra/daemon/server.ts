@@ -1729,6 +1729,131 @@ export const startDaemon = async (
       // so a half-gone worktree still prunes cleanly.
       await removeWorktree({ path, branch: `task/${id}` }, true, true)
     },
+    investigateWorktree: (() => {
+      // One active investigation per worktree id. A second concurrent POST for
+      // the same id returns immediately with a "already running" explanation
+      // rather than spawning a second Haiku process and melting the host.
+      const inProgress = new Set<string>()
+
+      return async (id: string): Promise<{ explanation: string }> => {
+        if (inProgress.has(id)) {
+          return { explanation: '(investigation already in progress — try again shortly)' }
+        }
+        inProgress.add(id)
+        try {
+          const { join } = await import('node:path')
+          const { execFile } = await import('node:child_process')
+          const { promisify } = await import('node:util')
+          const { getRepoRoot } = await import('../context')
+          const { runClaudeCode } = await import('../lib/git')
+          const { getTask } = await import('../queue')
+          const { patchOpenInboxPayload } = await import('../lib/inbox')
+
+          const repoRoot = getRepoRoot()
+          const worktreePath = join(repoRoot, '.mars', 'worktrees', id)
+          const localExec = promisify(execFile)
+
+          // Look up the originating task prompt (may not exist for absent tasks).
+          const task = await getTask(id)
+          const taskPrompt = task?.prompt ?? null
+
+          // Compute the diff against the branch point on main.
+          let mergeBase = 'main'
+          try {
+            const { stdout } = await localExec(
+              'git',
+              ['merge-base', `task/${id}`, 'main'],
+              { cwd: repoRoot },
+            )
+            mergeBase = stdout.trim() || 'main'
+          } catch { /* fall back to main */ }
+
+          let diffStat = ''
+          let diffBody = ''
+          let untrackedFiles = ''
+          try {
+            const { stdout } = await localExec(
+              'git',
+              ['diff', '--stat', mergeBase],
+              { cwd: worktreePath },
+            )
+            diffStat = stdout.trim()
+          } catch { /* ignore */ }
+          try {
+            const { stdout } = await localExec(
+              'git',
+              ['diff', mergeBase],
+              { cwd: worktreePath },
+            )
+            // Cap diff at 20 KB to keep the Haiku prompt small and cheap.
+            diffBody = stdout.slice(0, 20_000)
+          } catch { /* ignore */ }
+          try {
+            const { stdout } = await localExec(
+              'git',
+              ['ls-files', '--others', '--exclude-standard'],
+              { cwd: worktreePath },
+            )
+            untrackedFiles = stdout.trim()
+          } catch { /* ignore */ }
+
+          const promptParts: string[] = []
+          if (taskPrompt) {
+            promptParts.push(`ORIGINAL TASK PROMPT:\n${taskPrompt}\n`)
+          }
+          promptParts.push(
+            `DIFF STAT (changes vs main branch point):\n${diffStat || '(no committed changes)'}\n`,
+          )
+          if (diffBody) {
+            promptParts.push(`DIFF:\n${diffBody}\n`)
+          }
+          if (untrackedFiles) {
+            promptParts.push(`UNTRACKED FILES IN WORKTREE:\n${untrackedFiles}\n`)
+          }
+          promptParts.push(
+            'In one short paragraph, explain what this abandoned task was trying ' +
+              'to do and what the diff actually changed. Be terse — this is a ' +
+              'cheap triage aid, not a code review.',
+          )
+          const investigatePrompt = promptParts.join('\n')
+
+          const result = await runClaudeCode({
+            cwd: worktreePath,
+            prompt: investigatePrompt,
+            model: 'claude-haiku-4-5-20251001',
+            // Read-only: use default permission mode so no file edits are allowed.
+            permissionMode: 'default',
+            // Cap turns to keep cost low — Haiku only needs one turn to summarise.
+            maxMessages: 5,
+          })
+
+          // Extract the final text from the conversation. Prefer the 'result'
+          // event (the model's final answer), fall back to the last assistant text.
+          let explanation = '(no explanation generated)'
+          for (const event of result.conversation) {
+            if (
+              event.type === 'result' &&
+              typeof event.result === 'string' &&
+              !event.is_error
+            ) {
+              explanation = event.result as string
+            }
+          }
+
+          // Persist onto the inbox item so the UI can render it.
+          await patchOpenInboxPayload(id, {
+            investigation: {
+              text: explanation,
+              investigatedAt: new Date().toISOString(),
+            },
+          })
+
+          return { explanation }
+        } finally {
+          inProgress.delete(id)
+        }
+      }
+    })(),
     restartDaemon: async () => {
       // Re-exec a detached `mars daemon start` and let this process drain +
       // exit. Spawned detached so it survives our shutdown.
