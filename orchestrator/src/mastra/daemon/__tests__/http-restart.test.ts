@@ -37,6 +37,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   unblockTask: async () => {},
   purgeTask: async () => {},
   pruneWorktree: async () => {},
+  investigateWorktree: async () => ({ explanation: '' }),
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
