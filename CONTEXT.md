@@ -5,7 +5,7 @@ Canonical domain terms for this project. Edited via `mars glossary`.
 ## Language
 
 **originId**:
-Tracer id for a full workflow from `mars idea add` (or `mars task add`) through to merge; propagated onto every Mastra span in the arc so `mars arc reflect` can analyze the whole workflow as one timeline.
+Tracer id for a full workflow from `mars proposal add` (or `mars task add`) through to merge; propagated onto every Mastra span in the arc so `mars arc reflect` can analyze the whole workflow as one timeline.
 
 **Daemon**:
 The long-lived background process started by 'mars daemon' that runs Claude instances on ready tasks.
