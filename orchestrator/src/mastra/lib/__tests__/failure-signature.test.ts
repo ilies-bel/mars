@@ -273,6 +273,36 @@ describe('matchFull rules are checked against full output', () => {
     // errorClassRules, it takes priority.
     expect(classifyError(assertionWithTableText)).toBe('test-assertion-error')
   })
+
+  it('computeFailureSignature produces verify:test/test-libsql-not-an-error for the real libsql comment-only SQL error shape', () => {
+    // The actual error captured when runMigration (src/db/migrate.ts) splits a
+    // SQL migration file on '--> statement-breakpoint' and passes the leading
+    // comment block (which precedes the first breakpoint) to c.execute().
+    // SQLite returns SQLITE_OK for a comment-only statement; @libsql/client maps
+    // this to LibsqlError with code SQLITE_UNKNOWN_0 and message "not an error".
+    // The distinguishing signal is buried in the body after the vitest preamble,
+    // hence matchFull.
+    const errorOutput = [
+      ' FAIL  src/mastra/lib/__tests__/triaging-and-blocker-state.test.ts > Triaging status + Blocker state schema > initialises the tasks schema',
+      'LibsqlError: SQLITE_UNKNOWN_0: not an error',
+      ' ❯ mapSqliteError node_modules/@libsql/client/lib-esm/sqlite3.js:434:16',
+      ' ❯ runMigration src/db/migrate.ts:280:13',
+      'Caused by: SqliteError: not an error',
+      "Serialized Error: { code: 'SQLITE_OK', rawCode: +0 }",
+    ].join('\n')
+    expect(computeFailureSignature('verify:test', errorOutput)).toBe(
+      'verify:test/test-libsql-not-an-error',
+    )
+  })
+
+  it('test-libsql-not-an-error does not interfere with AssertionError classification', () => {
+    // An AssertionError that happens to contain "not an error" should still
+    // classify as test-assertion-error (AssertionError rule comes first in list).
+    const assertionWithNotAnError = [
+      "AssertionError: expected 'not an error' to be null",
+    ].join('\n')
+    expect(classifyError(assertionWithNotAnError)).toBe('test-assertion-error')
+  })
 })
 
 describe('errorClassRules registry', () => {

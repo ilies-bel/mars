@@ -242,6 +242,25 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /no such table:/i,
   },
   {
+    // verify:test/test-libsql-not-an-error fires when a SQL migration runner
+    // passes a comment-only SQL fragment to @libsql/client's `execute()`.
+    // SQLite returns SQLITE_OK (code 0) when asked to prepare a statement
+    // consisting entirely of `--` comments — no real statement is produced.
+    // The libsql sqlite3 backend surfaces this SQLITE_OK as a LibsqlError
+    // with code SQLITE_UNKNOWN_0 and message "not an error".
+    //
+    // Investigated 2026-05-27 (task mars-8c56c297): the Drizzle migration
+    // runner in src/db/migrate.ts splits SQL files on
+    // `'--> statement-breakpoint'` but does NOT filter the leading comment
+    // block that precedes the first breakpoint. That comment block becomes
+    // a non-empty "statement" after trim(), and executing it via
+    // `c.execute(stmt)` triggers the SQLITE_OK / "not an error" error.
+    // Fix: add a filter in `runMigration` that skips any fragment whose
+    // every non-empty line starts with `--`.
+    errorClass: 'test-libsql-not-an-error',
+    matchFull: /SQLITE_UNKNOWN_0: not an error/,
+  },
+  {
     // merge:preflight/template-leakage fires when a task branch edits a path
     // under orchestrator/src/init/templates/. The preflight categorically
     // blocks ALL orchestrator edits to that subtree — humans edit it directly
