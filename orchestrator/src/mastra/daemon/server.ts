@@ -37,7 +37,6 @@ import {
   drainInboxRepopulations,
   ensureInboxRepopulator,
 } from './inbox-repopulator'
-import { RequestContext } from '@mastra/core/di'
 import type { Logger, WorkflowEvent } from '@mars/workflow'
 import { getDefaultTaskStore } from '../lib/task-store'
 import { getDefaultDomainTaskStore } from '../store/task-store'
@@ -674,10 +673,9 @@ export const startDaemon = async (
       // Wire the TaskStore from the composition root into the workflow so
       // the generate step routes its queue reads through the store
       // rather than calling getClient() directly (ADR-0021 seam, slice 2).
+      // The store is read inside the workflow as `ctx.services.store`.
       const taskStore = await getDefaultTaskStore()
-      const requestContext = new RequestContext()
-      requestContext.set('taskStore', taskStore)
-      const result = await runPlan(taskId, refresh, requestContext)
+      const result = await runPlan(taskId, refresh, taskStore)
       log(
         `[refine] ${taskId} -> suggestions=${result.suggestionCount}`,
       )

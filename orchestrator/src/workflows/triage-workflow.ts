@@ -1,11 +1,11 @@
-import { createWorkflow, createStep } from '@mastra/core/workflows'
+import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
-import { RequestContext } from '@mastra/core/di'
 import { type Task } from '../mastra/queue'
 import { type DomainTaskStore, getDefaultDomainTaskStore } from '../mastra/store/task-store'
 import { Workers } from '../mastra/workers'
 import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
 import { getRepoRoot } from '../mastra/context'
+import { createQueueWorkflowStore } from './queue-workflow-store'
 
 const TASK_GRAPH_LIMIT = 30
 const PROMPT_PREVIEW_CHARS = 200
@@ -14,12 +14,7 @@ const triageInputSchema = z.object({
   taskId: z.string(),
 })
 
-const triageOutputSchema = z.object({
-  taskId: z.string(),
-  actionable: z.boolean(),
-  blockerCount: z.number(),
-  reason: z.string(),
-})
+type TriageInput = z.infer<typeof triageInputSchema>
 
 const MAX_BLOCKERS = 10
 
@@ -28,6 +23,13 @@ const triageJsonSchema = z.object({
   reason: z.string().default(''),
   blockerTaskIds: z.array(z.string()).default([]),
 })
+
+// The triage workflow reads + mutates the task graph; the daemon wires the
+// DomainTaskStore from the composition root, read inside as
+// `ctx.services.store` (replaces the Mastra RequestContext('taskStore')).
+export interface TriageServices {
+  store: DomainTaskStore
+}
 
 const buildTaskGraph = (tasks: readonly Task[], excludeId: string): string => {
   const rows = tasks
@@ -72,68 +74,6 @@ is genuinely required first. Never list the task being triaged as its own blocke
 Return ONLY this JSON, no prose, no fences:
 {"actionable": bool, "reason": string, "blockerTaskIds": string[]}`
 
-const generateStep = createStep({
-  id: 'generate-triage',
-  inputSchema: triageInputSchema,
-  outputSchema: triageOutputSchema,
-  execute: async ({ inputData, tracingContext, requestContext }) => {
-    const store: DomainTaskStore =
-      (requestContext.get('taskStore') as DomainTaskStore | undefined) ??
-      getDefaultDomainTaskStore()
-
-    const task = await store.getTask(inputData.taskId)
-    if (!task) throw new Error(`task ${inputData.taskId} not found`)
-
-    tracingContext?.currentSpan?.update({
-      metadata: { originId: task.originId, taskId: task.id },
-    })
-
-    const allTasks = await store.listTasks()
-    const knownIds = new Set(allTasks.map((t) => t.id))
-    const taskGraph = buildTaskGraph(allTasks, task.id)
-
-    const r = await Workers.Triager.run(buildPrompt(task, taskGraph), {
-      cwd: getRepoRoot(),
-    })
-    if (r.exitCode !== 0) {
-      throw new Error(
-        `claude -p exited ${r.exitCode}: ${(r.stderr || r.stdout).slice(0, 500)}`,
-      )
-    }
-
-    const parsed = triageJsonSchema.parse(parseClaudeJsonResult(r.stdout))
-
-    const filteredBlockers = parsed.blockerTaskIds
-      .filter((id) => id !== task.id && knownIds.has(id))
-      .slice(0, MAX_BLOCKERS)
-
-    await store.clearBlockers(task.id)
-    await store.addBlockers(task.id, filteredBlockers)
-
-    if (parsed.actionable) {
-      const remaining = await store.listBlockers(task.id)
-      if (remaining.length === 0) {
-        await store.promoteDraftToQueued(task.id)
-      }
-    }
-
-    return {
-      taskId: task.id,
-      actionable: parsed.actionable,
-      blockerCount: filteredBlockers.length,
-      reason: parsed.reason,
-    }
-  },
-})
-
-export const triageWorkflow = createWorkflow({
-  id: 'triage',
-  inputSchema: triageInputSchema,
-  outputSchema: triageOutputSchema,
-})
-  .then(generateStep)
-  .commit()
-
 export interface TriageResult {
   taskId: string
   actionable: boolean
@@ -141,20 +81,71 @@ export interface TriageResult {
   reason: string
 }
 
+// One imperative step ('generate-triage', load-bearing as the trace-view
+// node label). Failures THROW; the engine records the step failed and
+// `runWorkflow` returns `{ status: 'failed', error }`.
+export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageServices>({
+  id: 'triage',
+  inputSchema: triageInputSchema,
+  fn: async (
+    ctx: WorkflowCtx<TriageServices>,
+    input: TriageInput,
+  ): Promise<TriageResult> => {
+    const store = ctx.services.store
+    return await ctx.step('generate-triage', async (): Promise<TriageResult> => {
+      const task = await store.getTask(input.taskId)
+      if (!task) throw new Error(`task ${input.taskId} not found`)
+
+      const allTasks = await store.listTasks()
+      const knownIds = new Set(allTasks.map((t) => t.id))
+      const taskGraph = buildTaskGraph(allTasks, task.id)
+
+      const r = await Workers.Triager.run(buildPrompt(task, taskGraph), {
+        cwd: getRepoRoot(),
+      })
+      if (r.exitCode !== 0) {
+        throw new Error(
+          `claude -p exited ${r.exitCode}: ${(r.stderr || r.stdout).slice(0, 500)}`,
+        )
+      }
+
+      const parsed = triageJsonSchema.parse(parseClaudeJsonResult(r.stdout))
+
+      const filteredBlockers = parsed.blockerTaskIds
+        .filter((id) => id !== task.id && knownIds.has(id))
+        .slice(0, MAX_BLOCKERS)
+
+      await store.clearBlockers(task.id)
+      await store.addBlockers(task.id, filteredBlockers)
+
+      if (parsed.actionable) {
+        const remaining = await store.listBlockers(task.id)
+        if (remaining.length === 0) {
+          await store.promoteDraftToQueued(task.id)
+        }
+      }
+
+      return {
+        taskId: task.id,
+        actionable: parsed.actionable,
+        blockerCount: filteredBlockers.length,
+        reason: parsed.reason,
+      }
+    })
+  },
+})
+
 export const runTriage = async (
   taskId: string,
   store?: DomainTaskStore,
 ): Promise<TriageResult> => {
-  const run = await triageWorkflow.createRun()
-  const requestContext = new RequestContext()
-  if (store) requestContext.set('taskStore', store)
-  const result = await run.start({ inputData: { taskId }, requestContext })
-  if (result.status !== 'success') {
-    const cause =
-      'error' in result && result.error instanceof Error
-        ? `: ${result.error.message}`
-        : ` (full result: ${JSON.stringify(result).slice(0, 500)})`
+  const result = await runWorkflow(triageWorkflow, { taskId }, {
+    store: createQueueWorkflowStore(),
+    services: { store: store ?? getDefaultDomainTaskStore() },
+  })
+  if (result.status !== 'completed' || !result.output) {
+    const cause = result.error instanceof Error ? `: ${result.error.message}` : ''
     throw new Error(`triage workflow ${result.status}${cause}`)
   }
-  return result.result
+  return result.output
 }
