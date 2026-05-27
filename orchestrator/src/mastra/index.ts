@@ -9,18 +9,16 @@ import {
   SensitiveDataFilter,
 } from '@mastra/observability'
 import { initWorkflow } from '../workflows/init-workflow'
-import { sliceWorkflow } from '../workflows/slice-workflow'
 import { resolveContext } from './context'
 
 const { mastraDbPath, observabilityDbPath } = resolveContext()
 
 export const mastra = new Mastra({
-  // implement/triage/plan now run on the in-house @mars/workflow engine (see
-  // src/workflows/*, dispatched from daemon/server.ts via runWorkflow). Only
-  // init + slice remain Mastra workflows (ported next).
+  // implement/triage/plan/slice now run on the in-house @mars/workflow engine
+  // (see src/workflows/*, dispatched from daemon/server.ts via runWorkflow).
+  // Only init remains a Mastra workflow (ported next).
   workflows: {
     initWorkflow,
-    sliceWorkflow,
   },
   storage: new MastraCompositeStore({
     id: 'composite-storage',
