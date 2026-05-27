@@ -47,12 +47,6 @@ export type DaemonRequest =
     }
   | { op: 'adr-add'; title: string; body: string }
   | { op: 'init'; opts: RunInitOptions }
-  | {
-      op: 'ab'
-      instruction: string
-      variants: readonly unknown[]
-      integrationBranch: string
-    }
   | { op: 'status' }
   | { op: 'reload-config' }
   | { op: 'set-flag'; flag: string; value: string }

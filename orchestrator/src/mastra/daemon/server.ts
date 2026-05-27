@@ -1277,36 +1277,6 @@ export const startDaemon = async (
     return result
   }
 
-  const handleAb = async (
-    instruction: string,
-    variants: readonly unknown[],
-  ): Promise<unknown> => {
-    const { mastra } = await import('../index')
-    const wf = mastra.getWorkflow('abExperimentWorkflow')
-    const run = await wf.createRun()
-    log(`[ab] dispatching instruction="${instruction.slice(0, 60)}${instruction.length > 60 ? '…' : ''}"`)
-    // Workflow inputSchema (zod) expects a mutable array; the wire delivers
-    // a readonly one. Validation happens inside .start() — the copy here
-    // is just to satisfy the static type.
-    const result = await run.start({
-      inputData: {
-        instruction,
-        variants: [...variants] as never,
-        integrationBranch,
-      },
-    })
-    if (result.status !== 'success') {
-      const err =
-        'error' in result && result.error instanceof Error
-          ? result.error.message
-          : '(no error message)'
-      log(`[ab] -> ${result.status}: ${err}`)
-      throw new Error(`ab experiment ${result.status}: ${err}`)
-    }
-    log(`[ab] -> success`)
-    return result.result
-  }
-
   const handleStatus = async (): Promise<DaemonStatusPayload> => {
     const counts = {
       draft: (await listTasks('draft')).length,
@@ -1509,7 +1479,6 @@ export const startDaemon = async (
     'idea.slice',
     'glossary-write',
     'adr-add',
-    'ab',
     'init',
   ])
 
@@ -1642,16 +1611,6 @@ export const startDaemon = async (
             }
             throw err
           }
-        }
-        case 'ab': {
-          if (!Array.isArray(req.variants) || req.variants.length !== 2) {
-            return {
-              ok: false,
-              error: 'ab requires exactly 2 variants',
-            }
-          }
-          const report = await handleAb(req.instruction, req.variants)
-          return { ok: true, data: report }
         }
         case 'status': {
           return { ok: true, data: await handleStatus() }

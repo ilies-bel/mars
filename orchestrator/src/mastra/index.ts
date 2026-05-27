@@ -11,7 +11,6 @@ import {
 import { initWorkflow } from './workflows/init-workflow'
 import { triageWorkflow } from './workflows/triage-workflow'
 import { sliceWorkflow } from './workflows/slice-workflow'
-import { abExperimentWorkflow } from './workflows/ab-experiment-workflow'
 import { resolveContext } from './context'
 
 const { mastraDbPath, observabilityDbPath } = resolveContext()
@@ -19,13 +18,12 @@ const { mastraDbPath, observabilityDbPath } = resolveContext()
 export const mastra = new Mastra({
   // The implement pipeline is no longer a Mastra workflow — it runs on the
   // in-house @mars/workflow engine (see workflows/implement-workflow.ts,
-  // dispatched from daemon/server.ts via runWorkflow). The remaining five
-  // workflows (init/triage/slice/abExperiment) stay on Mastra.
+  // dispatched from daemon/server.ts via runWorkflow). The remaining three
+  // workflows (init/triage/slice) stay on Mastra.
   workflows: {
     initWorkflow,
     triageWorkflow,
     sliceWorkflow,
-    abExperimentWorkflow,
   },
   storage: new MastraCompositeStore({
     id: 'composite-storage',
