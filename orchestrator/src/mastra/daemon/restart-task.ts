@@ -66,6 +66,5 @@ export const coreRestartTask = async (
     claudeSessionId: null,
     error: null,
     failedPhase: null,
-    resumeFrom: null,
   })
 }

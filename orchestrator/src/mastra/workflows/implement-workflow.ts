@@ -1,4 +1,4 @@
-import { createWorkflow, createStep } from '@mastra/core/workflows'
+import { defineWorkflow, type StepHandle, type WorkflowCtx } from '@mars/workflow'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { z } from 'zod'
@@ -35,24 +35,28 @@ import type { ClaudeEvent } from '../lib/claude-stream'
 import {
   enqueueTask,
   addBlockers,
-  getTask,
   hasIncompleteBlockers,
   updateTask,
   upsertTranscript,
 } from '../queue'
 import { handleTaskFailureWithFixTask } from '../queue-fix-tasks'
 import { resolveOriginIdForTask } from '../lib/origin'
-import { type TaskStore, getDefaultTaskStore } from '../lib/task-store'
+import { type TaskStore } from '../lib/task-store'
 
 export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} has incomplete blockers; aborting dispatch (task remains queued)`
 
-// Mastra's workflow runner wraps a step-thrown error before it surfaces on
-// `run.start()`'s result (e.g. `new Error("Step <id> failed: <original>")`
-// with the original on `.cause`). Matching only `err.message` therefore
-// misses the sentinel once it's wrapped. Flatten the message + the entire
-// `cause` chain (depth-bounded against cycles) into one haystack so a
-// wrapped sentinel is still recognised.
+// The failure model is THROW: a step that hits a terminal failure performs
+// its self-heal side-effects (updateTask + handleTaskFailureWithFixTask) and
+// THEN throws a sentinel-carrying Error. The @mars/workflow engine records
+// that step `status:'failed'` and `runWorkflow` returns `{status:'failed',
+// error}` with the thrown Error verbatim on `RunResult.error` (the engine's
+// `toError` passes an Error through unchanged — see packages/workflow's
+// workflow.ts). The engine does NOT wrap our Error the way Mastra used to,
+// so the common case is a bare sentinel on `err.message`. We still walk the
+// `cause` chain (depth-bounded against cycles) so a future wrapping layer —
+// or a test that deliberately nests the sentinel on `.cause` — is still
+// recognised.
 const errorHaystack = (err: unknown): string => {
   const parts: string[] = []
   let cur: unknown = err
@@ -71,7 +75,7 @@ const errorHaystack = (err: unknown): string => {
 export const isBlockersAbortError = (err: unknown): boolean =>
   errorHaystack(err).includes('has incomplete blockers; aborting dispatch')
 
-// Thrown by setupStep when the merge target (integration branch) has
+// Thrown by the setup step when the merge target (integration branch) has
 // uncommitted tracked changes at the moment the worktree would be created.
 // The leading phrase is classified as `dirty-main` by failure-signature.ts,
 // producing signature `setup:preflight/dirty-main`, which the shared
@@ -84,14 +88,14 @@ export const isBlockersAbortError = (err: unknown): boolean =>
 export const DIRTY_MAIN_SETUP_MESSAGE =
   'merge target is dirty before coding'
 
-// True when an error (possibly Mastra-wrapped) is the dirty-main setup abort
-// thrown by setupStep. The daemon uses it to suppress the misleading
-// `task.completed status=failed` emit — the failure-handler has already
-// parked the source `blocked` with a real task_blockers edge.
+// True when an error is the dirty-main setup abort thrown by the setup step.
+// The daemon uses it to suppress the misleading `task.completed status=failed`
+// emit — the failure-handler has already parked the source `blocked` with a
+// real task_blockers edge.
 export const isDirtyMainSetupError = (err: unknown): boolean =>
   errorHaystack(err).includes('setup:preflight/dirty-main')
 
-// Thrown by codeStep when the read-span guard trips (agent read without
+// Thrown by the code step when the read-span guard trips (agent read without
 // acting) and we successfully spawn a diagnose Chore and park the original
 // task in `blocked`. The daemon uses it to suppress the misleading
 // `task.completed status=failed` emit — the task is already parked
@@ -102,8 +106,6 @@ export const TOO_HARD_ABORT_MESSAGE = (taskId: string): string =>
 export const isTooHardAbortError = (err: unknown): boolean =>
   errorHaystack(err).includes('aborted by read-span guard: diagnose Chore spawned')
 
-import { verifyPassedScorer } from '../scorers/verify-passed'
-import { mergeCleanScorer } from '../scorers/merge-clean'
 import { summarizeUsage } from '../lib/claude-usage'
 import { recordSignals, isReflectDisabled } from '../lib/reflect-signals'
 import { resolveVerifyCwd, type RanVerifyStep } from '../lib/derive-repro-command'
@@ -137,7 +139,7 @@ const tagSchema: z.ZodType<TaskTag> = z.enum(TASK_TAGS as readonly [TaskTag, ...
 const kindSchema = z.enum(['task', 'fix', 'diagnose']).default('task')
 
 /**
- * Predicate that the codeStep consults to decide whether to wire the
+ * Predicate that the code step consults to decide whether to wire the
  * read-span watcher around a Worker run. Exported so the rule is testable
  * in isolation — the actual call site reproduces this expression literally.
  *
@@ -149,11 +151,6 @@ const kindSchema = z.enum(['task', 'fix', 'diagnose']).default('task')
 export const shouldWireReadSpanWatcher = (
   kind: 'task' | 'fix' | 'diagnose',
 ): boolean => kind !== 'diagnose'
-
-// Phases that the workflow can be resumed from. Mirrors {@link FailedPhase}
-// in queue.ts but the workflow only ever resumes from a verify-or-later
-// failure: 'code' failures (setup:install) are non-resumable.
-const resumeFromSchema = z.enum(['verify', 'merge']).nullable().default(null)
 
 // Structured-task contract. Mirrors {@link TaskSpec} in queue.ts. Optional so
 // legacy free-prose rows still flow through composePrompt unchanged.
@@ -168,17 +165,6 @@ const specSchema = z
   })
   .nullable()
   .default(null)
-
-const STEP_ORDER = ['setup-worktree', 'run-claude-code', 'verify', 'merge'] as const
-
-// Map a resume hint to the rank of the first step that should actually
-// execute. Steps with a lower rank pass through, reusing the persisted
-// branch + worktree from the previous run.
-const resumeRank = (resumeFrom: 'verify' | 'merge' | null): number => {
-  if (resumeFrom === 'verify') return STEP_ORDER.indexOf('verify')
-  if (resumeFrom === 'merge') return STEP_ORDER.indexOf('merge')
-  return 0
-}
 
 // Mandatory footer appended to every implementor prompt. The verify step
 // fails any task whose branch has zero commits ahead of integration, so
@@ -308,8 +294,8 @@ export const CODER_SYSTEM_PROMPT = buildCoderSystemPrompt(resolveReadSpanLimit()
 // operating philosophy, read-span guard budget (dynamic — read from env at
 // call time), and deviation rules. The structured-write accommodation lane
 // (Writer system prompt) was removed by ADR 0019.
-// Centralised here so codeStep does not assemble the system prompt inline and
-// the surface is a single auditable seam.
+// Centralised here so the code step does not assemble the system prompt inline
+// and the surface is a single auditable seam.
 export const resolveWorkerSystemPrompt = (
   _tag: TaskTag,
 ): string => buildCoderSystemPrompt(resolveReadSpanLimit())
@@ -386,7 +372,7 @@ export const failureExcerpt = (
 // (pwd / ls / ls .github/workflows/) and keeps orientation cheap.
 //
 // Note: the worker process is still spawned at `worktreeRoot` (see
-// codeStep below). We *disclose* the project subdirectory here rather
+// the code step below). We *disclose* the project subdirectory here rather
 // than `cd`-ing the worker, so:
 //   - Mars CLI commands continue to resolve `repoRoot()` from the
 //     worktree root (the CLAUDE.md cwd trap),
@@ -476,8 +462,8 @@ export const composePrompt = (
 //     classifier never throws; the caller decides whether to retry or log.
 //
 // The function is pure: it shells out to git and returns the result.
-// Logging lives at the call site (codeStep below) so the same classifier
-// is reusable from tests without spying on console.
+// Logging lives at the call site (the code step below) so the same
+// classifier is reusable from tests without spying on console.
 export interface PostCoderStateArgs {
   worktreePath: string
   integrationBranch: string
@@ -549,897 +535,782 @@ export const detectPostCoderState = async (
   return { kind: 'dirty-no-commits', dirtyFiles }
 }
 
-const setupStep = createStep({
-  id: 'setup-worktree',
-  inputSchema: z.object({
-    taskId: z.string(),
-    prompt: z.string(),
-    plan: planSchema.default(null),
-    tag: tagSchema,
-    kind: kindSchema,
-    integrationBranch: z.string().default('main'),
-    resumeFrom: resumeFromSchema,
-    spec: specSchema,
-  }),
-  outputSchema: z.object({
-    taskId: z.string(),
-    prompt: z.string(),
-    plan: planSchema,
-    tag: tagSchema,
-    kind: kindSchema,
-    integrationBranch: z.string(),
-    path: z.string(),
-    branch: z.string(),
-    resumeFrom: resumeFromSchema,
-    spec: specSchema,
-  }),
-  execute: async ({ inputData, tracingContext, requestContext }) => {
-    const store: TaskStore = (requestContext.get('taskStore') as TaskStore | undefined) ?? await getDefaultTaskStore()
-    const originId = await resolveOriginIdForTask(inputData.taskId)
-    tracingContext?.currentSpan?.update({
-      metadata: { originId, taskId: inputData.taskId },
-    })
-    // `hasIncompleteBlockers` checks the task-dependency junction
-    // (`task_blockers`), NOT the removed question/answer feature. The
-    // orchestrator does not read, wait on, or branch based on question rows —
-    // the planner emits ideas, not questions, and a task progresses through
-    // draft → queued → running purely on plan completeness (PRD eb6f8cc6).
-    // Do not reintroduce question-gating here.
-    if (await hasIncompleteBlockers(inputData.taskId, store)) {
-      throw new Error(BLOCKERS_ABORT_MESSAGE(inputData.taskId))
-    }
+// ---------------------------------------------------------------------------
+// @mars/workflow port (was: four Mastra createStep + createWorkflow().then())
+//
+// The pipeline is now one imperative async function. Native TS control flow
+// is the source of truth; `ctx.step(name, fn)` wraps each durable unit. The
+// four step NAMES are load-bearing and unchanged ('setup-worktree',
+// 'run-claude-code', 'verify', 'merge') — they key checkpoint-resume and the
+// trace-view node label.
+//
+// Resume is the engine's job: the daemon dispatches with `runId: task.id`, so
+// a `mars continue` re-dispatch re-runs this function from the top and every
+// step whose record is already `'completed'` short-circuits (its `fn` is not
+// re-invoked; the recorded return value is handed back). There is no
+// `resumeFrom`/`resumeRank`/`STEP_ORDER` bookkeeping any more, and no
+// rehydrate-from-DB branch in setup — the engine returns the recorded
+// `{ path, branch }` output instead.
+// ---------------------------------------------------------------------------
 
-    // Resume short-circuit: 'mars continue' restarted this task on the
-    // existing branch+worktree. Skip worktree creation and dep install;
-    // re-use whatever the previous run committed.
-    if (resumeRank(inputData.resumeFrom) > STEP_ORDER.indexOf('setup-worktree')) {
-      const persisted = await getTask(inputData.taskId, store)
-      if (!persisted?.branch || !persisted?.worktreePath) {
-        throw new Error(
-          `task ${inputData.taskId} has resumeFrom=${inputData.resumeFrom} but no branch/worktree on the row; refusing to resume`,
+// Services injected at `runWorkflow` time (replaces Mastra's
+// `requestContext.get('taskStore')`). The daemon wires `{ store: TaskStore }`
+// from the composition root; steps read `ctx.services.store`.
+export interface ImplementServices {
+  store: TaskStore
+}
+
+// Validated workflow input. Mirrors the former Mastra inputSchema minus
+// `resumeFrom` (resume is now engine-driven via runId).
+const implementInputSchema = z.object({
+  taskId: z.string(),
+  prompt: z.string(),
+  plan: planSchema.default(null),
+  tag: tagSchema,
+  kind: kindSchema,
+  integrationBranch: z.string().default('main'),
+  spec: specSchema,
+})
+
+export type ImplementInput = z.infer<typeof implementInputSchema>
+
+export interface ImplementOutput {
+  taskId: string
+  success: boolean
+  message: string
+}
+
+// Output of the setup step. Recorded by the engine so a resumed run reuses
+// the persisted branch + worktree WITHOUT re-reading the DB or re-creating
+// the worktree (the recorded value is returned in place of re-running `fn`).
+interface SetupResult {
+  path: string
+  branch: string
+}
+
+// Output of the verify step. On the throw model a failed verify never
+// returns — it throws — so reaching merge always means verify passed. The
+// `verified` flag is retained purely so the recorded step result is
+// self-describing in the trace view; it is no longer read by a later step.
+interface VerifyResult {
+  verified: true
+}
+
+export const implementWorkflow = defineWorkflow<
+  ImplementInput,
+  ImplementOutput,
+  ImplementServices
+>({
+  id: 'implement',
+  inputSchema: implementInputSchema,
+  fn: async (
+    ctx: WorkflowCtx<ImplementServices>,
+    input: ImplementInput,
+  ): Promise<ImplementOutput> => {
+    const store = ctx.services.store
+
+    // ── setup-worktree ─────────────────────────────────────────────────────
+    const { path: worktreePath, branch } = await ctx.step(
+      'setup-worktree',
+      async (handle: StepHandle): Promise<SetupResult> => {
+        // `hasIncompleteBlockers` checks the task-dependency junction
+        // (`task_blockers`), NOT the removed question/answer feature. The
+        // orchestrator does not read, wait on, or branch based on question
+        // rows — the planner emits ideas, not questions, and a task
+        // progresses through draft → queued → running purely on plan
+        // completeness (PRD eb6f8cc6). Do not reintroduce question-gating
+        // here.
+        if (await hasIncompleteBlockers(input.taskId, store)) {
+          throw new Error(BLOCKERS_ABORT_MESSAGE(input.taskId))
+        }
+
+        // Setup-time pre-flight: abort before creating the worktree or
+        // dispatching the coding agent when the merge target already has
+        // uncommitted changes on tracked paths. This is the same condition
+        // that checkMergeTargetStatus catches at merge time — detecting it
+        // here prevents the full coding cost (historically ~$1–2 per
+        // occurrence). Only tracked files matter: untracked/ignored files
+        // cannot block `git merge --ff-only`.
+        try {
+          const { repoRoot: preflightRoot } = resolveContext()
+          const preflight = await checkSetupPreflight(preflightRoot)
+          if (preflight.dirty) {
+            const dirtyFiles = preflight.dirtyLines
+            // Detection only — no inbox-raise, no manual status write. Hand
+            // the failure to the standard self-heal pipeline so it spawns (or
+            // attaches to) the shared `setup:preflight/dirty-main` recovery
+            // task and parks THIS task `blocked` with a real task_blockers
+            // edge. No empty-blocker exception: blocked always implies an
+            // edge.
+            const errorOutput = `${DIRTY_MAIN_SETUP_MESSAGE} on ${input.integrationBranch}\n\n${dirtyFiles.join('\n')}`
+            await handleTaskFailureWithFixTask({
+              taskId: input.taskId,
+              failingStep: 'setup:preflight',
+              errorOutput,
+              branch: input.integrationBranch,
+              store,
+              recipeContext: {
+                // The dirty files live on the merge target itself, in the
+                // repo root — NOT in a worktree (none was created). The
+                // recovery recipe operates there via `git -C <targetPath>`.
+                targetPath: preflightRoot,
+                statusOutput: dirtyFiles.join('\n'),
+                targetBranch: input.integrationBranch,
+                integrationBranch: input.integrationBranch,
+                originalPrompt: '',
+              },
+            }).catch((err) => {
+              console.error(
+                `[setup:preflight] task ${input.taskId} dirty-main handling errored:`,
+                err,
+              )
+            })
+            // Throw the sentinel: the engine records setup-worktree as
+            // `failed` and `runWorkflow` returns `{status:'failed', error}`.
+            // The failure-handler above already parked the source `blocked`
+            // with a real task_blockers edge; the daemon's
+            // `isDirtyMainSetupError` suppression keeps the misleading
+            // `task.completed status=failed` emit from firing.
+            throw new Error(
+              `task ${input.taskId} setup:preflight/dirty-main: ${DIRTY_MAIN_SETUP_MESSAGE}`,
+            )
+          }
+        } catch (gitErr) {
+          // Re-throw only our own dirty-main abort. Git/IO failures are
+          // swallowed: the pre-flight is best-effort — if we cannot determine
+          // the target's state we proceed and let the merge-time check catch
+          // it.
+          if (
+            gitErr instanceof Error &&
+            gitErr.message.includes('setup:preflight/dirty-main')
+          ) {
+            throw gitErr
+          }
+          console.warn(
+            `[setup:preflight] task ${input.taskId} dirty-main pre-flight threw, continuing:`,
+            gitErr,
+          )
+        }
+
+        await updateTask(input.taskId, { status: 'running' }, store)
+        const ref = await createWorktree({
+          taskId: input.taskId,
+          integrationBranch: input.integrationBranch,
+        })
+        await updateTask(input.taskId, {
+          branch: ref.branch,
+          worktreePath: ref.path,
+        }, store)
+
+        // Capture the integration HEAD SHA at setup time so the task row
+        // records which commit the worktree branched from. Non-fatal: a
+        // missed capture (e.g. the branch does not exist yet in a fresh repo)
+        // is better than a failed setup. The column is nullable for exactly
+        // this case. Also record it on the step handle so the per-step record
+        // anchors on the SHA this step ran against (engine resume metadata).
+        try {
+          const { repoRoot } = resolveContext()
+          const { stdout } = await execFileAsync(
+            'git',
+            ['rev-parse', input.integrationBranch],
+            { cwd: repoRoot },
+          )
+          const headSha = stdout.trim()
+          handle.setSha(headSha)
+          await updateTask(input.taskId, { integrationHeadSha: headSha }, store)
+        } catch {
+          // Non-fatal: leave integration_head_sha as null.
+        }
+
+        try {
+          const summary = await installWorktreeDeps({
+            worktreeRoot: ref.path,
+            log: (line) => console.log(line),
+          })
+          if (summary.sites.length > 0) {
+            console.log(
+              `[setup] task ${input.taskId} install completed in ${(
+                summary.totalDurationMs / 1000
+              ).toFixed(1)}s (${summary.sites.length} manifest${summary.sites.length === 1 ? '' : 's'})`,
+            )
+          }
+        } catch (error: unknown) {
+          const isInstallErr = error instanceof WorktreeInstallError
+          const errorOutput = isInstallErr ? error.message : String(error)
+          const failSummary = errorOutput.slice(0, 1000)
+          await updateTask(input.taskId, {
+            status: 'failed',
+            error: failSummary,
+            failedPhase: 'code',
+          }, store)
+          await handleTaskFailureWithFixTask({
+            taskId: input.taskId,
+            failingStep: 'setup:install',
+            // Lead with a classifier-friendly summary; the recipe gets the
+            // raw error via recipeContext.statusOutput.
+            errorOutput: `frozen-lockfile install failed\n${errorOutput}`,
+            branch: ref.branch,
+            store,
+            recipeContext: {
+              targetPath: isInstallErr ? error.site.dir : ref.path,
+              statusOutput: errorOutput,
+              targetBranch: ref.branch,
+              // Handler backfills from task.prompt when '' is passed.
+              originalPrompt: '',
+            },
+          }).catch((err) => {
+            console.error(
+              `[failure-handler] task ${input.taskId} setup:install handling errored:`,
+              err,
+            )
+          })
+          // Throw so the engine records the step failed. install failures
+          // stamp failedPhase 'code' — a non-resumable, pre-coding failure.
+          throw error instanceof Error ? error : new Error(errorOutput)
+        }
+
+        // Recorded by the engine; a resumed run reuses this without
+        // re-creating the worktree or re-reading the DB.
+        return { path: ref.path, branch: ref.branch }
+      },
+    )
+
+    // ── run-claude-code ─────────────────────────────────────────────────────
+    await ctx.step('run-claude-code', async (handle: StepHandle): Promise<void> => {
+      // Sweep stray untracked files from a previous failed attempt on this
+      // branch BEFORE invoking the agent. Without this, a re-dispatch of a
+      // source task that the orchestrator unblocked after a recovery inherits
+      // the prior Coder's debris (e.g. files written under a wrongly-nested
+      // path that the previous run never staged) and burns turns inspecting
+      // them before getting to the actual work. The clean is gated on
+      // `rev-list --count <integration>..HEAD == 0`, so any commits the agent
+      // already produced are preserved.
+      try {
+        const cleanResult = await cleanWorktreeIfNoCommitsAhead({
+          worktreePath,
+          integrationBranch: input.integrationBranch,
+        })
+        if (cleanResult.cleaned && cleanResult.output.trim().length > 0) {
+          console.log(
+            `[clean] task ${input.taskId} ${cleanResult.reason}\n${cleanResult.output.trim()}`,
+          )
+        } else if (!cleanResult.cleaned) {
+          console.log(
+            `[clean] task ${input.taskId} skipped: ${cleanResult.reason}`,
+          )
+        }
+      } catch (err) {
+        // Clean is a best-effort hygiene step; never fail the dispatch on it.
+        console.error(
+          `[clean] task ${input.taskId} threw, continuing without clean:`,
+          err,
         )
       }
-      return {
-        ...inputData,
-        path: persisted.worktreePath,
-        branch: persisted.branch,
-      }
-    }
 
-    // Setup-time pre-flight: abort before creating the worktree or dispatching
-    // the coding agent when the merge target already has uncommitted changes on
-    // tracked paths. This is the same condition that checkMergeTargetStatus
-    // catches at merge time — detecting it here prevents the full coding cost
-    // (historically ~$1–2 per occurrence). Only tracked files matter:
-    // untracked/ignored files cannot block `git merge --ff-only`.
-    try {
-      const { repoRoot: preflightRoot } = resolveContext()
-      const preflight = await checkSetupPreflight(preflightRoot)
-      if (preflight.dirty) {
-        const dirtyFiles = preflight.dirtyLines
-        // Detection only — no inbox-raise, no manual status write. Hand the
-        // failure to the standard self-heal pipeline so it spawns (or
-        // attaches to) the shared `setup:preflight/dirty-main` recovery
-        // task and parks THIS task `blocked` with a real task_blockers edge.
-        // No empty-blocker exception: blocked always implies an edge.
-        const errorOutput = `${DIRTY_MAIN_SETUP_MESSAGE} on ${inputData.integrationBranch}\n\n${dirtyFiles.join('\n')}`
-        await handleTaskFailureWithFixTask({
-          taskId: inputData.taskId,
-          failingStep: 'setup:preflight',
-          errorOutput,
-          branch: inputData.integrationBranch,
-          store,
-          recipeContext: {
-            // The dirty files live on the merge target itself, in the repo
-            // root — NOT in a worktree (none was created). The recovery
-            // recipe operates there via `git -C <targetPath>`.
-            targetPath: preflightRoot,
-            statusOutput: dirtyFiles.join('\n'),
-            targetBranch: inputData.integrationBranch,
-            integrationBranch: inputData.integrationBranch,
-            originalPrompt: '',
-          },
-        }).catch((err) => {
+      const originId = await resolveOriginIdForTask(input.taskId)
+      const tag = isTaskTag(input.tag) ? input.tag : 'coder'
+      const fullPrompt = composePrompt(
+        input.prompt,
+        input.plan,
+        tag,
+        input.spec ?? null,
+        input.taskId,
+        worktreePath,
+        input.kind,
+      )
+      const conversation: ClaudeEvent[] = []
+      // Kind-aware routing: fix tasks go to the Fixer Worker (Opus, backlog-
+      // mutation denied); everything else uses Coder via tag (the only valid
+      // tag is 'coder' after ADR 0019). Kind takes precedence over tag for the
+      // fix → Fixer path because a recovery task must always land on the
+      // higher-resilience Worker regardless of what tag the row carries.
+      const worker =
+        input.kind === 'fix' ? Workers.Fixer : getWorkerForTag(tag)
+      // Read/Grep span watcher (gsd-style analysis-paralysis signal). When the
+      // threshold is reached AND the agent has taken zero actions for the
+      // entire run, a single diagnose Chore is spawned and the original task
+      // is parked in `blocked` behind it (see the post-run check below).
+      // Diagnose Chores are exempt (their job IS heavy reading; PRD 06e677fb —
+      // their backstop is the time/turn cap). Every other dispatched task gets
+      // the watcher.
+      const watcher = shouldWireReadSpanWatcher(input.kind)
+        ? createReadSpanWatcher({
+            limit: resolveReadSpanLimit(),
+            onThreshold: (info) => {
+              console.log(
+                `[span] task ${input.taskId}: ${info.limit} consecutive Read/Grep/Glob calls without action (trace=${info.trace.map((t) => t.tool).join('+')}).`,
+              )
+            },
+          })
+        : null
+      const r = await worker.run(fullPrompt, {
+        cwd: worktreePath,
+        systemPrompt: resolveWorkerSystemPrompt(tag),
+        onEvent: async (event) => {
+          conversation.push(event)
+          watcher?.observe(event)
+          // Was `writer.write({type:'claude-event', event})`; the engine's
+          // progress emitter replaces the Mastra workflow writer.
+          ctx.emit('claude-event', event)
+        },
+      })
+      // Per-run read/action summary. Emitted on every wired run so paralysis
+      // patterns are greppable in bulk (e.g. zero-action runs with a high
+      // max-streak), not just when the threshold was tripped.
+      if (watcher) {
+        console.log(
+          `[span-summary] task ${input.taskId}: maxStreak=${watcher.maxStreak} totalReads=${watcher.totalReads} totalActions=${watcher.totalActions} tripped=${watcher.thresholdEverReached}`,
+        )
+      }
+      // Read-span guard: if the agent tripped the threshold AND never took any
+      // action during the entire run, spawn a single diagnose Chore and park
+      // the original task behind it. The Chore has a bounded contract:
+      // investigate only, record one structured verdict, never attempt the
+      // parent's work. See PRD 06e677fb; the old three-way free-form
+      // instruction is gone.
+      if (watcher?.thresholdEverReached && watcher.totalActions === 0) {
+        const diagnosePrompt = buildDiagnoseChorePrompt(
+          input.taskId,
+          input.prompt,
+          watcher.trace,
+        )
+        try {
+          const child = await enqueueTask(diagnosePrompt, undefined, {
+            skipTriage: true,
+            kind: 'diagnose',
+            originId,
+          })
+          const errorSummary =
+            `too_hard:no-action-after-reads: maxStreak=${watcher.maxStreak}; diagnose Chore=${child.id}`.slice(0, 1000)
+          await updateTask(
+            input.taskId,
+            { status: 'blocked', error: errorSummary, failedPhase: 'code' },
+            store,
+          )
+          await addBlockers(input.taskId, [child.id])
+          console.log(
+            `[span] task ${input.taskId}: ${watcher.maxStreak} reads without action; spawned diagnose Chore ${child.id} as blocker; parent → blocked`,
+          )
+          // Throw the sentinel: the engine records run-claude-code `failed` and
+          // the daemon's `isTooHardAbortError` suppression keeps the misleading
+          // `task.completed status=failed` emit from firing.
+          throw new Error(TOO_HARD_ABORT_MESSAGE(input.taskId))
+        } catch (err) {
+          if (err instanceof Error && isTooHardAbortError(err)) throw err
+          // Spawn failed — park the task failed; don't silently swallow.
           console.error(
-            `[setup:preflight] task ${inputData.taskId} dirty-main handling errored:`,
+            `[span] task ${input.taskId}: failed to spawn diagnose Chore:`,
             err,
           )
-        })
-        throw new Error(
-          `task ${inputData.taskId} setup:preflight/dirty-main: ${DIRTY_MAIN_SETUP_MESSAGE}`,
-        )
+          await updateTask(
+            input.taskId,
+            {
+              status: 'failed',
+              error: `diagnose Chore spawn failed: ${String(err).slice(0, 500)}`,
+              failedPhase: 'code',
+            },
+            store,
+          ).catch(() => {})
+          throw err instanceof Error ? err : new Error(String(err))
+        }
       }
-    } catch (gitErr) {
-      // Re-throw only our own dirty-main abort. Git/IO failures are swallowed:
-      // the pre-flight is best-effort — if we cannot determine the target's
-      // state we proceed and let the merge-time check catch it.
-      if (
-        gitErr instanceof Error &&
-        gitErr.message.includes('setup:preflight/dirty-main')
-      ) {
-        throw gitErr
-      }
-      console.warn(
-        `[setup:preflight] task ${inputData.taskId} dirty-main pre-flight threw, continuing:`,
-        gitErr,
-      )
-    }
-
-    await updateTask(inputData.taskId, { status: 'running' }, store)
-    const ref = await createWorktree({
-      taskId: inputData.taskId,
-      integrationBranch: inputData.integrationBranch,
-    })
-    await updateTask(inputData.taskId, {
-      branch: ref.branch,
-      worktreePath: ref.path,
-    }, store)
-
-    // Capture the integration HEAD SHA at setup time so the task row records
-    // which commit the worktree branched from. Non-fatal: a missed capture
-    // (e.g. the branch does not exist yet in a fresh repo) is better than a
-    // failed setup. The column is nullable for exactly this case.
-    try {
-      const { repoRoot } = resolveContext()
-      const { stdout } = await execFileAsync(
-        'git',
-        ['rev-parse', inputData.integrationBranch],
-        { cwd: repoRoot },
-      )
-      await updateTask(inputData.taskId, { integrationHeadSha: stdout.trim() }, store)
-    } catch {
-      // Non-fatal: leave integration_head_sha as null.
-    }
-
-    try {
-      const summary = await installWorktreeDeps({
-        worktreeRoot: ref.path,
-        log: (line) => console.log(line),
-      })
-      if (summary.sites.length > 0) {
-        console.log(
-          `[setup] task ${inputData.taskId} install completed in ${(
-            summary.totalDurationMs / 1000
-          ).toFixed(1)}s (${summary.sites.length} manifest${summary.sites.length === 1 ? '' : 's'})`,
-        )
-      }
-    } catch (error: unknown) {
-      const isInstallErr = error instanceof WorktreeInstallError
-      const errorOutput = isInstallErr ? error.message : String(error)
-      const summary = errorOutput.slice(0, 1000)
-      await updateTask(inputData.taskId, {
-        status: 'failed',
-        error: summary,
-        failedPhase: 'code',
-      }, store)
-      await handleTaskFailureWithFixTask({
-        taskId: inputData.taskId,
-        failingStep: 'setup:install',
-        // Lead with a classifier-friendly summary; the recipe gets the
-        // raw error via recipeContext.statusOutput.
-        errorOutput: `frozen-lockfile install failed\n${errorOutput}`,
-        branch: ref.branch,
-        store,
-        recipeContext: {
-          targetPath: isInstallErr ? error.site.dir : ref.path,
-          statusOutput: errorOutput,
-          targetBranch: ref.branch,
-          // Handler backfills from task.prompt when '' is passed.
-          originalPrompt: '',
-        },
-      }).catch((err) => {
-        console.error(
-          `[failure-handler] task ${inputData.taskId} setup:install handling errored:`,
-          err,
-        )
-      })
-      throw error instanceof Error ? error : new Error(errorOutput)
-    }
-
-    return { ...inputData, ...ref }
-  },
-})
-
-const codeStep = createStep({
-  id: 'run-claude-code',
-  inputSchema: z.object({
-    taskId: z.string(),
-    prompt: z.string(),
-    plan: planSchema,
-    tag: tagSchema,
-    kind: kindSchema,
-    integrationBranch: z.string(),
-    path: z.string(),
-    branch: z.string(),
-    resumeFrom: resumeFromSchema,
-    spec: specSchema,
-  }),
-  outputSchema: z.object({
-    taskId: z.string(),
-    integrationBranch: z.string(),
-    path: z.string(),
-    branch: z.string(),
-    tag: tagSchema,
-    kind: kindSchema,
-    claudeExitCode: z.number(),
-    resumeFrom: resumeFromSchema,
-  }),
-  execute: async ({ inputData, writer, tracingContext, requestContext }) => {
-    const store: TaskStore = (requestContext.get('taskStore') as TaskStore | undefined) ?? await getDefaultTaskStore()
-    // Resume short-circuit: the worker already ran in a previous attempt
-    // and committed its work. Skip the claude-code invocation entirely;
-    // pass-through with a synthetic exit code 0.
-    if (resumeRank(inputData.resumeFrom) > STEP_ORDER.indexOf('run-claude-code')) {
-      return {
-        taskId: inputData.taskId,
-        integrationBranch: inputData.integrationBranch,
-        path: inputData.path,
-        branch: inputData.branch,
-        tag: inputData.tag,
-        kind: inputData.kind,
-        claudeExitCode: 0,
-        resumeFrom: inputData.resumeFrom,
-      }
-    }
-
-    // Sweep stray untracked files from a previous failed attempt on this
-    // branch BEFORE invoking the agent. Without this, a re-dispatch of a
-    // source task that the orchestrator unblocked after a recovery
-    // inherits the prior Coder's debris (e.g. files written under a
-    // wrongly-nested path that the previous run never staged) and burns
-    // turns inspecting them before getting to the actual work. The clean
-    // is gated on `rev-list --count <integration>..HEAD == 0`, so any
-    // commits the agent already produced are preserved.
-    try {
-      const cleanResult = await cleanWorktreeIfNoCommitsAhead({
-        worktreePath: inputData.path,
-        integrationBranch: inputData.integrationBranch,
-      })
-      if (cleanResult.cleaned && cleanResult.output.trim().length > 0) {
-        console.log(
-          `[clean] task ${inputData.taskId} ${cleanResult.reason}\n${cleanResult.output.trim()}`,
-        )
-      } else if (!cleanResult.cleaned) {
-        console.log(
-          `[clean] task ${inputData.taskId} skipped: ${cleanResult.reason}`,
-        )
-      }
-    } catch (err) {
-      // Clean is a best-effort hygiene step; never fail the dispatch on it.
-      console.error(
-        `[clean] task ${inputData.taskId} threw, continuing without clean:`,
-        err,
-      )
-    }
-
-    const originId = await resolveOriginIdForTask(inputData.taskId)
-    const tag = isTaskTag(inputData.tag) ? inputData.tag : 'coder'
-    const fullPrompt = composePrompt(
-      inputData.prompt,
-      inputData.plan,
-      tag,
-      inputData.spec ?? null,
-      inputData.taskId,
-      inputData.path,
-      inputData.kind,
-    )
-    const conversation: ClaudeEvent[] = []
-    // Kind-aware routing: fix tasks go to the Fixer Worker (Opus, backlog-
-    // mutation denied); everything else uses Coder via tag (the only valid
-    // tag is 'coder' after ADR 0019). Kind takes precedence over tag for the
-    // fix → Fixer path because a recovery task must always land on the
-    // higher-resilience Worker regardless of what tag the row carries.
-    const worker =
-      inputData.kind === 'fix' ? Workers.Fixer : getWorkerForTag(tag)
-    // Read/Grep span watcher (gsd-style analysis-paralysis signal). When the
-    // threshold is reached AND the agent has taken zero actions for the entire
-    // run, a single diagnose Chore is spawned and the original task is parked
-    // in `blocked` behind it (see the post-run check below). Diagnose Chores
-    // are exempt (their job IS heavy reading; PRD 06e677fb — their backstop
-    // is the time/turn cap). Every other dispatched task gets the watcher.
-    const watcher = shouldWireReadSpanWatcher(inputData.kind)
-      ? createReadSpanWatcher({
-          limit: resolveReadSpanLimit(),
-          onThreshold: (info) => {
-            console.log(
-              `[span] task ${inputData.taskId}: ${info.limit} consecutive Read/Grep/Glob calls without action (trace=${info.trace.map((t) => t.tool).join('+')}).`,
-            )
-          },
-        })
-      : null
-    const r = await worker.run(fullPrompt, {
-      cwd: inputData.path,
-      systemPrompt: resolveWorkerSystemPrompt(tag),
-      onEvent: async (event) => {
-        conversation.push(event)
-        watcher?.observe(event)
-        await writer?.write({ type: 'claude-event', event })
-      },
-    })
-    // Per-run read/action summary. Emitted on every wired run so paralysis
-    // patterns are greppable in bulk (e.g. zero-action runs with a high
-    // max-streak), not just when the threshold was tripped.
-    if (watcher) {
-      console.log(
-        `[span-summary] task ${inputData.taskId}: maxStreak=${watcher.maxStreak} totalReads=${watcher.totalReads} totalActions=${watcher.totalActions} tripped=${watcher.thresholdEverReached}`,
-      )
-    }
-    // Read-span guard: if the agent tripped the threshold AND never took any
-    // action during the entire run, spawn a single diagnose Chore and park the
-    // original task behind it. The Chore has a bounded contract: investigate
-    // only, record one structured verdict, never attempt the parent's work.
-    // See PRD 06e677fb; the old three-way free-form instruction is gone.
-    if (watcher?.thresholdEverReached && watcher.totalActions === 0) {
-      const diagnosePrompt = buildDiagnoseChorePrompt(
-        inputData.taskId,
-        inputData.prompt,
-        watcher.trace,
-      )
+      // Classify the worktree end-state. Only the 'dirty-no-commits' case is
+      // worth a log line — it's the new failure mode the post-test commit
+      // guard is being built to detect. Clean-success and clean-no-work are
+      // already covered by verify's existing signal. Errors are logged at
+      // warn level so a flaky git invocation doesn't pollute the success
+      // path. Best-effort: never fails the dispatch.
       try {
-        const child = await enqueueTask(diagnosePrompt, undefined, {
-          skipTriage: true,
-          kind: 'diagnose',
-          originId,
+        const postState = await detectPostCoderState({
+          worktreePath,
+          integrationBranch: input.integrationBranch,
         })
-        const errorSummary =
-          `too_hard:no-action-after-reads: maxStreak=${watcher.maxStreak}; diagnose Chore=${child.id}`.slice(0, 1000)
-        await updateTask(
-          inputData.taskId,
-          { status: 'blocked', error: errorSummary, failedPhase: 'code' },
-          store,
-        )
-        await addBlockers(inputData.taskId, [child.id])
-        console.log(
-          `[span] task ${inputData.taskId}: ${watcher.maxStreak} reads without action; spawned diagnose Chore ${child.id} as blocker; parent → blocked`,
-        )
-        throw new Error(TOO_HARD_ABORT_MESSAGE(inputData.taskId))
+        if (postState.kind === 'dirty-no-commits') {
+          console.log(
+            `[post-coder] task ${input.taskId}: dirty tree with 0 commits ahead of ${input.integrationBranch} — ${postState.dirtyFiles.length} uncommitted path(s):\n  ${postState.dirtyFiles.join('\n  ')}`,
+          )
+        } else if (postState.kind === 'error') {
+          console.warn(
+            `[post-coder] task ${input.taskId}: classifier error: ${postState.error}`,
+          )
+        }
       } catch (err) {
-        if (err instanceof Error && isTooHardAbortError(err)) throw err
-        // Spawn failed — park the task failed; don't silently swallow.
-        console.error(
-          `[span] task ${inputData.taskId}: failed to spawn diagnose Chore:`,
-          err,
-        )
-        await updateTask(
-          inputData.taskId,
-          {
-            status: 'failed',
-            error: `diagnose Chore spawn failed: ${String(err).slice(0, 500)}`,
-            failedPhase: 'code',
-          },
-          store,
-        ).catch(() => {})
-        throw err instanceof Error ? err : new Error(String(err))
-      }
-    }
-    // Classify the worktree end-state. Only the 'dirty-no-commits' case is
-    // worth a log line — it's the new failure mode the post-test commit
-    // guard is being built to detect. Clean-success and clean-no-work are
-    // already covered by verify's existing signal. Errors are logged at
-    // warn level so a flaky git invocation doesn't pollute the success
-    // path. Best-effort: never fails the dispatch.
-    try {
-      const postState = await detectPostCoderState({
-        worktreePath: inputData.path,
-        integrationBranch: inputData.integrationBranch,
-      })
-      if (postState.kind === 'dirty-no-commits') {
-        console.log(
-          `[post-coder] task ${inputData.taskId}: dirty tree with 0 commits ahead of ${inputData.integrationBranch} — ${postState.dirtyFiles.length} uncommitted path(s):\n  ${postState.dirtyFiles.join('\n  ')}`,
-        )
-      } else if (postState.kind === 'error') {
         console.warn(
-          `[post-coder] task ${inputData.taskId}: classifier error: ${postState.error}`,
-        )
-      }
-    } catch (err) {
-      console.warn(
-        `[post-coder] task ${inputData.taskId}: classifier threw, continuing:`,
-        err,
-      )
-    }
-
-    const usage = summarizeUsage(conversation)
-    tracingContext?.currentSpan?.update({
-      metadata: {
-        originId,
-        taskId: inputData.taskId,
-        claudeSessionId: r.sessionId,
-        workerName: worker.config.name,
-        usage,
-      },
-    })
-    if (r.sessionId) {
-      await updateTask(inputData.taskId, { claudeSessionId: r.sessionId }, store)
-    }
-    await recordSignals(inputData.taskId, 'run-claude-code', usage, store).catch(() => {
-      // signal capture must never fail the task
-    })
-    if (!isReflectDisabled()) {
-      await upsertTranscript({
-        taskId: inputData.taskId,
-        conversationJson: JSON.stringify(conversation),
-      }, store).catch(() => {
-        // transcript capture must never fail the task
-      })
-    }
-    return {
-      taskId: inputData.taskId,
-      integrationBranch: inputData.integrationBranch,
-      path: inputData.path,
-      branch: inputData.branch,
-      tag,
-      kind: inputData.kind,
-      claudeExitCode: r.exitCode,
-      resumeFrom: inputData.resumeFrom,
-    }
-  },
-})
-
-const verifyStep = createStep({
-  id: 'verify',
-  inputSchema: z.object({
-    taskId: z.string(),
-    integrationBranch: z.string(),
-    path: z.string(),
-    branch: z.string(),
-    tag: tagSchema,
-    kind: kindSchema,
-    claudeExitCode: z.number(),
-    resumeFrom: resumeFromSchema,
-  }),
-  outputSchema: z.object({
-    taskId: z.string(),
-    integrationBranch: z.string(),
-    path: z.string(),
-    branch: z.string(),
-    tag: tagSchema,
-    kind: kindSchema,
-    verified: z.boolean(),
-  }),
-  scorers: {
-    verifyPassed: {
-      scorer: verifyPassedScorer,
-      sampling: { type: 'ratio', rate: 1 },
-    },
-  },
-  execute: async ({ inputData, tracingContext, requestContext }) => {
-    const store: TaskStore = (requestContext.get('taskStore') as TaskStore | undefined) ?? await getDefaultTaskStore()
-    const originId = await resolveOriginIdForTask(inputData.taskId)
-    tracingContext?.currentSpan?.update({
-      metadata: { originId, taskId: inputData.taskId },
-    })
-
-    // Resume short-circuit: 'mars continue' is jumping straight to merge.
-    // Verify already passed in the previous run; trust it and pass through.
-    if (resumeRank(inputData.resumeFrom) > STEP_ORDER.indexOf('verify')) {
-      return {
-        taskId: inputData.taskId,
-        integrationBranch: inputData.integrationBranch,
-        path: inputData.path,
-        branch: inputData.branch,
-        tag: inputData.tag,
-        kind: inputData.kind,
-        verified: true,
-      }
-    }
-
-    // Diagnose Chore short-circuit: the Chore never commits and never
-    // produces a verifiable artefact. Its deliverable is the structured
-    // verdict in the diagnoses table; the merge step then cleans up the
-    // empty worktree and the post-completion branch in the daemon reads
-    // the verdict and either dispatches one fix or raises an inbox item.
-    if (inputData.kind === 'diagnose') {
-      return {
-        taskId: inputData.taskId,
-        integrationBranch: inputData.integrationBranch,
-        path: inputData.path,
-        branch: inputData.branch,
-        tag: inputData.tag,
-        kind: inputData.kind,
-        verified: true,
-      }
-    }
-
-    // Entering verify for real: clear both the previous failure stamp and
-    // the resume hint so a subsequent failure records this run's phase.
-    await updateTask(inputData.taskId, {
-      status: 'verifying',
-      failedPhase: null,
-      resumeFrom: null,
-    }, store)
-    const verifyCwd = resolveVerifyCwd(inputData.path)
-    const ctx = resolveContext()
-    // Scope-aware verify-step selection: look at the files the task
-    // actually changed between its branch and integration, then run the
-    // root scope's steps (the repo-wide floor) plus every narrower scope
-    // whose subtree a changed file falls in — each in its own directory.
-    const scopes = await loadVerifyScopes(ctx.supervisorsManifest)
-    const changedFiles = await getChangedFiles(
-      inputData.path,
-      inputData.integrationBranch,
-      inputData.branch,
-    )
-    const steps = selectVerifySteps(scopes, changedFiles)
-    // The diff / commits-ahead gate runs for every dispatched task — there is
-    // no skip option (ADR 0019). A task that exits with a clean tree and zero
-    // commits ahead of integration fails with the uniform no-commits-ahead
-    // outcome rather than being blessed as a success.
-    const r = await verifyChanges({
-      cwd: verifyCwd,
-      steps,
-      branch: inputData.branch,
-      integrationBranch: inputData.integrationBranch,
-    })
-
-    if (!isReflectDisabled()) {
-      const verifyOutput = r.steps
-        .map((s) => `=== ${s.name} (${s.passed ? 'pass' : 'fail'}) ===\n${s.output}`)
-        .join('\n\n')
-      await upsertTranscript({
-        taskId: inputData.taskId,
-        verifyOutput,
-      }, store).catch(() => {
-        // transcript capture must never fail the task
-      })
-    }
-
-    if (!r.passed) {
-      const failed = r.steps.filter((s) => !s.passed)
-      const summary = failed
-        .map((s) => `${s.name}:\n${failureExcerpt(s.output)}`)
-        .join('\n\n')
-      const firstFailedName = failed[0]?.name ?? 'verify'
-      const firstFailedOutput = failed[0]
-        ? failureExcerpt(failed[0].output)
-        : summary
-      // Build a list of every step that actually ran with its exact command
-      // and directory. Steps that carry cmd/stepDir (all steps routed through
-      // runVerifyStep) form the ranVerifySteps array used to produce an
-      // accurate, language-agnostic reproduce hint. Steps without cmd (e.g.
-      // the synthetic has-diff check) are omitted so the hint stays runnable.
-      const ranVerifySteps: RanVerifyStep[] = r.steps
-        .filter((s): s is typeof s & { cmd: string; stepDir: string } =>
-          s.cmd !== undefined && s.stepDir !== undefined,
-        )
-        .map((s) => ({
-          name: s.name,
-          cmd: s.cmd,
-          args: s.args ?? [],
-          stepDir: s.stepDir,
-          passed: s.passed,
-        }))
-      await updateTask(inputData.taskId, {
-        status: 'failed',
-        error: summary,
-        failedPhase: 'verify',
-      }, store)
-      await handleTaskFailureWithFixTask({
-        taskId: inputData.taskId,
-        failingStep: `verify:${firstFailedName}`,
-        errorOutput: firstFailedOutput,
-        branch: inputData.branch,
-        ranVerifySteps,
-        store,
-        recipeContext: {
-          targetPath: inputData.path,
-          statusOutput: firstFailedOutput,
-          targetBranch: inputData.branch,
-          integrationBranch: inputData.integrationBranch,
-          // Handler backfills from task.prompt when '' is passed.
-          originalPrompt: '',
-        },
-      }).catch((err) => {
-        console.error(
-          `[failure-handler] task ${inputData.taskId} verify failure handling errored:`,
+          `[post-coder] task ${input.taskId}: classifier threw, continuing:`,
           err,
         )
+      }
+
+      const usage = summarizeUsage(conversation)
+      if (r.sessionId) {
+        // The claudeSessionId is the transcript key — record it on the step
+        // record so the trace view can reference the full transcript by key
+        // (replaces the Mastra tracingContext.currentSpan.update metadata).
+        handle.setTranscriptKey(r.sessionId)
+        await updateTask(input.taskId, { claudeSessionId: r.sessionId }, store)
+      }
+      await recordSignals(input.taskId, 'run-claude-code', usage, store).catch(() => {
+        // signal capture must never fail the task
       })
-    }
-
-    return {
-      taskId: inputData.taskId,
-      integrationBranch: inputData.integrationBranch,
-      path: inputData.path,
-      branch: inputData.branch,
-      tag: inputData.tag,
-      kind: inputData.kind,
-      verified: r.passed,
-    }
-  },
-})
-
-const mergeStep = createStep({
-  id: 'merge',
-  inputSchema: z.object({
-    taskId: z.string(),
-    integrationBranch: z.string(),
-    path: z.string(),
-    branch: z.string(),
-    tag: tagSchema,
-    kind: kindSchema,
-    verified: z.boolean(),
-  }),
-  outputSchema: z.object({
-    taskId: z.string(),
-    success: z.boolean(),
-    message: z.string(),
-  }),
-  scorers: {
-    mergeClean: {
-      scorer: mergeCleanScorer,
-      sampling: { type: 'ratio', rate: 1 },
-    },
-  },
-  execute: async ({ inputData, writer, tracingContext, requestContext }) => {
-    const store: TaskStore = (requestContext.get('taskStore') as TaskStore | undefined) ?? await getDefaultTaskStore()
-    const originId = await resolveOriginIdForTask(inputData.taskId)
-    tracingContext?.currentSpan?.update({
-      metadata: { originId, taskId: inputData.taskId },
+      if (!isReflectDisabled()) {
+        await upsertTranscript({
+          taskId: input.taskId,
+          conversationJson: JSON.stringify(conversation),
+        }, store).catch(() => {
+          // transcript capture must never fail the task
+        })
+      }
     })
-    if (!inputData.verified) {
-      return {
-        taskId: inputData.taskId,
-        success: false,
-        message: 'verification failed; worktree retained for inspection',
-      }
-    }
 
-    // Diagnose Chore short-circuit: the Chore never commits and therefore
-    // has nothing to merge. Its deliverable is the structured verdict in
-    // the diagnoses table, which the daemon reads via the post-completion
-    // branch (see PRD 06e677fb). Clean up the worktree and mark done; the
-    // verdict-driven follow-up (one fix, or one inbox item) runs from the
-    // task.completed event in daemon/server.ts.
-    if (inputData.kind === 'diagnose') {
-      await removeWorktree({ path: inputData.path, branch: inputData.branch }, true)
-      await updateTask(inputData.taskId, { status: 'done', failedPhase: null }, store)
-      return {
-        taskId: inputData.taskId,
-        success: true,
-        message: 'diagnose Chore complete; verdict-driven branch runs in daemon',
+    // ── verify ───────────────────────────────────────────────────────────
+    await ctx.step('verify', async (): Promise<VerifyResult> => {
+      // Diagnose Chore short-circuit: the Chore never commits and never
+      // produces a verifiable artefact. Its deliverable is the structured
+      // verdict in the diagnoses table; the merge step then cleans up the
+      // empty worktree and the post-completion branch in the daemon reads
+      // the verdict and either dispatches one fix or raises an inbox item.
+      if (input.kind === 'diagnose') {
+        return { verified: true }
       }
-    }
 
-    // Any unhandled throw from mergeBranch (e.g. an unexpected git failure)
-    // must transition the task to a terminal status. Otherwise the queue row
-    // stays at 'merging' forever and `mars list` hides the failure.
-    try {
-      // Entering merge for real: clear any previous failure stamp + the
-      // resume hint so a subsequent failure records this run's phase.
-      await updateTask(inputData.taskId, {
-        status: 'merging',
+      // Entering verify for real: clear the previous failure stamp so a
+      // subsequent failure records this run's phase.
+      await updateTask(input.taskId, {
+        status: 'verifying',
         failedPhase: null,
-        resumeFrom: null,
       }, store)
-
-      const targetStatus = await checkMergeTargetStatus({
-        integrationBranch: inputData.integrationBranch,
-        taskBranch: inputData.branch,
+      const verifyCwd = resolveVerifyCwd(worktreePath)
+      const verifyCtx = resolveContext()
+      // Scope-aware verify-step selection: look at the files the task actually
+      // changed between its branch and integration, then run the root scope's
+      // steps (the repo-wide floor) plus every narrower scope whose subtree a
+      // changed file falls in — each in its own directory.
+      const scopes = await loadVerifyScopes(verifyCtx.supervisorsManifest)
+      const changedFiles = await getChangedFiles(
+        worktreePath,
+        input.integrationBranch,
+        branch,
+      )
+      const steps = selectVerifySteps(scopes, changedFiles)
+      // The diff / commits-ahead gate runs for every dispatched task — there
+      // is no skip option (ADR 0019). A task that exits with a clean tree and
+      // zero commits ahead of integration fails with the uniform
+      // no-commits-ahead outcome rather than being blessed as a success.
+      const r = await verifyChanges({
+        cwd: verifyCwd,
+        steps,
+        branch,
+        integrationBranch: input.integrationBranch,
       })
-      if (targetStatus.kind === 'needs-rebase') {
-        // Diverged / behind integration — recoverable, NOT a failure.
-        // mergeBranch Step 1 rebases the task branch onto integration
-        // (escalating to the vcs-supervisor on conflict) before the
-        // --ff-only merge. Parking here is the bug that dead-looped every
-        // lapped branch through the retry budget. Fall through to merge.
-        console.log(
-          `[merge:preflight] task ${inputData.taskId} ${targetStatus.statusOutput}; proceeding to rebase-before-ff`,
-        )
+
+      if (!isReflectDisabled()) {
+        const verifyOutput = r.steps
+          .map((s) => `=== ${s.name} (${s.passed ? 'pass' : 'fail'}) ===\n${s.output}`)
+          .join('\n\n')
+        await upsertTranscript({
+          taskId: input.taskId,
+          verifyOutput,
+        }, store).catch(() => {
+          // transcript capture must never fail the task
+        })
       }
-      if (targetStatus.kind === 'dirty') {
-        const errorMsg = `merge target has uncommitted changes; cannot fast-forward into ${inputData.integrationBranch}`
-        await updateTask(inputData.taskId, {
+
+      if (!r.passed) {
+        const failed = r.steps.filter((s) => !s.passed)
+        const summary = failed
+          .map((s) => `${s.name}:\n${failureExcerpt(s.output)}`)
+          .join('\n\n')
+        const firstFailedName = failed[0]?.name ?? 'verify'
+        const firstFailedOutput = failed[0]
+          ? failureExcerpt(failed[0].output)
+          : summary
+        // Build a list of every step that actually ran with its exact command
+        // and directory. Steps that carry cmd/stepDir (all steps routed through
+        // runVerifyStep) form the ranVerifySteps array used to produce an
+        // accurate, language-agnostic reproduce hint. Steps without cmd (e.g.
+        // the synthetic has-diff check) are omitted so the hint stays runnable.
+        const ranVerifySteps: RanVerifyStep[] = r.steps
+          .filter((s): s is typeof s & { cmd: string; stepDir: string } =>
+            s.cmd !== undefined && s.stepDir !== undefined,
+          )
+          .map((s) => ({
+            name: s.name,
+            cmd: s.cmd,
+            args: s.args ?? [],
+            stepDir: s.stepDir,
+            passed: s.passed,
+          }))
+        await updateTask(input.taskId, {
           status: 'failed',
-          error: errorMsg,
-          failedPhase: 'merge',
+          error: summary,
+          failedPhase: 'verify',
         }, store)
         await handleTaskFailureWithFixTask({
-          taskId: inputData.taskId,
-          failingStep: 'merge:preflight',
-          // Classifier-friendly lead line; raw porcelain via recipeContext.
-          errorOutput: `merge target ${targetStatus.targetPath} has uncommitted changes blocking fast-forward\n${targetStatus.statusOutput}`,
-          branch: inputData.branch,
+          taskId: input.taskId,
+          failingStep: `verify:${firstFailedName}`,
+          errorOutput: firstFailedOutput,
+          branch,
+          ranVerifySteps,
           store,
           recipeContext: {
-            targetPath: targetStatus.targetPath,
-            statusOutput: targetStatus.statusOutput,
-            targetBranch: inputData.integrationBranch,
+            targetPath: worktreePath,
+            statusOutput: firstFailedOutput,
+            targetBranch: branch,
+            integrationBranch: input.integrationBranch,
             // Handler backfills from task.prompt when '' is passed.
             originalPrompt: '',
           },
         }).catch((err) => {
           console.error(
-            `[failure-handler] task ${inputData.taskId} dirty-merge-target handling errored:`,
+            `[failure-handler] task ${input.taskId} verify failure handling errored:`,
             err,
           )
         })
-        return {
-          taskId: inputData.taskId,
-          success: false,
-          message: `merge pre-flight detected dirty target ${inputData.integrationBranch}; worktree retained`,
-        }
+        // Throw instead of returning `{verified:false}`: the engine records
+        // verify `failed` and stops the run before merge. The self-heal
+        // side-effects above already spawned the recovery task.
+        throw new Error(`task ${input.taskId} verify:${firstFailedName} failed`)
       }
-      if (targetStatus.kind === 'error') {
-        await updateTask(inputData.taskId, {
-          status: 'failed',
-          error: `merge pre-flight git status failed: ${targetStatus.error.message}`.slice(0, 1000),
-          failedPhase: 'merge',
-        }, store)
+
+      // Verify passed → return normally so the merge step runs.
+      return { verified: true }
+    })
+
+    // ── merge ──────────────────────────────────────────────────────────────
+    // The verify step throws on failure, so reaching here always means verify
+    // passed — the former `if (!inputData.verified)` early return is now
+    // unreachable and has been dropped.
+    return await ctx.step('merge', async (): Promise<ImplementOutput> => {
+      const originId = await resolveOriginIdForTask(input.taskId)
+
+      // Diagnose Chore short-circuit: the Chore never commits and therefore
+      // has nothing to merge. Its deliverable is the structured verdict in
+      // the diagnoses table, which the daemon reads via the post-completion
+      // branch (see PRD 06e677fb). Clean up the worktree and mark done; the
+      // verdict-driven follow-up (one fix, or one inbox item) runs from the
+      // task.completed event in daemon/server.ts.
+      if (input.kind === 'diagnose') {
+        await removeWorktree({ path: worktreePath, branch }, true)
+        await updateTask(input.taskId, { status: 'done', failedPhase: null }, store)
         return {
-          taskId: inputData.taskId,
-          success: false,
-          message: `merge pre-flight failed: ${targetStatus.error.message}`,
+          taskId: input.taskId,
+          success: true,
+          message: 'diagnose Chore complete; verdict-driven branch runs in daemon',
         }
       }
 
-      // Merge preflight: reject any branch that touches orchestrator/src/init/templates/**.
-      // Template files are init-only archetypes edited by humans on main, never by an
-      // orchestrator task. Any diff to those paths is leakage — most commonly caused by
-      // composePrompt inlining the project-root CLAUDE.md into the coder brief and a
-      // bypassPermissions coder "reconciling" the embedded text back to the template file.
-      // (Systematic: two independent worktrees showed byte-identical leaked diffs.)
-      // Strict default: ALL tasks are rejected. No current task legitimately edits the
-      // bundled archetype via the orchestrator; humans edit it directly on main.
-      const branchChangedFiles = await getChangedFiles(
-        inputData.path,
-        inputData.integrationBranch,
-        inputData.branch,
-      )
-      const leakingTemplatePaths = detectTemplatePaths(branchChangedFiles)
-      if (leakingTemplatePaths.length > 0) {
-        const leakMsg =
-          `merge:preflight/template-leakage: task branch touches ${leakingTemplatePaths.length} init template path(s) ` +
-          `that must only be edited by humans on main:\n  ${leakingTemplatePaths.join('\n  ')}`
-        await updateTask(inputData.taskId, {
-          status: 'failed',
-          error: leakMsg.slice(0, 1000),
-          failedPhase: 'merge',
+      // Any unhandled throw from mergeBranch (e.g. an unexpected git failure)
+      // must transition the task to a terminal status. Otherwise the queue row
+      // stays at 'merging' forever and `mars list` hides the failure.
+      try {
+        // Entering merge for real: clear any previous failure stamp so a
+        // subsequent failure records this run's phase.
+        await updateTask(input.taskId, {
+          status: 'merging',
+          failedPhase: null,
         }, store)
-        await handleTaskFailureWithFixTask({
-          taskId: inputData.taskId,
-          failingStep: 'merge:preflight/template-leakage',
-          errorOutput: leakMsg,
-          branch: inputData.branch,
-          store,
-          recipeContext: {
-            targetPath: inputData.path,
-            statusOutput: leakingTemplatePaths.join('\n'),
-            targetBranch: inputData.integrationBranch,
-            originalPrompt: '',
-          },
-        }).catch((err) => {
-          console.error(
-            `[failure-handler] task ${inputData.taskId} template-leakage handling errored:`,
-            err,
+
+        const targetStatus = await checkMergeTargetStatus({
+          integrationBranch: input.integrationBranch,
+          taskBranch: branch,
+        })
+        if (targetStatus.kind === 'needs-rebase') {
+          // Diverged / behind integration — recoverable, NOT a failure.
+          // mergeBranch Step 1 rebases the task branch onto integration
+          // (escalating to the vcs-supervisor on conflict) before the
+          // --ff-only merge. Parking here is the bug that dead-looped every
+          // lapped branch through the retry budget. Fall through to merge.
+          console.log(
+            `[merge:preflight] task ${input.taskId} ${targetStatus.statusOutput}; proceeding to rebase-before-ff`,
           )
-        })
-        return {
-          taskId: inputData.taskId,
-          success: false,
-          message: `merge:preflight/template-leakage: branch touches ${leakingTemplatePaths.length} init template path(s); worktree retained`,
         }
-      }
-
-      const supervisorConversation: ClaudeEvent[] = []
-      const m = await mergeBranch({
-        branch: inputData.branch,
-        worktreePath: inputData.path,
-        integrationBranch: inputData.integrationBranch,
-        lockTimeoutMs: 5 * 60 * 1000,
-        onVegaStart: async () => {
-          // Fast-forward failed; a live Vega session is being spawned. Leave
-          // the idempotent `merging` phase so `mars list`/`mars show` surface
-          // the conflict-resolution session as `vega-reconciling`.
-          await updateTask(inputData.taskId, { status: 'vega-reconciling' }, store)
-        },
-        onSupervisorEvent: async (event) => {
-          supervisorConversation.push(event)
-          await writer?.write({ type: 'vcs-supervisor-event', event })
-        },
-      })
-
-      if (supervisorConversation.length > 0) {
-        const supervisorUsage = summarizeUsage(supervisorConversation)
-        tracingContext?.currentSpan?.update({
-          metadata: {
-            originId,
-            taskId: inputData.taskId,
-            supervisorConversation,
-            supervisorConversationBytes: JSON.stringify(supervisorConversation).length,
-            supervisorUsage,
-          },
-        })
-        await recordSignals(inputData.taskId, 'vcs-supervisor', supervisorUsage, store).catch(() => {
-          // signal capture must never fail the task
-        })
-      }
-
-      if (m.aborted) {
-        const errorMsg = `merge aborted by vcs-supervisor; worktree retained at ${inputData.path}\n${m.output.slice(0, 1000)}`
-        await updateTask(inputData.taskId, {
-          status: 'failed',
-          error: errorMsg,
-          failedPhase: 'merge',
-        }, store)
-        await handleTaskFailureWithFixTask({
-          taskId: inputData.taskId,
-          failingStep: 'merge:vcs-supervisor-aborted',
-          errorOutput: m.output,
-          branch: inputData.branch,
-          store,
-        }).catch((err) => {
-          console.error(
-            `[failure-handler] task ${inputData.taskId} merge abort handling errored:`,
-            err,
+        if (targetStatus.kind === 'dirty') {
+          const errorMsg = `merge target has uncommitted changes; cannot fast-forward into ${input.integrationBranch}`
+          await updateTask(input.taskId, {
+            status: 'failed',
+            error: errorMsg,
+            failedPhase: 'merge',
+          }, store)
+          await handleTaskFailureWithFixTask({
+            taskId: input.taskId,
+            failingStep: 'merge:preflight',
+            // Classifier-friendly lead line; raw porcelain via recipeContext.
+            errorOutput: `merge target ${targetStatus.targetPath} has uncommitted changes blocking fast-forward\n${targetStatus.statusOutput}`,
+            branch,
+            store,
+            recipeContext: {
+              targetPath: targetStatus.targetPath,
+              statusOutput: targetStatus.statusOutput,
+              targetBranch: input.integrationBranch,
+              // Handler backfills from task.prompt when '' is passed.
+              originalPrompt: '',
+            },
+          }).catch((err) => {
+            console.error(
+              `[failure-handler] task ${input.taskId} dirty-merge-target handling errored:`,
+              err,
+            )
+          })
+          // Throw instead of returning `{success:false}`: the engine records
+          // merge `failed`. The self-heal handler above already spawned the
+          // recovery task and parked the source `blocked`/`failed`.
+          throw new Error(
+            `task ${input.taskId} merge:preflight detected dirty target ${input.integrationBranch}`,
           )
-        })
-        return {
-          taskId: inputData.taskId,
-          success: false,
-          message: 'merge aborted; vcs-supervisor could not reconcile, worktree retained',
         }
-      }
+        if (targetStatus.kind === 'error') {
+          await updateTask(input.taskId, {
+            status: 'failed',
+            error: `merge pre-flight git status failed: ${targetStatus.error.message}`.slice(0, 1000),
+            failedPhase: 'merge',
+          }, store)
+          throw new Error(
+            `task ${input.taskId} merge pre-flight failed: ${targetStatus.error.message}`,
+          )
+        }
 
-      await removeWorktree({ path: inputData.path, branch: inputData.branch }, true)
-      await updateTask(inputData.taskId, { status: 'done', failedPhase: null }, store)
-
-      return {
-        taskId: inputData.taskId,
-        success: true,
-        message: m.conflictResolved
-          ? 'merged with vcs-supervisor conflict resolution'
-          : 'merged cleanly',
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error)
-      console.error(`[merge] task ${inputData.taskId} crashed:`, error)
-      await updateTask(inputData.taskId, {
-        status: 'failed',
-        error: `merge step crashed: ${message}`.slice(0, 1000),
-        failedPhase: 'merge',
-      }, store)
-      await handleTaskFailureWithFixTask({
-        taskId: inputData.taskId,
-        failingStep: 'merge:crashed',
-        errorOutput: message,
-        branch: inputData.branch,
-        store,
-      }).catch((err) => {
-        console.error(
-          `[failure-handler] task ${inputData.taskId} merge crash handling errored:`,
-          err,
+        // Merge preflight: reject any branch that touches orchestrator/src/init/templates/**.
+        // Template files are init-only archetypes edited by humans on main, never by an
+        // orchestrator task. Any diff to those paths is leakage — most commonly caused by
+        // composePrompt inlining the project-root CLAUDE.md into the coder brief and a
+        // bypassPermissions coder "reconciling" the embedded text back to the template file.
+        // (Systematic: two independent worktrees showed byte-identical leaked diffs.)
+        // Strict default: ALL tasks are rejected. No current task legitimately edits the
+        // bundled archetype via the orchestrator; humans edit it directly on main.
+        const branchChangedFiles = await getChangedFiles(
+          worktreePath,
+          input.integrationBranch,
+          branch,
         )
-      })
-      return {
-        taskId: inputData.taskId,
-        success: false,
-        message: 'merge step crashed; worktree retained',
+        const leakingTemplatePaths = detectTemplatePaths(branchChangedFiles)
+        if (leakingTemplatePaths.length > 0) {
+          const leakMsg =
+            `merge:preflight/template-leakage: task branch touches ${leakingTemplatePaths.length} init template path(s) ` +
+            `that must only be edited by humans on main:\n  ${leakingTemplatePaths.join('\n  ')}`
+          await updateTask(input.taskId, {
+            status: 'failed',
+            error: leakMsg.slice(0, 1000),
+            failedPhase: 'merge',
+          }, store)
+          await handleTaskFailureWithFixTask({
+            taskId: input.taskId,
+            failingStep: 'merge:preflight/template-leakage',
+            errorOutput: leakMsg,
+            branch,
+            store,
+            recipeContext: {
+              targetPath: worktreePath,
+              statusOutput: leakingTemplatePaths.join('\n'),
+              targetBranch: input.integrationBranch,
+              originalPrompt: '',
+            },
+          }).catch((err) => {
+            console.error(
+              `[failure-handler] task ${input.taskId} template-leakage handling errored:`,
+              err,
+            )
+          })
+          throw new Error(
+            `task ${input.taskId} merge:preflight/template-leakage: branch touches ${leakingTemplatePaths.length} init template path(s)`,
+          )
+        }
+
+        const supervisorConversation: ClaudeEvent[] = []
+        const m = await mergeBranch({
+          branch,
+          worktreePath,
+          integrationBranch: input.integrationBranch,
+          lockTimeoutMs: 5 * 60 * 1000,
+          onVegaStart: async () => {
+            // Fast-forward failed; a live Vega session is being spawned. Leave
+            // the idempotent `merging` phase so `mars list`/`mars show` surface
+            // the conflict-resolution session as `vega-reconciling`.
+            await updateTask(input.taskId, { status: 'vega-reconciling' }, store)
+          },
+          onSupervisorEvent: async (event) => {
+            supervisorConversation.push(event)
+            // Was `writer.write({type:'vcs-supervisor-event', event})`.
+            ctx.emit('vcs-supervisor-event', event)
+          },
+        })
+
+        if (supervisorConversation.length > 0) {
+          const supervisorUsage = summarizeUsage(supervisorConversation)
+          await recordSignals(input.taskId, 'vcs-supervisor', supervisorUsage, store).catch(() => {
+            // signal capture must never fail the task
+          })
+        }
+
+        if (m.aborted) {
+          const errorMsg = `merge aborted by vcs-supervisor; worktree retained at ${worktreePath}\n${m.output.slice(0, 1000)}`
+          await updateTask(input.taskId, {
+            status: 'failed',
+            error: errorMsg,
+            failedPhase: 'merge',
+          }, store)
+          await handleTaskFailureWithFixTask({
+            taskId: input.taskId,
+            failingStep: 'merge:vcs-supervisor-aborted',
+            errorOutput: m.output,
+            branch,
+            store,
+          }).catch((err) => {
+            console.error(
+              `[failure-handler] task ${input.taskId} merge abort handling errored:`,
+              err,
+            )
+          })
+          throw new Error(
+            `task ${input.taskId} merge aborted; vcs-supervisor could not reconcile`,
+          )
+        }
+
+        await removeWorktree({ path: worktreePath, branch }, true)
+        await updateTask(input.taskId, { status: 'done', failedPhase: null }, store)
+
+        return {
+          taskId: input.taskId,
+          success: true,
+          message: m.conflictResolved
+            ? 'merged with vcs-supervisor conflict resolution'
+            : 'merged cleanly',
+        }
+      } catch (error: unknown) {
+        // Re-throw our own already-handled merge aborts verbatim: their
+        // self-heal side-effects (updateTask + handleTaskFailureWithFixTask)
+        // already ran above, so the outer crash handler must NOT double-handle
+        // them. Only a genuinely UNHANDLED throw from mergeBranch reaches the
+        // crash-stamp path below.
+        if (
+          error instanceof Error &&
+          (error.message.includes('merge:preflight') ||
+            error.message.includes('merge pre-flight failed') ||
+            error.message.includes('merge aborted; vcs-supervisor could not reconcile'))
+        ) {
+          throw error
+        }
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`[merge] task ${input.taskId} crashed:`, error)
+        await updateTask(input.taskId, {
+          status: 'failed',
+          error: `merge step crashed: ${message}`.slice(0, 1000),
+          failedPhase: 'merge',
+        }, store)
+        await handleTaskFailureWithFixTask({
+          taskId: input.taskId,
+          failingStep: 'merge:crashed',
+          errorOutput: message,
+          branch,
+          store,
+        }).catch((err) => {
+          console.error(
+            `[failure-handler] task ${input.taskId} merge crash handling errored:`,
+            err,
+          )
+        })
+        // Throw so the engine records merge `failed`.
+        throw error instanceof Error ? error : new Error(message)
       }
-    }
+    })
   },
 })
-
-export const implementWorkflow = createWorkflow({
-  id: 'implement',
-  inputSchema: z.object({
-    taskId: z.string(),
-    prompt: z.string(),
-    plan: planSchema.default(null),
-    tag: tagSchema,
-    kind: kindSchema,
-    integrationBranch: z.string().default('main'),
-    resumeFrom: resumeFromSchema,
-    spec: specSchema,
-  }),
-  outputSchema: z.object({
-    taskId: z.string(),
-    success: z.boolean(),
-    message: z.string(),
-  }),
-})
-  .then(setupStep)
-  .then(codeStep)
-  .then(verifyStep)
-  .then(mergeStep)
-  .commit()

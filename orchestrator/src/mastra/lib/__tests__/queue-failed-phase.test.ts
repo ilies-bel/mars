@@ -26,7 +26,7 @@ const loadQueue = async (repo: string): Promise<Queue> => {
   return mod as unknown as Queue
 }
 
-describe('tasks.failed_phase / resume_from columns', () => {
+describe('tasks.failed_phase column', () => {
   let repo: string
 
   beforeEach(() => {
@@ -38,12 +38,11 @@ describe('tasks.failed_phase / resume_from columns', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('defaults failedPhase and resumeFrom to null for new tasks', async () => {
+  it('defaults failedPhase to null for new tasks', async () => {
     const q = await loadQueue(repo)
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
     const fetched = await q.getTask(t.id)
     expect(fetched?.failedPhase).toBeNull()
-    expect(fetched?.resumeFrom).toBeNull()
   })
 
   it('round-trips failedPhase through updateTask', async () => {
@@ -57,39 +56,25 @@ describe('tasks.failed_phase / resume_from columns', () => {
     expect(fetched?.failedPhase).toBe('verify')
   })
 
-  it('round-trips resumeFrom and clears it independently of failedPhase', async () => {
-    const q = await loadQueue(repo)
-    const t = await q.enqueueTask('merge-fail task', undefined, {
-      skipTriage: true,
-    })
-    await q.updateTask(t.id, {
-      status: 'failed',
-      failedPhase: 'merge',
-      resumeFrom: 'merge',
-    })
-    const stamped = await q.getTask(t.id)
-    expect(stamped?.failedPhase).toBe('merge')
-    expect(stamped?.resumeFrom).toBe('merge')
+  // The resumeFrom round-trip test was removed: `resumeFrom` no longer exists
+  // on the Task type, the UpdateTaskPatch, or the read path. Resume is now
+  // engine-driven (the @mars/workflow engine resumes by re-dispatching with
+  // runId=task.id and skipping already-`completed` step records), so there is
+  // nothing on the queue row to round-trip. The `resume_from` DB column is
+  // retained (no migration to drop it) but is never read or written.
 
-    await q.updateTask(t.id, { resumeFrom: null })
-    const cleared = await q.getTask(t.id)
-    expect(cleared?.failedPhase).toBe('merge')
-    expect(cleared?.resumeFrom).toBeNull()
-  })
-
-  it("coerces unknown strings on the column back to null", async () => {
+  it('coerces an unknown failed_phase string on the column back to null', async () => {
     const q = await loadQueue(repo)
     const t = await q.enqueueTask('weird row', undefined, { skipTriage: true })
     const { createClient } = await import('@libsql/client')
     const c = createClient({ url: `file:${repo}/.mars/mars.db` })
     await c.execute({
-      sql: `UPDATE tasks SET failed_phase = ?, resume_from = ? WHERE id = ?`,
-      args: ['nonsense', '', t.id],
+      sql: `UPDATE tasks SET failed_phase = ? WHERE id = ?`,
+      args: ['nonsense', t.id],
     })
     c.close()
     const fetched = await q.getTask(t.id)
     expect(fetched?.failedPhase).toBeNull()
-    expect(fetched?.resumeFrom).toBeNull()
   })
 
   it("round-trips failedPhase='code' through updateTask", async () => {
