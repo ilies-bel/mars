@@ -1050,6 +1050,119 @@ const testNoSuiteFoundRecipe: FixRecipe = {
   },
 }
 
+const testLibsqlNotAnErrorRecipe: FixRecipe = {
+  signature: 'verify:test/test-libsql-not-an-error',
+  title: (ctx) =>
+    `Fix migration runner passing comment-only SQL to libsql (SQLITE_UNKNOWN_0: not an error) on ${ctx.targetBranch}`,
+  buildPrompt: (ctx) => {
+    const integration = ctx.integrationBranch ?? 'main'
+    const countCmd = `git rev-list --count ${integration}..HEAD`
+    const sanitizedBranch = ctx.targetBranch.replace(/[^a-zA-Z0-9-]/g, '-')
+    const patchFile = `/tmp/recover-${sanitizedBranch}.patch`
+    const failureOutput =
+      ctx.statusOutput.length > 0
+        ? ctx.statusOutput
+        : '(no test output captured)'
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `The previous attempt on branch ${ctx.targetBranch} failed the verify:test step with \`LibsqlError: SQLITE_UNKNOWN_0: not an error\`. The root cause is that the Drizzle migration runner in \`src/db/migrate.ts\` splits SQL migration files on \`'--> statement-breakpoint'\` but does NOT filter the leading comment block that precedes the first breakpoint. That comment fragment is passed as a SQL "statement" to \`@libsql/client\`'s \`execute()\`. SQLite returns SQLITE_OK (code 0) for a comment-only statement — no real statement is compiled — and libsql maps this unexpected SQLITE_OK into \`LibsqlError: SQLITE_UNKNOWN_0: not an error\`.`,
+      '',
+      `## Root cause`,
+      '',
+      `In \`runMigration\` (src/db/migrate.ts), the statement-splitting logic is:`,
+      '',
+      '```typescript',
+      `const statements = sql`,
+      `  .split('--> statement-breakpoint')`,
+      `  .map((s) => s.trim())`,
+      `  .filter((s) => s.length > 0)`,
+      '```',
+      '',
+      `Migration files like \`0001_baseline.sql\` start with a multi-line comment block before the first \`--> statement-breakpoint\` marker. After splitting, the first array element is that comment block — it is non-empty after \`.trim()\`, so the \`.filter(s => s.length > 0)\` guard does NOT remove it. Passing a comment-only string to \`c.execute(stmt)\` causes \`@libsql/client\` to throw \`SQLITE_UNKNOWN_0: not an error\`.`,
+      '',
+      `## Fix`,
+      '',
+      `Add a guard to \`runMigration\` in \`src/db/migrate.ts\` that skips any statement fragment whose every non-empty line starts with \`--\`:`,
+      '',
+      '```typescript',
+      `const statements = sql`,
+      `  .split('--> statement-breakpoint')`,
+      `  .map((s) => s.trim())`,
+      `  .filter((s) => s.length > 0)`,
+      `  .filter(`,
+      `    (s) =>`,
+      `      !s`,
+      `        .split('\\n')`,
+      `        .every((line) => line.trim() === '' || line.trim().startsWith('--')),`,
+      `  )`,
+      '```',
+      '',
+      `This is a one-line change to the filter chain in \`runMigration\` — do NOT modify the SQL migration files themselves or any test files.`,
+      '',
+      `You are running in a FRESH recovery worktree on a FRESH branch (not ${ctx.targetBranch}). Your job is to leave a commit HERE — in your own cwd, on your own branch. Do NOT \`cd\` into ${ctx.targetPath} and do NOT edit files there: that is the failing tree, inspect it read-only only.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `STEP 1 — sanity-check first. From your current working directory, run \`${countCmd}\` to count commits on your recovery branch not yet on ${integration}. The output is a plain integer.`,
+      ` - If it prints a non-zero integer, your recovery branch already has commits: this is a false positive — do NOT modify files, exit successfully.`,
+      ` - If it prints \`0\`, your branch is genuinely empty: proceed to STEP 2.`,
+      '',
+      `Do not use \`git log\` or any other command to make this decision — only the integer from \`rev-list --count\` is authoritative.`,
+      '',
+      `STEP 2 — Lift the failing worktree's diff into YOUR recovery worktree. Only enter this step when \`${countCmd}\` printed \`0\`.`,
+      '',
+      `Inspect what the previous agent did (read-only against the failing worktree):`,
+      '',
+      '```',
+      `git -C ${ctx.targetPath} diff ${integration}..HEAD --stat`,
+      `git -C ${ctx.targetPath} diff ${integration}..HEAD`,
+      '```',
+      '',
+      ` 1. Capture: \`git -C ${ctx.targetPath} diff ${integration}..HEAD > ${patchFile}\``,
+      ` 2. Apply: \`git apply --3way ${patchFile}\` (resolve any \`.rej\` files by hand if needed).`,
+      ` 3. **Commit immediately**: \`git add -A && git commit -m "recover: lift diff from ${ctx.targetBranch}"\`. Do this BEFORE running tests or fixing anything.`,
+      ` 4. Re-run \`${countCmd}\`. It MUST now print a non-zero integer. If it still prints \`0\`, fix that before anything else.`,
+      '',
+      `STEP 3 — Apply the fix. Open \`orchestrator/src/db/migrate.ts\` in YOUR worktree and find the \`runMigration\` function. Locate the \`statements\` array construction (the \`.split('--> statement-breakpoint')\` chain) and add the comment-only filter as shown in the ## Fix section above.`,
+      '',
+      `STEP 4 — Run the full test suite to confirm the error is gone:`,
+      '',
+      '```',
+      `cd orchestrator && npm test`,
+      '```',
+      '',
+      ` - The \`SQLITE_UNKNOWN_0: not an error\` errors must no longer appear.`,
+      ` - The migration tests must pass (search for "migrates a legacy task_blockers row" in the output).`,
+      '',
+      `STEP 5 — Commit the fix: \`git add -A && git commit -m "fix: skip comment-only SQL fragments in runMigration to avoid libsql SQLITE_UNKNOWN_0 error"\``,
+      '',
+      `## Important constraints`,
+      ` - Fix \`src/db/migrate.ts\` only — do NOT modify test files or SQL migration files.`,
+      ` - Do NOT remove the comment blocks from the SQL files — filter them in the runner instead.`,
+      ` - If the diff from the failing worktree is empty or the root cause appears different from what is described here, raise a high-priority inbox item via \`mars inbox raise --from -\` explaining what you found, then exit.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (for context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only — \`git -C ${ctx.targetPath} ...\` for inspection only, never edit there): ${ctx.targetPath}`,
+      `Integration branch: ${integration}`,
+      '',
+      'Captured test failure output:',
+      '```',
+      failureOutput,
+      '```',
+      '',
+      `Save your work. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 // NOTE — intentionally absent entries (documented so future investigators don't
 // re-open these):
 //
@@ -1173,6 +1286,7 @@ const recipeList: readonly FixRecipe[] = [
   testAssertionErrorRecipe,
   testLibsqlNoSuchTableRecipe,
   testNoSuiteFoundRecipe,
+  testLibsqlNotAnErrorRecipe,
 ]
 
 /**
