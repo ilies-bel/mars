@@ -1,10 +1,10 @@
 # mars
 
-Mastra-driven orchestrator that runs Claude Code in parallel git worktrees. Installable globally; works against any git repo.
+Orchestrator that runs Claude Code in parallel git worktrees on the in-house `@mars/workflow` engine. Installable globally; works against any git repo.
 
 ## How it works
 
-Each task in the queue runs through a 4-step Mastra workflow:
+Each task in the queue runs through a 4-step `@mars/workflow` pipeline (one imperative function; each step a `ctx.step`):
 
 1. **setup** — `git worktree add` on a fresh `task/<id>` branch off `main`
 2. **code** — `claude -p "<prompt>"` runs headless inside the worktree
@@ -32,8 +32,8 @@ mars where                  # show resolved repo + state paths
 mars --repo /path/to/repo add "fix bug Y"
 mars --repo /path/to/repo run
 
-# Mastra Studio (workflow traces, time-travel, logs)
-cd orchestrator && npm run dev   # http://localhost:4111
+# run the CLI from source
+cd orchestrator && npm run dev   # tsx src/cli.ts
 ```
 
 ## Repo & state resolution
@@ -48,7 +48,7 @@ State lives at `<target-repo>/.mars/`:
 | File                  | Purpose                       |
 | --------------------- | ----------------------------- |
 | `queue.db`            | LibSQL task queue             |
-| `mastra.db`           | Mastra workflow runs/traces   |
+| `queue.db` tables     | `@mars/workflow` run/step checkpoints (workflow_runs / workflow_step_runs) |
 | `worktrees/<task-id>` | Per-task git worktree         |
 | `.merge.lock`         | Serializes the merge step     |
 
@@ -60,11 +60,9 @@ Add `/.mars/` to the target repo's `.gitignore`.
 | ------------------------------- | -------------------------------------------------- |
 | `src/cli.ts`                    | CLI: `add`, `list`, `run`, `where`                 |
 | `src/mastra/context.ts`         | Resolves target repo + state paths                 |
-| `src/mastra/index.ts`           | Mastra registration                                |
 | `src/mastra/queue.ts`           | LibSQL-backed task queue                           |
 | `src/mastra/lib/git.ts`         | All shell side-effects (git, claude, verify)       |
-| `src/workflows/`                | `implementWorkflow` (+ triage/plan/slice/init)     |
-| `src/mastra/tools/`             | Same primitives wrapped as Mastra tools            |
+| `src/workflows/`                | `@mars/workflow` pipelines: implement, triage, plan, slice, init |
 | `src/prompts/vcs-supervisor.md` | Bundled supervisor spec, inlined into `claude -p`  |
 
 ## Prerequisites
@@ -150,9 +148,6 @@ are tracked separately from `input_tokens` because they carry different
 weights in the token-volume signal — conflating them would skew any
 weighted-token calculation in the reflection pass.
 
-The two existing scorers (`verify-passed`, `merge-clean`) are also wired
-to their respective steps and persist to `mastra_scorers` in
-`.mars/mastra.db` regardless of the disable flag.
 
 **Cross-task synthesis (manual).** `mars reflect` reads the signal corpus,
 calls Claude Haiku once with the joined task records, and inserts the

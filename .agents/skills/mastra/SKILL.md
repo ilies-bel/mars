@@ -1,6 +1,6 @@
 ---
 name: mastra
-description: "Comprehensive Mastra framework guide. Teaches how to find current documentation, verify API signatures, and build agents and workflows. Covers documentation lookup strategies (embedded docs, remote docs), core concepts (agents vs workflows, tools, memory, RAG), TypeScript requirements, and common patterns. Use this skill for all Mastra development to ensure you're using current APIs from the installed version or latest documentation."
+description: "Comprehensive Mastra framework guide. NOTE: the Mars orchestrator no longer uses Mastra (migrated to the in-house @mars/workflow engine) — do NOT load this skill for any work in this repo. Retained only as reference for external Mastra projects. Teaches how to find current documentation, verify API signatures, and build agents and workflows."
 license: Apache-2.0
 metadata:
   author: Mastra
@@ -9,6 +9,12 @@ metadata:
 ---
 
 # Mastra Framework Guide
+
+> **⚠️ Not applicable to the Mars repo.** The Mars orchestrator was migrated
+> off Mastra onto the in-house `@mars/workflow` engine (`packages/workflow/`);
+> see `orchestrator/docs/migrations/0001-mastra-to-workflow-engine.md`. Do not
+> use this skill for any orchestrator work. It is kept only as a reference for
+> external, genuinely-Mastra projects.
 
 Build AI applications with Mastra. This skill teaches you how to find current documentation and build agents and workflows.
 
