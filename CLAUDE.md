@@ -54,7 +54,7 @@ before enqueueing.
 
 Tasks live in `.mars/queue.db`. Enqueue via `mars task add "..."`; the
 orchestrator dispatches automatically (worktree → code → verify → merge).
-Inspect via `mars list` or Mastra Studio.
+Inspect via `mars list`.
 
 **All mutations route through the orchestrator.** Direct `Edit`/`Write`
 on the working tree (i.e. on `main`) is a last resort — see Routing
@@ -63,7 +63,8 @@ per-change and must be re-confirmed, even within the same session.
 
 ## Top-level directories
 
-- `orchestrator/` — Mastra-driven orchestrator. Headless Claude Code in
+- `orchestrator/` — the orchestrator, running on the in-house
+  `@mars/workflow` engine (`packages/workflow/`). Headless Claude Code in
   parallel worktrees → verify → fast-forward into `main`. Conflicts go
   to `vcs-supervisor` ("Vega"). Node `>=22.13.0`.
 - `.mars/` — per-repo state (`state.db`, `queue.db`, `mastra.db`,
@@ -171,10 +172,10 @@ exactly one recovery attempt per origin failure, full stop.
 - Bun compiles the `mars` CLI into standalone single-file binaries (the
   binary embeds its own runtime; no Bun installation required to run it).
   The orchestrator runs on Node `>=22.13.0` — Bun is not involved there.
-- Mastra APIs churn — load the `mastra` skill before touching
-  `orchestrator/src/mastra/**`.
-- Register new Mastra agents/tools/workflows/scorers in
-  `orchestrator/src/mastra/index.ts`.
+- Workflows run on the in-house `@mars/workflow` engine
+  (`packages/workflow/`), NOT Mastra (removed). Author them per
+  `orchestrator/docs/implement-pipeline.md`; the `mastra` skill no longer
+  applies to this repo.
 - Never commit `.env`, `.mars/`, or `node_modules`.
 - Never `cd`. Bash CWD persists across tool calls, and `mars` resolves
   the repo from CWD upward — once shifted into `.mars/worktrees/<id>/`,

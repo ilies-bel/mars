@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
-import { createWorkflow, createStep } from '@mastra/core/workflows'
+import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
+import { createQueueWorkflowStore } from './queue-workflow-store'
 import { resolveContext } from '../mastra/context'
 import { initDatabases } from '../init/databases'
 import {
@@ -132,46 +133,28 @@ const ensureBaseline = (stack: {
   return [BASELINE_SUPERVISOR]
 }
 
-const detectStep = createStep({
-  id: 'detect-stack',
-  inputSchema: z.object({
-    fetch: z.boolean().default(true),
-    refresh: z.boolean().default(false),
-  }),
-  outputSchema: z.object({
-    fetch: z.boolean(),
-    refresh: z.boolean(),
-    stack: stackSchema,
-  }),
-  execute: async ({ inputData }) => {
-    const ctx = resolveContext()
-    const detected = detectStack(ctx.repoRoot)
-    const stack = {
-      languages: detected.languages,
-      frameworks: detected.frameworks,
-      infra: detected.infra,
-      mobile: detected.mobile,
-      specialized: detected.specialized,
-      supervisors: ensureBaseline(detected),
-    }
-    return { fetch: inputData.fetch, refresh: inputData.refresh, stack }
-  },
-})
+type DetectedStack = z.infer<typeof stackSchema>
+type RenderedSupervisor = z.infer<typeof renderedSupervisorSchema>
 
-const renderStep = createStep({
-  id: 'render-supervisors',
-  inputSchema: z.object({
-    fetch: z.boolean(),
-    refresh: z.boolean(),
-    stack: stackSchema,
-  }),
-  outputSchema: z.object({
-    stack: stackSchema,
-    rendered: z.array(renderedSupervisorSchema),
-  }),
-  execute: async ({ inputData }) => {
+const runDetectStack = async (): Promise<DetectedStack> => {
+  const ctx = resolveContext()
+  const detected = detectStack(ctx.repoRoot)
+  return {
+    languages: detected.languages,
+    frameworks: detected.frameworks,
+    infra: detected.infra,
+    mobile: detected.mobile,
+    specialized: detected.specialized,
+    supervisors: ensureBaseline(detected),
+  }
+}
+
+const runRenderSupervisors = async (
+  doFetch: boolean,
+  refresh: boolean,
+  stack: DetectedStack,
+): Promise<RenderedSupervisor[]> => {
     const ctx = resolveContext()
-    const { fetch: doFetch, refresh, stack } = inputData
 
     const fetchOpts = { refresh, cacheDir: ctx.cacheDir }
     const index = doFetch
@@ -182,7 +165,7 @@ const renderStep = createStep({
 
     const renderOne = async (
       spec: SupervisorSpec,
-    ): Promise<z.infer<typeof renderedSupervisorSchema>> => {
+    ): Promise<RenderedSupervisor> => {
       let resolved: ResolvedSpecialist | null = null
       let tried: string[] = Array.from(spec.externalSlugs)
       let outcome: 'hit' | 'miss' | 'error' = 'miss'
@@ -237,10 +220,8 @@ const renderStep = createStep({
       }
     }
 
-    const rendered = await Promise.all(stack.supervisors.map(renderOne))
-    return { stack, rendered }
-  },
-})
+    return Promise.all(stack.supervisors.map(renderOne))
+}
 
 const scopeDepth = (scope: string | undefined): number => {
   if (!scope || scope === '.' || scope === '') return 0
@@ -265,33 +246,23 @@ const flattenVerifySteps = (
   return Array.from(byName.values()).map((e) => e.entry)
 }
 
-const writeStep = createStep({
-  id: 'write-slim-init',
-  inputSchema: z.object({
-    stack: stackSchema,
-    rendered: z.array(renderedSupervisorSchema),
-  }),
-  outputSchema: z.object({
-    written: z.array(z.string()),
-  }),
-  execute: async ({ inputData }) => {
-    const ctx = resolveContext()
-    const verifySteps = flattenVerifySteps(inputData.rendered)
-    const slimResult = writeSlimInit({
-      repoRoot: ctx.repoRoot,
-      verifyConfigPath: ctx.verifyConfigPath,
-      contextPath: resolve(ctx.repoRoot, 'CONTEXT.md'),
-      adrDir: resolve(ctx.repoRoot, 'docs', 'adr'),
-      verifySteps,
-    })
-    const perFolderResult = writePerFolderClaudeMds({
-      repoRoot: ctx.repoRoot,
-      marsDir: ctx.stateDir,
-      supervisors: inputData.rendered.map((r) => r.spec),
-    })
-    return { written: [...slimResult.written, ...perFolderResult.written] }
-  },
-})
+const runWriteSlimInit = async (rendered: RenderedSupervisor[]): Promise<string[]> => {
+  const ctx = resolveContext()
+  const verifySteps = flattenVerifySteps(rendered)
+  const slimResult = writeSlimInit({
+    repoRoot: ctx.repoRoot,
+    verifyConfigPath: ctx.verifyConfigPath,
+    contextPath: resolve(ctx.repoRoot, 'CONTEXT.md'),
+    adrDir: resolve(ctx.repoRoot, 'docs', 'adr'),
+    verifySteps,
+  })
+  const perFolderResult = writePerFolderClaudeMds({
+    repoRoot: ctx.repoRoot,
+    marsDir: ctx.stateDir,
+    supervisors: rendered.map((r) => r.spec),
+  })
+  return [...slimResult.written, ...perFolderResult.written]
+}
 
 /**
  * Copy the framework's bundled Claude Code config (`.claude/**` + root
@@ -301,28 +272,16 @@ const writeStep = createStep({
  * `scaffoldClaudeConfig` with `force: true` and treat any residual conflict
  * (e.g. a file that appeared between pre-flight and now) as a hard error.
  */
-const scaffoldClaudeStep = createStep({
-  id: 'scaffold-claude',
-  inputSchema: z.object({
-    written: z.array(z.string()),
-  }),
-  outputSchema: z.object({
-    written: z.array(z.string()),
-  }),
-  execute: async ({ inputData }) => {
-    const ctx = resolveContext()
-    const result = scaffoldClaudeConfig({
-      repoRoot: ctx.repoRoot,
-      force: true,
-    })
-    if (result.status === 'conflict') {
-      throw new Error(
-        `scaffold-claude: unexpected conflict after pre-flight: ${result.conflicts.join(', ')}`,
-      )
-    }
-    return { written: [...inputData.written, ...result.written] }
-  },
-})
+const runScaffoldClaude = async (written: string[]): Promise<string[]> => {
+  const ctx = resolveContext()
+  const result = scaffoldClaudeConfig({ repoRoot: ctx.repoRoot, force: true })
+  if (result.status === 'conflict') {
+    throw new Error(
+      `scaffold-claude: unexpected conflict after pre-flight: ${result.conflicts.join(', ')}`,
+    )
+  }
+  return [...written, ...result.written]
+}
 
 /**
  * Materialise `.mars/queue.db` + `.mars/state.db` (tasks, ideas, inbox) so a
@@ -330,59 +289,65 @@ const scaffoldClaudeStep = createStep({
  * write to lazily create them. All three init paths are idempotent via
  * `CREATE TABLE IF NOT EXISTS`.
  */
-const initDatabasesStep = createStep({
-  id: 'init-databases',
-  inputSchema: z.object({
-    written: z.array(z.string()),
-  }),
-  outputSchema: z.object({
-    written: z.array(z.string()),
-  }),
-  execute: async ({ inputData }) => {
-    const ctx = resolveContext()
-    await initDatabases()
-    const dbWrites = [
-      relative(ctx.repoRoot, ctx.queueDbPath),
-      relative(ctx.repoRoot, ctx.stateDbPath),
-    ]
+const runInitDatabases = async (written: string[]): Promise<string[]> => {
+  const ctx = resolveContext()
+  await initDatabases()
+  const dbWrites = [
+    relative(ctx.repoRoot, ctx.queueDbPath),
+    relative(ctx.repoRoot, ctx.stateDbPath),
+  ]
 
-    // Merge any root-level CLAUDE.md (written by scaffold) into the init
-    // manifest so it is listed alongside the per-folder CLAUDE.md files that
-    // writePerFolderClaudeMds already recorded. The per-folder manifest was
-    // written earlier in writeStep; here we only extend it with paths that
-    // scaffold produced (i.e. those ending in 'CLAUDE.md' and not already
-    // present in the manifest).
-    const allWritten = [...inputData.written, ...dbWrites]
-    const rootClaudePaths = allWritten.filter((p) => p.endsWith('CLAUDE.md'))
-    if (rootClaudePaths.length > 0) {
-      const existing = readInitManifest(ctx.stateDir)
-      const existingSet = new Set(existing)
-      const toAdd = rootClaudePaths.filter((p) => !existingSet.has(p))
-      if (toAdd.length > 0) {
-        writeInitManifest(ctx.stateDir, [...existing, ...toAdd])
-      }
+  // Merge any root-level CLAUDE.md (written by scaffold) into the init
+  // manifest so it is listed alongside the per-folder CLAUDE.md files that
+  // writePerFolderClaudeMds already recorded. The per-folder manifest was
+  // written earlier in write-slim-init; here we only extend it with paths that
+  // scaffold produced (i.e. those ending in 'CLAUDE.md' and not already
+  // present in the manifest).
+  const allWritten = [...written, ...dbWrites]
+  const rootClaudePaths = allWritten.filter((p) => p.endsWith('CLAUDE.md'))
+  if (rootClaudePaths.length > 0) {
+    const existing = readInitManifest(ctx.stateDir)
+    const existingSet = new Set(existing)
+    const toAdd = rootClaudePaths.filter((p) => !existingSet.has(p))
+    if (toAdd.length > 0) {
+      writeInitManifest(ctx.stateDir, [...existing, ...toAdd])
     }
+  }
 
-    return { written: allWritten }
+  return allWritten
+}
+
+const initInputSchema = z.object({
+  fetch: z.boolean().default(true),
+  refresh: z.boolean().default(false),
+})
+
+type InitInput = z.infer<typeof initInputSchema>
+
+interface InitWorkflowOutput {
+  written: string[]
+}
+
+// Five linear steps, threaded by native control flow. The step NAMES
+// ('detect-stack', 'render-supervisors', 'write-slim-init', 'scaffold-claude',
+// 'init-databases') are load-bearing trace-view labels. Disk side effects
+// (verify.json, per-folder + root CLAUDE.md, the init manifest) and DB side
+// effects (queue.db/state.db) are preserved verbatim. Failures THROW; the
+// engine records the step failed.
+export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
+  id: 'init',
+  inputSchema: initInputSchema,
+  fn: async (ctx: WorkflowCtx, input: InitInput): Promise<InitWorkflowOutput> => {
+    const stack = await ctx.step('detect-stack', runDetectStack)
+    const rendered = await ctx.step('render-supervisors', () =>
+      runRenderSupervisors(input.fetch, input.refresh, stack),
+    )
+    const w1 = await ctx.step('write-slim-init', () => runWriteSlimInit(rendered))
+    const w2 = await ctx.step('scaffold-claude', () => runScaffoldClaude(w1))
+    const written = await ctx.step('init-databases', () => runInitDatabases(w2))
+    return { written }
   },
 })
-
-export const initWorkflow = createWorkflow({
-  id: 'init',
-  inputSchema: z.object({
-    fetch: z.boolean().default(true),
-    refresh: z.boolean().default(false),
-  }),
-  outputSchema: z.object({
-    written: z.array(z.string()),
-  }),
-})
-  .then(detectStep)
-  .then(renderStep)
-  .then(writeStep)
-  .then(scaffoldClaudeStep)
-  .then(initDatabasesStep)
-  .commit()
 
 export interface RunInitOptions {
   force: boolean
@@ -469,19 +434,19 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
     }
   }
 
-  const { mastra } = await import('../mastra/index')
-  const wf = mastra.getWorkflow('initWorkflow')
-  const run = await wf.createRun()
-  const result = await run.start({
-    inputData: { fetch: opts.fetch, refresh: opts.refresh },
-  })
+  const result = await runWorkflow(
+    initWorkflow,
+    { fetch: opts.fetch, refresh: opts.refresh },
+    { store: createQueueWorkflowStore() },
+  )
 
-  if (result.status !== 'success') {
-    throw new Error(`init workflow ${result.status}`)
+  if (result.status !== 'completed' || !result.output) {
+    const cause = result.error instanceof Error ? `: ${result.error.message}` : ''
+    throw new Error(`init workflow ${result.status}${cause}`)
   }
   return {
     status: 'ok',
     message: 'verify config generated',
-    written: result.result.written,
+    written: result.output.written,
   }
 }
