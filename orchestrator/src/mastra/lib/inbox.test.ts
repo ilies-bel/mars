@@ -609,6 +609,70 @@ describe('inbox', () => {
       expect(result.closed).toBe(0)
     })
   })
+
+  describe('live task state on getInboxItem (slice 6)', () => {
+    it('liveTaskStatus reflects what the liveTaskLookup returns at call time', async () => {
+      const inbox = await loadModule(repo)
+      const originId = 'task-stuck-live-1'
+      const id = await inbox.raiseInboxItem(
+        baseItem({
+          kind: 'diagnose-inconclusive',
+          originTaskId: originId,
+        }),
+      )
+
+      // Provide a lookup that simulates the task currently being 'failed'
+      const item = await inbox.getInboxItem(id, async () => ({ status: 'failed' }))
+      expect(item).not.toBeNull()
+      expect(item!.originTaskId).toBe(originId)
+      expect(item!.liveTaskStatus).toBe('failed')
+    })
+
+    it('a subsequent open reflects changed task state — not the stale status at raise time', async () => {
+      const inbox = await loadModule(repo)
+      const originId = 'task-stuck-live-2'
+      const id = await inbox.raiseInboxItem(
+        baseItem({
+          kind: 'diagnose-inconclusive',
+          originTaskId: originId,
+          payload: { taskStatusAtRaise: 'failed' },
+        }),
+      )
+
+      // First open: task is 'failed'
+      const before = await inbox.getInboxItem(id, async () => ({ status: 'failed' }))
+      expect(before!.liveTaskStatus).toBe('failed')
+
+      // Operator restarts the task → status changes to 'queued'.
+      // A subsequent open must reflect the NEW state, not the stale stored copy.
+      const after = await inbox.getInboxItem(id, async () => ({ status: 'queued' }))
+      expect(after!.liveTaskStatus).toBe('queued')
+      // The stored payload is untouched — live state is derived from the lookup.
+      expect(after!.payload.taskStatusAtRaise).toBe('failed')
+    })
+
+    it('liveTaskStatus is null when the item has no originTaskId', async () => {
+      const inbox = await loadModule(repo)
+      const id = await inbox.raiseInboxItem(
+        baseItem({ signature: 'no-origin' }), // no originTaskId
+      )
+      // The lookup must not be invoked when there is no originTaskId.
+      const lookup = vi.fn(async () => ({ status: 'failed' as string }))
+      const item = await inbox.getInboxItem(id, lookup)
+      expect(item!.liveTaskStatus).toBeNull()
+      expect(lookup).not.toHaveBeenCalled()
+    })
+
+    it('liveTaskStatus is null when the lookup finds no task', async () => {
+      const inbox = await loadModule(repo)
+      const originId = 'task-deleted'
+      const id = await inbox.raiseInboxItem(
+        baseItem({ kind: 'diagnose-inconclusive', originTaskId: originId }),
+      )
+      const item = await inbox.getInboxItem(id, async () => null)
+      expect(item!.liveTaskStatus).toBeNull()
+    })
+  })
 })
 
 describe('INBOX_KINDS membership — writer kind constants', () => {
