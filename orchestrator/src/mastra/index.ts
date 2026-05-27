@@ -9,20 +9,17 @@ import {
   SensitiveDataFilter,
 } from '@mastra/observability'
 import { initWorkflow } from '../workflows/init-workflow'
-import { triageWorkflow } from '../workflows/triage-workflow'
 import { sliceWorkflow } from '../workflows/slice-workflow'
 import { resolveContext } from './context'
 
 const { mastraDbPath, observabilityDbPath } = resolveContext()
 
 export const mastra = new Mastra({
-  // The implement pipeline is no longer a Mastra workflow — it runs on the
-  // in-house @mars/workflow engine (see workflows/implement-workflow.ts,
-  // dispatched from daemon/server.ts via runWorkflow). The remaining three
-  // workflows (init/triage/slice) stay on Mastra.
+  // implement/triage/plan now run on the in-house @mars/workflow engine (see
+  // src/workflows/*, dispatched from daemon/server.ts via runWorkflow). Only
+  // init + slice remain Mastra workflows (ported next).
   workflows: {
     initWorkflow,
-    triageWorkflow,
     sliceWorkflow,
   },
   storage: new MastraCompositeStore({

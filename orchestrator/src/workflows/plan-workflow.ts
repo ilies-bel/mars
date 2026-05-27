@@ -1,4 +1,4 @@
-import { createWorkflow, createStep } from '@mastra/core/workflows'
+import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 import { getTask } from '../mastra/queue'
 import { createProposal } from '../mastra/proposals'
@@ -6,17 +6,14 @@ import { Workers } from '../mastra/workers'
 import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
 import { getRepoRoot } from '../mastra/context'
 import { type TaskStore, getDefaultTaskStore } from '../mastra/lib/task-store'
-import { RequestContext } from '@mastra/core/di'
+import { createQueueWorkflowStore } from './queue-workflow-store'
 
 const planInputSchema = z.object({
   taskId: z.string(),
   refresh: z.boolean().default(false),
 })
 
-const planOutputSchema = z.object({
-  taskId: z.string(),
-  suggestionCount: z.number(),
-})
+type PlanInput = z.infer<typeof planInputSchema>
 
 const plannerOutputSchema = z.object({
   suggestions: z
@@ -29,6 +26,13 @@ const plannerOutputSchema = z.object({
     )
     .max(10),
 })
+
+// The plan workflow reads the task and writes Proposal rows; the daemon
+// wires the TaskStore from the composition root, read inside as
+// `ctx.services.store` (replaces the Mastra RequestContext('taskStore')).
+export interface PlanServices {
+  store: TaskStore
+}
 
 const buildPrompt = (spec: string): string =>
   `You analyze a draft software task spec and surface discrete follow-up tasks it implies but does not state.
@@ -46,6 +50,11 @@ ${spec}`
 const parsePlannerOutput = (claudeStdout: string): z.infer<typeof plannerOutputSchema> =>
   plannerOutputSchema.parse(parseClaudeJsonResult(claudeStdout))
 
+export interface RunPlanResult {
+  taskId: string
+  suggestionCount: number
+}
+
 // Contract: the planner emits follow-up suggestions as ideas (source='planner')
 // only. It MUST NOT insert question rows or otherwise produce a mid-run
 // human-question artefact — the orchestrator commits to a "plan fully up
@@ -54,68 +63,61 @@ const parsePlannerOutput = (claudeStdout: string): z.infer<typeof plannerOutputS
 // incomplete information either completes a plan or leaves the task in draft,
 // with no question artefact created. Do not reintroduce a question-emission
 // branch here.
-const generateStep = createStep({
-  id: 'generate-plan',
-  inputSchema: planInputSchema,
-  outputSchema: planOutputSchema,
-  execute: async ({ inputData, tracingContext, requestContext }) => {
-    const store: TaskStore = (requestContext.get('taskStore') as TaskStore | undefined) ?? await getDefaultTaskStore()
-    const task = await getTask(inputData.taskId, store)
-    if (!task) throw new Error(`task ${inputData.taskId} not found`)
-
-    tracingContext?.currentSpan?.update({
-      metadata: { originId: task.originId, taskId: task.id },
-    })
-
-    const r = await Workers.Planner.run(buildPrompt(task.prompt), {
-      cwd: getRepoRoot(),
-    })
-    if (r.exitCode !== 0) {
-      throw new Error(
-        `claude -p exited ${r.exitCode}: ${(r.stderr || r.stdout).slice(0, 500)}`,
-      )
-    }
-
-    const parsed = parsePlannerOutput(r.stdout)
-
-    for (const s of parsed.suggestions) {
-      await createProposal(s.title, {
-        source: 'planner',
-        author: { kind: 'agent', name: 'planner' },
-        solution: s.prompt,
-        notes: s.rationale ?? '',
-      })
-    }
-
-    return {
-      taskId: task.id,
-      suggestionCount: parsed.suggestions.length,
-    }
-  },
-})
-
-export const planWorkflow = createWorkflow({
+//
+// One imperative step ('generate-plan', load-bearing as the trace-view node
+// label). Failures THROW; the engine records the step failed.
+export const planWorkflow = defineWorkflow<PlanInput, RunPlanResult, PlanServices>({
   id: 'plan',
   inputSchema: planInputSchema,
-  outputSchema: planOutputSchema,
-})
-  .then(generateStep)
-  .commit()
+  fn: async (
+    ctx: WorkflowCtx<PlanServices>,
+    input: PlanInput,
+  ): Promise<RunPlanResult> => {
+    const store = ctx.services.store
+    return await ctx.step('generate-plan', async (): Promise<RunPlanResult> => {
+      const task = await getTask(input.taskId, store)
+      if (!task) throw new Error(`task ${input.taskId} not found`)
 
-export interface RunPlanResult {
-  taskId: string
-  suggestionCount: number
-}
+      const r = await Workers.Planner.run(buildPrompt(task.prompt), {
+        cwd: getRepoRoot(),
+      })
+      if (r.exitCode !== 0) {
+        throw new Error(
+          `claude -p exited ${r.exitCode}: ${(r.stderr || r.stdout).slice(0, 500)}`,
+        )
+      }
+
+      const parsed = parsePlannerOutput(r.stdout)
+
+      for (const s of parsed.suggestions) {
+        await createProposal(s.title, {
+          source: 'planner',
+          author: { kind: 'agent', name: 'planner' },
+          solution: s.prompt,
+          notes: s.rationale ?? '',
+        })
+      }
+
+      return {
+        taskId: task.id,
+        suggestionCount: parsed.suggestions.length,
+      }
+    })
+  },
+})
 
 export const runPlan = async (
   taskId: string,
   refresh = false,
-  requestContext?: RequestContext,
+  store?: TaskStore,
 ): Promise<RunPlanResult> => {
-  const run = await planWorkflow.createRun()
-  const result = await run.start({ inputData: { taskId, refresh }, requestContext })
-  if (result.status !== 'success') {
-    throw new Error(`plan workflow ${result.status}`)
+  const result = await runWorkflow(planWorkflow, { taskId, refresh }, {
+    store: createQueueWorkflowStore(),
+    services: { store: store ?? (await getDefaultTaskStore()) },
+  })
+  if (result.status !== 'completed' || !result.output) {
+    const cause = result.error instanceof Error ? `: ${result.error.message}` : ''
+    throw new Error(`plan workflow ${result.status}${cause}`)
   }
-  return result.result
+  return result.output
 }
