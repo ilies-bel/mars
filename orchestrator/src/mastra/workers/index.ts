@@ -262,8 +262,8 @@ const assertSystemPromptShape = (config: WorkerConfig): void => {
 // Public factory. Constructing a Worker through this path enforces the
 // systemPrompt-vs-appendSystemPrompt mutual exclusion and produces a Worker
 // whose run() delegates to the dispatch wrapper with the pinned config.
-// Exported so tests (and future Worker-derived shapes — A/B variants,
-// experimentation harnesses) can construct ad-hoc Workers with the same
+// Exported so tests (and future Worker-derived shapes — experimentation
+// harnesses, ad-hoc one-off runners) can construct Workers with the same
 // guarantees as the shipped registry.
 export const createWorker = (config: WorkerConfig): Worker => buildWorker(config)
 

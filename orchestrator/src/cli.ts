@@ -40,7 +40,6 @@ const FLAGS_WITH_VALUES = new Set([
   '--technical-file',
   '--since',
   '--limit',
-  '--variants',
   '--out',
   '--author',
   '--note',
@@ -279,13 +278,6 @@ Commands:
                                 recovery <on|off>' toggles the
                                 MARS_RECOVERY_DISABLED kill-switch in-memory
                                 (not persisted across restarts).
-  ab "<instruction>" --variants <path>
-                                run an A/B experiment: same instruction, two
-                                configurable variants from the JSON file (must
-                                contain exactly 2 entries: { prompt, model?,
-                                systemPrompt? }), pinned to the same base SHA,
-                                judged by an LLM rubric. No merge — both
-                                worktrees are retained.
   triage [<task-id>]            run triage once on one draft, or all drafts in
                                 parallel (Haiku assesses actionability)
   glossary set "<term>" "<definition>" [--avoid alias1,alias2]
@@ -625,12 +617,6 @@ Subcommands:
                      MARS_RECOVERY_DISABLED=1 (fix-task/Investigator spawns
                      are suppressed); 'off' unsets it. Not persisted —
                      a daemon restart re-reads the spawn env.`,
-  ab: `mars ab "<instruction>" --variants <path>
-
-Run an A/B experiment: same instruction, two configurable variants from
-the JSON file (must contain exactly 2 entries: { prompt, model?,
-systemPrompt? }), pinned to the same base SHA, judged by an LLM rubric.
-No merge — both worktrees are retained.`,
   triage: `mars triage [<task-id>]
 
 Run triage once on one draft, or all drafts in parallel. Haiku assesses
@@ -2330,104 +2316,6 @@ const main = async (): Promise<void> => {
     ) {
       process.exit(1)
     }
-    return
-  }
-
-  if (cmd === 'ab') {
-    const instruction = rest.join(' ')
-    if (!instruction) {
-      console.error('usage: mars ab "<instruction>" --variants <path-to-json>')
-      process.exit(1)
-    }
-    const variantsPath = flags['--variants']
-    if (!variantsPath) {
-      console.error('mars ab requires --variants <path-to-json>')
-      process.exit(1)
-    }
-    let variantsJson: unknown
-    try {
-      variantsJson = JSON.parse(readFileSync(variantsPath, 'utf8'))
-    } catch (err) {
-      console.error(`failed to read/parse ${variantsPath}: ${(err as Error).message}`)
-      process.exit(1)
-    }
-    if (!Array.isArray(variantsJson) || variantsJson.length !== 2) {
-      console.error('--variants JSON must be an array of exactly 2 entries')
-      process.exit(1)
-    }
-    const branch = process.env.INTEGRATION_BRANCH ?? 'main'
-    const { sendRequest } = await import('./mastra/daemon/client')
-    let report: {
-      experimentId: string
-      baseSha: string
-      instruction: string
-      variants: ReadonlyArray<{
-        label: 'A' | 'B'
-        worktreePath: string
-        branch: string
-        usage: {
-          inputTokens: number
-          outputTokens: number
-          cacheCreateTokens: number
-          cacheReadTokens: number
-          messageCount: number
-        }
-        verifyResult: { passed: boolean; steps: ReadonlyArray<{ name: string; passed: boolean }> }
-        wallClockMs: number
-        diff: { changedFiles: string[]; additions: number; deletions: number; patchTruncated: boolean }
-        rubric: {
-          correctness: number
-          completeness: number
-          unnecessaryChanges: number
-          mistakes: string[]
-          rationale: string
-        }
-      }>
-      judgeRationale: string
-      tokensWinner: 'A' | 'B' | 'tie'
-    }
-    try {
-      report = (await sendRequest({
-        op: 'ab',
-        instruction,
-        variants: variantsJson,
-        integrationBranch: branch,
-      })) as typeof report
-    } catch (err) {
-      console.error((err as Error).message)
-      process.exit(1)
-    }
-    console.log(`\n=== A/B experiment ${report.experimentId} ===`)
-    console.log(`base SHA: ${report.baseSha}`)
-    console.log(`instruction: ${report.instruction}`)
-    for (const v of report.variants) {
-      console.log(`\n--- Variant ${v.label} ---`)
-      console.log(`  worktree:       ${v.worktreePath}`)
-      console.log(`  branch:         ${v.branch}`)
-      console.log(`  wallClock:      ${(v.wallClockMs / 1000).toFixed(1)}s`)
-      console.log(`  tokens (in):    ${v.usage.inputTokens}`)
-      console.log(`  tokens (out):   ${v.usage.outputTokens}`)
-      console.log(`  cache create:   ${v.usage.cacheCreateTokens}`)
-      console.log(`  cache read:     ${v.usage.cacheReadTokens}`)
-      console.log(`  verify passed:  ${v.verifyResult.passed}`)
-      console.log(
-        `  diff:           ${v.diff.changedFiles.length} files, +${v.diff.additions}/-${v.diff.deletions}${v.diff.patchTruncated ? ' (truncated)' : ''}`,
-      )
-      console.log(`  rubric:`)
-      console.log(`    correctness:        ${v.rubric.correctness}/10`)
-      console.log(`    completeness:       ${v.rubric.completeness}/10`)
-      console.log(`    unnecessaryChanges: ${v.rubric.unnecessaryChanges}/10`)
-      if (v.rubric.mistakes.length > 0) {
-        console.log(`    mistakes:`)
-        for (const m of v.rubric.mistakes) console.log(`      - ${m}`)
-      }
-      console.log(`    rationale: ${v.rubric.rationale}`)
-    }
-    console.log(`\nJudge: ${report.judgeRationale}`)
-    console.log(`Token-efficiency winner: ${report.tokensWinner}`)
-    console.log(
-      `\nBoth worktrees retained for inspection. cd into either to inspect or run further commands.`,
-    )
     return
   }
 
