@@ -38,6 +38,7 @@ import {
   ensureInboxRepopulator,
 } from './inbox-repopulator'
 import { RequestContext } from '@mastra/core/di'
+import type { Logger, WorkflowEvent } from '@mars/workflow'
 import { getDefaultTaskStore } from '../lib/task-store'
 import { getDefaultDomainTaskStore } from '../store/task-store'
 import { listProposals, promoteProposal } from '../proposals'
@@ -143,6 +144,44 @@ export interface DaemonHandle {
 export interface DaemonOptions {
   integrationBranch?: string
   log?: (line: string) => void
+}
+
+/**
+ * Adapt the daemon's `log(line)` sink into the pino-shaped `Logger` the
+ * @mars/workflow engine expects. The engine calls `info/warn/error` with
+ * either `(msg)` or `(fields, msg)` and chains `child(bindings)`; we fold the
+ * bindings + fields into a single bracketed daemon log line so engine
+ * lifecycle output lands in the same `.mars/watch.log` stream as everything
+ * else. Bindings accumulate across `child` calls (runId/workflowId/step) so a
+ * line is self-describing.
+ */
+const makeWorkflowLogger = (
+  log: (line: string) => void,
+  bindings: Record<string, unknown> = {},
+): Logger => {
+  const fmt = (
+    level: string,
+    arg1: Record<string, unknown> | string,
+    arg2?: string,
+  ): string => {
+    const fields = typeof arg1 === 'string' ? {} : arg1
+    const msg = typeof arg1 === 'string' ? arg1 : arg2
+    const merged = { ...bindings, ...fields }
+    const ctx = Object.entries(merged)
+      .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
+      .join(' ')
+    return `[workflow] ${level}${ctx ? ` ${ctx}` : ''}${msg ? ` ${msg}` : ''}`
+  }
+  return {
+    info: (arg1: Record<string, unknown> | string, arg2?: string) =>
+      log(fmt('info', arg1, arg2)),
+    warn: (arg1: Record<string, unknown> | string, arg2?: string) =>
+      log(fmt('warn', arg1, arg2)),
+    error: (arg1: Record<string, unknown> | string, arg2?: string) =>
+      log(fmt('error', arg1, arg2)),
+    child: (extra: Record<string, unknown>) =>
+      makeWorkflowLogger(log, { ...bindings, ...extra }),
+  }
 }
 
 const writeLog = (logFile: string, line: string): void => {
@@ -344,27 +383,44 @@ export const startDaemon = async (
     claimedImplement.delete(task.id)
     log(`[implement] ${task.id} dispatching`)
     try {
-      const { mastra } = await import('../index')
-      const wf = mastra.getWorkflow('implementWorkflow')
-      const run = await wf.createRun()
-      // Wire the TaskStore from the composition root into the workflow so
-      // every step can route its queue reads/writes through the store
-      // rather than calling getClient() directly (ADR-0021 seam, slice 2).
+      const { runWorkflow } = await import('@mars/workflow')
+      const { implementWorkflow } = await import('../workflows/implement-workflow')
+      const { createQueueWorkflowStore } = await import('../workflows/queue-workflow-store')
+      // The implement pipeline now runs on the in-house @mars/workflow engine
+      // rather than Mastra. Two seams are wired here:
+      //   - `store`    — the engine's run/step checkpoint persistence, backed
+      //                  by `.mars/queue.db` (createQueueWorkflowStore).
+      //   - `services` — the orchestrator's TaskStore from the composition
+      //                  root, read inside the workflow as `ctx.services.store`
+      //                  (replaces the Mastra RequestContext('taskStore')).
+      // `runId: task.id` is what makes `mars continue` resume: re-dispatching
+      // the same task id re-enters runWorkflow with that runId, and every step
+      // whose record is already `'completed'` short-circuits. Resume is now
+      // entirely engine-driven — there is no `resumeFrom` hint in the input.
       const taskStore = await getDefaultTaskStore()
-      const requestContext = new RequestContext()
-      requestContext.set('taskStore', taskStore)
-      const result = await run.start({
-        inputData: {
+      const workflowStore = createQueueWorkflowStore()
+      // Pino-shaped logger adapter over the daemon's `log`. The engine emits
+      // structured run/step lifecycle lines (`step.started`, `step.completed`,
+      // `run.failed`, …); fold them into one greppable daemon log line each.
+      const workflowLogger = makeWorkflowLogger(log)
+      // Forward fine-grained progress events. The high-volume per-tool-call
+      // streams (`claude-event`, `vcs-supervisor-event`) used to flow through
+      // Mastra's workflow writer purely for live UI tailing and were not
+      // persisted here; we drop them to keep the daemon log readable and let
+      // the per-step transcript (keyed by claudeSessionId) carry the detail.
+      const onEvent = (evt: WorkflowEvent): void => {
+        if (evt.event === 'claude-event' || evt.event === 'vcs-supervisor-event') return
+        log(`[implement] ${task.id} ${evt.step ?? 'run'}:${evt.event}`)
+      }
+      const result = await runWorkflow(
+        implementWorkflow,
+        {
           taskId: task.id,
           prompt: task.prompt,
           plan: task.plan,
           tag: task.tag ?? 'coder',
           kind: task.kind ?? 'task',
           integrationBranch,
-          resumeFrom:
-            task.resumeFrom === 'verify' || task.resumeFrom === 'merge'
-              ? task.resumeFrom
-              : null,
           spec: task.spec
             ? {
                 files: [...task.spec.files],
@@ -376,15 +432,20 @@ export const startDaemon = async (
               }
             : null,
         },
-        requestContext,
-      })
+        {
+          store: workflowStore,
+          services: { store: taskStore },
+          runId: task.id,
+          logger: workflowLogger,
+          onEvent,
+        },
+      )
       const { isBlockersAbortError, isDirtyMainSetupError, isTooHardAbortError } = await import('../workflows/implement-workflow')
-      // Pass the raw error through: the detectors flatten the cause chain
-      // and accept `unknown`, so the previous `instanceof Error` precondition
-      // (which silently nulled out any wrapped/serialized error and dropped
-      // it into the generic `-> failed` log even though the task was parked
-      // `blocked`) is both unnecessary and the source of the mislabel.
-      const resultError = 'error' in result ? result.error : null
+      // Read the failure off RunResult.error (the engine puts the thrown Error
+      // there verbatim on the `failed` path). The detectors flatten the cause
+      // chain and accept `unknown`, so passing the raw error through is correct
+      // and the previous `instanceof Error` precondition is unnecessary.
+      const resultError = result.status === 'failed' ? result.error : null
       if (result.status === 'failed' && isBlockersAbortError(resultError)) {
         log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
         return
@@ -1254,12 +1315,27 @@ export const startDaemon = async (
     const verifying = await listTasks('verifying')
     for (const t of verifying) {
       if (t.branch && t.worktreePath && exists(t.worktreePath)) {
+        // The prior daemon ran this task on Mastra (or a fresh engine run with
+        // no checkpoint rows), so there is no @mars/workflow step record to
+        // resume from — and re-running setup against the surviving worktree
+        // would conflict on the existing branch/path. Clear the in-flight
+        // worktree + branch and re-queue from a clean setup, mirroring the
+        // merging not-landed path. Engine-resume (runId=task.id) is the only
+        // resume mechanism now; there is no `resumeFrom` hint to skip into
+        // verify.
         log(
-          `[reconcile] task ${t.id} was verifying; worktree intact, re-queuing at verify`,
+          `[reconcile] task ${t.id} was verifying; clearing worktree and re-queuing from setup`,
         )
+        const branch = t.branch
+        if (exists(t.worktreePath)) {
+          await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
+        }
+        await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
         await updateTask(t.id, {
           status: 'queued',
-          resumeFrom: 'verify',
+          branch: null,
+          worktreePath: null,
+          claudeSessionId: null,
           error: null,
           failedPhase: null,
         }).catch(() => {})
@@ -1320,7 +1396,6 @@ export const startDaemon = async (
           claudeSessionId: null,
           error: null,
           failedPhase: null,
-          resumeFrom: null,
         }).catch(() => {})
         bus.emit('task.queued', { taskId: t.id })
       }

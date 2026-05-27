@@ -52,9 +52,9 @@ describe('continue degrades to restart for pre-setup failures', () => {
     expect(result.note).toMatch(/pre-setup/)
 
     const after = await queue.getTask(task.id)
-    // Re-enters from setup: no resumeFrom hint, branch+worktree cleared
+    // Re-enters from setup: branch+worktree cleared. Resume is engine-driven
+    // (runId=task.id); the row carries no resume hint.
     expect(after?.status).toBe('queued')
-    expect(after?.resumeFrom).toBeNull()
     expect(after?.branch).toBeNull()
     expect(after?.worktreePath).toBeNull()
     expect(after?.error).toBeNull()
@@ -78,7 +78,6 @@ describe('continue degrades to restart for pre-setup failures', () => {
 
     const after = await queue.getTask(task.id)
     expect(after?.status).toBe('queued')
-    expect(after?.resumeFrom).toBeNull()
     expect(after?.failedPhase).toBeNull()
   })
 
@@ -114,8 +113,12 @@ describe('continue degrades to restart for pre-setup failures', () => {
     expect(result.degradedToRestart).toBe(false)
 
     const after = await queue.getTask(task.id)
+    // Re-queued as-is with the worktree preserved. Continue no longer sets a
+    // resumeFrom hint; the engine resumes via runId=task.id, short-circuiting
+    // the already-completed setup+code steps and re-entering verify on its own.
+    // failedPhase stays on the row (it drove the resume-vs-degrade decision).
     expect(after?.status).toBe('queued')
-    expect(after?.resumeFrom).toBe('verify') // skips back into verify
+    expect(after?.failedPhase).toBe('verify')
     expect(after?.branch).toBe(`task/${task.id}`) // preserved
   })
 })

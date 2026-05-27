@@ -8,9 +8,11 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "outDir": "dist",
     "jsx": "react-jsx",
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@mars/workflow": ["../packages/workflow/src/index.ts"]
+    }
   },
   "include": [
     "src/**/*"
