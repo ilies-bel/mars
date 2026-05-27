@@ -4,19 +4,33 @@ A small, **domain-agnostic** workflow engine for local TypeScript CLIs that
 drive coding agents (Claude, others). Built for the Mars orchestrator;
 designed to be useful outside it.
 
+> **This supersedes the declarative DAG model.** Earlier drafts specced
+> `defineStep({ id, deps, … })` + `defineWorkflow({ steps, output })` with a
+> topological sort. That model is gone. A workflow is now a plain
+> **imperative TypeScript function**; native control flow is the source of
+> truth. ADR 0012 (DAG step model) and ADR 0014 (linear `.then` v1
+> composition) describe the old design and will need amendment — this README
+> is the current contract.
+
 ## Why this exists
 
 The orchestrator was on Mastra but used `.then()` chains and nothing else
 — no agents, no memory, no scorers. Mastra brought seven packages and a
 migration story. This engine is the smallest thing that does the job:
 
-- **DAG steps** with Zod-typed inputs and outputs.
-- **Durable resume** from the last completed step (single SQLite file).
+- **Imperative workflows** — a workflow is `async (ctx, input) => output`.
+  Branch with `if`, repeat with `for`, sequence with `await`. No graph, no
+  `deps`, no DSL.
+- **A step contract** — `ctx.step(name, fn)` wraps each durable unit. The
+  `name` is explicit and load-bearing: it keys both resume and the trace
+  view.
+- **Checkpoint-resume durability** (single SQLite file) — a step whose
+  record is already `completed` does not re-run its `fn`.
 - **Logging by design** — every step receives a child logger; lifecycle
   events are logged automatically.
-- **Pluggable agent runtimes** — `HeadlessRuntime` for `claude -p`,
-  `TmuxRuntime` for interactive panes. Steps depend on the interface,
-  not the binary.
+- **Pluggable agent runtimes** — `HeadlessRuntime` for `claude -p` (and a
+  `TmuxRuntime` slot for interactive panes). Steps depend on the
+  interface, not the binary.
 - **Local-first.** No broker, no server, no UI. One process, one SQLite
   file, one event stream you can pipe wherever.
 
@@ -25,10 +39,19 @@ The orchestrator consumes it.
 
 ## Non-goals
 
+- Deterministic replay / event-sourced history. The codebase moves under
+  the workflow and side effects live in git and the filesystem, not in a
+  replayable event log — replay would be a category mismatch. We
+  checkpoint and resume instead.
+- Declarative or visual authoring, a graph editor, or graph↔code
+  round-trip. Code is the only authoring surface.
+- A state-machine library (XState et al.). The "state machine" is your own
+  TS control flow.
 - Distributed workers, multi-machine queues, cluster scheduling.
-- Long-running cron / scheduled triggers (use `cron` + invoke the engine).
-- Human-in-the-loop approval UI (consumer's job).
-- A workflow editor / studio.
+- Long-running / "react to every new commit forever" workflows. A workflow
+  terminates.
+- Human-in-the-loop approval UI, and the trace UI itself (consumer's job;
+  the per-step record carries everything that UI needs).
 
 ## Install
 
@@ -36,81 +59,129 @@ The orchestrator consumes it.
 npm install @mars/workflow zod
 ```
 
-Peer deps: `zod` (schemas), `better-sqlite3` (default store; optional if
-you bring your own).
+The default SQLite store uses `node:sqlite`, built into Node (stable from
+Node 22.13) — no native addon to compile, no `better-sqlite3` install step.
 
 ## Concepts
 
-### Step
+### Workflow = a function
 
-A typed unit of work with declared dependencies.
+A workflow is a plain async function. Control flow is native TypeScript.
 
 ```ts
-import { z } from 'zod';
-import { defineStep } from '@mars/workflow';
+import type { WorkflowCtx } from '@mars/workflow';
 
-const verify = defineStep({
-  id: 'verify',
-  deps: ['code'],
-  inputSchema:  z.object({ worktree: z.string() }),
-  outputSchema: z.object({ passed: z.boolean(), report: z.string() }),
-  run: async (input, ctx) => {
-    ctx.logger.info({ worktree: input.worktree }, 'verify started');
-    const result = await runVerify(input.worktree, ctx.signal);
-    ctx.emit('verify.result', result);
-    return result;
-  },
-});
+interface ImplementInput { taskId: string; prompt: string; qa: 'full' | 'none'; }
+interface ImplementOutput { merged: boolean; sha: string | null; }
+
+async function implement(
+  ctx: WorkflowCtx,
+  input: ImplementInput,
+): Promise<ImplementOutput> {
+  const wt   = await ctx.step('setup', () => createWorktree(input));
+  const code = await ctx.step('code',  () => runCoder(wt));
+
+  if (input.qa !== 'none') {
+    await ctx.step('verify', () => runVerify(wt));   // omit this = "merge without checking"
+  }
+
+  const merge = await ctx.step('merge', () => mergeToMain(wt));
+  return { merged: merge.merged, sha: merge.sha };
+}
 ```
 
-Steps receive a `ctx`:
+There is no `deps` array and no topological sort: the order the function
+reaches each `ctx.step(...)` *is* the execution order. Loops and branches
+are just loops and branches.
+
+### Step = `ctx.step(name, fn)`
+
+`name` is an explicit string and it is **load-bearing**: it keys both
+checkpoint-resume and the trace-view node label. `fn` is
+`(handle) => Promise<T> | T`; its return value is recorded as the step's
+result.
+
+- Reaching the **same name twice within a run throws.** Use templated names
+  for looped or conditional steps:
+
+  ```ts
+  for (const pkg of input.packages) {
+    await ctx.step(`verify-${pkg}`, () => runVerify(pkg));
+  }
+  ```
+
+- The `handle` lets a step annotate its own record for resume and the trace
+  view:
+
+  ```ts
+  await ctx.step('code', (handle) => {
+    handle.setSha(currentWorktreeSha);          // re-anchor point on resume
+    handle.setTranscriptKey('transcript/abc');  // full output lives by key
+    handle.setSummary('wrote 12 files');        // compact trace summary
+    return runCoder(wt);
+  });
+  ```
+
+The `ctx` a workflow receives:
 
 | Field | Purpose |
 |---|---|
-| `workflowId`, `stepId` | identity |
-| `signal` | `AbortSignal` propagated from the run |
+| `runId`, `workflowId` | run identity |
+| `step(name, fn, opts?)` | wrap a durable unit |
+| `signal` | `AbortSignal` for the run |
 | `emit(event, payload)` | fine-grained progress events |
-| `logger` | child logger scoped to this step |
+| `logger` | run-scoped child logger |
+| `services` | injected dependencies (agent runtime, git, fs…) |
 
-### Workflow
-
-A set of steps, plus an `output` function that projects step results.
-
-```ts
-import { defineWorkflow } from '@mars/workflow';
-
-export const implementWorkflow = defineWorkflow({
-  id: 'implement',
-  inputSchema:  z.object({ taskId: z.string(), prompt: z.string() }),
-  outputSchema: z.object({ merged: z.boolean(), sha: z.string().nullable() }),
-  steps: { setup, code, verify, merge },
-  output: (results) => ({
-    merged: results.merge.merged,
-    sha: results.merge.sha,
-  }),
-});
-```
-
-Steps form a DAG via `deps`. The engine topologically sorts on every
-run; cycles are a definition-time error.
-
-### Run
+### Run (and resume)
 
 ```ts
-import { runWorkflow, Sqlite3Store, pinoLogger } from '@mars/workflow';
+import { runWorkflow, SqliteStore, pinoLogger } from '@mars/workflow';
 
-const store  = new Sqlite3Store('.mars/workflow.db');
+const store  = new SqliteStore('.mars/workflow.db');
 const logger = pinoLogger();          // any compatible logger
 
-const result = await runWorkflow(implementWorkflow, {
+const result = await runWorkflow(implement, {
   taskId: 'task-abc',
   prompt: 'fix the bug in src/foo.ts',
+  qa: 'full',
 }, { store, logger });
 ```
 
-Resume is automatic: re-running with the same `workflowId + input hash`
-picks up after the last completed step. Pass `{ fresh: true }` to start
-over.
+`runWorkflow(fn, input, options)` returns
+`{ runId, status: 'completed' | 'failed', output?, error? }`. You can pass a
+bare function (its `.name` becomes the `workflowId`) or a `defineWorkflow`
+result to pin the id and an input schema:
+
+```ts
+import { defineWorkflow } from '@mars/workflow';
+import { z } from 'zod';
+
+export const implementWorkflow = defineWorkflow({
+  id: 'implement',
+  inputSchema: z.object({
+    taskId: z.string(),
+    prompt: z.string(),
+    qa: z.enum(['full', 'none']),
+  }),
+  fn: implement,
+});
+```
+
+**Resume** is checkpoint-based, not replay. Pass the existing `runId` to
+re-run:
+
+```ts
+const resumed = await runWorkflow(implement, input, { store, runId: result.runId });
+```
+
+The function body runs from the top again — that is just how an imperative
+function resumes — but every `ctx.step(name, fn)` whose stored record is
+already `completed` **short-circuits**: `fn` is not invoked and the recorded
+result is returned in its place. A step left in `running` or `failed` (e.g.
+a crash mid-step, or a verify that went red) runs again, its `attempt`
+counter incrementing. Side effects already committed to git/fs are not
+repeated; the `sha` on each record is your re-anchor point.
 
 ### Agent runtimes
 
@@ -118,81 +189,38 @@ Steps that drive a coding agent depend on the `AgentRuntime` interface,
 never on a specific binary:
 
 ```ts
-import type { AgentRuntime } from '@mars/workflow/agent';
+import type { AgentRuntime, WorkflowCtx } from '@mars/workflow';
 
-const codeStep = defineStep({
-  id: 'code',
-  deps: ['setup'],
-  inputSchema:  z.object({ worktree: z.string(), prompt: z.string() }),
-  outputSchema: z.object({ events: z.array(z.unknown()) }),
-  run: async (input, ctx) => {
-    const runtime: AgentRuntime = ctx.services.agent;
+async function code(ctx: WorkflowCtx<{ agent: AgentRuntime }>, input: { worktree: string; prompt: string }) {
+  return ctx.step('code', async (handle) => {
     const events: unknown[] = [];
-    for await (const ev of runtime.run(input.prompt, {
+    for await (const ev of ctx.services.agent.run(input.prompt, {
       cwd: input.worktree,
-      signal: ctx.signal,
+      signal: handle.signal,
     })) {
       ctx.emit('agent.event', ev);
       events.push(ev);
     }
     return { events };
-  },
-});
+  });
+}
 ```
 
-Two implementations ship in the box:
-
-#### `HeadlessRuntime`
-
-Spawns `claude -p` (or any compatible CLI), parses stream-json events,
-yields them one-by-one.
+`HeadlessRuntime` (spawns `claude -p`, yields parsed stream-json lines)
+ships as a minimal reference implementation:
 
 ```ts
-import { HeadlessRuntime } from '@mars/workflow/runtimes/headless';
+import { HeadlessRuntime } from '@mars/workflow';
 
-const runtime = new HeadlessRuntime({
-  binary: 'claude',
-  defaultArgs: ['--model', 'sonnet'],
-});
-```
-
-Use for: daemons, CI, anything unattended.
-
-#### `TmuxRuntime`
-
-Attaches to a tmux session/pane, sends the prompt as keystrokes, scrapes
-pane output. The user can watch, interrupt, or take over.
-
-```ts
-import { TmuxRuntime } from '@mars/workflow/runtimes/tmux';
-
-const runtime = new TmuxRuntime({
-  session: 'mars',
-  windowName: (input) => `task-${input.taskId}`,
-});
-```
-
-Use for: interactive supervisor mode, debugging, demos.
-
-Both runtimes implement the same `AgentRuntime` interface, so steps are
-runtime-agnostic. The orchestrator picks the runtime per-run; steps
-never know which one they got.
-
-### Wiring services into steps
-
-Steps can declare service dependencies (logger and emitter come for
-free; agent runtime / git / fs are passed in via `services`):
-
-```ts
-const result = await runWorkflow(implementWorkflow, input, {
+const result = await runWorkflow(implement, input, {
   store,
-  logger,
-  services: { agent: new HeadlessRuntime({ binary: 'claude' }) },
+  services: { agent: new HeadlessRuntime({ binary: 'claude', defaultArgs: ['--model', 'sonnet'] }) },
 });
 ```
 
-Inside a step, `ctx.services.agent` is typed against whatever the
-workflow declared in its `Services` generic.
+A `TmuxRuntime` (interactive panes the user can watch and take over) is the
+intended second implementation; the interface is the load-bearing part, so
+steps stay runtime-agnostic and the caller picks the runtime per run.
 
 ## Logging by design
 
@@ -200,64 +228,82 @@ The engine wraps a structured logger (`pino`-shaped — `info`, `warn`,
 `error`, `child`). Lifecycle events are logged automatically:
 
 ```
-{ level: 'info', runId, workflowId, stepId, event: 'step.started'  }
-{ level: 'info', runId, workflowId, stepId, event: 'step.completed', durationMs }
-{ level: 'error', runId, workflowId, stepId, event: 'step.failed', err }
+{ level: 'info',  runId, workflowId, step, event: 'step.started',   attempt }
+{ level: 'info',  runId, workflowId, step, event: 'step.completed', attempt, durationMs }
+{ level: 'info',  runId, workflowId, step, event: 'step.skipped',   attempt }   // resume
+{ level: 'error', runId, workflowId, step, event: 'step.failed',    attempt, err }
 ```
 
-Inside a step, `ctx.logger` is a child scoped to `{ runId, stepId }`.
-The same logger backs `ctx.emit` — every emitted event is also logged
-at `debug`. There is no `console.log` path in the engine.
-
-You bring the logger; the engine ships a `pinoLogger()` helper but
-accepts any compatible interface.
+Inside a step, `handle.logger` is a child scoped to `{ runId, workflowId,
+step }`. `ctx.emit(event, payload)` adds fine-grained progress events, also
+logged at `info` and forwarded to the optional `onEvent` sink. There is no
+`console.log` path in the engine — you bring the logger; the bundled
+`pinoLogger()` is a dependency-free default and `silentLogger()` suppresses
+output (handy in tests).
 
 ## Storage
 
-`WorkflowStore` is an interface. The default `Sqlite3Store`
-(better-sqlite3) creates two tables:
+`WorkflowStore` is an interface — the seam the consumer (Mars) implements
+against its own `.mars/queue.db`. Two reference impls ship: `InMemoryStore`
+(tests, ephemeral runs) and the default `SqliteStore` (`node:sqlite`), which
+creates two tables:
 
 ```sql
 CREATE TABLE workflow_runs (
-  id TEXT PRIMARY KEY,
-  workflow_id TEXT NOT NULL,
-  input_hash TEXT NOT NULL,
-  input_json TEXT NOT NULL,
-  status TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  id          TEXT PRIMARY KEY,
+  workflow_id TEXT    NOT NULL,
+  input_json  TEXT    NOT NULL,
+  status      TEXT    NOT NULL,      -- 'running' | 'completed' | 'failed'
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
 );
 
 CREATE TABLE workflow_step_runs (
-  run_id TEXT NOT NULL,
-  step_id TEXT NOT NULL,
-  status TEXT NOT NULL,
-  output_json TEXT,
-  error_json TEXT,
-  started_at INTEGER NOT NULL,
-  finished_at INTEGER,
-  PRIMARY KEY (run_id, step_id)
+  run_id         TEXT    NOT NULL,
+  step_name      TEXT    NOT NULL,   -- the explicit, load-bearing step name
+  status         TEXT    NOT NULL,   -- 'running' | 'completed' | 'failed'
+  sha            TEXT,               -- worktree SHA the step ran against (re-anchor)
+  started_at     INTEGER NOT NULL,
+  finished_at    INTEGER,
+  attempt        INTEGER NOT NULL,   -- retry count (1-based once run)
+  summary        TEXT,               -- COMPACT result summary, not full output
+  error_summary  TEXT,               -- compact failure summary
+  transcript_key TEXT,               -- key into external transcript storage
+  result_json    TEXT,               -- recorded return value (resume hands this back)
+  PRIMARY KEY (run_id, step_name)
 );
 ```
 
-You can implement `WorkflowStore` against any backend (the Mars
-orchestrator implements it against the existing `.mars/queue.db`).
+One lean record per step, keyed by `(run_id, step_name)`, serves **both**
+roles: resume reads `status` + `result_json`, and the read-only trace view
+reads `step_name`, `status`, `started_at`/`finished_at`, `attempt`, `sha`,
+and `transcript_key` to render a timeline and resolve full transcripts by
+key on expand. This per-step log is the workflow-instance analog of an
+append-only outbox — full transcripts are **referenced by key, never
+inlined**.
+
+Note there is no persisted `'skipped'` status: a step skipped on resume is
+simply one whose stored status is already `'completed'`. Skip is a
+runtime/trace concept (the `step.skipped` event), not a stored state.
 
 ## What this is not
 
-- Not a queue. It runs *a* workflow. Dispatching, retries-with-backoff,
-  and concurrency caps belong in the caller.
+- Not a queue. It runs *a* workflow. Dispatching, retries-with-backoff, and
+  concurrency caps belong in the caller.
+- Not a replay engine. Durability is checkpoint-resume; the step record is
+  the checkpoint.
 - Not durable across machines. One SQLite file, one host.
-- Not an agent framework. Agent runtimes are opaque to the engine —
-  it just streams whatever they yield.
+- Not an agent framework. Agent runtimes are opaque to the engine — it just
+  streams whatever they yield.
 
 ## Status
 
-Internal to the Mars repo, intended to be published as a standalone
-package once the orchestrator finishes migrating off Mastra. API may
-still shift; pin a version.
+Internal to the Mars repo, intended to be published as a standalone package
+once the orchestrator finishes migrating off Mastra. API may still shift;
+pin a version.
 
 ## See also
 
-- ADR 0012 — Workflow engine is domain-agnostic with pluggable agent
-  runtimes (`docs/adr/0012-...`)
+- ADR 0012 — Workflow engine domain model (the declarative DAG variant this
+  README supersedes; pending amendment).
+- ADR 0014 — Linear `.then` v1 composition (likewise pending amendment).
