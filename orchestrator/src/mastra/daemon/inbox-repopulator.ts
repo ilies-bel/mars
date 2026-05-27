@@ -102,10 +102,7 @@ async function applyInboxMutation(event: BusEvent): Promise<void> {
       body: [
         `Task \`${taskId}\` reached \`${event.type}\` without a specific recovery plan.`,
         '',
-        '**Suggested next steps:**',
-        `- Inspect: \`mars log ${taskId}\``,
-        `- Restart: \`mars restart ${taskId}\``,
-        `- Drop: \`mars drop ${taskId}\``,
+        `Inspect the full log with \`mars log ${taskId}\`.`,
       ].join('\n'),
       payload: { taskId, eventType: event.type },
       context: {},

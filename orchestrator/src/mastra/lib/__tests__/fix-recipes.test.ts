@@ -1439,7 +1439,7 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
   })
 })
 
-describe('handleTaskFailureWithFixTask investigator path flows originalPrompt', () => {
+describe('handleTaskFailureWithFixTask unknown-signature path', () => {
   let repo: string
 
   beforeEach(() => {
@@ -1451,7 +1451,7 @@ describe('handleTaskFailureWithFixTask investigator path flows originalPrompt', 
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('includes the original task prompt in the investigator task prompt so the investigator can judge intent vs. incident', async () => {
+  it('marks the source failed and raises an inbox item WITHOUT spawning an investigator task', async () => {
     const { q, ft } = await loadModules(repo)
     const originalPrompt =
       'add the nudge link in src/components/NudgePanel.tsx with a specific href'
@@ -1468,18 +1468,22 @@ describe('handleTaskFailureWithFixTask investigator path flows originalPrompt', 
     })
 
     expect(result.outcome).toBe('no-recipe')
-    expect(result.investigatorTaskId).toBeDefined()
+    // The auto-investigator is gone: no recipe-proposing task is spawned.
+    expect(
+      (result as { investigatorTaskId?: string }).investigatorTaskId,
+    ).toBeUndefined()
+    expect(result.inboxItemId).toBeTruthy()
 
-    const r = await q.getClient().execute({
-      sql: `SELECT prompt FROM tasks WHERE id = ?`,
-      args: [result.investigatorTaskId ?? ''],
+    // Source task is marked failed.
+    const source = await q.getTask(t.id)
+    expect(source?.status).toBe('failed')
+
+    // No new task rows beyond the source were created (no investigator).
+    const all = await q.getClient().execute({
+      sql: `SELECT id FROM tasks`,
+      args: [],
     })
-    const row = r.rows[0] as unknown as { prompt: string }
-    // The investigator prompt must embed the original task's text verbatim so
-    // the investigator can judge whether the failure is a real product bug or a
-    // malformed/underspecified task — without burning turn budget on a DB lookup.
-    expect(row.prompt).toContain(originalPrompt)
-    expect(row.prompt).toMatch(/## Original task prompt/i)
+    expect(all.rows.length).toBe(1)
   })
 })
 

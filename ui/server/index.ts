@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
+import { hasRecipe } from '../../orchestrator/src/mastra/lib/fix-recipes.ts'
+import { DAEMON_KILLED_SIGNATURE } from '../../orchestrator/src/mastra/lib/retry-budget.ts'
 import { loadAgents } from './agents.ts'
 import { fetchErrorKinds, proxyAction } from './daemonHttp.ts'
 import { StateDb, TaskDb } from './db.ts'
@@ -301,6 +303,7 @@ export const startServer = async (
               ? never[]
               : { id: string; label: string; op: string }[]
             staleWorktreeDetail: StaleWorktreeDetail | null
+            diagnosis: { text: string; diagnosedAt: string } | null
           }
 
           const rows: ActionQueueRow[] = []
@@ -317,12 +320,27 @@ export const startServer = async (
             const dismissed =
               ackState === 'resolved' || ackState === 'dismissed'
             const errorKind = toErrorKind(row.kind)
-            const actions =
+            const allActions =
               (registry.get(errorKind)?.recoveryActions ?? []) as {
                 id: string
                 label: string
                 op: string
               }[]
+
+            // Gate the Investigate (diagnose-failure) action to unknown-signature
+            // failures only. A signature with a registered recipe auto-recovers,
+            // and a daemon-killed task just needs a requeue — neither warrants a
+            // one-shot root-cause diagnosis. The signature lives on the task row.
+            const gatedTask = taskById.get(entityId)
+            const sig = gatedTask?.failureSignature ?? null
+            const diagnosable =
+              uiKind === 'failed-task' &&
+              sig !== null &&
+              sig !== DAEMON_KILLED_SIGNATURE &&
+              !hasRecipe(sig)
+            const actions = diagnosable
+              ? allActions
+              : allActions.filter((a) => a.op !== 'diagnose-failure')
 
             // DAG enrichment for task-backed rows.
             let dag: ActionQueueRow['dag'] = null
@@ -409,6 +427,23 @@ export const startServer = async (
               }
             }
 
+            // Diagnosis persisted by the diagnose-failure agent onto the inbox
+            // payload as { text, diagnosedAt }.
+            let diagnosis: { text: string; diagnosedAt: string } | null = null
+            const rawDiagnosis = row.payload.diagnosis
+            if (
+              rawDiagnosis !== null &&
+              typeof rawDiagnosis === 'object' &&
+              typeof (rawDiagnosis as { text?: unknown }).text === 'string' &&
+              typeof (rawDiagnosis as { diagnosedAt?: unknown }).diagnosedAt ===
+                'string'
+            ) {
+              diagnosis = {
+                text: (rawDiagnosis as { text: string }).text,
+                diagnosedAt: (rawDiagnosis as { diagnosedAt: string }).diagnosedAt,
+              }
+            }
+
             rows.push({
               id: row.id,
               kind: uiKind,
@@ -423,6 +458,7 @@ export const startServer = async (
               errorKind,
               actions,
               staleWorktreeDetail,
+              diagnosis,
             })
           }
 
@@ -458,10 +494,7 @@ export const startServer = async (
               title: `Restart all daemon-killed tasks (${daemonKilledVisible.length})`,
               body:
                 `${daemonKilledVisible.length} tasks were in flight when the daemon was killed.\n` +
-                `None of these failures are task faults — a fresh dispatch is very likely to succeed.\n\n` +
-                `Next actions:\n` +
-                `  • Restart all at once:  mars restart ${daemonKilledVisible.map((r) => r.entityId).join(' ')}\n` +
-                `  • Or use the button above to restart all in one click.`,
+                `None of these failures are task faults — a fresh dispatch is very likely to succeed.`,
               at: newest.at,
               dag: null,
               dismissed: false,
@@ -469,6 +502,7 @@ export const startServer = async (
               errorKind: 'daemon-killed-batch',
               actions: batchActions,
               staleWorktreeDetail: null,
+              diagnosis: null,
             })
           }
 

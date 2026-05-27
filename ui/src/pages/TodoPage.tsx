@@ -106,8 +106,9 @@ interface ActionBarProps {
   item: ActionQueueItem
 }
 
-// Op string used in two places inside ActionBar; defined once to avoid drift.
+// Op strings used in multiple places inside ActionBar; defined once to avoid drift.
 const INVESTIGATE_OP = 'investigate'
+const DIAGNOSE_OP = 'diagnose-failure'
 
 /**
  * Renders one button per recovery action on the row. Clicking proxies the
@@ -148,6 +149,10 @@ const ActionBar = ({ item }: ActionBarProps) => {
   // Show a specific label while the Investigate (Haiku) call is in-flight.
   const isInvestigating =
     mutation.isPending && mutation.variables?.action.op === INVESTIGATE_OP
+
+  // Show a specific label while the diagnose-failure (Sonnet) call is in-flight.
+  const isDiagnosing =
+    mutation.isPending && mutation.variables?.action.op === DIAGNOSE_OP
 
   const run = (action: ActionDescriptor) => {
     if (mutation.isPending) return
@@ -190,7 +195,9 @@ const ActionBar = ({ item }: ActionBarProps) => {
             >
               {action.op === INVESTIGATE_OP && isInvestigating
                 ? 'Investigating…'
-                : action.label}
+                : action.op === DIAGNOSE_OP && isDiagnosing
+                  ? 'Diagnosing…'
+                  : action.label}
             </button>
           ),
         )}
@@ -286,14 +293,29 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
           )}
           <div>
             <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Next action
+              Details
             </dt>
             <dd className="whitespace-pre-wrap text-fg">
               {item.body.trim() || (
-                <span className="text-iron/70">(no action recorded)</span>
+                <span className="text-iron/70">(no details recorded)</span>
               )}
             </dd>
           </div>
+          {item.diagnosis ? (
+            <div>
+              <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+                Diagnosis
+              </dt>
+              <dd>
+                <p className="mb-1 text-[10px] text-iron/60">
+                  {formatTime(item.diagnosis.diagnosedAt)}
+                </p>
+                <p className="whitespace-pre-wrap text-fg">
+                  {item.diagnosis.text}
+                </p>
+              </dd>
+            </div>
+          ) : null}
           {item.dag && (
             <>
               {item.dag.proposalId && (
