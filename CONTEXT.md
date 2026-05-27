@@ -100,7 +100,7 @@ TaskStatus terminal: the task was abandoned without merging (e.g. zero-commit ru
 TaskStatus: the task has at least one open task_blocker row referencing another task that has not yet reached 'done'. Auto-promotes to 'queued' when the last blocker clears.
 
 **prd-ready**:
-IdeaStatus: a fully-shaped idea that has passed validateIdeaShaped(). Eligible for the slicer. Produced by 'mars idea promote' — note the verb name mismatch with the status.
+ProposalStatus: a fully-shaped proposal that has passed validateProposalShaped(). Eligible for the slicer. Produced by 'mars proposal promote' — note the verb name mismatch with the status.
 
 **sliced**:
 IdeaStatus terminal: the slicer has decomposed the idea into N tracer-bullet tasks (each linked back via parent_idea_id). The idea row stays alive as the PRD reference.
