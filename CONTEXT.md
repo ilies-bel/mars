@@ -76,7 +76,7 @@ TaskStatus initial state: a task row that has been authored but not yet triaged 
 TaskStatus: a task that has cleared triage and is waiting for a Worker slot. The dispatcher picks tasks in this state.
 
 **ready (task)**:
-TaskStatus: legacy/unreachable state that predates 'queued' as the claimable state. Slated for removal (idea 05fad6e6).
+TaskStatus: legacy/unreachable state that predates 'queued' as the claimable state. Slated for removal (proposal 05fad6e6).
 
 **running (task)**:
 TaskStatus: a task whose code step (claude -p in the worktree) is currently executing.
