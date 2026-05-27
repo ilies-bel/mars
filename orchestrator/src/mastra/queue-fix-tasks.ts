@@ -600,11 +600,11 @@ export const handleTaskFailureWithFixTask = async (
   // park the source in a new `'flake-blocked'` status, raise an inbox
   // item, and return without enqueueing a fix-task. Dependencies (file
   // separately, then wire here):
-  //   - parser for failing test paths (idea 5710b256)
-  //   - 'flake-blocked' TaskStatus + plumbing (idea abfca8d8)
-  //   - integration-branch re-run helper (idea b4da8c0e)
+  //   - parser for failing test paths (proposal 5710b256)
+  //   - 'flake-blocked' TaskStatus + plumbing (proposal abfca8d8)
+  //   - integration-branch re-run helper (proposal b4da8c0e)
   //   - structured failure-context plumbing on this entrypoint
-  //     (idea adee06a6) — must extend HandleTaskFailureViaTaskInput
+  //     (proposal adee06a6) — must extend HandleTaskFailureViaTaskInput
   //     with spec.files + pre-computed integration re-run results,
   //     since classifyError today only sees errorOutput.
   // No recipe for this signature — do NOT fall back to a generic prompt

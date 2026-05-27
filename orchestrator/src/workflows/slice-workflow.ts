@@ -11,11 +11,11 @@ import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
 import { getRepoRoot } from '../mastra/context'
 
 const sliceInputSchema = z.object({
-  ideaId: z.string(),
+  proposalId: z.string(),
 })
 
 const sliceOutputSchema = z.object({
-  ideaId: z.string(),
+  proposalId: z.string(),
   status: z.string(),
   taskIds: z.array(z.string()),
 })
@@ -128,7 +128,7 @@ const renderUserStories = (stories: readonly string[]): string => {
   return stories.map((s, i) => `${i + 1}. ${s}`).join('\n')
 }
 
-export const buildSlicerPrompt = (idea: {
+export const buildSlicerPrompt = (proposal: {
   id: string
   title: string
   problem: string
@@ -242,27 +242,27 @@ surrounding prose, no code fences, and no commentary:
 PRD to decompose
 ================
 
-Title: ${idea.title}
+Title: ${proposal.title}
 
 Problem
 -------
-${idea.problem || '(not specified)'}
+${proposal.problem || '(not specified)'}
 
 Solution
 --------
-${idea.solution || '(not specified)'}
+${proposal.solution || '(not specified)'}
 
 User stories
 ------------
-${renderUserStories(idea.userStories)}
+${renderUserStories(proposal.userStories)}
 
 Out of scope
 ------------
-${idea.outOfScope || '(not specified)'}
+${proposal.outOfScope || '(not specified)'}
 
 Notes
 -----
-${idea.notes || '(not specified)'}
+${proposal.notes || '(not specified)'}
 `
 
 const parseSlicerOutput = (
@@ -503,7 +503,7 @@ const truncateAtWord = (text: string, maxLen: number): string => {
  * Exported for unit testing.
  */
 export const composeTaskPrompt = (
-  idea: {
+  proposal: {
     id: string
     title: string
     problem: string
@@ -531,7 +531,7 @@ export const composeTaskPrompt = (
       ? `\n## Files\n\n${allFiles.map((f) => `- ${f}`).join('\n')}\n`
       : ''
 
-  const rawGoal = (idea.solution || idea.title).trim()
+  const rawGoal = (proposal.solution || proposal.title).trim()
   const goal = truncateAtWord(rawGoal, DIGEST_GOAL_CHARS)
 
   const blockers =
@@ -539,14 +539,14 @@ export const composeTaskPrompt = (
       ? '(none)'
       : `slices ${slice.blockedBy.join(', ')} in this PRD`
 
-  const rawNonGoals = (idea.outOfScope || '').trim()
+  const rawNonGoals = (proposal.outOfScope || '').trim()
   const nonGoals = rawNonGoals
     ? truncateAtWord(rawNonGoals, DIGEST_NON_GOALS_CHARS)
     : '(none)'
 
   return `# ${slice.title}
 
-Slice ${index} of ${total} for PRD ${idea.id}: ${idea.title}
+Slice ${index} of ${total} for PRD ${proposal.id}: ${proposal.title}
 Type: ${slice.type}
 
 ## What to build
@@ -594,15 +594,15 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
   fn: async (ctx: WorkflowCtx, input: SliceInput): Promise<SliceOutput> =>
     ctx.step('generate-slices', async (): Promise<SliceOutput> => {
     const inputData = input
-    const idea = await getProposal(inputData.ideaId)
-    if (!idea) throw new Error(`idea ${inputData.ideaId} not found`)
-    if (idea.status !== 'prd-ready') {
+    const proposal = await getProposal(inputData.proposalId)
+    if (!proposal) throw new Error(`proposal ${inputData.proposalId} not found`)
+    if (proposal.status !== 'prd-ready') {
       throw new Error(
-        `idea ${idea.id} is '${idea.status}'; only prd-ready ideas can be sliced`,
+        `proposal ${proposal.id} is '${proposal.status}'; only prd-ready proposals can be sliced`,
       )
     }
 
-    const r = await Workers.Slicer.run(buildSlicerPrompt(idea), {
+    const r = await Workers.Slicer.run(buildSlicerPrompt(proposal), {
       cwd: getRepoRoot(),
     })
     if (r.exitCode !== 0) {
@@ -643,10 +643,10 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     const ideasClient = getProposalsClient()
 
     // Pre-flight: crash-recovery deduplication. A process crash between
-    // Phase 1 (task inserts) and Phase 4 (status flip) leaves the idea
+    // Phase 1 (task inserts) and Phase 4 (status flip) leaves the proposal
     // prd-ready with orphaned tasks in the queue. Without this cleanup,
     // a retry would insert a fresh set of tasks on top of the orphans,
-    // creating duplicates. Delete any tasks that claim this idea as
+    // creating duplicates. Delete any tasks that claim this proposal as
     // parent before starting Phase 1 so retries are idempotent.
     await taskStore
       .execute({
@@ -655,48 +655,48 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
               ) OR blocker_task_id IN (
                 SELECT id FROM tasks WHERE parent_proposal_id = ?
               )`,
-        args: [idea.id, idea.id],
+        args: [proposal.id, proposal.id],
       })
       .catch(() => {})
     await taskStore
       .execute({
         sql: `DELETE FROM tasks WHERE parent_proposal_id = ?`,
-        args: [idea.id],
+        args: [proposal.id],
       })
       .catch(() => {})
 
     const taskIds: string[] = []
-    // Tracks whether Phase 4 successfully flipped the idea row to 'sliced'.
+    // Tracks whether Phase 4 successfully flipped the proposal row to 'sliced'.
     // The catch block uses this to compensate (revert to 'prd-ready') when
-    // a failure after the flip would otherwise strand the idea as 'sliced'
+    // a failure after the flip would otherwise strand the proposal as 'sliced'
     // with no surviving tasks — wedging it permanently, since the
     // precondition above refuses to re-slice anything that is not
     // 'prd-ready' and the daemon's auto-slice loop only picks up
-    // 'prd-ready' ideas.
-    let ideaFlipped = false
+    // 'prd-ready' proposals.
+    let proposalFlipped = false
 
     // The writes span two DBs (queue.db for tasks/blockers, state.db for
-    // the idea row), so we cannot wrap them in a single transaction. We
+    // the proposal row), so we cannot wrap them in a single transaction. We
     // do best-effort with cleanup on error: if anything fails after task
     // inserts begin, delete the inserted slice tasks AND revert the
-    // idea's status back to 'prd-ready' if we already flipped it, before
-    // re-throwing — so a failed slice is fully undone and the idea is
+    // proposal's status back to 'prd-ready' if we already flipped it, before
+    // re-throwing — so a failed slice is fully undone and the proposal is
     // re-sliceable.
     try {
-      // Phase 1: insert each slice as a 'draft' task carrying parent_idea_id
+      // Phase 1: insert each slice as a 'draft' task carrying parent_proposal_id
       // and slice_index. We transition status in Phase 3.
       for (let i = 0; i < total; i += 1) {
         const slice = parsed.slices[i]
-        const prompt = composeTaskPrompt(idea, slice, i + 1, total)
+        const prompt = composeTaskPrompt(proposal, slice, i + 1, total)
         const verifyCmd =
           slice.verifyCmd !== null && slice.verifyCmd.trim().length > 0
             ? slice.verifyCmd
             : null
         const files = sliceFilesForPersistence(slice)
         const task = await enqueueTask(prompt, undefined, {
-          author: idea.author ?? undefined,
-          originId: idea.id,
-          parentProposalId: idea.id,
+          author: proposal.author ?? undefined,
+          originId: proposal.id,
+          parentProposalId: proposal.id,
           sliceIndex: i + 1,
           spec: {
             files,
@@ -730,26 +730,26 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
           args: [status, now, taskIds[i]],
         })
       }
-      // Defensive: never mark an idea 'sliced' with zero tasks. The
+      // Defensive: never mark a proposal 'sliced' with zero tasks. The
       // slicerOutputSchema already enforces `slices.min(1)` and Phase 1
       // pushes every successfully-enqueued task into `taskIds`, so this
       // branch only fires if some upstream path silently committed an
       // empty parse result. Throwing here lets the catch block revert
       // any partial state and surface the bug instead of stranding the
-      // idea as 'sliced' with no work to do.
+      // proposal as 'sliced' with no work to do.
       if (taskIds.length === 0) {
         throw new Error(
-          `slicer produced 0 tasks for idea ${idea.id}; refusing to mark idea 'sliced' with no surviving tasks`,
+          `slicer produced 0 tasks for proposal ${proposal.id}; refusing to mark proposal 'sliced' with no surviving tasks`,
         )
       }
-      // Phase 4: flip the idea row to 'sliced' so subsequent invocations
+      // Phase 4: flip the proposal row to 'sliced' so subsequent invocations
       // refuse to re-slice (the precondition above checks 'prd-ready').
       // markProposalSliced updates state.db and emits proposal.sliced on
       // the event bus (best-effort, non-atomic with the queue.db writes).
-      await markProposalSliced(idea.id, taskIds.length)
-      ideaFlipped = true
+      await markProposalSliced(proposal.id, taskIds.length)
+      proposalFlipped = true
       // Phase 5 (ADR-0015 promote transfer): any task that was blocked by
-      // THIS idea via task_proposal_blockers must now be re-pointed at the
+      // THIS proposal via task_proposal_blockers must now be re-pointed at the
       // resulting work, atomically, so no dispatcher tick observes the
       // dependent with zero blockers between the delete and the insert.
       // transferProposalBlockerToTask does both writes (delete the
@@ -768,7 +768,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       // shape. True N-fan-out is deferred and called out in the report.
       if (taskIds.length > 0) {
         const { transferProposalBlockerToTask } = await import('../mastra/queue')
-        await transferProposalBlockerToTask(idea.id, taskIds[0])
+        await transferProposalBlockerToTask(proposal.id, taskIds[0])
       }
     } catch (error: unknown) {
       for (const id of taskIds) {
@@ -782,31 +782,31 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
           })
           .catch(() => {})
       }
-      // Compensating revert: the writes that mutate state.db (the idea
+      // Compensating revert: the writes that mutate state.db (the proposal
       // status flip in Phase 4) live outside the queue.db cleanup above
       // and cannot be wrapped in a single transaction with the task
-      // inserts. If we already flipped the idea to 'sliced' before
+      // inserts. If we already flipped the proposal to 'sliced' before
       // failing later (e.g. in Phase 5's blocker-transfer), revert it
       // back to 'prd-ready' so the daemon auto-slice loop and
       // `mars proposal slice` can pick it up again. Best-effort — a revert
       // failure should not mask the original cause.
-      if (ideaFlipped) {
+      if (proposalFlipped) {
         await ideasClient
           .execute({
             sql: `UPDATE proposals SET status = 'prd-ready', updated_at = ? WHERE id = ?`,
-            args: [Date.now(), idea.id],
+            args: [Date.now(), proposal.id],
           })
           .catch(() => {})
       }
       throw error
     }
 
-    return { ideaId: idea.id, status: 'sliced', taskIds }
+    return { proposalId: proposal.id, status: 'sliced', taskIds }
     }),
 })
 
 export interface RunSliceResult {
-  ideaId: string
+  proposalId: string
   status: string
   taskIds: string[]
 }
@@ -865,8 +865,8 @@ export const describeSliceFailure = (result: unknown): string => {
     : message
 }
 
-export const runSlice = async (ideaId: string): Promise<RunSliceResult> => {
-  const result = await runWorkflow(sliceWorkflow, { ideaId }, {
+export const runSlice = async (proposalId: string): Promise<RunSliceResult> => {
+  const result = await runWorkflow(sliceWorkflow, { proposalId }, {
     store: createQueueWorkflowStore(),
   })
   if (result.status !== 'completed' || !result.output) {

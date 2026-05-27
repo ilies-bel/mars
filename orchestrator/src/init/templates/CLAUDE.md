@@ -68,8 +68,8 @@ re-confirmed, even within the same session.
 The Mars inbox is the single human-facing work surface. Everything
 that needs the user — operational alerts from self-heal, tasks the
 orchestrator stopped on after exhausting retries (kind
-`task-blocked`), and draft ideas waiting to be shaped (kind
-`idea-needs-shaping`) — appears as an inbox message. Pick one via
+`task-blocked`), and draft proposals waiting to be shaped (kind
+`draft-proposal`) — appears as an inbox message. Pick one via
 `mars inbox list` or `/mars:inbox`; the inbox dispatches to the right
 resolver (`/mars:unblock`, `/mars:grill`, or ack/resolve/dismiss).
 

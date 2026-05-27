@@ -1,13 +1,13 @@
 /**
  * Mars id value object.
  *
- * A Mars id frames an entity (`task` or `idea`) so an agent can read the
+ * A Mars id frames an entity (`task` or `proposal`) so an agent can read the
  * kind directly from a pasted id. The bare hex is the canonical identity:
  * equality is on the hex alone, the kind/slug are presentation framing.
  *
  * Four user-facing input shapes are accepted by `parseMarsId`:
- *   1. Full rendered form         — `mars-task-<hex>` or `mars-idea-<hex>-<slug>`
- *   2. Prefix without slug        — `mars-idea-<hex>` (no trailing slug)
+ *   1. Full rendered form         — `mars-task-<hex>` or `mars-proposal-<hex>-<slug>`
+ *   2. Prefix without slug        — `mars-proposal-<hex>` (no trailing slug)
  *   3. Bare hex                   — `<hex>` (8 chars, kind unknown)
  *   4. Hex prefix (partial)       — `<hex-prefix>` (1–7 chars, partial lookup)
  *
@@ -22,7 +22,7 @@
  * hand.
  */
 
-const KINDS = ['task', 'idea'] as const
+const KINDS = ['task', 'proposal'] as const
 export type MarsIdKind = (typeof KINDS)[number]
 
 const HEX_RE = /^[0-9a-f]+$/
@@ -38,7 +38,7 @@ function isFullHex(value: string): boolean {
 }
 
 /**
- * A complete Mars id: a kind, the 8-hex identity, and (for ideas) an
+ * A complete Mars id: a kind, the 8-hex identity, and (for proposals) an
  * optional slug. Always-complete: every instance can be rendered to its
  * user-facing form.
  */

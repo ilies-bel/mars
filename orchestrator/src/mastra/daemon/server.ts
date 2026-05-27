@@ -265,7 +265,7 @@ export const startDaemon = async (
 
   await initQueue()
 
-  // Source-stamp guard for the ideas->proposals rename (and any future
+  // Source-stamp guard for the proposals schema migration (and any future
   // schema-rename that lands in proposals.ts). Captured before any RPC is
   // served; checked by proposal-mutating handlers. See stale-detection.ts.
   const proposalsStamp = captureProposalsStamp()
@@ -1231,28 +1231,28 @@ export const startDaemon = async (
     bus.emit('task.refine', { taskId: id, refresh })
   }
 
-  const handleIdeaPromote = async (
-    ideaId: string,
-  ): Promise<{ ideaId: string; status: string }> => {
+  const handleProposalPromote = async (
+    proposalId: string,
+  ): Promise<{ proposalId: string; status: string }> => {
     assertProposalsSourceFresh(proposalsStamp)
-    const idea = await promoteProposal(ideaId)
+    const proposal = await promoteProposal(proposalId)
     // Auto-slice: chain slicing fire-and-forget so the RPC stays fast and a
-    // slicer failure (e.g. malformed PRD) leaves the idea in prd-ready for the
-    // operator to inspect and re-promote without aborting the promote itself.
-    if (idea.status === 'prd-ready') {
-      void handleIdeaSlice(idea.id).catch((err) =>
-        log(`[auto-slice] idea ${idea.id} failed: ${(err as Error).message}`),
+    // slicer failure (e.g. malformed PRD) leaves the proposal in prd-ready for
+    // the operator to inspect and re-promote without aborting the promote itself.
+    if (proposal.status === 'prd-ready') {
+      void handleProposalSlice(proposal.id).catch((err) =>
+        log(`[auto-slice] proposal ${proposal.id} failed: ${(err as Error).message}`),
       )
     }
-    return { ideaId: idea.id, status: idea.status }
+    return { proposalId: proposal.id, status: proposal.status }
   }
 
-  const handleIdeaSlice = async (
-    ideaId: string,
-  ): Promise<{ ideaId: string; status: string; taskIds: string[] }> => {
+  const handleProposalSlice = async (
+    proposalId: string,
+  ): Promise<{ proposalId: string; status: string; taskIds: string[] }> => {
     assertProposalsSourceFresh(proposalsStamp)
     const { runSlice } = await import('../../workflows/slice-workflow')
-    const result = await runSlice(ideaId)
+    const result = await runSlice(proposalId)
     // Newly-queued slice tasks need to enter the implement pool. Emit one
     // 'task.queued' per id; the bus subscriber pushes them into pendingImplement
     // and drain() picks them up under the implement semaphore.
@@ -1448,14 +1448,14 @@ export const startDaemon = async (
       }
     }
 
-    // Ideas promoted while the daemon was offline are still in prd-ready;
+    // Proposals promoted while the daemon was offline are still in prd-ready;
     // pick them up and slice. Failures stay logged but don't abort reconcile.
     try {
       const stalled = await listProposals({ status: 'prd-ready' })
-      for (const idea of stalled) {
-        log(`[reconcile-slice] idea ${idea.id} prd-ready on startup; slicing`)
-        void handleIdeaSlice(idea.id).catch((err) =>
-          log(`[reconcile-slice] idea ${idea.id} failed: ${(err as Error).message}`),
+      for (const proposal of stalled) {
+        log(`[reconcile-slice] proposal ${proposal.id} prd-ready on startup; slicing`)
+        void handleProposalSlice(proposal.id).catch((err) =>
+          log(`[reconcile-slice] proposal ${proposal.id} failed: ${(err as Error).message}`),
         )
       }
     } catch (err) {
@@ -1473,8 +1473,8 @@ export const startDaemon = async (
     'continue',
     'restart',
     'refine',
-    'idea.promote',
-    'idea.slice',
+    'proposal.promote',
+    'proposal.slice',
     'glossary-write',
     'adr-add',
     'init',
@@ -1545,12 +1545,12 @@ export const startDaemon = async (
           const result = await handleRemoveBlockers(req.id, req.blockerIds ?? [])
           return { ok: true, data: result }
         }
-        case 'idea.promote': {
-          const r = await handleIdeaPromote(req.ideaId)
+        case 'proposal.promote': {
+          const r = await handleProposalPromote(req.proposalId)
           return { ok: true, data: r }
         }
-        case 'idea.slice': {
-          const r = await handleIdeaSlice(req.ideaId)
+        case 'proposal.slice': {
+          const r = await handleProposalSlice(req.proposalId)
           return { ok: true, data: r }
         }
         case 'refine': {
