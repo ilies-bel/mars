@@ -2,7 +2,7 @@ import { NavBar } from '@/widgets/NavBar'
 import { TaskDetailDrawer } from '@/widgets/TaskDetailDrawer'
 import { ProposalDetailDrawer } from '@/widgets/ProposalDetailDrawer'
 import { useHashRoute } from '@/shared/useHashRoute'
-import { detectRoute, parseProposalRoute, parseTaskRoute } from '@/shared/routing'
+import { parseProposalRoute, parseTaskRoute, resolvePageRoute } from '@/shared/routing'
 import { useTodo } from '@/entities/todo/useTodo'
 import { AgentsPage } from '@/pages/AgentsPage'
 import { ProgressPage } from '@/pages/ProgressPage'
@@ -24,10 +24,7 @@ const App = () => {
   const proposal = proposalId
     ? (drafts.find((d) => d.id === proposalId) ?? null)
     : null
-  const overlayOpen =
-    (taskId && hash.startsWith('#/task/')) ||
-    (proposalId && hash.startsWith('#/proposal/'))
-  const route = overlayOpen ? 'progress' : detectRoute(hash)
+  const route = resolvePageRoute(hash)
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
       <NavBar hash={hash} />
