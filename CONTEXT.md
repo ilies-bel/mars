@@ -135,10 +135,6 @@ A semver git tag (vMAJOR.MINOR.PATCH) on the mars-framework repository; the cano
 The slice of the Graph view's blocker DAG anchored at a selected node — by default the upstream blocker chain to its roots plus one downstream hop, with the selected node's originating Idea attached as a fixed provenance hop.
 _Avoid_: focus query, focus mode
 
-**Idea dependency**:
-A row in idea_dependencies asserting that one Idea cannot be meaningfully PRD-shaped until another Idea reaches sliced; lives in the planning graph, is written by operators or by the recursive planner when it spawns a gap-filling child Idea, and is never fanned out into task_blockers when the blocker Idea is sliced.
-_Avoid_: idea blocker
-
 **Bundle**:
 A tarball asset (mars-bundle-vX.Y.Z.tar.gz) containing manifest.json plus exactly the union of its owned and hybrid paths at a specific framework version. Published on the matching GitHub Release alongside a .sha256 sidecar; consumed by mars install and mars update.
 _Avoid_: release tarball, framework bundle, mars bundle
