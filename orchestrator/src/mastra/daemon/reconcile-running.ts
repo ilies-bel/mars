@@ -27,8 +27,8 @@ const exec = promisify(execFile)
  *  1. Remove the stale worktree directory if it still exists on disk.
  *  2. Delete the task branch from git (best-effort; ignored if already gone).
  *  3. Reset the task row to `queued` with all in-flight fields cleared —
- *     `branch`, `worktreePath`, `claudeSessionId`, `error`, `failedPhase`,
- *     `resumeFrom` — so the next dispatch starts a clean setup step.
+ *     `branch`, `worktreePath`, `claudeSessionId`, `error`, `failedPhase` —
+ *     so the next dispatch starts a clean setup step.
  *  4. `retryCount` is intentionally NOT touched: the restart is not a fault
  *     and must not consume a retry-budget slot.
  *
@@ -61,7 +61,6 @@ export const requeueRunningTasksFromPriorDaemon = async (
       claudeSessionId: null,
       error: null,
       failedPhase: null,
-      resumeFrom: null,
     }).catch(() => {})
 
     requeued.push(t.id)

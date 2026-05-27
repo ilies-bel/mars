@@ -254,13 +254,6 @@ export interface Task {
    */
   failedPhase: FailedPhase | null
   /**
-   * When set, the dispatcher passes this hint into the workflow run so the
-   * earlier steps (setup, code, optionally verify) pass through without
-   * re-executing. Cleared on every successful step entry. Only `mars
-   * continue` sets it.
-   */
-  resumeFrom: FailedPhase | null
-  /**
    * Structured-task contract. NULL on legacy rows where `prompt` is the
    * complete brief. When populated, `composePrompt` renders the spec on
    * top of `prompt` so the agent sees a typed checklist instead of free
@@ -465,11 +458,15 @@ export const initQueue = async (): Promise<void> => {
   // failed_phase: which step stamped the failure ('code' | 'verify' | 'merge').
   // Backed by application-level writes only on the failure transition; the
   // CHECK constraint is enforced in TypeScript (see {@link FailedPhase}).
-  // resume_from: hint set by 'mars continue' so the dispatcher knows which
-  // step to skip into. Cleared on every step entry.
   if (!names.has('failed_phase')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN failed_phase TEXT`)
   }
+  // resume_from: LEGACY. It was the `mars continue` hint that told the old
+  // Mastra dispatcher which step to skip into. Resume is now engine-driven —
+  // the @mars/workflow engine resumes by re-dispatching with runId=task.id and
+  // skipping already-`completed` step records — so this column is no longer
+  // read or written. The CREATE is retained (no migration to drop it) so an
+  // existing queue.db keeps its schema; new code simply ignores the column.
   if (!names.has('resume_from')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN resume_from TEXT`)
   }
@@ -956,7 +953,6 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     originId: ((row.origin_id as string | null) ?? (row.id as string)),
     priority: Number(row.priority ?? 0),
     failedPhase: coerceFailedPhase(row.failed_phase),
-    resumeFrom: coerceFailedPhase(row.resume_from),
     spec: rowToTaskSpec(row),
     integrationHeadSha: (row.integration_head_sha as string | null) ?? null,
     createdAt: row.created_at as string,
@@ -1151,7 +1147,6 @@ export const updateTask = async (
       | 'claudeSessionId'
       | 'error'
       | 'failedPhase'
-      | 'resumeFrom'
       | 'integrationHeadSha'
       | 'failureReason'
       | 'failureSignature'
@@ -1204,10 +1199,6 @@ export const updateTask = async (
   if (patch.failedPhase !== undefined) {
     fields.push('failed_phase = ?')
     args.push(patch.failedPhase)
-  }
-  if (patch.resumeFrom !== undefined) {
-    fields.push('resume_from = ?')
-    args.push(patch.resumeFrom)
   }
   if (patch.integrationHeadSha !== undefined) {
     fields.push('integration_head_sha = ?')

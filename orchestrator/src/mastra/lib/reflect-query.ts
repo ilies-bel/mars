@@ -1,5 +1,3 @@
-import { resolveContext } from '../context'
-import { openLibsql } from './libsql'
 import { getDefaultTaskStore, type TaskStore } from './task-store'
 import type { TaskSignalRow } from './reflect-signals'
 
@@ -80,24 +78,6 @@ const tail = (value: string | null, bytes: number): string | null => {
   return `…${value.slice(value.length - bytes)}`
 }
 
-interface MastraScorerRow {
-  scorerId: string
-  score: number | null
-  reason: string | null
-  input: string | null
-}
-
-const tryParseTaskIdFromInput = (input: string | null): string | null => {
-  if (!input) return null
-  try {
-    const parsed = JSON.parse(input) as { taskId?: unknown }
-    if (typeof parsed.taskId === 'string') return parsed.taskId
-  } catch {
-    // ignore
-  }
-  return null
-}
-
 export const median = (values: readonly number[]): number => {
   if (values.length === 0) return 0
   const sorted = [...values].sort((a, b) => a - b)
@@ -110,47 +90,24 @@ export interface TaskScoreEntry {
   reason: string | null
 }
 
+/**
+ * Per-task scorer scores keyed by scorerId.
+ *
+ * The implement pipeline used to emit two Mastra scorers (`verify-passed`,
+ * `merge-clean`) into a `mastra_scorers` table that this function read back.
+ * Both scorers were removed with the @mars/workflow port (they were unused),
+ * so the table is never written again and the read path is dead. This now
+ * returns an empty map unconditionally — every corpus entry's `scores` is
+ * `{}`. The function (and {@link TaskScoreEntry}) survive as a stable seam so
+ * `loadRecentTaskCorpus` and deep-reflect-query keep compiling and working;
+ * the rest of the reflect corpus (signals, token totals, cost summary) is
+ * unaffected. Reintroduce a real read path here if a future durable scorer
+ * lands.
+ */
 export const loadScoresForTasks = async (
-  taskIds: readonly string[],
+  _taskIds: readonly string[],
 ): Promise<Map<string, Record<string, TaskScoreEntry>>> => {
-  const scoresByTask = new Map<string, Record<string, TaskScoreEntry>>()
-  if (taskIds.length === 0) return scoresByTask
-  const { mastraDbPath } = resolveContext()
-  // openLibsql issues PRAGMA foreign_keys = ON as a fire-and-forget. This is
-  // behaviourally inert here: this connection only runs SELECTs against
-  // mastra.db and exercises no FK constraints. Routed through the helper to
-  // satisfy AC#3 (no raw createClient in Mars-owned source outside the helper).
-  const mastraClient = openLibsql({ url: `file:${mastraDbPath}` })
-  let scorerRows: MastraScorerRow[] = []
-  try {
-    const r = await mastraClient.execute({
-      sql: `SELECT scorerId, score, reason, input
-              FROM mastra_scorers
-             WHERE scorerId IN ('verify-passed', 'merge-clean')`,
-      args: [],
-    })
-    scorerRows = r.rows.map((row) => {
-      const r0 = row as unknown as Record<string, unknown>
-      return {
-        scorerId: (r0.scorerId as string) ?? '',
-        score: r0.score === null || r0.score === undefined ? null : Number(r0.score),
-        reason: (r0.reason as string | null) ?? null,
-        input: (r0.input as string | null) ?? null,
-      }
-    })
-  } catch {
-    return scoresByTask
-  }
-  const idSet = new Set(taskIds)
-  for (const row of scorerRows) {
-    const taskId = tryParseTaskIdFromInput(row.input)
-    if (!taskId || !idSet.has(taskId)) continue
-    const score = row.score ?? 0
-    const existing = scoresByTask.get(taskId) ?? {}
-    existing[row.scorerId] = { score, reason: row.reason }
-    scoresByTask.set(taskId, existing)
-  }
-  return scoresByTask
+  return new Map<string, Record<string, TaskScoreEntry>>()
 }
 
 const buildCostSummary = (entries: readonly ReflectCorpusEntry[]): ReflectCostSummary => {

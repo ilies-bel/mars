@@ -106,7 +106,6 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     expect(reloaded?.claudeSessionId).toBeNull()
     expect(reloaded?.error).toBeNull()
     expect(reloaded?.failedPhase).toBeNull()
-    expect(reloaded?.resumeFrom).toBeNull()
   })
 
   it('removes the worktree directory from disk when the path exists', async () => {

@@ -20,9 +20,15 @@ export interface ContinueResult {
 /**
  * Core continue mechanics shared by the UDS RPC handler.
  *
- * Happy path: the task failed in a resumable phase ('verify' or 'merge'),
- * the worktree exists on disk, and the task is re-queued with `resumeFrom`
- * set so the workflow skips back into the failed step.
+ * Happy path: the task failed in a resumable phase ('verify' or 'merge') and
+ * its worktree still exists on disk. We re-queue it as-is (`status:'queued'`,
+ * `error:null`) — WITHOUT any `resumeFrom` hint. Resume is engine-driven now:
+ * the daemon dispatches `runWorkflow(..., { runId: task.id })`, so the
+ * re-dispatch re-enters the implement workflow with the same runId and the
+ * @mars/workflow engine short-circuits every step whose checkpoint record is
+ * already `'completed'`, picking up exactly where the prior run failed.
+ * `failedPhase` stays on the row: it still records which phase failed and
+ * drives the degraded-vs-resume decision below and the operator display.
  *
  * Degraded path: the failure occurred upstream of worktree creation (e.g. a
  * dirty-main guard at setup). There is nothing on disk worth preserving, so
@@ -63,10 +69,11 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
     }
   }
 
+  // Re-queue as-is. No `resumeFrom`: engine checkpoint-resume (runId=task.id)
+  // is the single source of truth for which step the re-dispatch skips into.
   await updateTask(id, {
     status: 'queued',
     error: null,
-    resumeFrom: task.failedPhase,
   })
   return { degradedToRestart: false }
 }
