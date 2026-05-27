@@ -1407,13 +1407,13 @@ const main = async (): Promise<void> => {
       const { sendRequest } = await import('./mastra/daemon/client')
       try {
         const r = (await sendRequest(
-          { op: 'idea.promote', ideaId: id },
+          { op: 'proposal.promote', proposalId: id },
           {
             onSpawnNotice: (pid, log) =>
               console.log(`[mars] started daemon (pid ${pid}, log: ${log})`),
           },
-        )) as { ideaId: string; status: string }
-        console.log(`proposal ${r.ideaId} marked ${r.status}`)
+        )) as { proposalId: string; status: string }
+        console.log(`proposal ${r.proposalId} marked ${r.status}`)
       } catch (error: unknown) {
         console.error(error instanceof Error ? error.message : String(error))
         process.exit(1)
@@ -1429,14 +1429,14 @@ const main = async (): Promise<void> => {
       const { sendRequest } = await import('./mastra/daemon/client')
       try {
         const r = (await sendRequest(
-          { op: 'idea.slice', ideaId: id },
+          { op: 'proposal.slice', proposalId: id },
           {
             onSpawnNotice: (pid, log) =>
               console.log(`[mars] started daemon (pid ${pid}, log: ${log})`),
           },
-        )) as { ideaId: string; status: string; taskIds: string[] }
+        )) as { proposalId: string; status: string; taskIds: string[] }
         console.log(
-          `proposal ${r.ideaId} ${r.status} into ${r.taskIds.length} task(s):`,
+          `proposal ${r.proposalId} ${r.status} into ${r.taskIds.length} task(s):`,
         )
         for (const t of r.taskIds) console.log(`  ${t}`)
       } catch (error: unknown) {

@@ -2,8 +2,8 @@
  * Canonical shared deterministic keyword-overlap scorer.
  *
  * This is the single owner of lexical-overlap logic per ADR 0006.
- * Both the deterministic Linker (idea 2be831da) and the add-time
- * duplicate-task gate (idea e67663e4 / task mars-c91d6807) MUST import
+ * Both the deterministic Linker (proposal 2be831da) and the add-time
+ * duplicate-task gate (proposal e67663e4 / task mars-c91d6807) MUST import
  * from here — do NOT fork a second scorer.
  *
  * Public API (intentionally small):

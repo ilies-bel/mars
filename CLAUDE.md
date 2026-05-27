@@ -82,8 +82,8 @@ per-change and must be re-confirmed, even within the same session.
 
 The Mars inbox is the single human-facing work surface. Everything that
 needs the user — operational alerts from self-heal, tasks the orchestrator
-stopped on after exhausting retries (kind `task-blocked`), and draft ideas
-waiting to be shaped (kind `idea-needs-shaping`) — appears as an inbox
+stopped on after exhausting retries (kind `task-blocked`), and draft proposals
+waiting to be shaped (kind `draft-proposal`) — appears as an inbox
 message. Pick one via `mars inbox list` or `/mars:inbox`; the inbox
 dispatches to the right resolver (`/mars:unblock`, `/mars:grill`, or
 ack/resolve/dismiss). To see pending work, run `/mars:chat` or `/mars:inbox`.
@@ -154,7 +154,7 @@ exactly one recovery attempt per origin failure, full stop.
 ## Orchestrator notes
 
 - Coder runs get a deviation-rules brief: no bailing without an auto-fix
-  commit, a `--blocked-by $TASK_ID` follow-up, or a `mars idea add`. A
+  commit, a `--blocked-by $TASK_ID` follow-up, or a `mars proposal add`. A
   watcher logs (but does not abort) once a coder makes 5+ consecutive
   Read/Grep/Glob calls without an Edit/Write/Bash; override the threshold
   via `MARS_READ_SPAN_LIMIT`.

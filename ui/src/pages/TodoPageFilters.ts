@@ -22,7 +22,7 @@ export const itemKey = (item: SidebarItem): string => `${item.kind}:${item.id}`
 const ALERT_KIND_TOKENS = ['stale', 'alert', 'task-blocked']
 
 /** Tokens that should make every proposal visible when typed. */
-const IDEA_KIND_TOKENS = ['draft', 'proposal', 'idea-needs-shaping']
+const PROPOSAL_KIND_TOKENS = ['draft', 'proposal', 'draft-proposal']
 
 // ---- Filter functions -----------------------------------------------------
 
@@ -64,7 +64,7 @@ export function filterIdeaItems(items: IdeaItem[], query: string): IdeaItem[] {
       d.solution,
       d.source,
       d.status,
-      ...IDEA_KIND_TOKENS,
+      ...PROPOSAL_KIND_TOKENS,
     ]
       .join('\n')
       .toLowerCase()

@@ -795,8 +795,8 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     expect(result.taskIds).toHaveLength(1)
     expect(await countTasksForIdea(ideaId)).toBe(1)
 
-    // The returned ideaId must match, and status must be the settled string.
-    expect(result.ideaId).toBe(ideaId)
+    // The returned proposalId must match, and status must be the settled string.
+    expect(result.proposalId).toBe(ideaId)
     expect(result.status).toBe('sliced')
   })
 

@@ -12,14 +12,14 @@ describe('MarsId.create', () => {
     expect(id.toString()).toBe('mars-task-04830c8e')
   })
 
-  it('renders an idea id with slug as mars-idea-<hex>-<slug>', () => {
-    const id = MarsId.create('idea', '04830c8e', 'centralize-id-generation')
-    expect(id.toString()).toBe('mars-idea-04830c8e-centralize-id-generation')
+  it('renders a proposal id with slug as mars-proposal-<hex>-<slug>', () => {
+    const id = MarsId.create('proposal', '04830c8e', 'centralize-id-generation')
+    expect(id.toString()).toBe('mars-proposal-04830c8e-centralize-id-generation')
   })
 
-  it('renders an idea id without slug as mars-idea-<hex>', () => {
-    const id = MarsId.create('idea', '04830c8e')
-    expect(id.toString()).toBe('mars-idea-04830c8e')
+  it('renders a proposal id without slug as mars-proposal-<hex>', () => {
+    const id = MarsId.create('proposal', '04830c8e')
+    expect(id.toString()).toBe('mars-proposal-04830c8e')
   })
 
   it('rejects an invalid hex (non-hex chars)', () => {
@@ -31,7 +31,7 @@ describe('MarsId.create', () => {
   })
 
   it('rejects an invalid slug shape', () => {
-    expect(() => MarsId.create('idea', '04830c8e', 'Bad Slug!')).toThrow()
+    expect(() => MarsId.create('proposal', '04830c8e', 'Bad Slug!')).toThrow()
   })
 })
 
@@ -49,24 +49,24 @@ describe('parseMarsId — round-trip', () => {
     expect(r.value.slug).toBeUndefined()
   })
 
-  it('parses the full rendered idea form with slug to a MarsId', () => {
-    const r = parseMarsId(`mars-idea-${bare}-foo-bar-baz`)
+  it('parses the full rendered proposal form with slug to a MarsId', () => {
+    const r = parseMarsId(`mars-proposal-${bare}-foo-bar-baz`)
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.kind).toBe('id')
     if (r.kind !== 'id') return
-    expect(r.value.kind).toBe('idea')
+    expect(r.value.kind).toBe('proposal')
     expect(r.value.hex).toBe(bare)
     expect(r.value.slug).toBe('foo-bar-baz')
   })
 
-  it('parses the idea prefix-without-slug form to a MarsId', () => {
-    const r = parseMarsId(`mars-idea-${bare}`)
+  it('parses the proposal prefix-without-slug form to a MarsId', () => {
+    const r = parseMarsId(`mars-proposal-${bare}`)
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.kind).toBe('id')
     if (r.kind !== 'id') return
-    expect(r.value.kind).toBe('idea')
+    expect(r.value.kind).toBe('proposal')
     expect(r.value.hex).toBe(bare)
     expect(r.value.slug).toBeUndefined()
   })
@@ -92,8 +92,8 @@ describe('parseMarsId — round-trip', () => {
   it('round-trips all four user-facing shapes back to the same bare hex', () => {
     const shapes = [
       `mars-task-${bare}`, // full rendered (task)
-      `mars-idea-${bare}-some-slug`, // full rendered (idea, with slug)
-      `mars-idea-${bare}`, // prefix without slug
+      `mars-proposal-${bare}-some-slug`, // full rendered (proposal, with slug)
+      `mars-proposal-${bare}`, // prefix without slug
       bare, // bare hex
       '0483', // hex prefix (different — partial)
     ]
@@ -121,6 +121,13 @@ describe('parseMarsId — typed errors', () => {
 
   it('surfaces a typed error for an unknown kind', () => {
     const r = parseMarsId('mars-thing-04830c8e')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.code).toBe('UNKNOWN_KIND')
+  })
+
+  it('also rejects the legacy mars-idea- prefix (renamed to proposal)', () => {
+    const r = parseMarsId('mars-idea-04830c8e')
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('UNKNOWN_KIND')
@@ -159,7 +166,7 @@ describe('parseMarsId — typed errors', () => {
 describe('MarsId.equals', () => {
   it('returns true when hex matches even if kind differs', () => {
     const a = MarsId.create('task', '04830c8e')
-    const b = MarsId.create('idea', '04830c8e', 'some-slug')
+    const b = MarsId.create('proposal', '04830c8e', 'some-slug')
     expect(a.equals(b)).toBe(true)
     expect(b.equals(a)).toBe(true)
   })
@@ -171,8 +178,8 @@ describe('MarsId.equals', () => {
   })
 
   it('returns true when only slug differs', () => {
-    const a = MarsId.create('idea', '04830c8e', 'one-slug')
-    const b = MarsId.create('idea', '04830c8e', 'another-slug')
+    const a = MarsId.create('proposal', '04830c8e', 'one-slug')
+    const b = MarsId.create('proposal', '04830c8e', 'another-slug')
     expect(a.equals(b)).toBe(true)
   })
 })
@@ -208,7 +215,7 @@ describe('MarsIdPrefix', () => {
     // The prefix carries no kind, so it must not stringify to a
     // `mars-<kind>-...` shape that downstream code could mistake for a
     // final id.
-    expect(String(p)).not.toMatch(/^mars-(task|idea)-/)
+    expect(String(p)).not.toMatch(/^mars-(task|proposal)-/)
     // And it does not expose a `toRenderedForm()` / similar that returns
     // a kinded id.
     expect((p as unknown as Record<string, unknown>).toRenderedForm).toBeUndefined()
