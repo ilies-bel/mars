@@ -3,9 +3,8 @@
 // These are structural guardrails. They pin the binding between each
 // dispatching stage and its role-pinned Worker, and they assert that the
 // migrated stages do NOT reach for the lower-level `runClaudeCode` wrapper
-// any more — only the A/B experiment workflow keeps that direct call,
-// because A/B variants intentionally configure their own per-variant
-// `claude -p` flags (model, system prompt) outside the role registry.
+// any more — every dispatching stage now routes through the role registry,
+// with no carve-outs.
 //
 // A test that loads the workflow source files and greps for the Worker
 // names is intentionally coarse: it documents the binding without
@@ -43,13 +42,6 @@ describe('PRD 948691d0 slice 4 — stages route through named Workers', () => {
   it('triage workflow dispatches through Workers.Triager.run', () => {
     const src = read('triage-workflow.ts')
     expect(src).toMatch(/Workers\.Triager\.run\(/)
-  })
-
-  it('A/B experiment workflow keeps calling runClaudeCode directly', () => {
-    const src = read('ab-experiment-workflow.ts')
-    // A/B is the documented carve-out: each variant pins its own model /
-    // systemPrompt, so it does not fit the role registry.
-    expect(src).toMatch(/runClaudeCode\(/)
   })
 
   it('migrated stages do not assemble dispatch flags ad-hoc', () => {

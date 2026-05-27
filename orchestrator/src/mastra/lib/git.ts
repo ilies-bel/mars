@@ -409,7 +409,7 @@ interface ClaudeStreamArgsOptions {
 // listening on a dispatched run, so a call to either tool errors at the
 // claude runtime and tempts the agent to silently drift from the task.
 // Denying them at the single shared wrapper means every workflow — including
-// paths that legitimately bypass the Worker primitive (e.g. A/B experiment)
+// any path that bypasses the Worker primitive and calls the wrapper directly
 // — inherits the ban. See idea 948691d0.
 const AGENT_TO_USER_DENIED_TOOLS = ['AskUserQuestion', 'SendUserMessage'] as const
 
