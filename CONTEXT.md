@@ -140,7 +140,7 @@ A tarball asset (mars-bundle-vX.Y.Z.tar.gz) containing manifest.json plus exactl
 _Avoid_: release tarball, framework bundle, mars bundle
 
 **Mars id**:
-An entity identifier rendered as 'mars-<kind>-<hex>' (with an optional '-<slug>' suffix for ideas), where the bare hex is the storage primary key and the prefix is added only at the CLI/render seam.
+An entity identifier rendered as 'mars-<kind>-<hex>' (with an optional '-<slug>' suffix for proposals), where the bare hex is the canonical identity: equality is on the hex alone, the kind/slug are presentation framing.
 _Avoid_: prefixed id, namespaced id
 
 **Bare id**:
