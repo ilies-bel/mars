@@ -720,12 +720,13 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
-  it('no-recipe path: spawns an investigator task and raises a no-recipe inbox item; original is marked failed', async () => {
+  it('no-recipe path: marks the source failed and raises an inbox item, WITHOUT spawning an investigator task', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
     // 'verify:test/unclassified' is NOT in the registered recipe set;
-    // the failure handler should NOT enqueue a recovery.
+    // the failure handler should NOT enqueue a recovery and should NOT
+    // auto-spawn a recipe-proposing investigator.
     const r = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:test',
@@ -734,14 +735,13 @@ describe('queue-fix-tasks', () => {
     })
     expect(r.outcome).toBe('no-recipe')
     expect(r.failureSignature).toBe('verify:test/unclassified')
-    expect(r.investigatorTaskId).toBeTruthy()
+    expect(
+      (r as { investigatorTaskId?: string }).investigatorTaskId,
+    ).toBeUndefined()
     expect(r.inboxItemId).toBeTruthy()
     expect(r.fixTaskId).toBeUndefined()
 
-    // Original task is marked failed — there is no task_blockers edge since
-    // the investigator does not unblock the source (a merged recipe does not
-    // retroactively fix the past failure). Human re-runs via mars continue /
-    // mars restart once a recipe is available.
+    // Original task is marked failed with no task_blockers edge.
     const origin = await q.getTask(t.id)
     expect(origin?.status).toBe('failed')
     const blockers = await q.getClient().execute({
@@ -750,56 +750,12 @@ describe('queue-fix-tasks', () => {
     })
     expect(Number((blockers.rows[0] as unknown as { n: number }).n)).toBe(0)
 
-    // Investigator exists, is queued, and references the same origin.
-    const inv = await q.getTask(r.investigatorTaskId!)
-    expect(inv?.status).toBe('queued')
-    expect(inv?.fixForTaskId).toBeNull()
-    expect(inv?.originId).toBe(origin?.originId)
-    expect(inv?.author?.name).toBe('agent:investigator')
-    expect(inv?.prompt).toContain('Investigator task')
-    expect(inv?.prompt).toContain('verify:test/unclassified')
-  })
-
-  it('investigator prompt follows the diagnose discipline (feedback-loop first, ranked falsifiable hypotheses, [DEBUG-] tags, "no recipe is the right answer" framing)', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, ft } = await loadModules(repo)
-    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
-    const r = await ft.handleTaskFailureWithFixTask({
-      taskId: t.id,
-      failingStep: 'verify:test',
-      errorOutput: 'something nobody has classified yet',
-      branch: 'task/x',
+    // No investigator (or any other) task was created beyond the source.
+    const all = await q.getClient().execute({
+      sql: `SELECT id FROM tasks`,
+      args: [],
     })
-    expect(r.outcome).toBe('no-recipe')
-    expect(r.investigatorTaskId).toBeTruthy()
-
-    const inv = await q.getTask(r.investigatorTaskId!)
-    expect(inv).not.toBeNull()
-    const prompt = inv!.prompt
-
-    // Feedback-loop-first discipline.
-    expect(prompt.toLowerCase()).toContain('feedback loop')
-    // Ranked hypotheses (covers "ranked" + "hypothes" stems).
-    expect(prompt).toMatch(/ranked/i)
-    expect(prompt).toMatch(/hypothes/i)
-    // Falsifiable framing.
-    expect(prompt).toMatch(/falsifiab/i)
-    // Tagged debug logs with the specific prefix shape.
-    expect(prompt).toContain('[DEBUG-')
-    // "No recipe is the right answer" is named as a first-class outcome.
-    expect(prompt).toContain('no recipe is the right answer')
-    // Concrete examples for outcome (b).
-    expect(prompt.toLowerCase()).toMatch(/flaky|credential|api key|underspecified/)
-    // Phase-6 grep-and-remove step + verify-gate forward reference.
-    expect(prompt.toLowerCase()).toContain('grep')
-    expect(prompt.toLowerCase()).toMatch(/verify step.*reject|reject.*\[debug-/i)
-    // Commit-message-carries-the-hypothesis requirement.
-    expect(prompt.toLowerCase()).toMatch(/commit message/)
-    // Existing boundaries / ADR reference / save-your-work closing preserved.
-    expect(prompt).toContain('docs/adr/0002-recipe-per-failure-signature.md')
-    expect(prompt).toContain('Save your work')
-    expect(prompt).toMatch(/vitest test/i)
-    expect(prompt).toMatch(/catch-all/i)
+    expect(all.rows.length).toBe(1)
   })
 
   it('fix-fail loop: caps fix-task inserts per (sourceTaskId, failureSignature) at MARS_MAX_FIX_ATTEMPTS (default 2) and escalates to a fix-fail-loop inbox item', async () => {
