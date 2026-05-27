@@ -196,7 +196,7 @@ export const actionQueueItemSchema = z.object({
      * no investigation has been run yet.
      */
     investigation: z.string().nullable(),
-  }).nullable(),
+  }).nullish(),
 })
 
 export const actionQueueResponseSchema = z.array(actionQueueItemSchema)

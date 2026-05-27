@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import type { Mock } from 'bun:test'
-import { fetchAgents, fetchProgress, fetchTasks, fetchTodo } from './api'
+import { fetchActionQueue, fetchAgents, fetchProgress, fetchTasks, fetchTodo } from './api'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -285,5 +285,70 @@ describe('fetchProgress', () => {
     expect(result.tasks).toHaveLength(1)
     expect(result.tasks[0].cluster).toBe('In progress')
     expect(result.proposals).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// fetchActionQueue
+// ---------------------------------------------------------------------------
+
+const minActionQueueItem = (overrides: Record<string, unknown> = {}) => ({
+  id: 'aq-1',
+  kind: 'failed-task',
+  entityId: 'task-1',
+  priority: 'normal',
+  title: 'Task failed',
+  body: 'Something went wrong',
+  at: new Date().toISOString(),
+  dag: null,
+  dismissed: false,
+  ackState: null,
+  errorKind: 'generic',
+  actions: [],
+  staleWorktreeDetail: null,
+  ...overrides,
+})
+
+describe('fetchActionQueue', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('returns a typed ActionQueueItem array on a valid response', async () => {
+    fetchSpy.mockResolvedValue(json([minActionQueueItem()]))
+    const result = await fetchActionQueue()
+    expect(result).toHaveLength(1)
+    expect(result[0].id).toBe('aq-1')
+    expect(result[0].kind).toBe('failed-task')
+  })
+
+  it('parses a failed-task row with staleWorktreeDetail absent (undefined) without error', async () => {
+    // Omit the key entirely — simulates an older server build or a non-stale row
+    const rowWithoutKey = minActionQueueItem()
+    delete (rowWithoutKey as Record<string, unknown>)['staleWorktreeDetail']
+
+    fetchSpy.mockResolvedValue(json([rowWithoutKey]))
+    const result = await fetchActionQueue()
+    expect(result).toHaveLength(1)
+    // The field resolves to undefined (not null) when the key is absent
+    expect(result[0].staleWorktreeDetail).toBeUndefined()
+  })
+
+  it('parses a row with staleWorktreeDetail null without error', async () => {
+    fetchSpy.mockResolvedValue(json([minActionQueueItem({ staleWorktreeDetail: null })]))
+    const result = await fetchActionQueue()
+    expect(result[0].staleWorktreeDetail).toBeNull()
+  })
+
+  it('throws on HTTP error', async () => {
+    fetchSpy.mockResolvedValue(json({ error: 'not found' }, 500))
+    await expect(fetchActionQueue()).rejects.toThrow('500')
   })
 })
