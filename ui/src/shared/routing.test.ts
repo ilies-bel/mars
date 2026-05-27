@@ -4,6 +4,7 @@ import {
   actionQueueCount,
   parseTaskRoute,
   parseProposalRoute,
+  resolvePageRoute,
 } from './routing'
 import type { TodoPayload } from './schemas'
 
@@ -147,5 +148,41 @@ describe('parseProposalRoute', () => {
 
   it('decodes percent-encoded ids', () => {
     expect(parseProposalRoute('#/proposal/mars%2D123')).toBe('mars-123')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolvePageRoute – overlay keeps Progress page mounted (criterion 4)
+// ---------------------------------------------------------------------------
+
+describe('resolvePageRoute', () => {
+  it('returns progress when a task overlay hash is present', () => {
+    // A task drawer hash forces the Progress page to stay mounted so that
+    // the operator's view state (active tab, cluster toggles) is preserved.
+    expect(resolvePageRoute('#/task/mars-abc123')).toBe('progress')
+  })
+
+  it('returns progress after the drawer closes (hash reset to #/progress)', () => {
+    // clearTaskHash in App sets window.location.hash = '#/progress'.
+    // Verifying that the same route name is produced both during and after the
+    // overlay guarantees the ProgressPage component is never unmounted.
+    expect(resolvePageRoute('#/progress')).toBe('progress')
+  })
+
+  it('returns action-queue for an empty hash (no overlay, no named route)', () => {
+    expect(resolvePageRoute('')).toBe('action-queue')
+  })
+
+  it('returns action-queue for a malformed #/task/ hash (empty id)', () => {
+    // A stray '#/task/' must not open a blank overlay or force the progress route.
+    expect(resolvePageRoute('#/task/')).toBe('action-queue')
+  })
+
+  it('returns progress when a proposal overlay hash is present', () => {
+    expect(resolvePageRoute('#/proposal/prop-abc')).toBe('progress')
+  })
+
+  it('returns agents for #/agents (no overlay)', () => {
+    expect(resolvePageRoute('#/agents')).toBe('agents')
   })
 })

@@ -53,3 +53,26 @@ export const parseProposalRoute = (hash: string): string | null => {
  */
 export const actionQueueCount = (todo: TodoPayload): number =>
   todo.staleWorktrees.length
+
+/**
+ * Resolves the page route that should render beneath a potential overlay.
+ *
+ * Task and proposal overlay hashes (`#/task/<id>`, `#/proposal/<id>`) force
+ * the Progress page to stay mounted so that the operator's local view state
+ * (active tab, cluster toggles, recency slider) is preserved.  Closing the
+ * drawer resets the hash to `#/progress`, which also resolves to 'progress',
+ * so the ProgressPage component is never unmounted during the open/close cycle.
+ *
+ * Use this instead of `detectRoute` as the single source of truth in the App.
+ */
+export const resolvePageRoute = (hash: string): RouteName => {
+  const taskId = parseTaskRoute(hash)
+  const proposalId = parseProposalRoute(hash)
+  if (
+    (taskId !== null && hash.startsWith('#/task/')) ||
+    (proposalId !== null && hash.startsWith('#/proposal/'))
+  ) {
+    return 'progress'
+  }
+  return detectRoute(hash)
+}
