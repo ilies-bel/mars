@@ -103,7 +103,7 @@ TaskStatus: the task has at least one open task_blocker row referencing another 
 ProposalStatus: a fully-shaped proposal that has passed validateProposalShaped(). Eligible for the slicer. Produced by 'mars proposal promote' — note the verb name mismatch with the status.
 
 **sliced**:
-IdeaStatus terminal: the slicer has decomposed the idea into N tracer-bullet tasks (each linked back via parent_idea_id). The idea row stays alive as the PRD reference.
+ProposalStatus terminal: the slicer has decomposed the proposal into N tracer-bullet tasks (each linked back via parent_proposal_id). The proposal row stays alive as the PRD reference.
 
 **open (inbox)**:
 InboxState initial: an inbox item that needs operator attention (stale-worktree alert, blocked task, failed task).
