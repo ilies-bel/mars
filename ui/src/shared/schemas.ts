@@ -140,11 +140,15 @@ export const actionDescriptorSchema = z.object({
 
 export const actionQueueItemSchema = z.object({
   id: z.string(),
+  // unknown kinds coerce to 'failed-task' to mirror server toUiKind and keep
+  // one bad row (e.g. a stale persisted kind) from failing the whole response.
+  // .catch() intentionally swallows any non-member value into the default —
+  // for a closed enum this is the desired safe behaviour, not a masked bug.
   kind: z.enum([
     'failed-task',
     'stale-worktree',
     'draft-proposal',
-  ]),
+  ]).catch('failed-task'),
   entityId: z.string(),
   priority: z.enum(['high', 'normal', 'low']),
   title: z.string(),
