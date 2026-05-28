@@ -295,8 +295,8 @@ Commands:
   reflect [--since <iso>] [--limit <n>]
                                 synthesize draft proposals (source='reflection') from
                                 recent completed tasks. Reads token + scorer
-                                signals from .mars/queue.db and .mars/mastra.db.
-                                Default: last 10 completed tasks. Proposals are
+                                signals from .mars/queue.db. Default: last 10
+                                completed tasks. Proposals are
                                 inserted as drafts — never auto-run. Disable
                                 signal capture entirely with the env var
                                 MARS_REFLECT_DISABLED=1.
@@ -720,10 +720,9 @@ Subcommands:
   reflect: `mars reflect [--since <iso>] [--limit <n>]
 
 Synthesize draft task suggestions from recent completed tasks. Reads
-token + scorer signals from .mars/queue.db and .mars/mastra.db. Default:
-last 10 completed tasks. Suggestions are inserted as proposals — never
-auto-run. Disable signal capture entirely with the env var
-MARS_REFLECT_DISABLED=1.
+token + scorer signals from .mars/queue.db. Default: last 10 completed
+tasks. Suggestions are inserted as proposals — never auto-run. Disable
+signal capture entirely with the env var MARS_REFLECT_DISABLED=1.
 
 Flags:
   --since <iso>   only reflect on tasks completed after this ISO timestamp
@@ -888,7 +887,6 @@ const main = async (): Promise<void> => {
     console.log(`repo:           ${ctx.repoRoot}`)
     console.log(`stateDir:       ${ctx.stateDir}`)
     console.log(`queueDb:        ${ctx.queueDbPath}`)
-    console.log(`mastraDb:       ${ctx.mastraDbPath}`)
     console.log(`supervisorsDir: ${ctx.supervisorsDir}`)
     console.log(`cacheDir:       ${ctx.cacheDir}`)
     return
