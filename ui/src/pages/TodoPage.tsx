@@ -38,9 +38,19 @@ interface RowProps {
   item: ActionQueueItem
   active: boolean
   onSelect: () => void
+  /** Non-null when the item has a restart action and the button should render. */
+  onRestart: (() => void) | null
+  /** True while the restart mutation is in-flight for this specific item. */
+  restartPending: boolean
 }
 
-const ActionQueueRow = ({ item, active, onSelect }: RowProps) => {
+export const ActionQueueRow = ({
+  item,
+  active,
+  onSelect,
+  onRestart,
+  restartPending,
+}: RowProps) => {
   const baseClass = [
     'cursor-pointer border-l-2 px-3 py-2 transition-colors',
     active ? 'border-fg bg-iron/20' : 'border-transparent hover:bg-iron/10',
@@ -64,9 +74,24 @@ const ActionQueueRow = ({ item, active, onSelect }: RowProps) => {
       <div className="mt-1 break-words font-mono text-[12px] text-fg">
         {item.title || '(no title)'}
       </div>
-      <div className="mt-1 font-mono text-[10px] text-iron/70">
-        {formatTime(item.at)}
-        {item.ackState !== null ? ` · ${ACK_STATE_LABEL[item.ackState]}` : ''}
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <span className="font-mono text-[10px] text-iron/70">
+          {formatTime(item.at)}
+          {item.ackState !== null ? ` · ${ACK_STATE_LABEL[item.ackState]}` : ''}
+        </span>
+        {onRestart !== null && (
+          <button
+            type="button"
+            disabled={restartPending}
+            onClick={(e) => {
+              e.stopPropagation()
+              onRestart()
+            }}
+            className="shrink-0 border border-fg/60 px-2 py-0.5 font-mono text-[10px] uppercase text-fg transition-colors hover:bg-iron/20 disabled:opacity-50"
+          >
+            {restartPending ? 'Restarting…' : 'Restart'}
+          </button>
+        )}
       </div>
     </li>
   )
@@ -356,6 +381,16 @@ export const ActionQueuePage = () => {
   const [query, setQuery] = useState<string>('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
+  const qc = useQueryClient()
+  const restartMutation = useMutation({
+    mutationFn: (entityId: string) => invokeAction('restart', entityId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['action-queue'] })
+      void qc.invalidateQueries({ queryKey: ['tasks'] })
+      void qc.invalidateQueries({ queryKey: ['progress'] })
+    },
+  })
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return items
@@ -407,6 +442,15 @@ export const ActionQueuePage = () => {
                   item={item}
                   active={item.id === (selected?.id ?? null)}
                   onSelect={() => setSelectedId(item.id)}
+                  onRestart={
+                    item.actions.some((a) => a.op === 'restart')
+                      ? () => restartMutation.mutate(item.entityId)
+                      : null
+                  }
+                  restartPending={
+                    restartMutation.isPending &&
+                    restartMutation.variables === item.entityId
+                  }
                 />
               ))}
             </ul>
