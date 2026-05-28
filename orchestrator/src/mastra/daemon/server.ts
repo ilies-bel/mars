@@ -58,6 +58,7 @@ import {
   sweepStaleFailedMainCommiterInbox,
 } from './main-dirty-inbox'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
+import { failureReasonStringToCode } from '../lib/failure-reasons'
 import { openTraceEventStore, type TraceEventStore } from '../lib/trace-events-store'
 import { internalBus } from '../../internal-bus'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
@@ -459,7 +460,12 @@ export const startDaemon = async (
       const message = err instanceof Error ? err.message : String(err)
       log(`[triage] ${taskId} failed: ${message}`)
       try {
-        await updateTask(taskId, { status: 'failed', error: message })
+        await updateTask(taskId, {
+          status: 'failed',
+          error: message,
+          failureReason: message,
+          failureReasonCode: failureReasonStringToCode(message),
+        })
       } catch {
         // best-effort
       }
@@ -647,7 +653,12 @@ export const startDaemon = async (
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
         try {
-          await updateTask(task.id, { status: 'failed', error: message })
+          await updateTask(task.id, {
+            status: 'failed',
+            error: message,
+            failureReason: message,
+            failureReasonCode: failureReasonStringToCode(message),
+          })
         } catch {
           // best-effort
         }
@@ -1582,6 +1593,8 @@ export const startDaemon = async (
           status: 'failed',
           error: 'daemon restart while task was verifying; worktree missing',
           failedPhase: 'verify',
+          failureReason: 'daemon restart while task was verifying; worktree missing',
+          failureReasonCode: 'unknown',
         }).catch(() => {})
       }
     }
@@ -1893,6 +1906,8 @@ export const startDaemon = async (
                 status: 'failed',
                 error: 'killed by `mars daemon kill`',
                 failureSignature: DAEMON_KILLED_SIGNATURE,
+                failureReason: 'killed by `mars daemon kill`',
+                failureReasonCode: 'unknown',
               })
             } catch {
               // best-effort
@@ -2358,7 +2373,11 @@ export const startDaemon = async (
   void (async () => {
     try {
       await ensureInboxRepopulator(getClient())
-      const { processed } = await drainInboxRepopulations(getClient(), log)
+      const { processed } = await drainInboxRepopulations(
+        getClient(),
+        failureReasonCatalog,
+        log,
+      )
       if (processed > 0)
         log(`[inbox-repopulator] applied ${processed} inbox mutation(s) on boot`)
     } catch (err) {
@@ -2453,7 +2472,7 @@ export const startDaemon = async (
   const inboxRepopulatorDrain = setInterval(() => {
     void (async () => {
       try {
-        await drainInboxRepopulations(getClient(), log)
+        await drainInboxRepopulations(getClient(), failureReasonCatalog, log)
       } catch (err) {
         log(`[inbox-repopulator] drain errored: ${(err as Error).message}`)
       }

@@ -1,3 +1,4 @@
+import { failureReasonStringToCode } from './lib/failure-reasons'
 import { type InboxKind, raiseInboxItem } from './lib/inbox'
 import { publish } from './lib/outbox'
 import { getDefaultQueueClient } from './lib/task-store'
@@ -17,14 +18,22 @@ export const getRetryBudget = (): number => {
 export const markTaskDropped = async (
   taskId: string,
   reason: string,
+  /**
+   * Optional catalog code recorded on `failure_reason_code`. Defaults to
+   * mapping `reason` through {@link failureReasonStringToCode} so the inbox
+   * row renders against the structured catalog even for callers that don't
+   * yet thread an explicit code.
+   */
+  failureReasonCode?: string | null,
 ): Promise<void> => {
   const now = new Date().toISOString()
   const c = await getDefaultQueueClient()
+  const code = failureReasonCode ?? failureReasonStringToCode(reason)
   const tx = await c.transaction('write')
   try {
     await tx.execute({
-      sql: `UPDATE tasks SET status = 'dropped', drop_reason = ?, updated_at = ? WHERE id = ?`,
-      args: [reason, now, taskId],
+      sql: `UPDATE tasks SET status = 'dropped', drop_reason = ?, failure_reason_code = ?, updated_at = ? WHERE id = ?`,
+      args: [reason, code, now, taskId],
     })
     await tx.execute({
       sql: `DELETE FROM task_blockers WHERE task_id = ?`,
@@ -48,14 +57,23 @@ export const markTaskDropped = async (
 export const markTaskFailed = async (
   taskId: string,
   reason: string,
+  /**
+   * Optional catalog code recorded on `failure_reason_code`. Defaults to
+   * mapping `reason` through {@link failureReasonStringToCode} so the inbox
+   * row renders against the structured catalog. Callers that already know
+   * the code (e.g. dispatch-time `verify:main-dirty` parking) pass it
+   * explicitly to skip the string-matching shim.
+   */
+  failureReasonCode?: string | null,
 ): Promise<void> => {
   const now = new Date().toISOString()
   const c = await getDefaultQueueClient()
+  const code = failureReasonCode ?? failureReasonStringToCode(reason)
   const tx = await c.transaction('write')
   try {
     await tx.execute({
-      sql: `UPDATE tasks SET status = 'failed', failure_reason = ?, updated_at = ? WHERE id = ?`,
-      args: [reason, now, taskId],
+      sql: `UPDATE tasks SET status = 'failed', failure_reason = ?, failure_reason_code = ?, updated_at = ? WHERE id = ?`,
+      args: [reason, code, now, taskId],
     })
     await tx.execute({
       sql: `DELETE FROM task_blockers WHERE task_id = ?`,

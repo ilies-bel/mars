@@ -78,6 +78,63 @@ export interface FailureReasonCatalog {
 }
 
 /**
+ * Map the legacy free-text `failure_reason` string (`tasks.failure_reason`) to
+ * a catalog code. Slice G — backward bridge for rows landed before
+ * `failure_reason_code` was being written everywhere; row renderers fall back
+ * through this when `failure_reason_code` is null.
+ *
+ * The matching is substring-only and the rules order matches the audit list
+ * in the slice G brief. Anything not matched returns `unknown`, which the
+ * catalog resolves to the user-facing "Inspect transcript" fallback entry.
+ */
+export const failureReasonStringToCode = (raw: string | null): string => {
+  if (raw === null) return UNKNOWN_FAILURE_CODE
+  const s = raw.toLowerCase()
+  // `verify:main-dirty` is the F.2-owned code; the legacy column stores the
+  // catalog code verbatim there, so it round-trips. The substring 'main-dirty'
+  // is a stronger signal than 'dirty' alone.
+  if (s.includes('main-dirty')) return 'verify:main-dirty'
+  if (s.includes('typecheck')) return 'verify:typecheck'
+  if (s.includes('lint')) return 'verify:lint'
+  // 'test' is checked AFTER the more specific verify-phase substrings so a
+  // string like 'typecheck' (which contains no 'test') is captured upstream
+  // and a string like 'no-edits-made:test' (hypothetical) is caught by
+  // no-edits-made first. The check is verify-phase failures only; the legacy
+  // strings never embedded 'test' for non-verify paths.
+  if (s.includes('no-edits-made') || s.includes('no_edits_made')) {
+    return 'code:no-edits-made'
+  }
+  if (s.includes('timeout')) return 'code:timeout'
+  if (s.includes('over-budget') || s.includes('over_budget')) {
+    return 'code:over-budget'
+  }
+  if (s.includes('vcs-supervisor-aborted') || s.includes('vega-aborted')) {
+    return 'merge:vcs-supervisor-aborted'
+  }
+  if (s.includes('test')) return 'verify:test'
+  return UNKNOWN_FAILURE_CODE
+}
+
+/**
+ * Render a catalog entry's `availableActions` as a markdown bullet list.
+ * Substitute `<id>` placeholders in each `cliHint` with the task id before
+ * rendering so the operator sees a command they can paste verbatim.
+ */
+export const substituteTaskId = (hint: string, taskId: string): string =>
+  hint.replace(/<id>/g, taskId)
+
+export const renderAvailableActionsMarkdown = (
+  actions: readonly FailureAction[],
+  taskId: string,
+): string =>
+  actions
+    .map((a) => {
+      if (a.cliHint === null) return `- ${a.label}`
+      return `- ${a.label}: \`${substituteTaskId(a.cliHint, taskId)}\``
+    })
+    .join('\n')
+
+/**
  * Encode/decode a code to its on-disk filename. Codes use `:` and may contain
  * `/`; only `/` is unsafe on common filesystems, so we replace it with `--`.
  * Built-in codes today contain only `:` separators, but the encoding handles

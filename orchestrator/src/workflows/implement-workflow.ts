@@ -36,6 +36,7 @@ import {
   updateTask,
 } from '../mastra/queue'
 import { handleTaskFailureWithFixTask } from '../mastra/queue-fix-tasks'
+import { failureReasonStringToCode } from '../mastra/lib/failure-reasons'
 import { resolveOriginIdForTask } from '../mastra/lib/origin'
 import { type TaskStore } from '../mastra/lib/task-store'
 
@@ -808,6 +809,8 @@ export const implementWorkflow = defineWorkflow<
             status: 'failed',
             error: failSummary,
             failedPhase: 'code',
+            failureReason: failSummary,
+            failureReasonCode: failureReasonStringToCode(failSummary),
           }, store)
           await handleTaskFailureWithFixTask({
             taskId: input.taskId,
@@ -987,6 +990,10 @@ export const implementWorkflow = defineWorkflow<
               status: 'failed',
               error: `diagnose Chore spawn failed: ${String(err).slice(0, 500)}`,
               failedPhase: 'code',
+              failureReason: `diagnose Chore spawn failed: ${String(err).slice(0, 500)}`,
+              failureReasonCode: failureReasonStringToCode(
+                `diagnose Chore spawn failed: ${String(err)}`,
+              ),
             },
             store,
           ).catch(() => {})
@@ -1198,6 +1205,10 @@ export const implementWorkflow = defineWorkflow<
           status: 'failed',
           error: summary,
           failedPhase: 'verify',
+          failureReason: `verify:${firstFailedName}`,
+          failureReasonCode: failureReasonStringToCode(
+            `verify:${firstFailedName}`,
+          ),
         }, store)
         await handleTaskFailureWithFixTask({
           taskId: input.taskId,
@@ -1322,6 +1333,8 @@ export const implementWorkflow = defineWorkflow<
             status: 'failed',
             error: errorMsg,
             failedPhase: 'merge',
+            failureReason: 'verify:main-dirty',
+            failureReasonCode: 'verify:main-dirty',
           }, store)
           await handleTaskFailureWithFixTask({
             taskId: input.taskId,
@@ -1351,10 +1364,13 @@ export const implementWorkflow = defineWorkflow<
           )
         }
         if (targetStatus.kind === 'error') {
+          const errorMsg = `merge pre-flight git status failed: ${targetStatus.error.message}`.slice(0, 1000)
           await updateTask(input.taskId, {
             status: 'failed',
-            error: `merge pre-flight git status failed: ${targetStatus.error.message}`.slice(0, 1000),
+            error: errorMsg,
             failedPhase: 'merge',
+            failureReason: errorMsg,
+            failureReasonCode: failureReasonStringToCode(errorMsg),
           }, store)
           throw new Error(
             `task ${input.taskId} merge pre-flight failed: ${targetStatus.error.message}`,
@@ -1394,6 +1410,8 @@ export const implementWorkflow = defineWorkflow<
             status: 'failed',
             error: errorMsg,
             failedPhase: 'merge',
+            failureReason: 'merge:vcs-supervisor-aborted',
+            failureReasonCode: 'merge:vcs-supervisor-aborted',
           }, store)
           await handleTaskFailureWithFixTask({
             taskId: input.taskId,
@@ -1438,10 +1456,13 @@ export const implementWorkflow = defineWorkflow<
         }
         const message = error instanceof Error ? error.message : String(error)
         console.error(`[merge] task ${input.taskId} crashed:`, error)
+        const crashMsg = `merge step crashed: ${message}`.slice(0, 1000)
         await updateTask(input.taskId, {
           status: 'failed',
-          error: `merge step crashed: ${message}`.slice(0, 1000),
+          error: crashMsg,
           failedPhase: 'merge',
+          failureReason: crashMsg,
+          failureReasonCode: failureReasonStringToCode(crashMsg),
         }, store)
         await handleTaskFailureWithFixTask({
           taskId: input.taskId,
