@@ -4,7 +4,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  checkSecretPath,
   detectWipMarkerInTestDiff,
+  scanDirtyFilesForGuards,
   scanDirtyTestsForWip,
 } from '../dirty-main-salvage'
 
@@ -398,6 +400,239 @@ describe('scanDirtyTestsForWip (git integration)', () => {
     expect(result.blocked).toBe(true)
     if (result.blocked) {
       expect(result.hit.label).toBe('TODO comment')
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Secret-path guard — pure
+// ---------------------------------------------------------------------------
+
+describe('checkSecretPath', () => {
+  describe('dotenv file detection', () => {
+    it('returns a hit for the root-level .env file', () => {
+      const hit = checkSecretPath('.env')
+      expect(hit).not.toBeNull()
+      expect(hit?.filePath).toBe('.env')
+      expect(hit?.reason).toBe('dotenv file')
+    })
+
+    it('returns a hit for .env.local', () => {
+      const hit = checkSecretPath('.env.local')
+      expect(hit).not.toBeNull()
+      expect(hit?.reason).toBe('dotenv file')
+    })
+
+    it('returns a hit for .env.production', () => {
+      const hit = checkSecretPath('.env.production')
+      expect(hit).not.toBeNull()
+      expect(hit?.reason).toBe('dotenv file')
+    })
+
+    it('returns a hit for .env.test nested inside a subdirectory', () => {
+      const hit = checkSecretPath('apps/api/.env.test')
+      expect(hit).not.toBeNull()
+      expect(hit?.filePath).toBe('apps/api/.env.test')
+      expect(hit?.reason).toBe('dotenv file')
+    })
+
+    it('returns a hit for a .env file nested two levels deep', () => {
+      const hit = checkSecretPath('packages/core/.env')
+      expect(hit).not.toBeNull()
+      expect(hit?.reason).toBe('dotenv file')
+    })
+
+    it('returns null for dotenv.config.js — basename does not start with .env', () => {
+      expect(checkSecretPath('dotenv.config.js')).toBeNull()
+    })
+
+    it('returns null for .environment — not a .env prefix', () => {
+      expect(checkSecretPath('.environment')).toBeNull()
+    })
+
+    it('returns null for src/env.ts — basename is env.ts, not .env', () => {
+      expect(checkSecretPath('src/env.ts')).toBeNull()
+    })
+  })
+
+  describe('per-repo state directory detection', () => {
+    it('returns a hit for a file directly inside .mars/', () => {
+      const hit = checkSecretPath('.mars/queue.db')
+      expect(hit).not.toBeNull()
+      expect(hit?.filePath).toBe('.mars/queue.db')
+      expect(hit?.reason).toBe('per-repo state directory')
+    })
+
+    it('returns a hit for a deeply nested .mars/ path', () => {
+      const hit = checkSecretPath('.mars/worktrees/abc123/some-file.ts')
+      expect(hit).not.toBeNull()
+      expect(hit?.reason).toBe('per-repo state directory')
+    })
+
+    it('returns a hit for .mars itself (no trailing slash)', () => {
+      const hit = checkSecretPath('.mars')
+      expect(hit).not.toBeNull()
+      expect(hit?.reason).toBe('per-repo state directory')
+    })
+
+    it('returns null for a path that merely contains ".mars" in a segment name', () => {
+      // e.g. src/smart-mars/foo.ts should NOT be caught
+      expect(checkSecretPath('src/smart-mars/foo.ts')).toBeNull()
+    })
+
+    it('returns null for ordinary source files', () => {
+      expect(checkSecretPath('src/config.ts')).toBeNull()
+      expect(checkSecretPath('orchestrator/lib/git.ts')).toBeNull()
+    })
+
+    it('returns null for an empty path', () => {
+      expect(checkSecretPath('')).toBeNull()
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Combined guard — git integration
+// ---------------------------------------------------------------------------
+
+describe('scanDirtyFilesForGuards (git integration)', () => {
+  let dir: string
+
+  const git = (...args: string[]): string =>
+    execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: 'pipe' })
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dirty-main-salvage-guard-test-'))
+    git('init', '-q')
+    git('config', 'user.email', 'test@test.com')
+    git('config', 'user.name', 'Test')
+    writeFileSync(join(dir, 'README.md'), 'hello\n')
+    git('add', 'README.md')
+    git('commit', '-m', 'initial', '--no-gpg-sign')
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  // Acceptance criterion 1 — dotenv file blocks auto-commit
+  it('returns blocked:true with kind:"secret-path" when a dirty path is a dotenv file', async () => {
+    // Track a .env file and then dirty it.
+    writeFileSync(join(dir, '.env'), 'SECRET=initial\n')
+    git('add', '.env')
+    git('commit', '-m', 'add env', '--no-gpg-sign')
+    writeFileSync(join(dir, '.env'), 'SECRET=changed\n')
+
+    const result = await scanDirtyFilesForGuards(dir, [' M .env'])
+
+    expect(result.blocked).toBe(true)
+    if (result.blocked && result.kind === 'secret-path') {
+      expect(result.hit.filePath).toBe('.env')
+      expect(result.hit.reason).toBe('dotenv file')
+    }
+  })
+
+  // Acceptance criterion 2 — .mars/ path blocks auto-commit
+  it('returns blocked:true with kind:"secret-path" when a dirty path is under .mars/', async () => {
+    // Track a .mars/ file (no .gitignore in the temp repo, so it CAN be tracked).
+    mkdirSync(join(dir, '.mars'), { recursive: true })
+    writeFileSync(join(dir, '.mars', 'state.db'), 'db-v1\n')
+    git('add', '.mars/state.db')
+    git('commit', '-m', 'add state', '--no-gpg-sign')
+    writeFileSync(join(dir, '.mars', 'state.db'), 'db-v2\n')
+
+    const result = await scanDirtyFilesForGuards(dir, [' M .mars/state.db'])
+
+    expect(result.blocked).toBe(true)
+    if (result.blocked && result.kind === 'secret-path') {
+      expect(result.hit.filePath).toBe('.mars/state.db')
+      expect(result.hit.reason).toBe('per-repo state directory')
+    }
+  })
+
+  // Acceptance criterion 3 — guard trip leaves the merge target unchanged
+  // (no new commits on HEAD)
+  it('leaves HEAD unchanged when the secret-path guard trips on a .env file', async () => {
+    writeFileSync(join(dir, '.env'), 'API_KEY=secret\n')
+    git('add', '.env')
+    git('commit', '-m', 'add env', '--no-gpg-sign')
+
+    const headBefore = git('rev-parse', 'HEAD').trim()
+
+    writeFileSync(join(dir, '.env'), 'API_KEY=newsecret\n')
+
+    const result = await scanDirtyFilesForGuards(dir, [' M .env'])
+
+    // Guard trips — caller must not commit.
+    expect(result.blocked).toBe(true)
+
+    // The guard never commits: HEAD must be unchanged, proving no auto-commit
+    // occurred on the merge target.
+    const headAfter = git('rev-parse', 'HEAD').trim()
+    expect(headAfter).toBe(headBefore)
+  })
+
+  // Acceptance criterion 4 — all-or-nothing: other tracked changes in the same
+  // dirty tree are not partially committed when a guarded path is present.
+  it('blocks all commits even when only one path in a mixed dirty tree is guarded', async () => {
+    // Two tracked files: a clean source file and a .env file.
+    writeFileSync(join(dir, 'src.ts'), 'const x = 1\n')
+    writeFileSync(join(dir, '.env'), 'SECRET=original\n')
+    git('add', 'src.ts', '.env')
+    git('commit', '-m', 'add files', '--no-gpg-sign')
+
+    const headBefore = git('rev-parse', 'HEAD').trim()
+
+    // Both files are dirty.
+    writeFileSync(join(dir, 'src.ts'), 'const x = 2\n')
+    writeFileSync(join(dir, '.env'), 'SECRET=leaked\n')
+
+    // Caller would pass all dirty lines; the guard must block the entire commit.
+    const result = await scanDirtyFilesForGuards(dir, [
+      ' M src.ts',
+      ' M .env',
+    ])
+
+    expect(result.blocked).toBe(true)
+    if (result.blocked) {
+      // The guard returns secret-path (not wip) because secret paths are
+      // checked first and the chore must commit nothing.
+      expect(result.kind).toBe('secret-path')
+    }
+
+    // HEAD must be unchanged — no partial commit of src.ts.
+    const headAfter = git('rev-parse', 'HEAD').trim()
+    expect(headAfter).toBe(headBefore)
+  })
+
+  it('returns blocked:false when only clean non-secret files are dirty', async () => {
+    writeFileSync(join(dir, 'src.ts'), 'const x = 1\n')
+    git('add', 'src.ts')
+    git('commit', '-m', 'add src', '--no-gpg-sign')
+
+    writeFileSync(join(dir, 'src.ts'), 'const x = 2\n')
+
+    const result = await scanDirtyFilesForGuards(dir, [' M src.ts'])
+
+    expect(result.blocked).toBe(false)
+  })
+
+  it('still catches WIP markers in test files when no secret paths are present', async () => {
+    mkdirSync(join(dir, '__tests__'), { recursive: true })
+    writeFileSync(join(dir, '__tests__', 'foo.test.ts'), 'describe("foo", () => {})\n')
+    git('add', '__tests__/foo.test.ts')
+    git('commit', '-m', 'add test', '--no-gpg-sign')
+
+    writeFileSync(
+      join(dir, '__tests__', 'foo.test.ts'),
+      ['describe("foo", () => {', '  // TODO: write assertions', '})'].join('\n'),
+    )
+
+    const result = await scanDirtyFilesForGuards(dir, [' M __tests__/foo.test.ts'])
+
+    expect(result.blocked).toBe(true)
+    if (result.blocked) {
+      expect(result.kind).toBe('wip')
     }
   })
 })
