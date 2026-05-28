@@ -39,6 +39,12 @@ export interface CloseSpanParams {
   outcome: string
   /** Defaults to `new Date()` when omitted. */
   endedAt?: Date
+  /**
+   * The Claude session id returned by the worker run. When provided it is
+   * written into the `session_id` column; when omitted the open-time value
+   * (if any) is preserved via `COALESCE`.
+   */
+  sessionId?: string
   transcript?: string
   usageSignals?: Record<string, unknown>
   /**
@@ -166,15 +172,17 @@ export const openStepSpanStore = async (dbPath: string): Promise<StepSpanStore> 
       const endedAt = (params.endedAt ?? new Date()).toISOString()
       await client.execute({
         sql: `UPDATE step_spans
-              SET ended_at     = ?,
-                  outcome      = ?,
-                  transcript   = ?,
+              SET ended_at      = ?,
+                  outcome       = ?,
+                  session_id    = COALESCE(?, session_id),
+                  transcript    = ?,
                   usage_signals = ?,
                   verify_output = COALESCE(?, verify_output)
               WHERE id = ?`,
         args: [
           endedAt,
           params.outcome,
+          params.sessionId ?? null,
           params.transcript ?? null,
           params.usageSignals !== undefined
             ? JSON.stringify(params.usageSignals)

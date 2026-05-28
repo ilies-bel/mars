@@ -4,8 +4,10 @@ import { type Task } from '../mastra/queue'
 import { type DomainTaskStore, getDefaultDomainTaskStore } from '../mastra/store/task-store'
 import { Workers } from '../mastra/workers'
 import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
-import { getRepoRoot } from '../mastra/context'
+import { getRepoRoot, resolveContext } from '../mastra/context'
 import { createQueueWorkflowStore } from './queue-workflow-store'
+import { openStepSpanStore } from '../mastra/lib/step-span-store'
+import { runWorkerWithSpan } from '../mastra/lib/run-worker-with-span'
 
 const TASK_GRAPH_LIMIT = 30
 const PROMPT_PREVIEW_CHARS = 200
@@ -100,8 +102,15 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
       const knownIds = new Set(allTasks.map((t) => t.id))
       const taskGraph = buildTaskGraph(allTasks, task.id)
 
-      const r = await Workers.Triager.run(buildPrompt(task, taskGraph), {
-        cwd: getRepoRoot(),
+      const spanStore = await openStepSpanStore(resolveContext().stateDbPath).catch(() => undefined)
+      const r = await runWorkerWithSpan({
+        worker: Workers.Triager,
+        prompt: buildPrompt(task, taskGraph),
+        runOptions: { cwd: getRepoRoot() },
+        spanStore,
+        stepName: 'generate-triage',
+        workflowInstanceId: ctx.runId,
+        originId: input.taskId,
       })
       if (r.exitCode !== 0) {
         throw new Error(

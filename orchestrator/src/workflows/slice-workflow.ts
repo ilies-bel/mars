@@ -8,8 +8,10 @@ import { enqueueTask } from '../mastra/queue'
 import { getDefaultTaskStore } from '../mastra/lib/task-store'
 import { Workers } from '../mastra/workers'
 import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
-import { getRepoRoot } from '../mastra/context'
+import { getRepoRoot, resolveContext } from '../mastra/context'
 import { raiseInboxItem } from '../mastra/lib/inbox'
+import { openStepSpanStore } from '../mastra/lib/step-span-store'
+import { runWorkerWithSpan } from '../mastra/lib/run-worker-with-span'
 
 const sliceInputSchema = z.object({
   proposalId: z.string(),
@@ -603,8 +605,15 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       )
     }
 
-    const r = await Workers.Slicer.run(buildSlicerPrompt(proposal), {
-      cwd: getRepoRoot(),
+    const spanStore = await openStepSpanStore(resolveContext().stateDbPath).catch(() => undefined)
+    const r = await runWorkerWithSpan({
+      worker: Workers.Slicer,
+      prompt: buildSlicerPrompt(proposal),
+      runOptions: { cwd: getRepoRoot() },
+      spanStore,
+      stepName: 'generate-slices',
+      workflowInstanceId: ctx.runId,
+      originId: inputData.proposalId,
     })
     if (r.exitCode !== 0) {
       throw new Error(
