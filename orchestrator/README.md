@@ -77,7 +77,81 @@ Add `/.mars/` to the target repo's `.gitignore`.
 - `MARS_REFLECT_DISABLED=1` — skip per-task token/cost capture and
   short-circuit `mars reflect`. Scorers stay attached either way.
 
-### Daemon worker pool
+## Daemon
+
+```
+mars daemon <start|stop|restart|kill|status|reload|set-flag> [flags]
+```
+
+CLI write operations (e.g. `mars add`) auto-spawn the daemon when needed.
+Use these subcommands to manage its lifecycle explicitly.
+
+### Subcommands
+
+| Subcommand | Description |
+| ---------- | ----------- |
+| `start` | Fork the daemon to the background. No-op if already running. Equivalent to the legacy `--detach` flag. |
+| `stop [--force]` | Graceful shutdown: stop accepting new work, wait for in-flight tasks to finish, then exit. `--force` exits immediately and abandons in-flight tasks. No timeout — use `kill` if `stop` is hanging. |
+| `restart` | Force-stop any running daemon, then start a fresh one in the background. Exits once the new daemon is up. |
+| `kill` | Hard stop: mark every in-flight task failed and SIGKILL the daemon's process group (kills all child `claude -p` workers). Use when `stop` is hanging on stuck work. |
+| `status` | Print pid, startedAt, inFlight, and queue counts. |
+| `reload` | Re-read `.mars/daemon.json` and `MARS_MAX_*` env vars without restarting. |
+| `set-flag <flag> <on\|off>` | Toggle an in-memory kill-switch. Currently only `recovery` is supported: `on` suppresses fix-task/Investigator spawns; `off` re-enables them. Not persisted across restarts. |
+
+```bash
+mars daemon start                      # fork to background; no-op if already running
+mars daemon status                     # print pid, uptime, and in-flight counts
+mars daemon stop                       # graceful: wait for in-flight tasks to finish
+mars daemon restart                    # force-stop + fresh start in one step
+mars daemon kill                       # hard stop: abort all in-flight tasks immediately
+mars daemon reload                     # pick up new MARS_MAX_* values without restart
+```
+
+### Output
+
+`mars daemon start` and `mars daemon restart` both print on stdout whether
+the daemon was already running or freshly spawned:
+
+```
+[mars] daemon detached (pid 12345, log: /path/to/repo/.mars/watch.log)
+```
+
+`mars daemon status` output:
+
+```
+pid:        12345
+startedAt:  2026-05-28T10:00:00.000Z
+counts:     draft=0 queued=2 running=1 verifying=0 merging=0 vega-reconciling=0
+inFlight:   1
+  implement task/abc123
+```
+
+### Self-heal on startup
+
+When the daemon starts (via `mars daemon start`, `restart`, or an
+auto-spawn triggered by a write op), it silently repairs stale state left
+over from a crash or unclean exit before binding its socket:
+
+| Stale state | What happens |
+| ----------- | ------------ |
+| **Orphan socket** (`watch.sock` exists but connection refused) | Socket file deleted; fresh socket bound in its place. No output. |
+| **Stale watch pid** (`watch.pid` points to a dead process, socket already gone) | Pid file deleted. No output. |
+| **Stale-but-alive pid** (`watch.pid` points to a live process that is not responding on the socket) | Socket unlinked and the new daemon takes over. One line on stderr: |
+
+```
+warning: stale-but-running daemon (pid 12345) not responding on /path/to/repo/.mars/watch.sock; taking over socket
+```
+
+Client-side liveness checks (run before any `mars daemon` subcommand)
+apply the same cleanup — orphan sockets and dead-pid files are removed
+silently before the subcommand proceeds.
+
+Note: the stale-worktree sweep runs as a background timer inside the
+daemon (every 5 minutes by default; override with `MARS_STALE_SWEEP_MS`).
+It is not a separate process and has no separate pid file — it starts and
+stops with the daemon.
+
+### Worker pool
 
 The daemon dispatches work through per-kind semaphores so a reconcile
 storm or a burst of `task add` calls can't spawn one worktree + `claude
