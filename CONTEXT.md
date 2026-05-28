@@ -315,3 +315,7 @@ _Avoid_: proposal blocker
 **Stale worker**:
 A dispatched Worker whose child process has produced no stdout/stderr output for longer than its Worker's Stale threshold; surfaces as a KPI signal only, without aborting the process.
 _Avoid_: stuck worker, quiet worker, idle worker
+
+**Dead worker**:
+A Stale Worker that has stayed quiet past its Dead threshold; the daemon aborts the child with exit code 125 and routes it to a worker-stale inbox item carrying restart/drop actions, bypassing the automatic recovery-recipe path.
+_Avoid_: stuck worker, timed-out worker, hung worker
