@@ -2327,3 +2327,169 @@ describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Tas
     expect(p1).not.toContain(TDD_WORKER_BRIEF)
   })
 })
+
+describe('runSlice: inbox summary for pre-flight dropped slices', () => {
+  // When the slicer pre-flight drops one or more already-satisfied slices,
+  // exactly one inbox item must be created (before tasks are queued) so the
+  // operator can verify the drop before survivors begin dispatch. When zero
+  // slices are dropped, no item is created from this code path.
+  let repo: string
+
+  const setupRepo = (): string => {
+    const r = mkdtempSync(resolve(tmpdir(), 'mars-slice-dropped-'))
+    execFileSync('git', ['init', '-q'], { cwd: r })
+    mkdirSync(resolve(r, '.mars'), { recursive: true })
+    return r
+  }
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+    vi.doUnmock('../../mastra/lib/git')
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  const envelope = (jsonResult: unknown): string =>
+    JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
+
+  const seedPrdReadyIdea = async (): Promise<string> => {
+    const proposals = await import('../../mastra/proposals')
+    await proposals.initProposals()
+    const idea = await proposals.createProposal('Inbox drop test PRD', {
+      problem: 'p',
+      solution: 's',
+    })
+    await proposals.addProposalUserStory(idea.id, 'as a user, I want X')
+    const promoted = await proposals.promoteProposal(idea.id)
+    expect(promoted.status).toBe('prd-ready')
+    return idea.id
+  }
+
+  it('creates exactly one inbox item naming the PRD id and dropped count when drops > 0', async () => {
+    // Slice 1 declares creates: ['src/alreadyShipped.ts'] with symbol
+    // `alreadyShipped`; that file and export already exist on disk, so the
+    // pre-flight drops it. Slice 2 survives and dispatches normally.
+    mkdirSync(resolve(repo, 'src'), { recursive: true })
+    writeFileSync(
+      resolve(repo, 'src/alreadyShipped.ts'),
+      'export function alreadyShipped() {}\n',
+    )
+
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope({
+            slices: [
+              {
+                title: 'Already shipped slice',
+                type: 'AFK',
+                whatToBuild: 'Create alreadyShipped function',
+                acceptanceCriteria: ['alreadyShipped exists'],
+                blockedBy: [],
+                readFirst: ['src/alreadyShipped.ts'],
+                prescriptiveAction:
+                  'Add `alreadyShipped` function to src/alreadyShipped.ts.',
+                creates: ['src/alreadyShipped.ts'],
+                modifies: [],
+                verifyCmd: null,
+                taskType: 'auto',
+              },
+              {
+                title: 'Surviving slice',
+                type: 'AFK',
+                whatToBuild: 'Some other work',
+                acceptanceCriteria: ['done'],
+                blockedBy: [],
+                readFirst: ['src/other.ts'],
+                prescriptiveAction: 'Add `otherFn` to src/other.ts.',
+                creates: [],
+                modifies: [],
+                verifyCmd: null,
+                taskType: 'auto',
+              },
+            ],
+          }),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+
+    // Slice 2 is the only survivor — one task queued.
+    expect(result.taskIds).toHaveLength(1)
+
+    // One inbox item must have been created for the dropped slice.
+    const inbox = await import('../../mastra/lib/inbox')
+    await inbox.initInbox()
+    const items = await inbox.listInboxItems('open', { kind: 'slices-dropped' })
+
+    expect(items).toHaveLength(1)
+    // Body must identify the PRD id and the count of dropped slices.
+    expect(items[0].body).toContain(ideaId)
+    expect(items[0].body).toContain('1')
+  })
+
+  it('creates no inbox item when the slicer run drops zero slices', async () => {
+    // No files pre-created → nothing satisfies the pre-flight check.
+    // The slicer emits one slice that creates a file that does not yet
+    // exist on disk — it must be dispatched normally with no inbox item.
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope({
+            slices: [
+              {
+                title: 'Regular slice',
+                type: 'AFK',
+                whatToBuild: 'Something new',
+                acceptanceCriteria: ['done'],
+                blockedBy: [],
+                readFirst: ['src/missing.ts'],
+                prescriptiveAction: 'Add `missingFn` to src/missing.ts.',
+                creates: ['src/missing.ts'],
+                modifies: [],
+                verifyCmd: null,
+                taskType: 'auto',
+              },
+            ],
+          }),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    await sliceModule.runSlice(ideaId)
+
+    const inbox = await import('../../mastra/lib/inbox')
+    await inbox.initInbox()
+    const items = await inbox.listInboxItems('open', { kind: 'slices-dropped' })
+
+    expect(items).toHaveLength(0)
+  })
+})

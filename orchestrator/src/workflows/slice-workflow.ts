@@ -9,6 +9,7 @@ import { getDefaultTaskStore } from '../mastra/lib/task-store'
 import { Workers } from '../mastra/workers'
 import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
 import { getRepoRoot } from '../mastra/context'
+import { raiseInboxItem } from '../mastra/lib/inbox'
 
 const sliceInputSchema = z.object({
   proposalId: z.string(),
@@ -622,7 +623,9 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     // Pre-flight drop: remove any slice whose creates files already exist
     // on disk and already export every backtick-declared symbol. Blocker
     // edges pointing at dropped slices are removed from surviving slices.
+    const preDropCount = parsed.slices.length
     parsed.slices = dropAlreadySatisfiedSlices(parsed.slices, getRepoRoot())
+    const droppedCount = preDropCount - parsed.slices.length
     const total = parsed.slices.length
 
     // Validate dependency indices before any DB writes.
@@ -664,6 +667,24 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
         args: [proposal.id],
       })
       .catch(() => {})
+
+    // Inform the operator when the pre-flight dropped at least one slice.
+    // Non-fatal: a failure here must not prevent the surviving slices from
+    // dispatching. Created before Phase 1 so the operator can intercept
+    // before any tasks are queued.
+    if (droppedCount > 0) {
+      await raiseInboxItem({
+        kind: 'slices-dropped',
+        category: 'orchestrator',
+        priority: 'normal',
+        title: `Slicer pre-flight: ${droppedCount} slice${droppedCount === 1 ? '' : 's'} already satisfied for PRD ${proposal.id}`,
+        body: `PRD ${proposal.id} (${proposal.title}): ${droppedCount} slice${droppedCount === 1 ? ' was' : 's were'} dropped as already satisfied on main. The remaining ${total} survivor${total === 1 ? '' : 's'} will dispatch normally.`,
+        payload: { proposalId: proposal.id, droppedCount, survivorCount: total },
+        context: {},
+        raisedBy: 'slicer',
+        signature: proposal.id,
+      }).catch(() => {})
+    }
 
     const taskIds: string[] = []
     // Tracks whether Phase 4 successfully flipped the proposal row to 'sliced'.
