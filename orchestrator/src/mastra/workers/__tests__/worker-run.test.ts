@@ -48,7 +48,6 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
   it('result carries the session id from the subprocess', async () => {
     const r = await Workers.Coder.run('noop', {
       cwd: process.cwd(),
-      timeoutMs: 5_000,
     })
     expect(r.exitCode).toBe(0)
     expect(r.sessionId).toBe('worker-stub-session')
@@ -59,7 +58,6 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
   it('result carries the full conversation from the session', async () => {
     const r = await Workers.Coder.run('noop', {
       cwd: process.cwd(),
-      timeoutMs: 5_000,
     })
     expect(r.conversation).toHaveLength(3)
     expect(r.conversation.map((e: ClaudeEvent) => e.type)).toEqual([
@@ -104,7 +102,6 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
     const seen: string[] = []
     await Workers.Coder.run('noop', {
       cwd: process.cwd(),
-      timeoutMs: 5_000,
       onEvent: (event) => {
         seen.push(event.type)
       },
@@ -116,7 +113,6 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
     const fromHook: string[] = []
     const r = await Workers.Coder.run('noop', {
       cwd: process.cwd(),
-      timeoutMs: 5_000,
       onEvent: (event) => {
         fromHook.push(event.type)
       },
@@ -175,14 +171,12 @@ tick();
       bare: false,
       disallowedTools: [],
       outputFormat: 'stream-json',
-      defaultTimeoutMs: 5_000,
       maxMessages: 3,
       runtime: 'headless',
     }
     const capper = createWorker(capCfg)
     const r = await capper.run('noop', {
       cwd: process.cwd(),
-      timeoutMs: 10_000,
     })
     expect(r.exitCode).toBe(137)
     // The conversation must be ≤ the cap — events recorded before the kill.
