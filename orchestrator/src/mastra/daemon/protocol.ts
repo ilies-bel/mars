@@ -12,7 +12,7 @@ export type DaemonRequest =
       author?: Author
       blockerIds?: readonly string[]
       priority?: number
-      tag?: TaskTag
+      tags?: TaskTag[]
       spec?: TaskSpec
     }
   | { op: 'task.priority'; id: string; priority: number }

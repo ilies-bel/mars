@@ -62,7 +62,7 @@ const FLAGS_WITH_VALUES = new Set([
   '--session',
 ])
 
-const REPEATABLE_FLAGS = new Set(['--blocked-by', '--files', '--done'])
+const REPEATABLE_FLAGS = new Set(['--blocked-by', '--files', '--done', '--tag'])
 
 const parseArgs = (argv: readonly string[]): ParsedArgs => {
   const positional: string[] = []
@@ -140,14 +140,15 @@ Commands:
                                 ayush-that/sub-agents.directory over HTTPS, cached
                                 under .mars/cache/sub-agents/ (7-day TTL).
                                 --verbose lists each discovered manifest on stderr.
-  task add "<prompt>" [--author kind:name] [--blocked-by <id>] [--tag coder] [plan flags]
+  task add "<prompt>" [--author kind:name] [--blocked-by <id>] [--tag <tag>] [plan flags]
                                 enqueue a runnable task directly (status='queued',
                                 skips triage; can be picked up by agent runners).
                                 --blocked-by <id> is repeatable; every id must
                                 already exist. The task will not dispatch until
-                                every listed blocker reaches 'done'. --tag picks
-                                the Worker that implements the task: 'coder'
-                                (default, only valid value) edits the worktree.
+                                every listed blocker reaches 'done'. --tag is
+                                repeatable; collected values form the tags list.
+                                The first tag routes to a Worker ('coder' is
+                                the default). Unknown tags fall back to Coder.
   proposal add "<goal>" [--author kind:name]
                                 create a proposal/plan in .mars/state.db. Author
                                 is detected from env/git when omitted: human if
@@ -949,7 +950,7 @@ const main = async (): Promise<void> => {
     skipTriage: boolean,
     blockerIds?: readonly string[],
     priority?: number,
-    tag?: 'coder',
+    tags?: string[],
     spec?: {
       files: readonly string[]
       verifyCmd: string | null
@@ -999,7 +1000,7 @@ const main = async (): Promise<void> => {
         author,
         ...(blockerIds && blockerIds.length > 0 ? { blockerIds } : {}),
         ...(priority !== undefined ? { priority } : {}),
-        ...(tag !== undefined ? { tag } : {}),
+        ...(tags !== undefined ? { tags } : {}),
         ...(spec !== undefined ? { spec } : {}),
       },
       {
@@ -1049,15 +1050,10 @@ const main = async (): Promise<void> => {
         }
         priority = n
       }
-      const tagRaw = flags['--tag']
-      let tag: 'coder' | undefined
-      if (tagRaw !== undefined) {
-        if (tagRaw !== 'coder') {
-          console.error(`tag must be one of coder; got '${tagRaw}'`)
-          process.exit(1)
-        }
-        tag = tagRaw
-      }
+      const tags: string[] | undefined =
+        multiFlags['--tag'] && multiFlags['--tag'].length > 0
+          ? multiFlags['--tag']
+          : undefined
       // Structured-task spec (gsd-style). Any of --files/--verify/--done/--type
       // promotes the row from free-prose to structured. If none are passed, the
       // row keeps the legacy shape (spec column NULL) and the agent sees only
@@ -1097,7 +1093,7 @@ const main = async (): Promise<void> => {
           taskType,
         }
       }
-      await enqueueViaDaemon(prompt, true, blockerIds, priority, tag, spec)
+      await enqueueViaDaemon(prompt, true, blockerIds, priority, tags, spec)
       return
     }
     if (sub === 'show') {
@@ -1118,7 +1114,7 @@ const main = async (): Promise<void> => {
       console.log(`kind:       task`)
       console.log(`id:         ${task.id}`)
       console.log(`Status:     ${task.status}`)
-      console.log(`tag:        ${task.tag ?? 'coder'}`)
+      console.log(`tags:       ${(task.tags ?? ['coder']).join(', ')}`)
       console.log(`author:     ${formatAuthor(task.author)}`)
       console.log(`branch:     ${task.branch ?? '-'}`)
       console.log(`worktree:   ${task.worktreePath ?? '-'}`)
@@ -1716,7 +1712,7 @@ const main = async (): Promise<void> => {
       console.log(`kind:       task`)
       console.log(`id:         ${task.id}`)
       console.log(`Status:     ${task.status}`)
-      console.log(`tag:        ${task.tag ?? 'coder'}`)
+      console.log(`tags:       ${(task.tags ?? ['coder']).join(', ')}`)
       console.log(`author:     ${formatAuthor(task.author)}`)
       console.log(`branch:     ${task.branch ?? '-'}`)
       console.log(`worktree:   ${task.worktreePath ?? '-'}`)
