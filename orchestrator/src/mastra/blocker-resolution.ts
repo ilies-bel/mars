@@ -8,6 +8,7 @@ import {
   markTaskFailed,
   raiseRetryBudgetExhaustedInbox,
 } from './queue-retry'
+import { failureReasonStringToCode } from './lib/failure-reasons'
 import { getTask, updateTask } from './queue'
 import { getDefaultQueueClient } from './lib/task-store'
 import { type InboxKind, raiseInboxItem, supersedeInboxItemsForOrigin } from './lib/inbox'
@@ -494,6 +495,9 @@ export const onBlockerTaskCancelled = async (
       status: 'failed',
       error: `cancelled-blocker-cascade: blocker ${blockerTaskId} was cancelled by user`,
       failureReason: CANCELLED_CASCADE_FAILURE_REASON,
+      failureReasonCode: failureReasonStringToCode(
+        CANCELLED_CASCADE_FAILURE_REASON,
+      ),
     })
     try {
       await raiseInboxItem({

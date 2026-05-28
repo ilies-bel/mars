@@ -10,10 +10,16 @@ import {
   processedOnce,
 } from '../../bus/processed-once.js'
 import {
+  type FailureReasonCatalog,
+  failureReasonStringToCode,
+  renderAvailableActionsMarkdown,
+} from '../lib/failure-reasons'
+import {
   raiseInboxItem,
   supersedeInboxItemsForOrigin,
   type SupersedeReason,
 } from '../lib/inbox'
+import { getTask } from '../queue'
 
 /**
  * Durable outbox subscriber that keeps inbox_items current from outbox
@@ -81,6 +87,26 @@ export async function ensureInboxRepopulator(client: Client): Promise<void> {
 }
 
 /**
+ * Parse a `recovery_payload` JSON blob and check whether it represents a
+ * `main-commiter` recovery. F.2's `raiseAggregatedMainCommiterFailureRow`
+ * already owns the inbox row for those failures; the structured writer
+ * must not compete.
+ */
+const isMainCommiterRecovery = (
+  recoveryPayload: string | null,
+  kind: string | undefined,
+): boolean => {
+  if (kind !== 'fix') return false
+  if (recoveryPayload === null || recoveryPayload.length === 0) return false
+  try {
+    const parsed = JSON.parse(recoveryPayload) as { recipe?: unknown }
+    return parsed.recipe === 'main-commiter'
+  } catch {
+    return false
+  }
+}
+
+/**
  * Apply the inbox mutation for a single mapped event.
  *
  * Separated from the drain loop so the caller can invoke it AFTER the
@@ -88,9 +114,47 @@ export async function ensureInboxRepopulator(client: Client): Promise<void> {
  * transaction on queue.db while also writing to state.db (which may be
  * the same file in some configurations, causing SQLITE_BUSY).
  */
-async function applyInboxMutation(event: BusEvent): Promise<void> {
+async function applyInboxMutation(
+  event: BusEvent,
+  catalog: FailureReasonCatalog,
+): Promise<void> {
   if (TASK_RAISE_EVENTS.has(event.type)) {
     const { taskId } = event.payload as { taskId: string }
+    // Load the task to read failure_reason_code, the legacy failure_reason
+    // string, and the recovery metadata that decides whether F.2's
+    // aggregated writer owns this row.
+    const task = await getTask(taskId)
+
+    // F.2 override: failed `main-commiter` recoveries are handled by
+    // `raiseAggregatedMainCommiterFailureRow`, which writes a cohort-listing
+    // body keyed on the committer's task id. Bail BEFORE raising so the
+    // structured writer and the aggregated writer don't compete.
+    if (
+      task !== null &&
+      isMainCommiterRecovery(task.recoveryPayload, task.kind)
+    ) {
+      return
+    }
+
+    // Resolve the failure code: prefer the typed column; fall back to mapping
+    // the legacy string; finally fall back to `unknown`.
+    const code =
+      task?.failureReasonCode ??
+      (task?.failureReason !== null && task?.failureReason !== undefined
+        ? failureReasonStringToCode(task.failureReason)
+        : 'unknown')
+    const entry = catalog.get(code)
+    const actionsMarkdown = renderAvailableActionsMarkdown(
+      entry.availableActions,
+      taskId,
+    )
+    const body = [
+      entry.userMessage,
+      '',
+      '**Available actions:**',
+      actionsMarkdown,
+    ].join('\n')
+
     // raiseInboxItem is idempotent: if an open origin row already exists
     // (raised by a richer writer such as queue-fix-tasks), it bumps
     // seen_count rather than inserting a duplicate row.
@@ -99,12 +163,18 @@ async function applyInboxMutation(event: BusEvent): Promise<void> {
       category: 'orchestrator',
       priority: 'high',
       title: `Task ${taskId} needs attention`,
-      body: [
-        `Task \`${taskId}\` reached \`${event.type}\` without a specific recovery plan.`,
-        '',
-        `Inspect the full log with \`mars log ${taskId}\`.`,
-      ].join('\n'),
-      payload: { taskId, eventType: event.type },
+      body,
+      payload: {
+        taskId,
+        eventType: event.type,
+        failureReasonCode: entry.code,
+        userMessage: entry.userMessage,
+        availableActions: entry.availableActions.map((a) => ({
+          id: a.id,
+          label: a.label,
+          cliHint: a.cliHint,
+        })),
+      },
       context: {},
       raisedBy: `inbox-repopulator:${event.type}`,
       signature: taskId,
@@ -176,6 +246,7 @@ async function applyInboxMutation(event: BusEvent): Promise<void> {
  */
 export async function drainInboxRepopulations(
   client: Client,
+  catalog: FailureReasonCatalog,
   log?: (msg: string) => void,
 ): Promise<{ processed: number }> {
   const pending = await fetchPending(client, INBOX_REPOPULATOR_SUBSCRIBER)
@@ -206,7 +277,7 @@ export async function drainInboxRepopulations(
           // Phase 2: Apply the inbox mutation now that the dedup row is committed.
           // processedOnce guarantees this branch runs at most once per (subscriber,
           // event) — concurrent drain calls cannot double-apply.
-          await applyInboxMutation(event)
+          await applyInboxMutation(event, catalog)
           processed++
         }
       } catch (err) {

@@ -230,6 +230,13 @@ export interface Task {
   author: Author | null
   dropReason: string | null
   failureReason: string | null
+  /**
+   * Typed catalog code (e.g. `verify:typecheck`) for the failure. Companion
+   * to the loose-string `failureReason`. Slice G writes it on every failure
+   * path; the legacy column stays for forensic continuity. Null on legacy
+   * rows landed before slice G.
+   */
+  failureReasonCode: string | null
   retryCount: number
   fixForTaskId: string | null
   failureSignature: string | null
@@ -974,6 +981,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     author,
     dropReason: (row.drop_reason as string | null) ?? null,
     failureReason: (row.failure_reason as string | null) ?? null,
+    failureReasonCode: (row.failure_reason_code as string | null) ?? null,
     retryCount: Number(row.retry_count ?? 0),
     fixForTaskId,
     failureSignature: (row.failure_signature as string | null) ?? null,
