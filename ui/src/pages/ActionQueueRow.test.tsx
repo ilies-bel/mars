@@ -45,7 +45,11 @@ const makeItem = (overrides: Partial<ActionQueueItem>): ActionQueueItem => ({
 
 const renderRow = (
   item: ActionQueueItem,
-  opts: { onRestart?: (() => void) | null; restartPending?: boolean } = {},
+  opts: {
+    onRestart?: (() => void) | null
+    restartPending?: boolean
+    restartError?: string | null
+  } = {},
 ) =>
   renderToStaticMarkup(
     <ActionQueueRow
@@ -54,6 +58,7 @@ const renderRow = (
       onSelect={() => {}}
       onRestart={opts.onRestart ?? null}
       restartPending={opts.restartPending ?? false}
+      restartError={opts.restartError ?? null}
     />,
   )
 
@@ -197,5 +202,60 @@ describe('ActionQueueRow – Restart button visibility', () => {
     expect(htmlFailed).toContain('>Restart<')
     expect(htmlStale).not.toContain('Restart')
     expect(htmlDraft).not.toContain('Restart')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// AC1: Clicking Restart triggers exactly one call — the button is disabled
+//      (native browser behaviour) while the call is in-flight, so rapid
+//      double-clicks cannot fire a second request.
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueRow – double-click protection', () => {
+  it('renders the button with the disabled attribute while restart is pending', () => {
+    const html = renderRow(BASE_ITEM, { onRestart: () => {}, restartPending: true })
+    // renderToStaticMarkup serialises disabled={true} as disabled="" in the HTML.
+    // We check for that attribute (not the CSS class disabled:opacity-50).
+    expect(html).toContain('disabled=""')
+  })
+
+  it('button is NOT disabled when restart is not pending', () => {
+    const html = renderRow(BASE_ITEM, { onRestart: () => {}, restartPending: false })
+    // The CSS class disabled:opacity-50 is always present, but the HTML
+    // attribute disabled="" must NOT appear when restartPending is false.
+    expect(html).not.toContain('disabled=""')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// AC4: On failure the row returns to its interactive state and an error
+//      message is shown inline on the row.
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueRow – restart error display', () => {
+  it('shows the error message inline when restartError is set', () => {
+    const html = renderRow(BASE_ITEM, {
+      onRestart: () => {},
+      restartError: 'restart failed (409): task is queued; only failed can be restarted',
+    })
+    expect(html).toContain('restart failed (409): task is queued; only failed can be restarted')
+  })
+
+  it('shows no error text when restartError is null', () => {
+    const html = renderRow(BASE_ITEM, { onRestart: () => {}, restartError: null })
+    // The row body should not contain any error-specific text
+    expect(html).not.toContain('restart failed')
+  })
+
+  it('still shows the Restart button alongside the error message (row is interactive again)', () => {
+    const html = renderRow(BASE_ITEM, {
+      onRestart: () => {},
+      restartError: 'network error',
+    })
+    // Both the error and the re-enabled button should be present
+    expect(html).toContain('network error')
+    expect(html).toContain('>Restart<')
+    // And the button should NOT carry the disabled="" attribute (pending = false, the default)
+    expect(html).not.toContain('disabled=""')
   })
 })
