@@ -51,7 +51,7 @@ export interface HttpServerDeps {
   /**
    * Resolved failure-reason catalog (built-in seed + `.mars/failure-reasons/`
    * overrides), loaded once at daemon start. Served verbatim by
-   * `GET /api/failure-reasons` for the inbox UI.
+   * `GET /failure-reasons` for the inbox UI.
    */
   failureReasonCatalog: FailureReasonCatalog
 }
@@ -114,7 +114,7 @@ type EntityOp = 'restart' | 'unblock' | 'purge' | 'prune-worktree'
  * Start a local HTTP server bound to `127.0.0.1` only. Exposes:
  *
  *   GET  /error-kinds            → the error-kind registry (action menus)
- *   GET  /api/failure-reasons    → the resolved failure-reason catalog
+ *   GET  /failure-reasons        → the resolved failure-reason catalog
  *   POST /actions/restart/:id    → re-queue a failed/daemon-killed task
  *   POST /actions/unblock/:id    → phantom-recover a blocked task
  *   POST /actions/purge/:id      → drop a task + worktree
@@ -142,11 +142,11 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /api/failure-reasons — the resolved failure-reason catalog. The
+    // GET /failure-reasons — the resolved failure-reason catalog. The
     // catalog is loaded once at daemon start (built-in seed + per-repo
     // overrides under `.mars/failure-reasons/`); consumers re-`mars daemon
     // reload` to pick up edits. Pure read; no draining gate.
-    if (req.method === 'GET' && req.url === '/api/failure-reasons') {
+    if (req.method === 'GET' && req.url === '/failure-reasons') {
       sendJson(res, 200, deps.failureReasonCatalog.list())
       return
     }
