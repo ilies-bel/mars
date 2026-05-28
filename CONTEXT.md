@@ -323,3 +323,7 @@ _Avoid_: stuck worker, timed-out worker, hung worker
 **Spawn governor**:
 The admission-control gate the daemon consults before acquiring a Worker semaphore slot; samples host load and memory at each watchdog tick and refuses new spawns when either signal is in High or Critical pressure, leaving the task in queued for the next drain cycle.
 _Avoid_: admission control, pressure gate, load gate, governor
+
+**Pressure level**:
+The Spawn governor's per-tick verdict on host resource state — Normal, Elevated, High, or Critical — computed as the worst band across load-ratio (loadavg-1 / cpu-count) and memory-used (1 - freemem / totalmem); High and Critical both refuse spawns, Elevated and Normal allow them.
+_Avoid_: pressure band, governor band, load level
