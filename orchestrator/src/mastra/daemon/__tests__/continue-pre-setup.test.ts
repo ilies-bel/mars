@@ -125,6 +125,38 @@ describe('continue degrades to restart for pre-setup failures', () => {
     expect(after?.error).toBeNull()
   })
 
+  // ── In-flight recovery guard ──────────────────────────────────────────────
+
+  it('refuses with the recovery task id when an in-flight recovery is present', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const source = await queue.enqueueTask('test work', undefined, { skipTriage: true })
+    // Source is failed+verify: worktree exists, so no pre-setup guard would fire.
+    // The only reason continue should refuse is the in-flight recovery.
+    await queue.updateTask(source.id, {
+      status: 'failed',
+      error: 'verify failed',
+      failedPhase: 'verify',
+      branch: `task/${source.id}`,
+      worktreePath: repo, // repo dir exists on disk
+    })
+
+    // Insert a recovery fix-task pointing at the source. enqueueTask rejects
+    // kind='fix', so we use the task store directly.
+    const { getDefaultTaskStore } = (await import('../../lib/task-store')) as typeof import('../../lib/task-store')
+    const store = await getDefaultTaskStore()
+    const recoveryId = `mars-fix-00`
+    const now = new Date().toISOString()
+    await store.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, origin_id, priority, tag, kind, created_at, updated_at)
+            VALUES (?, ?, 'running', ?, ?, 0, 'coder', 'fix', ?, ?)`,
+      args: [recoveryId, 'fix the thing', source.id, source.id, now, now],
+    })
+
+    // continue must refuse and name the in-flight recovery id
+    await expect(continueTask.coreContinueTask(source.id)).rejects.toThrow(recoveryId)
+  })
+
   // ── Normal resume path is unaffected ──────────────────────────────────────
 
   it('resumes from failed phase without degrading when worktree exists', async () => {
