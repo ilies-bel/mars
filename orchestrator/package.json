@@ -28,7 +28,6 @@
     "node": ">=22.13.0"
   },
   "dependencies": {
-    "@duckdb/node-api": "^1.5.2-r.1",
     "@libsql/client": "^0.17.3",
     "@mars/workflow": "file:../packages/workflow",
     "ink": "^7.0.2",

@@ -83,10 +83,15 @@ describe('resolveContext repo-root detection', () => {
     expect(ctx.repoRoot).toBe(realRepo)
   })
 
-  it("places Mars's trace-event store in a separate file from the framework's observability store", () => {
+  it("co-locates Mars's trace-event store inside the unified state.db (mars.db)", () => {
     const ctx = resolveContext(realRepo)
-    expect(ctx.traceDbPath).toBe(resolve(realRepo, '.mars', 'mars-trace.duckdb'))
-    // Physically distinct from the framework's observability store.
-    expect(ctx.traceDbPath).not.toBe(ctx.observabilityDbPath)
+    // Slice B collapsed the old DuckDB-backed mars-trace store into the
+    // shared SQLite mars.db. The framework's observability.duckdb stays a
+    // separate file, written by the framework's own observability hook.
+    expect(ctx.stateDbPath).toBe(resolve(realRepo, '.mars', 'mars.db'))
+    expect(ctx.observabilityDbPath).toBe(
+      resolve(realRepo, '.mars', 'observability.duckdb'),
+    )
+    expect(ctx.stateDbPath).not.toBe(ctx.observabilityDbPath)
   })
 })

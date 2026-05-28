@@ -6,7 +6,7 @@ import { Workers } from '../mastra/workers'
 import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
 import { getRepoRoot, resolveContext } from '../mastra/context'
 import { createQueueWorkflowStore } from './queue-workflow-store'
-import { openStepSpanStore } from '../mastra/lib/step-span-store'
+import { openTraceEventStore } from '../mastra/lib/trace-events-store'
 import { runWorkerWithSpan } from '../mastra/lib/run-worker-with-span'
 
 const TASK_GRAPH_LIMIT = 30
@@ -102,12 +102,12 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
       const knownIds = new Set(allTasks.map((t) => t.id))
       const taskGraph = buildTaskGraph(allTasks, task.id)
 
-      const spanStore = await openStepSpanStore(resolveContext().stateDbPath).catch(() => undefined)
+      const traceStore = await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)
       const r = await runWorkerWithSpan({
         worker: Workers.Triager,
         prompt: buildPrompt(task, taskGraph),
         runOptions: { cwd: getRepoRoot() },
-        spanStore,
+        traceStore,
         stepName: 'generate-triage',
         workflowInstanceId: ctx.runId,
         originId: input.taskId,
