@@ -40,6 +40,7 @@ export const INBOX_KINDS = [
   'worktree-ahead',
   'prerequisite-failed',
   'draft-proposal',
+  'slices-dropped',
 ] as const
 
 export type InboxKind = (typeof INBOX_KINDS)[number]
