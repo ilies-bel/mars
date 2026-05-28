@@ -42,7 +42,7 @@ if (r.exitCode !== 0) {
 ```
 
 The cap string is emitted verbatim by `lib/git.ts` (`runClaudeCode`,
-~lines 662-669): `claude -p hit message cap of ${cap} (MARS_CLAUDE_MAX_MESSAGES)`
+~lines 662-669): `claude -p hit message cap of ${cap}`
 with `exitCode: 137`. `Workers.Slicer.run` is a thin wrapper that returns
 that `RunClaudeResult` unchanged (`workers/index.ts:185-203`).
 
@@ -69,7 +69,7 @@ the existing test verbatim as your template:
 > `runClaudeCode` to return `{ exitCode: 1, stdout: '', stderr: '...' }`.
 
 - **Cap test:** clone that block, return
-  `{ exitCode: 137, stdout: '', stderr: 'claude -p hit message cap of 250 (MARS_CLAUDE_MAX_MESSAGES)', sessionId: 'stub-session', conversation: [] }`,
+  `{ exitCode: 137, stdout: '', stderr: 'claude -p hit message cap of 250', sessionId: 'stub-session', conversation: [] }`,
   seed a prd-ready idea (`seedPrdReadyIdea` helper at lines 311/646), and
   assert `runSlice` rejects with a message containing `message cap` AND
   `split the PRD` AND `not.toBe('slice workflow failed')`.
