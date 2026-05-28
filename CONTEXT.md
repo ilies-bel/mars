@@ -140,8 +140,8 @@ A tarball asset (mars-bundle-vX.Y.Z.tar.gz) containing manifest.json plus exactl
 _Avoid_: release tarball, framework bundle, mars bundle
 
 **Mars id**:
-An entity identifier rendered as 'mars-<kind>-<hex>' (with an optional '-<slug>' suffix for proposals), where the bare hex is the canonical identity: equality is on the hex alone, the kind/slug are presentation framing.
-_Avoid_: prefixed id, namespaced id
+An entity identifier rendered as '<tag>-<hex>', where <tag> is a fixed 4-letter kind code (e.g. task, prop, orig, alrt) and the bare hex is the canonical identity: equality is on the hex alone, the tag is presentation framing. No slug suffix.
+_Avoid_: prefixed id, namespaced id, slugged id
 
 **Bare id**:
 The hex-only portion of a Mars id, stored as the primary key on every entity table (tasks, proposals, etc.). All SQL indexes and foreign keys use the bare form; the 'mars-<kind>-' prefix is added on render and stripped on parse.
