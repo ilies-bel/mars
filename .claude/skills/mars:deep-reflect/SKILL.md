@@ -143,9 +143,9 @@ Rules:
 
 ## Conventions
 
-- **Never bypass the CLI.** Don't poke at `.mars/queue.db` or
-  `.mars/mastra.db` directly; don't read transcripts by hand; don't
-  insert into `proposals` by hand.
+- **Never bypass the CLI.** Don't poke at `.mars/queue.db` directly;
+  don't read JSONL transcripts under `~/.claude/projects/` by hand;
+  don't insert into `proposals` by hand.
 - **Foreground only.** `mars deep-reflect` is the user-visible action;
   do not run it with `run_in_background`.
 - **Never invent a task id.** If the user is vague, ask one clarifying
