@@ -312,10 +312,6 @@ ProposalStatus terminal: the proposal was decided against — no slicing, no tas
 A row in proposal_dependencies asserting that one Proposal cannot be meaningfully PRD-shaped until another Proposal reaches sliced; lives in the planning graph, is written by operators or by the recursive planner when it spawns a gap-filling child Proposal, and is never fanned out into task_blockers when the blocker Proposal is sliced.
 _Avoid_: proposal blocker
 
-**Stale worker**:
-A dispatched Worker whose child process has produced no stdout/stderr output for longer than its Worker's Stale threshold; surfaces as a KPI signal only, without aborting the process.
-_Avoid_: stuck worker, quiet worker, idle worker
-
 **Dead worker**:
 A Stale Worker that has stayed quiet past its Dead threshold; the daemon aborts the child with exit code 125 and routes it to a worker-stale inbox item carrying restart/drop actions, bypassing the automatic recovery-recipe path.
 _Avoid_: stuck worker, timed-out worker, hung worker
