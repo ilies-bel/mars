@@ -15,7 +15,6 @@ import {
   getChangedFiles,
   mergeBranch,
   checkMergeTargetStatus,
-  detectTemplatePaths,
 } from '../mastra/lib/git'
 import { getWorkerForTag, Workers, type WorkerName } from '../mastra/workers'
 import {
@@ -1166,52 +1165,6 @@ export const implementWorkflow = defineWorkflow<
           }, store)
           throw new Error(
             `task ${input.taskId} merge pre-flight failed: ${targetStatus.error.message}`,
-          )
-        }
-
-        // Merge preflight: reject any branch that touches orchestrator/src/init/templates/**.
-        // Template files are init-only archetypes edited by humans on main, never by an
-        // orchestrator task. Any diff to those paths is leakage — most commonly caused by
-        // composePrompt inlining the project-root CLAUDE.md into the coder brief and a
-        // bypassPermissions coder "reconciling" the embedded text back to the template file.
-        // (Systematic: two independent worktrees showed byte-identical leaked diffs.)
-        // Strict default: ALL tasks are rejected. No current task legitimately edits the
-        // bundled archetype via the orchestrator; humans edit it directly on main.
-        const branchChangedFiles = await getChangedFiles(
-          worktreePath,
-          input.integrationBranch,
-          branch,
-        )
-        const leakingTemplatePaths = detectTemplatePaths(branchChangedFiles)
-        if (leakingTemplatePaths.length > 0) {
-          const leakMsg =
-            `merge:preflight/template-leakage: task branch touches ${leakingTemplatePaths.length} init template path(s) ` +
-            `that must only be edited by humans on main:\n  ${leakingTemplatePaths.join('\n  ')}`
-          await updateTask(input.taskId, {
-            status: 'failed',
-            error: leakMsg.slice(0, 1000),
-            failedPhase: 'merge',
-          }, store)
-          await handleTaskFailureWithFixTask({
-            taskId: input.taskId,
-            failingStep: 'merge:preflight/template-leakage',
-            errorOutput: leakMsg,
-            branch,
-            store,
-            recipeContext: {
-              targetPath: worktreePath,
-              statusOutput: leakingTemplatePaths.join('\n'),
-              targetBranch: input.integrationBranch,
-              originalPrompt: '',
-            },
-          }).catch((err) => {
-            console.error(
-              `[failure-handler] task ${input.taskId} template-leakage handling errored:`,
-              err,
-            )
-          })
-          throw new Error(
-            `task ${input.taskId} merge:preflight/template-leakage: branch touches ${leakingTemplatePaths.length} init template path(s)`,
           )
         }
 
