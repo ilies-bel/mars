@@ -11,6 +11,7 @@
     "mars:bundle:refresh": "bash ./scripts/sync-claude-templates.sh",
     "sync-version": "node ./scripts/sync-version.mjs",
     "prebuild": "node ./scripts/sync-version.mjs",
+    "build": "tsc --noEmit",
     "pretest": "node ./scripts/sync-version.mjs",
     "test": "vitest run",
     "dev": "tsx src/cli.ts",

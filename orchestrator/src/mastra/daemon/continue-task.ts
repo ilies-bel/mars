@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { getTask, updateTask } from '../queue'
+import { getDefaultTaskStore } from '../lib/task-store'
 import { coreRestartTask } from './restart-task'
 
 export interface ContinueResult {
@@ -43,6 +44,26 @@ export interface ContinueResult {
 export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
   const task = await getTask(id)
   if (!task) throw new Error(`task ${id} not found`)
+
+  // Guard: refuse if an in-flight recovery (fix-task) is already running for
+  // this task. Checked before the status guard so the error names the recovery
+  // id rather than giving the generic "only failed tasks" message.
+  const store = await getDefaultTaskStore()
+  const inflightRows = await store.query({
+    sql: `SELECT id FROM tasks
+           WHERE fix_for_task_id = ?
+             AND status IN ('queued','running','verifying','merging','vega-reconciling','draft','blocked')
+           ORDER BY created_at DESC
+           LIMIT 1`,
+    args: [id],
+  })
+  if (inflightRows.rows.length > 0) {
+    const recoveryId = (inflightRows.rows[0] as unknown as { id: string }).id
+    throw new Error(
+      `task ${id} already has an in-flight recovery ${recoveryId}; wait for it to complete or use 'mars restart' to discard and re-run`,
+    )
+  }
+
   if (task.status !== 'failed') {
     throw new Error(
       `task ${id} is ${task.status}; only failed tasks can be continued (use 'mars restart' instead)`,
