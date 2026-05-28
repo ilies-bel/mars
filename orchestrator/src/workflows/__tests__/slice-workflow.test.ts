@@ -2493,3 +2493,306 @@ describe('runSlice: inbox summary for pre-flight dropped slices', () => {
     expect(items).toHaveLength(0)
   })
 })
+
+describe('runSlice: hitl slice routing → inbox item + Coder sub-task + blocked parent', () => {
+  // Acceptance criteria for this slice:
+  // - Slicing a PRD with one hitl slice creates exactly one inbox item of kind
+  //   'hitl-slice-needs-operator'
+  // - The inbox item body contains the slice title and acceptance criteria
+  //   rendered as a manual checklist
+  // - Exactly one Coder sub-task is enqueued from the subDeliverable spec
+  // - The sub-task is dispatchable (status='queued')
+  // - The hitl slice task row is in status='blocked'
+  // - All-coder PRDs produce no hitl inbox items and no sub-tasks
+
+  let repo: string
+
+  const setupRepo = (): string => {
+    const r = mkdtempSync(resolve(tmpdir(), 'mars-slice-hitl-routing-'))
+    execFileSync('git', ['init', '-q'], { cwd: r })
+    mkdirSync(resolve(r, '.mars'), { recursive: true })
+    return r
+  }
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+    vi.doUnmock('../../mastra/lib/git')
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  const envelope = (jsonResult: unknown): string =>
+    JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
+
+  const seedPrdReadyIdea = async (): Promise<string> => {
+    const proposals = await import('../../mastra/proposals')
+    await proposals.initProposals()
+    const idea = await proposals.createProposal('HITL routing test PRD', {
+      problem: 'operator must release manually',
+      solution: 'route hitl slices to operator inbox',
+    })
+    await proposals.addProposalUserStory(idea.id, 'as an operator, I see what to do')
+    const promoted = await proposals.promoteProposal(idea.id)
+    expect(promoted.status).toBe('prd-ready')
+    return idea.id
+  }
+
+  const hitlSlicerOutput = {
+    slices: [
+      {
+        title: 'Publish release to GitHub',
+        type: 'HITL' as const,
+        kind: 'hitl' as const,
+        whatToBuild:
+          'Operator downloads the artifact and pushes a tag to the remote.',
+        acceptanceCriteria: [
+          'release page shows the correct artifact',
+          'tag is pushed to remote',
+        ],
+        blockedBy: [] as number[],
+        readFirst: ['scripts/release.sh'] as string[],
+        prescriptiveAction:
+          'In scripts/release.sh, add a step that pushes the release tag.',
+        modifies: [] as string[],
+        creates: [] as string[],
+        verifyCmd: null,
+        taskType: 'auto' as const,
+        subDeliverable: {
+          title: 'Release verification script',
+          whatToBuild:
+            'Write scripts/verify-release.sh that checks the release page and exits 0 if the correct artifact is present.',
+          acceptanceCriteria: [
+            'script exits 0 when artifact is present on the release page',
+            'script exits 1 when artifact is missing',
+          ],
+          files: ['scripts/verify-release.sh'],
+        },
+      },
+    ],
+  }
+
+  it('creates exactly one inbox item of kind hitl-slice-needs-operator when an hitl slice is present', async () => {
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(hitlSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    await sliceModule.runSlice(ideaId)
+
+    const inbox = await import('../../mastra/lib/inbox')
+    await inbox.initInbox()
+    const items = await inbox.listInboxItems('open', {
+      kind: 'hitl-slice-needs-operator',
+    })
+
+    expect(items).toHaveLength(1)
+  })
+
+  it('inbox item body contains the hitl slice title and acceptance criteria as a manual checklist', async () => {
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(hitlSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    await sliceModule.runSlice(ideaId)
+
+    const inbox = await import('../../mastra/lib/inbox')
+    await inbox.initInbox()
+    const items = await inbox.listInboxItems('open', {
+      kind: 'hitl-slice-needs-operator',
+    })
+
+    const body = items[0].body
+    // Must contain the slice title
+    expect(body).toContain('Publish release to GitHub')
+    // Must contain the acceptance criteria rendered as manual checkboxes
+    expect(body).toContain('- [ ] release page shows the correct artifact')
+    expect(body).toContain('- [ ] tag is pushed to remote')
+  })
+
+  it('enqueues exactly one Coder sub-task built from the subDeliverable spec, dispatchable as queued', async () => {
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(hitlSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+
+    // result.taskIds contains only the slice task ids (1 hitl slice → 1 id)
+    expect(result.taskIds).toHaveLength(1)
+
+    const queue = await import('../../mastra/queue')
+    await queue.initQueue()
+
+    // hitl slice task + Coder sub-task = 2 tasks for this proposal
+    const allTasks = await queue.getClient().execute({
+      sql: `SELECT id, status, prompt FROM tasks WHERE parent_proposal_id = ? ORDER BY created_at ASC`,
+      args: [ideaId],
+    })
+    expect(allTasks.rows).toHaveLength(2)
+
+    // Identify the sub-task (not in result.taskIds)
+    type TaskRow = { id: string; status: string; prompt: string }
+    const subTaskRow = allTasks.rows.find(
+      (r) =>
+        !(result.taskIds as string[]).includes(
+          (r as unknown as TaskRow).id,
+        ),
+    ) as unknown as TaskRow | undefined
+    expect(subTaskRow).toBeDefined()
+
+    // Sub-task must be Coder-dispatchable (status='queued')
+    expect(subTaskRow!.status).toBe('queued')
+
+    // Sub-task prompt must derive from the subDeliverable spec
+    expect(subTaskRow!.prompt).toContain('Release verification script')
+    expect(subTaskRow!.prompt).toContain('verify-release.sh')
+  })
+
+  it('leaves the hitl slice task in status=blocked immediately after slicing', async () => {
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(hitlSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+
+    const queue = await import('../../mastra/queue')
+    await queue.initQueue()
+
+    // The hitl slice task itself must be blocked — never queued for Coder dispatch
+    const hitlRow = await queue.getClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [result.taskIds[0]],
+    })
+    expect(
+      (hitlRow.rows[0] as unknown as { status: string }).status,
+    ).toBe('blocked')
+  })
+
+  it('all-coder PRDs produce no hitl-slice-needs-operator inbox items and no Coder sub-tasks', async () => {
+    const coderOnlyOutput = {
+      slices: [
+        {
+          title: 'Refactor the parser',
+          type: 'AFK' as const,
+          kind: 'coder' as const,
+          whatToBuild: 'Improve parser performance.',
+          acceptanceCriteria: ['parser is faster'],
+          blockedBy: [] as number[],
+          readFirst: ['src/parser.ts'] as string[],
+          prescriptiveAction: 'Optimise parseToken() in src/parser.ts.',
+          modifies: [] as string[],
+          creates: [] as string[],
+          verifyCmd: null,
+          taskType: 'auto' as const,
+        },
+      ],
+    }
+
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(coderOnlyOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+
+    // One task only (the coder slice) — no sub-tasks created
+    expect(result.taskIds).toHaveLength(1)
+
+    const queue = await import('../../mastra/queue')
+    await queue.initQueue()
+    const totalTasks = await queue.getClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE parent_proposal_id = ?`,
+      args: [ideaId],
+    })
+    expect(
+      Number(
+        (totalTasks.rows[0] as unknown as { n: number | bigint }).n ?? 0,
+      ),
+    ).toBe(1)
+
+    // No hitl-slice-needs-operator inbox items
+    const inbox = await import('../../mastra/lib/inbox')
+    await inbox.initInbox()
+    const items = await inbox.listInboxItems('open', {
+      kind: 'hitl-slice-needs-operator',
+    })
+    expect(items).toHaveLength(0)
+  })
+})
