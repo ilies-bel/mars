@@ -339,3 +339,7 @@ _Avoid_: heal rate, fix success rate, recovery rate
 **KPI drift**:
 A sustained move in a KPI against its own rolling baseline (this window vs. prior) — the signal the dashboard exists to surface. Detecting drift requires a persisted KPI time-series; today KPIs are recomputed and printed, never stored, so drift is invisible. Drift in one KPI is read against the rest of the vector, never alone (see KPI).
 _Avoid_: regression, metric drift, trend
+
+**Self-evolve loop**:
+The closed feedback arc that turns KPI drift into corrective work: KPI regression -> reflection -> draft proposal -> operator promotes -> merge -> KPI re-measured to confirm the change moved the number. The framework does NOT rewrite itself: it surfaces drift and proposes; the operator owns every promotion, keeping planning the single human touchpoint. The automatic KPI-regression->proposal trigger is opt-in and off by default; with it off, deep-reflect is the manual entry point to the same loop. Agnostic by construction — it tunes any project's specifics via proposals, carrying no codebase assumptions.
+_Avoid_: auto-evolve, self-improvement, feedback loop, evolve loop
