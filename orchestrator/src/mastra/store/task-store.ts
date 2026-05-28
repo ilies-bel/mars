@@ -5,6 +5,19 @@
  * is a thin pass-through to the corresponding `queue.ts` function: same
  * signature, same return value, no behavioural change.
  *
+ * In addition to the typed domain methods, the store exposes three generic
+ * SQL escape hatches:
+ *
+ * - `query(sql, params)` — executes a single read in a read-only batch
+ *   transaction and returns the ResultSet.
+ * - `execute(sql, params)` — runs a single ad-hoc write statement and
+ *   returns the ResultSet.
+ * - `atomic(fn)` — opens a write transaction, passes a revocable Scope to
+ *   the callback, and commits on return or rolls back on throw, rethrowing
+ *   the original error. The Scope is revoked the moment the callback
+ *   settles; any retained reference used afterwards throws a clear error.
+ *   Nesting atomic() inside an active atomic() callback is rejected.
+ *
  * `createRunMigrations(client)` returns a lazy, once-per-instance memoised
  * runner that drives queue.ts's `initQueue()`. The factory signature accepts
  * a `client` so the API is stable for the next slice, which will execute DDL
@@ -14,7 +27,7 @@
  * `initQueue` remain exported from queue.ts unchanged.
  */
 
-import type { Client } from '@libsql/client'
+import type { Client, InValue, ResultSet } from '@libsql/client'
 import {
   initQueue,
   getTask as queueGetTask,
@@ -60,11 +73,29 @@ import type {
 export type UpdateTaskPatch = Parameters<typeof queueUpdateTask>[1]
 
 /**
+ * The callback argument for {@link DomainTaskStore.atomic}.
+ *
+ * Exposes only `query` and `execute` — no raw client, no transaction handle,
+ * no commit/rollback controls. The scope is revoked the moment the callback
+ * settles; any use afterwards throws a clear 'revoked' error.
+ */
+export interface Scope {
+  /** Execute a read statement inside the active transaction. */
+  query(sql: string, params?: InValue[]): Promise<ResultSet>
+  /** Execute a write statement inside the active transaction. */
+  execute(sql: string, params?: InValue[]): Promise<ResultSet>
+}
+
+/**
  * Typed domain interface over queue.db. Every method mirrors the
  * corresponding queue.ts export with an identical signature and return
  * type — no extra options, no narrowed constraints. This is the stable
  * seam callers will target after the migration; implementations move
  * to direct client execution in subsequent slices.
+ *
+ * In addition to the domain methods, three generic SQL escape hatches are
+ * available on every store created with a non-null client:
+ * `query`, `execute`, and `atomic`.
  */
 export interface DomainTaskStore {
   // ── Core task CRUD ───────────────────────────────────────────────────────
@@ -123,6 +154,27 @@ export interface DomainTaskStore {
   // ── Transcripts ──────────────────────────────────────────────────────────
   upsertTranscript(input: UpsertTranscriptInput): Promise<void>
   getTranscript(taskId: string): Promise<TaskTranscriptRow | null>
+
+  // ── Generic SQL escape hatches ───────────────────────────────────────────
+  /**
+   * Execute a single read statement in a read-only transaction and return
+   * the full ResultSet. Requires a non-null client.
+   */
+  query(sql: string, params?: InValue[]): Promise<ResultSet>
+  /**
+   * Execute a single ad-hoc write statement and return the full ResultSet.
+   * Requires a non-null client.
+   */
+  execute(sql: string, params?: InValue[]): Promise<ResultSet>
+  /**
+   * Run `fn` inside a write transaction. Commits when `fn` returns;
+   * rolls back and rethrows when `fn` throws. The {@link Scope} passed to
+   * `fn` is revoked the moment the callback settles — any retained reference
+   * used afterwards throws a clear 'revoked' error. Nesting `atomic` inside
+   * an active `atomic` callback is rejected immediately. Requires a non-null
+   * client.
+   */
+  atomic<T>(fn: (scope: Scope) => Promise<T>): Promise<T>
 }
 
 /**
@@ -149,66 +201,141 @@ export const createRunMigrations = (
 }
 
 /**
- * Create a `DomainTaskStore` over the given libsql client. Each method is a
- * thin pass-through to the corresponding queue function — identical signature,
- * identical return value, no extra behaviour. The `client` parameter is
- * accepted to establish the stable factory signature; queue functions resolve
- * their own client from the runtime context in this slice.
+ * Create a `DomainTaskStore` over the given libsql client.
+ *
+ * Domain methods (getTask, listTasks, …) are thin pass-throughs to the
+ * corresponding queue functions — identical signature, identical return value,
+ * no extra behaviour. The `client` parameter is used by the generic escape
+ * hatches (`query`, `execute`, `atomic`); domain methods resolve their own
+ * client from the runtime context in this slice.
+ *
+ * Passing `null` as the client is supported for call sites that only use
+ * domain methods. Calling `query`, `execute`, or `atomic` on a null-client
+ * store throws a clear error.
  */
-export const createTaskStore = (
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _client: Client | null,
-): DomainTaskStore => ({
-  // Core task CRUD
-  getTask: (id) => queueGetTask(id),
-  listTasks: (status) => queueListTasks(status),
-  enqueueTask: (prompt, plan, opts) => queueEnqueueTask(prompt, plan, opts),
-  updateTask: (id, patch) => queueUpdateTask(id, patch),
-  dropTask: (id) => queueDropTask(id),
-  deleteTask: (id) => queueDeleteTask(id),
-  setTaskPriority: (id, priority) => queueSetTaskPriority(id, priority),
-  insertReflectionTask: (corpusSize) => queueInsertReflectionTask(corpusSize),
-  promoteDraftToQueued: (taskId) => queuePromoteDraftToQueued(taskId),
-  unblockTask: (taskId) => queueUnblockTask(taskId),
+export const createTaskStore = (client: Client | null): DomainTaskStore => {
+  let inTransaction = false
 
-  // Blocker management
-  addBlockers: (taskId, blockerIds) => queueAddBlockers(taskId, blockerIds),
-  addPendingReviewBlockers: (taskId, blockerIds) =>
-    queueAddPendingReviewBlockers(taskId, blockerIds),
-  removeBlocker: (taskId, blockerId) => queueRemoveBlocker(taskId, blockerId),
-  clearBlockers: (taskId) => queueClearBlockers(taskId),
-  listBlockers: (taskId) => queueListBlockers(taskId),
-  hasIncompleteBlockers: (taskId) => queueHasIncompleteBlockers(taskId),
-  listAllBlockers: (taskId) => queueListAllBlockers(taskId),
+  /** Asserts the client is non-null; throws a descriptive error otherwise. */
+  const guardClient = (): Client => {
+    if (!client)
+      throw new Error(
+        'TaskStore: a libsql Client is required for query/execute/atomic — pass a non-null client to createTaskStore',
+      )
+    return client
+  }
 
-  // Proposal blockers
-  addProposalBlockers: (taskId, proposalIds) =>
-    queueAddProposalBlockers(taskId, proposalIds),
-  removeProposalBlocker: (taskId, proposalId) =>
-    queueRemoveProposalBlocker(taskId, proposalId),
-  listProposalBlockers: (taskId) => queueListProposalBlockers(taskId),
-  listTasksBlockedByProposal: (proposalId) =>
-    queueListTasksBlockedByProposal(proposalId),
-  transferProposalBlockerToTask: (proposalId, newBlockerTaskId) =>
-    queueTransferProposalBlockerToTask(proposalId, newBlockerTaskId),
+  return {
+    // ── Core task CRUD ─────────────────────────────────────────────────────
+    getTask: (id) => queueGetTask(id),
+    listTasks: (status) => queueListTasks(status),
+    enqueueTask: (prompt, plan, opts) => queueEnqueueTask(prompt, plan, opts),
+    updateTask: (id, patch) => queueUpdateTask(id, patch),
+    dropTask: (id) => queueDropTask(id),
+    deleteTask: (id) => queueDeleteTask(id),
+    setTaskPriority: (id, priority) => queueSetTaskPriority(id, priority),
+    insertReflectionTask: (corpusSize) => queueInsertReflectionTask(corpusSize),
+    promoteDraftToQueued: (taskId) => queuePromoteDraftToQueued(taskId),
+    unblockTask: (taskId) => queueUnblockTask(taskId),
 
-  // Relations
-  listSiblings: (originId, excludeTaskId) =>
-    queueListSiblings(originId, excludeTaskId),
-  listTasksForProposal: (proposalId) => queueListTasksForProposal(proposalId),
+    // ── Blocker management ─────────────────────────────────────────────────
+    addBlockers: (taskId, blockerIds) => queueAddBlockers(taskId, blockerIds),
+    addPendingReviewBlockers: (taskId, blockerIds) =>
+      queueAddPendingReviewBlockers(taskId, blockerIds),
+    removeBlocker: (taskId, blockerId) => queueRemoveBlocker(taskId, blockerId),
+    clearBlockers: (taskId) => queueClearBlockers(taskId),
+    listBlockers: (taskId) => queueListBlockers(taskId),
+    hasIncompleteBlockers: (taskId) => queueHasIncompleteBlockers(taskId),
+    listAllBlockers: (taskId) => queueListAllBlockers(taskId),
 
-  // Transcripts
-  upsertTranscript: (input) => queueUpsertTranscript(input),
-  getTranscript: (taskId) => queueGetTranscript(taskId),
-})
+    // ── Proposal blockers ──────────────────────────────────────────────────
+    addProposalBlockers: (taskId, proposalIds) =>
+      queueAddProposalBlockers(taskId, proposalIds),
+    removeProposalBlocker: (taskId, proposalId) =>
+      queueRemoveProposalBlocker(taskId, proposalId),
+    listProposalBlockers: (taskId) => queueListProposalBlockers(taskId),
+    listTasksBlockedByProposal: (proposalId) =>
+      queueListTasksBlockedByProposal(proposalId),
+    transferProposalBlockerToTask: (proposalId, newBlockerTaskId) =>
+      queueTransferProposalBlockerToTask(proposalId, newBlockerTaskId),
+
+    // ── Relations ──────────────────────────────────────────────────────────
+    listSiblings: (originId, excludeTaskId) =>
+      queueListSiblings(originId, excludeTaskId),
+    listTasksForProposal: (proposalId) => queueListTasksForProposal(proposalId),
+
+    // ── Transcripts ────────────────────────────────────────────────────────
+    upsertTranscript: (input) => queueUpsertTranscript(input),
+    getTranscript: (taskId) => queueGetTranscript(taskId),
+
+    // ── Generic SQL escape hatches ─────────────────────────────────────────
+
+    query: async (sql, params) => {
+      const c = guardClient()
+      const [result] = await c.batch([{ sql, args: params ?? [] }], 'read')
+      return result
+    },
+
+    execute: async (sql, params) => {
+      const c = guardClient()
+      return c.execute({ sql, args: params ?? [] })
+    },
+
+    atomic: async <T>(fn: (scope: Scope) => Promise<T>): Promise<T> => {
+      const c = guardClient()
+      if (inTransaction) {
+        throw new Error(
+          'TaskStore: atomic() cannot be nested inside another atomic() call',
+        )
+      }
+      inTransaction = true
+      const tx = await c.transaction('write')
+      let revoked = false
+
+      const scope: Scope = {
+        query: async (sql, params) => {
+          if (revoked)
+            throw new Error(
+              'TaskStore: Scope has been revoked — cannot use scope after atomic() has settled',
+            )
+          return tx.execute({ sql, args: params ?? [] })
+        },
+        execute: async (sql, params) => {
+          if (revoked)
+            throw new Error(
+              'TaskStore: Scope has been revoked — cannot use scope after atomic() has settled',
+            )
+          return tx.execute({ sql, args: params ?? [] })
+        },
+      }
+
+      try {
+        const result = await fn(scope)
+        await tx.commit()
+        return result
+      } catch (err) {
+        try {
+          await tx.rollback()
+        } catch {
+          // Swallow rollback errors; the original error is what matters.
+        }
+        throw err
+      } finally {
+        revoked = true
+        inTransaction = false
+        tx.close()
+      }
+    },
+  }
+}
 
 /**
  * Return a DomainTaskStore that routes through the queue module's singleton
  * client. Used as the fallback when no store is injected via RequestContext.
  *
- * The `_client` parameter in `createTaskStore` is unused in the current
- * pass-through implementation; queue functions resolve their own client
- * internally. This helper lets call sites obtain a domain store without
- * importing the Client type.
+ * Domain methods work without a real client (queue functions resolve their
+ * own client internally). The generic escape hatches (query/execute/atomic)
+ * are not available on this store — callers that need them should obtain a
+ * store via `createTaskStore(client)` with a real client.
  */
 export const getDefaultDomainTaskStore = (): DomainTaskStore => createTaskStore(null)
