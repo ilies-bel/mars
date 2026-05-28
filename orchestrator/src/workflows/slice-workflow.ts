@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { createQueueWorkflowStore } from './queue-workflow-store'
 import { getProposal, getProposalsClient, markProposalSliced } from '../mastra/proposals'
 import { enqueueTask } from '../mastra/queue'
+import { assertNotRecoveryEdge } from '../mastra/lib/blocker-invariant'
 import { getDefaultTaskStore } from '../mastra/lib/task-store'
 import { Workers } from '../mastra/workers'
 import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
@@ -810,6 +811,12 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       for (let i = 0; i < total; i += 1) {
         const deps = parsed.slices[i].blockedBy
         for (const dep of deps) {
+          // ADR-0038 leaf-node guard. Slicer-emitted rows are kind='task' by
+          // construction, so the assert is defensive — but the bottleneck
+          // sits at every task_blockers writer regardless of provenance.
+          await assertNotRecoveryEdge(taskIds[i], taskIds[dep - 1], {
+            client: taskStore,
+          })
           await taskStore.execute({
             sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
                   VALUES (?, ?, ?)`,
@@ -822,6 +829,11 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       // the operator confirms the manual step. hitlSliceIndices[j] is the
       // 0-based position in taskIds; subTaskIds[j] is the sub-task id.
       for (let j = 0; j < hitlSliceIndices.length; j += 1) {
+        await assertNotRecoveryEdge(
+          taskIds[hitlSliceIndices[j]],
+          subTaskIds[j],
+          { client: taskStore },
+        )
         await taskStore.execute({
           sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
                 VALUES (?, ?, ?)`,
