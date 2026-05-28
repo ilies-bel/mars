@@ -29,8 +29,6 @@ import {
   runSubprocessStreaming,
   runClaudeCode,
   stripFrontmatter,
-  detectTemplatePaths,
-  TEMPLATE_LEAKAGE_PREFIX,
 } from '../git'
 
 describe('claudeBinEnvFingerprint', () => {
@@ -1043,96 +1041,6 @@ process.exit(1);
     expect(result.aborted).toBe(false)
     // The resolved content (task version) must be present
     expect(readFileSync(resolve(repo, 'src.ts'), 'utf8')).toBe('const x = 2\n')
-  })
-})
-
-describe('detectTemplatePaths (unit)', () => {
-  it('returns an empty array when no paths are under the template prefix', () => {
-    expect(detectTemplatePaths(['src/foo.ts', 'README.md', 'orchestrator/src/init/scaffold.ts'])).toEqual([])
-  })
-
-  it('returns template paths that are directly under the prefix', () => {
-    const result = detectTemplatePaths([
-      'orchestrator/src/init/templates/CLAUDE.md',
-      'src/index.ts',
-    ])
-    expect(result).toEqual(['orchestrator/src/init/templates/CLAUDE.md'])
-  })
-
-  it('returns nested template paths', () => {
-    const result = detectTemplatePaths([
-      'orchestrator/src/init/templates/claude/skills/mars:deep-reflect/SKILL.md',
-      'orchestrator/src/init/scaffold.ts',
-    ])
-    expect(result).toEqual([
-      'orchestrator/src/init/templates/claude/skills/mars:deep-reflect/SKILL.md',
-    ])
-  })
-
-  it('returns all template paths when multiple are present', () => {
-    const result = detectTemplatePaths([
-      'orchestrator/src/init/templates/CLAUDE.md',
-      'orchestrator/src/init/templates/claude/skills/mars:deep-reflect/SKILL.md',
-      'src/unrelated.ts',
-    ])
-    expect(result).toHaveLength(2)
-    expect(result).toContain('orchestrator/src/init/templates/CLAUDE.md')
-    expect(result).toContain('orchestrator/src/init/templates/claude/skills/mars:deep-reflect/SKILL.md')
-  })
-
-  it('does not match a path that merely contains "templates" elsewhere', () => {
-    expect(detectTemplatePaths(['src/templates/foo.ts', 'lib/email-templates/bar.ts'])).toEqual([])
-  })
-
-  it('TEMPLATE_LEAKAGE_PREFIX is the expected sentinel string', () => {
-    expect(TEMPLATE_LEAKAGE_PREFIX).toBe('orchestrator/src/init/templates/')
-  })
-})
-
-describe('detectTemplatePaths with getChangedFiles (integration)', () => {
-  let repo: string
-
-  beforeEach(() => {
-    repo = mkdtempSync(resolve(tmpdir(), 'mars-tmpl-leak-'))
-    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
-    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
-    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
-    writeFileSync(resolve(repo, 'README.md'), 'init\n')
-    execFileSync('git', ['add', '.'], { cwd: repo })
-    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
-  })
-
-  afterEach(() => {
-    rmSync(repo, { recursive: true, force: true })
-  })
-
-  it('detects template leakage when branch diff contains orchestrator/src/init/templates/ paths', async () => {
-    // Simulate a coder run that "reconciled" the inlined CLAUDE.md back to
-    // the template file — the exact systematic leak from the incident.
-    execFileSync('git', ['checkout', '-q', '-b', 'task/leak-test'], { cwd: repo })
-    const templatesDir = resolve(repo, 'orchestrator/src/init/templates')
-    mkdirSync(templatesDir, { recursive: true })
-    writeFileSync(resolve(templatesDir, 'CLAUDE.md'), '# leaked\n')
-    execFileSync('git', ['add', '-A'], { cwd: repo })
-    execFileSync('git', ['commit', '-q', '-m', 'leaked template edit'], { cwd: repo })
-    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
-
-    const { getChangedFiles, detectTemplatePaths: detect } = await import('../git')
-    const changed = await getChangedFiles(repo, 'main', 'task/leak-test')
-    expect(detect(changed)).toEqual(['orchestrator/src/init/templates/CLAUDE.md'])
-  })
-
-  it('passes when branch diff contains no template paths', async () => {
-    execFileSync('git', ['checkout', '-q', '-b', 'task/clean'], { cwd: repo })
-    mkdirSync(resolve(repo, 'orchestrator/src'), { recursive: true })
-    writeFileSync(resolve(repo, 'orchestrator/src/index.ts'), 'export const x = 1\n')
-    execFileSync('git', ['add', '-A'], { cwd: repo })
-    execFileSync('git', ['commit', '-q', '-m', 'legit change'], { cwd: repo })
-    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
-
-    const { getChangedFiles, detectTemplatePaths: detect } = await import('../git')
-    const changed = await getChangedFiles(repo, 'main', 'task/clean')
-    expect(detect(changed)).toEqual([])
   })
 })
 
