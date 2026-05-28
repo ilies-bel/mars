@@ -14,11 +14,16 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
 import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
+import { loadRecipeCatalog } from '../../lib/recipes'
 
 let cachedCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
+let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
 beforeAll(async () => {
   cachedCatalog = await loadFailureReasonCatalog(
     mkdtempSync(resolve(tmpdir(), 'mars-http-inv-cat-')),
+  )
+  cachedRecipeCatalog = await loadRecipeCatalog(
+    mkdtempSync(resolve(tmpdir(), 'mars-http-inv-rec-')),
   )
 })
 
@@ -41,6 +46,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
   failureReasonCatalog: cachedCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>,
+  recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   ...overrides,
 })
 
