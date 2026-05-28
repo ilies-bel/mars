@@ -94,8 +94,8 @@ export interface WorkerConfig {
   // Wire format for claude -p's streamed output. Defaults to stream-json
   // (the only format the orchestrator's event reader currently parses).
   readonly outputFormat: ClaudeOutputFormat
-  // Per-Worker message cap. Resolved at construction time via the cascade:
-  // explicit override → MARS_CLAUDE_MAX_MESSAGES env var → DEFAULT_MAX_MESSAGES.
+  // Per-Worker message cap. Resolved at construction time: explicit override,
+  // else DEFAULT_MAX_MESSAGES (0 = unbounded).
   readonly maxMessages: number
   // Execution runtime for this Worker. Always 'headless' for existing Workers —
   // dispatched via `claude -p` in a non-interactive subprocess. Reserved for
@@ -110,22 +110,13 @@ export interface WorkerConfig {
 // one explicitly (e.g. Triager=40).
 export const DEFAULT_MAX_MESSAGES = 0
 
-// Resolve a Worker's effective message cap from the three-step cascade:
-//   1. an explicit per-Worker override (number)
-//   2. the MARS_CLAUDE_MAX_MESSAGES environment variable
-//   3. DEFAULT_MAX_MESSAGES (0 = unbounded)
-// Non-integer or negative env values are ignored and fall through to the
-// default — this matches resolveClaudeMessageCap inside the dispatch
-// wrapper so the two resolution sites agree.
+// Resolve a Worker's effective message cap: returns the explicit override when
+// it is a non-negative integer, otherwise DEFAULT_MAX_MESSAGES (0 = unbounded).
 export const resolveWorkerMaxMessages = (override?: number): number => {
   if (override !== undefined && Number.isInteger(override) && override >= 0) {
     return override
   }
-  const raw = process.env.MARS_CLAUDE_MAX_MESSAGES
-  if (raw === undefined) return DEFAULT_MAX_MESSAGES
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isInteger(parsed) || parsed < 0) return DEFAULT_MAX_MESSAGES
-  return parsed
+  return DEFAULT_MAX_MESSAGES
 }
 
 export interface RunOptions {

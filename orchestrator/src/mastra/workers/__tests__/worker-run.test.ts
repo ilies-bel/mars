@@ -129,7 +129,6 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
 describe('worker.run() — per-Worker message cap', () => {
   let stubDir: string
   let originalPath: string | undefined
-  let originalCap: string | undefined
 
   beforeAll(() => {
     stubDir = mkdtempSync(resolve(tmpdir(), 'mars-worker-cap-stub-'))
@@ -148,16 +147,11 @@ tick();
     writeFileSync(stubPath, stubScript, 'utf8')
     chmodSync(stubPath, 0o755)
     originalPath = process.env.PATH
-    originalCap = process.env.MARS_CLAUDE_MAX_MESSAGES
-    // Clear the global env cap so only the Worker-level pinned cap fires.
-    delete process.env.MARS_CLAUDE_MAX_MESSAGES
     process.env.PATH = `${stubDir}:${originalPath ?? ''}`
   })
 
   afterAll(() => {
     if (originalPath !== undefined) process.env.PATH = originalPath
-    if (originalCap === undefined) delete process.env.MARS_CLAUDE_MAX_MESSAGES
-    else process.env.MARS_CLAUDE_MAX_MESSAGES = originalCap
     rmSync(stubDir, { recursive: true, force: true })
   })
 

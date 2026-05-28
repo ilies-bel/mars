@@ -263,8 +263,7 @@ export const runReflector = async (
   }
 
   // No wall-clock timeout: reflect synthesis must run to completion.
-  // The only way to stop it is Ctrl-C. The MARS_CLAUDE_MAX_MESSAGES message
-  // cap (exit 137) still applies via runClaudeCode's internal logic.
+  // The only way to stop it is Ctrl-C.
   const r = await runClaudeCode({
     cwd: getRepoRoot(),
     prompt: buildPrompt(corpus),

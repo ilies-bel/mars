@@ -40,27 +40,21 @@ tick();
 describe('runClaudeCode message cap', () => {
   let stubDir: string
   let originalPath: string | undefined
-  let originalCap: string | undefined
 
   beforeAll(() => {
     stubDir = mkdtempSync(resolve(tmpdir(), 'mars-claude-cap-stub-'))
     originalPath = process.env.PATH
-    originalCap = process.env.MARS_CLAUDE_MAX_MESSAGES
     process.env.PATH = `${stubDir}:${originalPath ?? ''}`
   })
 
   afterAll(() => {
     if (originalPath !== undefined) process.env.PATH = originalPath
-    if (originalCap === undefined) delete process.env.MARS_CLAUDE_MAX_MESSAGES
-    else process.env.MARS_CLAUDE_MAX_MESSAGES = originalCap
     rmSync(stubDir, { recursive: true, force: true })
   })
 
-  it('runs uncapped by default (DEFAULT_CLAUDE_MAX_MESSAGES=0) and resolves with exit 0', async () => {
-    delete process.env.MARS_CLAUDE_MAX_MESSAGES
-    // 500 assistant events: with the default now uncapped, the run completes
-    // naturally instead of being SIGKILLed at 100. The 100 default used to cut
-    // Coders off mid-implementation.
+  it('runs uncapped by default (no maxMessages) and resolves with exit 0', async () => {
+    // 500 assistant events: with the default unbounded cap, the run completes
+    // naturally instead of being SIGKILLed.
     writeStub(stubDir, 500, 'cap-session-default')
 
     const r = await runClaudeCode({
@@ -75,36 +69,18 @@ describe('runClaudeCode message cap', () => {
     expect(r.sessionId).toBe('cap-session-default')
   }, 30_000)
 
-  it('respects a custom cap from MARS_CLAUDE_MAX_MESSAGES', async () => {
-    process.env.MARS_CLAUDE_MAX_MESSAGES = '25'
+  it('respects a custom cap passed via maxMessages and exits 137 when hit', async () => {
     writeStub(stubDir, 200, 'cap-session-custom')
 
     const r = await runClaudeCode({
       cwd: process.cwd(),
       prompt: 'noop',
       timeoutMs: 30_000,
+      maxMessages: 25,
     })
 
     expect(r.exitCode).toBe(137)
-    expect(r.stderr).toBe(
-      'claude -p hit message cap of 25 (MARS_CLAUDE_MAX_MESSAGES)',
-    )
+    expect(r.stderr).toBe('claude -p hit message cap of 25')
     expect(r.conversation.length).toBe(25)
-  }, 30_000)
-
-  it('runs to natural completion when MARS_CLAUDE_MAX_MESSAGES=0 disables the cap', async () => {
-    process.env.MARS_CLAUDE_MAX_MESSAGES = '0'
-    writeStub(stubDir, 200, 'cap-session-disabled')
-
-    const r = await runClaudeCode({
-      cwd: process.cwd(),
-      prompt: 'noop',
-      timeoutMs: 30_000,
-    })
-
-    expect(r.exitCode).toBe(0)
-    // 1 system + 200 assistant + 1 result.
-    expect(r.conversation.length).toBe(202)
-    expect(r.sessionId).toBe('cap-session-disabled')
   }, 30_000)
 })

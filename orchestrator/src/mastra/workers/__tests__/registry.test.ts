@@ -327,33 +327,18 @@ describe('systemPrompt / appendSystemPrompt mutual exclusion', () => {
   })
 })
 
-describe('resolveWorkerMaxMessages — explicit → env var → DEFAULT_MAX_MESSAGES', () => {
-  const original = process.env.MARS_CLAUDE_MAX_MESSAGES
-  beforeEach(() => {
-    delete process.env.MARS_CLAUDE_MAX_MESSAGES
-  })
-  afterEach(() => {
-    if (original === undefined) delete process.env.MARS_CLAUDE_MAX_MESSAGES
-    else process.env.MARS_CLAUDE_MAX_MESSAGES = original
-  })
-
+describe('resolveWorkerMaxMessages — explicit override → DEFAULT_MAX_MESSAGES', () => {
   it('returns the explicit override when one is provided', () => {
     expect(resolveWorkerMaxMessages(42)).toBe(42)
   })
 
-  it('falls back to MARS_CLAUDE_MAX_MESSAGES when no override is given', () => {
-    process.env.MARS_CLAUDE_MAX_MESSAGES = '77'
-    expect(resolveWorkerMaxMessages()).toBe(77)
+  it('returns 0 for an explicit override of 0 (unbounded)', () => {
+    expect(resolveWorkerMaxMessages(0)).toBe(0)
   })
 
-  it('falls back to DEFAULT_MAX_MESSAGES (0 = unbounded) when neither override nor env is set', () => {
+  it('falls back to DEFAULT_MAX_MESSAGES (0 = unbounded) when no override is given', () => {
     expect(resolveWorkerMaxMessages()).toBe(DEFAULT_MAX_MESSAGES)
     expect(DEFAULT_MAX_MESSAGES).toBe(0)
-  })
-
-  it('ignores non-integer env values and falls back to the default', () => {
-    process.env.MARS_CLAUDE_MAX_MESSAGES = 'notanumber'
-    expect(resolveWorkerMaxMessages()).toBe(DEFAULT_MAX_MESSAGES)
   })
 })
 
