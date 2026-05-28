@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http'
 import { listErrorKinds } from '../lib/error-kinds'
 import type { FailureReasonCatalog } from '../lib/failure-reasons'
+import type { RecipeCatalog } from '../lib/recipes'
 import type { RestartTaskError } from './restart-task'
 
 /**
@@ -54,6 +55,13 @@ export interface HttpServerDeps {
    * `GET /failure-reasons` for the inbox UI.
    */
   failureReasonCatalog: FailureReasonCatalog
+  /**
+   * Resolved recovery-recipe catalog (built-in seed + `.mars/recipes/`
+   * overrides), loaded once at daemon start. Served verbatim by
+   * `GET /recipes` so the inbox UI can name which recipe a recovery task
+   * was dispatched under.
+   */
+  recipeCatalog: RecipeCatalog
 }
 
 export interface HttpServerHandle {
@@ -115,6 +123,7 @@ type EntityOp = 'restart' | 'unblock' | 'purge' | 'prune-worktree'
  *
  *   GET  /error-kinds            → the error-kind registry (action menus)
  *   GET  /failure-reasons        → the resolved failure-reason catalog
+ *   GET  /recipes                → the resolved recovery-recipe catalog
  *   POST /actions/restart/:id    → re-queue a failed/daemon-killed task
  *   POST /actions/unblock/:id    → phantom-recover a blocked task
  *   POST /actions/purge/:id      → drop a task + worktree
@@ -148,6 +157,17 @@ export const startHttpServer = async (
     // reload` to pick up edits. Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/failure-reasons') {
       sendJson(res, 200, deps.failureReasonCatalog.list())
+      return
+    }
+
+    // GET /recipes — the resolved recovery-recipe catalog. Same lifecycle
+    // as /failure-reasons: loaded once at boot from
+    // `src/mastra/recipes/built-in/*.md` plus `.mars/recipes/*.md`
+    // overrides; consumers re-`mars daemon reload` to pick up edits. Pure
+    // read; no draining gate. No recipes are dispatched in slice E — this
+    // endpoint exists for symmetry and so the inbox UI can name them.
+    if (req.method === 'GET' && req.url === '/recipes') {
+      sendJson(res, 200, deps.recipeCatalog.list())
       return
     }
 

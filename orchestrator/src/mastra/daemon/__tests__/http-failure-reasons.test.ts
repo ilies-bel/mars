@@ -14,12 +14,17 @@ import {
   failureReasonsDir,
   loadFailureReasonCatalog,
 } from '../../lib/failure-reasons'
+import { loadRecipeCatalog } from '../../lib/recipes'
 import { BUILT_IN_FAILURE_REASONS } from '../../failure-reasons/built-in'
 
 let cachedCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
+let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
 beforeAll(async () => {
   cachedCatalog = await loadFailureReasonCatalog(
     mkdtempSync(resolve(tmpdir(), 'mars-http-fr-cat-')),
+  )
+  cachedRecipeCatalog = await loadRecipeCatalog(
+    mkdtempSync(resolve(tmpdir(), 'mars-http-fr-rec-')),
   )
 })
 
@@ -38,6 +43,7 @@ const makeDeps = (
   isAcceptingWork: () => true,
   failureReasonCatalog:
     catalogOverride ?? (cachedCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>),
+  recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   ...overrides,
 })
 
