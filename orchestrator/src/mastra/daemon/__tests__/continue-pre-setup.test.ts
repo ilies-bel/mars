@@ -92,6 +92,39 @@ describe('continue degrades to restart for pre-setup failures', () => {
     await expect(continueTask.coreContinueTask(task.id)).rejects.toThrow(/only failed tasks/)
   })
 
+  // ── Missing-worktree fallback: recorded path is gone from disk ────────────
+
+  it('falls back to restart when worktree path is set but missing from disk', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const task = await queue.enqueueTask('test work', undefined, { skipTriage: true })
+    // Simulate a task that failed in verify with a worktree that has since
+    // been deleted from disk (e.g. host reboot, manual cleanup, or eviction).
+    // The branch+worktreePath are recorded in the DB but the directory is gone.
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'verify failed',
+      failedPhase: 'verify',
+      branch: `task/${task.id}`,
+      worktreePath: '/nonexistent/worktree/path',
+    })
+
+    const result = await continueTask.coreContinueTask(task.id)
+
+    // Should degrade to restart since the worktree is missing on disk.
+    expect(result.degradedToRestart).toBe(true)
+    // Note must specifically mention the missing worktree so the operator
+    // knows why continue could not re-enter the verify phase.
+    expect(result.note).toMatch(/missing from disk/)
+
+    const after = await queue.getTask(task.id)
+    // Re-enters from setup: branch+worktree cleared (same as restart).
+    expect(after?.status).toBe('queued')
+    expect(after?.branch).toBeNull()
+    expect(after?.worktreePath).toBeNull()
+    expect(after?.error).toBeNull()
+  })
+
   // ── Normal resume path is unaffected ──────────────────────────────────────
 
   it('resumes from failed phase without degrading when worktree exists', async () => {
