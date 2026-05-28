@@ -27,6 +27,7 @@ import { writeSlimInit, writePerFolderClaudeMds, purgeStaleSupervisorMds, type V
 import { writeDetectionReport } from '../init/write-detection-report'
 import { readInitManifest, writeInitManifest } from '../init/init-manifest'
 import { writeFailureReasonsSeed } from '../init/failure-reasons-seed'
+import { writeRecipesSeed } from '../init/recipes-seed'
 import { relative, resolve } from 'node:path'
 
 const verifyStepSchema = z.object({
@@ -340,6 +341,27 @@ const runSeedFailureReasons = async (written: string[]): Promise<string[]> => {
   ]
 }
 
+/**
+ * Seed `.mars/recipes/<name>.md` overrides for every shipped built-in
+ * recovery recipe. Same no-overwrite rule as failure-reasons: once the
+ * consumer owns the file, the binary leaves it alone. A future binary
+ * adding new recipes lands only the missing files. Silent unless
+ * something was written.
+ */
+const runSeedRecipes = async (written: string[]): Promise<string[]> => {
+  const ctx = resolveContext()
+  const result = writeRecipesSeed(ctx.stateDir)
+  if (result.written.length > 0) {
+    process.stdout.write(
+      `[mars init] wrote ${result.written.length} recipe seeds to ${relative(ctx.repoRoot, result.dir)}/\n`,
+    )
+  }
+  return [
+    ...written,
+    ...result.written.map((f) => relative(ctx.repoRoot, resolve(result.dir, f))),
+  ]
+}
+
 const initInputSchema = z.object({
   fetch: z.boolean().default(true),
   refresh: z.boolean().default(false),
@@ -351,13 +373,13 @@ interface InitWorkflowOutput {
   written: string[]
 }
 
-// Six linear steps, threaded by native control flow. The step NAMES
+// Seven linear steps, threaded by native control flow. The step NAMES
 // ('detect-stack', 'render-supervisors', 'write-slim-init', 'scaffold-claude',
-// 'init-databases', 'seed-failure-reasons') are load-bearing trace-view
-// labels. Disk side effects (verify.json, per-folder + root CLAUDE.md, the
-// init manifest, the failure-reason override seeds) and DB side effects
-// (queue.db/state.db) are preserved verbatim. Failures THROW; the engine
-// records the step failed.
+// 'init-databases', 'seed-failure-reasons', 'seed-recipes') are load-bearing
+// trace-view labels. Disk side effects (verify.json, per-folder + root
+// CLAUDE.md, the init manifest, the failure-reason and recipe override
+// seeds) and DB side effects (queue.db/state.db) are preserved verbatim.
+// Failures THROW; the engine records the step failed.
 export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
   id: 'init',
   inputSchema: initInputSchema,
@@ -369,9 +391,10 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
     const w1 = await ctx.step('write-slim-init', () => runWriteSlimInit(rendered))
     const w2 = await ctx.step('scaffold-claude', () => runScaffoldClaude(w1))
     const w3 = await ctx.step('init-databases', () => runInitDatabases(w2))
-    const written = await ctx.step('seed-failure-reasons', () =>
+    const w4 = await ctx.step('seed-failure-reasons', () =>
       runSeedFailureReasons(w3),
     )
+    const written = await ctx.step('seed-recipes', () => runSeedRecipes(w4))
     return { written }
   },
 })

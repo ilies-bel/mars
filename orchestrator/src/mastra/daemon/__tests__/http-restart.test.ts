@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
 import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
+import { loadRecipeCatalog } from '../../lib/recipes'
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-http-restart-'))
@@ -36,6 +37,7 @@ const loadModules = async (repo: string) => {
 // Built-in-only catalog reused across tests. Tests that need overrides
 // build their own catalog from a temp `.mars/failure-reasons/` directory.
 let cachedBuiltInCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
+let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
 const getBuiltInCatalog = async () => {
   if (!cachedBuiltInCatalog) {
     cachedBuiltInCatalog = await loadFailureReasonCatalog(
@@ -43,6 +45,14 @@ const getBuiltInCatalog = async () => {
     )
   }
   return cachedBuiltInCatalog
+}
+const getBuiltInRecipeCatalog = async () => {
+  if (!cachedRecipeCatalog) {
+    cachedRecipeCatalog = await loadRecipeCatalog(
+      mkdtempSync(resolve(tmpdir(), 'mars-http-rec-')),
+    )
+  }
+  return cachedRecipeCatalog
 }
 
 const makeDeps = (
@@ -60,12 +70,14 @@ const makeDeps = (
   isAcceptingWork: () => true,
   failureReasonCatalog:
     catalogOverride ?? (cachedBuiltInCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>),
+  recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   ...overrides,
 })
 
 // Vitest lifecycle: ensure the cached catalog is ready before any test runs.
 beforeAll(async () => {
   await getBuiltInCatalog()
+  await getBuiltInRecipeCatalog()
 })
 
 describe('HTTP action endpoint', () => {

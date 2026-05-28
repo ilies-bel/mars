@@ -1876,6 +1876,15 @@ export const startDaemon = async (
     resolveContext().stateDir,
     { onWarn: (msg) => log(msg) },
   )
+  // Same lifecycle as the failure-reason catalog: built-in seed under
+  // `src/mastra/recipes/built-in/*.md` merged with `.mars/recipes/*.md`
+  // overrides, loaded once. No recipe is dispatched in this slice — the
+  // catalog is exposed so the inbox UI can name which recipe a recovery
+  // task ran under (wiring lands in slice F).
+  const { loadRecipeCatalog } = await import('../lib/recipes')
+  const recipeCatalog = await loadRecipeCatalog(resolveContext().stateDir, {
+    onWarn: (msg) => log(msg),
+  })
   const httpHandle = await startHttpServer({
     restartTask: async (id) => {
       await coreRestart(id, new Set(['failed']))
@@ -2189,6 +2198,7 @@ export const startDaemon = async (
     },
     isAcceptingWork: () => acceptingWork,
     failureReasonCatalog,
+    recipeCatalog,
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
