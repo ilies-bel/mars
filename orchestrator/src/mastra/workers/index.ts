@@ -58,7 +58,7 @@ export type ClaudeOutputFormat = 'stream-json' | 'json' | 'text'
 // author who reads WORKER_CONFIGS sees the entire role-pinned posture
 // (model, fallback model, effort, permission mode, agent, system prompt
 // shape, allow/deny lists, tool list, output format, message cap, bare
-// mode, default timeout) without having to chase the dispatch call site.
+// mode) without having to chase the dispatch call site.
 //
 // `systemPrompt` and `appendSystemPrompt` are mutually exclusive. The
 // Worker factory throws at construction time if both are pinned — the
@@ -94,10 +94,6 @@ export interface WorkerConfig {
   // Wire format for claude -p's streamed output. Defaults to stream-json
   // (the only format the orchestrator's event reader currently parses).
   readonly outputFormat: ClaudeOutputFormat
-  // Default per-invocation timeout (ms). Workflow authors may override with
-  // RunOptions.timeoutMs but the default is pinned here so a stage cannot
-  // forget to set one.
-  readonly defaultTimeoutMs: number
   // Per-Worker message cap. Resolved at construction time via the cascade:
   // explicit override → MARS_CLAUDE_MAX_MESSAGES env var → DEFAULT_MAX_MESSAGES.
   readonly maxMessages: number
@@ -136,7 +132,6 @@ export interface RunOptions {
   readonly cwd: string
   readonly sessionId?: string
   readonly onEvent?: (event: ClaudeEvent) => void | Promise<void>
-  readonly timeoutMs?: number
   readonly systemPrompt?: string
   /**
    * Caller-supplied abort signal. Forwarded to {@link runClaudeCode} so the
@@ -187,7 +182,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: [],
     outputFormat: 'stream-json',
-    defaultTimeoutMs: 20 * 60 * 1000,
     maxMessages: resolveWorkerMaxMessages(),
     runtime: 'headless',
   },
@@ -199,7 +193,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    defaultTimeoutMs: 5 * 60 * 1000,
     maxMessages: resolveWorkerMaxMessages(),
     runtime: 'headless',
   },
@@ -211,7 +204,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    defaultTimeoutMs: 5 * 60 * 1000,
     // Slicing is a read-heavy, one-shot analysis of a whole PRD against the
     // codebase; the 100-message default (shared with Coder/Planner) is too
     // tight — the slicer spends 60+ messages orienting and was SIGKILLed
@@ -228,7 +220,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    defaultTimeoutMs: 2 * 60 * 1000,
     maxMessages: resolveWorkerMaxMessages(40),
     runtime: 'headless',
   },
@@ -240,7 +231,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: FIXER_BACKLOG_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    defaultTimeoutMs: 20 * 60 * 1000,
     maxMessages: resolveWorkerMaxMessages(),
     runtime: 'headless',
   },
@@ -276,7 +266,6 @@ const buildWorker = (config: WorkerConfig): Worker => {
       runClaudeCode({
         cwd: options.cwd,
         prompt,
-        timeoutMs: options.timeoutMs ?? config.defaultTimeoutMs,
         model: config.model,
         systemPrompt: options.systemPrompt ?? config.systemPrompt ?? config.appendSystemPrompt,
         sessionId: options.sessionId,
