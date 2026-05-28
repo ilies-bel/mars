@@ -31,12 +31,14 @@
     "@libsql/client": "^0.17.3",
     "@mars/workflow": "file:../packages/workflow",
     "ink": "^7.0.2",
+    "js-yaml": "^4.1.1",
     "react": "^19.2.0",
     "tsx": "^4.21.0",
     "ws": "^8.20.0",
     "zod": "4.3.6"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.0",
     "@types/ws": "^8.5.13",
