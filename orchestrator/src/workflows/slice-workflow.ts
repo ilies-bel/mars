@@ -696,6 +696,15 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     }
 
     const taskIds: string[] = []
+    // Coder sub-tasks enqueued for hitl slices (one per hitl slice, in
+    // the same order as the hitl slices appear in taskIds). Tracked
+    // separately so markProposalSliced receives the true slice count and
+    // the catch block can clean them up alongside the slice tasks.
+    const subTaskIds: string[] = []
+    // Parallel arrays that map hitl slice positions to their sub-tasks.
+    // hitlSliceIndices[j] is the 0-based index in parsed.slices/taskIds;
+    // subTaskIds[j] is the id of the Coder sub-task for that slice.
+    const hitlSliceIndices: number[] = []
     // Tracks whether Phase 4 successfully flipped the proposal row to 'sliced'.
     // The catch block uses this to compensate (revert to 'prd-ready') when
     // a failure after the flip would otherwise strand the proposal as 'sliced'
@@ -738,6 +747,63 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
           },
         })
         taskIds.push(task.id)
+
+        // HITL routing: for hitl slices, enqueue a Coder sub-task built
+        // from the slice's subDeliverable spec, then raise an operator
+        // inbox item so the human knows what to act on. The hitl slice
+        // task itself is never dispatched to a Coder (Phase 3 always
+        // marks it 'blocked'; Phase 2b wires it to wait on the sub-task).
+        if (slice.kind === 'hitl' && slice.subDeliverable !== undefined) {
+          const sub = slice.subDeliverable
+          const subCriteria = sub.acceptanceCriteria.map((c) => `- [ ] ${c}`).join('\n')
+          const subFilesSection =
+            sub.files && sub.files.length > 0
+              ? `\n## Files\n\n${sub.files.map((f) => `- ${f}`).join('\n')}\n`
+              : ''
+          const subPrompt =
+            `# ${sub.title}\n\n` +
+            `Sub-task for HITL slice "${slice.title}" (PRD ${proposal.id}: ${proposal.title}).\n\n` +
+            `## What to build\n\n${sub.whatToBuild}\n\n` +
+            `## Acceptance criteria\n\n${subCriteria}\n` +
+            subFilesSection
+
+          const subTask = await enqueueTask(subPrompt, undefined, {
+            author: proposal.author ?? undefined,
+            originId: proposal.id,
+            parentProposalId: proposal.id,
+            spec: {
+              files: sub.files ?? [],
+              verifyCmd: null,
+              doneCriteria: sub.acceptanceCriteria,
+              taskType: 'auto',
+              sliceKind: 'coder',
+            },
+          })
+          subTaskIds.push(subTask.id)
+          hitlSliceIndices.push(i)
+
+          const checklist = slice.acceptanceCriteria.map((c) => `- [ ] ${c}`).join('\n')
+          await raiseInboxItem({
+            kind: 'hitl-slice-needs-operator',
+            category: 'orchestrator',
+            priority: 'normal',
+            title: `HITL: ${slice.title}`,
+            body:
+              `**HITL slice:** ${slice.title}\n\n` +
+              `## Manual checklist\n\n${checklist}\n\n` +
+              `## Operator tooling\n\n` +
+              `Sub-task \`${subTask.id}\` will deliver the artifact for this HITL step. ` +
+              `Once it completes, run the artifact to confirm the step.\n`,
+            payload: {
+              proposalId: proposal.id,
+              sliceIndex: i + 1,
+              subTaskId: subTask.id,
+            },
+            context: {},
+            raisedBy: 'slicer',
+            signature: `${proposal.id}:hitl:${i + 1}`,
+          })
+        }
       }
       // Phase 2: wire blockers using the resolved task ids.
       const now = new Date().toISOString()
@@ -751,13 +817,36 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
           })
         }
       }
-      // Phase 3: transition each slice to 'queued' (no blockers) or
-      // 'blocked' (has blockers). The daemon will pick up queued ones.
+      // Phase 2b: wire each hitl slice task to block on its Coder sub-task.
+      // The hitl slice is never dispatched until the sub-task completes and
+      // the operator confirms the manual step. hitlSliceIndices[j] is the
+      // 0-based position in taskIds; subTaskIds[j] is the sub-task id.
+      for (let j = 0; j < hitlSliceIndices.length; j += 1) {
+        await taskStore.execute({
+          sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
+                VALUES (?, ?, ?)`,
+          args: [taskIds[hitlSliceIndices[j]], subTaskIds[j], now],
+        })
+      }
+      // Phase 3: transition each slice to 'queued' (no blockers and kind='coder') or
+      // 'blocked' (has blockers or kind='hitl'). hitl slices are ALWAYS blocked —
+      // they are never dispatched to a Coder; the operator completes them manually.
+      // The daemon picks up 'queued' tasks.
       for (let i = 0; i < total; i += 1) {
-        const status = parsed.slices[i].blockedBy.length === 0 ? 'queued' : 'blocked'
+        const isHitl = parsed.slices[i].kind === 'hitl'
+        const status =
+          isHitl || parsed.slices[i].blockedBy.length > 0 ? 'blocked' : 'queued'
         await taskStore.execute({
           sql: `UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
           args: [status, now, taskIds[i]],
+        })
+      }
+      // Phase 3b: Coder sub-tasks enqueued for hitl slices have no blockers
+      // and must be dispatched immediately — transition them to 'queued'.
+      for (const subTaskId of subTaskIds) {
+        await taskStore.execute({
+          sql: `UPDATE tasks SET status = 'queued', updated_at = ? WHERE id = ?`,
+          args: [now, subTaskId],
         })
       }
       // Defensive: never mark a proposal 'sliced' with zero tasks. The
@@ -801,7 +890,8 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
         await transferProposalBlockerToTask(proposal.id, taskIds[0])
       }
     } catch (error: unknown) {
-      for (const id of taskIds) {
+      // Clean up slice tasks AND any Coder sub-tasks created for hitl slices.
+      for (const id of [...taskIds, ...subTaskIds]) {
         await taskStore
           .execute({ sql: `DELETE FROM tasks WHERE id = ?`, args: [id] })
           .catch(() => {})

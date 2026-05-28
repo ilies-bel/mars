@@ -41,6 +41,7 @@ export const INBOX_KINDS = [
   'prerequisite-failed',
   'draft-proposal',
   'slices-dropped',
+  'hitl-slice-needs-operator',
 ] as const
 
 export type InboxKind = (typeof INBOX_KINDS)[number]
