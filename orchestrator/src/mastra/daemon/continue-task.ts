@@ -54,19 +54,22 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
   //   - failedPhase 'code' → sentinel for non-resumable setup-time failures
   //   - no branch/worktreePath on the row → worktree was never created
   //   - worktree path missing on disk → worktree was created but is gone
+  const worktreeMissingOnDisk =
+    !!task.branch && !!task.worktreePath && !existsSync(task.worktreePath)
+
   const isPreSetup =
     task.failedPhase === null ||
     task.failedPhase === 'code' ||
     !task.branch ||
     !task.worktreePath ||
-    !existsSync(task.worktreePath)
+    worktreeMissingOnDisk
 
   if (isPreSetup) {
     await coreRestartTask(id, new Set(['failed']))
-    return {
-      degradedToRestart: true,
-      note: `failure was pre-setup (no worktree to preserve); continue is equivalent to restart here`,
-    }
+    const note = worktreeMissingOnDisk
+      ? `worktree at ${task.worktreePath} is missing from disk; cannot re-enter ${task.failedPhase} phase — restarting from setup`
+      : `failure was pre-setup (no worktree to preserve); continue is equivalent to restart here`
+    return { degradedToRestart: true, note }
   }
 
   // Re-queue as-is. No `resumeFrom`: engine checkpoint-resume (runId=task.id)

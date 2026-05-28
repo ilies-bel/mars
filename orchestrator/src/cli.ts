@@ -1885,7 +1885,10 @@ const main = async (): Promise<void> => {
         typeof res === 'object' &&
         (res as { degradedToRestart?: boolean }).degradedToRestart === true
       ) {
-        verb = `queued ${id} for restart from setup (failure was pre-setup; continue and restart are equivalent here)`
+        const fallbackNote = (res as { note?: string }).note
+        verb = fallbackNote
+          ? `queued ${id} for restart from setup — ${fallbackNote}`
+          : `queued ${id} for restart from setup (failure was pre-setup; continue and restart are equivalent here)`
       } else {
         verb =
           cmd === 'continue'
