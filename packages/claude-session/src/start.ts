@@ -80,6 +80,18 @@ export async function start(opts: StartOptions): Promise<SessionHandle> {
       }
       proc.write(text + '\r');
     },
+    kill() {
+      proc.kill(); // sends SIGTERM
+    },
+    async forceKill() {
+      if (hasExited) return;
+      try {
+        proc.kill('SIGKILL');
+      } catch {
+        // process may have exited between the hasExited-check and the kill call
+      }
+      await exited;
+    },
   };
   registerSession(handle);
 
