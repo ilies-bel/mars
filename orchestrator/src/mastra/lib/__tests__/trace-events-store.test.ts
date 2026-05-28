@@ -47,6 +47,49 @@ describe('deriveSeverity', () => {
     expect(deriveSeverity('step_started', { stepName: 'code' })).toBe('info')
   })
 
+  it('returns info for tool_invoked with exitCode=0', () => {
+    expect(
+      deriveSeverity('tool_invoked', {
+        tool: 'git',
+        argv: ['status'],
+        exitCode: 0,
+        durationMs: 5,
+      }),
+    ).toBe('info')
+  })
+
+  it('returns warn for tool_invoked with non-zero exit when expectsFailure=true', () => {
+    expect(
+      deriveSeverity('tool_invoked', {
+        tool: 'git',
+        argv: ['diff', '--quiet'],
+        exitCode: 1,
+        durationMs: 7,
+        expectsFailure: true,
+      }),
+    ).toBe('warn')
+  })
+
+  it('returns error for tool_invoked with non-zero exit when expectsFailure is not set', () => {
+    expect(
+      deriveSeverity('tool_invoked', {
+        tool: 'git',
+        argv: ['push'],
+        exitCode: 128,
+        durationMs: 12,
+      }),
+    ).toBe('error')
+    expect(
+      deriveSeverity('tool_invoked', {
+        tool: 'npm',
+        argv: ['ci'],
+        exitCode: 1,
+        durationMs: 999,
+        expectsFailure: false,
+      }),
+    ).toBe('error')
+  })
+
   it('covers every kind in the closed enum without throwing', () => {
     for (const kind of TRACE_EVENT_KINDS) {
       const sev = deriveSeverity(kind, {})

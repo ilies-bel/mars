@@ -1,7 +1,5 @@
-import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { promisify } from 'node:util'
 import {
   createWorktree,
   removeWorktree,
@@ -9,8 +7,7 @@ import {
   checkMergeTargetStatus,
   type MergeResult,
 } from './git'
-
-const exec = promisify(execFile)
+import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 
 export interface StructuredWriteArgs {
   /** Short kind tag, used as the branch prefix (e.g. "glossary", "adr"). */
@@ -26,6 +23,9 @@ export interface StructuredWriteArgs {
   mutate: (worktreePath: string) => Promise<boolean | void>
   /** Optional override for the merge lock timeout (default 5 min). */
   lockTimeoutMs?: number
+  /** Optional trace context. Populated when called from a workflow phase;
+   *  omitted by direct CLI entry points (e.g. `mars glossary set`). */
+  traceCtx?: TraceCtx
 }
 
 export type StructuredWriteOutcome =
@@ -36,9 +36,29 @@ export type StructuredWriteOutcome =
 const integrationFromEnv = (): string =>
   process.env.INTEGRATION_BRANCH ?? 'main'
 
-const stagedHasChanges = async (cwd: string): Promise<boolean> => {
-  const { stdout } = await exec('git', ['status', '--porcelain'], { cwd })
-  return stdout.length > 0
+const stagedHasChanges = async (
+  cwd: string,
+  traceCtx: TraceCtx | undefined,
+): Promise<boolean> => {
+  // `git status --porcelain` is a probe: empty output means a clean tree, any
+  // output means dirty. Non-zero exit (e.g. cwd not a git repo) IS an error;
+  // the bare non-zero distinction is fine — we keep expectsFailure off so a
+  // failure surfaces as a real `error` in the trace.
+  const r = await runTool(
+    {
+      tool: 'git',
+      argv: ['status', '--porcelain'],
+      cwd,
+      taskId: traceCtx?.taskId ?? null,
+      originId: traceCtx?.originId ?? null,
+      phase: traceCtx?.phase ?? null,
+    },
+    traceCtx?.store ?? nullTraceStore,
+  )
+  if (r.exitCode !== 0) {
+    throw new Error(`git status --porcelain failed (exit ${r.exitCode}): ${r.stderr}`)
+  }
+  return r.stdout.length > 0
 }
 
 const shortId = (): string => randomUUID().slice(0, 8)
@@ -92,16 +112,39 @@ export const runStructuredWrite = async (
       return { kind: 'noop' }
     }
 
-    if (!(await stagedHasChanges(worktree.path))) {
+    if (!(await stagedHasChanges(worktree.path, args.traceCtx))) {
       return { kind: 'noop' }
     }
 
-    await exec('git', ['add', '-A'], { cwd: worktree.path })
-    await exec(
-      'git',
-      ['commit', '-m', args.commitMessage],
-      { cwd: worktree.path },
+    const wtTrace = {
+      taskId: args.traceCtx?.taskId ?? null,
+      originId: args.traceCtx?.originId ?? null,
+      phase: args.traceCtx?.phase ?? null,
+    }
+    const wtStore = args.traceCtx?.store ?? nullTraceStore
+    const addResult = await runTool(
+      { tool: 'git', argv: ['add', '-A'], cwd: worktree.path, ...wtTrace },
+      wtStore,
     )
+    if (addResult.exitCode !== 0) {
+      throw new Error(
+        `git add -A failed (exit ${addResult.exitCode}): ${addResult.stderr}`,
+      )
+    }
+    const commitResult = await runTool(
+      {
+        tool: 'git',
+        argv: ['commit', '-m', args.commitMessage],
+        cwd: worktree.path,
+        ...wtTrace,
+      },
+      wtStore,
+    )
+    if (commitResult.exitCode !== 0) {
+      throw new Error(
+        `git commit failed (exit ${commitResult.exitCode}): ${commitResult.stderr}`,
+      )
+    }
 
     merge = await mergeBranch({
       branch: worktree.branch,

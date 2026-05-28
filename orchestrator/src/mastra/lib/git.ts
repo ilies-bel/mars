@@ -1,13 +1,108 @@
-import { execFile, spawn } from 'node:child_process'
-import { promisify } from 'node:util'
+import { spawn } from 'node:child_process'
 import { resolve, dirname, isAbsolute, join } from 'node:path'
 import { access, open, mkdir, readFile, rm, stat, unlink } from 'node:fs/promises'
 import { statSync, constants as fsConstants, accessSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { getRepoRoot, getStateDir } from '../context'
 import { parseClaudeStreamLine, type ClaudeEvent } from './claude-stream'
+import {
+  runTool,
+  nullTraceStore,
+  type TraceCtx,
+} from './run-tool'
 
-const exec = promisify(execFile)
+/**
+ * Internal helper that funnels every git (or git-adjacent) shell-out through
+ * `runTool` so each one emits a `tool_invoked` trace event. Mimics the
+ * historical `promisify(execFile)` semantics: throws on non-zero exit unless
+ * the caller marks it `expectsFailure` for probe-style invocations.
+ *
+ * Callers that legitimately read a non-zero exit (e.g. `git diff --quiet`,
+ * `git merge-base --is-ancestor`) pass `expectsFailure: true` and inspect the
+ * returned exitCode/error. The trace severity follows the same rule
+ * (info / warn / error) so the trace surface matches caller intent.
+ */
+interface ExecOpts {
+  cwd: string
+  timeoutMs?: number
+  expectsFailure?: boolean
+  tool?: string
+  traceCtx?: TraceCtx
+}
+
+interface ExecError extends Error {
+  code?: number
+  stdout?: string
+  stderr?: string
+}
+
+const runShell = async (
+  cmd: string,
+  args: readonly string[],
+  opts: ExecOpts,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
+  const ctx = opts.traceCtx
+  const r = await runTool(
+    {
+      tool: opts.tool ?? cmd,
+      argv: [...args],
+      cwd: opts.cwd,
+      timeoutMs: opts.timeoutMs,
+      taskId: ctx?.taskId ?? null,
+      originId: ctx?.originId ?? null,
+      phase: ctx?.phase ?? null,
+      expectsFailure: opts.expectsFailure,
+    },
+    ctx?.store ?? nullTraceStore,
+  )
+  if (r.exitCode !== 0 && opts.expectsFailure !== true) {
+    const err = new Error(
+      `${cmd} ${args.join(' ')} (cwd=${opts.cwd}) exited with code ${r.exitCode}: ${r.stderr.trim()}`,
+    ) as ExecError
+    err.code = r.exitCode
+    err.stdout = r.stdout
+    err.stderr = r.stderr
+    throw err
+  }
+  return { stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode }
+}
+
+// Back-compat shim that mimics `promisify(execFile)`'s call shape so the
+// migration is mechanical. The fourth argument carries the trace context.
+const exec = async (
+  cmd: string,
+  args: readonly string[],
+  opts: { cwd: string; timeout?: number; maxBuffer?: number },
+  traceCtx?: TraceCtx,
+): Promise<{ stdout: string; stderr: string }> => {
+  // `maxBuffer` is intentionally ignored — `runTool` caches the full output
+  // in memory the same way `execFile` did; the truncation cap lives in the
+  // trace payload, not the in-process buffer.
+  void opts.maxBuffer
+  return runShell(cmd, args, {
+    cwd: opts.cwd,
+    timeoutMs: opts.timeout,
+    traceCtx,
+  })
+}
+
+// Probe variant: returns the result with exitCode preserved instead of
+// throwing on non-zero. Used by `git diff --quiet`, `git merge-base
+// --is-ancestor`, and friends whose entire API is the exit code.
+const execProbe = async (
+  cmd: string,
+  args: readonly string[],
+  opts: { cwd: string; timeout?: number },
+  traceCtx?: TraceCtx,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
+  runShell(cmd, args, {
+    cwd: opts.cwd,
+    timeoutMs: opts.timeout,
+    expectsFailure: true,
+    traceCtx,
+  })
+
+export type { TraceCtx }
 
 // Hard timeout for git worktree list/prune calls. A corrupt .git/worktrees
 // directory with many admin entries can make 'git worktree list --porcelain'
@@ -28,6 +123,9 @@ export interface CreateWorktreeArgs {
   integrationBranch: string
   baseSha?: string
   branchSuffix?: string
+  /** Optional trace context. When supplied, every git invocation issued by
+   *  this call funnels through `runTool` with `phase: 'setup'`. */
+  traceCtx?: TraceCtx
 }
 
 export interface WorktreeRef {
@@ -40,11 +138,18 @@ interface RegisteredWorktree {
   branch: string | null
 }
 
-const listRegisteredWorktrees = async (): Promise<RegisteredWorktree[]> => {
-  const { stdout } = await exec(resolveGitBin(), ['worktree', 'list', '--porcelain'], {
-    cwd: repoRoot(),
-    timeout: WORKTREE_GIT_TIMEOUT_MS,
-  })
+const listRegisteredWorktrees = async (
+  traceCtx?: TraceCtx,
+): Promise<RegisteredWorktree[]> => {
+  const { stdout } = await exec(
+    resolveGitBin(),
+    ['worktree', 'list', '--porcelain'],
+    {
+      cwd: repoRoot(),
+      timeout: WORKTREE_GIT_TIMEOUT_MS,
+    },
+    traceCtx,
+  )
   const entries: RegisteredWorktree[] = []
   let current: { path?: string; branch?: string | null } = {}
   const flush = (): void => {
@@ -72,17 +177,19 @@ const listRegisteredWorktrees = async (): Promise<RegisteredWorktree[]> => {
   return entries
 }
 
-const branchExists = async (branch: string): Promise<boolean> => {
-  try {
-    await exec(
-      'git',
-      ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
-      { cwd: repoRoot() },
-    )
-    return true
-  } catch {
-    return false
-  }
+const branchExists = async (
+  branch: string,
+  traceCtx?: TraceCtx,
+): Promise<boolean> => {
+  // `git show-ref --verify --quiet` returns non-zero when the ref is missing.
+  // That's a probe, not an error, so mark expectsFailure on the trace.
+  const r = await execProbe(
+    'git',
+    ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
+    { cwd: repoRoot() },
+    traceCtx,
+  )
+  return r.exitCode === 0
 }
 
 // Portable filesystem-level existence check. Replaces a prior shell-out to
@@ -107,6 +214,7 @@ export const createWorktree = async ({
   integrationBranch,
   baseSha,
   branchSuffix,
+  traceCtx,
 }: CreateWorktreeArgs): Promise<WorktreeRef> => {
   const suffix = branchSuffix ? `-${branchSuffix}` : ''
   const branch = `task/${taskId}${suffix}`
@@ -114,6 +222,11 @@ export const createWorktree = async ({
   const path = resolve(getStateDir(), `worktrees/${dirName}`)
   const startPoint = baseSha ?? integrationBranch
   const cwd = repoRoot()
+  // Default phase to setup for createWorktree calls if the caller didn't pin
+  // a phase explicitly. Most callers are workflows in the setup step.
+  const setupCtx: TraceCtx | undefined = traceCtx
+    ? { ...traceCtx, phase: traceCtx.phase ?? 'setup' }
+    : undefined
 
   await mkdir(resolve(path, '..'), { recursive: true })
 
@@ -123,9 +236,14 @@ export const createWorktree = async ({
   // entries can make these commands hang indefinitely, stalling every
   // implement dispatch until slots exhaust. Errors and timeouts fall through
   // to .catch below so createWorktree proceeds with an empty registration list.
-  await exec(resolveGitBin(), ['worktree', 'prune'], { cwd, timeout: WORKTREE_GIT_TIMEOUT_MS }).catch(() => {})
+  await execProbe(
+    resolveGitBin(),
+    ['worktree', 'prune'],
+    { cwd, timeout: WORKTREE_GIT_TIMEOUT_MS },
+    setupCtx,
+  ).catch(() => {})
 
-  const registered = await listRegisteredWorktrees().catch(
+  const registered = await listRegisteredWorktrees(setupCtx).catch(
     () => [] as RegisteredWorktree[],
   )
   const existingForBranch = registered.find((w) => w.branch === branch)
@@ -145,25 +263,32 @@ export const createWorktree = async ({
   // Worktree registered at our path but on a different branch (or detached).
   // It's stale state from a previous run — drop it.
   if (existingForPath && existingForPath.branch !== branch) {
-    await exec(
+    await execProbe(
       'git',
       ['worktree', 'remove', '--force', existingForPath.path],
       { cwd },
+      setupCtx,
     ).catch(() => {})
   }
 
   // Worktree registered for our branch at a different path. Drop that
   // registration so we can re-attach the branch at the canonical path.
   if (existingForBranch && existingForBranch.path !== path) {
-    await exec(
+    await execProbe(
       'git',
       ['worktree', 'remove', '--force', existingForBranch.path],
       { cwd },
+      setupCtx,
     ).catch(() => {})
   }
 
   // Re-prune in case the removes above left dangling refs.
-  await exec(resolveGitBin(), ['worktree', 'prune'], { cwd, timeout: WORKTREE_GIT_TIMEOUT_MS }).catch(() => {})
+  await execProbe(
+    resolveGitBin(),
+    ['worktree', 'prune'],
+    { cwd, timeout: WORKTREE_GIT_TIMEOUT_MS },
+    setupCtx,
+  ).catch(() => {})
 
   // If a directory still exists at our target path with no live worktree
   // registration, it's leftover filesystem state — wipe it.
@@ -171,16 +296,24 @@ export const createWorktree = async ({
     await rm(path, { recursive: true, force: true }).catch(() => {})
   }
 
-  const branchAlreadyExists = await branchExists(branch)
+  const branchAlreadyExists = await branchExists(branch, setupCtx)
   const args = branchAlreadyExists
     ? ['worktree', 'add', path, branch]
     : ['worktree', 'add', '-b', branch, path, startPoint]
-  await exec(resolveGitBin(), args, { cwd })
+  await exec(resolveGitBin(), args, { cwd }, setupCtx)
   return { path, branch }
 }
 
-export const resolveSha = async (ref: string): Promise<string> => {
-  const { stdout } = await exec(resolveGitBin(), ['rev-parse', ref], { cwd: repoRoot() })
+export const resolveSha = async (
+  ref: string,
+  traceCtx?: TraceCtx,
+): Promise<string> => {
+  const { stdout } = await exec(
+    resolveGitBin(),
+    ['rev-parse', ref],
+    { cwd: repoRoot() },
+    traceCtx,
+  )
   return stdout.trim()
 }
 
@@ -188,13 +321,19 @@ export const removeWorktree = async (
   ref: WorktreeRef,
   force = true,
   keepBranch = false,
+  traceCtx?: TraceCtx,
 ): Promise<void> => {
   const args = ['worktree', 'remove']
   if (force) args.push('--force')
   args.push(ref.path)
-  await exec(resolveGitBin(), args, { cwd: repoRoot() })
+  await exec(resolveGitBin(), args, { cwd: repoRoot() }, traceCtx)
   if (!keepBranch) {
-    await exec(resolveGitBin(), ['branch', '-D', ref.branch], { cwd: repoRoot() }).catch(() => {})
+    await execProbe(
+      resolveGitBin(),
+      ['branch', '-D', ref.branch],
+      { cwd: repoRoot() },
+      traceCtx,
+    ).catch(() => {})
   }
 }
 
@@ -822,6 +961,12 @@ export interface VerifyArgs {
   // No skip option: the diff / commits-ahead gate runs for every dispatched
   // task. A task that exits with zero commits ahead of integration fails with
   // the uniform no-commits-ahead outcome (ADR 0019).
+  /** Optional trace context. When supplied, each verify step's shell-out
+   *  emits a `tool_invoked` event under `phase: 'verify'`. Steps are probes
+   *  whose non-zero exit IS the failure signal — passed through with
+   *  `expectsFailure: true` so the trace severity stays warn instead of
+   *  flagging every failing verify run as a hard error. */
+  traceCtx?: TraceCtx
 }
 
 const runVerifyStep = async (
@@ -829,23 +974,29 @@ const runVerifyStep = async (
   cmd: string,
   args: readonly string[],
   cwd: string,
+  traceCtx?: TraceCtx,
 ): Promise<VerifyStep> => {
-  try {
-    const { stdout, stderr } = await exec(cmd, [...args], {
-      cwd,
-      maxBuffer: 10 * 1024 * 1024,
-    })
-    return { name, passed: true, output: stdout + stderr, cmd, args, stepDir: cwd }
-  } catch (error: unknown) {
-    const e = error as { stdout?: string; stderr?: string; message?: string }
+  const verifyCtx: TraceCtx | undefined = traceCtx
+    ? { ...traceCtx, phase: traceCtx.phase ?? 'verify' }
+    : undefined
+  const r = await execProbe(cmd, [...args], { cwd }, verifyCtx)
+  if (r.exitCode === 0) {
     return {
       name,
-      passed: false,
-      output: (e.stdout ?? '') + (e.stderr ?? '') + (e.message ?? ''),
+      passed: true,
+      output: r.stdout + r.stderr,
       cmd,
       args,
       stepDir: cwd,
     }
+  }
+  return {
+    name,
+    passed: false,
+    output: r.stdout + r.stderr,
+    cmd,
+    args,
+    stepDir: cwd,
   }
 }
 
@@ -858,14 +1009,18 @@ const captureHasDiffDiagnostics = async (
   cwd: string,
   branch: string,
   integrationBranch: string,
+  traceCtx?: TraceCtx,
 ): Promise<string> => {
   const probe = async (
     label: string,
     args: readonly string[],
   ): Promise<string> => {
     try {
-      const { stdout } = await exec(resolveGitBin(), [...args], { cwd })
-      const trimmed = stdout.trim()
+      const r = await execProbe(resolveGitBin(), [...args], { cwd }, traceCtx)
+      if (r.exitCode !== 0) {
+        return `${label}: <error: ${(r.stderr || 'unknown').trim()}>`
+      }
+      const trimmed = r.stdout.trim()
       return `${label}: ${trimmed.length > 0 ? trimmed : '(empty)'}`
     } catch (error: unknown) {
       const e = error as { stderr?: string; message?: string }
@@ -896,12 +1051,17 @@ export const checkBranchHasDiff = async (
   cwd: string,
   branch: string,
   integrationBranch: string,
+  traceCtx?: TraceCtx,
 ): Promise<VerifyStep> => {
+  const verifyCtx: TraceCtx | undefined = traceCtx
+    ? { ...traceCtx, phase: traceCtx.phase ?? 'verify' }
+    : undefined
   try {
     const { stdout } = await exec(
       'git',
       ['rev-list', '--count', `${integrationBranch}..${branch}`],
       { cwd },
+      verifyCtx,
     )
     const count = Number.parseInt(stdout.trim(), 10)
     if (!Number.isInteger(count) || count <= 0) {
@@ -910,8 +1070,22 @@ export const checkBranchHasDiff = async (
       // task's setup and this check) from "branch tip equals integration"
       // (genuine no-op — agent set up the worktree and didn't commit).
       // Only the latter is a failure.
-      const branchSha = (await exec(resolveGitBin(), ['rev-parse', '--verify', `${branch}^{commit}`], { cwd })).stdout.trim()
-      const integrationSha = (await exec(resolveGitBin(), ['rev-parse', '--verify', `${integrationBranch}^{commit}`], { cwd })).stdout.trim()
+      const branchSha = (
+        await exec(
+          resolveGitBin(),
+          ['rev-parse', '--verify', `${branch}^{commit}`],
+          { cwd },
+          verifyCtx,
+        )
+      ).stdout.trim()
+      const integrationSha = (
+        await exec(
+          resolveGitBin(),
+          ['rev-parse', '--verify', `${integrationBranch}^{commit}`],
+          { cwd },
+          verifyCtx,
+        )
+      ).stdout.trim()
       if (branchSha !== integrationSha) {
         return {
           name: 'has-diff',
@@ -927,6 +1101,7 @@ export const checkBranchHasDiff = async (
         cwd,
         branch,
         integrationBranch,
+        verifyCtx,
       )
       return {
         name: 'has-diff',
@@ -948,6 +1123,8 @@ export const checkBranchHasDiff = async (
 export interface CleanWorktreeArgs {
   worktreePath: string
   integrationBranch: string
+  /** Optional trace context piped through to the git invocations. */
+  traceCtx?: TraceCtx
 }
 
 export interface CleanWorktreeResult {
@@ -978,12 +1155,14 @@ export interface CleanWorktreeResult {
 export const cleanWorktreeIfNoCommitsAhead = async (
   args: CleanWorktreeArgs,
 ): Promise<CleanWorktreeResult> => {
+  const ctx = args.traceCtx
   let count: number
   try {
     const { stdout } = await exec(
       'git',
       ['rev-list', '--count', `${args.integrationBranch}..HEAD`],
       { cwd: args.worktreePath },
+      ctx,
     )
     count = Number.parseInt(stdout.trim(), 10)
     if (!Number.isInteger(count)) {
@@ -1015,6 +1194,7 @@ export const cleanWorktreeIfNoCommitsAhead = async (
       'git',
       ['clean', '-fd'],
       { cwd: args.worktreePath },
+      ctx,
     )
     return {
       cleaned: true,
@@ -1034,8 +1214,16 @@ export const cleanWorktreeIfNoCommitsAhead = async (
 export const verifyChanges = async (
   args: VerifyArgs,
 ): Promise<{ passed: boolean; steps: VerifyStep[] }> => {
+  const verifyCtx: TraceCtx | undefined = args.traceCtx
+    ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'verify' }
+    : undefined
   if (args.branch && args.integrationBranch) {
-    const diffStep = await checkBranchHasDiff(args.cwd, args.branch, args.integrationBranch)
+    const diffStep = await checkBranchHasDiff(
+      args.cwd,
+      args.branch,
+      args.integrationBranch,
+      verifyCtx,
+    )
     if (!diffStep.passed) {
       return { passed: false, steps: [diffStep] }
     }
@@ -1050,7 +1238,13 @@ export const verifyChanges = async (
     // the verify root; a narrower scope runs in its subdirectory.
     const stepCwd =
       spec.dir && spec.dir !== '.' ? resolve(args.cwd, spec.dir) : args.cwd
-    const result = await runVerifyStep(spec.name, spec.cmd, spec.args, stepCwd)
+    const result = await runVerifyStep(
+      spec.name,
+      spec.cmd,
+      spec.args,
+      stepCwd,
+      verifyCtx,
+    )
     results.push(result)
     if (!result.passed && spec.required) {
       stoppedOnRequired = true
@@ -1205,12 +1399,14 @@ export const getChangedFiles = async (
   cwd: string,
   integrationBranch: string,
   branch: string,
+  traceCtx?: TraceCtx,
 ): Promise<string[]> => {
   try {
     const { stdout } = await exec(
       'git',
       ['diff', '--name-only', `${integrationBranch}..${branch}`],
       { cwd },
+      traceCtx,
     )
     return stdout
       .split('\n')
@@ -1301,11 +1497,16 @@ export interface SetupPreflightResult {
  */
 export const checkSetupPreflight = async (
   repoRoot: string,
+  traceCtx?: TraceCtx,
 ): Promise<SetupPreflightResult> => {
+  const setupCtx: TraceCtx | undefined = traceCtx
+    ? { ...traceCtx, phase: traceCtx.phase ?? 'setup' }
+    : undefined
   const { stdout } = await exec(
     'git',
     ['status', '--porcelain', '--untracked-files=no'],
     { cwd: repoRoot },
+    setupCtx,
   )
   const dirtyLines = stdout.split('\n').filter((l) => l.length > 0)
   return { dirty: dirtyLines.length > 0, dirtyLines }
@@ -1326,6 +1527,8 @@ export type MergeTargetStatus =
 export interface CheckMergeTargetArgs {
   integrationBranch: string
   taskBranch: string
+  /** Optional trace context. Default phase is `merge` when omitted. */
+  traceCtx?: TraceCtx
 }
 
 // Classifies the merge target ahead of mergeBranch:
@@ -1343,27 +1546,34 @@ export const checkMergeTargetStatus = async (
 ): Promise<MergeTargetStatus> => {
   const targetPath = repoRoot()
   const { integrationBranch, taskBranch } = args
+  const mergeCtx: TraceCtx | undefined = args.traceCtx
+    ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'merge' }
+    : undefined
   try {
-    await exec(resolveGitBin(), ['rev-parse', '--verify', `${integrationBranch}^{commit}`], {
-      cwd: targetPath,
-    })
-    await exec(resolveGitBin(), ['rev-parse', '--verify', `${taskBranch}^{commit}`], {
-      cwd: targetPath,
-    })
+    await exec(
+      resolveGitBin(),
+      ['rev-parse', '--verify', `${integrationBranch}^{commit}`],
+      { cwd: targetPath },
+      mergeCtx,
+    )
+    await exec(
+      resolveGitBin(),
+      ['rev-parse', '--verify', `${taskBranch}^{commit}`],
+      { cwd: targetPath },
+      mergeCtx,
+    )
 
     // `git merge-base --is-ancestor` exits 0 when ancestor, 1 when not, other
-    // codes on usage/IO errors. promisified execFile rejects on any non-zero,
-    // so distinguish via the error's .code (numeric exit) field.
-    const ancestryError = await exec(
+    // codes on usage/IO errors. Use execProbe so non-zero exits are warn-level
+    // probes in the trace rather than spurious errors.
+    const ancestry = await execProbe(
       'git',
       ['merge-base', '--is-ancestor', integrationBranch, taskBranch],
       { cwd: targetPath },
-    ).then(
-      () => null,
-      (err: Error & { code?: number | string }) => err,
+      mergeCtx,
     )
-    if (ancestryError !== null) {
-      if (ancestryError.code === 1) {
+    if (ancestry.exitCode !== 0) {
+      if (ancestry.exitCode === 1) {
         // Diverged or behind: a rebase candidate, NOT a dirty-target failure.
         // mergeBranch Step 1 rebases onto integration before the ff merge.
         return {
@@ -1375,7 +1585,7 @@ export const checkMergeTargetStatus = async (
       return {
         kind: 'error',
         error: new Error(
-          `git merge-base --is-ancestor failed (code=${String(ancestryError.code)}): ${ancestryError.message}`,
+          `git merge-base --is-ancestor failed (code=${ancestry.exitCode}): ${ancestry.stderr.trim()}`,
         ),
       }
     }
@@ -1384,6 +1594,7 @@ export const checkMergeTargetStatus = async (
       'git',
       ['diff', '--name-only', `${integrationBranch}..${taskBranch}`],
       { cwd: targetPath },
+      mergeCtx,
     )
     const changedPaths = diff.stdout.split('\n').filter((p) => p.length > 0)
     if (changedPaths.length === 0) return { kind: 'clean' }
@@ -1396,7 +1607,12 @@ export const checkMergeTargetStatus = async (
     if (changedPaths.length <= PATH_CAP) {
       statusArgs.push('--', ...changedPaths)
     }
-    const status = await exec(resolveGitBin(), statusArgs, { cwd: targetPath })
+    const status = await exec(
+      resolveGitBin(),
+      statusArgs,
+      { cwd: targetPath },
+      mergeCtx,
+    )
     if (status.stdout.length === 0) return { kind: 'clean' }
     return {
       kind: 'dirty',
@@ -1419,6 +1635,8 @@ export interface MergeArgs {
   worktreePath: string
   integrationBranch: string
   lockTimeoutMs: number
+  /** Optional trace context. Default phase is `merge` when omitted. */
+  traceCtx?: TraceCtx
   onSupervisorEvent?: (event: ClaudeEvent) => void | Promise<void>
   /**
    * Fired exactly once, the moment the deterministic fast-forward path fails
@@ -1544,11 +1762,24 @@ const isDirectory = async (p: string): Promise<boolean> => {
   }
 }
 
-const isRebaseInProgress = async (cwd: string): Promise<boolean> => {
+const isRebaseInProgress = async (
+  cwd: string,
+  traceCtx?: TraceCtx,
+): Promise<boolean> => {
   try {
-    const { stdout } = await exec(resolveGitBin(), ['rev-parse', '--git-path', 'rebase-merge'], { cwd })
+    const { stdout } = await exec(
+      resolveGitBin(),
+      ['rev-parse', '--git-path', 'rebase-merge'],
+      { cwd },
+      traceCtx,
+    )
     const mergePath = stdout.trim()
-    const { stdout: applyStdout } = await exec(resolveGitBin(), ['rev-parse', '--git-path', 'rebase-apply'], { cwd })
+    const { stdout: applyStdout } = await exec(
+      resolveGitBin(),
+      ['rev-parse', '--git-path', 'rebase-apply'],
+      { cwd },
+      traceCtx,
+    )
     const applyPath = applyStdout.trim()
     const checks = await Promise.all([
       isDirectory(mergePath),
@@ -1567,7 +1798,11 @@ export const mergeBranch = async ({
   lockTimeoutMs,
   onSupervisorEvent,
   onVegaStart,
+  traceCtx,
 }: MergeArgs): Promise<MergeResult> => {
+  const mergeCtx: TraceCtx | undefined = traceCtx
+    ? { ...traceCtx, phase: traceCtx.phase ?? 'merge' }
+    : undefined
   const release = await acquireLock(
     resolve(getStateDir(), '.merge.lock'),
     lockTimeoutMs,
@@ -1579,20 +1814,25 @@ export const mergeBranch = async ({
 
     // Step 1: ensure the task branch is up-to-date with integration via rebase
     // inside the worktree. After this, integration can fast-forward to it.
-    try {
-      const r = await exec(resolveGitBin(), ['rebase', integrationBranch], { cwd: worktreePath })
-      output += r.stdout + r.stderr
-    } catch (rebaseError: unknown) {
-      const e = rebaseError as { stdout?: string; stderr?: string }
-      output += (e.stdout ?? '') + (e.stderr ?? '')
-
+    // The rebase is allowed to fail (conflict path); execProbe keeps the
+    // trace severity at warn instead of error for the expected-failure path.
+    const rebaseResult = await execProbe(
+      resolveGitBin(),
+      ['rebase', integrationBranch],
+      { cwd: worktreePath },
+      mergeCtx,
+    )
+    output += rebaseResult.stdout + rebaseResult.stderr
+    if (rebaseResult.exitCode !== 0) {
       // Deterministic fast-forward has failed: we are about to hand the
       // conflict to a live Vega (Claude) session. Signal the transition out of
       // the idempotent `merging` phase before spawning, so the task shows as
       // `vega-reconciling` for the full duration of the session.
       await onVegaStart?.()
 
-      const preSha = (await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() })).stdout.trim()
+      const preSha = (
+        await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() }, mergeCtx)
+      ).stdout.trim()
 
       const supervisorTimeoutMs = 30 * 60 * 1000
       const sup = await invokeVcsSupervisor(
@@ -1605,21 +1845,36 @@ export const mergeBranch = async ({
       supervisorConversation.push(...sup.conversation)
       output += sup.stdout + sup.stderr
 
-      const stillInProgress = await isRebaseInProgress(worktreePath)
-      const postSha = (await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() })).stdout.trim()
+      const stillInProgress = await isRebaseInProgress(worktreePath, mergeCtx)
+      const postSha = (
+        await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() }, mergeCtx)
+      ).stdout.trim()
       const advanced = postSha !== preSha
       const treeClean = await (async () => {
-        try {
-          await exec(resolveGitBin(), ['diff', '--quiet'], { cwd: worktreePath })
-          await exec(resolveGitBin(), ['diff', '--cached', '--quiet'], { cwd: worktreePath })
-          return true
-        } catch {
-          return false
-        }
+        // `git diff --quiet` is a probe: exit 0 = clean, exit 1 = dirty.
+        const a = await execProbe(
+          resolveGitBin(),
+          ['diff', '--quiet'],
+          { cwd: worktreePath },
+          mergeCtx,
+        )
+        if (a.exitCode !== 0) return false
+        const b = await execProbe(
+          resolveGitBin(),
+          ['diff', '--cached', '--quiet'],
+          { cwd: worktreePath },
+          mergeCtx,
+        )
+        return b.exitCode === 0
       })()
 
       if (stillInProgress || !advanced || !treeClean) {
-        await exec(resolveGitBin(), ['rebase', '--abort'], { cwd: worktreePath }).catch(() => {})
+        await execProbe(
+          resolveGitBin(),
+          ['rebase', '--abort'],
+          { cwd: worktreePath },
+          mergeCtx,
+        ).catch(() => {})
         return {
           merged: false,
           conflictResolved: false,
@@ -1636,16 +1891,22 @@ export const mergeBranch = async ({
     // `git update-ref` never touches any working tree, so it succeeds even when
     // the main working tree has uncommitted tracked changes or is checked out on
     // a different branch.
-    const taskSha = (await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() })).stdout.trim()
-    const integrationSha = (await exec(resolveGitBin(), ['rev-parse', integrationBranch], { cwd: repoRoot() })).stdout.trim()
+    const taskSha = (
+      await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() }, mergeCtx)
+    ).stdout.trim()
+    const integrationSha = (
+      await exec(resolveGitBin(), ['rev-parse', integrationBranch], { cwd: repoRoot() }, mergeCtx)
+    ).stdout.trim()
 
     // Confirm fast-forward is valid: integrationSha must be an ancestor of taskSha.
     // `git merge-base --is-ancestor` exits 0 when true, 1 when false.
-    const ancestryOk = await exec(
+    const ancestryProbe = await execProbe(
       'git',
       ['merge-base', '--is-ancestor', integrationSha, taskSha],
       { cwd: repoRoot() },
-    ).then(() => true, () => false)
+      mergeCtx,
+    )
+    const ancestryOk = ancestryProbe.exitCode === 0
 
     if (!ancestryOk) {
       return {
@@ -1666,6 +1927,7 @@ export const mergeBranch = async ({
         'git',
         ['update-ref', `refs/heads/${integrationBranch}`, taskSha, integrationSha],
         { cwd: repoRoot() },
+        mergeCtx,
       )
     } catch (casError: unknown) {
       const e = casError as { stdout?: string; stderr?: string; message?: string }
@@ -1704,18 +1966,30 @@ export const mergeBranch = async ({
     // merge already landed via the ref update; log and continue.
     try {
       const headBranch = (
-        await exec(resolveGitBin(), ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoRoot() })
+        await exec(
+          resolveGitBin(),
+          ['rev-parse', '--abbrev-ref', 'HEAD'],
+          { cwd: repoRoot() },
+          mergeCtx,
+        )
       ).stdout.trim()
       if (headBranch === integrationBranch) {
         // `git diff --quiet <sha>` exits 0 when the working tree + index match
-        // <sha> exactly (no genuine local work), non-zero otherwise.
-        const cleanVsOldHead = await exec(
+        // <sha> exactly (no genuine local work), non-zero otherwise. Probe form.
+        const diffProbe = await execProbe(
           'git',
           ['diff', '--quiet', integrationSha],
           { cwd: repoRoot() },
-        ).then(() => true, () => false)
+          mergeCtx,
+        )
+        const cleanVsOldHead = diffProbe.exitCode === 0
         if (cleanVsOldHead) {
-          const reset = await exec(resolveGitBin(), ['reset', '--hard', taskSha], { cwd: repoRoot() })
+          const reset = await exec(
+            resolveGitBin(),
+            ['reset', '--hard', taskSha],
+            { cwd: repoRoot() },
+            mergeCtx,
+          )
           output += reset.stdout + reset.stderr
         } else {
           output += `\n[mergeBranch] merge target checkout has local changes vs ${integrationSha.slice(0, 9)}; left as-is to avoid clobbering (HEAD ref advanced).`
@@ -1741,21 +2015,21 @@ export const mergeBranch = async ({
 export const isBranchMergedIntoMain = async (
   branch: string,
   repoRoot: string,
+  traceCtx?: TraceCtx,
 ): Promise<boolean> => {
-  try {
-    await exec(resolveGitBin(), ['merge-base', '--is-ancestor', branch, 'main'], {
-      cwd: repoRoot,
-    })
-  } catch (err: unknown) {
-    const code = (err as { code?: number }).code
-    if (code === 1) return false
-    return false
-  }
+  const probe = await execProbe(
+    resolveGitBin(),
+    ['merge-base', '--is-ancestor', branch, 'main'],
+    { cwd: repoRoot },
+    traceCtx,
+  )
+  if (probe.exitCode !== 0) return false
   try {
     const { stdout } = await exec(
       'git',
       ['rev-list', '--count', `${branch}..main`],
       { cwd: repoRoot },
+      traceCtx,
     )
     const mainAhead = Number.parseInt(stdout.trim(), 10)
     if (!Number.isFinite(mainAhead)) return false
@@ -1768,15 +2042,20 @@ export const isBranchMergedIntoMain = async (
 export const isZeroCommitBranch = async (
   branch: string,
   repoRoot: string,
+  traceCtx?: TraceCtx,
 ): Promise<boolean> => {
   try {
-    const { stdout: tip } = await exec(resolveGitBin(), ['rev-parse', branch], {
-      cwd: repoRoot,
-    })
+    const { stdout: tip } = await exec(
+      resolveGitBin(),
+      ['rev-parse', branch],
+      { cwd: repoRoot },
+      traceCtx,
+    )
     const { stdout: base } = await exec(
       'git',
       ['merge-base', branch, 'main'],
       { cwd: repoRoot },
+      traceCtx,
     )
     return tip.trim() === base.trim()
   } catch {

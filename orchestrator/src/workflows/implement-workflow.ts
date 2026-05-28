@@ -1,9 +1,7 @@
 import { defineWorkflow, type StepHandle, type WorkflowCtx } from '@mars/workflow'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { z } from 'zod'
 
-const execFileAsync = promisify(execFile)
+import { runTool, nullTraceStore, type TraceCtx } from '../mastra/lib/run-tool'
 import {
   checkSetupPreflight,
   cleanWorktreeIfNoCommitsAhead,
@@ -466,6 +464,9 @@ export const composePrompt = (
 export interface PostCoderStateArgs {
   worktreePath: string
   integrationBranch: string
+  /** Optional trace context; when populated, the git shell-outs emit
+   *  `tool_invoked` events under `phase: 'code'`. */
+  traceCtx?: TraceCtx
 }
 
 export type PostCoderState =
@@ -492,16 +493,33 @@ const parsePorcelainPaths = (raw: string): string[] => {
 export const detectPostCoderState = async (
   args: PostCoderStateArgs,
 ): Promise<PostCoderState> => {
+  const store = args.traceCtx?.store ?? nullTraceStore
+  const baseCtx = {
+    taskId: args.traceCtx?.taskId ?? null,
+    originId: args.traceCtx?.originId ?? null,
+    phase: args.traceCtx?.phase ?? ('code' as const),
+  }
+
   let commitsAhead: number
   try {
-    const { stdout } = await execFileAsync(
-      'git',
-      ['rev-list', '--count', `${args.integrationBranch}..HEAD`],
-      { cwd: args.worktreePath },
+    const r = await runTool(
+      {
+        tool: 'git',
+        argv: ['rev-list', '--count', `${args.integrationBranch}..HEAD`],
+        cwd: args.worktreePath,
+        ...baseCtx,
+      },
+      store,
     )
-    const parsed = Number.parseInt(stdout.trim(), 10)
+    if (r.exitCode !== 0) {
+      return {
+        kind: 'error',
+        error: `rev-list ${args.integrationBranch}..HEAD failed (exit ${r.exitCode}): ${r.stderr}`,
+      }
+    }
+    const parsed = Number.parseInt(r.stdout.trim(), 10)
     if (!Number.isInteger(parsed)) {
-      return { kind: 'error', error: `rev-list emitted non-integer: ${stdout.trim()}` }
+      return { kind: 'error', error: `rev-list emitted non-integer: ${r.stdout.trim()}` }
     }
     commitsAhead = parsed
   } catch (error: unknown) {
@@ -514,12 +532,19 @@ export const detectPostCoderState = async (
     // --untracked-files=all so a wholly-new directory is listed file-by-file
     // rather than collapsed to its top-level path. The dirty-file list is
     // for operators reading the run log; per-file detail is what they want.
-    const { stdout } = await execFileAsync(
-      'git',
-      ['status', '--porcelain=v1', '--untracked-files=all'],
-      { cwd: args.worktreePath },
+    const r = await runTool(
+      {
+        tool: 'git',
+        argv: ['status', '--porcelain=v1', '--untracked-files=all'],
+        cwd: args.worktreePath,
+        ...baseCtx,
+      },
+      store,
     )
-    dirtyFiles = parsePorcelainPaths(stdout)
+    if (r.exitCode !== 0) {
+      return { kind: 'error', error: `git status failed (exit ${r.exitCode}): ${r.stderr}` }
+    }
+    dirtyFiles = parsePorcelainPaths(r.stdout)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
     return { kind: 'error', error: `git status failed: ${message}` }
@@ -608,6 +633,27 @@ export const implementWorkflow = defineWorkflow<
   ): Promise<ImplementOutput> => {
     const store = ctx.services.store
 
+    // One trace store for every shell-out the workflow issues across all
+    // four phases. Opened once at the top so each step doesn't re-open it.
+    // Failure to open is non-fatal — `nullTraceStore` keeps the wrapper
+    // type-clean while silently dropping events.
+    const workflowTraceStore: TraceEventStore =
+      (await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)) ??
+      nullTraceStore
+    // Resolve origin id once for the whole workflow so every trace event has
+    // a stable origin attribution. resolveOriginIdForTask falls back to the
+    // task id itself, so the chain never hands `null` back even on a fresh
+    // task that hasn't acquired an origin row yet.
+    const workflowOriginId = await resolveOriginIdForTask(input.taskId).catch(
+      () => input.taskId,
+    )
+    const buildCtx = (phase: 'setup' | 'code' | 'verify' | 'merge'): TraceCtx => ({
+      store: workflowTraceStore,
+      taskId: input.taskId,
+      originId: workflowOriginId,
+      phase,
+    })
+
     // ── setup-worktree ─────────────────────────────────────────────────────
     const { path: worktreePath, branch } = await ctx.step(
       'setup-worktree',
@@ -632,7 +678,7 @@ export const implementWorkflow = defineWorkflow<
         // cannot block `git merge --ff-only`.
         try {
           const { repoRoot: preflightRoot } = resolveContext()
-          const preflight = await checkSetupPreflight(preflightRoot)
+          const preflight = await checkSetupPreflight(preflightRoot, buildCtx('setup'))
           if (preflight.dirty) {
             const dirtyFiles = preflight.dirtyLines
             // Detection only — no inbox-raise, no manual status write. Hand
@@ -695,6 +741,7 @@ export const implementWorkflow = defineWorkflow<
         const ref = await createWorktree({
           taskId: input.taskId,
           integrationBranch: input.integrationBranch,
+          traceCtx: buildCtx('setup'),
         })
         await updateTask(input.taskId, {
           branch: ref.branch,
@@ -709,12 +756,19 @@ export const implementWorkflow = defineWorkflow<
         // anchors on the SHA this step ran against (engine resume metadata).
         try {
           const { repoRoot } = resolveContext()
-          const { stdout } = await execFileAsync(
-            'git',
-            ['rev-parse', input.integrationBranch],
-            { cwd: repoRoot },
+          const r = await runTool(
+            {
+              tool: 'git',
+              argv: ['rev-parse', input.integrationBranch],
+              cwd: repoRoot,
+              taskId: input.taskId,
+              originId: workflowOriginId,
+              phase: 'setup',
+            },
+            workflowTraceStore,
           )
-          const headSha = stdout.trim()
+          if (r.exitCode !== 0) throw new Error(`rev-parse exit ${r.exitCode}`)
+          const headSha = r.stdout.trim()
           handle.setSha(headSha)
           await updateTask(input.taskId, { integrationHeadSha: headSha }, store)
         } catch {
@@ -725,6 +779,7 @@ export const implementWorkflow = defineWorkflow<
           const summary = await installWorktreeDeps({
             worktreeRoot: ref.path,
             log: (line) => console.log(line),
+            traceCtx: buildCtx('setup'),
           })
           if (summary.sites.length > 0) {
             console.log(
@@ -788,6 +843,7 @@ export const implementWorkflow = defineWorkflow<
         const cleanResult = await cleanWorktreeIfNoCommitsAhead({
           worktreePath,
           integrationBranch: input.integrationBranch,
+          traceCtx: buildCtx('code'),
         })
         if (cleanResult.cleaned && cleanResult.output.trim().length > 0) {
           console.log(
@@ -841,13 +897,11 @@ export const implementWorkflow = defineWorkflow<
             },
           })
         : null
-      // Open trace store best-effort — a DB hiccup must never fail the task.
-      const workerTraceStore = await openTraceEventStore(resolveContext().stateDbPath).catch(
-        (err: unknown) => {
-          console.warn('[trace] failed to open trace-event store for run-claude-code:', err)
-          return undefined
-        },
-      )
+      // Reuse the workflow-level trace store opened at the top of `fn`. A
+      // null store (workflow couldn't open one) is forwarded as-is — the
+      // worker span wrapper handles undefined gracefully.
+      const workerTraceStore =
+        workflowTraceStore === nullTraceStore ? undefined : workflowTraceStore
       const r = await runWorkerWithSpan({
         worker,
         prompt: fullPrompt,
@@ -937,6 +991,7 @@ export const implementWorkflow = defineWorkflow<
         const postState = await detectPostCoderState({
           worktreePath,
           integrationBranch: input.integrationBranch,
+          traceCtx: buildCtx('code'),
         })
         if (postState.kind === 'dirty-no-commits') {
           console.log(
@@ -998,6 +1053,7 @@ export const implementWorkflow = defineWorkflow<
         worktreePath,
         input.integrationBranch,
         branch,
+        buildCtx('verify'),
       )
       const steps = selectVerifySteps(scopes, changedFiles)
       // The diff / commits-ahead gate runs for every dispatched task — there
@@ -1009,6 +1065,7 @@ export const implementWorkflow = defineWorkflow<
         steps,
         branch,
         integrationBranch: input.integrationBranch,
+        traceCtx: buildCtx('verify'),
       })
 
       // Open a trace-event surface around verify so the verify output is
@@ -1147,7 +1204,7 @@ export const implementWorkflow = defineWorkflow<
       // verdict-driven follow-up (one fix, or one inbox item) runs from the
       // task.completed event in daemon/server.ts.
       if (input.kind === 'diagnose') {
-        await removeWorktree({ path: worktreePath, branch }, true)
+        await removeWorktree({ path: worktreePath, branch }, true, false, buildCtx('merge'))
         await updateTask(input.taskId, { status: 'done', failedPhase: null }, store)
         return {
           taskId: input.taskId,
@@ -1170,6 +1227,7 @@ export const implementWorkflow = defineWorkflow<
         const targetStatus = await checkMergeTargetStatus({
           integrationBranch: input.integrationBranch,
           taskBranch: branch,
+          traceCtx: buildCtx('merge'),
         })
         if (targetStatus.kind === 'needs-rebase') {
           // Diverged / behind integration — recoverable, NOT a failure.
@@ -1232,6 +1290,7 @@ export const implementWorkflow = defineWorkflow<
           worktreePath,
           integrationBranch: input.integrationBranch,
           lockTimeoutMs: 5 * 60 * 1000,
+          traceCtx: buildCtx('merge'),
           onVegaStart: async () => {
             // Fast-forward failed; a live Vega session is being spawned. Leave
             // the idempotent `merging` phase so `mars list`/`mars show` surface
@@ -1276,7 +1335,7 @@ export const implementWorkflow = defineWorkflow<
           )
         }
 
-        await removeWorktree({ path: worktreePath, branch }, true)
+        await removeWorktree({ path: worktreePath, branch }, true, false, buildCtx('merge'))
         await updateTask(input.taskId, { status: 'done', failedPhase: null }, store)
 
         return {
