@@ -270,6 +270,14 @@ export interface Task {
    * A populated value is always a 40-character hex string.
    */
   integrationHeadSha: string | null
+  /**
+   * Recipe-specific payload preserved with a recovery task. NULL for every
+   * non-recovery row. Slice F.2 stores `{ recipe, dirtyMainHash }` here for
+   * `main-commiter` recoveries; later recipes that need typed sidecar state
+   * can reuse the same column with their own JSON shape. The persistence
+   * layer treats it as an opaque string; recipe code parses it.
+   */
+  recoveryPayload: string | null
   createdAt: string
   updatedAt: string
 }
@@ -395,6 +403,17 @@ export const initQueue = async (): Promise<void> => {
   // string archive for forensic continuity during the rollout.
   if (!names.has('failure_reason_code')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN failure_reason_code TEXT`)
+  }
+  // recovery_payload: JSON blob populated only on recovery (kind='fix') rows
+  // that need recipe-specific context preserved across restarts. Slice F.2
+  // introduces it as the home of the dirty-main diff hash + recipe ref for
+  // `main-commiter` recoveries; future recipes can co-opt the same column
+  // rather than adding one per recipe. NULL on every non-recovery row and
+  // on legacy recovery rows that predate this column. Schema-level type is
+  // TEXT (libsql/sqlite has no JSON column type); application code parses
+  // the JSON shape per recipe.
+  if (!names.has('recovery_payload')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN recovery_payload TEXT`)
   }
   if (!names.has('retry_count')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`)
@@ -965,6 +984,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     failedPhase: coerceFailedPhase(row.failed_phase),
     spec: rowToTaskSpec(row),
     integrationHeadSha: (row.integration_head_sha as string | null) ?? null,
+    recoveryPayload: (row.recovery_payload as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -1158,7 +1178,20 @@ export const updateTask = async (
       | 'integrationHeadSha'
       | 'failureReason'
       | 'failureSignature'
-    >
+    > & {
+      /**
+       * Typed catalog code for the failure (e.g. `verify:main-dirty`).
+       * Companion to the legacy free-text `failureReason`; either can be
+       * written on its own, both can be written together. Slice F.2
+       * starts populating it for dirty-main parking.
+       */
+      failureReasonCode?: string | null
+      /**
+       * JSON-encoded sidecar for recovery (kind='fix') rows. Slice F.2 stores
+       * `{ recipe, dirtyMainHash }` here for `main-commiter` recoveries.
+       */
+      recoveryPayload?: string | null
+    }
   >,
   store?: TaskStore,
 ): Promise<void> => {
@@ -1219,6 +1252,14 @@ export const updateTask = async (
   if (patch.failureSignature !== undefined) {
     fields.push('failure_signature = ?')
     args.push(patch.failureSignature)
+  }
+  if (patch.failureReasonCode !== undefined) {
+    fields.push('failure_reason_code = ?')
+    args.push(patch.failureReasonCode)
+  }
+  if (patch.recoveryPayload !== undefined) {
+    fields.push('recovery_payload = ?')
+    args.push(patch.recoveryPayload)
   }
   fields.push('updated_at = ?')
   args.push(new Date().toISOString())

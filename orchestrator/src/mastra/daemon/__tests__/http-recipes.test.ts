@@ -77,13 +77,14 @@ describe('GET /recipes', () => {
         source: 'built-in' | 'override'
       }>
       expect(Array.isArray(body)).toBe(true)
-      // All eight slice-E built-ins.
+      // All slice-E built-ins plus slice-F.2's `main-commiter`.
       const names = body.map((e) => e.name).sort()
       expect(names).toEqual(
         [
           'context-fetcher',
           'diagnose-only',
           'lint-autofix',
+          'main-commiter',
           'merge-aborter',
           'prompt-tightener',
           'scope-narrower',

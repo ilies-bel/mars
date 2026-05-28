@@ -292,6 +292,94 @@ export const upsertFixTask = async (
   return { fixTaskId, created: true }
 }
 
+/**
+ * Slice F.2: attach a new blocked source to an EXISTING recovery (fix) task
+ * without spawning a fresh recovery row.
+ *
+ * Background. `upsertFixTask` is the canonical origin → recovery edge writer
+ * and is the documented exemption from F.1's ADR-0038 leaf-node guard (every
+ * other `task_blockers` writer goes through `assertNotRecoveryEdge`). When
+ * dirty-main dedup determines that a queued / in-flight / failed
+ * `main-commiter` already exists for the current diff hash, we still need
+ * a `task_blockers` edge (origin → existing recovery) — but we MUST NOT
+ * re-create the recovery row. A normal `addBlockers` call would trip
+ * F.1's guard because the blocker endpoint is a recovery task; this helper
+ * bypasses the guard by writing the edge through the same chokepoint the
+ * spawn path uses, then re-parks the source.
+ *
+ * The combined fields written are exactly the post-spawn shape of
+ * `upsertFixTask` minus the fix-task INSERT (and minus the
+ * `self_heal_attempts` ledger row, since the cap counts attempt-by-row and
+ * we are not adding a new attempt — we are joining an existing one).
+ *
+ * No-op when the source is already blocked on this exact recovery
+ * (`INSERT OR IGNORE` on the edge).
+ */
+export interface AttachToExistingFixTaskInput {
+  sourceTaskId: string
+  /** The recovery task to attach the source to. Must already exist as a kind='fix' row. */
+  fixTaskId: string
+  /** Catalog code recorded on the source's `failure_reason_code` column. */
+  failureReasonCode: string | null
+  /**
+   * Loose-string archive of the failure for forensic continuity (mirrors
+   * `tasks.failure_reason`). Kept in step with the catalog-driven code.
+   */
+  failureReason: string | null
+  /** Short error summary written to `tasks.error` (truncated to 1000 chars). */
+  errorSummary: string
+  store?: TaskStore
+}
+
+export const attachToExistingFixTask = async (
+  input: AttachToExistingFixTaskInput,
+): Promise<void> => {
+  const s = input.store ?? (await getDefaultTaskStore())
+  const source = await getTask(input.sourceTaskId, s)
+  if (!source) {
+    throw new Error(`source task ${input.sourceTaskId} not found`)
+  }
+  const now = new Date().toISOString()
+  const truncatedError = truncate(input.errorSummary, 1000)
+  await s.batch(
+    [
+      {
+        // F.1 exemption: this insert reaches `task_blockers` directly because
+        // the legitimate origin → recovery edge writer (`upsertFixTask`) is
+        // the documented bypass of the ADR-0038 guard, and this helper is its
+        // dedup sibling. See ADR-0038 clarification: the origin → recovery
+        // edge is the canonical attach mechanism.
+        sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at)
+              VALUES (?, ?, 'confirmed', ?)`,
+        args: [input.sourceTaskId, input.fixTaskId, now],
+      },
+      {
+        sql: `UPDATE tasks
+                 SET status = 'blocked',
+                     error = ?,
+                     failure_reason = COALESCE(?, failure_reason),
+                     failure_reason_code = COALESCE(?, failure_reason_code),
+                     updated_at = ?
+               WHERE id = ?`,
+        args: [
+          truncatedError,
+          input.failureReason,
+          input.failureReasonCode,
+          now,
+          input.sourceTaskId,
+        ],
+      },
+    ],
+    'write',
+  )
+  internalBus().emit('task.blocked', {
+    taskId: input.sourceTaskId,
+    fixTaskId: input.fixTaskId,
+    failureSignature: input.failureReasonCode ?? 'verify:main-dirty',
+    failingStep: 'dispatch:main-dirty',
+  })
+}
+
 const buildRecoveryEscalationBody = (input: {
   recoveryTaskId: string
   originTaskId: string

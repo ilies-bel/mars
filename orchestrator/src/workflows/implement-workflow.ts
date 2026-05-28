@@ -91,6 +91,18 @@ export const DIRTY_MAIN_SETUP_MESSAGE =
 export const isDirtyMainSetupError = (err: unknown): boolean =>
   errorHaystack(err).includes('setup:preflight/dirty-main')
 
+// Thrown by the verify step's slice-F.2 dirty-main check. The verify step
+// detects an uncommitted state on the integration branch and parks the task
+// `blocked` behind a `main-commiter` recovery via `spawnOrAttachMainCommitter`
+// before throwing this sentinel. The daemon's `isMainDirtyVerifyError`
+// suppresses the misleading `task.completed status=failed` emit so the
+// `blocked` state stands.
+export const MAIN_DIRTY_VERIFY_MESSAGE =
+  'integration branch dirty before verify; parked behind main-commiter recovery'
+
+export const isMainDirtyVerifyError = (err: unknown): boolean =>
+  errorHaystack(err).includes('verify:main-dirty')
+
 // Thrown by the code step when the read-span guard trips (agent read without
 // acting) and we successfully spawn a diagnose Chore and park the original
 // task in `blocked`. The daemon uses it to suppress the misleading
@@ -1034,6 +1046,71 @@ export const implementWorkflow = defineWorkflow<
       // the verdict and either dispatches one fix or raises an inbox item.
       if (input.kind === 'diagnose') {
         return { verified: true }
+      }
+
+      // Slice F.2: verify-time dirty-main check. Runs at the top of the
+      // verify step, BEFORE typecheck/test/lint. If the integration branch
+      // is dirty right now, we park this task behind a `main-commiter`
+      // recovery and abort the step — verify cannot legitimately land work
+      // on a dirty tree, and the failure model says short-circuit verify
+      // for this exact case (no `verify:typecheck` recorded, etc.).
+      //
+      // Recovery (kind='fix') tasks are exempt by design — the committer
+      // itself must be able to run against the dirty branch.
+      if (input.kind !== 'fix') {
+        try {
+          const { checkIntegrationBranchDirty, MAIN_COMMITER_RECIPE, spawnOrAttachMainCommitter } =
+            await import('../mastra/lib/main-dirty')
+          const { loadRecipeCatalog } = await import('../mastra/lib/recipes')
+          const verifyTopCtx = resolveContext()
+          const detection = await checkIntegrationBranchDirty({
+            repoRoot: verifyTopCtx.repoRoot,
+            traceCtx: buildCtx('verify'),
+          })
+          if (detection.dirty) {
+            const catalog = await loadRecipeCatalog(verifyTopCtx.stateDir)
+            const recipe = catalog.get(MAIN_COMMITER_RECIPE)
+            if (recipe) {
+              const resolution = await spawnOrAttachMainCommitter({
+                sourceTaskId: input.taskId,
+                detection,
+                integrationBranch: input.integrationBranch,
+                dispatchPhase: 'verify',
+                recipePrompt: recipe.prompt,
+                sourceOriginId: workflowOriginId,
+                traceStore: workflowTraceStore,
+                store,
+              })
+              console.log(
+                `[main-dirty] verify-time: task ${input.taskId} parked blocked on main-commiter ${resolution.fixTaskId} (${
+                  resolution.spawned
+                    ? 'spawned fresh'
+                    : `attached to existing committer in status=${resolution.attachedToStatus}`
+                })`,
+              )
+              // Throw to abort the verify step. The detection-throw is
+              // suppressed by `isMainDirtyVerifyError` in the daemon so the
+              // misleading `task.completed status=failed` emit is skipped —
+              // the source task is already `blocked` with a real
+              // task_blockers edge.
+              throw new Error(
+                `task ${input.taskId} verify:main-dirty: ${MAIN_DIRTY_VERIFY_MESSAGE}`,
+              )
+            }
+            console.log(
+              `[main-dirty] verify-time: integration branch is dirty but recipe '${MAIN_COMMITER_RECIPE}' is missing from the catalog; falling through to standard verify`,
+            )
+          }
+        } catch (err) {
+          if (err instanceof Error && err.message.includes('verify:main-dirty')) {
+            throw err
+          }
+          console.warn(
+            `[main-dirty] verify-time check threw, continuing with verify: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          )
+        }
       }
 
       // Entering verify for real: clear the previous failure stamp so a
