@@ -81,6 +81,94 @@ export function detectWipMarkerInTestDiff(
 
 export type WipScanResult = { blocked: false } | { blocked: true; hit: WipHit }
 
+// ---------------------------------------------------------------------------
+// Secret-path guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Identifies a file path that matches a secret-or-state shape which the
+ * salvage chore must never auto-commit.
+ */
+export interface SecretPathHit {
+  /** Repo-relative path that tripped the guard. */
+  filePath: string
+  /** Human-readable reason (e.g. "dotenv file"). */
+  reason: string
+}
+
+/**
+ * Checks whether a single repo-relative file path matches a secret-or-state
+ * shape that must never be auto-committed by the salvage chore:
+ *
+ * - Dotenv files: exactly `.env`, or any name whose basename starts with
+ *   `.env.` (e.g. `.env.local`, `.env.production`).
+ * - Per-repo state directory: any path that is exactly `.mars` or starts
+ *   with `.mars/`.
+ *
+ * Returns a `SecretPathHit` when the path matches, or `null` when safe.
+ */
+export function checkSecretPath(filePath: string): SecretPathHit | null {
+  const basename = filePath.split('/').pop() ?? ''
+
+  if (basename === '.env' || basename.startsWith('.env.')) {
+    return { filePath, reason: 'dotenv file' }
+  }
+
+  if (filePath === '.mars' || filePath.startsWith('.mars/')) {
+    return { filePath, reason: 'per-repo state directory' }
+  }
+
+  return null
+}
+
+/**
+ * Combined guard result returned by {@link scanDirtyFilesForGuards}.
+ */
+export type GuardResult =
+  | { blocked: false }
+  | { blocked: true; kind: 'secret-path'; hit: SecretPathHit }
+  | { blocked: true; kind: 'wip'; hit: WipHit }
+
+/**
+ * Combined salvage guard: checks ALL dirty paths for secret-or-state shapes
+ * first (pure, no git I/O), then checks test-directory files for WIP markers.
+ *
+ * The guard is **all-or-nothing**: if any path matches the secret-or-state
+ * guard, `{ blocked: true, kind: 'secret-path' }` is returned immediately
+ * without fetching any git diffs. The caller must treat any `blocked: true`
+ * result as "skip the salvage chore entirely — commit nothing".
+ *
+ * Returns `{ blocked: false }` when the full dirty tree is safe to
+ * auto-commit.
+ */
+export async function scanDirtyFilesForGuards(
+  repoRoot: string,
+  dirtyLines: string[],
+): Promise<GuardResult> {
+  // First pass: pure path-shape guard — no git I/O needed.
+  for (const line of dirtyLines) {
+    const raw = line.slice(3).trim()
+    const arrowIdx = raw.indexOf(' -> ')
+    const filePath = arrowIdx >= 0 ? raw.slice(arrowIdx + 4) : raw
+
+    const secretHit = checkSecretPath(filePath)
+    if (secretHit) return { blocked: true, kind: 'secret-path', hit: secretHit }
+  }
+
+  // Second pass: WIP-marker guard for test files (async, needs git diff).
+  const wipResult = await scanDirtyTestsForWip(repoRoot, dirtyLines)
+  if (wipResult.blocked) {
+    return { blocked: true, kind: 'wip', hit: wipResult.hit }
+  }
+
+  return { blocked: false }
+}
+
+// ---------------------------------------------------------------------------
+// WIP scan (kept below the secret-path guard so scanDirtyFilesForGuards can
+// reference scanDirtyTestsForWip; callers importing both still work fine)
+// ---------------------------------------------------------------------------
+
 /**
  * Scans dirty tracked files (as reported by
  * `git status --porcelain --untracked-files=no`) for WIP markers in files
