@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -16,6 +16,7 @@ interface QueueModule {
 interface DeepQueryModule {
   pickDeepReflectCandidate: typeof import('../deep-reflect-query').pickDeepReflectCandidate
   loadDeepReflectSession: typeof import('../deep-reflect-query').loadDeepReflectSession
+  loadDeepReflectArc: typeof import('../deep-reflect-query').loadDeepReflectArc
   listDeepReflectArcCandidates: typeof import('../deep-reflect-query').listDeepReflectArcCandidates
 }
 
@@ -248,6 +249,98 @@ describe('listDeepReflectArcCandidates', () => {
       withTranscriptOnly: false,
     })
     expect(result.length).toBeLessThanOrEqual(3)
+  })
+})
+
+describe('loadDeepReflectSession reads JSONL transcripts', () => {
+  let repo: string
+  let homeDir: string
+  let originalHome: string | undefined
+
+  beforeEach(() => {
+    repo = setupRepo()
+    homeDir = mkdtempSync(resolve(tmpdir(), 'mars-deep-reflect-home-'))
+    originalHome = process.env.HOME
+    process.env.HOME = homeDir
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    if (originalHome === undefined) delete process.env.HOME
+    else process.env.HOME = originalHome
+    rmSync(repo, { recursive: true, force: true })
+    rmSync(homeDir, { recursive: true, force: true })
+  })
+
+  const writeJsonl = (encoded: string, sessionId: string, lines: string[]): void => {
+    const dir = resolve(homeDir, '.claude', 'projects', encoded)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(resolve(dir, `${sessionId}.jsonl`), lines.join('\n') + '\n')
+  }
+
+  it('populates conversation and toolCallCounts from on-disk JSONL', async () => {
+    const { q, dq } = await loadModules(repo)
+    const t = await q.enqueueTask('p', undefined, { skipTriage: true })
+    const worktreePath = '/tmp/wt-session-load'
+    await q.getClient().execute({
+      sql: `UPDATE tasks
+              SET status = 'done', worktree_path = ?, claude_session_ids = ?
+            WHERE id = ?`,
+      args: [worktreePath, JSON.stringify(['sess-x']), t.id],
+    })
+
+    const encoded = worktreePath.split('/').join('-')
+    writeJsonl(encoded, 'sess-x', [
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'planning' },
+            { type: 'tool_use', name: 'Read', input: { path: 'foo.ts' } },
+            { type: 'tool_use', name: 'Edit', input: { path: 'foo.ts' } },
+          ],
+        },
+      }),
+      JSON.stringify({ type: 'tool_use', name: 'Bash' }),
+    ])
+
+    const session = await dq.loadDeepReflectSession(t.id)
+    expect(session).not.toBeNull()
+    expect(session?.conversation).toHaveLength(2)
+    expect(session?.toolCallCounts).toEqual({ Read: 1, Edit: 1, Bash: 1 })
+    expect(session?.transcriptNotes).toEqual([])
+  })
+
+  it('returns the session with a "no transcripts recorded" note when no session ids are stored', async () => {
+    const { q, dq } = await loadModules(repo)
+    const t = await q.enqueueTask('p', undefined, { skipTriage: true })
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [t.id],
+    })
+
+    const session = await dq.loadDeepReflectSession(t.id)
+    expect(session).not.toBeNull()
+    expect(session?.conversation).toEqual([])
+    expect(session?.toolCallCounts).toEqual({})
+    expect(session?.transcriptNotes).toEqual([`no transcripts recorded for task ${t.id}`])
+  })
+
+  it('notes missing JSONL files without crashing', async () => {
+    const { q, dq } = await loadModules(repo)
+    const t = await q.enqueueTask('p', undefined, { skipTriage: true })
+    const worktreePath = '/tmp/wt-missing'
+    await q.getClient().execute({
+      sql: `UPDATE tasks
+              SET status = 'done', worktree_path = ?, claude_session_ids = ?
+            WHERE id = ?`,
+      args: [worktreePath, JSON.stringify(['sess-gone']), t.id],
+    })
+
+    const session = await dq.loadDeepReflectSession(t.id)
+    expect(session).not.toBeNull()
+    expect(session?.conversation).toEqual([])
+    expect(session?.transcriptNotes[0]).toMatch(/transcript sess-gone not found on disk/)
   })
 })
 

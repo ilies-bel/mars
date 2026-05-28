@@ -2,6 +2,11 @@ import { getDefaultTaskStore } from './task-store'
 import type { ClaudeEvent } from './claude-stream'
 import { listTaskSignals, type TaskSignalRow } from './reflect-signals'
 import { loadScoresForTasks, median, type TaskScoreEntry } from './reflect-query'
+import {
+  readAllTranscriptsForTask,
+  resolveTranscriptLocationsForTask,
+  type TranscriptLocation,
+} from './claude-transcript'
 
 export interface DeepReflectSession {
   taskId: string
@@ -20,6 +25,16 @@ export interface DeepReflectSession {
   scores: Record<string, TaskScoreEntry>
   conversation: ClaudeEvent[]
   verifyOutput: string | null
+  /**
+   * Human-readable notes about transcript coverage. Populated when the
+   * task has no recorded session ids ("no transcripts recorded for this
+   * task") or when one of the recorded session ids has no JSONL file on
+   * disk ("transcript <id> not found on disk: <path>"). Empty when every
+   * session resolved cleanly.
+   */
+  transcriptNotes: string[]
+  /** Per-tool counts derived from the JSONL stream (`{ Edit: 12, Bash: 7 }`). */
+  toolCallCounts: Record<string, number>
 }
 
 interface PickReason {
@@ -41,6 +56,85 @@ interface TranscriptCostRow {
   status: string
   created_at: string
   weighted_tokens: number
+}
+
+/**
+ * Coerce a raw JSONL payload into a {@link ClaudeEvent} if it satisfies
+ * the loose `{ type: string, ... }` shape. Returns null otherwise so
+ * downstream stats reflect "events Mars can reason about" rather than
+ * every line in the file (some Claude versions also emit summary or
+ * metadata lines without a `type`).
+ */
+const coerceClaudeEvent = (raw: unknown): ClaudeEvent | null => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  if (typeof o.type !== 'string') return null
+  return o as unknown as ClaudeEvent
+}
+
+/**
+ * Count tool calls in a parsed Claude event. Mirrors the shape Claude
+ * uses both in stream-json and on-disk JSONL: tool calls live as
+ * `tool_use` blocks inside `message.content` on assistant turns, or as
+ * top-level `{ type: 'tool_use', name }` events on some versions.
+ */
+const countToolCalls = (event: ClaudeEvent, counts: Record<string, number>): void => {
+  if (event.type === 'tool_use' && typeof event.name === 'string') {
+    counts[event.name] = (counts[event.name] ?? 0) + 1
+    return
+  }
+  if (event.type === 'assistant' || event.type === 'user') {
+    const message = event.message
+    if (message && typeof message === 'object' && !Array.isArray(message)) {
+      const content = (message as Record<string, unknown>).content
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (!block || typeof block !== 'object' || Array.isArray(block)) continue
+          const b = block as Record<string, unknown>
+          if (b.type === 'tool_use' && typeof b.name === 'string') {
+            counts[b.name] = (counts[b.name] ?? 0) + 1
+          }
+        }
+      }
+    }
+  }
+}
+
+interface TranscriptStreamResult {
+  conversation: ClaudeEvent[]
+  toolCallCounts: Record<string, number>
+  notes: string[]
+}
+
+/**
+ * Stream every JSONL event for a task, coerce to ClaudeEvent[], and
+ * tally per-tool counts. Also reports any missing-on-disk transcripts
+ * so the caller can surface them in the report without a stack trace.
+ */
+const loadTranscriptStream = async (
+  taskId: string,
+): Promise<TranscriptStreamResult> => {
+  const locations: TranscriptLocation[] =
+    await resolveTranscriptLocationsForTask(taskId)
+  const notes: string[] = []
+  if (locations.length === 0) {
+    notes.push(`no transcripts recorded for task ${taskId}`)
+    return { conversation: [], toolCallCounts: {}, notes }
+  }
+  for (const loc of locations) {
+    if (!loc.exists) {
+      notes.push(`transcript ${loc.sessionId} not found on disk: ${loc.path}`)
+    }
+  }
+  const conversation: ClaudeEvent[] = []
+  const toolCallCounts: Record<string, number> = {}
+  for await (const evt of readAllTranscriptsForTask(taskId)) {
+    const claudeEvent = coerceClaudeEvent(evt.raw)
+    if (!claudeEvent) continue
+    conversation.push(claudeEvent)
+    countToolCalls(claudeEvent, toolCallCounts)
+  }
+  return { conversation, toolCallCounts, notes }
 }
 
 const fetchTranscriptCostRows = async (
@@ -142,21 +236,23 @@ export const loadDeepReflectSession = async (
   if (taskRes.rows.length === 0) return null
   const task = taskRes.rows[0] as unknown as Record<string, unknown>
 
-  const transcriptRes = await store.query({
-    sql: `SELECT conversation_json, verify_output FROM task_transcripts WHERE task_id = ?`,
+  // Verify output is still surfaced via the task_transcripts row when the
+  // verify span writer recorded one. The legacy conversation_json column
+  // on the same table is no longer written or read — slice J reads
+  // conversations directly from Claude Code's on-disk JSONL transcripts.
+  const verifyRes = await store.query({
+    sql: `SELECT verify_output FROM task_transcripts WHERE task_id = ?`,
     args: [taskId],
   })
-  if (transcriptRes.rows.length === 0) return null
-  const transcript = transcriptRes.rows[0] as unknown as Record<string, unknown>
-  const conversationJson = transcript.conversation_json as string
-  let conversation: ClaudeEvent[] = []
-  try {
-    const parsed = JSON.parse(conversationJson) as unknown
-    if (Array.isArray(parsed)) conversation = parsed as ClaudeEvent[]
-  } catch {
-    conversation = []
-  }
-  const verifyOutput = (transcript.verify_output as string | null) ?? null
+  const verifyOutput =
+    verifyRes.rows.length === 0
+      ? null
+      : ((verifyRes.rows[0] as unknown as Record<string, unknown>).verify_output as
+          | string
+          | null) ?? null
+
+  const transcript = await loadTranscriptStream(taskId)
+  const { conversation, toolCallCounts, notes: transcriptNotes } = transcript
 
   const signalRows = await listTaskSignals(taskId)
   const signals = signalRows.map((s) => ({
@@ -201,6 +297,8 @@ export const loadDeepReflectSession = async (
     scores,
     conversation,
     verifyOutput,
+    transcriptNotes,
+    toolCallCounts,
   }
 }
 
@@ -228,7 +326,12 @@ export interface ArcTaskEntry {
   scores: Record<string, TaskScoreEntry>
   conversation: ClaudeEvent[]
   verifyOutput: string | null
+  /** True when at least one JSONL transcript file resolved to disk. */
   hasTranscript: boolean
+  /** Per-tool counts derived from this task's JSONL transcripts. */
+  toolCallCounts: Record<string, number>
+  /** Notes about transcript coverage; see DeepReflectSession.transcriptNotes. */
+  transcriptNotes: string[]
 }
 
 export interface DeepReflectArc {
@@ -285,30 +388,39 @@ const fetchArcTaskRows = async (
   })
 }
 
+interface LoadedTaskTranscript {
+  conversation: ClaudeEvent[]
+  verifyOutput: string | null
+  hasTranscript: boolean
+  toolCallCounts: Record<string, number>
+  transcriptNotes: string[]
+}
+
 const loadTaskTranscript = async (
   store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
   taskId: string,
-): Promise<{ conversation: ClaudeEvent[]; verifyOutput: string | null; hasTranscript: boolean }> => {
+): Promise<LoadedTaskTranscript> => {
+  // Verify output still lives on task_transcripts.verify_output (recorded
+  // by the verify span writer). The conversation_json column is no longer
+  // read — we stream the on-disk JSONL transcripts instead.
   const r = await store.query({
-    sql: `SELECT conversation_json, verify_output FROM task_transcripts WHERE task_id = ?`,
+    sql: `SELECT verify_output FROM task_transcripts WHERE task_id = ?`,
     args: [taskId],
   })
-  if (r.rows.length === 0) {
-    return { conversation: [], verifyOutput: null, hasTranscript: false }
-  }
-  const row = r.rows[0] as unknown as Record<string, unknown>
-  const conversationJson = (row.conversation_json as string | null) ?? '[]'
-  let conversation: ClaudeEvent[] = []
-  try {
-    const parsed = JSON.parse(conversationJson) as unknown
-    if (Array.isArray(parsed)) conversation = parsed as ClaudeEvent[]
-  } catch {
-    conversation = []
-  }
+  const verifyOutput =
+    r.rows.length === 0
+      ? null
+      : ((r.rows[0] as unknown as Record<string, unknown>).verify_output as
+          | string
+          | null) ?? null
+
+  const stream = await loadTranscriptStream(taskId)
   return {
-    conversation,
-    verifyOutput: (row.verify_output as string | null) ?? null,
-    hasTranscript: true,
+    conversation: stream.conversation,
+    verifyOutput,
+    hasTranscript: stream.conversation.length > 0,
+    toolCallCounts: stream.toolCallCounts,
+    transcriptNotes: stream.notes,
   }
 }
 
@@ -378,6 +490,8 @@ export const loadDeepReflectArc = async (
       conversation: transcript.conversation,
       verifyOutput: transcript.verifyOutput,
       hasTranscript: transcript.hasTranscript,
+      toolCallCounts: transcript.toolCallCounts,
+      transcriptNotes: transcript.transcriptNotes,
     })
   }
 
