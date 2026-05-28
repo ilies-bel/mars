@@ -4,9 +4,11 @@ import { getTask } from '../mastra/queue'
 import { createProposal } from '../mastra/proposals'
 import { Workers } from '../mastra/workers'
 import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
-import { getRepoRoot } from '../mastra/context'
+import { getRepoRoot, resolveContext } from '../mastra/context'
 import { type TaskStore, getDefaultTaskStore } from '../mastra/lib/task-store'
 import { createQueueWorkflowStore } from './queue-workflow-store'
+import { openStepSpanStore } from '../mastra/lib/step-span-store'
+import { runWorkerWithSpan } from '../mastra/lib/run-worker-with-span'
 
 const planInputSchema = z.object({
   taskId: z.string(),
@@ -78,8 +80,15 @@ export const planWorkflow = defineWorkflow<PlanInput, RunPlanResult, PlanService
       const task = await getTask(input.taskId, store)
       if (!task) throw new Error(`task ${input.taskId} not found`)
 
-      const r = await Workers.Planner.run(buildPrompt(task.prompt), {
-        cwd: getRepoRoot(),
+      const spanStore = await openStepSpanStore(resolveContext().stateDbPath).catch(() => undefined)
+      const r = await runWorkerWithSpan({
+        worker: Workers.Planner,
+        prompt: buildPrompt(task.prompt),
+        runOptions: { cwd: getRepoRoot() },
+        spanStore,
+        stepName: 'generate-plan',
+        workflowInstanceId: ctx.runId,
+        originId: input.taskId,
       })
       if (r.exitCode !== 0) {
         throw new Error(

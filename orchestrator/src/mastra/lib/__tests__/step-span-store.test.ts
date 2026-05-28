@@ -141,6 +141,31 @@ describe('openStepSpanStore', () => {
     expect(spans[0].verifyOutput).toBe('pending')
   })
 
+  it('closeSpan can write session_id when it was not set at open time', async () => {
+    const store = await openStepSpanStore(tmpDbPath())
+    const id = await store.openSpan({
+      stepName: 'code',
+      workflowInstanceId: 'wf-009b',
+      originId: 'task-sess-late',
+    })
+    await store.closeSpan(id, { outcome: 'success', sessionId: 'sess-from-close' })
+    const spans = await store.listSpans('task-sess-late')
+    expect(spans[0].sessionId).toBe('sess-from-close')
+  })
+
+  it('closeSpan preserves an open-time session_id when close does not supply one', async () => {
+    const store = await openStepSpanStore(tmpDbPath())
+    const id = await store.openSpan({
+      stepName: 'code',
+      workflowInstanceId: 'wf-009c',
+      originId: 'task-sess-preserve',
+      sessionId: 'sess-open-time',
+    })
+    await store.closeSpan(id, { outcome: 'success' })
+    const spans = await store.listSpans('task-sess-preserve')
+    expect(spans[0].sessionId).toBe('sess-open-time')
+  })
+
   it('listSpans returns only spans belonging to the requested origin', async () => {
     const store = await openStepSpanStore(tmpDbPath())
     await store.openSpan({

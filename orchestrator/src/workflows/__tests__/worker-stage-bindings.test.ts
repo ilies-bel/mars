@@ -24,24 +24,35 @@ describe('PRD 948691d0 slice 4 — stages route through named Workers', () => {
     // Fixer for kind='fix', Coder for everything else (via getWorkerForTag;
     // 'coder' is the only valid tag after ADR 0019). Both branches go through
     // the role registry — not a raw `runClaudeCode` call.
+    // Workers are now passed to runWorkerWithSpan (PRD 436f14c7) rather than
+    // calling .run() inline; the binding to named Workers is preserved.
     expect(src).toMatch(/Workers\.Fixer/)
     expect(src).toMatch(/getWorkerForTag/)
-    expect(src).toMatch(/worker\.run\(/)
+    expect(src).toMatch(/runWorkerWithSpan/)
   })
 
-  it('plan workflow dispatches through Workers.Planner.run', () => {
+  it('plan workflow dispatches Workers.Planner through runWorkerWithSpan', () => {
     const src = read('plan-workflow.ts')
-    expect(src).toMatch(/Workers\.Planner\.run\(/)
+    // Previously Workers.Planner.run() — now passed to runWorkerWithSpan so a
+    // step span is recorded around each Planner session (PRD 436f14c7).
+    expect(src).toMatch(/Workers\.Planner/)
+    expect(src).toMatch(/runWorkerWithSpan/)
   })
 
-  it('slice workflow dispatches through Workers.Slicer.run', () => {
+  it('slice workflow dispatches Workers.Slicer through runWorkerWithSpan', () => {
     const src = read('slice-workflow.ts')
-    expect(src).toMatch(/Workers\.Slicer\.run\(/)
+    // Previously Workers.Slicer.run() — now passed to runWorkerWithSpan so a
+    // step span is recorded around each Slicer session (PRD 436f14c7).
+    expect(src).toMatch(/Workers\.Slicer/)
+    expect(src).toMatch(/runWorkerWithSpan/)
   })
 
-  it('triage workflow dispatches through Workers.Triager.run', () => {
+  it('triage workflow dispatches Workers.Triager through runWorkerWithSpan', () => {
     const src = read('triage-workflow.ts')
-    expect(src).toMatch(/Workers\.Triager\.run\(/)
+    // Previously Workers.Triager.run() — now passed to runWorkerWithSpan so a
+    // step span is recorded around each Triager session (PRD 436f14c7).
+    expect(src).toMatch(/Workers\.Triager/)
+    expect(src).toMatch(/runWorkerWithSpan/)
   })
 
   it('migrated stages do not assemble dispatch flags ad-hoc', () => {
