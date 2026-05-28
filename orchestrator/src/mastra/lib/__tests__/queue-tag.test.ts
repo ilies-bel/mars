@@ -46,34 +46,37 @@ describe('task tag', () => {
     expect(fetched?.tag).toBe('coder')
   })
 
-  it('rejects an unknown tag at enqueue with a precise message', async () => {
+  it('accepts an arbitrary tag string at enqueue', async () => {
     const q = await loadQueue(repo)
-    await expect(
-      q.enqueueTask('bad', undefined, {
-        skipTriage: true,
-        // @ts-expect-error -- intentionally bypassing the type guard
-        tag: 'reviewer',
-      }),
-    ).rejects.toThrow(/tag/)
+    const t = await q.enqueueTask('reviewer task', undefined, {
+      skipTriage: true,
+      tag: 'reviewer',
+    })
+    expect(t.tag).toBe('reviewer')
+    const fetched = await q.getTask(t.id)
+    expect(fetched?.tag).toBe('reviewer')
   })
 
-  it('rejects the retired "writer" tag at enqueue (structured-write lane removed, ADR 0019)', async () => {
+  it('accepts the formerly-retired "writer" tag at enqueue', async () => {
     const q = await loadQueue(repo)
-    await expect(
-      q.enqueueTask('glossary slice', undefined, {
-        skipTriage: true,
-        // @ts-expect-error -- intentionally bypassing the type guard
-        tag: 'writer',
-      }),
-    ).rejects.toThrow(/tag/)
+    const t = await q.enqueueTask('glossary slice', undefined, {
+      skipTriage: true,
+      tag: 'writer',
+    })
+    expect(t.tag).toBe('writer')
+    const fetched = await q.getTask(t.id)
+    expect(fetched?.tag).toBe('writer')
   })
 
-  it('isTaskTag narrows valid tag literals — "coder" only after ADR 0019', async () => {
+  it('isTaskTag accepts any non-empty string and rejects non-strings', async () => {
     const q = await loadQueue(repo)
     expect(q.isTaskTag('coder')).toBe(true)
-    // 'writer' is no longer a valid tag — the structured-write lane was removed.
-    expect(q.isTaskTag('writer')).toBe(false)
-    expect(q.isTaskTag('reviewer')).toBe(false)
+    expect(q.isTaskTag('writer')).toBe(true)
+    expect(q.isTaskTag('reviewer')).toBe(true)
+    expect(q.isTaskTag('custom-tag')).toBe(true)
     expect(q.isTaskTag(null)).toBe(false)
+    expect(q.isTaskTag(undefined)).toBe(false)
+    expect(q.isTaskTag('')).toBe(false)
+    expect(q.isTaskTag(42)).toBe(false)
   })
 })
