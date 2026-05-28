@@ -26,3 +26,11 @@ export function getSession(id: string): SessionHandle | undefined {
 export function removeSession(id: string): void {
   sessions.delete(id);
 }
+
+/**
+ * Return all currently live session handles as an array.
+ * Sessions that have exited are not included (they are removed on exit).
+ */
+export function listSessions(): SessionHandle[] {
+  return Array.from(sessions.values());
+}
