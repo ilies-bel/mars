@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -19,6 +19,8 @@ const setupRepo = (): string => {
 }
 
 const loadQueue = async (repo: string): Promise<Queue> => {
+  // Isolate module instances so each test starts with a fresh DB connection.
+  const { vi } = await import('vitest')
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../../queue')
@@ -26,7 +28,7 @@ const loadQueue = async (repo: string): Promise<Queue> => {
   return mod as unknown as Queue
 }
 
-describe('task tag', () => {
+describe('task tags (list)', () => {
   let repo: string
 
   beforeEach(() => {
@@ -38,34 +40,66 @@ describe('task tag', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('defaults to "coder" when tag is not provided', async () => {
+  it('stores an empty --tag invocation as the default tag list [coder]', async () => {
     const q = await loadQueue(repo)
     const t = await q.enqueueTask('default tagless', undefined, { skipTriage: true })
-    expect(t.tag).toBe('coder')
+    expect(t.tags).toEqual(['coder'])
     const fetched = await q.getTask(t.id)
-    expect(fetched?.tag).toBe('coder')
+    expect(fetched?.tags).toEqual(['coder'])
   })
 
-  it('accepts an arbitrary tag string at enqueue', async () => {
+  it('stores a single tag provided via tags option', async () => {
     const q = await loadQueue(repo)
-    const t = await q.enqueueTask('reviewer task', undefined, {
+    const t = await q.enqueueTask('single tag task', undefined, {
       skipTriage: true,
-      tag: 'reviewer',
+      tags: ['reviewer'],
     })
-    expect(t.tag).toBe('reviewer')
+    expect(t.tags).toEqual(['reviewer'])
     const fetched = await q.getTask(t.id)
-    expect(fetched?.tag).toBe('reviewer')
+    expect(fetched?.tags).toEqual(['reviewer'])
   })
 
-  it('accepts the formerly-retired "writer" tag at enqueue', async () => {
+  it('stores multiple tags — mars task add --tag a --tag b', async () => {
+    const q = await loadQueue(repo)
+    const t = await q.enqueueTask('multi-tag task', undefined, {
+      skipTriage: true,
+      tags: ['a', 'b'],
+    })
+    expect(t.tags).toEqual(['a', 'b'])
+    const fetched = await q.getTask(t.id)
+    expect(fetched?.tags).toEqual(['a', 'b'])
+  })
+
+  it('accepts formerly-retired "writer" tag', async () => {
     const q = await loadQueue(repo)
     const t = await q.enqueueTask('glossary slice', undefined, {
       skipTriage: true,
-      tag: 'writer',
+      tags: ['writer'],
     })
-    expect(t.tag).toBe('writer')
+    expect(t.tags).toEqual(['writer'])
     const fetched = await q.getTask(t.id)
-    expect(fetched?.tag).toBe('writer')
+    expect(fetched?.tags).toEqual(['writer'])
+  })
+
+  it('rejects tags option containing an empty string', async () => {
+    const q = await loadQueue(repo)
+    await expect(
+      q.enqueueTask('bad tags', undefined, {
+        skipTriage: true,
+        tags: ['coder', ''],
+      }),
+    ).rejects.toThrow(/tags must be an array of non-empty strings/)
+  })
+
+  it('rejects tags option that is not an array', async () => {
+    const q = await loadQueue(repo)
+    await expect(
+      q.enqueueTask('bad tags', undefined, {
+        skipTriage: true,
+        // @ts-expect-error testing runtime guard
+        tags: 'coder',
+      }),
+    ).rejects.toThrow(/tags must be an array of non-empty strings/)
   })
 
   it('isTaskTag accepts any non-empty string and rejects non-strings', async () => {

@@ -126,10 +126,10 @@ const planSchema = z
   })
   .nullable()
 
-// Worker-routing tag, mirroring {@link TaskTag}. Accepts any non-empty string;
-// defaults to 'coder' when the dispatcher omits it (legacy/tagless rows) so
-// the workflow keeps running on Coder unless a tag is explicitly threaded through.
-const tagSchema: z.ZodType<TaskTag> = z.string().default('coder')
+// Worker-routing tags list, mirroring {@link Task.tags}. Each element must be
+// a non-empty string. Defaults to ['coder'] when the dispatcher omits it
+// (legacy/tagless rows). The first element is the primary routing tag.
+const tagSchema: z.ZodType<TaskTag[]> = z.array(z.string()).default(['coder'])
 
 // Task role, mirroring {@link TaskKind}. Defaults to 'task' when the
 // dispatcher omits it (legacy rows). 'diagnose' marks a diagnose-only
@@ -565,7 +565,7 @@ const implementInputSchema = z.object({
   taskId: z.string(),
   prompt: z.string(),
   plan: planSchema.default(null),
-  tag: tagSchema,
+  tags: tagSchema,
   kind: kindSchema,
   integrationBranch: z.string().default('main'),
   spec: specSchema,
@@ -807,23 +807,23 @@ export const implementWorkflow = defineWorkflow<
       }
 
       const originId = await resolveOriginIdForTask(input.taskId)
-      const tag = isTaskTag(input.tag) ? input.tag : 'coder'
+      // Use the first valid tag as the primary routing tag, defaulting to 'coder'.
+      const primaryTag: TaskTag = input.tags.find(isTaskTag) ?? 'coder'
       const fullPrompt = composePrompt(
         input.prompt,
         input.plan,
-        tag,
+        primaryTag,
         input.spec ?? null,
         input.taskId,
         worktreePath,
         input.kind,
       )
       // Kind-aware routing: fix tasks go to the Fixer Worker (Opus, backlog-
-      // mutation denied); everything else uses Coder via tag (the only valid
-      // tag is 'coder' after ADR 0019). Kind takes precedence over tag for the
-      // fix → Fixer path because a recovery task must always land on the
-      // higher-resilience Worker regardless of what tag the row carries.
+      // mutation denied); everything else uses Coder via the primary tag.
+      // Kind takes precedence over tags for the fix → Fixer path because a
+      // recovery task must always land on the higher-resilience Worker.
       const worker =
-        input.kind === 'fix' ? Workers.Fixer : getWorkerForTag(tag)
+        input.kind === 'fix' ? Workers.Fixer : getWorkerForTag(primaryTag)
       // Read/Grep span watcher (gsd-style analysis-paralysis signal). When the
       // threshold is reached AND the agent has taken zero actions for the
       // entire run, a single diagnose Chore is spawned and the original task
@@ -853,7 +853,7 @@ export const implementWorkflow = defineWorkflow<
         prompt: fullPrompt,
         runOptions: {
           cwd: worktreePath,
-          systemPrompt: resolveWorkerSystemPrompt(tag),
+          systemPrompt: resolveWorkerSystemPrompt(primaryTag),
           onEvent: async (event) => {
             watcher?.observe(event)
             // Was `writer.write({type:'claude-event', event})`; the engine's

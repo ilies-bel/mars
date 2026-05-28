@@ -112,7 +112,7 @@ export type TaskKind = 'task' | 'fix' | 'diagnose'
  *   - `'coder'` → default. Routes to the Coder Worker (sonnet, bypass,
  *                 full tool surface).
  *
- * Untagged rows default to `'coder'` at the read boundary, preserving the
+ * Untagged rows default to `['coder']` at the read boundary, preserving the
  * "quick escape hatch" behaviour for hand-written `mars task add` calls.
  */
 export type TaskTag = string
@@ -239,12 +239,11 @@ export interface Task {
    */
   kind?: TaskKind
   /**
-   * Routing hint that picks the Worker. See {@link TaskTag}. Optional on the
-   * type for backwards compatibility with existing `Task` literals in tests
-   * and fixtures; the persistence boundary defaults missing/NULL values to
-   * `'coder'`.
+   * Routing hints that pick the Worker. See {@link TaskTag}. Always populated
+   * at the persistence boundary (defaults to `['coder']` for tagless rows).
+   * The implement workflow uses the first element as the primary routing tag.
    */
-  tag?: TaskTag
+  tags: TaskTag[]
   originId: string
   priority: number
   /**
@@ -427,6 +426,17 @@ export const initQueue = async (): Promise<void> => {
   if (!names.has('tag')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN tag TEXT`)
     await c.execute(`UPDATE tasks SET tag = 'coder' WHERE tag IS NULL`)
+  }
+  // tags_json: JSON-encoded string[] that supersedes the singular `tag` column.
+  // Old rows carry only `tag`; new rows write only `tags_json`. The read path
+  // in {@link rowToTask} parses `tags_json` and falls back to `[tag]` for
+  // legacy rows. Both branches default to `['coder']` when the value is absent.
+  if (!names.has('tags_json')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN tags_json TEXT`)
+    // Backfill legacy rows: wrap the existing `tag` value (defaulting to 'coder') in a JSON array.
+    await c.execute(
+      `UPDATE tasks SET tags_json = json_array(COALESCE(tag, 'coder')) WHERE tags_json IS NULL`,
+    )
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created ON tasks(priority DESC, created_at ASC)`,
@@ -931,8 +941,17 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     rawKind === 'fix' || rawKind === 'task' || rawKind === 'diagnose'
       ? rawKind
       : deriveTaskKind(fixForTaskId)
-  const rawTag = (row.tag as string | null) ?? null
-  const tag: TaskTag = isTaskTag(rawTag) ? rawTag : 'coder'
+  // Read tags from the new tags_json column. Fall back to the legacy tag
+  // column for old rows that predate the tags_json migration.
+  const rawTagsJson = (row.tags_json as string | null) ?? null
+  let tags: TaskTag[]
+  if (rawTagsJson !== null) {
+    const parsed = parseStringArray(rawTagsJson).filter(isTaskTag)
+    tags = parsed.length > 0 ? parsed : ['coder']
+  } else {
+    const rawTag = (row.tag as string | null) ?? null
+    tags = [isTaskTag(rawTag) ? rawTag : 'coder']
+  }
   return {
     id: row.id as string,
     prompt: coerceToString(row.prompt, 'rowToTask: prompt'),
@@ -950,7 +969,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
     fixForTaskId,
     failureSignature: (row.failure_signature as string | null) ?? null,
     kind,
-    tag,
+    tags,
     originId: ((row.origin_id as string | null) ?? (row.id as string)),
     priority: Number(row.priority ?? 0),
     failedPhase: coerceFailedPhase(row.failed_phase),
@@ -1027,10 +1046,11 @@ export interface EnqueueTaskOptions {
   parentProposalId?: string
   sliceIndex?: number
   /**
-   * Worker-routing hint. Any non-empty string is valid; defaults to `'coder'`
-   * when omitted. Unknown tags fall back to the Coder Worker at dispatch.
+   * Worker-routing hints. Each element must be a non-empty string; defaults to
+   * `['coder']` when omitted. The implement workflow uses the first element as
+   * the primary routing tag; unknown tags fall back to the Coder Worker.
    */
-  tag?: TaskTag
+  tags?: TaskTag[]
   /**
    * Marker for the task's role. Defaults to `'task'`. `'fix'` is set by the
    * recovery dispatcher (must come with a non-null `fixForTaskId`).
@@ -1055,9 +1075,12 @@ export const enqueueTask = async (
 ): Promise<Task> => {
   const promptText = coerceToString(prompt, 'enqueueTask: prompt')
   if (opts?.priority !== undefined) validatePriority(opts.priority)
-  if (opts?.tag !== undefined && !isTaskTag(opts.tag)) {
+  if (
+    opts?.tags !== undefined &&
+    (!Array.isArray(opts.tags) || opts.tags.some((t) => !isTaskTag(t)))
+  ) {
     throw new Error(
-      `tag must be a non-empty string; got ${JSON.stringify(opts.tag)}`,
+      `tags must be an array of non-empty strings; got ${JSON.stringify(opts.tags)}`,
     )
   }
   await initQueue()
@@ -1070,7 +1093,7 @@ export const enqueueTask = async (
   const priority = opts?.priority ?? 0
   const parentProposalId = opts?.parentProposalId ?? null
   const sliceIndex = opts?.sliceIndex ?? null
-  const tag: TaskTag = opts?.tag ?? 'coder'
+  const tags: TaskTag[] = opts?.tags ?? ['coder']
   const kind: TaskKind = opts?.kind ?? 'task'
   // enqueueTask never sets fix_for_task_id (fix-tasks go through their own
   // recovery path), so the invariant collapses to: only 'task' and
@@ -1099,8 +1122,9 @@ export const enqueueTask = async (
   const subDeliverableJson = spec?.subDeliverable
     ? JSON.stringify(spec.subDeliverable)
     : null
+  const tagsJson = JSON.stringify(tags)
   await getClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tag, kind, files_json, verify_cmd, done_criteria_json, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, files_json, verify_cmd, done_criteria_json, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       promptText,
@@ -1113,7 +1137,7 @@ export const enqueueTask = async (
       priority,
       parentProposalId,
       sliceIndex,
-      tag,
+      tagsJson,
       kind,
       filesJson,
       verifyCmd,
