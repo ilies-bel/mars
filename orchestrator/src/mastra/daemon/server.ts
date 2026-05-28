@@ -444,7 +444,7 @@ export const startDaemon = async (
           taskId: task.id,
           prompt: task.prompt,
           plan: task.plan,
-          tag: task.tag ?? 'coder',
+          tags: task.tags ?? ['coder'],
           kind: task.kind ?? 'task',
           integrationBranch,
           spec: task.spec
@@ -867,14 +867,14 @@ export const startDaemon = async (
     author?: Task['author'],
     blockerIds?: readonly string[],
     priority?: number,
-    tag?: Task['tag'],
+    tags?: Task['tags'],
     spec?: Task['spec'],
   ): Promise<Task> => {
     const opts: Parameters<typeof enqueueTask>[2] = {}
     if (skipTriage) opts.skipTriage = true
     if (author) opts.author = author
     if (priority !== undefined) opts.priority = priority
-    if (tag !== undefined) opts.tag = tag
+    if (tags !== undefined) opts.tags = tags
     if (spec) opts.spec = spec
     const task = await enqueueTask(
       prompt,
@@ -1515,7 +1515,7 @@ export const startDaemon = async (
             req.author,
             req.blockerIds,
             req.priority,
-            req.tag,
+            req.tags,
             req.spec,
           )
           return { ok: true, data: task }

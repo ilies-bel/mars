@@ -26,6 +26,7 @@ const baseTask = (overrides: Partial<Task>): Task => ({
   priority: 0,
   failedPhase: null,
   spec: null,
+  tags: ['coder'],
   integrationHeadSha: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
