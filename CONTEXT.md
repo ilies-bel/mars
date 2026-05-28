@@ -46,8 +46,8 @@ A task arc whose merge step could not land as an instant git fast-forward into t
 _Avoid_: non-fast-forward, conflicted merge, vega merge
 
 **KPI**:
-A read-only aggregate health number derived from completed task arcs over a rolling time window, surfaced on the dashboard so the operator can spot orchestrator drift at a glance.
-_Avoid_: metric, stat, gauge
+One of a small fixed vector of read-only health numbers derived from completed Arcs over a rolling time window, surfaced on the dashboard so the operator can spot orchestrator drift at a glance. KPIs are defined over framework primitives (Arc, Task, Worker, recovery, Action queue) and never over codebase-specific artifacts, so they hold for any Mars deployment regardless of what its agents produce. A single 'harness health' scalar is deliberately rejected: the goals (autonomy, frugality, resilience, operator ergonomics) trade against each other, so health is a vector and a regression in one KPI is only meaningful held against the others. The canonical vector: Cost per completed Arc, Failure rate, Autonomous completion rate, Recovery success rate.
+_Avoid_: metric, stat, gauge, harness health score
 
 **Chore**:
 A Mars work unit whose purpose is a side-effecting repair (a fix or follow-up after a failure) rather than feature work; goes through the same code/verify/merge workflow as a Task.
