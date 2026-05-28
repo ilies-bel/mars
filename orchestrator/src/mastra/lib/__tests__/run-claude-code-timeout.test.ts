@@ -96,18 +96,14 @@ describe('runClaudeCode timeout aborts the subprocess', () => {
   let stubDir: string
   let markerDir: string
   let originalPath: string | undefined
-  let originalCap: string | undefined
 
   beforeAll(async () => {
     stubDir = mkdtempSync(resolve(tmpdir(), 'mars-claude-timeout-stub-'))
     markerDir = mkdtempSync(resolve(tmpdir(), 'mars-claude-timeout-marker-'))
     originalPath = process.env.PATH
-    originalCap = process.env.MARS_CLAUDE_MAX_MESSAGES
     process.env.PATH = `${stubDir}:${originalPath ?? ''}`
-    // Disable the message cap so the wall-clock timeout is the only abort
-    // path — otherwise the stub would trip the 100-event cap first and we
-    // wouldn't be exercising the right code path.
-    process.env.MARS_CLAUDE_MAX_MESSAGES = '0'
+    // No message cap is set: DEFAULT_CLAUDE_MAX_MESSAGES=0 means the run is
+    // unbounded and the wall-clock timeout is the only abort path.
 
     // Warm up against a throwaway marker dir, then start the real test
     // from a clean markerDir so the before/after marker count is exact.
@@ -128,8 +124,6 @@ describe('runClaudeCode timeout aborts the subprocess', () => {
 
   afterAll(() => {
     if (originalPath !== undefined) process.env.PATH = originalPath
-    if (originalCap === undefined) delete process.env.MARS_CLAUDE_MAX_MESSAGES
-    else process.env.MARS_CLAUDE_MAX_MESSAGES = originalCap
     rmSync(stubDir, { recursive: true, force: true })
     rmSync(markerDir, { recursive: true, force: true })
   })

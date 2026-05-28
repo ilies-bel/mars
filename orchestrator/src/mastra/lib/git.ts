@@ -331,9 +331,7 @@ export interface RunClaudeArgs {
   prompt: string
   /**
    * Wall-clock timeout in milliseconds. If omitted or ≤ 0, no timeout is
-   * armed and the subprocess runs to completion (or until Ctrl-C). The
-   * reflect synthesis path intentionally passes no timeout here — only the
-   * MARS_CLAUDE_MAX_MESSAGES message cap applies on that path.
+   * armed and the subprocess runs to completion (or until Ctrl-C).
    */
   timeoutMs?: number
   model?: string
@@ -349,7 +347,7 @@ export interface RunClaudeArgs {
   agent?: string
   disallowedTools?: ReadonlyArray<string>
   // Per-invocation override for the message cap enforced inside runClaudeCode.
-  // Falls back to MARS_CLAUDE_MAX_MESSAGES, then to DEFAULT_CLAUDE_MAX_MESSAGES.
+  // When omitted, defaults to DEFAULT_CLAUDE_MAX_MESSAGES (0 = unbounded).
   maxMessages?: number
   /**
    * Optional caller-supplied abort signal. When fired, runClaudeCode
@@ -478,15 +476,13 @@ export const claudeStreamArgs = (
   // No --max-turns: the Claude Code CLI runs unbounded turns. The 60-turn cap
   // was cutting Coders off mid-implementation (they spend 30+ turns exploring
   // before they edit/commit), producing spurious verify:has-diff/no-commits
-  // failures. Run-length is now bounded only by the per-Worker timeout
-  // (defaultTimeoutMs) and the wall-clock RunOptions.timeoutMs.
+  // failures.
 ]
 
 // 0 = no message cap (unbounded). runClaudeCode treats cap<=0 as "capEnabled
 // = false" and never aborts on message count. A Worker that needs a hard
 // ceiling sets one explicitly (e.g. Triager=40); everything else runs to
-// natural completion, bounded only by the wall-clock timeout. The 100 default
-// was cutting Coders off mid-implementation.
+// natural completion. The 100 default was cutting Coders off mid-implementation.
 const DEFAULT_CLAUDE_MAX_MESSAGES = 0
 
 // Default search path for the `claude` binary when it is not on the daemon's
@@ -587,11 +583,7 @@ const resolveClaudeMessageCap = (override?: number): number => {
   if (override !== undefined && Number.isInteger(override) && override >= 0) {
     return override
   }
-  const raw = process.env.MARS_CLAUDE_MAX_MESSAGES
-  if (raw === undefined) return DEFAULT_CLAUDE_MAX_MESSAGES
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isInteger(parsed) || parsed < 0) return DEFAULT_CLAUDE_MAX_MESSAGES
-  return parsed
+  return DEFAULT_CLAUDE_MAX_MESSAGES
 }
 
 export const runClaudeCode = async ({
@@ -652,7 +644,7 @@ export const runClaudeCode = async ({
   // Omitting timeoutMs (or passing ≤ 0) means the subprocess runs to
   // completion — the reflect synthesis path uses this to avoid killing a slow
   // Claude generation mid-flight. The message-cap (exit 137) path below is
-  // independent and always active when MARS_CLAUDE_MAX_MESSAGES is set.
+  // independent and always active when a maxMessages cap is set.
   const timeoutHandle =
     timeoutMs !== undefined && timeoutMs > 0
       ? setTimeout(() => {
@@ -710,7 +702,7 @@ export const runClaudeCode = async ({
     return {
       exitCode: 137,
       stdout: result.stdout,
-      stderr: `claude -p hit message cap of ${cap} (MARS_CLAUDE_MAX_MESSAGES)`,
+      stderr: `claude -p hit message cap of ${cap}`,
       sessionId: detectedSessionId,
       conversation,
     }
