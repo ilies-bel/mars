@@ -8,8 +8,9 @@
  * replaces that entry wholesale (no deep-merge — the consumer owns the record).
  * Files introducing new codes are additive.
  *
- * Recipe references are reserved for a later slice — every entry here records
- * `recipe: null` for now. The first wired recipe arrives in slice F.
+ * Recipe references became live in slice F.2: `verify:main-dirty` points at
+ * `main-commiter`. Other codes still record `recipe: null` until their
+ * respective rewire slices land.
  */
 import type { FailureReason } from '../lib/failure-reasons'
 
@@ -63,7 +64,11 @@ export const BUILT_IN_FAILURE_REASONS: readonly FailureReason[] = [
     code: 'verify:main-dirty',
     userMessage:
       'The integration branch had uncommitted changes when this task tried to verify.',
-    recipe: null,
+    // Wired in slice F.2. The orchestrator detects dirty-main at dispatch
+    // and at verify, parks the task `blocked` with an edge to a shared
+    // `main-commiter` recovery (one per diff-hash, deduplicated across the
+    // herd), and proceeds once the committer lands a clean tree.
+    recipe: 'main-commiter',
     availableActions: COMMON_ACTIONS,
   },
   {

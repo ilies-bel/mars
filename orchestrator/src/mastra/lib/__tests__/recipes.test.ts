@@ -26,6 +26,7 @@ const BUILT_IN_RECIPE_NAMES = [
   'context-fetcher',
   'diagnose-only',
   'lint-autofix',
+  'main-commiter',
   'merge-aborter',
   'prompt-tightener',
   'scope-narrower',

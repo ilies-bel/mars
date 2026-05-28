@@ -29,7 +29,7 @@ describe('writeRecipesSeed', () => {
 
   it('writes one .md per shipped built-in on a fresh stateDir', () => {
     const built = listBuiltInRecipeFiles()
-    expect(built.length).toBe(8)
+    expect(built.length).toBe(9)
     const result = writeRecipesSeed(stateDir)
     expect(result.written).toHaveLength(built.length)
     expect(result.skipped).toHaveLength(0)
