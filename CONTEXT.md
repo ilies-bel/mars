@@ -335,3 +335,7 @@ _Avoid_: autonomy rate, hands-off rate, no-touch rate
 **Recovery success rate**:
 The resilience (self-healing) KPI: the fraction of origin failures whose recovery task reached done AND whose origin then reached done, over the window — i.e. how often self-healing actually heals, per ADR-0002's one-shot recovery. Not capturable today: nothing records recovery outcome distinctly from a normal task transition. Deferred deliberately — it is to be derived from the forthcoming queryable workflow surface rather than bolted onto the current model, so this term names the target without mandating a schema that the workflow rework would obsolete.
 _Avoid_: heal rate, fix success rate, recovery rate
+
+**KPI drift**:
+A sustained move in a KPI against its own rolling baseline (this window vs. prior) — the signal the dashboard exists to surface. Detecting drift requires a persisted KPI time-series; today KPIs are recomputed and printed, never stored, so drift is invisible. Drift in one KPI is read against the rest of the vector, never alone (see KPI).
+_Avoid_: regression, metric drift, trend
