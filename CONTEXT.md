@@ -331,3 +331,7 @@ _Avoid_: error rate, fail percentage
 **Autonomous completion rate**:
 The autonomy KPI: the fraction of Arcs over the window that reached done while raising zero Action queue items — i.e. completed with no human intervention beyond the planning phase. Directly measures the project's headline goal (no human touch except planning). Trades against Cost per completed Arc and Recovery success rate: pushing autonomy up (never ask the operator) tends to cost more tokens and risks a wrong unsupervised choice compounding, which is why it is read as a vector member, not maximised alone.
 _Avoid_: autonomy rate, hands-off rate, no-touch rate
+
+**Recovery success rate**:
+The resilience (self-healing) KPI: the fraction of origin failures whose recovery task reached done AND whose origin then reached done, over the window — i.e. how often self-healing actually heals, per ADR-0002's one-shot recovery. Not capturable today: nothing records recovery outcome distinctly from a normal task transition. Deferred deliberately — it is to be derived from the forthcoming queryable workflow surface rather than bolted onto the current model, so this term names the target without mandating a schema that the workflow rework would obsolete.
+_Avoid_: heal rate, fix success rate, recovery rate
