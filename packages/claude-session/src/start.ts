@@ -58,7 +58,10 @@ export async function start(opts: StartOptions): Promise<SessionHandle> {
     resolveExited = resolve;
   });
 
+  let hasExited = false;
+
   proc.onExit(({ exitCode }) => {
+    hasExited = true;
     removeSession(id);
     resolveExited(exitCode);
   });
@@ -71,6 +74,12 @@ export async function start(opts: StartOptions): Promise<SessionHandle> {
       return () => { handlers.delete(handler); };
     },
     exited,
+    sendMessage(text: string): void {
+      if (hasExited) {
+        throw new Error(`Session "${id}" has already exited`);
+      }
+      proc.write(text + '\r');
+    },
   };
   registerSession(handle);
 

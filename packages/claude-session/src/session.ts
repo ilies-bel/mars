@@ -23,4 +23,10 @@ export interface SessionHandle {
    * removed from the live-sessions registry before this promise settles.
    */
   exited: Promise<number>;
+  /**
+   * Write `text` followed by a carriage return (`\r`) to the PTY in one
+   * call, submitting it as a single message. Throws if the session has
+   * already exited.
+   */
+  sendMessage(text: string): void;
 }
