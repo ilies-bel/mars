@@ -19,13 +19,14 @@ import {
 } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
+import { isAbsolute, resolve } from 'node:path'
 import {
   acquireLock,
   buildWorkerEnv,
   checkSetupPreflight,
   claudeBinEnvFingerprint,
   resolveClaudeBin,
+  resolveGitBin,
   runSubprocessStreaming,
   runClaudeCode,
   stripFrontmatter,
@@ -149,6 +150,66 @@ describe('resolveClaudeBin — Windows platform (monkey-patched)', () => {
     const result = resolveClaudeBin()
 
     expect(result).toBe('claude')
+  })
+})
+
+describe('resolveGitBin', () => {
+  // We test two behaviours:
+  //   1. When git is present, resolveGitBin() returns an absolute path.
+  //   2. When git cannot be found, resolveGitBin() throws with a message that
+  //      names the missing binary.
+  //
+  // Test #2 needs both PATH and the POSIX fallback dirs to lack git. We
+  // monkey-patch process.platform to 'win32' to disable the POSIX fallback
+  // dir probe (same technique used by the resolveClaudeBin Windows tests), then
+  // set PATH to a temp dir that has no git binary.
+
+  let tempDir: string
+  let originalPath: string | undefined
+  let originalPlatformDescriptor: PropertyDescriptor | undefined
+
+  beforeAll(() => {
+    tempDir = mkdtempSync(resolve(tmpdir(), 'mars-git-bin-'))
+  })
+
+  afterAll(() => {
+    rmSync(tempDir, { recursive: true, force: true })
+  })
+
+  beforeEach(() => {
+    originalPath = process.env.PATH
+    originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  })
+
+  afterEach(() => {
+    // Restore platform
+    if (originalPlatformDescriptor) {
+      Object.defineProperty(process, 'platform', originalPlatformDescriptor)
+    }
+    // Restore PATH
+    if (originalPath !== undefined) process.env.PATH = originalPath
+    else delete process.env.PATH
+  })
+
+  it('returns an absolute path pointing to the git binary when git is on PATH', () => {
+    // Sanity-check that the resolver works in a normal environment.
+    const result = resolveGitBin()
+    expect(isAbsolute(result)).toBe(true)
+    expect(result).toMatch(/git(\.exe)?$/)
+  })
+
+  it('throws with a clear error message when git is not found', () => {
+    // Fake Windows mode so the POSIX fallback dirs (/usr/bin, etc.) are not
+    // consulted, then point PATH at a directory that has no git binary.
+    Object.defineProperty(process, 'platform', {
+      value: 'win32',
+      configurable: true,
+      writable: false,
+      enumerable: true,
+    })
+    process.env.PATH = tempDir  // tempDir has no git binary
+
+    expect(() => resolveGitBin()).toThrow('git binary not found on PATH')
   })
 })
 
