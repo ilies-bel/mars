@@ -260,20 +260,6 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     errorClass: 'test-libsql-not-an-error',
     matchFull: /SQLITE_UNKNOWN_0: not an error/,
   },
-  {
-    // merge:preflight/template-leakage fires when a task branch edits a path
-    // under orchestrator/src/init/templates/. The preflight categorically
-    // blocks ALL orchestrator edits to that subtree — humans edit it directly
-    // on main (see git.ts TEMPLATE_LEAKAGE_PREFIX comment for the historical
-    // incident). Intentionally has NO registered recovery recipe: any recovery
-    // agent hits the same preflight block if it tries to update the template,
-    // and a recovery that skips the template edit fails the task's own verify
-    // criteria. Root cause is always a task prompt that asked for the
-    // impossible — requires human resolution (update template on main, then
-    // handle the original task manually).
-    errorClass: 'template-paths-detected',
-    match: /touches \d+ init template path/i,
-  },
 ]
 
 export const classifyError = (errorOutput: string): string => {

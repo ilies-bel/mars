@@ -1186,28 +1186,6 @@ export const getChangedFiles = async (
 export const DEFAULT_VERIFY_STEPS_FALLBACK: ReadonlyArray<VerifyStepSpec> =
   DEFAULT_VERIFY_STEPS
 
-/**
- * The repo-root-relative path prefix that identifies the init template
- * subtree. This subtree is a static, init-only archetype — the only
- * legitimate writer is a human editing the bundled template directly on main.
- * Any orchestrator task branch that touches these paths has leaked into the
- * archetype (systematic root cause: composePrompt inlines the project-root
- * CLAUDE.md into the coder brief and bypassPermissions coders "reconcile" the
- * embedded text back to the file on disk). See CLAUDE.md for the full
- * incident description.
- */
-export const TEMPLATE_LEAKAGE_PREFIX = 'orchestrator/src/init/templates/'
-
-/**
- * Given a list of repo-root-relative changed-file paths (e.g. from
- * {@link getChangedFiles}), returns the subset that fall inside the init
- * template subtree. A non-empty result means the branch has leaked into the
- * bundled archetype and the merge should be rejected with
- * `merge:preflight/template-leakage`.
- */
-export const detectTemplatePaths = (changedFiles: ReadonlyArray<string>): string[] =>
-  changedFiles.filter((f) => f.startsWith(TEMPLATE_LEAKAGE_PREFIX))
-
 const isPidAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0)
