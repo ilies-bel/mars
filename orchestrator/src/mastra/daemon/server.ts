@@ -53,6 +53,10 @@ import {
   recoverBlockedTasks,
 } from '../blocker-resolution'
 import { supersedeInboxItemsForOrigin } from '../lib/inbox'
+import {
+  raiseAggregatedMainCommiterFailureRow,
+  sweepStaleFailedMainCommiterInbox,
+} from './main-dirty-inbox'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { openTraceEventStore, type TraceEventStore } from '../lib/trace-events-store'
 import { internalBus } from '../../internal-bus'
@@ -479,6 +483,38 @@ export const startDaemon = async (
     claimedImplement.delete(task.id)
     log(`[implement] ${task.id} dispatching`)
     try {
+      // Slice F.2: dispatch-time dirty-main check. Runs BEFORE workflow
+      // dispatch (i.e. before the worktree is created) so we never burn the
+      // coding turn on a tree we'd reject at verify anyway. Recovery
+      // (kind='fix') tasks are exempt — the main-commiter is itself the
+      // tool we use to fix dirty-main, so it MUST be allowed to dispatch
+      // against the dirty integration branch.
+      if (task.kind !== 'fix') {
+        try {
+          const { runMainDirtyDispatchCheck } = await import(
+            './main-dirty-dispatch'
+          )
+          const parked = await runMainDirtyDispatchCheck({
+            task,
+            integrationBranch,
+            traceStore,
+            recipeCatalog,
+            log,
+          })
+          if (parked) {
+            // Source is now `blocked` with an edge to a (new or existing)
+            // main-commiter. Skip dispatching the workflow — its first step
+            // (setup) would just hit the same condition.
+            return
+          }
+        } catch (err) {
+          log(
+            `[main-dirty] dispatch-time check threw for task ${task.id}; falling through to workflow (legacy preflight is backstop): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          )
+        }
+      }
       const { runWorkflow } = await import('@mars/workflow')
       const { implementWorkflow } = await import('../../workflows/implement-workflow')
       const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
@@ -536,7 +572,12 @@ export const startDaemon = async (
           onEvent,
         },
       )
-      const { isBlockersAbortError, isDirtyMainSetupError, isTooHardAbortError } = await import('../../workflows/implement-workflow')
+      const {
+        isBlockersAbortError,
+        isDirtyMainSetupError,
+        isMainDirtyVerifyError,
+        isTooHardAbortError,
+      } = await import('../../workflows/implement-workflow')
       // Read the failure off RunResult.error (the engine puts the thrown Error
       // there verbatim on the `failed` path). The detectors flatten the cause
       // chain and accept `unknown`, so passing the raw error through is correct
@@ -554,6 +595,14 @@ export const startDaemon = async (
       // emit and let the blocked state stand.
       if (result.status === 'failed' && isDirtyMainSetupError(resultError)) {
         log(`[implement] ${task.id} parked blocked: merge target dirty at setup; shared recovery task spawned/attached`)
+        return
+      }
+      // Slice F.2: verify-time dirty-main detection. The verify step parked
+      // the source `blocked` behind a `main-commiter` recovery and threw a
+      // sentinel; suppress the misleading `task.completed status=failed`
+      // emit, same shape as the setup-preflight case above.
+      if (result.status === 'failed' && isMainDirtyVerifyError(resultError)) {
+        log(`[implement] ${task.id} parked blocked: integration branch dirty at verify; main-commiter spawned/attached`)
         return
       }
       // A read-span guard trip parks the original task `blocked` with a
@@ -1034,6 +1083,26 @@ export const startDaemon = async (
             `[block-cascade] error blocking downstreams for failed ${id}: ${(err as Error).message}`,
           )
         }
+        // Slice F.2: when a `main-commiter` recovery itself fails, raise a
+        // single aggregated inbox row listing every blocked dependent so
+        // the operator can see the cohort at a glance. Overrides the
+        // generic recovery-failed row that `inbox-repopulator` would
+        // raise for this task. Idempotent on the committer task id —
+        // a repeat failure transition bumps seenCount only.
+        if (after.kind === 'fix') {
+          try {
+            const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } =
+              await import('../lib/main-dirty')
+            const payload = parseMainCommiterPayload(after.recoveryPayload)
+            if (payload && payload.recipe === MAIN_COMMITER_RECIPE) {
+              await raiseAggregatedMainCommiterFailureRow(after.id, log)
+            }
+          } catch (err) {
+            log(
+              `[main-dirty] error raising aggregated inbox row for failed committer ${id}: ${(err as Error).message}`,
+            )
+          }
+        }
       }
       if (
         after.status === 'failed' &&
@@ -1075,6 +1144,30 @@ export const startDaemon = async (
           log(
             `[inbox] error superseding items for origin ${id}: ${(err as Error).message}`,
           )
+        }
+        // Slice F.2: when a `main-commiter` succeeds, any open `failed`
+        // inbox rows raised by PREVIOUS committer attempts (for stale
+        // hashes — i.e. a different broken state of main that has since
+        // been resolved) are no longer actionable. Sweep them to
+        // `resolved/superseded` so the operator's inbox doesn't keep
+        // stale "main-committer failed" rows for a state that's gone.
+        if (after.kind === 'fix') {
+          try {
+            const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } =
+              await import('../lib/main-dirty')
+            const payload = parseMainCommiterPayload(after.recoveryPayload)
+            if (payload && payload.recipe === MAIN_COMMITER_RECIPE) {
+              await sweepStaleFailedMainCommiterInbox(
+                payload.dirtyMainHash,
+                after.id,
+                log,
+              )
+            }
+          } catch (err) {
+            log(
+              `[main-dirty] error sweeping stale committer inbox rows after ${id} done: ${(err as Error).message}`,
+            )
+          }
         }
         // Recovery→origin done propagation. CLAUDE.md contract: "a
         // successful recovery counts as its origin reaching done, so

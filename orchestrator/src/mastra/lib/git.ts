@@ -304,6 +304,82 @@ export const createWorktree = async ({
   return { path, branch }
 }
 
+/**
+ * Slice F.2 (main-commiter): provision a worktree the committer recovery
+ * runs inside. The committer's whole purpose is to read the dirty state of
+ * the integration branch and commit / stash it; the dirty state lives on
+ * the repo's main checkout (`getRepoRoot()`), so a vanilla `createWorktree`
+ * pointing at a `task/<id>` branch would land the committer in a CLEAN tree
+ * — the wrong workspace.
+ *
+ * Approach: stash the dirty state in `repoRoot` (with `--include-untracked`),
+ * spin up a fresh worktree at `.mars/worktrees/<recoveryTaskId>/` on a new
+ * branch off `integrationBranch`, then pop the stash inside that worktree.
+ * The result is that the recovery agent sees exactly the same `git status`
+ * it would have seen in `repoRoot`, but in its own isolated working tree
+ * (so concurrent task worktrees branched off main aren't affected by the
+ * committer's edits until it commits on the integration branch via
+ * `git -C <committerWorktree> commit` and the orchestrator later merges).
+ *
+ * If `git stash` produces no entry (e.g. only untracked-ignored files exist
+ * which the stash refuses to capture), the worktree is still created on
+ * the integration branch — the recipe re-checks `git status` at start and
+ * exits successfully on a clean tree.
+ */
+export interface CommitterWorktreeArgs {
+  /** Recovery task id used for path + branch naming. */
+  recoveryTaskId: string
+  integrationBranch: string
+  traceCtx?: TraceCtx
+}
+
+export const provisionCommitterWorktree = async (
+  args: CommitterWorktreeArgs,
+): Promise<WorktreeRef> => {
+  const cwd = repoRoot()
+  const ctx: TraceCtx | undefined = args.traceCtx
+    ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'setup' }
+    : undefined
+
+  // Stash the dirty state in the main checkout. `--include-untracked` covers
+  // untracked-but-not-ignored files so the committer sees the full picture.
+  // `git stash push` returns non-zero when there is nothing to stash; treat
+  // that as a benign skip so a stale-detection race (state cleaned between
+  // our probe and this call) doesn't hard-fail the recovery spawn.
+  const stashMessage = `mars main-commiter spawn ${args.recoveryTaskId}`
+  const stashed = await execProbe(
+    'git',
+    ['stash', 'push', '--include-untracked', '-m', stashMessage],
+    { cwd },
+    ctx,
+  )
+  // Standard git output: "No local changes to save" means we have nothing
+  // to migrate; stick with the clean integration branch and let the
+  // recipe re-check.
+  const haveStash =
+    stashed.exitCode === 0 && !/No local changes to save/i.test(stashed.stdout)
+
+  // Build the worktree on a fresh branch off the integration tip via the
+  // standard `createWorktree`. The branch is `task/<recoveryTaskId>` and
+  // lives under `.mars/worktrees/<recoveryTaskId>/` — same conventions
+  // as a normal Coder worktree so cleanup (`removeWorktree`) is uniform.
+  const worktree = await createWorktree({
+    taskId: args.recoveryTaskId,
+    integrationBranch: args.integrationBranch,
+    traceCtx: ctx,
+  })
+
+  if (haveStash) {
+    // Pop the stash into the new worktree. `stash pop` on conflicts is a
+    // recoverable state for the agent (it sees the conflicted files in
+    // `git status`); we surface the exit code as a probe rather than
+    // throwing, so the recipe can decide what to do.
+    await execProbe('git', ['stash', 'pop'], { cwd: worktree.path }, ctx)
+  }
+
+  return worktree
+}
+
 export const resolveSha = async (
   ref: string,
   traceCtx?: TraceCtx,
