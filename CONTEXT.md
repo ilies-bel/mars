@@ -343,3 +343,7 @@ _Avoid_: regression, metric drift, trend
 **Self-evolve loop**:
 The closed feedback arc that turns KPI drift into corrective work: KPI regression -> reflection -> draft proposal -> operator promotes -> merge -> KPI re-measured to confirm the change moved the number. The framework does NOT rewrite itself: it surfaces drift and proposes; the operator owns every promotion, keeping planning the single human touchpoint. The automatic KPI-regression->proposal trigger is opt-in and off by default; with it off, deep-reflect is the manual entry point to the same loop. Agnostic by construction — it tunes any project's specifics via proposals, carrying no codebase assumptions.
 _Avoid_: auto-evolve, self-improvement, feedback loop, evolve loop
+
+**Effectiveness-under-budget**:
+The rigorous, size-fair backstop to Cost per completed Arc: success rate plotted against cumulative token spend, integrated as normalised area-under-curve up to a budget cap (after SWE-Effi). Because it never divides per-task, the one-line-vs-500-line size-variance problem dissolves entirely — it rewards cheaply-solved Arcs and discounts expensive or unsolved ones. Computed only during deep-reflect (too heavy and too hard to read for the daily dashboard), where Cost per completed Arc is the at-a-glance number and Effectiveness-under-budget is the audit-grade view.
+_Avoid_: AUC, SWE-Effi, budget AUC, resource-bounded effectiveness
