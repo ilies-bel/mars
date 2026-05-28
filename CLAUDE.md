@@ -201,6 +201,33 @@ There are two install routes, for two different audiences:
   so source edits go live immediately. This is a dev-only flow; prod
   consumers should use the bootstrap above instead.
 
+## Bundled templates
+
+The `.claude/` template tree that consumers receive via `mars init` /
+`mars update` is maintained in `orchestrator/src/init/templates/` and
+bundled at author time, not at consumer install time.
+
+**Maintainer refresh.** When the framework's `.claude/` source tree
+changes, run `npm run mars:bundle:refresh` (alias: `sync-claude-templates`)
+from the `orchestrator/` directory. This copies the canonical `.claude/`
+tree into the bundle path so the next release ships the updated templates.
+
+**CI drift gate.** A CI job (`template-sync-check`) runs on every PR. It
+re-runs `mars:bundle:refresh` and fails the PR if the result differs from
+what is already committed — i.e. if the bundled templates have drifted
+from the framework's `.claude/` source tree. Run the refresh command and
+commit the result before pushing.
+
+**No build-time side effect.** The `prebuild` and `pretest` hooks no
+longer trigger a template sync. The bundle is refreshed only when a
+maintainer explicitly runs `mars:bundle:refresh`. This supersedes the old
+expectation that `npm run build` or `npm test` would keep the bundle
+current.
+
+**Consumer-side UX is unchanged.** `mars init` and `mars update` continue
+to work exactly as before — they expand the bundled templates into the
+target repo. Only the maintainer-side refresh mechanism changed.
+
 ## Loose ends
 
 Enqueue the moment you spot one — **one `mars task add` per item**, no
