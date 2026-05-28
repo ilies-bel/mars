@@ -711,12 +711,15 @@ Subcommands:
                                 'mars deep-reflect <task-id>' behaviour.
                                 Output: .mars/deep-reflections/<task-id>-<iso>.json
 
-      Both modes walk every stored transcript event-by-event to surface
-      dissonant tool calls, verify-claim mismatches, and thrashing patterns.
+      Both modes walk every transcript event-by-event to surface dissonant
+      tool calls, verify-claim mismatches, and thrashing patterns. Transcripts
+      are read directly from Claude Code's on-disk JSONL files under
+      ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl; tasks with no
+      recorded session ids (or with files the user has since cleaned) get
+      a degraded report that notes the absence instead of crashing.
 
-      Requires at least one stored transcript. Disabled by
-      MARS_REFLECT_DISABLED=1. Model defaults to opus; override with
-      MARS_DEEP_REFLECT_MODEL.`,
+      Disabled by MARS_REFLECT_DISABLED=1. Model defaults to opus; override
+      with MARS_DEEP_REFLECT_MODEL.`,
   reflect: `mars reflect [--since <iso>] [--limit <n>]
 
 Synthesize draft task suggestions from recent completed tasks. Reads
@@ -2602,13 +2605,16 @@ const main = async (): Promise<void> => {
 
         const session = await loadDeepReflectSession(sessionId)
         if (!session) {
-          console.error(`no transcript found for task ${sessionId}`)
+          console.error(`no task ${sessionId}`)
           process.exit(1)
         }
 
         console.log(
           `session ${sessionId}: ${session.conversation.length} event(s), verifyOutput=${session.verifyOutput ? `${session.verifyOutput.length} chars` : 'none'}`,
         )
+        for (const note of session.transcriptNotes) {
+          console.log(`  note: ${note}`)
+        }
 
         const result = await runDeepReflector(session)
         const report = result.report
@@ -2731,6 +2737,11 @@ const main = async (): Promise<void> => {
       console.log(
         `arc ${originId}: ${arc.taskCount} task(s) [${statusMixStr}], ${arc.totals.eventCount} event(s), ${arc.totals.totalWeightedTokens.toFixed(0)} weighted tokens total`,
       )
+      for (const t of arc.tasks) {
+        for (const note of t.transcriptNotes) {
+          console.log(`  note (${t.taskId}): ${note}`)
+        }
+      }
 
       const result = await runDeepReflectorArc(arc)
       const report = result.report

@@ -252,16 +252,21 @@ export const buildPrompt = (
     totals: session.totals,
     signals: session.signals,
     scores: session.scores,
+    toolCallCounts: session.toolCallCounts,
   }
   const headJson = JSON.stringify(head, null, 2)
   // Pass the full conversation array verbatim; no summarisation, no
-  // event-level truncation. The storage layer may have capped huge blobs
-  // at write time (see capConversationJson), but anything we have we
-  // forward intact.
+  // event-level truncation. The reader (claude-transcript.ts) streams
+  // every Claude Code on-disk JSONL event in session order; we forward
+  // them intact.
   const conversationJson = JSON.stringify(session.conversation)
   const verifyBlock = session.verifyOutput
     ? `\n\nVerify output (raw):\n\`\`\`\n${session.verifyOutput}\n\`\`\``
     : '\n\n(verify output: none recorded)'
+  const transcriptBlock =
+    session.transcriptNotes.length > 0
+      ? `\n\nTranscript notes:\n${session.transcriptNotes.map((n) => `- ${n}`).join('\n')}`
+      : ''
   const originBlock = originContext
     ? `\n\nOrigin arc context:\n${originContext}`
     : ''
@@ -271,7 +276,7 @@ Session metadata:
 ${headJson}
 
 Conversation (ClaudeEvent[] JSON; index into this array for eventIndex):
-${conversationJson}${verifyBlock}`
+${conversationJson}${verifyBlock}${transcriptBlock}`
 }
 
 const buildArcPrompt = (arc: DeepReflectArc): string => {
@@ -311,6 +316,7 @@ const buildArcPrompt = (arc: DeepReflectArc): string => {
         totals: t.totals,
         signals: t.signals,
         scores: t.scores,
+        toolCallCounts: t.toolCallCounts,
       }
       const metaJson = JSON.stringify(meta, null, 2)
       // Pass the full conversation array verbatim.
@@ -318,16 +324,19 @@ const buildArcPrompt = (arc: DeepReflectArc): string => {
       const verifyBlock = t.verifyOutput
         ? `\n\nVerify output (raw) for ${t.taskId}:\n\`\`\`\n${t.verifyOutput}\n\`\`\``
         : `\n\n(verify output for ${t.taskId}: none recorded)`
+      const transcriptNotes = t.transcriptNotes.length > 0
+        ? `\n\nTranscript notes for ${t.taskId}:\n${t.transcriptNotes.map((n) => `- ${n}`).join('\n')}`
+        : ''
       const transcriptNote = t.hasTranscript
         ? ''
-        : `\n\n(no stored transcript for ${t.taskId}; conversation array is empty)`
+        : `\n\n(no on-disk JSONL transcript resolved for ${t.taskId}; conversation array is empty)`
       return `── Task ${idx + 1} of ${arc.taskCount}: ${t.taskId} ──
 
 Task metadata:
 ${metaJson}
 
 Conversation for ${t.taskId} (ClaudeEvent[] JSON; index into this array for eventIndex):
-${conversationJson}${verifyBlock}${transcriptNote}`
+${conversationJson}${verifyBlock}${transcriptNotes}${transcriptNote}`
     })
     .join('\n\n')
 

@@ -267,6 +267,8 @@ const makeSession = (overrides: Partial<DeepReflectSession> = {}): DeepReflectSe
   scores: {},
   conversation: [],
   verifyOutput: null,
+  transcriptNotes: [],
+  toolCallCounts: {},
   ...overrides,
 })
 
