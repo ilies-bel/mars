@@ -10,7 +10,7 @@ import { Workers } from '../mastra/workers'
 import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
 import { getRepoRoot, resolveContext } from '../mastra/context'
 import { raiseInboxItem } from '../mastra/lib/inbox'
-import { openStepSpanStore } from '../mastra/lib/step-span-store'
+import { openTraceEventStore } from '../mastra/lib/trace-events-store'
 import { runWorkerWithSpan } from '../mastra/lib/run-worker-with-span'
 
 const sliceInputSchema = z.object({
@@ -605,12 +605,12 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       )
     }
 
-    const spanStore = await openStepSpanStore(resolveContext().stateDbPath).catch(() => undefined)
+    const traceStore = await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)
     const r = await runWorkerWithSpan({
       worker: Workers.Slicer,
       prompt: buildSlicerPrompt(proposal),
       runOptions: { cwd: getRepoRoot() },
-      spanStore,
+      traceStore,
       stepName: 'generate-slices',
       workflowInstanceId: ctx.runId,
       originId: inputData.proposalId,

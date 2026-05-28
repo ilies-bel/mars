@@ -106,7 +106,7 @@ export const isTooHardAbortError = (err: unknown): boolean =>
 
 import { summarizeUsage } from '../mastra/lib/claude-usage'
 import { recordSignals, isReflectDisabled } from '../mastra/lib/reflect-signals'
-import { openStepSpanStore, type StepSpanStore } from '../mastra/lib/step-span-store'
+import { openTraceEventStore, type TraceEventStore } from '../mastra/lib/trace-events-store'
 import { runWorkerWithSpan } from '../mastra/lib/run-worker-with-span'
 import { resolveVerifyCwd, type RanVerifyStep } from '../mastra/lib/derive-repro-command'
 import { resolveTaskCwd } from '../mastra/lib/resolve-task-cwd'
@@ -841,10 +841,10 @@ export const implementWorkflow = defineWorkflow<
             },
           })
         : null
-      // Open span store best-effort — a DB hiccup must never fail the task.
-      const workerSpanStore = await openStepSpanStore(resolveContext().stateDbPath).catch(
+      // Open trace store best-effort — a DB hiccup must never fail the task.
+      const workerTraceStore = await openTraceEventStore(resolveContext().stateDbPath).catch(
         (err: unknown) => {
-          console.warn('[span] failed to open step span store for run-claude-code:', err)
+          console.warn('[trace] failed to open trace-event store for run-claude-code:', err)
           return undefined
         },
       )
@@ -861,10 +861,11 @@ export const implementWorkflow = defineWorkflow<
             ctx.emit('claude-event', event)
           },
         },
-        spanStore: workerSpanStore,
+        traceStore: workerTraceStore,
         stepName: 'run-claude-code',
         workflowInstanceId: ctx.runId,
         originId,
+        phase: 'code',
       })
       // Per-run read/action summary. Emitted on every wired run so paralysis
       // patterns are greppable in bulk (e.g. zero-action runs with a high
@@ -1010,20 +1011,24 @@ export const implementWorkflow = defineWorkflow<
         integrationBranch: input.integrationBranch,
       })
 
-      // Open a verify span so the verify output is captured in the new span
-      // lifecycle rather than the legacy task_transcripts table.
-      const verifySpanStore = isReflectDisabled()
+      // Open a trace-event surface around verify so the verify output is
+      // captured in the unified trace surface rather than the legacy
+      // task_transcripts table. Best-effort: a DB hiccup must never fail
+      // the task.
+      const verifyTraceStore: TraceEventStore | undefined = isReflectDisabled()
         ? undefined
-        : await openStepSpanStore(resolveContext().stateDbPath).catch(() => undefined)
-      let verifySpanId: string | null = null
-      if (verifySpanStore !== undefined) {
-        verifySpanId = await verifySpanStore
-          .openSpan({
-            stepName: 'verify',
-            workflowInstanceId: ctx.runId,
+        : await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)
+      const verifyStartedAt = Date.now()
+      if (verifyTraceStore !== undefined) {
+        await verifyTraceStore
+          .record({
+            kind: 'step_started',
+            taskId: input.taskId,
             originId: input.taskId,
+            phase: 'verify',
+            payload: { stepName: 'verify', workflowInstanceId: ctx.runId },
           })
-          .catch(() => null)
+          .catch(() => {})
       }
 
       const verifyOutput = r.steps
@@ -1081,12 +1086,22 @@ export const implementWorkflow = defineWorkflow<
             err,
           )
         })
-        // Capture the verify output in the span before throwing.
-        if (verifySpanId !== null && verifySpanStore !== undefined) {
-          await verifySpanStore
-            .closeSpan(verifySpanId, {
-              outcome: `failed:${firstFailedName}`,
-              verifyOutput,
+        // Capture the verify output in the trace surface before throwing.
+        if (verifyTraceStore !== undefined) {
+          await verifyTraceStore
+            .record({
+              kind: 'step_ended',
+              taskId: input.taskId,
+              originId: input.taskId,
+              phase: 'verify',
+              payload: {
+                stepName: 'verify',
+                workflowInstanceId: ctx.runId,
+                outcome: 'failure',
+                failureReason: firstFailedName,
+                durationMs: Date.now() - verifyStartedAt,
+                verifyOutput,
+              },
             })
             .catch(() => {})
         }
@@ -1096,10 +1111,22 @@ export const implementWorkflow = defineWorkflow<
         throw new Error(`task ${input.taskId} verify:${firstFailedName} failed`)
       }
 
-      // Capture the verify output in the span before returning.
-      if (verifySpanId !== null && verifySpanStore !== undefined) {
-        await verifySpanStore
-          .closeSpan(verifySpanId, { outcome: 'success', verifyOutput })
+      // Capture the verify output in the trace surface before returning.
+      if (verifyTraceStore !== undefined) {
+        await verifyTraceStore
+          .record({
+            kind: 'step_ended',
+            taskId: input.taskId,
+            originId: input.taskId,
+            phase: 'verify',
+            payload: {
+              stepName: 'verify',
+              workflowInstanceId: ctx.runId,
+              outcome: 'success',
+              durationMs: Date.now() - verifyStartedAt,
+              verifyOutput,
+            },
+          })
           .catch(() => {})
       }
       // Verify passed → return normally so the merge step runs.

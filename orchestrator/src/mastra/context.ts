@@ -7,7 +7,6 @@ export interface OrchestratorContext {
   stateDir: string
   queueDbPath: string
   observabilityDbPath: string
-  traceDbPath: string
   stateDbPath: string
   supervisorsDir: string
   supervisorsManifest: string
@@ -106,7 +105,6 @@ export const resolveContext = (override?: string): OrchestratorContext => {
     // existing repos from the historical `queue.db` + `state.db` layout.
     queueDbPath: resolve(stateDir, 'mars.db'),
     observabilityDbPath: resolve(stateDir, 'observability.duckdb'),
-    traceDbPath: resolve(stateDir, 'mars-trace.duckdb'),
     stateDbPath: resolve(stateDir, 'mars.db'),
     supervisorsDir,
     supervisorsManifest: resolve(supervisorsDir, 'manifest.json'),
