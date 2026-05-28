@@ -41,7 +41,7 @@ interface RegisteredWorktree {
 }
 
 const listRegisteredWorktrees = async (): Promise<RegisteredWorktree[]> => {
-  const { stdout } = await exec('git', ['worktree', 'list', '--porcelain'], {
+  const { stdout } = await exec(resolveGitBin(), ['worktree', 'list', '--porcelain'], {
     cwd: repoRoot(),
     timeout: WORKTREE_GIT_TIMEOUT_MS,
   })
@@ -123,7 +123,7 @@ export const createWorktree = async ({
   // entries can make these commands hang indefinitely, stalling every
   // implement dispatch until slots exhaust. Errors and timeouts fall through
   // to .catch below so createWorktree proceeds with an empty registration list.
-  await exec('git', ['worktree', 'prune'], { cwd, timeout: WORKTREE_GIT_TIMEOUT_MS }).catch(() => {})
+  await exec(resolveGitBin(), ['worktree', 'prune'], { cwd, timeout: WORKTREE_GIT_TIMEOUT_MS }).catch(() => {})
 
   const registered = await listRegisteredWorktrees().catch(
     () => [] as RegisteredWorktree[],
@@ -163,7 +163,7 @@ export const createWorktree = async ({
   }
 
   // Re-prune in case the removes above left dangling refs.
-  await exec('git', ['worktree', 'prune'], { cwd, timeout: WORKTREE_GIT_TIMEOUT_MS }).catch(() => {})
+  await exec(resolveGitBin(), ['worktree', 'prune'], { cwd, timeout: WORKTREE_GIT_TIMEOUT_MS }).catch(() => {})
 
   // If a directory still exists at our target path with no live worktree
   // registration, it's leftover filesystem state — wipe it.
@@ -175,12 +175,12 @@ export const createWorktree = async ({
   const args = branchAlreadyExists
     ? ['worktree', 'add', path, branch]
     : ['worktree', 'add', '-b', branch, path, startPoint]
-  await exec('git', args, { cwd })
+  await exec(resolveGitBin(), args, { cwd })
   return { path, branch }
 }
 
 export const resolveSha = async (ref: string): Promise<string> => {
-  const { stdout } = await exec('git', ['rev-parse', ref], { cwd: repoRoot() })
+  const { stdout } = await exec(resolveGitBin(), ['rev-parse', ref], { cwd: repoRoot() })
   return stdout.trim()
 }
 
@@ -192,9 +192,9 @@ export const removeWorktree = async (
   const args = ['worktree', 'remove']
   if (force) args.push('--force')
   args.push(ref.path)
-  await exec('git', args, { cwd: repoRoot() })
+  await exec(resolveGitBin(), args, { cwd: repoRoot() })
   if (!keepBranch) {
-    await exec('git', ['branch', '-D', ref.branch], { cwd: repoRoot() }).catch(() => {})
+    await exec(resolveGitBin(), ['branch', '-D', ref.branch], { cwd: repoRoot() }).catch(() => {})
   }
 }
 
@@ -579,6 +579,52 @@ export const resolveClaudeBin = (): string => {
   return 'claude'
 }
 
+// Cache for the resolved git binary path. Keyed on process.env.PATH so
+// tests can change PATH and get a fresh resolution without restarting the
+// process. In production PATH is stable so the cache is effectively permanent.
+let cachedGitBin: string | null = null
+let cachedGitBinFor: string | undefined = undefined
+
+/**
+ * Resolve the absolute path to the `git` binary, caching the result.
+ *
+ * Searches PATH dirs then the POSIX fallback dirs (same set used for claude).
+ * Throws `Error('git binary not found on PATH')` if git cannot be located.
+ * Called once at daemon boot so that any PATH problem surfaces immediately
+ * rather than as a per-task ENOENT mid-flight.
+ */
+export const resolveGitBin = (): string => {
+  const envFingerprint = process.env.PATH ?? ''
+  if (cachedGitBin !== null && cachedGitBinFor === envFingerprint) {
+    return cachedGitBin
+  }
+  cachedGitBinFor = envFingerprint
+  cachedGitBin = null
+
+  const isWindows = process.platform === 'win32'
+  const pathDelimiter = isWindows ? ';' : ':'
+  const binaryNames = isWindows ? ['git.exe'] : ['git']
+  // POSIX-only fallback directories — not applicable on Windows.
+  const fallbackDirs = isWindows ? [] : FALLBACK_CLAUDE_PATH_DIRS
+
+  const pathDirs = (process.env.PATH ?? '').split(pathDelimiter).filter((p) => p.length > 0)
+  const seen = new Set<string>()
+  for (const dir of [...pathDirs, ...fallbackDirs]) {
+    if (seen.has(dir)) continue
+    seen.add(dir)
+    if (!isAbsolute(dir)) continue
+    for (const name of binaryNames) {
+      const candidate = join(dir, name)
+      if (isExecutableFile(candidate)) {
+        cachedGitBin = candidate
+        return candidate
+      }
+    }
+  }
+
+  throw new Error('git binary not found on PATH')
+}
+
 const resolveClaudeMessageCap = (override?: number): number => {
   if (override !== undefined && Number.isInteger(override) && override >= 0) {
     return override
@@ -818,7 +864,7 @@ const captureHasDiffDiagnostics = async (
     args: readonly string[],
   ): Promise<string> => {
     try {
-      const { stdout } = await exec('git', [...args], { cwd })
+      const { stdout } = await exec(resolveGitBin(), [...args], { cwd })
       const trimmed = stdout.trim()
       return `${label}: ${trimmed.length > 0 ? trimmed : '(empty)'}`
     } catch (error: unknown) {
@@ -864,8 +910,8 @@ export const checkBranchHasDiff = async (
       // task's setup and this check) from "branch tip equals integration"
       // (genuine no-op — agent set up the worktree and didn't commit).
       // Only the latter is a failure.
-      const branchSha = (await exec('git', ['rev-parse', '--verify', `${branch}^{commit}`], { cwd })).stdout.trim()
-      const integrationSha = (await exec('git', ['rev-parse', '--verify', `${integrationBranch}^{commit}`], { cwd })).stdout.trim()
+      const branchSha = (await exec(resolveGitBin(), ['rev-parse', '--verify', `${branch}^{commit}`], { cwd })).stdout.trim()
+      const integrationSha = (await exec(resolveGitBin(), ['rev-parse', '--verify', `${integrationBranch}^{commit}`], { cwd })).stdout.trim()
       if (branchSha !== integrationSha) {
         return {
           name: 'has-diff',
@@ -1298,10 +1344,10 @@ export const checkMergeTargetStatus = async (
   const targetPath = repoRoot()
   const { integrationBranch, taskBranch } = args
   try {
-    await exec('git', ['rev-parse', '--verify', `${integrationBranch}^{commit}`], {
+    await exec(resolveGitBin(), ['rev-parse', '--verify', `${integrationBranch}^{commit}`], {
       cwd: targetPath,
     })
-    await exec('git', ['rev-parse', '--verify', `${taskBranch}^{commit}`], {
+    await exec(resolveGitBin(), ['rev-parse', '--verify', `${taskBranch}^{commit}`], {
       cwd: targetPath,
     })
 
@@ -1350,7 +1396,7 @@ export const checkMergeTargetStatus = async (
     if (changedPaths.length <= PATH_CAP) {
       statusArgs.push('--', ...changedPaths)
     }
-    const status = await exec('git', statusArgs, { cwd: targetPath })
+    const status = await exec(resolveGitBin(), statusArgs, { cwd: targetPath })
     if (status.stdout.length === 0) return { kind: 'clean' }
     return {
       kind: 'dirty',
@@ -1500,9 +1546,9 @@ const isDirectory = async (p: string): Promise<boolean> => {
 
 const isRebaseInProgress = async (cwd: string): Promise<boolean> => {
   try {
-    const { stdout } = await exec('git', ['rev-parse', '--git-path', 'rebase-merge'], { cwd })
+    const { stdout } = await exec(resolveGitBin(), ['rev-parse', '--git-path', 'rebase-merge'], { cwd })
     const mergePath = stdout.trim()
-    const { stdout: applyStdout } = await exec('git', ['rev-parse', '--git-path', 'rebase-apply'], { cwd })
+    const { stdout: applyStdout } = await exec(resolveGitBin(), ['rev-parse', '--git-path', 'rebase-apply'], { cwd })
     const applyPath = applyStdout.trim()
     const checks = await Promise.all([
       isDirectory(mergePath),
@@ -1534,7 +1580,7 @@ export const mergeBranch = async ({
     // Step 1: ensure the task branch is up-to-date with integration via rebase
     // inside the worktree. After this, integration can fast-forward to it.
     try {
-      const r = await exec('git', ['rebase', integrationBranch], { cwd: worktreePath })
+      const r = await exec(resolveGitBin(), ['rebase', integrationBranch], { cwd: worktreePath })
       output += r.stdout + r.stderr
     } catch (rebaseError: unknown) {
       const e = rebaseError as { stdout?: string; stderr?: string }
@@ -1546,7 +1592,7 @@ export const mergeBranch = async ({
       // `vega-reconciling` for the full duration of the session.
       await onVegaStart?.()
 
-      const preSha = (await exec('git', ['rev-parse', branch], { cwd: repoRoot() })).stdout.trim()
+      const preSha = (await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() })).stdout.trim()
 
       const supervisorTimeoutMs = 30 * 60 * 1000
       const sup = await invokeVcsSupervisor(
@@ -1560,12 +1606,12 @@ export const mergeBranch = async ({
       output += sup.stdout + sup.stderr
 
       const stillInProgress = await isRebaseInProgress(worktreePath)
-      const postSha = (await exec('git', ['rev-parse', branch], { cwd: repoRoot() })).stdout.trim()
+      const postSha = (await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() })).stdout.trim()
       const advanced = postSha !== preSha
       const treeClean = await (async () => {
         try {
-          await exec('git', ['diff', '--quiet'], { cwd: worktreePath })
-          await exec('git', ['diff', '--cached', '--quiet'], { cwd: worktreePath })
+          await exec(resolveGitBin(), ['diff', '--quiet'], { cwd: worktreePath })
+          await exec(resolveGitBin(), ['diff', '--cached', '--quiet'], { cwd: worktreePath })
           return true
         } catch {
           return false
@@ -1573,7 +1619,7 @@ export const mergeBranch = async ({
       })()
 
       if (stillInProgress || !advanced || !treeClean) {
-        await exec('git', ['rebase', '--abort'], { cwd: worktreePath }).catch(() => {})
+        await exec(resolveGitBin(), ['rebase', '--abort'], { cwd: worktreePath }).catch(() => {})
         return {
           merged: false,
           conflictResolved: false,
@@ -1590,8 +1636,8 @@ export const mergeBranch = async ({
     // `git update-ref` never touches any working tree, so it succeeds even when
     // the main working tree has uncommitted tracked changes or is checked out on
     // a different branch.
-    const taskSha = (await exec('git', ['rev-parse', branch], { cwd: repoRoot() })).stdout.trim()
-    const integrationSha = (await exec('git', ['rev-parse', integrationBranch], { cwd: repoRoot() })).stdout.trim()
+    const taskSha = (await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() })).stdout.trim()
+    const integrationSha = (await exec(resolveGitBin(), ['rev-parse', integrationBranch], { cwd: repoRoot() })).stdout.trim()
 
     // Confirm fast-forward is valid: integrationSha must be an ancestor of taskSha.
     // `git merge-base --is-ancestor` exits 0 when true, 1 when false.
@@ -1658,7 +1704,7 @@ export const mergeBranch = async ({
     // merge already landed via the ref update; log and continue.
     try {
       const headBranch = (
-        await exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoRoot() })
+        await exec(resolveGitBin(), ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoRoot() })
       ).stdout.trim()
       if (headBranch === integrationBranch) {
         // `git diff --quiet <sha>` exits 0 when the working tree + index match
@@ -1669,7 +1715,7 @@ export const mergeBranch = async ({
           { cwd: repoRoot() },
         ).then(() => true, () => false)
         if (cleanVsOldHead) {
-          const reset = await exec('git', ['reset', '--hard', taskSha], { cwd: repoRoot() })
+          const reset = await exec(resolveGitBin(), ['reset', '--hard', taskSha], { cwd: repoRoot() })
           output += reset.stdout + reset.stderr
         } else {
           output += `\n[mergeBranch] merge target checkout has local changes vs ${integrationSha.slice(0, 9)}; left as-is to avoid clobbering (HEAD ref advanced).`
@@ -1697,7 +1743,7 @@ export const isBranchMergedIntoMain = async (
   repoRoot: string,
 ): Promise<boolean> => {
   try {
-    await exec('git', ['merge-base', '--is-ancestor', branch, 'main'], {
+    await exec(resolveGitBin(), ['merge-base', '--is-ancestor', branch, 'main'], {
       cwd: repoRoot,
     })
   } catch (err: unknown) {
@@ -1724,7 +1770,7 @@ export const isZeroCommitBranch = async (
   repoRoot: string,
 ): Promise<boolean> => {
   try {
-    const { stdout: tip } = await exec('git', ['rev-parse', branch], {
+    const { stdout: tip } = await exec(resolveGitBin(), ['rev-parse', branch], {
       cwd: repoRoot,
     })
     const { stdout: base } = await exec(

@@ -38,6 +38,7 @@ import {
   ensureInboxRepopulator,
 } from './inbox-repopulator'
 import type { Logger, WorkflowEvent } from '@mars/workflow'
+import { resolveGitBin } from '../lib/git'
 import { getDefaultTaskStore } from '../lib/task-store'
 import { getDefaultDomainTaskStore } from '../store/task-store'
 import { listProposals, promoteProposal } from '../proposals'
@@ -261,6 +262,16 @@ export const startDaemon = async (
     // Mars owns the trace-event store: open it now so the file exists from
     // first start and Mars holds the single-writer lock for its lifetime.
     traceStore = await openTraceEventStore(traceDbPath)
+  }
+
+  // Resolve git binary once at startup. If git is not on PATH the daemon
+  // exits immediately with a clear message instead of letting the first
+  // git call fail mid-task as a retry-budget-exhausted ENOENT.
+  try {
+    resolveGitBin()
+  } catch {
+    log('git binary not found on PATH; refusing to start')
+    process.exit(1)
   }
 
   await initQueue()
