@@ -1,5 +1,5 @@
 /**
- * Tests for GET /api/failure-reasons — serves the resolved failure-reason
+ * Tests for GET /failure-reasons — serves the resolved failure-reason
  * catalog (built-in seed merged with `.mars/failure-reasons/*.yaml`
  * overrides). The HTTP layer is a verbatim pass-through; these tests pin
  * shape and override propagation.
@@ -41,7 +41,7 @@ const makeDeps = (
   ...overrides,
 })
 
-describe('GET /api/failure-reasons', () => {
+describe('GET /failure-reasons', () => {
   let stateDir: string
 
   beforeEach(() => {
@@ -56,7 +56,7 @@ describe('GET /api/failure-reasons', () => {
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(makeDeps())
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/failure-reasons`)
+      const res = await fetch(`http://127.0.0.1:${port}/failure-reasons`)
       expect(res.status).toBe(200)
       expect(res.headers.get('content-type')).toContain('application/json')
       const body = (await res.json()) as Array<{ code: string }>
@@ -81,7 +81,7 @@ describe('GET /api/failure-reasons', () => {
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(makeDeps({}, overrideCatalog))
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/failure-reasons`)
+      const res = await fetch(`http://127.0.0.1:${port}/failure-reasons`)
       const body = (await res.json()) as Array<{
         code: string
         userMessage: string
@@ -99,7 +99,7 @@ describe('GET /api/failure-reasons', () => {
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(makeDeps())
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/failure-reasons`)
+      const res = await fetch(`http://127.0.0.1:${port}/failure-reasons`)
       const body = (await res.json()) as Array<Record<string, unknown>>
       for (const entry of body) {
         expect(typeof entry.code).toBe('string')
