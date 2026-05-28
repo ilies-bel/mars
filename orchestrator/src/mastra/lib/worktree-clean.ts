@@ -1,13 +1,10 @@
-import { execFile } from 'node:child_process'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { promisify } from 'node:util'
 import { resolveContext } from '../context'
 import { getTask, type Task, type TaskStatus } from '../queue'
 import { isBranchMergedIntoMain, isZeroCommitBranch } from './git'
-
-const exec = promisify(execFile)
+import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 
 export const DEFAULT_WORKTREE_REMOVE_TIMEOUT_MS = 60_000
 
@@ -107,6 +104,9 @@ export interface RunOptions {
   dryRun?: boolean
   forceOrphans?: boolean
   log?: (line: string) => void
+  /** Optional trace context. Populated when called from a workflow phase;
+   *  omitted by the CLI admin entry point. */
+  traceCtx?: TraceCtx
 }
 
 export const discoverWorktreesIn = (root: string): DiscoveredWorktree[] => {
@@ -149,33 +149,54 @@ const removeWorktreeAt = async (
   wt: DiscoveredWorktree,
   repoRoot: string,
   timeoutMs = DEFAULT_WORKTREE_REMOVE_TIMEOUT_MS,
+  traceCtx?: TraceCtx,
 ): Promise<void> => {
-  try {
-    await exec('git', ['worktree', 'remove', '--force', wt.path], {
+  const store = traceCtx?.store ?? nullTraceStore
+  const baseCtx = {
+    taskId: traceCtx?.taskId ?? null,
+    originId: traceCtx?.originId ?? null,
+    phase: traceCtx?.phase ?? null,
+  }
+  // The remove probe is allowed to fail (already-removed worktrees, locked
+  // entries) — the rm/branch-cleanup below is the safety net. Mark it as
+  // expectsFailure so the trace severity stays warn rather than error.
+  const removeResult = await runTool(
+    {
+      tool: 'git',
+      argv: ['worktree', 'remove', '--force', wt.path],
       cwd: repoRoot,
-      timeout: timeoutMs,
-      killSignal: 'SIGKILL',
-    })
-  } catch (err: unknown) {
-    // A timeout surfaces as an error with `.killed === true` or
-    // `.signal === 'SIGKILL'`. Re-throw so the caller can surface it clearly;
-    // skip only for the "not a registered worktree / already gone" class of
-    // errors that we want to fall through silently.
-    const e = err as { killed?: boolean; signal?: string; code?: string | number }
-    if (e.killed || e.signal === 'SIGKILL') {
-      throw new Error(
-        `git worktree remove --force ${wt.path} timed out after ${timeoutMs}ms (SIGKILL)`,
-      )
-    }
-    // git refused (e.g. not a registered worktree, locked); fall through to
-    // rm -rf so we still clean the dead directory.
+      timeoutMs,
+      expectsFailure: true,
+      ...baseCtx,
+    },
+    store,
+  )
+  // A timeout surfaces as exit code 143 (SIGTERM) or 137 (SIGKILL grace).
+  // Re-throw so the caller can surface it clearly; skip only for the "not a
+  // registered worktree / already gone" class of errors that we want to fall
+  // through silently.
+  if (
+    removeResult.exitCode === 143 ||
+    removeResult.exitCode === 137 ||
+    removeResult.stderr.includes('[runTool: killed after')
+  ) {
+    throw new Error(
+      `git worktree remove --force ${wt.path} timed out after ${timeoutMs}ms (SIGKILL)`,
+    )
   }
   if (existsSync(wt.path)) {
     await rm(wt.path, { recursive: true, force: true })
   }
-  await exec('git', ['branch', '-D', wt.branch], { cwd: repoRoot }).catch(
-    () => {},
-  )
+  await runTool(
+    {
+      tool: 'git',
+      argv: ['branch', '-D', wt.branch],
+      cwd: repoRoot,
+      expectsFailure: true,
+      ...baseCtx,
+    },
+    store,
+  ).catch(() => {})
 }
 
 export const runWorktreeClean = async (
@@ -260,7 +281,12 @@ export const runWorktreeClean = async (
       }
 
       try {
-        await removeWorktreeAt(wt, ctx.repoRoot)
+        await removeWorktreeAt(
+          wt,
+          ctx.repoRoot,
+          DEFAULT_WORKTREE_REMOVE_TIMEOUT_MS,
+          opts.traceCtx,
+        )
         summary.removed += 1
         log(`[remove] ${wt.branch} (${reason})`)
       } catch (err) {

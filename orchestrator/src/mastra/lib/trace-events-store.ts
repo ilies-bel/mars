@@ -24,6 +24,7 @@ export const TRACE_EVENT_KINDS = [
   'task_blocked',
   'recovery_spawned',
   'task_failed',
+  'tool_invoked',
 ] as const
 
 export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]
@@ -88,6 +89,9 @@ export interface TraceEventStore {
  *
  * - `task_blocked`, `recovery_spawned` → `warn`
  * - `task_failed`, `step_ended` with `payload.outcome === 'failure'` → `error`
+ * - `tool_invoked` with `payload.exitCode === 0` → `info`
+ * - `tool_invoked` with non-zero exit AND `payload.expectsFailure === true` → `warn`
+ * - `tool_invoked` with non-zero exit AND falsy `expectsFailure` → `error`
  * - everything else → `info`
  */
 export const deriveSeverity = (
@@ -97,6 +101,12 @@ export const deriveSeverity = (
   if (kind === 'task_failed') return 'error'
   if (kind === 'step_ended' && payload.outcome === 'failure') return 'error'
   if (kind === 'task_blocked' || kind === 'recovery_spawned') return 'warn'
+  if (kind === 'tool_invoked') {
+    const exitCode = payload.exitCode
+    if (typeof exitCode === 'number' && exitCode === 0) return 'info'
+    if (payload.expectsFailure === true) return 'warn'
+    return 'error'
+  }
   return 'info'
 }
 
