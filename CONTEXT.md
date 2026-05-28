@@ -319,3 +319,7 @@ _Avoid_: stuck worker, quiet worker, idle worker
 **Dead worker**:
 A Stale Worker that has stayed quiet past its Dead threshold; the daemon aborts the child with exit code 125 and routes it to a worker-stale inbox item carrying restart/drop actions, bypassing the automatic recovery-recipe path.
 _Avoid_: stuck worker, timed-out worker, hung worker
+
+**Spawn governor**:
+The admission-control gate the daemon consults before acquiring a Worker semaphore slot; samples host load and memory at each watchdog tick and refuses new spawns when either signal is in High or Critical pressure, leaving the task in queued for the next drain cycle.
+_Avoid_: admission control, pressure gate, load gate, governor
