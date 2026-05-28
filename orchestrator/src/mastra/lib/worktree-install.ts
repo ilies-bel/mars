@@ -1,6 +1,7 @@
 import { stat } from 'node:fs/promises'
 import { resolve, relative } from 'node:path'
-import { runSubprocessStreaming, type RunSubprocessResult } from './git'
+import { type RunSubprocessResult } from './git'
+import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 
 export const DEFAULT_INSTALL_TIMEOUT_MS = 8 * 60_000
 
@@ -150,33 +151,43 @@ export interface InstallWorktreeDepsOptions {
   runner?: InstallRunner
   log?: (line: string) => void
   timeoutMs?: number
+  /** Optional trace context. When supplied, the default runner emits a
+   *  `tool_invoked` event per install via `runTool`. Custom runners are
+   *  responsible for their own tracing. */
+  traceCtx?: TraceCtx
 }
 
-const defaultInstallRunner: InstallRunner = (cmd, args, cwd, opts) => {
-  const timeoutMs = opts?.timeoutMs
-  if (timeoutMs === undefined) {
-    return runSubprocessStreaming(cmd, args, cwd)
-  }
-  const abort = new AbortController()
-  const handle = setTimeout(() => abort.abort(), timeoutMs)
-  return runSubprocessStreaming(cmd, args, cwd, undefined, abort.signal).then(
-    (result) => {
-      clearTimeout(handle)
-      return result
+const makeDefaultInstallRunner = (
+  traceCtx: TraceCtx | undefined,
+): InstallRunner => async (cmd, args, cwd, opts) => {
+  const store = traceCtx?.store ?? nullTraceStore
+  const r = await runTool(
+    {
+      tool: cmd,
+      argv: [...args],
+      cwd,
+      timeoutMs: opts?.timeoutMs,
+      taskId: traceCtx?.taskId ?? null,
+      originId: traceCtx?.originId ?? null,
+      phase: traceCtx?.phase ?? 'setup',
     },
-    (err: unknown) => {
-      clearTimeout(handle)
-      throw err
-    },
+    store,
   )
+  return {
+    exitCode: r.exitCode,
+    stdout: r.stdout,
+    stderr: r.stderr,
+  }
 }
 
 export const installWorktreeDeps = async ({
   worktreeRoot,
-  runner = defaultInstallRunner,
+  runner,
   log,
   timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
+  traceCtx,
 }: InstallWorktreeDepsOptions): Promise<WorktreeInstallSummary> => {
+  const effectiveRunner = runner ?? makeDefaultInstallRunner(traceCtx)
   const sites = await detectInstallSites(worktreeRoot)
   if (sites.length === 0) {
     return { sites: [], totalDurationMs: 0 }
@@ -187,7 +198,7 @@ export const installWorktreeDeps = async ({
     sites.map(async (site) => {
       const [cmd, args] = installCommand(site.manager)
       const t0 = Date.now()
-      const r = await runner(cmd, args, site.dir, { timeoutMs })
+      const r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
       const durationMs = Date.now() - t0
       const rel = relative(worktreeRoot, site.dir) || '.'
       log?.(
