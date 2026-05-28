@@ -9,7 +9,7 @@ import { getDefaultTaskStore } from '../mastra/lib/task-store'
 import { Workers } from '../mastra/workers'
 import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
 import { getRepoRoot, resolveContext } from '../mastra/context'
-import { raiseInboxItem } from '../mastra/lib/inbox'
+import { listInboxItems, raiseInboxItem } from '../mastra/lib/inbox'
 import { openStepSpanStore } from '../mastra/lib/step-span-store'
 import { runWorkerWithSpan } from '../mastra/lib/run-worker-with-span'
 
@@ -924,6 +924,74 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     return { proposalId: proposal.id, status: 'sliced', taskIds }
     }),
 })
+
+/**
+ * Attempt to complete a HITL slice task.
+ *
+ * A HITL slice reaches 'done' exactly when BOTH of the following hold:
+ *   1. Every blocking sub-task has status 'done' (the Coder sub-task that
+ *      delivers the operator artifact has landed).
+ *   2. The operator-facing inbox item (kind='hitl-slice-needs-operator') for
+ *      this slice is 'resolved' or 'dismissed' — the operator has confirmed
+ *      the manual step is complete.
+ *
+ * If either condition is unmet the function is a no-op and returns false.
+ * If both conditions are met it flips the task from 'blocked' to 'done'
+ * and returns true.
+ *
+ * Exported so it can be called from daemon event hooks (task.completed,
+ * inbox.resolved) and from tests exercising the three ordering variants.
+ */
+export const tryCompleteHitlSlice = async (
+  hitlSliceTaskId: string,
+): Promise<boolean> => {
+  const taskStore = await getDefaultTaskStore()
+
+  // 1. Confirm this is an HITL slice that is still blocked.
+  const taskCheckResult = await taskStore.execute({
+    sql: `SELECT status, slice_kind, origin_id, slice_index FROM tasks WHERE id = ?`,
+    args: [hitlSliceTaskId],
+  })
+  if (taskCheckResult.rows.length === 0) return false
+  const taskRow = taskCheckResult.rows[0] as unknown as {
+    status: string
+    slice_kind: string | null
+    origin_id: string | null
+    slice_index: number | null
+  }
+  if (taskRow.status !== 'blocked' || taskRow.slice_kind !== 'hitl') return false
+  if (!taskRow.origin_id || taskRow.slice_index == null) return false
+
+  // 2. All blocking sub-tasks must be done.
+  const blockersResult = await taskStore.execute({
+    sql: `SELECT t.status FROM task_blockers tb
+          JOIN tasks t ON t.id = tb.blocker_task_id
+          WHERE tb.task_id = ?`,
+    args: [hitlSliceTaskId],
+  })
+  if (blockersResult.rows.length === 0) return false
+  const allDone = blockersResult.rows.every(
+    (r) => (r as unknown as { status: string }).status === 'done',
+  )
+  if (!allDone) return false
+
+  // 3. The operator inbox item must be resolved or dismissed.
+  //    The item's signature encodes the proposal id and 1-based slice index,
+  //    matching exactly what raiseInboxItem sets when slicing.
+  const signature = `${taskRow.origin_id}:hitl:${taskRow.slice_index}`
+  const hitlItems = await listInboxItems('all', { kind: 'hitl-slice-needs-operator' })
+  const inboxItem = hitlItems.find((item) => item.signature === signature)
+  if (!inboxItem) return false
+  if (inboxItem.state !== 'resolved' && inboxItem.state !== 'dismissed') return false
+
+  // 4. Both conditions met — flip the HITL slice from 'blocked' to 'done'.
+  const now = new Date().toISOString()
+  await taskStore.execute({
+    sql: `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
+    args: [now, hitlSliceTaskId],
+  })
+  return true
+}
 
 export interface RunSliceResult {
   proposalId: string
