@@ -1,0 +1,34 @@
+name: Template sync check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  template-sync-check:
+    name: Bundled templates in sync with source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Refresh bundle and assert no drift
+        working-directory: orchestrator
+        run: |
+          set -euo pipefail
+          npm run mars:bundle:refresh
+          if ! git diff --quiet -- src/init/templates; then
+            echo "::error::orchestrator/src/init/templates is stale relative to root .claude/. Run 'npm --prefix orchestrator run mars:bundle:refresh' and commit the result."
+            git --no-pager diff --stat -- src/init/templates
+            exit 1
+          fi
+          echo "Bundled templates are in sync with source."
