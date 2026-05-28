@@ -311,3 +311,7 @@ ProposalStatus terminal: the proposal was decided against — no slicing, no tas
 **Proposal dependency**:
 A row in proposal_dependencies asserting that one Proposal cannot be meaningfully PRD-shaped until another Proposal reaches sliced; lives in the planning graph, is written by operators or by the recursive planner when it spawns a gap-filling child Proposal, and is never fanned out into task_blockers when the blocker Proposal is sliced.
 _Avoid_: proposal blocker
+
+**Stale worker**:
+A dispatched Worker whose child process has produced no stdout/stderr output for longer than its Worker's Stale threshold; surfaces as a KPI signal only, without aborting the process.
+_Avoid_: stuck worker, quiet worker, idle worker
