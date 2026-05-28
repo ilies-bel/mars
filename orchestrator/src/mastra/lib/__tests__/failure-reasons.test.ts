@@ -5,8 +5,11 @@ import { resolve } from 'node:path'
 import {
   codeToFilename,
   failureReasonsDir,
+  failureReasonStringToCode,
   filenameToCode,
   loadFailureReasonCatalog,
+  renderAvailableActionsMarkdown,
+  substituteTaskId,
 } from '../failure-reasons'
 import { BUILT_IN_FAILURE_REASONS } from '../../failure-reasons/built-in'
 
@@ -177,6 +180,149 @@ describe('failure-reasons catalog', () => {
 
     it('round-trips for codes with slashes', () => {
       expect(filenameToCode('foo--bar.yaml')).toBe('foo/bar')
+    })
+  })
+
+  describe('failureReasonStringToCode', () => {
+    it('null → unknown', () => {
+      expect(failureReasonStringToCode(null)).toBe('unknown')
+    })
+
+    it('typecheck substring → verify:typecheck', () => {
+      expect(failureReasonStringToCode('typecheck failed')).toBe(
+        'verify:typecheck',
+      )
+      expect(failureReasonStringToCode('verify:typecheck')).toBe(
+        'verify:typecheck',
+      )
+    })
+
+    it('test substring → verify:test', () => {
+      expect(failureReasonStringToCode('test suite failed')).toBe(
+        'verify:test',
+      )
+      expect(failureReasonStringToCode('vitest run failed')).toBe(
+        'verify:test',
+      )
+    })
+
+    it('lint substring → verify:lint', () => {
+      expect(failureReasonStringToCode('eslint failed')).toBe('verify:lint')
+    })
+
+    it('main-dirty substring → verify:main-dirty', () => {
+      expect(failureReasonStringToCode('verify:main-dirty')).toBe(
+        'verify:main-dirty',
+      )
+      expect(failureReasonStringToCode('SOMETHING main-dirty XYZ')).toBe(
+        'verify:main-dirty',
+      )
+    })
+
+    it('no-edits-made variants → code:no-edits-made', () => {
+      expect(failureReasonStringToCode('no-edits-made')).toBe(
+        'code:no-edits-made',
+      )
+      expect(failureReasonStringToCode('no_edits_made')).toBe(
+        'code:no-edits-made',
+      )
+    })
+
+    it('timeout substring → code:timeout', () => {
+      expect(failureReasonStringToCode('coder exceeded timeout')).toBe(
+        'code:timeout',
+      )
+    })
+
+    it('over-budget variants → code:over-budget', () => {
+      expect(failureReasonStringToCode('over-budget')).toBe('code:over-budget')
+      expect(failureReasonStringToCode('over_budget')).toBe('code:over-budget')
+    })
+
+    it('vcs-supervisor variants → merge:vcs-supervisor-aborted', () => {
+      expect(failureReasonStringToCode('vcs-supervisor-aborted')).toBe(
+        'merge:vcs-supervisor-aborted',
+      )
+      expect(failureReasonStringToCode('vega-aborted')).toBe(
+        'merge:vcs-supervisor-aborted',
+      )
+    })
+
+    it('unmatched strings → unknown', () => {
+      expect(failureReasonStringToCode('some random unknown garbage')).toBe(
+        'unknown',
+      )
+      expect(failureReasonStringToCode('retry_budget_exhausted_at_unblock')).toBe(
+        'unknown',
+      )
+    })
+
+    it('is case-insensitive', () => {
+      expect(failureReasonStringToCode('TYPECHECK FAILED')).toBe(
+        'verify:typecheck',
+      )
+    })
+  })
+
+  describe('substituteTaskId', () => {
+    it('replaces every <id> occurrence with the task id', () => {
+      expect(substituteTaskId('mars restart <id>', 'mars-abc123')).toBe(
+        'mars restart mars-abc123',
+      )
+      expect(substituteTaskId('<id> blocked by <id>', 'mars-xyz')).toBe(
+        'mars-xyz blocked by mars-xyz',
+      )
+    })
+
+    it('leaves strings without <id> untouched', () => {
+      expect(substituteTaskId('inspect transcript', 'mars-abc')).toBe(
+        'inspect transcript',
+      )
+    })
+  })
+
+  describe('renderAvailableActionsMarkdown', () => {
+    it('renders cliHint actions as backticked code with task-id substitution', () => {
+      const actions = [
+        {
+          id: 'restart',
+          label: 'Restart from scratch',
+          cliHint: 'mars restart <id>',
+        },
+        {
+          id: 'purge',
+          label: 'Drop permanently',
+          cliHint: 'mars purge <id>',
+        },
+      ]
+      const out = renderAvailableActionsMarkdown(actions, 'mars-abc123')
+      expect(out).toBe(
+        '- Restart from scratch: `mars restart mars-abc123`\n' +
+          '- Drop permanently: `mars purge mars-abc123`',
+      )
+    })
+
+    it('renders null cliHint actions without a code segment', () => {
+      const actions = [
+        { id: 'dismiss', label: 'Dismiss', cliHint: null },
+      ]
+      const out = renderAvailableActionsMarkdown(actions, 'mars-abc')
+      expect(out).toBe('- Dismiss')
+    })
+
+    it('mixes null and string cliHints correctly', () => {
+      const actions = [
+        {
+          id: 'restart',
+          label: 'Restart',
+          cliHint: 'mars restart <id>',
+        },
+        { id: 'dismiss', label: 'Dismiss', cliHint: null },
+      ]
+      const out = renderAvailableActionsMarkdown(actions, 't-1')
+      expect(out).toBe(
+        '- Restart: `mars restart t-1`\n- Dismiss',
+      )
     })
   })
 })

@@ -186,6 +186,8 @@ export const runDiagnoseFollowup = async (
   await updateTask(parentTaskId, {
     status: 'failed',
     failedPhase: 'code',
+    failureReason: `diagnose chore ${verdict.kind}`,
+    failureReasonCode: 'unknown',
   })
   const inboxItemId = await raiseInboxItem({
     kind: 'diagnose-inconclusive',

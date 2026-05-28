@@ -4,6 +4,7 @@ import {
   buildVerifyReproHint,
   type RanVerifyStep,
 } from './lib/derive-repro-command'
+import { failureReasonStringToCode } from './lib/failure-reasons'
 import {
   getRecipe,
   hasRecipe,
@@ -605,9 +606,12 @@ export const handleTaskFailureWithFixTask = async (
   // Recovery (fix-task) failures escalate to inbox; never spawn another
   // recovery. See ADR 0002 — this is the rule that broke the cascade.
   if (task.fixForTaskId !== null) {
+    const recoveryFailureReason = `recovery_failed:${failureSignature}: ${truncatedError.slice(0, 500)}`
     await updateTask(input.taskId, {
       status: 'failed',
-      error: `recovery_failed:${failureSignature}: ${truncatedError.slice(0, 500)}`,
+      error: recoveryFailureReason,
+      failureReason: recoveryFailureReason,
+      failureReasonCode: failureReasonStringToCode(failureSignature),
     }, s)
 
     const originId = task.originId
@@ -702,11 +706,19 @@ export const handleTaskFailureWithFixTask = async (
   // one-shot Sonnet agent), restart, or purge.
   if (!hasRecipe(failureSignature)) {
     const now = new Date().toISOString()
+    const noRecipeReason = truncate(
+      `${input.failingStep}: ${truncatedError}`,
+      1000,
+    )
     await updateTask(
       input.taskId,
       {
         status: 'failed',
-        error: truncate(`${input.failingStep}: ${truncatedError}`, 1000),
+        error: noRecipeReason,
+        failureReason: noRecipeReason,
+        failureReasonCode: failureReasonStringToCode(
+          `${input.failingStep}:${failureSignature}`,
+        ),
       },
       s,
     )
