@@ -39,6 +39,7 @@ import {
   ensureInboxRepopulator,
 } from './inbox-repopulator'
 import type { Logger, WorkflowEvent } from '@mars/workflow'
+import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
 import { resolveGitBin } from '../lib/git'
 import { getDefaultTaskStore } from '../lib/task-store'
 import { getDefaultDomainTaskStore } from '../store/task-store'
@@ -209,6 +210,31 @@ const removeLegacyMastraDb = (
   }
 }
 
+/**
+ * ADR-0038 forensic backfill: scan `task_blockers` for rows that violate the
+ * recovery-leaf invariant (either endpoint is a kind='fix' / fixForTaskId-set
+ * task) and log them so the operator can resolve via `mars unblock <id>`.
+ * Read-only — never mutates the table.
+ */
+const scanRecoveryLeafViolations = async (
+  log: (line: string) => void,
+): Promise<void> => {
+  const violations = await scanRecoveryBlockerEdges()
+  if (violations.length === 0) return
+  log(
+    `[adr-0038] found ${violations.length} task_blockers row(s) involving a recovery task (pre-leaf-guard residue). ` +
+      `Recovery tasks must be leaf nodes — run \`mars unblock <id>\` on each to clear them.`,
+  )
+  for (const v of violations) {
+    const roles: string[] = []
+    if (v.taskIsRecovery) roles.push(`task=${v.taskId}`)
+    if (v.blockerIsRecovery) roles.push(`blocker=${v.blockerTaskId}`)
+    log(
+      `[adr-0038]   edge (task=${v.taskId}, blocker=${v.blockerTaskId}) violates leaf invariant: ${roles.join(', ')}`,
+    )
+  }
+}
+
 const writeLog = (logFile: string, line: string): void => {
   const stamped = `[${new Date().toISOString()}] ${line}\n`
   try {
@@ -306,6 +332,19 @@ export const startDaemon = async (
   }
 
   await initQueue()
+
+  // Forensic backfill check for ADR-0038 (recovery tasks are leaf nodes).
+  // Read-only scan of `task_blockers` for rows where either endpoint is a
+  // recovery (fix) task — those edges predate the leaf-node guard and must
+  // be cleared by the operator (`mars unblock <id>`). The check never
+  // mutates the DB; if it fails, log and continue.
+  try {
+    await scanRecoveryLeafViolations(log)
+  } catch (err) {
+    log(
+      `[adr-0038] recovery-leaf backfill scan failed: ${(err as Error).message}`,
+    )
+  }
 
   // Source-stamp guard for the proposals schema migration (and any future
   // schema-rename that lands in proposals.ts). Captured before any RPC is

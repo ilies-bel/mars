@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { resolveContext } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
+import { assertNotRecoveryEdge } from './lib/blocker-invariant'
 import { dismissAlertsOnStatusChange } from './lib/inbox'
 import { clearDismissalForEntity } from './lib/inbox-dismissals'
 import { openLibsql } from './lib/libsql'
@@ -1567,6 +1568,13 @@ export const addBlockers = async (
   }
 
   if (unique.length === 0) return
+  // ADR-0038 leaf-node guard: recovery (fix) tasks cannot be either endpoint
+  // of a task_blockers edge. Probe both sides before the batch — the fix-task
+  // spawn path (`upsertFixTask`) is the one legitimate origin → fix writer
+  // and bypasses this entry point by reaching `task_blockers` directly.
+  for (const blockerId of unique) {
+    await assertNotRecoveryEdge(taskId, blockerId, { client: c })
+  }
   const now = new Date().toISOString()
   // Causal writers default to 'confirmed' state. The Linker writes
   // 'pending-review' rows via a separate entry point (TODO: linker writer).
@@ -1615,6 +1623,12 @@ export const addPendingReviewBlockers = async (
     unique.push(id)
   }
   if (unique.length === 0) return
+  // ADR-0038 leaf-node guard: even pending-review Linker rows are subject to
+  // the recovery leaf rule. A recovery task is never the candidate of a
+  // keyword-overlap edge.
+  for (const blockerId of unique) {
+    await assertNotRecoveryEdge(taskId, blockerId, { client: c })
+  }
   const now = new Date().toISOString()
   const stmts = unique.map((blockerId) => ({
     sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'pending-review', ?)`,
@@ -1781,6 +1795,14 @@ export const transferProposalBlockerToTask = async (
   })
   if (blockerRow.rows.length === 0) {
     throw new Error(`blocker task ${newBlockerTaskId} not found`)
+  }
+  // ADR-0038 leaf-node guard: refuse the transfer if any endpoint involved
+  // is a recovery task. dependents are tasks waiting on a proposal — they
+  // are origin work by construction, so practical violations are unlikely,
+  // but the guard runs anyway so the bottleneck stays in one place.
+  for (const taskId of dependents) {
+    if (taskId === newBlockerTaskId) continue
+    await assertNotRecoveryEdge(taskId, newBlockerTaskId, { client: c })
   }
   const now = new Date().toISOString()
   const stmts: InStatement[] = []
