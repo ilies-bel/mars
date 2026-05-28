@@ -7,12 +7,20 @@
  * layer only contracts through the public interface (fetch + response body).
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
+import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
+
+let cachedCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
+beforeAll(async () => {
+  cachedCatalog = await loadFailureReasonCatalog(
+    mkdtempSync(resolve(tmpdir(), 'mars-http-inv-cat-')),
+  )
+})
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-http-investigate-'))
@@ -32,6 +40,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
+  failureReasonCatalog: cachedCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>,
   ...overrides,
 })
 

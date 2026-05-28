@@ -387,6 +387,14 @@ export const initQueue = async (): Promise<void> => {
   if (!names.has('failure_reason')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN failure_reason TEXT`)
   }
+  // failure_reason_code: typed, catalog-resolvable companion to the legacy
+  // `failure_reason` string. Introduced in slice D; no path writes it yet
+  // (slice F starts populating it for `verify:main-dirty`, later slices
+  // rewire every other failure path). The legacy column stays as a loose-
+  // string archive for forensic continuity during the rollout.
+  if (!names.has('failure_reason_code')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN failure_reason_code TEXT`)
+  }
   if (!names.has('retry_count')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`)
   }

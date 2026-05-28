@@ -1868,6 +1868,14 @@ export const startDaemon = async (
   // daemon restart. GET /error-kinds serves the action-menu registry.
   const { startHttpServer } = await import('./http-server')
   const { coreRestartTask: coreRestart } = await import('./restart-task')
+  // Load the failure-reason catalog once at boot — built-in seed merged
+  // with `.mars/failure-reasons/*.yaml` overrides. Consumers re-`mars
+  // daemon reload` (or restart) to pick up file edits; no hot-reload.
+  const { loadFailureReasonCatalog } = await import('../lib/failure-reasons')
+  const failureReasonCatalog = await loadFailureReasonCatalog(
+    resolveContext().stateDir,
+    { onWarn: (msg) => log(msg) },
+  )
   const httpHandle = await startHttpServer({
     restartTask: async (id) => {
       await coreRestart(id, new Set(['failed']))
@@ -2180,6 +2188,7 @@ export const startDaemon = async (
       return restarted
     },
     isAcceptingWork: () => acceptingWork,
+    failureReasonCatalog,
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
