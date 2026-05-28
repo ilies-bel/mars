@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
+import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-http-restart-'))
@@ -32,7 +33,22 @@ const loadModules = async (repo: string) => {
  * Build HttpServerDeps with sane no-op defaults; tests override only the verb
  * they exercise. Keeps each test focused on one route.
  */
-const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
+// Built-in-only catalog reused across tests. Tests that need overrides
+// build their own catalog from a temp `.mars/failure-reasons/` directory.
+let cachedBuiltInCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
+const getBuiltInCatalog = async () => {
+  if (!cachedBuiltInCatalog) {
+    cachedBuiltInCatalog = await loadFailureReasonCatalog(
+      mkdtempSync(resolve(tmpdir(), 'mars-http-cat-')),
+    )
+  }
+  return cachedBuiltInCatalog
+}
+
+const makeDeps = (
+  overrides: Partial<HttpServerDeps> = {},
+  catalogOverride?: Awaited<ReturnType<typeof loadFailureReasonCatalog>>,
+): HttpServerDeps => ({
   restartTask: async () => {},
   unblockTask: async () => {},
   purgeTask: async () => {},
@@ -42,7 +58,14 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
+  failureReasonCatalog:
+    catalogOverride ?? (cachedBuiltInCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>),
   ...overrides,
+})
+
+// Vitest lifecycle: ensure the cached catalog is ready before any test runs.
+beforeAll(async () => {
+  await getBuiltInCatalog()
 })
 
 describe('HTTP action endpoint', () => {

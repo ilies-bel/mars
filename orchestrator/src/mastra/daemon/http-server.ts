@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http'
 import { listErrorKinds } from '../lib/error-kinds'
+import type { FailureReasonCatalog } from '../lib/failure-reasons'
 import type { RestartTaskError } from './restart-task'
 
 /**
@@ -47,6 +48,12 @@ export interface HttpServerDeps {
   restartAllDaemonKilled: () => Promise<string[]>
   /** Returns `true` while the daemon is accepting work (draining → `false`). */
   isAcceptingWork: () => boolean
+  /**
+   * Resolved failure-reason catalog (built-in seed + `.mars/failure-reasons/`
+   * overrides), loaded once at daemon start. Served verbatim by
+   * `GET /api/failure-reasons` for the inbox UI.
+   */
+  failureReasonCatalog: FailureReasonCatalog
 }
 
 export interface HttpServerHandle {
@@ -107,6 +114,7 @@ type EntityOp = 'restart' | 'unblock' | 'purge' | 'prune-worktree'
  * Start a local HTTP server bound to `127.0.0.1` only. Exposes:
  *
  *   GET  /error-kinds            → the error-kind registry (action menus)
+ *   GET  /api/failure-reasons    → the resolved failure-reason catalog
  *   POST /actions/restart/:id    → re-queue a failed/daemon-killed task
  *   POST /actions/unblock/:id    → phantom-recover a blocked task
  *   POST /actions/purge/:id      → drop a task + worktree
@@ -131,6 +139,15 @@ export const startHttpServer = async (
     // GET /error-kinds — the action-menu registry. Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/error-kinds') {
       sendJson(res, 200, { ok: true, errorKinds: listErrorKinds() })
+      return
+    }
+
+    // GET /api/failure-reasons — the resolved failure-reason catalog. The
+    // catalog is loaded once at daemon start (built-in seed + per-repo
+    // overrides under `.mars/failure-reasons/`); consumers re-`mars daemon
+    // reload` to pick up edits. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/api/failure-reasons') {
+      sendJson(res, 200, deps.failureReasonCatalog.list())
       return
     }
 
