@@ -283,13 +283,11 @@ export const Workers: Readonly<Record<WorkerName, Worker>> = {
 export const getWorker = (name: WorkerName): Worker => Workers[name]
 
 // Single, audited mapping from a Task's tag to the Worker that implements it.
-// The structured-write accommodation lane (tag='writer' → Writer Worker) was
-// removed by ADR 0019; 'coder' is now the only valid tag and every tag
-// resolves to the default Coder Worker. The seam is preserved so future tags
-// can be added by extending TaskTag and adding a row here.
-const TAG_TO_WORKER: Readonly<Record<TaskTag, WorkerName>> = {
+// TaskTag is a free-form string; unknown tags fall back to the Coder Worker.
+// Extend this map to route new tags to a different Worker.
+const TAG_TO_WORKER: Readonly<Record<string, WorkerName | undefined>> = {
   coder: 'Coder',
 } as const
 
 export const getWorkerForTag = (tag: TaskTag): Worker =>
-  Workers[TAG_TO_WORKER[tag]]
+  Workers[TAG_TO_WORKER[tag] ?? 'Coder']

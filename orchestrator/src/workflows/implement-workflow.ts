@@ -126,11 +126,10 @@ const planSchema = z
   })
   .nullable()
 
-// Worker-routing tag, mirroring {@link TaskTag}. Defaults to 'coder' when
-// the dispatcher omits it (legacy/tagless rows) so the workflow keeps
-// running on Coder unless a tag is explicitly threaded through.
-const tagSchema: z.ZodType<TaskTag> = z.enum(TASK_TAGS as readonly [TaskTag, ...TaskTag[]])
-  .default('coder')
+// Worker-routing tag, mirroring {@link TaskTag}. Accepts any non-empty string;
+// defaults to 'coder' when the dispatcher omits it (legacy/tagless rows) so
+// the workflow keeps running on Coder unless a tag is explicitly threaded through.
+const tagSchema: z.ZodType<TaskTag> = z.string().default('coder')
 
 // Task role, mirroring {@link TaskKind}. Defaults to 'task' when the
 // dispatcher omits it (legacy rows). 'diagnose' marks a diagnose-only

@@ -108,19 +108,20 @@ export type TaskKind = 'task' | 'fix' | 'diagnose'
  * workflow to pick a Worker from the registry. Adding a tag never widens
  * what a Worker can do — each tag maps to a single, pinned Worker.
  *
+ * Free-form string: any non-empty string is valid. Well-known values:
  *   - `'coder'` → default. Routes to the Coder Worker (sonnet, bypass,
- *                 full tool surface). The only valid tag since the
- *                 structured-write accommodation lane was removed (ADR 0019).
+ *                 full tool surface).
  *
  * Untagged rows default to `'coder'` at the read boundary, preserving the
  * "quick escape hatch" behaviour for hand-written `mars task add` calls.
- * Legacy rows with `tag='writer'` are coerced to `'coder'` at read time.
  */
-export type TaskTag = 'coder'
+export type TaskTag = string
 
-export const TASK_TAGS: readonly TaskTag[] = ['coder'] as const
+/** Well-known built-in tags. Not exhaustive — any string is a valid tag. */
+export const TASK_TAGS: readonly string[] = ['coder'] as const
 
-export const isTaskTag = (value: unknown): value is TaskTag => value === 'coder'
+export const isTaskTag = (value: unknown): value is TaskTag =>
+  typeof value === 'string' && value.length > 0
 
 /**
  * The phase that stamped a `'failed'` task. Set on the failure transition
@@ -1026,10 +1027,8 @@ export interface EnqueueTaskOptions {
   parentProposalId?: string
   sliceIndex?: number
   /**
-   * Worker-routing hint. Defaults to `'coder'` when omitted, matching the
-   * read-time coercion in {@link rowToTask}. Authored values must satisfy
-   * {@link isTaskTag}; an unknown string throws so the caller sees the
-   * rejection at enqueue rather than dispatch.
+   * Worker-routing hint. Any non-empty string is valid; defaults to `'coder'`
+   * when omitted. Unknown tags fall back to the Coder Worker at dispatch.
    */
   tag?: TaskTag
   /**
@@ -1058,7 +1057,7 @@ export const enqueueTask = async (
   if (opts?.priority !== undefined) validatePriority(opts.priority)
   if (opts?.tag !== undefined && !isTaskTag(opts.tag)) {
     throw new Error(
-      `tag must be one of ${TASK_TAGS.join(', ')}; got '${String(opts.tag)}'`,
+      `tag must be a non-empty string; got ${JSON.stringify(opts.tag)}`,
     )
   }
   await initQueue()
