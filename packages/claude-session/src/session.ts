@@ -29,4 +29,16 @@ export interface SessionHandle {
    * already exited.
    */
   sendMessage(text: string): void;
+  /**
+   * Sends SIGTERM to the underlying process. Returns immediately without
+   * waiting for the process to exit. Callers can await `exited` or call
+   * `forceKill()` on their own schedule if the process does not respond.
+   */
+  kill(): void;
+  /**
+   * Sends SIGKILL to the underlying process and resolves only after the
+   * process has exited. Calling this on an already-exited session is a
+   * safe no-op that resolves immediately.
+   */
+  forceKill(): Promise<void>;
 }
