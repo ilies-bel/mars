@@ -67,7 +67,7 @@ per-change and must be re-confirmed, even within the same session.
   `@mars/workflow` engine (`packages/workflow/`). Headless Claude Code in
   parallel worktrees → verify → fast-forward into `main`. Conflicts go
   to `vcs-supervisor` ("Vega"). Node `>=22.13.0`.
-- `.mars/` — per-repo state (`state.db`, `queue.db`, `mastra.db`,
+- `.mars/` — per-repo state (`state.db`, `queue.db`,
   `worktrees/<task-id>/`, `.merge.lock`). Gitignored.
 
 ## Key concepts

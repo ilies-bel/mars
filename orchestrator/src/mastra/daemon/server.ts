@@ -4,12 +4,13 @@ import {
   existsSync,
   mkdirSync,
   renameSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
-import { dirname } from 'node:path'
+import { dirname, resolve as resolvePath } from 'node:path'
 import { resolveContext } from '../context'
 import {
   addBlockers,
@@ -184,6 +185,30 @@ const makeWorkflowLogger = (
   }
 }
 
+/**
+ * One-shot cleanup: remove legacy `.mars/mastra.db*` files left over from
+ * the pre-@mars/workflow era. The orchestrator no longer opens or queries
+ * `.mars/mastra.db`, so the file (plus its SQLite `-shm`/`-wal` siblings)
+ * is dead weight that lingers on disk. Idempotent — `force: true` makes a
+ * missing file a no-op rather than an error.
+ */
+const removeLegacyMastraDb = (
+  stateDir: string,
+  log: (line: string) => void,
+): void => {
+  const removed: string[] = []
+  for (const name of ['mastra.db', 'mastra.db-shm', 'mastra.db-wal']) {
+    const path = resolvePath(stateDir, name)
+    if (existsSync(path)) {
+      rmSync(path, { force: true })
+      removed.push(name)
+    }
+  }
+  if (removed.length > 0) {
+    log(`[cleanup] removed legacy ${removed.join(', ')} from ${stateDir}`)
+  }
+}
+
 const writeLog = (logFile: string, line: string): void => {
   const stamped = `[${new Date().toISOString()}] ${line}\n`
   try {
@@ -272,6 +297,15 @@ export const startDaemon = async (
   } catch {
     log('git binary not found on PATH; refusing to start')
     process.exit(1)
+  }
+
+  // One-shot cleanup of pre-@mars/workflow `.mars/mastra.db*` files.
+  // Idempotent: silent if nothing exists, single info line if anything
+  // was removed. Runs every startup; deleting absent files is cheap.
+  try {
+    removeLegacyMastraDb(resolveContext().stateDir, log)
+  } catch (err) {
+    log(`[cleanup] legacy mastra.db sweep failed: ${(err as Error).message}`)
   }
 
   await initQueue()

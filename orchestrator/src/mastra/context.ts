@@ -6,7 +6,6 @@ export interface OrchestratorContext {
   repoRoot: string
   stateDir: string
   queueDbPath: string
-  mastraDbPath: string
   observabilityDbPath: string
   traceDbPath: string
   stateDbPath: string
@@ -106,7 +105,6 @@ export const resolveContext = (override?: string): OrchestratorContext => {
     // resolve to the same path. A one-shot merge in `initDatabases` lifts
     // existing repos from the historical `queue.db` + `state.db` layout.
     queueDbPath: resolve(stateDir, 'mars.db'),
-    mastraDbPath: resolve(stateDir, 'mastra.db'),
     observabilityDbPath: resolve(stateDir, 'observability.duckdb'),
     traceDbPath: resolve(stateDir, 'mars-trace.duckdb'),
     stateDbPath: resolve(stateDir, 'mars.db'),
