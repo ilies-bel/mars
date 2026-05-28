@@ -42,6 +42,8 @@ interface RowProps {
   onRestart: (() => void) | null
   /** True while the restart mutation is in-flight for this specific item. */
   restartPending: boolean
+  /** Non-null when the last restart attempt for this item failed; shows inline error. */
+  restartError: string | null
 }
 
 export const ActionQueueRow = ({
@@ -50,6 +52,7 @@ export const ActionQueueRow = ({
   onSelect,
   onRestart,
   restartPending,
+  restartError,
 }: RowProps) => {
   const baseClass = [
     'cursor-pointer border-l-2 px-3 py-2 transition-colors',
@@ -93,6 +96,11 @@ export const ActionQueueRow = ({
           </button>
         )}
       </div>
+      {restartError !== null && (
+        <div className="mt-1 font-mono text-[10px] text-[#ff4f4f]">
+          {restartError}
+        </div>
+      )}
     </li>
   )
 }
@@ -450,6 +458,12 @@ export const ActionQueuePage = () => {
                   restartPending={
                     restartMutation.isPending &&
                     restartMutation.variables === item.entityId
+                  }
+                  restartError={
+                    restartMutation.isError &&
+                    restartMutation.variables === item.entityId
+                      ? (restartMutation.error as Error).message
+                      : null
                   }
                 />
               ))}
