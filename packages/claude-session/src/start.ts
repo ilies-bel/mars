@@ -14,20 +14,29 @@ export interface StartOptions {
   args: string[];
   /** Environment variables passed to the child process. */
   env: Record<string, string>;
+  /**
+   * When set, `start` waits until this string appears anywhere in the PTY
+   * output before resolving — signalling that the child is ready to receive
+   * its first message.  If the process exits before the marker is seen,
+   * `start` rejects with an error that surfaces the exit code.
+   *
+   * When omitted, `start` resolves immediately after the PTY is created.
+   */
+  readinessMarker?: string;
 }
 
 /**
  * Launch a process inside a pseudo-terminal and return a session handle.
  *
- * The process is spawned immediately; `start` resolves as soon as the PTY
- * has been created — it does not wait for the child to emit output or
- * reach a ready state (that belongs to a later slice).
+ * When `opts.readinessMarker` is set, `start` blocks until that string
+ * appears in the PTY output.  If the process exits before the marker is
+ * observed, `start` rejects with a descriptive error.
  *
  * The returned handle is also stored in the library's internal registry
  * so it can be retrieved later via `getSession(id)`.
  */
 export async function start(opts: StartOptions): Promise<SessionHandle> {
-  const { id, cwd, args, env } = opts;
+  const { id, cwd, args, env, readinessMarker } = opts;
   const [file, ...rest] = args;
 
   if (!file) {
@@ -94,6 +103,24 @@ export async function start(opts: StartOptions): Promise<SessionHandle> {
     },
   };
   registerSession(handle);
+
+  if (readinessMarker !== undefined) {
+    await new Promise<void>((resolve, reject) => {
+      const unsub = handle.onData((chunk) => {
+        if (chunk.includes(readinessMarker)) {
+          unsub();
+          resolve();
+        }
+      });
+      // If the process exits before the marker is seen, surface the exit code.
+      handle.exited.then((code) => {
+        unsub();
+        reject(new Error(
+          `Session "${id}" exited with code ${code} before the readiness marker was observed`,
+        ));
+      });
+    });
+  }
 
   return handle;
 }
