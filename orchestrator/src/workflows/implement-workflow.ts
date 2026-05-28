@@ -36,7 +36,6 @@ import {
   addBlockers,
   hasIncompleteBlockers,
   updateTask,
-  upsertTranscript,
 } from '../mastra/queue'
 import { handleTaskFailureWithFixTask } from '../mastra/queue-fix-tasks'
 import { resolveOriginIdForTask } from '../mastra/lib/origin'
@@ -107,6 +106,8 @@ export const isTooHardAbortError = (err: unknown): boolean =>
 
 import { summarizeUsage } from '../mastra/lib/claude-usage'
 import { recordSignals, isReflectDisabled } from '../mastra/lib/reflect-signals'
+import { openStepSpanStore, type StepSpanStore } from '../mastra/lib/step-span-store'
+import { runWorkerWithSpan } from '../mastra/lib/run-worker-with-span'
 import { resolveVerifyCwd, type RanVerifyStep } from '../mastra/lib/derive-repro-command'
 import { resolveTaskCwd } from '../mastra/lib/resolve-task-cwd'
 import { relative } from 'node:path'
@@ -817,7 +818,6 @@ export const implementWorkflow = defineWorkflow<
         worktreePath,
         input.kind,
       )
-      const conversation: ClaudeEvent[] = []
       // Kind-aware routing: fix tasks go to the Fixer Worker (Opus, backlog-
       // mutation denied); everything else uses Coder via tag (the only valid
       // tag is 'coder' after ADR 0019). Kind takes precedence over tag for the
@@ -842,16 +842,30 @@ export const implementWorkflow = defineWorkflow<
             },
           })
         : null
-      const r = await worker.run(fullPrompt, {
-        cwd: worktreePath,
-        systemPrompt: resolveWorkerSystemPrompt(tag),
-        onEvent: async (event) => {
-          conversation.push(event)
-          watcher?.observe(event)
-          // Was `writer.write({type:'claude-event', event})`; the engine's
-          // progress emitter replaces the Mastra workflow writer.
-          ctx.emit('claude-event', event)
+      // Open span store best-effort — a DB hiccup must never fail the task.
+      const workerSpanStore = await openStepSpanStore(resolveContext().stateDbPath).catch(
+        (err: unknown) => {
+          console.warn('[span] failed to open step span store for run-claude-code:', err)
+          return undefined
         },
+      )
+      const r = await runWorkerWithSpan({
+        worker,
+        prompt: fullPrompt,
+        runOptions: {
+          cwd: worktreePath,
+          systemPrompt: resolveWorkerSystemPrompt(tag),
+          onEvent: async (event) => {
+            watcher?.observe(event)
+            // Was `writer.write({type:'claude-event', event})`; the engine's
+            // progress emitter replaces the Mastra workflow writer.
+            ctx.emit('claude-event', event)
+          },
+        },
+        spanStore: workerSpanStore,
+        stepName: 'run-claude-code',
+        workflowInstanceId: ctx.runId,
+        originId,
       })
       // Per-run read/action summary. Emitted on every wired run so paralysis
       // patterns are greppable in bulk (e.g. zero-action runs with a high
@@ -940,7 +954,7 @@ export const implementWorkflow = defineWorkflow<
         )
       }
 
-      const usage = summarizeUsage(conversation)
+      const usage = summarizeUsage(r.conversation)
       if (r.sessionId) {
         // The claudeSessionId is the transcript key — record it on the step
         // record so the trace view can reference the full transcript by key
@@ -951,14 +965,9 @@ export const implementWorkflow = defineWorkflow<
       await recordSignals(input.taskId, 'run-claude-code', usage, store).catch(() => {
         // signal capture must never fail the task
       })
-      if (!isReflectDisabled()) {
-        await upsertTranscript({
-          taskId: input.taskId,
-          conversationJson: JSON.stringify(conversation),
-        }, store).catch(() => {
-          // transcript capture must never fail the task
-        })
-      }
+      // Transcript and usage are now captured in the step_spans row opened
+      // by runWorkerWithSpan above. The legacy upsertTranscript call has been
+      // removed in favour of the span lifecycle (see PRD 436f14c7).
     })
 
     // ── verify ───────────────────────────────────────────────────────────
@@ -1002,17 +1011,25 @@ export const implementWorkflow = defineWorkflow<
         integrationBranch: input.integrationBranch,
       })
 
-      if (!isReflectDisabled()) {
-        const verifyOutput = r.steps
-          .map((s) => `=== ${s.name} (${s.passed ? 'pass' : 'fail'}) ===\n${s.output}`)
-          .join('\n\n')
-        await upsertTranscript({
-          taskId: input.taskId,
-          verifyOutput,
-        }, store).catch(() => {
-          // transcript capture must never fail the task
-        })
+      // Open a verify span so the verify output is captured in the new span
+      // lifecycle rather than the legacy task_transcripts table.
+      const verifySpanStore = isReflectDisabled()
+        ? undefined
+        : await openStepSpanStore(resolveContext().stateDbPath).catch(() => undefined)
+      let verifySpanId: string | null = null
+      if (verifySpanStore !== undefined) {
+        verifySpanId = await verifySpanStore
+          .openSpan({
+            stepName: 'verify',
+            workflowInstanceId: ctx.runId,
+            originId: input.taskId,
+          })
+          .catch(() => null)
       }
+
+      const verifyOutput = r.steps
+        .map((s) => `=== ${s.name} (${s.passed ? 'pass' : 'fail'}) ===\n${s.output}`)
+        .join('\n\n')
 
       if (!r.passed) {
         const failed = r.steps.filter((s) => !s.passed)
@@ -1065,12 +1082,27 @@ export const implementWorkflow = defineWorkflow<
             err,
           )
         })
+        // Capture the verify output in the span before throwing.
+        if (verifySpanId !== null && verifySpanStore !== undefined) {
+          await verifySpanStore
+            .closeSpan(verifySpanId, {
+              outcome: `failed:${firstFailedName}`,
+              verifyOutput,
+            })
+            .catch(() => {})
+        }
         // Throw instead of returning `{verified:false}`: the engine records
         // verify `failed` and stops the run before merge. The self-heal
         // side-effects above already spawned the recovery task.
         throw new Error(`task ${input.taskId} verify:${firstFailedName} failed`)
       }
 
+      // Capture the verify output in the span before returning.
+      if (verifySpanId !== null && verifySpanStore !== undefined) {
+        await verifySpanStore
+          .closeSpan(verifySpanId, { outcome: 'success', verifyOutput })
+          .catch(() => {})
+      }
       // Verify passed → return normally so the merge step runs.
       return { verified: true }
     })
