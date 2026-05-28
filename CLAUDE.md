@@ -137,6 +137,13 @@ actionable inbox item and the operator resolves it explicitly (e.g.
 `mars restart`). There is no retry budget, retry count, or tunable knob —
 exactly one recovery attempt per origin failure, full stop.
 
+Recovery tasks are **leaf nodes** in the task graph (ADR-0038): they
+cannot have blockers, cannot be blocked by anything, and the
+blocker-cascade does not recurse through them. The `task_blockers`
+insertion path rejects any edge whose either endpoint is a recovery
+task; the one legitimate origin→recovery edge is written by the
+recovery-spawn path itself.
+
 - Create edges at enqueue with `mars task add ... --blocked-by <id>`
   (repeatable; each id must already exist) or after the fact with
   `mars block <task-id> <blocker-id> [<blocker-id> ...]`.
