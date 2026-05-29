@@ -2065,6 +2065,21 @@ export const startDaemon = async (
       await handlePurge(id, false)
     },
     pruneWorktree: async (id) => {
+      // Guard: never remove a live task's worktree mid-flight. Removing the
+      // spawn cwd while verify is running produces a cryptic "spawn git ENOENT"
+      // that is indistinguishable from a missing git binary without this fix
+      // (root cause of the 2026-05-29 verify:has-diff incident). The statuses
+      // here match IN_FLIGHT_STATUSES above; they are inlined to avoid a
+      // dependency on that internal Set from the closure.
+      const task = await getTask(id)
+      if (task && (task.status === 'running' || task.status === 'verifying' || task.status === 'merging')) {
+        throw Object.assign(
+          new Error(
+            `task ${id} is in flight (status=${task.status}); cannot prune its worktree while live`,
+          ),
+          { code: 'WRONG_STATUS' as const },
+        )
+      }
       const { removeWorktree } = await import('../lib/git')
       const { getRepoRoot } = await import('../context')
       const { join } = await import('node:path')

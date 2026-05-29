@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { performance } from 'node:perf_hooks'
 import { randomUUID } from 'node:crypto'
 import type {
@@ -167,7 +168,17 @@ export const runTool = async (
   // about a missing binary instead of silently writing a bogus trace.
   if (exitInfo.spawnError) {
     const err = exitInfo.spawnError
-    const detail = err.code ? `${err.code}: ${err.message}` : err.message
+    // Distinguish two ENOENT causes — Node emits the same code for both:
+    //   (a) binary not on PATH: cwd exists but the binary was not found.
+    //   (b) cwd missing: the spawn cwd directory itself does not exist.
+    // Check the cwd on disk to tell them apart so post-mortems can immediately
+    // identify a deleted worktree rather than suspecting a PATH misconfiguration.
+    let detail: string
+    if (err.code === 'ENOENT' && !existsSync(input.cwd)) {
+      detail = `working directory no longer exists: ${input.cwd}`
+    } else {
+      detail = err.code ? `${err.code}: ${err.message}` : err.message
+    }
     const wrapped = new Error(
       `runTool: spawn ${input.tool} failed (${detail})`,
     )
