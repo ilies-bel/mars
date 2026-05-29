@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { DraftFeature } from '@/shared/schemas'
 
 interface ProposalDetailDrawerProps {
@@ -33,14 +34,77 @@ export const ProposalDetailDrawer = ({
   proposal,
   onClose,
 }: ProposalDetailDrawerProps) => {
+  const drawerRef = useRef<HTMLElement>(null)
+
+  // On open: save the previously focused element and move focus into the drawer.
+  // On close (cleanup): restore focus to where it was.
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement | null
+    drawerRef.current?.focus()
+    return () => {
+      prev?.focus?.()
+    }
+  }, [])
+
+  // Escape-to-close + Tab focus trap.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        onClose()
+        return
+      }
+      if (e.key === 'Tab') {
+        const container = drawerRef.current
+        if (!container) return
+        const focusable = [
+          ...container.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        ]
+        if (focusable.length === 0) {
+          e.preventDefault()
+          return
+        }
+        const first = focusable[0]!
+        const last = focusable[focusable.length - 1]!
+        if (e.shiftKey) {
+          if (document.activeElement === first || document.activeElement === container) {
+            e.preventDefault()
+            last.focus()
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault()
+            first.focus()
+          }
+        }
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [onClose])
+
   return (
-    <aside
-      role="dialog"
-      aria-modal="true"
-      aria-label="Proposal detail"
-      data-testid="proposal-detail-drawer"
-      className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-iron/40 bg-bg shadow-2xl"
-    >
+    <>
+      {/* Scrim — sits at z-40 (below the drawer's z-50) so clicks outside dismiss the panel */}
+      <div
+        data-testid="proposal-detail-overlay"
+        aria-hidden="true"
+        className="fixed inset-0 z-40 bg-fg/40"
+        onClick={onClose}
+      />
+      <aside
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Proposal detail"
+        data-testid="proposal-detail-drawer"
+        tabIndex={-1}
+        className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-iron/40 bg-bg shadow-2xl outline-none"
+      >
       <header className="flex items-start justify-between gap-3 border-b border-iron/40 px-4 py-3">
         <div className="flex min-w-0 flex-col gap-2">
           <h2
@@ -78,5 +142,6 @@ export const ProposalDetailDrawer = ({
         </button>
       </header>
     </aside>
+    </>
   )
 }
