@@ -2927,6 +2927,13 @@ const main = async (): Promise<void> => {
         `arc ${originId}: ${arc.taskCount} task(s) [${statusMixStr}], ${arc.totals.eventCount} event(s), ${arc.totals.totalWeightedTokens.toFixed(0)} weighted tokens total`,
       )
       for (const t of arc.tasks) {
+        const weightedTokens = Math.round(
+          t.totals.inputTokens +
+            t.totals.outputTokens +
+            t.totals.cacheCreateTokens +
+            t.totals.cacheReadTokens * 0.1,
+        )
+        console.log(`  task ${t.taskId} [${t.status}]: weighted-tokens=${weightedTokens}`)
         for (const note of t.transcriptNotes) {
           console.log(`  note (${t.taskId}): ${note}`)
         }
