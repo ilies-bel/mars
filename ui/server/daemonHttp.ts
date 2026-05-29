@@ -14,7 +14,6 @@
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { SseHub } from './sse.ts'
 
 /** Mirror of the orchestrator's ActionDescriptor (received over the wire). */
 export interface ActionDescriptor {
@@ -201,65 +200,4 @@ export const proxyAction = async (
       body: { ok: false, error: (err as Error).message, errorCode: 'PROXY_FAILED' },
     }
   }
-}
-
-/**
- * Subscribe to the daemon's /view/stream SSE endpoint and relay each channel
- * event to all connected browser clients via the SseHub.
- *
- * Reconnects automatically on close or error so the UI stays live across
- * daemon restarts. When the daemon is not yet running (no port file) the
- * function retries until it becomes available.
- */
-export const connectDaemonStream = (stateDir: string, hub: SseHub): void => {
-  const attemptConnect = async (): Promise<void> => {
-    const port = await readDaemonHttpPort(stateDir)
-    if (port === null) {
-      setTimeout(() => { void attemptConnect() }, 2000)
-      return
-    }
-
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/stream`, {
-        headers: { Accept: 'text/event-stream' },
-      })
-
-      if (!res.ok || !res.body) {
-        setTimeout(() => { void attemptConnect() }, 2000)
-        return
-      }
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() ?? ''
-
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              const channel = line.slice('event: '.length).trim()
-              hub.broadcast(channel)
-            }
-          }
-        }
-      } finally {
-        reader.cancel().catch(() => {})
-      }
-
-      // Stream closed normally — reconnect after a short delay.
-      setTimeout(() => { void attemptConnect() }, 1000)
-    } catch {
-      // Connection failed — retry with backoff.
-      setTimeout(() => { void attemptConnect() }, 2000)
-    }
-  }
-
-  void attemptConnect()
 }
