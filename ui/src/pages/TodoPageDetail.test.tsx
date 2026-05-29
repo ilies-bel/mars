@@ -290,6 +290,52 @@ describe('inbox detail – Origins section', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Open-task-detail affordance: failed-task rows expose the shared drawer.
+// ---------------------------------------------------------------------------
+
+describe('inbox detail – Open task detail affordance', () => {
+  it('renders the Open task detail button for a real failed-task row', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(BASE_ITEM, qc)
+    expect(html).toContain('data-testid="aq-open-task-detail"')
+    expect(html).toContain('Open task detail')
+  })
+
+  it('omits the button for the daemon-killed-batch sentinel', () => {
+    const qc = makeClient({ taskId: '__daemon-killed-batch__' })
+    const html = renderDetail(
+      makeItem({
+        id: 'failed-task:__daemon-killed-batch__',
+        entityId: '__daemon-killed-batch__',
+      }),
+      qc,
+    )
+    expect(html).not.toContain('data-testid="aq-open-task-detail"')
+  })
+
+  it('omits the button for a stale-worktree row', () => {
+    const stale = makeItem({
+      kind: 'stale-worktree',
+      errorKind: 'stale-worktree',
+      actions: [{ id: 'investigate', label: 'Investigate', op: 'investigate' }],
+      failureReasonCode: null,
+      staleWorktreeDetail: {
+        prompt: 'some task',
+        status: 'running',
+        ageHours: 5,
+        updatedAt: new Date().toISOString(),
+        branch: 'task/t-1',
+        empty: false,
+        investigation: null,
+      },
+    })
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(stale, qc)
+    expect(html).not.toContain('data-testid="aq-open-task-detail"')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Responsive layout: panes must stack on narrow viewports.
 // ---------------------------------------------------------------------------
 
