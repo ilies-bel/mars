@@ -116,13 +116,8 @@ export const startServer = async (
       }
 
       if (path === '/api/tasks') {
-        try {
-          const exists = await db.tableExists()
-          const tasks = exists ? await db.listTasks() : []
-          return jsonResponse(200, { tasks })
-        } catch (err) {
-          return jsonResponse(500, { error: (err as Error).message })
-        }
+        const r = await proxyGet(ctx.stateDir, '/view/tasks')
+        return jsonResponse(r.status, r.body)
       }
 
       if (path === '/api/progress') {
