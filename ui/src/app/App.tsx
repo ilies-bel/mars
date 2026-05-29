@@ -52,7 +52,7 @@ const App = () => {
         />
       ) : null}
       {proposal ? (
-        <ProposalDetailDrawer proposal={proposal} onClose={clearTaskHash} />
+        <ProposalDetailDrawer proposal={proposal} onClose={clearTaskHash} tasks={tasks ?? []} />
       ) : null}
     </div>
   )
