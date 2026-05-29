@@ -55,6 +55,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   inboxResolve: async () => {},
   inboxDismiss: async () => {},
   todoDismiss: async () => {},
+  viewInbox: async () => [],
   ...overrides,
 })
 

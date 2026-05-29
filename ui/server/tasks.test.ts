@@ -52,6 +52,12 @@ const makeDaemonDeps = (
     cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,
   viewTasks,
+  viewProgress: async () => ({ tasks: [], proposals: [] }),
+  inboxAck: async () => {},
+  inboxResolve: async () => {},
+  inboxDismiss: async () => {},
+  todoDismiss: async () => {},
+  viewInbox: async () => [],
 })
 
 describe('GET /api/tasks — proxies daemon /view/tasks', () => {
