@@ -69,15 +69,15 @@ const result = await runWorkflow(implementWorkflow, input, {
 1. `hasIncompleteBlockers(taskId)` → if true, **throw**
    `BLOCKERS_ABORT_MESSAGE` (a blocker landed between dispatch and run;
    the task stays queued).
-2. Dirty-main preflight: `checkSetupPreflight`. If the merge target has
-   uncommitted tracked changes, route through
-   `handleTaskFailureWithFixTask` (`setup:preflight`) — which parks this
-   task `blocked` with a real `task_blockers` edge to the shared
-   recovery task — then **throw** `setup:preflight/dirty-main`.
-3. `updateTask({ status: 'running' })`, `createWorktree`, persist
+2. `updateTask({ status: 'running' })`, `createWorktree`, persist
    `branch`/`worktreePath`, capture `integrationHeadSha`
-   (`handle.setSha(headSha)`).
-4. `installWorktreeDeps`. On failure: `updateTask({ status:'failed',
+   (`handle.setSha(headSha)`). Dirty-main detection runs dispatch-side
+   in `runMainDirtyDispatchCheck` (daemon) before this step runs, and
+   verify-side at the top of the verify step below — both routing
+   through `spawnOrAttachMainCommitter` (signature `verify:main-dirty`).
+   The legacy setup-time `checkSetupPreflight` backstop was retired in
+   slice K.
+3. `installWorktreeDeps`. On failure: `updateTask({ status:'failed',
    failedPhase:'code' })` + `handleTaskFailureWithFixTask`
    (`setup:install`) then **throw**. (`failedPhase:'code'` is the
    sentinel for non-resumable setup-time failures.)
@@ -160,7 +160,7 @@ real edge):
 | Predicate | Sentinel | Meaning |
 |---|---|---|
 | `isBlockersAbortError` | `BLOCKERS_ABORT_MESSAGE` | blocker landed between dispatch and run; stays queued |
-| `isDirtyMainSetupError` | `setup:preflight/dirty-main` | merge target dirty at setup; parked blocked, shared recovery spawned |
+| `isMainDirtyVerifyError` | `verify:main-dirty` | integration branch dirty at verify; parked behind `main-commiter` recovery |
 | `isTooHardAbortError` | `TOO_HARD_ABORT_MESSAGE` | read-span guard tripped; diagnose Chore spawned as blocker |
 
 On any other failure the daemon emits `task.failed`; on success/other it

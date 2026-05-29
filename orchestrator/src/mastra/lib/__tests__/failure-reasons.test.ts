@@ -219,6 +219,23 @@ describe('failure-reasons catalog', () => {
       )
     })
 
+    it('legacy preflight/dirty-main strings map to verify:main-dirty (slice K bridge)', () => {
+      // Bare legacy signature.
+      expect(failureReasonStringToCode('setup:preflight/dirty-main')).toBe(
+        'verify:main-dirty',
+      )
+      // Wrapped legacy form persisted by the retry-budget exhaustion path.
+      expect(
+        failureReasonStringToCode(
+          'retry_budget_exhausted:setup:preflight/dirty-main',
+        ),
+      ).toBe('verify:main-dirty')
+      // Case-insensitive.
+      expect(failureReasonStringToCode('SETUP:PREFLIGHT/DIRTY-MAIN')).toBe(
+        'verify:main-dirty',
+      )
+    })
+
     it('no-edits-made variants → code:no-edits-made', () => {
       expect(failureReasonStringToCode('no-edits-made')).toBe(
         'code:no-edits-made',

@@ -14,9 +14,10 @@
  *
  * The helper is best-effort against transient git failures: if `git status`
  * itself errors, it returns `{ dirty: false, hash: null }` and the caller
- * proceeds as if the branch is clean. This mirrors the pre-existing
- * `checkSetupPreflight` behavior — the new path coexists with the legacy
- * preflight (which acts as a backstop until slice K retires it).
+ * proceeds as if the branch is clean. The legacy `checkSetupPreflight`
+ * backstop that used to catch transient git failures was retired in
+ * slice K; pessimistically reporting clean here is the documented
+ * fallback now.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { runTool, type TraceCtx } from './run-tool'
@@ -48,9 +49,10 @@ export interface IntegrationBranchDirtyResult {
  *
  * Failure-mode contract:
  *  - Non-zero exit from `git status` ⇒ treat as clean (return dirty:false).
- *    The legacy `checkSetupPreflight` preflight is still in place as a
- *    backstop; pessimistically reporting clean here is safer than throwing,
- *    which would crash the dispatch loop on a transient git hiccup.
+ *    Pessimistically reporting clean here is safer than throwing, which
+ *    would crash the dispatch loop on a transient git hiccup. (The legacy
+ *    setup-time preflight that doubled as a backstop was retired in
+ *    slice K.)
  *  - `git status` succeeds, `git diff` fails ⇒ return dirty:true with
  *    hash:null. The committer will still spawn; it just won't dedup against
  *    other dirty-main hits in the same window.
@@ -364,8 +366,7 @@ const spawnFresh = async (
           VERIFY_MAIN_DIRTY_CODE,
           VERIFY_MAIN_DIRTY_CODE,
           input.sourceOriginId,
-          // Max priority: every queued task is blocked behind this. Same
-          // policy as the legacy shared `dirtyMainAtSetupRecipe`.
+          // Max priority: every queued task is blocked behind this.
           3,
           serialiseMainCommiterPayload(payload),
           now,
