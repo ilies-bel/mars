@@ -63,6 +63,7 @@ const makeDeps = (
   recipeCatalog: cachedRecipeCatalog!,
   traceStore: nullTraceStore,
   viewTasks,
+  viewInbox: async () => [],
   ...overrides,
 })
 
