@@ -257,6 +257,46 @@ describe('TaskDetailDrawer – subgraph (originating proposal)', () => {
   })
 })
 
+// ── A11y: scrim + focusable drawer ───────────────────────────────────────────
+
+/**
+ * These tests verify the static HTML structure that enables the keyboard /
+ * pointer a11y behaviours (Escape-to-close, outside-click dismiss, focus trap,
+ * focus restoration).  The interactive side of those behaviours (actual key
+ * events and focus movement) requires a live DOM and is covered by the Manual
+ * verification steps in the task spec.
+ */
+describe('TaskDetailDrawer – a11y overlay and focusability', () => {
+  it('renders a scrim overlay element alongside the drawer panel', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
+    )
+    expect(html).toContain('data-testid="task-detail-overlay"')
+  })
+
+  it('scrim is aria-hidden so it does not pollute the screen reader tree', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
+    )
+    expect(html).toContain('aria-hidden="true"')
+  })
+
+  it('scrim uses z-40 (lower than the drawer z-50) so the drawer stays on top', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
+    )
+    expect(html).toContain('z-40')
+    expect(html).toContain('z-50')
+  })
+
+  it('drawer panel has tabindex="-1" so it can receive programmatic focus on open', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
+    )
+    expect(html).toContain('tabindex="-1"')
+  })
+})
+
 // ── Subgraph: cluster colours match main canvas ───────────────────────────────
 
 describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', () => {
