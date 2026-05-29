@@ -63,6 +63,8 @@ const makeDeps = (
   recipeCatalog: cachedRecipeCatalog!,
   traceStore: nullTraceStore,
   viewTasks,
+  viewProgress: async () => ({ tasks: [], proposals: [] }),
+  viewTerminalEvents: async () => ({ events: [] }),
   ...overrides,
 })
 
