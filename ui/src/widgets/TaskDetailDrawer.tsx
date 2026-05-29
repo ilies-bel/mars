@@ -10,12 +10,31 @@
  * The subgraph reuses `focusSubgraph` — the same helper used by the main DAG
  * canvas — and uses identical cluster colours so nodes carry the same visual
  * semantics in both contexts.
+ *
+ * A step timeline section shows every Step span for the task's originId,
+ * fetched from `/api/step-spans`. Pass `stepSpans` directly to skip the fetch
+ * (used in tests and static rendering).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 import { dagClusterStyle, DAG_EDGE_BLOCKER, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
+
+/** A single step execution span — one step_started event paired with its step_ended (if any). */
+export interface StepSpan {
+  stepName: string
+  phase: string | null
+  workflowInstanceId: string
+  workerName: string | null
+  /** 'running' when no step_ended event has been recorded yet. */
+  outcome: 'running' | 'completed' | 'failed' | 'killed'
+  startedAt: string
+  endedAt: string | null
+  durationMs: number | null
+  taskId: string | null
+  originId: string | null
+}
 
 interface TaskDetailDrawerProps {
   /** Task id pulled from `#/task/<id>`. */
@@ -37,6 +56,12 @@ interface TaskDetailDrawerProps {
    * Pass an empty array when there are no proposals.
    */
   proposals?: ProgressProposalNode[]
+  /**
+   * Pre-loaded step spans. When provided the step timeline renders immediately
+   * without fetching `/api/step-spans`. Omit in production; pass in tests or
+   * static rendering to control the timeline content directly.
+   */
+  stepSpans?: StepSpan[]
 }
 
 type LoadState =
@@ -168,18 +193,43 @@ const buildSubgraphLayout = (
   return { positioned, edges: subgraph.edges }
 }
 
+/** Format a durationMs value for display (e.g. "500ms" or "12.3s"). */
+const formatDuration = (ms: number): string =>
+  ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+
+/** Outcome → short human label for the timeline row. */
+const outcomeLabel = (outcome: StepSpan['outcome']): string => {
+  switch (outcome) {
+    case 'running':
+      return 'running…'
+    case 'completed':
+      return 'done'
+    case 'failed':
+      return 'failed'
+    case 'killed':
+      return 'killed'
+  }
+}
+
 export const TaskDetailDrawer = ({
   taskId,
   onClose,
   fetchImpl,
   tasks,
   proposals,
+  stepSpans,
 }: TaskDetailDrawerProps) => {
   const drawerRef = useRef<HTMLElement>(null)
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [closing, setClosing] = useState(false)
   // Synchronous guard — prevents double-scheduling the close timer.
   const closingRef = useRef(false)
+
+  /**
+   * Step spans fetched from the API. Null until the task detail fetch succeeds
+   * and the spans request completes. Ignored when the `stepSpans` prop is set.
+   */
+  const [fetchedSpans, setFetchedSpans] = useState<StepSpan[] | null>(null)
 
   /**
    * Initiates the exit animation (180 ms) then calls the onClose prop.
@@ -245,6 +295,10 @@ export const TaskDetailDrawer = ({
   }, [handleClose])
 
   useEffect(() => {
+    // When stepSpans prop is provided, skip the task+spans fetch entirely —
+    // the caller has pre-loaded spans (used in tests and static rendering).
+    if (stepSpans !== undefined) return
+
     let cancelled = false
     setState({ kind: 'loading' })
     const f = fetchImpl ?? fetch
@@ -259,8 +313,24 @@ export const TaskDetailDrawer = ({
           setState({ kind: 'error', message: `HTTP ${res.status}` })
           return
         }
-        const data = (await res.json()) as { task: { status: string } }
+        const data = (await res.json()) as {
+          task: { status: string; originId?: string | null }
+        }
         setState({ kind: 'ready', taskStatus: data.task.status })
+
+        // Fetch step spans. Use originId from the task response (falls back to
+        // taskId when the column is absent from older DBs).
+        const originId = data.task.originId ?? taskId
+        f(`/api/step-spans?originId=${encodeURIComponent(originId)}`)
+          .then(async (spansRes) => {
+            if (cancelled || !spansRes.ok) return
+            const spansData = (await spansRes.json()) as { spans: StepSpan[] }
+            if (!cancelled) setFetchedSpans(spansData.spans)
+          })
+          .catch(() => {
+            // Step spans are optional display data — a failed fetch silently
+            // leaves the timeline section absent rather than erroring the drawer.
+          })
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -270,7 +340,7 @@ export const TaskDetailDrawer = ({
     return () => {
       cancelled = true
     }
-  }, [taskId, fetchImpl])
+  }, [taskId, fetchImpl, stepSpans])
 
   // Compute the focus subgraph from props. This is independent of the detail
   // fetch so it renders immediately — the operator sees relationship context
@@ -298,6 +368,10 @@ export const TaskDetailDrawer = ({
   const svgHeight = subgraph
     ? subgraph.positioned.reduce((acc, n) => Math.max(acc, n.y + MINI_NODE_H), 0) + MINI_PAD_Y
     : 0
+
+  // The resolved spans to render: prefer the prop (for testing / static
+  // rendering), otherwise use the spans fetched from the API.
+  const resolvedSpans = stepSpans !== undefined ? stepSpans : fetchedSpans
 
   return (
     <>
@@ -408,6 +482,51 @@ export const TaskDetailDrawer = ({
               })}
             </svg>
           </div>
+        </section>
+      ) : null}
+
+      {/* Step timeline — renders when spans data is available (prop or fetched) */}
+      {resolvedSpans !== null ? (
+        <section
+          data-testid="task-step-timeline"
+          className="border-b border-iron/20 px-4 py-3"
+        >
+          <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+            Steps
+          </h3>
+          {resolvedSpans.length === 0 ? (
+            <p className="font-mono text-xs text-iron">No steps recorded yet</p>
+          ) : (
+            <ol className="flex flex-col gap-1">
+              {resolvedSpans.map((s, i) => (
+                <li
+                  key={`${s.workflowInstanceId}-${s.stepName}-${i}`}
+                  data-testid="step-timeline-row"
+                  data-outcome={s.outcome}
+                  className={`flex items-center gap-2 rounded px-2 py-1 font-mono text-xs ${
+                    s.outcome === 'running'
+                      ? 'bg-amber-500/10 text-amber-400'
+                      : s.outcome === 'failed'
+                        ? 'text-red-400'
+                        : s.outcome === 'killed'
+                          ? 'text-orange-400'
+                          : 'text-fg'
+                  }`}
+                >
+                  <span className="w-16 shrink-0 font-semibold">{s.stepName}</span>
+                  {s.workerName != null ? (
+                    <span className="shrink-0 text-muted">{s.workerName}</span>
+                  ) : null}
+                  <span className="shrink-0 text-muted">{outcomeLabel(s.outcome)}</span>
+                  {s.durationMs != null ? (
+                    <span className="ml-auto shrink-0 text-muted">
+                      {formatDuration(s.durationMs)}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          )}
         </section>
       ) : null}
 

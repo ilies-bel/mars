@@ -390,6 +390,80 @@ export const startServer = async (
         }
       }
 
+      // GET /api/step-spans?originId=<id> — step timeline for a task arc.
+      // Returns all step_started events for the given originId, paired with
+      // their matching step_ended events (keyed by workflowInstanceId+stepName).
+      // Steps with no matching step_ended have outcome='running'. Ordered by
+      // startedAt ascending (workflow order).
+      if (path === '/api/step-spans' && req.method === 'GET') {
+        const originId = url.searchParams.get('originId')
+        if (!originId) {
+          return jsonResponse(400, { error: 'originId query parameter is required' })
+        }
+        try {
+          const store = await openTraceEventStore(ctx.queueDbPath)
+          try {
+            const [started, ended] = await Promise.all([
+              store.query({ originId, kind: ['step_started'], limit: 1000 }),
+              store.query({ originId, kind: ['step_ended'], limit: 1000 }),
+            ])
+
+            // Map (workflowInstanceId, stepName) → the ended event so we can
+            // pair them in O(n) rather than O(n²).
+            const endedMap = new Map<string, (typeof ended)[0]>()
+            for (const e of ended) {
+              const wfId = e.payload.workflowInstanceId
+              const stepName = e.payload.stepName
+              if (typeof wfId === 'string' && typeof stepName === 'string') {
+                endedMap.set(`${wfId}\0${stepName}`, e)
+              }
+            }
+
+            const spans = started
+              .map((s) => {
+                const wfId = s.payload.workflowInstanceId
+                const stepName = s.payload.stepName
+                const key =
+                  typeof wfId === 'string' && typeof stepName === 'string'
+                    ? `${wfId}\0${stepName}`
+                    : null
+                const endEvent = key ? endedMap.get(key) : undefined
+
+                return {
+                  stepName: typeof stepName === 'string' ? stepName : '',
+                  phase: s.phase,
+                  workflowInstanceId: typeof wfId === 'string' ? wfId : '',
+                  workerName:
+                    typeof s.payload.workerName === 'string'
+                      ? s.payload.workerName
+                      : null,
+                  outcome: endEvent
+                    ? typeof endEvent.payload.outcome === 'string'
+                      ? endEvent.payload.outcome
+                      : 'completed'
+                    : 'running',
+                  startedAt: s.timestamp,
+                  endedAt: endEvent ? endEvent.timestamp : null,
+                  durationMs:
+                    endEvent && typeof endEvent.payload.durationMs === 'number'
+                      ? endEvent.payload.durationMs
+                      : null,
+                  taskId: s.taskId,
+                  originId: s.originId,
+                }
+              })
+              // Ascending by startedAt — preserves workflow execution order.
+              .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+
+            return jsonResponse(200, { spans })
+          } finally {
+            await store.close()
+          }
+        } catch (err) {
+          return jsonResponse(500, { error: (err as Error).message })
+        }
+      }
+
       if (path.startsWith('/api/')) {
         return jsonResponse(404, { error: `no route for ${path}` })
       }
