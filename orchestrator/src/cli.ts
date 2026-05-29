@@ -974,6 +974,78 @@ const main = async (): Promise<void> => {
     return
   }
 
+  if (cmd === 'install') {
+    // Consumer install entrypoint (slice 1/5).
+    //
+    // Lays every file listed in the framework's manifest.json down in the
+    // consumer repo (cwd → ctx.repoRoot), then writes mars.lock at the
+    // consumer root. Owned files overwrite unconditionally (ADR-0004);
+    // hybrid files write only if absent (ADR-0007 refuse-on-existence is
+    // implemented in slice 2).
+    const { fileURLToPath } = await import('node:url')
+    const { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } =
+      await import('node:fs')
+    const { dirname: dirnameOf, join: pathJoin, resolve: pathResolve } =
+      await import('node:path')
+    const { runInstall } = await import('./commands/install.js')
+    const installModule = await import('./commands/install.js')
+    type Manifest = import('./commands/install.js').Manifest
+    type InstallDeps = import('./commands/install.js').InstallDeps
+    void installModule
+
+    // cli.ts lives at <frameworkRoot>/orchestrator/src/cli.ts (source) or
+    // a sibling location in a compiled binary. Resolve the framework root
+    // by walking up three directories from the entry file.
+    const cliEntryPath = fileURLToPath(import.meta.url)
+    const frameworkRoot = dirnameOf(dirnameOf(dirnameOf(cliEntryPath)))
+    const manifestPath = pathResolve(frameworkRoot, 'manifest.json')
+
+    if (!existsSync(manifestPath)) {
+      console.error(`mars install: manifest not found at ${manifestPath}`)
+      process.exit(1)
+    }
+
+    let manifest: Manifest
+    try {
+      manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`mars install: failed to parse ${manifestPath}: ${msg}`)
+      process.exit(1)
+    }
+
+    const consumerRoot = ctx.repoRoot
+
+    const deps: InstallDeps = {
+      readBytes: (srcPath: string): Buffer => readFileSync(srcPath),
+      writeFile: (dstPath: string, content: Buffer, mode?: number): void => {
+        mkdirSync(dirnameOf(dstPath), { recursive: true })
+        writeFileSync(dstPath, content)
+        if (mode !== undefined) chmodSync(dstPath, mode)
+      },
+      exists: (p: string): boolean => existsSync(p),
+      log: (msg: string): void => console.log(msg),
+    }
+
+    void pathJoin // suppress unused-import lint; kept for parity with init block
+
+    try {
+      const result = await runInstall(
+        manifest,
+        frameworkRoot,
+        consumerRoot,
+        MARS_VERSION,
+        deps,
+      )
+      console.log(`mars install: ${result.outcome} (${result.lock.files.length} files)`)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`mars install: ${msg}`)
+      process.exit(1)
+    }
+    return
+  }
+
   const enqueueViaDaemon = async (
     prompt: string,
     skipTriage: boolean,
