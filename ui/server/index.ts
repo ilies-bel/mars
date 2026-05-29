@@ -2,10 +2,11 @@ import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { openTraceEventStore } from '../../orchestrator/src/mastra/lib/trace-events-store.ts'
 import { loadAgents } from './agents.ts'
-import { connectDaemonStream, fetchKpis, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'
+import { fetchKpis, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'
 import { StateDb, TaskDb } from './db.ts'
 import { resolveRepo } from './repo.ts'
 import { SseHub } from './sse.ts'
+import { watchQueue } from './watch.ts'
 
 interface CliArgs {
   repo?: string
@@ -71,10 +72,13 @@ export const startServer = async (
   await stateDb.init()
 
   const hub = new SseHub()
-  // The daemon is the sole reader of its own database; it pushes channel
-  // invalidations over /view/stream and we relay them to browsers. No fs
-  // watch on the DB file remains in the UI server.
-  connectDaemonStream(ctx.stateDir, hub)
+  // queueDbPath and stateDbPath now resolve to the same `.mars/mars.db`
+  // file (see resolveRepo), so a single watcher covers both task and
+  // proposal/inbox mutations — broadcast every affected channel from it.
+  watchQueue(ctx.queueDbPath, () => {
+    hub.broadcast('tasks')
+    hub.broadcast('todo')
+  })
 
   const distDir = args.distDir ? resolve(args.distDir) : undefined
 
