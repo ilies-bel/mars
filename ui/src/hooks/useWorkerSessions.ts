@@ -7,12 +7,16 @@ interface State {
   error: string | null
 }
 
+/** How often to re-fetch sessions to pick up live → terminal transitions. */
+const LIVE_POLL_MS = 5_000
+
 export const useWorkerSessions = (agentName: string | null): State => {
   const query = useQuery({
     queryKey: ['sessions', agentName],
     queryFn: () =>
       agentName ? fetchWorkerSessions(agentName) : Promise.resolve([]),
     enabled: agentName !== null,
+    refetchInterval: LIVE_POLL_MS,
   })
 
   const sessions = query.data ?? null
