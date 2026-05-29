@@ -145,7 +145,7 @@ export const discoverAllWorktrees = (
   return merged
 }
 
-const removeWorktreeAt = async (
+export const removeWorktreeAt = async (
   wt: DiscoveredWorktree,
   repoRoot: string,
   timeoutMs = DEFAULT_WORKTREE_REMOVE_TIMEOUT_MS,
