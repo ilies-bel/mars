@@ -12,6 +12,8 @@ import {
   dropAlreadySatisfiedSlices,
   composeTaskPrompt,
   subDeliverableSchema,
+  detectActionAntiPattern,
+  applyActionQualityGuard,
 } from '../slice-workflow'
 import {
   composePrompt,
@@ -3221,5 +3223,141 @@ describe('hitl slice completion: both inbox resolved and sub-task done required'
       args: [coderTaskId],
     })
     expect((coderRowAfter.rows[0] as unknown as { status: string }).status).toBe('queued')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// detectActionAntiPattern — pure unit tests, no LLM calls
+// ---------------------------------------------------------------------------
+
+describe('detectActionAntiPattern: vague-prose detection', () => {
+  it('flags a too-short action (word count below minimum)', () => {
+    // "implement the feature" = 3 words
+    expect(detectActionAntiPattern('implement the feature')).not.toBeNull()
+  })
+
+  it('flags a long action that contains the fluff word "implement"', () => {
+    const action =
+      'implement the feature in a reasonable way to support user requests and handle edge cases'
+    const result = detectActionAntiPattern(action)
+    expect(result).not.toBeNull()
+    expect(result).toContain('implement')
+  })
+
+  it('flags a long action that contains the fluff word "ensure"', () => {
+    // Has file path (passes that check) but "ensure" is a fluff word
+    const action =
+      'In src/foo/bar.ts ensure the function validates input before returning the result'
+    const result = detectActionAntiPattern(action)
+    expect(result).not.toBeNull()
+    expect(result).toContain('ensure')
+  })
+
+  it('flags an action that lacks both a file path and a backtick-quoted identifier', () => {
+    const action =
+      'Add the new validation logic to the module and update the configuration to reflect the change'
+    expect(detectActionAntiPattern(action)).not.toBeNull()
+  })
+
+  it('passes a concrete action with a file path and sufficient word count', () => {
+    const action =
+      'In orchestrator/src/workflows/slice-workflow.ts, add `detectActionAntiPattern` after the SCHEMA_DROP_PATTERNS constant and export it.'
+    expect(detectActionAntiPattern(action)).toBeNull()
+  })
+
+  it('passes a concrete action with a backtick-quoted identifier and sufficient word count', () => {
+    const action =
+      'In `slicerOutputSchema` (slice-workflow.ts line 44), add `prescriptiveAction: z.string().min(1)` after `readFirst` and update the tests accordingly.'
+    expect(detectActionAntiPattern(action)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// applyActionQualityGuard — behaviour tests with injected mock reprompt
+// ---------------------------------------------------------------------------
+
+describe('applyActionQualityGuard: re-prompt on vague actions', () => {
+  it('does not call reprompt when action is already concrete', async () => {
+    const slices = [
+      {
+        title: 'Add detectActionAntiPattern',
+        prescriptiveAction:
+          'In orchestrator/src/workflows/slice-workflow.ts, add `detectActionAntiPattern` after the SCHEMA_DROP_PATTERNS block and export it.',
+      },
+    ]
+    const reprompt = vi.fn().mockResolvedValue(null)
+    await applyActionQualityGuard(slices, reprompt)
+    expect(reprompt).not.toHaveBeenCalled()
+    // Original action is unchanged
+    expect(slices[0].prescriptiveAction).toContain('detectActionAntiPattern')
+  })
+
+  it('calls reprompt exactly once naming the anti-pattern, and uses the concrete rewrite', async () => {
+    const vagueAction =
+      'implement the feature in a reasonable way to support user requests and handle edge cases'
+    const slices = [{ title: 'Feature slice', prescriptiveAction: vagueAction }]
+    const concreteAction =
+      'In `applyActionQualityGuard` (orchestrator/src/workflows/slice-workflow.ts), add a for-loop that calls `detectActionAntiPattern` on each slice.prescriptiveAction and invokes reprompt once per flagged entry.'
+    const reprompt = vi.fn().mockResolvedValue(concreteAction)
+
+    await applyActionQualityGuard(slices, reprompt)
+
+    expect(reprompt).toHaveBeenCalledTimes(1)
+    // The anti-pattern description passed to reprompt must name the offending phrase
+    expect(reprompt).toHaveBeenCalledWith(
+      expect.objectContaining({ prescriptiveAction: vagueAction }),
+      expect.stringContaining('implement'),
+    )
+    // Slice is updated with the concrete rewrite
+    expect(slices[0].prescriptiveAction).toBe(concreteAction)
+  })
+
+  it('keeps original action when reprompt returns still-vague prose', async () => {
+    const original =
+      'implement the feature in a reasonable way to support user requests and handle edge cases'
+    const slices = [{ title: 'Feature slice', prescriptiveAction: original }]
+    // Reprompt returns something that also has fluff words and no concrete anchor
+    const reprompt = vi.fn().mockResolvedValue(
+      'ensure it is done properly and correctly aligned with the requirements',
+    )
+
+    await applyActionQualityGuard(slices, reprompt)
+
+    expect(reprompt).toHaveBeenCalledTimes(1)
+    // Original action must be preserved — the still-vague rewrite is discarded
+    expect(slices[0].prescriptiveAction).toBe(original)
+  })
+
+  it('keeps original action when reprompt returns null (error or failure)', async () => {
+    const original =
+      'implement the feature in a reasonable way to support user requests and handle edge cases'
+    const slices = [{ title: 'Feature slice', prescriptiveAction: original }]
+    const reprompt = vi.fn().mockResolvedValue(null)
+
+    await applyActionQualityGuard(slices, reprompt)
+
+    expect(reprompt).toHaveBeenCalledTimes(1)
+    expect(slices[0].prescriptiveAction).toBe(original)
+  })
+
+  it('processes only vague slices; leaves concrete slice untouched', async () => {
+    const concreteAction =
+      'In orchestrator/src/workflows/slice-workflow.ts, add `detectActionAntiPattern` after the SCHEMA_DROP_PATTERNS block.'
+    const vagueAction =
+      'implement the feature in a reasonable way to support user requests and handle edge cases'
+    const concreteRewrite =
+      'In `applyActionQualityGuard` (orchestrator/src/workflows/slice-workflow.ts), add a for-loop iterating over slices.'
+    const slices = [
+      { title: 'Concrete slice', prescriptiveAction: concreteAction },
+      { title: 'Vague slice', prescriptiveAction: vagueAction },
+    ]
+    const reprompt = vi.fn().mockResolvedValue(concreteRewrite)
+
+    await applyActionQualityGuard(slices, reprompt)
+
+    // Only the vague slice triggers a reprompt
+    expect(reprompt).toHaveBeenCalledTimes(1)
+    expect(slices[0].prescriptiveAction).toBe(concreteAction)
+    expect(slices[1].prescriptiveAction).toBe(concreteRewrite)
   })
 })
