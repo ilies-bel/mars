@@ -22,18 +22,21 @@ describe('deriveSeverity', () => {
     expect(deriveSeverity('task_failed', { failureReason: 'x' })).toBe('error')
   })
 
-  it('returns error for step_ended with outcome=failure', () => {
+  it('returns error for step_ended with outcome=failed', () => {
     expect(
-      deriveSeverity('step_ended', { stepName: 'verify', outcome: 'failure' }),
+      deriveSeverity('step_ended', { stepName: 'verify', outcome: 'failed' }),
     ).toBe('error')
   })
 
-  it('returns info for step_ended with outcome=success or skipped', () => {
+  it('returns warn for step_ended with outcome=killed (watchdog-terminated session)', () => {
     expect(
-      deriveSeverity('step_ended', { stepName: 'code', outcome: 'success' }),
-    ).toBe('info')
+      deriveSeverity('step_ended', { stepName: 'code', outcome: 'killed' }),
+    ).toBe('warn')
+  })
+
+  it('returns info for step_ended with outcome=completed', () => {
     expect(
-      deriveSeverity('step_ended', { stepName: 'code', outcome: 'skipped' }),
+      deriveSeverity('step_ended', { stepName: 'code', outcome: 'completed' }),
     ).toBe('info')
   })
 
@@ -136,12 +139,17 @@ describe('openTraceEventStore — record + query roundtrip', () => {
       await store.record({
         kind: 'step_ended',
         taskId: 'a',
-        payload: { stepName: 'verify', outcome: 'failure', durationMs: 12 },
+        payload: { stepName: 'verify', outcome: 'failed', durationMs: 12 },
       })
       await store.record({
         kind: 'step_ended',
         taskId: 'a',
-        payload: { stepName: 'code', outcome: 'success', durationMs: 7 },
+        payload: { stepName: 'code', outcome: 'completed', durationMs: 7 },
+      })
+      await store.record({
+        kind: 'step_ended',
+        taskId: 'a',
+        payload: { stepName: 'code', outcome: 'killed', durationMs: 3 },
       })
       await store.record({ kind: 'task_blocked', taskId: 'a' })
       await store.record({ kind: 'recovery_spawned', taskId: 'a' })
@@ -156,8 +164,9 @@ describe('openTraceEventStore — record + query roundtrip', () => {
       expect(byKindOutcome).toEqual(
         expect.arrayContaining([
           { kind: 'task_failed', outcome: null, severity: 'error' },
-          { kind: 'step_ended', outcome: 'failure', severity: 'error' },
-          { kind: 'step_ended', outcome: 'success', severity: 'info' },
+          { kind: 'step_ended', outcome: 'failed', severity: 'error' },
+          { kind: 'step_ended', outcome: 'completed', severity: 'info' },
+          { kind: 'step_ended', outcome: 'killed', severity: 'warn' },
           { kind: 'task_blocked', outcome: null, severity: 'warn' },
           { kind: 'recovery_spawned', outcome: null, severity: 'warn' },
           { kind: 'step_started', outcome: null, severity: 'info' },
@@ -218,7 +227,7 @@ describe('openTraceEventStore — filters', () => {
         taskId: 't1',
         originId: 'origin-1',
         phase: 'verify',
-        payload: { stepName: 'verify', outcome: 'failure', durationMs: 1 },
+        payload: { stepName: 'verify', outcome: 'failed', durationMs: 1 },
       })
       await store.record({
         kind: 'task_blocked',
@@ -263,12 +272,12 @@ describe('openTraceEventStore — filters', () => {
       await store.record({
         kind: 'step_ended',
         taskId: 'tA',
-        payload: { stepName: 'verify', outcome: 'failure', durationMs: 1 },
+        payload: { stepName: 'verify', outcome: 'failed', durationMs: 1 },
       })
       await store.record({
         kind: 'step_ended',
         taskId: 'tA',
-        payload: { stepName: 'verify', outcome: 'success', durationMs: 2 },
+        payload: { stepName: 'verify', outcome: 'completed', durationMs: 2 },
       })
       await store.record({ kind: 'task_blocked', taskId: 'tA' })
       await store.record({ kind: 'task_failed', taskId: 'tB' })
@@ -279,7 +288,7 @@ describe('openTraceEventStore — filters', () => {
         severity: ['error'],
       })
       expect(errOnA).toHaveLength(1)
-      expect(errOnA[0].payload.outcome).toBe('failure')
+      expect(errOnA[0].payload.outcome).toBe('failed')
     } finally {
       await store.close()
     }

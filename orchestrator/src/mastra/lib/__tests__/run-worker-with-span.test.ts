@@ -56,6 +56,15 @@ const failedResult = (): RunClaudeResult => ({
   conversation: [],
 })
 
+// A RunClaudeResult that simulates a watchdog kill (exit code 138).
+const killedResult = (sessionId: string | null = null): RunClaudeResult => ({
+  exitCode: 138,
+  stdout: '',
+  stderr: 'claude -p aborted by caller (read/grep span watcher)',
+  sessionId,
+  conversation: [],
+})
+
 describe('runWorkerWithSpan — Coder run', () => {
   it('records one step_started + one step_ended event with worker name populated', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
@@ -98,7 +107,7 @@ describe('runWorkerWithSpan — Coder run', () => {
     expect(ended.payload.sessionId).toBe('sess-abc')
   })
 
-  it('records outcome=success and durationMs on a zero-exit run', async () => {
+  it('records outcome=completed and durationMs on a zero-exit run', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
     const worker = makeWorker('Coder', successResult('sess-xyz'))
 
@@ -113,7 +122,7 @@ describe('runWorkerWithSpan — Coder run', () => {
     })
 
     const ended = (await traceStore.query({ taskId: 'task-coder-ghi', kind: ['step_ended'] }))[0]
-    expect(ended.payload.outcome).toBe('success')
+    expect(ended.payload.outcome).toBe('completed')
     expect(ended.severity).toBe('info')
     expect(typeof ended.payload.durationMs).toBe('number')
   })
@@ -190,12 +199,12 @@ describe('runWorkerWithSpan — Planner / Slicer / Triager / Fixer runs', () => 
     const ended = (await traceStore.query({ taskId: originId, kind: ['step_ended'] }))[0]
     expect(ended.payload.workerName).toBe(name)
     expect(ended.payload.sessionId).toBe(`sess-${name}`)
-    expect(ended.payload.outcome).toBe('success')
+    expect(ended.payload.outcome).toBe('completed')
   })
 })
 
 describe('runWorkerWithSpan — failed worker run', () => {
-  it('records step_ended with outcome=failure when the worker exits non-zero', async () => {
+  it('records step_ended with outcome=failed when the worker exits non-zero', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
     const worker = makeWorker('Coder', failedResult())
 
@@ -210,12 +219,12 @@ describe('runWorkerWithSpan — failed worker run', () => {
     })
 
     const ended = (await traceStore.query({ taskId: 'task-fail-abc', kind: ['step_ended'] }))[0]
-    expect(ended.payload.outcome).toBe('failure')
+    expect(ended.payload.outcome).toBe('failed')
     expect(ended.payload.failureReason).toMatch(/^exit-/)
     expect(ended.severity).toBe('error')
   })
 
-  it('records step_ended with outcome=failure when the worker throws', async () => {
+  it('records step_ended with outcome=failed when the worker throws', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
     const worker: Worker = {
       config: makeWorkerConfig('Coder'),
@@ -238,9 +247,39 @@ describe('runWorkerWithSpan — failed worker run', () => {
     ).rejects.toThrow('subprocess unexpectedly died')
 
     const ended = (await traceStore.query({ taskId: 'task-throw-abc', kind: ['step_ended'] }))[0]
-    expect(ended.payload.outcome).toBe('failure')
+    expect(ended.payload.outcome).toBe('failed')
     expect(ended.payload.failureReason).toContain('subprocess unexpectedly died')
     expect(ended.severity).toBe('error')
+  })
+
+  it('records step_ended with outcome=killed when the watchdog fires (exit code 138)', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const worker = makeWorker('Coder', killedResult('sess-kill'))
+
+    await runWorkerWithSpan({
+      worker,
+      prompt: 'implement the thing',
+      runOptions: { cwd: '/tmp' },
+      traceStore,
+      stepName: 'run-claude-code',
+      workflowInstanceId: 'wf-killed-001',
+      originId: 'task-killed-abc',
+    })
+
+    const ended = (await traceStore.query({ taskId: 'task-killed-abc', kind: ['step_ended'] }))[0]
+    expect(ended.payload.outcome).toBe('killed')
+    // killed is a distinct outcome — not failure, not completed
+    expect(ended.payload.outcome).not.toBe('failed')
+    expect(ended.payload.outcome).not.toBe('completed')
+    // severity is warn, not error — watchdog kill is a problem but not a hard task failure
+    expect(ended.severity).toBe('warn')
+    // end time is always set (non-null) — the timestamp on the step_ended event
+    expect(typeof ended.timestamp).toBe('string')
+    expect(ended.timestamp.length).toBeGreaterThan(0)
+    // no failureReason on killed sessions
+    expect(ended.payload.failureReason).toBeUndefined()
+    // session id is preserved even on killed sessions
+    expect(ended.payload.sessionId).toBe('sess-kill')
   })
 
   it('re-throws the original error so the caller still sees the failure', async () => {
