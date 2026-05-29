@@ -51,6 +51,7 @@ const makeDeps = (
     (cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>),
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),
+  viewInbox: async () => [],
   ...overrides,
 })
 
