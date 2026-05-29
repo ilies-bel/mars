@@ -72,6 +72,12 @@ export interface TraceEventFilter {
   phase?: readonly TraceEventPhase[]
   sinceIso?: string
   untilIso?: string
+  /**
+   * Substring match against the serialized payload JSON. SQLite `LIKE`
+   * with `%q%` wrappers; case-insensitive (the LIKE collation is the
+   * default — NOCASE on ASCII only). Empty/undefined → no filter.
+   */
+  q?: string
   /** Opaque cursor returned by a previous `query`. Newest-first ordering. */
   cursor?: string
   /** Max rows to return. Defaults to 100. */
@@ -292,6 +298,12 @@ export const openTraceEventStore = async (
       if (filter.untilIso !== undefined) {
         where.push('timestamp <= ?')
         args.push(filter.untilIso)
+      }
+      if (filter.q !== undefined && filter.q !== '') {
+        // SQLite LIKE is case-insensitive on ASCII by default. We wrap with
+        // `%` so any substring inside the JSON-serialized payload matches.
+        where.push('payload LIKE ?')
+        args.push(`%${filter.q}%`)
       }
 
       // Cursor-based pagination: rows are ordered (timestamp DESC, id DESC).

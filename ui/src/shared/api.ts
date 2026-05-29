@@ -2,11 +2,17 @@ import type { ZodType } from 'zod'
 import {
   actionQueueResponseSchema,
   agentsResponseSchema,
+  eventsResponseSchema,
+  failureReasonsResponseSchema,
+  originsResponseSchema,
   progressResponseSchema,
   tasksResponseSchema,
   todoResponseSchema,
   type ActionQueueItem,
   type Agent,
+  type EventsResponse,
+  type FailureReasonCatalogEntry,
+  type OriginsResponse,
   type ProgressProposalNode,
   type ProgressTask,
   type Task,
@@ -142,6 +148,56 @@ export const invokeAction = async (
 
 export const eventsUrl = (): string => `${BASE}/events`
 
+/**
+ * Fetch the resolved failure-reason catalog from the daemon (proxied through
+ * the UI server). The catalog is keyed by `code`. The inbox detail panel
+ * looks up `failureReasonCode` to render `Reason: <userMessage>` plus the
+ * `availableActions` button list. Falls back to the catalog's `unknown`
+ * entry when the code is absent or not in the catalog.
+ */
+export const fetchFailureReasons = async (): Promise<
+  FailureReasonCatalogEntry[]
+> => {
+  return fetchJson('/api/failure-reasons', failureReasonsResponseSchema)
+}
+
+export interface EventsFilter {
+  taskId?: string
+  cursor?: string
+  limit?: number
+}
+
+/**
+ * Fetch a page of trace events filtered by `taskId` (and an optional cursor).
+ * The inbox detail panel's Traces section calls this when the panel opens,
+ * and again for `Load more`. Newest-first ordering.
+ */
+export const fetchEvents = async (
+  filter: EventsFilter,
+): Promise<EventsResponse> => {
+  const params = new URLSearchParams()
+  if (filter.taskId !== undefined) params.set('taskId', filter.taskId)
+  if (filter.cursor !== undefined) params.set('cursor', filter.cursor)
+  if (filter.limit !== undefined) params.set('limit', String(filter.limit))
+  const qs = params.toString()
+  const path = qs ? `/api/trace-events?${qs}` : '/api/trace-events'
+  return fetchJson(path, eventsResponseSchema)
+}
+
+/**
+ * Fetch the origin tree for a task. Root is the highest-level known ancestor
+ * (a proposal, a sliced PRD, or the originating task). The current task sits
+ * inside the tree; the UI highlights it on render.
+ */
+export const fetchOrigins = async (
+  taskId: string,
+): Promise<OriginsResponse> => {
+  return fetchJson(
+    `/api/origins/${encodeURIComponent(taskId)}`,
+    originsResponseSchema,
+  )
+}
+
 export const dismissTodoItem = async (
   id: string,
   kind: 'draft' | 'stale',
@@ -162,7 +218,11 @@ export const dismissTodoItem = async (
 export type {
   ActionQueueItem,
   Agent,
+  EventsResponse,
+  FailureReasonCatalogEntry,
+  OriginsResponse,
   ProgressProposalNode,
   StaleWorktree,
   TodoPayload,
+  TraceEvent,
 } from './schemas'

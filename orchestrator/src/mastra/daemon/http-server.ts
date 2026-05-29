@@ -2,6 +2,16 @@ import { createServer, type Server } from 'node:http'
 import { listErrorKinds } from '../lib/error-kinds'
 import type { FailureReasonCatalog } from '../lib/failure-reasons'
 import type { RecipeCatalog } from '../lib/recipes'
+import { buildOriginTree } from '../lib/origin-tree'
+import {
+  cursorAfter,
+  TRACE_EVENT_KINDS,
+  type TraceEventFilter,
+  type TraceEventKind,
+  type TraceEventPhase,
+  type TraceEventSeverity,
+  type TraceEventStore,
+} from '../lib/trace-events-store'
 import type { RestartTaskError } from './restart-task'
 
 /**
@@ -62,6 +72,12 @@ export interface HttpServerDeps {
    * was dispatched under.
    */
   recipeCatalog: RecipeCatalog
+  /**
+   * The unified trace-event store, used by `GET /events` to back the
+   * per-task lifecycle view in the inbox detail panel (and broader filters
+   * in the dedicated Events tab).
+   */
+  traceStore: TraceEventStore
 }
 
 export interface HttpServerHandle {
@@ -118,12 +134,100 @@ const sendError = (
  */
 type EntityOp = 'restart' | 'unblock' | 'purge' | 'prune-worktree'
 
+const TRACE_EVENT_KIND_SET = new Set<TraceEventKind>(TRACE_EVENT_KINDS)
+const TRACE_EVENT_SEVERITIES: readonly TraceEventSeverity[] = [
+  'info',
+  'warn',
+  'error',
+]
+const TRACE_EVENT_PHASES: readonly TraceEventPhase[] = [
+  'setup',
+  'code',
+  'verify',
+  'merge',
+]
+
+/** Floor + ceiling on the page size. Defaults mirror the public API doc. */
+const EVENTS_DEFAULT_LIMIT = 200
+const EVENTS_MAX_LIMIT = 1000
+
+const filterKinds = (raw: string[]): TraceEventKind[] =>
+  raw.filter((v): v is TraceEventKind =>
+    TRACE_EVENT_KIND_SET.has(v as TraceEventKind),
+  )
+
+const filterSeverities = (raw: string[]): TraceEventSeverity[] =>
+  raw.filter((v): v is TraceEventSeverity =>
+    (TRACE_EVENT_SEVERITIES as readonly string[]).includes(v),
+  )
+
+const filterPhases = (raw: string[]): TraceEventPhase[] =>
+  raw.filter((v): v is TraceEventPhase =>
+    (TRACE_EVENT_PHASES as readonly string[]).includes(v),
+  )
+
+/** Build the `TraceEventFilter` from a parsed URL's search params. */
+const parseEventsFilter = (params: URLSearchParams): TraceEventFilter => {
+  const filter: TraceEventFilter = {}
+  const taskId = params.get('taskId')
+  if (taskId) filter.taskId = taskId
+  const originId = params.get('originId')
+  if (originId) filter.originId = originId
+  const kinds = filterKinds(params.getAll('kind'))
+  if (kinds.length > 0) filter.kind = kinds
+  const severities = filterSeverities(params.getAll('severity'))
+  if (severities.length > 0) filter.severity = severities
+  const phases = filterPhases(params.getAll('phase'))
+  if (phases.length > 0) filter.phase = phases
+  const since = params.get('since')
+  if (since) filter.sinceIso = since
+  const until = params.get('until')
+  if (until) filter.untilIso = until
+  const q = params.get('q')
+  if (q) filter.q = q
+  const cursor = params.get('cursor')
+  if (cursor) filter.cursor = cursor
+  const limitRaw = params.get('limit')
+  if (limitRaw !== null) {
+    const parsed = Number.parseInt(limitRaw, 10)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      filter.limit = Math.min(parsed, EVENTS_MAX_LIMIT)
+    }
+  }
+  if (filter.limit === undefined) {
+    filter.limit = EVENTS_DEFAULT_LIMIT
+  }
+  return filter
+}
+
+/**
+ * Handle a `GET /events?...` request. Reads from the trace store with the
+ * parsed filter, then attaches `nextCursor` (the cursor pointing one past
+ * the last row) when the page is full — signalling more rows are available.
+ */
+const handleEventsRequest = async (
+  url: string,
+  store: TraceEventStore,
+): Promise<{ events: unknown[]; nextCursor: string | null }> => {
+  // `url` is the path+query (e.g. `/events?taskId=abc`). Wrap with a base
+  // so URLSearchParams can be derived without re-parsing manually.
+  const parsed = new URL(url, 'http://localhost')
+  const filter = parseEventsFilter(parsed.searchParams)
+  const events = await store.query(filter)
+  const limit = filter.limit ?? EVENTS_DEFAULT_LIMIT
+  const last = events.length === limit ? events[events.length - 1] : null
+  const nextCursor = last ? cursorAfter(last) : null
+  return { events, nextCursor }
+}
+
 /**
  * Start a local HTTP server bound to `127.0.0.1` only. Exposes:
  *
  *   GET  /error-kinds            → the error-kind registry (action menus)
  *   GET  /failure-reasons        → the resolved failure-reason catalog
  *   GET  /recipes                → the resolved recovery-recipe catalog
+ *   GET  /events?...             → unified trace events (taskId, kind, etc.)
+ *   GET  /origins/:taskId        → the origin tree for a task
  *   POST /actions/restart/:id    → re-queue a failed/daemon-killed task
  *   POST /actions/unblock/:id    → phantom-recover a blocked task
  *   POST /actions/purge/:id      → drop a task + worktree
@@ -169,6 +273,35 @@ export const startHttpServer = async (
     if (req.method === 'GET' && req.url === '/recipes') {
       sendJson(res, 200, deps.recipeCatalog.list())
       return
+    }
+
+    // GET /events — unified trace events. Supports multi-filter querying
+    // (taskId, originId, kind[], severity[], phase[], since, until, q) plus
+    // cursor pagination. Newest-first ordering. The per-task inbox panel
+    // always passes `?taskId=...&limit=50`; the dedicated Events tab uses
+    // the broader filter surface. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/events')) {
+      handleEventsRequest(req.url, deps.traceStore)
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /origins/:taskId — origin tree for a task. Single-node tree when
+    // the task has no known ancestry. Pure read; no draining gate.
+    {
+      const originsMatch =
+        req.method === 'GET' &&
+        req.url
+          ? req.url.match(/^\/origins\/([^/?]+)(?:\?.*)?$/)
+          : null
+      if (originsMatch && originsMatch[1]) {
+        const taskId = decodeURIComponent(originsMatch[1])
+        buildOriginTree(taskId)
+          .then((tree) => sendJson(res, 200, tree))
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
     }
 
     if (req.method !== 'POST') {

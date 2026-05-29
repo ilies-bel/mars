@@ -18,6 +18,7 @@ import { resolve } from 'node:path'
 import type { HttpServerDeps } from '../http-server'
 import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog, recipesDir } from '../../lib/recipes'
+import { nullTraceStore } from '../../lib/run-tool'
 
 let cachedFailureCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
 let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
@@ -48,6 +49,7 @@ const makeDeps = (
   recipeCatalog:
     recipeCatalogOverride ??
     (cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>),
+  traceStore: nullTraceStore,
   ...overrides,
 })
 
