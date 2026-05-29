@@ -1,4 +1,7 @@
 import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join, relative, resolve } from 'node:path'
+import { homedir } from 'node:os'
 import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 import { createQueueWorkflowStore } from './queue-workflow-store'
@@ -28,7 +31,7 @@ import { writeDetectionReport } from '../init/write-detection-report'
 import { readInitManifest, writeInitManifest } from '../init/init-manifest'
 import { writeFailureReasonsSeed } from '../init/failure-reasons-seed'
 import { writeRecipesSeed } from '../init/recipes-seed'
-import { relative, resolve } from 'node:path'
+import { activatePlugin, realDeps, type ClaudePluginDeps } from '../commands/claude-plugin.js'
 
 const verifyStepSchema = z.object({
   name: z.string(),
@@ -366,6 +369,51 @@ const runSeedRecipes = async (written: string[]): Promise<string[]> => {
   ]
 }
 
+/**
+ * Best-effort plugin activation. Registers `frameworkClaudeDir` as the Mars
+ * Claude Code plugin in the user-level settings file at `userSettingsPath`.
+ *
+ * Non-fatal: if `frameworkClaudeDir` is not a valid Mars plugin directory
+ * (missing `plugin.json` with `"name": "mars"`) OR if the settings file is
+ * unwritable, this function prints a one-line warning to stderr and returns
+ * without throwing. Repo state written by prior steps is always preserved.
+ *
+ * Exported so tests can drive it with injected deps without touching the
+ * real filesystem or ~/.claude/settings.json.
+ */
+export function tryActivatePlugin(
+  frameworkClaudeDir: string,
+  userSettingsPath: string,
+  deps: ClaudePluginDeps,
+): void {
+  try {
+    if (!deps.isMarsPlugin(frameworkClaudeDir)) {
+      process.stderr.write(
+        `[mars init] warning: could not locate Mars plugin directory at ${frameworkClaudeDir}; run \`mars plugin activate <dir>\` manually\n`,
+      )
+      return
+    }
+    activatePlugin(frameworkClaudeDir, userSettingsPath, deps)
+    process.stdout.write(
+      '[mars init] activated Mars Claude Code plugin (mars:* skills now available)\n',
+    )
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    process.stderr.write(
+      `[mars init] warning: could not activate Mars plugin (${msg}); run \`mars plugin activate <dir>\` manually\n`,
+    )
+  }
+}
+
+const runActivatePlugin = (): void => {
+  // init-workflow.ts lives at <frameworkRoot>/orchestrator/src/workflows/
+  // walking up three directories reaches <frameworkRoot>
+  const thisFile = fileURLToPath(import.meta.url)
+  const frameworkClaudeDir = join(dirname(dirname(dirname(thisFile))), '.claude')
+  const userSettingsPath = join(homedir(), '.claude', 'settings.json')
+  tryActivatePlugin(frameworkClaudeDir, userSettingsPath, realDeps)
+}
+
 const initInputSchema = z.object({
   fetch: z.boolean().default(true),
   refresh: z.boolean().default(false),
@@ -377,13 +425,14 @@ interface InitWorkflowOutput {
   written: string[]
 }
 
-// Seven linear steps, threaded by native control flow. The step NAMES
+// Eight linear steps, threaded by native control flow. The step NAMES
 // ('detect-stack', 'render-supervisors', 'write-slim-init', 'scaffold-claude',
-// 'init-databases', 'seed-failure-reasons', 'seed-recipes') are load-bearing
-// trace-view labels. Disk side effects (verify.json, per-folder + root
-// CLAUDE.md, the init manifest, the failure-reason and recipe override
-// seeds) and DB side effects (queue.db/state.db) are preserved verbatim.
-// Failures THROW; the engine records the step failed.
+// 'init-databases', 'seed-failure-reasons', 'seed-recipes', 'activate-plugin')
+// are load-bearing trace-view labels. Disk side effects (verify.json,
+// per-folder + root CLAUDE.md, the init manifest, the failure-reason and
+// recipe override seeds) and DB side effects (queue.db/state.db) are
+// preserved verbatim. Failures THROW; the engine records the step failed.
+// 'activate-plugin' is best-effort: it never throws regardless of outcome.
 export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
   id: 'init',
   inputSchema: initInputSchema,
@@ -399,6 +448,7 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
       runSeedFailureReasons(w3),
     )
     const written = await ctx.step('seed-recipes', () => runSeedRecipes(w4))
+    await ctx.step('activate-plugin', runActivatePlugin)
     return { written }
   },
 })
