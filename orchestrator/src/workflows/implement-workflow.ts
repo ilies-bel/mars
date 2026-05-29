@@ -1061,9 +1061,11 @@ export const implementWorkflow = defineWorkflow<
       )
       const steps = selectVerifySteps(scopes, changedFiles)
       // The diff / commits-ahead gate runs for every dispatched task — there
-      // is no skip option (ADR 0019). A task that exits with a clean tree and
-      // zero commits ahead of integration fails with the uniform
-      // no-commits-ahead outcome rather than being blessed as a success.
+      // is no skip option (ADR 0019). It fails only a branch that has diverged
+      // from integration without landing a commit on it; a branch whose tip
+      // equals integration (legitimate no-op, e.g. the main-committer leaving
+      // an already-clean tree) or is an ancestor of it (work already merged)
+      // passes — the integration branch is clean and nothing is un-merged.
       const r = await verifyChanges({
         cwd: verifyCwd,
         steps,
