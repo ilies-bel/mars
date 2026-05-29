@@ -857,37 +857,47 @@ export const TaskDetailDrawer = ({
                 )
               })}
 
-              {/* Nodes */}
+              {/* Nodes — each wrapped in an SVG <a> so click and keyboard
+                  Enter both invoke navigate(), matching TopologyView's pattern. */}
               {subgraph.positioned.map((node) => {
                 const s = miniNodeStyle(node.kind, node.cluster)
                 // Translate 'idea' back to 'proposal' for data-node-kind so the
                 // attribute matches TopologyView's convention on the main canvas.
                 const displayKind = node.kind === 'idea' ? 'proposal' : node.kind
                 return (
-                  <g
+                  <a
                     key={node.id}
-                    data-node-id={node.id}
-                    data-node-kind={displayKind}
-                    {...(node.kind === 'task' ? { 'data-cluster': node.cluster } : {})}
-                    transform={`translate(${node.x}, ${node.y})`}
+                    href={`#/task/${encodeURIComponent(node.id)}`}
+                    style={{ cursor: 'pointer' }}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      navigate(node.id)
+                    }}
                   >
-                    <rect
-                      width={MINI_NODE_W}
-                      height={MINI_NODE_H}
-                      rx={3}
-                      style={{ fill: s.fill, stroke: s.stroke }}
-                      strokeWidth={1.5}
-                    />
-                    <text
-                      x={6}
-                      y={MINI_NODE_H / 2 + 4}
-                      fontSize={10}
-                      fontFamily="monospace"
-                      style={{ fill: s.text }}
+                    <g
+                      data-node-id={node.id}
+                      data-node-kind={displayKind}
+                      {...(node.kind === 'task' ? { 'data-cluster': node.cluster } : {})}
+                      transform={`translate(${node.x}, ${node.y})`}
                     >
-                      {node.label}
-                    </text>
-                  </g>
+                      <rect
+                        width={MINI_NODE_W}
+                        height={MINI_NODE_H}
+                        rx={3}
+                        style={{ fill: s.fill, stroke: s.stroke }}
+                        strokeWidth={1.5}
+                      />
+                      <text
+                        x={6}
+                        y={MINI_NODE_H / 2 + 4}
+                        fontSize={10}
+                        fontFamily="monospace"
+                        style={{ fill: s.text }}
+                      >
+                        {node.label}
+                      </text>
+                    </g>
+                  </a>
                 )
               })}
             </svg>
