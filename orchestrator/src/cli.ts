@@ -395,6 +395,11 @@ Commands:
                                 zero rows. recreate: exits 0 only when no
                                 forbidden ids appear, and prints a checklist
                                 of the seven carry-forward proposal titles.
+  observability prune [<days>]   delete telemetry rows from the trace_events
+                                store older than <days> days. Default: 3.
+                                Pass 0 to wipe all rows. Prints the number
+                                of rows removed. Safe to run while the
+                                daemon is running.
   worker list                   print all known Workers (hard-coded defaults
                                 merged with any persisted registry)
   worker add <name> --model <model> [flags]
@@ -899,6 +904,20 @@ Phases:
       07201a16, 26471262) appear as a hex suffix of any current id.
       Also prints a checklist of the seven carry-forward proposal titles,
       marking each as ✓ (re-entered) or ✗ (still missing).`,
+  observability: `mars observability <subcommand> ...
+
+Subcommands:
+  prune [<days>]
+      Delete telemetry rows from the trace_events store older than <days>
+      days. Default: 3. Pass 0 to wipe all rows regardless of age.
+
+      Prints the number of rows removed. Safe to run while the Mars daemon
+      is running — no need to stop the daemon or delete the store file.
+
+      Examples:
+        mars observability prune         # delete rows older than 3 days
+        mars observability prune 7       # delete rows older than 7 days
+        mars observability prune 0       # wipe all telemetry rows`,
   worker: `mars worker <subcommand> ...
 
 Subcommands:
@@ -3754,6 +3773,35 @@ const main = async (): Promise<void> => {
     console.error(`mars plugin: unknown subcommand '${subCmd ?? ''}'`)
     console.error('usage: mars plugin activate <path> | mars plugin deactivate')
     process.exit(1)
+  }
+
+  // -------------------------------------------------------------------------
+  // observability prune [<days>]
+  // -------------------------------------------------------------------------
+  if (cmd === 'observability') {
+    const sub = rest[0]
+    if (sub === 'prune') {
+      const ageArg = rest[1]
+      let maxAgeDays = 3
+      if (ageArg !== undefined) {
+        const parsed = Number(ageArg)
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          console.error(
+            `usage: mars observability prune [<days>]\n\n<days> must be a non-negative number (0 = wipe all); got '${ageArg}'`,
+          )
+          process.exit(1)
+        }
+        maxAgeDays = parsed
+      }
+      const { pruneObservability } = await import(
+        './mastra/lib/observability-prune'
+      )
+      const deleted = await pruneObservability(ctx.stateDbPath, maxAgeDays)
+      console.log(`pruned ${deleted} telemetry row${deleted === 1 ? '' : 's'}`)
+      return
+    }
+    console.error(`usage: mars observability prune [<days>]`)
+    process.exit(2)
   }
 
   // -------------------------------------------------------------------------
