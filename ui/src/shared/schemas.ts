@@ -207,6 +207,12 @@ export const actionQueueItemSchema = z.object({
       diagnosedAt: z.string(),
     })
     .nullish(),
+  /**
+   * Failure-reason catalog code. The detail panel looks the code up in the
+   * `/failure-reasons` catalog to render `Reason: <userMessage>`. Null on
+   * non-failed rows and on legacy rows landed before slice G.
+   */
+  failureReasonCode: z.string().nullable().optional(),
 })
 
 export const actionQueueResponseSchema = z.array(actionQueueItemSchema)
@@ -225,6 +231,89 @@ export const agentSchema = z.object({
 export const agentsResponseSchema = z.object({
   agents: z.array(agentSchema),
 })
+
+// ----------------------------------------------------------------------------
+// Failure-reason catalog (daemon `/failure-reasons` → proxied as
+// `/api/failure-reasons`). Mirror of the FailureReason shape declared on the
+// orchestrator side; we re-derive locally rather than importing from the
+// orchestrator to keep the UI a standalone package.
+// ----------------------------------------------------------------------------
+
+export const failureActionCatalogSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  cliHint: z.string().nullable(),
+})
+
+export const failureReasonCatalogEntrySchema = z.object({
+  code: z.string(),
+  userMessage: z.string(),
+  recipe: z.string().nullable(),
+  availableActions: z.array(failureActionCatalogSchema),
+})
+
+export const failureReasonsResponseSchema = z.array(
+  failureReasonCatalogEntrySchema,
+)
+
+// ----------------------------------------------------------------------------
+// Trace events (daemon `/events` → proxied as `/api/trace-events`).
+// ----------------------------------------------------------------------------
+
+export const traceEventSchema = z.object({
+  id: z.string(),
+  timestamp: z.string(),
+  kind: z.string(),
+  severity: z.enum(['info', 'warn', 'error']).catch('info'),
+  taskId: z.string().nullable(),
+  originId: z.string().nullable(),
+  phase: z.string().nullable(),
+  payload: z.record(z.string(), z.unknown()),
+})
+
+export const eventsResponseSchema = z.object({
+  events: z.array(traceEventSchema),
+  nextCursor: z.string().nullable(),
+})
+
+// ----------------------------------------------------------------------------
+// Origin tree (daemon `/origins/:taskId` → proxied as `/api/origins/:taskId`).
+// The tree is recursive, so the schema declares the leaf shape and patches
+// `children` via z.lazy. We use an explicit ZodType type annotation so the
+// recursive inference compiles.
+// ----------------------------------------------------------------------------
+
+export type OriginNode = {
+  id: string
+  kind: string
+  title: string
+  status: string
+  children: OriginNode[]
+}
+
+const baseOriginNodeShape = {
+  id: z.string(),
+  kind: z.string(),
+  title: z.string(),
+  status: z.string(),
+}
+
+export const originNodeSchema: z.ZodType<OriginNode> = z.object({
+  ...baseOriginNodeShape,
+  children: z.lazy(() => z.array(originNodeSchema)),
+})
+
+export const originsResponseSchema = z.object({
+  node: originNodeSchema,
+})
+
+export type FailureReasonCatalogEntry = z.infer<
+  typeof failureReasonCatalogEntrySchema
+>
+export type FailureActionCatalog = z.infer<typeof failureActionCatalogSchema>
+export type TraceEvent = z.infer<typeof traceEventSchema>
+export type EventsResponse = z.infer<typeof eventsResponseSchema>
+export type OriginsResponse = z.infer<typeof originsResponseSchema>
 
 export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
 export type ActionDescriptor = z.infer<typeof actionDescriptorSchema>

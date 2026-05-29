@@ -2346,6 +2346,7 @@ export const startDaemon = async (
     isAcceptingWork: () => acceptingWork,
     failureReasonCatalog,
     recipeCatalog,
+    traceStore,
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)

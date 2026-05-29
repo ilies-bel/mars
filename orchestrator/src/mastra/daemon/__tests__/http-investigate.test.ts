@@ -15,6 +15,7 @@ import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
 import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
+import { nullTraceStore } from '../../lib/run-tool'
 
 let cachedCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
 let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
@@ -47,6 +48,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   isAcceptingWork: () => true,
   failureReasonCatalog: cachedCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>,
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
+  traceStore: nullTraceStore,
   ...overrides,
 })
 

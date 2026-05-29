@@ -16,6 +16,7 @@ import {
 } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { BUILT_IN_FAILURE_REASONS } from '../../failure-reasons/built-in'
+import { nullTraceStore } from '../../lib/run-tool'
 
 let cachedCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
 let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
@@ -44,6 +45,7 @@ const makeDeps = (
   failureReasonCatalog:
     catalogOverride ?? (cachedCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>),
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
+  traceStore: nullTraceStore,
   ...overrides,
 })
 
