@@ -15,6 +15,7 @@ import {
 import { listKpis as defaultListKpis, type KpiRecord } from './kpi-store'
 import type { RestartTaskError } from './restart-task'
 import type { ProgressTask, ProposalNode } from './view/progress'
+import type { ViewStreamHub } from './view/stream-hub'
 
 /**
  * Handlers the daemon supplies for each recovery verb the local HTTP server
@@ -119,6 +120,13 @@ export interface HttpServerDeps {
    * state changes. Backed by `POST /view/inbox/dismiss`.
    */
   inboxDismiss: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
+  /**
+   * SSE hub for `GET /view/stream`. When provided, the stream endpoint
+   * registers each connecting client here and delivers invalidation events
+   * whenever the daemon mutates a store. Omitting this dep disables fan-out
+   * (the endpoint still serves the greeting but broadcasts are no-ops).
+   */
+  viewStreamHub?: ViewStreamHub
 }
 
 export interface HttpServerHandle {
@@ -365,6 +373,33 @@ export const startHttpServer = async (
         .viewTasks()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/stream — long-lived Server-Sent Events channel. Emits one
+    // named event per channel ('tasks'|'progress'|'inbox'|'todo'|'kpis')
+    // whenever the daemon mutates the corresponding store. The UI subscribes
+    // to avoid polling and to get the same liveness it previously had from
+    // watching the DB file. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/stream') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      })
+      // Send the hello greeting so the client knows the stream is live.
+      res.write('event: hello\ndata: {}\n\n')
+
+      const hub = deps.viewStreamHub
+      if (hub) {
+        const client = hub.add(res)
+        const cleanup = (): void => {
+          hub.remove(client)
+        }
+        req.on('close', cleanup)
+        req.on('error', cleanup)
+      }
       return
     }
 

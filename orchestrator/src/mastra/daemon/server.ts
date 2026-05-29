@@ -79,6 +79,7 @@ import {
   type DaemonResponse,
   type DaemonStatusPayload,
 } from './protocol'
+import { ViewStreamHub } from './view/stream-hub'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -390,6 +391,11 @@ export const startDaemon = async (
 
   const bus = new EventEmitter()
   bus.setMaxListeners(50)
+
+  // SSE invalidation hub: the daemon broadcasts one event per channel
+  // whenever it mutates the corresponding store. Connected UI clients
+  // re-fetch the relevant view endpoint on receipt.
+  const viewStreamHub = new ViewStreamHub()
 
   const inFlight = new Map<string, InFlightEntry>()
   const startedAt = new Date().toISOString()
@@ -1000,6 +1006,15 @@ export const startDaemon = async (
     pendingImplement.add(e.taskId)
     void drain()
   })
+
+  // Broadcast invalidations to connected SSE clients on every task lifecycle
+  // event so the UI re-fetches the tasks/progress views without polling.
+  bus.on('task.added', () => { viewStreamHub.broadcast('tasks') })
+  bus.on('task.queued', () => { viewStreamHub.broadcast('tasks'); viewStreamHub.broadcast('progress') })
+  bus.on('task.completed', () => { viewStreamHub.broadcast('tasks'); viewStreamHub.broadcast('progress') })
+  bus.on('task.failed', () => { viewStreamHub.broadcast('tasks'); viewStreamHub.broadcast('progress') })
+  bus.on('task.blocked', () => { viewStreamHub.broadcast('tasks') })
+  bus.on('task.unblocked', () => { viewStreamHub.broadcast('tasks') })
 
   // ── Wrappers around queue ops that emit the right events ──────────────────
 
@@ -2382,6 +2397,7 @@ export const startDaemon = async (
       const { dismissEntity } = await import('../lib/inbox-dismissals')
       await dismissEntity(kind, id, { by: 'daemon' })
     },
+    viewStreamHub,
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
@@ -2414,8 +2430,10 @@ export const startDaemon = async (
         failureReasonCatalog,
         log,
       )
-      if (processed > 0)
+      if (processed > 0) {
         log(`[inbox-repopulator] applied ${processed} inbox mutation(s) on boot`)
+        viewStreamHub.broadcast('inbox')
+      }
     } catch (err) {
       log(`[inbox-repopulator] boot drain failed: ${(err as Error).message}`)
     }
@@ -2473,6 +2491,8 @@ export const startDaemon = async (
         const raised = await detectAndRaiseStaleWorktrees(resolveContext().repoRoot)
         if (raised.length > 0) {
           log(`[stale-sweep] raised/bumped ${raised.length} stale-worktree inbox item(s)`)
+          viewStreamHub.broadcast('todo')
+          viewStreamHub.broadcast('inbox')
         }
       } catch (err) {
         log(`[stale-sweep] errored: ${(err as Error).message}`)
@@ -2508,7 +2528,8 @@ export const startDaemon = async (
   const inboxRepopulatorDrain = setInterval(() => {
     void (async () => {
       try {
-        await drainInboxRepopulations(getClient(), failureReasonCatalog, log)
+        const { processed } = await drainInboxRepopulations(getClient(), failureReasonCatalog, log)
+        if (processed > 0) viewStreamHub.broadcast('inbox')
       } catch (err) {
         log(`[inbox-repopulator] drain errored: ${(err as Error).message}`)
       }
