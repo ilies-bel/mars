@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -14,8 +14,6 @@ interface QueueModule {
 }
 
 interface DeepQueryModule {
-  pickDeepReflectCandidate: typeof import('../deep-reflect-query').pickDeepReflectCandidate
-  loadDeepReflectSession: typeof import('../deep-reflect-query').loadDeepReflectSession
   loadDeepReflectArc: typeof import('../deep-reflect-query').loadDeepReflectArc
   listDeepReflectArcCandidates: typeof import('../deep-reflect-query').listDeepReflectArcCandidates
 }
@@ -37,125 +35,6 @@ const loadModules = async (
   const dq = (await import('../deep-reflect-query')) as unknown as DeepQueryModule
   return { q, dq }
 }
-
-const recordTokens = async (
-  q: QueueModule,
-  taskId: string,
-  inputTokens: number,
-): Promise<void> => {
-  const now = new Date().toISOString()
-  await q.getClient().execute({
-    sql: `INSERT INTO task_signals
-            (task_id, step_id, input_tokens, output_tokens,
-             cache_create_tokens, cache_read_tokens,
-             message_count, recorded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [taskId, 'run-claude-code', inputTokens, 0, 0, 0, 0, now],
-  })
-}
-
-const setStatus = async (
-  q: QueueModule,
-  taskId: string,
-  status: string,
-  createdAt?: string,
-): Promise<void> => {
-  await q.getClient().execute({
-    sql: `UPDATE tasks SET status = ?${createdAt ? ', created_at = ?' : ''} WHERE id = ?`,
-    args: createdAt ? [status, createdAt, taskId] : [status, taskId],
-  })
-}
-
-describe('pickDeepReflectCandidate', () => {
-  let repo: string
-
-  beforeEach(() => {
-    repo = setupRepo()
-  })
-
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
-  it('returns null when DB is empty', async () => {
-    const { dq } = await loadModules(repo)
-    const r = await dq.pickDeepReflectCandidate()
-    expect(r).toBeNull()
-  })
-
-  it('returns null when there are tasks but none have transcripts', async () => {
-    const { q, dq } = await loadModules(repo)
-    const t = await q.enqueueTask('p', undefined, { skipTriage: true })
-    await setStatus(q, t.id, 'failed')
-    const r = await dq.pickDeepReflectCandidate()
-    expect(r).toBeNull()
-  })
-
-  it('rule 1: prefers most recent failed task with transcript', async () => {
-    const { q, dq } = await loadModules(repo)
-    const tFail = await q.enqueueTask('failing task', undefined, { skipTriage: true })
-    await setStatus(q, tFail.id, 'failed')
-    await q.upsertTranscript({ taskId: tFail.id, conversationJson: '[]' })
-
-    const tDone = await q.enqueueTask('done task', undefined, { skipTriage: true })
-    await setStatus(q, tDone.id, 'done')
-    await q.upsertTranscript({ taskId: tDone.id, conversationJson: '[]' })
-    await recordTokens(q, tDone.id, 5000)
-
-    const r = await dq.pickDeepReflectCandidate()
-    expect(r).not.toBeNull()
-    expect(r?.taskId).toBe(tFail.id)
-    expect(r?.reason.reason).toMatch(/most recent failure/i)
-  })
-
-  it('rule 2: picks highest weighted-token done task within last 7d when ≥ 2× median', async () => {
-    const { q, dq } = await loadModules(repo)
-    // cheap tasks: 100 input tokens each → weighted = 100
-    const cheap1 = await q.enqueueTask('cheap1', undefined, { skipTriage: true })
-    await setStatus(q, cheap1.id, 'done')
-    await q.upsertTranscript({ taskId: cheap1.id, conversationJson: '[]' })
-    await recordTokens(q, cheap1.id, 100)
-
-    const cheap2 = await q.enqueueTask('cheap2', undefined, { skipTriage: true })
-    await setStatus(q, cheap2.id, 'done')
-    await q.upsertTranscript({ taskId: cheap2.id, conversationJson: '[]' })
-    await recordTokens(q, cheap2.id, 100)
-
-    // expensive task: 2100 input tokens → weighted = 2100, > 2×median(100)
-    const expensive = await q.enqueueTask('expensive', undefined, {
-      skipTriage: true,
-    })
-    await setStatus(q, expensive.id, 'done')
-    await q.upsertTranscript({ taskId: expensive.id, conversationJson: '[]' })
-    await recordTokens(q, expensive.id, 2100)
-
-    const r = await dq.pickDeepReflectCandidate()
-    expect(r).not.toBeNull()
-    expect(r?.taskId).toBe(expensive.id)
-    expect(r?.reason.reason).toMatch(/highest weighted-token done/i)
-  })
-
-  it('rule 3: falls back to most recent done when no expensive outlier', async () => {
-    const { q, dq } = await loadModules(repo)
-    // All similar cost.
-    const a = await q.enqueueTask('a', undefined, { skipTriage: true })
-    await setStatus(q, a.id, 'done')
-    await q.upsertTranscript({ taskId: a.id, conversationJson: '[]' })
-    await recordTokens(q, a.id, 100)
-
-    const b = await q.enqueueTask('b', undefined, { skipTriage: true })
-    await setStatus(q, b.id, 'done')
-    await q.upsertTranscript({ taskId: b.id, conversationJson: '[]' })
-    await recordTokens(q, b.id, 100)
-
-    const r = await dq.pickDeepReflectCandidate()
-    expect(r).not.toBeNull()
-    // Most recent created -> b
-    expect(r?.taskId).toBe(b.id)
-    expect(r?.reason.reason).toMatch(/most recent done/i)
-  })
-})
 
 describe('listDeepReflectArcCandidates', () => {
   let repo: string
@@ -249,98 +128,6 @@ describe('listDeepReflectArcCandidates', () => {
       withTranscriptOnly: false,
     })
     expect(result.length).toBeLessThanOrEqual(3)
-  })
-})
-
-describe('loadDeepReflectSession reads JSONL transcripts', () => {
-  let repo: string
-  let homeDir: string
-  let originalHome: string | undefined
-
-  beforeEach(() => {
-    repo = setupRepo()
-    homeDir = mkdtempSync(resolve(tmpdir(), 'mars-deep-reflect-home-'))
-    originalHome = process.env.HOME
-    process.env.HOME = homeDir
-  })
-
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    if (originalHome === undefined) delete process.env.HOME
-    else process.env.HOME = originalHome
-    rmSync(repo, { recursive: true, force: true })
-    rmSync(homeDir, { recursive: true, force: true })
-  })
-
-  const writeJsonl = (encoded: string, sessionId: string, lines: string[]): void => {
-    const dir = resolve(homeDir, '.claude', 'projects', encoded)
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(resolve(dir, `${sessionId}.jsonl`), lines.join('\n') + '\n')
-  }
-
-  it('populates conversation and toolCallCounts from on-disk JSONL', async () => {
-    const { q, dq } = await loadModules(repo)
-    const t = await q.enqueueTask('p', undefined, { skipTriage: true })
-    const worktreePath = '/tmp/wt-session-load'
-    await q.getClient().execute({
-      sql: `UPDATE tasks
-              SET status = 'done', worktree_path = ?, claude_session_ids = ?
-            WHERE id = ?`,
-      args: [worktreePath, JSON.stringify(['sess-x']), t.id],
-    })
-
-    const encoded = worktreePath.split('/').join('-')
-    writeJsonl(encoded, 'sess-x', [
-      JSON.stringify({
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'text', text: 'planning' },
-            { type: 'tool_use', name: 'Read', input: { path: 'foo.ts' } },
-            { type: 'tool_use', name: 'Edit', input: { path: 'foo.ts' } },
-          ],
-        },
-      }),
-      JSON.stringify({ type: 'tool_use', name: 'Bash' }),
-    ])
-
-    const session = await dq.loadDeepReflectSession(t.id)
-    expect(session).not.toBeNull()
-    expect(session?.conversation).toHaveLength(2)
-    expect(session?.toolCallCounts).toEqual({ Read: 1, Edit: 1, Bash: 1 })
-    expect(session?.transcriptNotes).toEqual([])
-  })
-
-  it('returns the session with a "no transcripts recorded" note when no session ids are stored', async () => {
-    const { q, dq } = await loadModules(repo)
-    const t = await q.enqueueTask('p', undefined, { skipTriage: true })
-    await q.getClient().execute({
-      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
-      args: [t.id],
-    })
-
-    const session = await dq.loadDeepReflectSession(t.id)
-    expect(session).not.toBeNull()
-    expect(session?.conversation).toEqual([])
-    expect(session?.toolCallCounts).toEqual({})
-    expect(session?.transcriptNotes).toEqual([`no transcripts recorded for task ${t.id}`])
-  })
-
-  it('notes missing JSONL files without crashing', async () => {
-    const { q, dq } = await loadModules(repo)
-    const t = await q.enqueueTask('p', undefined, { skipTriage: true })
-    const worktreePath = '/tmp/wt-missing'
-    await q.getClient().execute({
-      sql: `UPDATE tasks
-              SET status = 'done', worktree_path = ?, claude_session_ids = ?
-            WHERE id = ?`,
-      args: [worktreePath, JSON.stringify(['sess-gone']), t.id],
-    })
-
-    const session = await dq.loadDeepReflectSession(t.id)
-    expect(session).not.toBeNull()
-    expect(session?.conversation).toEqual([])
-    expect(session?.transcriptNotes[0]).toMatch(/transcript sess-gone not found on disk/)
   })
 })
 

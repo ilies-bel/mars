@@ -60,11 +60,6 @@ describe('mars arc reflect --help', () => {
     expect(result.stdout).toMatch(/originId|origin.id/i)
   })
 
-  it('documents the --session escape hatch', () => {
-    const result = runCli(['arc', 'reflect', '--help'])
-    expect(result.status).toBe(0)
-    expect(result.stdout).toContain('--session')
-  })
 })
 
 describe('mars arc reflect — interactive picker (no originId)', () => {
@@ -107,24 +102,3 @@ describe('mars arc reflect <originId>', () => {
   })
 })
 
-describe('mars arc reflect --session <id>', () => {
-  it('exits non-zero with a clear error when the session has no transcript', () => {
-    withTempRepo((tmpDir) => {
-      const result = runCli(['arc', 'reflect', '--session', 'no-such-session-id'], {
-        MARS_REPO: tmpDir,
-      })
-      expect(result.status).not.toBe(0)
-      expect(result.stderr).toContain('no-such-session-id')
-    })
-  })
-
-  it('does not prompt for Arc selection when --session is given', () => {
-    withTempRepo((tmpDir) => {
-      const result = runCli(['arc', 'reflect', '--session', 'no-such-session-id'], {
-        MARS_REPO: tmpDir,
-      })
-      // Should not print the arc picker header
-      expect(result.stdout).not.toContain('originId\ttasks')
-    })
-  })
-})
