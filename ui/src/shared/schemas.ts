@@ -226,6 +226,30 @@ export const agentsResponseSchema = z.object({
   agents: z.array(agentSchema),
 })
 
+export const kpiKeySchema = z.enum([
+  'cost_per_arc',
+  'failure_rate',
+  'autonomous_completion_rate',
+  'recovery_success_rate',
+])
+
+export const kpiSchema = z.object({
+  key: kpiKeySchema,
+  currentValue: z.number(),
+  priorValue: z.number(),
+  delta: z.number(),
+  sampleCount: z.number(),
+  lowConfidence: z.boolean(),
+})
+
+export const kpisResponseSchema = z.object({
+  kpis: z.array(kpiSchema),
+})
+
+export type KpiKey = z.infer<typeof kpiKeySchema>
+export type Kpi = z.infer<typeof kpiSchema>
+export type KpisPayload = z.infer<typeof kpisResponseSchema>
+
 export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
 export type ActionDescriptor = z.infer<typeof actionDescriptorSchema>
 export type DagNode = z.infer<typeof dagNodeSchema>
