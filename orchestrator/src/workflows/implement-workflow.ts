@@ -1079,6 +1079,9 @@ export const implementWorkflow = defineWorkflow<
 
       // Wrap the real verify work in a non-LLM span so it shows up in the
       // unified trace surface alongside the setup / code / merge spans.
+      // capturedVerifyOutput is set inside fn() and read by getCommandOutput
+      // after fn() completes so the span carries the full verify output.
+      let capturedVerifyOutput: string | undefined
       const verifySpanStore = workflowTraceStore === nullTraceStore ? undefined : workflowTraceStore
       return await runNonLlmStepWithSpan({
         stepName: 'verify',
@@ -1086,6 +1089,7 @@ export const implementWorkflow = defineWorkflow<
         originId: workflowOriginId,
         phase: 'verify',
         traceStore: verifySpanStore,
+        getCommandOutput: () => capturedVerifyOutput,
         fn: async (): Promise<VerifyResult> => {
       // Slice F.2: verify-time dirty-main check. Runs at the top of the
       // verify step, BEFORE typecheck/test/lint. If the integration branch
@@ -1189,6 +1193,7 @@ export const implementWorkflow = defineWorkflow<
       const verifyOutput = r.steps
         .map((s) => `=== ${s.name} (${s.passed ? 'pass' : 'fail'}) ===\n${s.output}`)
         .join('\n\n')
+      capturedVerifyOutput = verifyOutput
 
       if (!r.passed) {
         const failed = r.steps.filter((s) => !s.passed)
@@ -1224,21 +1229,30 @@ export const implementWorkflow = defineWorkflow<
             `verify:${firstFailedName}`,
           ),
         }, store)
-        await handleTaskFailureWithFixTask({
-          taskId: input.taskId,
-          failingStep: `verify:${firstFailedName}`,
-          errorOutput: firstFailedOutput,
-          branch,
-          ranVerifySteps,
-          store,
-          recipeContext: {
-            targetPath: worktreePath,
-            statusOutput: firstFailedOutput,
-            targetBranch: branch,
-            integrationBranch: input.integrationBranch,
-            // Handler backfills from task.prompt when '' is passed.
-            originalPrompt: '',
-          },
+        // Wrap the recovery dispatch in its own span so it is visible as a
+        // distinct step in the trace surface alongside setup/verify/merge.
+        await runNonLlmStepWithSpan({
+          stepName: 'recovery-dispatch',
+          workflowInstanceId: ctx.runId,
+          originId: workflowOriginId,
+          phase: 'verify',
+          traceStore: verifySpanStore,
+          fn: () => handleTaskFailureWithFixTask({
+            taskId: input.taskId,
+            failingStep: `verify:${firstFailedName}`,
+            errorOutput: firstFailedOutput,
+            branch,
+            ranVerifySteps,
+            store,
+            recipeContext: {
+              targetPath: worktreePath,
+              statusOutput: firstFailedOutput,
+              targetBranch: branch,
+              integrationBranch: input.integrationBranch,
+              // Handler backfills from task.prompt when '' is passed.
+              originalPrompt: '',
+            },
+          }),
         }).catch((err) => {
           console.error(
             `[failure-handler] task ${input.taskId} verify failure handling errored:`,

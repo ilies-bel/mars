@@ -180,6 +180,14 @@ export interface RunNonLlmStepOptions<T> {
    * Returning null / undefined keeps the span a plain non-LLM Step span.
    */
   getVegaInfo?: () => { workerName: string; sessionId: string | null } | null | undefined
+  /**
+   * Optional. Called after fn() completes (successfully or with a throw) to
+   * capture the step's command output (e.g. the concatenated verify step
+   * stdout/stderr). When it returns a non-undefined string the value is
+   * included in the step_ended payload as `commandOutput`. Returning
+   * undefined (or omitting this callback) omits the field.
+   */
+  getCommandOutput?: () => string | undefined
 }
 
 /**
@@ -207,7 +215,16 @@ export interface RunNonLlmStepOptions<T> {
 export const runNonLlmStepWithSpan = async <T>(
   options: RunNonLlmStepOptions<T>,
 ): Promise<T> => {
-  const { stepName, workflowInstanceId, originId, phase, traceStore, fn, getVegaInfo } = options
+  const {
+    stepName,
+    workflowInstanceId,
+    originId,
+    phase,
+    traceStore,
+    fn,
+    getVegaInfo,
+    getCommandOutput,
+  } = options
 
   const startedAt = Date.now()
   await safeRecord(traceStore, {
@@ -221,6 +238,7 @@ export const runNonLlmStepWithSpan = async <T>(
   try {
     const result = await fn()
     const vegaInfo = getVegaInfo?.() ?? null
+    const commandOutput = getCommandOutput?.()
     await safeRecord(traceStore, {
       kind: 'step_ended',
       taskId: originId,
@@ -234,11 +252,13 @@ export const runNonLlmStepWithSpan = async <T>(
         ...(vegaInfo !== null
           ? { workerName: vegaInfo.workerName, sessionId: vegaInfo.sessionId }
           : {}),
+        ...(commandOutput !== undefined ? { commandOutput } : {}),
       },
     })
     return result
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    const commandOutput = getCommandOutput?.()
     await safeRecord(traceStore, {
       kind: 'step_ended',
       taskId: originId,
@@ -250,6 +270,7 @@ export const runNonLlmStepWithSpan = async <T>(
         outcome: 'failed',
         failureReason: msg.slice(0, 200),
         durationMs: Date.now() - startedAt,
+        ...(commandOutput !== undefined ? { commandOutput } : {}),
       },
     })
     throw err
