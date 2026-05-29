@@ -251,15 +251,20 @@ Commands:
                                 <blocker-id> to reach 'done' before dispatch.
                                 All ids must already exist; self-blocking is
                                 rejected.
-  sweep                         read-only enumeration of local task/<id>
-                                branches whose id is absent from the queue.
-                                For each orphan branch, prints the branch
-                                name and its unique commits ahead of the
-                                integration branch (default 'main', override
-                                via INTEGRATION_BRANCH) as
-                                '<short-sha> <subject>' lines. Prints a
-                                single line saying so when no orphans exist.
-                                Makes no changes to git state or the queue.
+  sweep                         enumerate local task/<id> branches whose id
+                                is absent from the queue and interactively
+                                resolve each one. For each orphan branch,
+                                shows the branch name and its unique commits
+                                ahead of the integration branch (default
+                                'main', override via INTEGRATION_BRANCH),
+                                then prompts: [k]eep (no-op), [d]elete
+                                (force-remove the branch), or [c]herry-pick-
+                                then-delete (apply each unique commit onto
+                                the integration branch in order, then remove
+                                the source branch). A cherry-pick conflict
+                                halts on that branch with a clear message;
+                                remaining orphans are still processed.
+                                Requires an interactive terminal (TTY).
   worktree clean [--dry-run] [--force-orphans]
                                 classify every directory under .mars/worktrees/
                                 (and legacy .worktrees/) against queue.db and
@@ -597,14 +602,29 @@ fix_for_task_id. 'mars drop <recovery>' followed by 'mars purge
 <parent>' (or 'mars drop <parent>') clears both.`,
   sweep: `mars sweep
 
-Read-only enumeration of orphan task branches: local git branches whose
-name matches task/<id> but whose id has no row in the queue. For each
-orphan branch, prints the branch name followed by its unique commits
-ahead of the integration branch (default 'main', override via
-INTEGRATION_BRANCH) as '<short-sha> <subject>' lines. Prints
-'no orphan task branches' when there are none.
+Enumerate local task/<id> branches whose id has no row in the queue and
+interactively resolve each one.
 
-Makes no changes to git state or the queue.`,
+For each orphan branch the command prints the branch name and its unique
+commits ahead of the integration branch (default 'main', override via
+INTEGRATION_BRANCH), then prompts for one of three actions:
+
+  [k]eep                  — no-op; branch and commits are left untouched.
+  [d]elete                — force-remove the local branch (unique commits
+                            are discarded).
+  [c]herry-pick-then-delete
+                          — apply each unique commit onto the integration
+                            branch in original order, then force-remove the
+                            source branch. A cherry-pick conflict halts on
+                            that branch with a message naming the conflicting
+                            commit; the branch is left intact for manual
+                            resolution and remaining orphans are still
+                            processed.
+
+No branch is ever modified without an explicit per-branch choice.
+
+Requires an interactive terminal. Prints 'no orphan task branches' when
+there are none.`,
   worktree: `mars worktree clean [--dry-run] [--force-orphans]
 
 Walk .mars/worktrees/ (and legacy .worktrees/), classify each directory
@@ -2558,8 +2578,66 @@ const main = async (): Promise<void> => {
   }
 
   if (cmd === 'sweep') {
-    const { runSweep } = await import('./mastra/lib/sweep')
-    await runSweep({ log: (line) => console.log(line) })
+    if (!process.stdin.isTTY) {
+      console.error(
+        'mars sweep: stdin is not a terminal; an interactive TTY is required to prompt for each orphan branch',
+      )
+      process.exit(1)
+    }
+
+    const integrationBranch =
+      process.env.INTEGRATION_BRANCH ?? 'main'
+
+    const {
+      runSweepVerb,
+      listLocalTaskBranches,
+      listUniqueCommitsAhead,
+      applyCommitsCherryPick,
+    } = await import('./mastra/lib/sweep')
+    const { getTask } = await import('./mastra/queue')
+    const { execFile: cpExecFile } = await import('node:child_process')
+    const { promisify: cpPromisify } = await import('node:util')
+    const cpExec = cpPromisify(cpExecFile)
+
+    const { createInterface } = await import('node:readline')
+    const rl = createInterface({ input: process.stdin, output: process.stdout })
+
+    const askAction = (branch: string): Promise<'keep' | 'delete' | 'cherry-pick'> =>
+      new Promise((resolve) => {
+        const onClose = (): void => resolve('keep')
+        rl.once('close', onClose)
+        rl.question(
+          `  Action for ${branch} — [k]eep  [d]elete  [c]herry-pick-then-delete > `,
+          (answer) => {
+            rl.removeListener('close', onClose)
+            const a = answer.trim().toLowerCase()
+            if (a === 'd' || a === 'delete') return resolve('delete')
+            if (a === 'c' || a === 'cherry-pick' || a === 'cherry-pick-then-delete') {
+              return resolve('cherry-pick')
+            }
+            resolve('keep')
+          },
+        )
+      })
+
+    await runSweepVerb({
+      integrationBranch,
+      log: (line) => console.log(line),
+      deps: {
+        listTaskBranches: () => listLocalTaskBranches(ctx.repoRoot),
+        getTask: (id) => getTask(id),
+        listUniqueCommits: (branch, integration) =>
+          listUniqueCommitsAhead(branch, integration, ctx.repoRoot),
+        prompt: (orphan) => askAction(orphan.branch),
+        deleteBranch: async (branch) => {
+          await cpExec('git', ['branch', '-D', branch], { cwd: ctx.repoRoot })
+        },
+        cherryPickCommits: (commits) =>
+          applyCommitsCherryPick(commits, integrationBranch, ctx.repoRoot),
+      },
+    })
+
+    rl.close()
     return
   }
 
