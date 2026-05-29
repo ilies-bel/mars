@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import type { InStatement } from '@libsql/client'
 import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 import { createQueueWorkflowStore } from './queue-workflow-store'
@@ -7,6 +8,7 @@ import { getProposal, getProposalsClient, markProposalSliced } from '../mastra/p
 import { enqueueTask } from '../mastra/queue'
 import { assertNotRecoveryEdge } from '../mastra/lib/blocker-invariant'
 import { getDefaultTaskStore } from '../mastra/lib/task-store'
+import { buildEventInsert } from '../mastra/lib/outbox'
 import { Workers } from '../mastra/workers'
 import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
 import { getRepoRoot, resolveContext } from '../mastra/context'
@@ -848,18 +850,34 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
         const isHitl = parsed.slices[i].kind === 'hitl'
         const status =
           isHitl || parsed.slices[i].blockedBy.length > 0 ? 'blocked' : 'queued'
-        await taskStore.execute({
-          sql: `UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
-          args: [status, now, taskIds[i]],
-        })
+        // Status write + lifecycle emit share one atomic batch (ADR-0030).
+        // Only 'queued' slices emit task.queued; 'blocked' slices emit
+        // nothing here (the blocked transition for a brand-new slice carries
+        // no failure context and is not an Invalidator trigger).
+        const stmts: InStatement[] = [
+          {
+            sql: `UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
+            args: [status, now, taskIds[i]],
+          },
+        ]
+        if (status === 'queued') {
+          stmts.push(buildEventInsert('task.queued', { taskId: taskIds[i] }))
+        }
+        await taskStore.batch(stmts, 'write')
       }
       // Phase 3b: Coder sub-tasks enqueued for hitl slices have no blockers
       // and must be dispatched immediately — transition them to 'queued'.
       for (const subTaskId of subTaskIds) {
-        await taskStore.execute({
-          sql: `UPDATE tasks SET status = 'queued', updated_at = ? WHERE id = ?`,
-          args: [now, subTaskId],
-        })
+        await taskStore.batch(
+          [
+            {
+              sql: `UPDATE tasks SET status = 'queued', updated_at = ? WHERE id = ?`,
+              args: [now, subTaskId],
+            },
+            buildEventInsert('task.queued', { taskId: subTaskId }),
+          ],
+          'write',
+        )
       }
       // Defensive: never mark a proposal 'sliced' with zero tasks. The
       // slicerOutputSchema already enforces `slices.min(1)` and Phase 1
@@ -997,11 +1015,28 @@ export const tryCompleteHitlSlice = async (
   if (inboxItem.state !== 'resolved' && inboxItem.state !== 'dismissed') return false
 
   // 4. Both conditions met — flip the HITL slice from 'blocked' to 'done'.
+  // Status write + lifecycle emit share one atomic batch (ADR-0030). The
+  // task.terminal{done} lets the Invalidator close any Action-queue row tied
+  // to this HITL slice; before this emit, a completed HITL slice stranded
+  // its own operator row (the measured hitl-slice staleness).
   const now = new Date().toISOString()
-  await taskStore.execute({
-    sql: `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
-    args: [now, hitlSliceTaskId],
-  })
+  await taskStore.batch(
+    [
+      {
+        sql: `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
+        args: [now, hitlSliceTaskId],
+      },
+      buildEventInsert('task.completed', {
+        taskId: hitlSliceTaskId,
+        result: { via: 'hitl-slice-completion' },
+      }),
+      buildEventInsert('task.terminal', {
+        taskId: hitlSliceTaskId,
+        reason: 'done',
+      }),
+    ],
+    'write',
+  )
   return true
 }
 

@@ -22,6 +22,11 @@ interface SweepModule {
   STALE_WORKTREE_KIND: typeof import('../stale-worktree-sweep').STALE_WORKTREE_KIND
 }
 
+interface AlertDismisserModule {
+  ensureAlertDismisser: typeof import('../alert-dismisser').ensureAlertDismisser
+  drainAlertDismissals: typeof import('../alert-dismisser').drainAlertDismissals
+}
+
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-stale-sweep-'))
   execFileSync('git', ['init', '-q'], { cwd: repo })
@@ -34,7 +39,12 @@ const OLD_UPDATED_AT = new Date(Date.now() - 2 * 24 * 3_600_000).toISOString()
 
 const loadModules = async (
   repo: string,
-): Promise<{ q: QueueModule; inbox: InboxModule; sweep: SweepModule }> => {
+): Promise<{
+  q: QueueModule
+  inbox: InboxModule
+  sweep: SweepModule
+  ad: AlertDismisserModule
+}> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   process.env.MARS_STALE_WORKTREE_HOURS = '24'
@@ -42,7 +52,8 @@ const loadModules = async (
   await q.initQueue()
   const inbox = (await import('../../lib/inbox')) as unknown as InboxModule
   const sweep = (await import('../stale-worktree-sweep')) as unknown as SweepModule
-  return { q, inbox, sweep }
+  const ad = (await import('../alert-dismisser')) as unknown as AlertDismisserModule
+  return { q, inbox, sweep, ad }
 }
 
 describe('detectAndRaiseStaleWorktrees', () => {
@@ -183,11 +194,12 @@ describe('detectAndRaiseStaleWorktrees', () => {
     expect(items).toHaveLength(0)
   })
 
-  it('closes the inbox item automatically when the origin task status changes', async () => {
-    const { q, inbox, sweep } = await loadModules(repo)
+  it('closes the inbox item via the Invalidator when the origin task reaches a terminal state', async () => {
+    const { q, inbox, sweep, ad } = await loadModules(repo)
+    const client = q.getClient()
     const task = await q.enqueueTask('task to complete', undefined, { skipTriage: true })
 
-    await q.getClient().execute({
+    await client.execute({
       sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
       args: [OLD_UPDATED_AT, task.id],
     })
@@ -200,8 +212,13 @@ describe('detectAndRaiseStaleWorktrees', () => {
     expect(openBefore).toHaveLength(1)
     const itemId = openBefore[0].id
 
-    // Task status changes (e.g. daemon requeues it) — triggers dismissAlertsOnStatusChange
+    // Status change is no longer cleared inline by updateTask; it emits
+    // task.terminal{done} into the outbox, and the Invalidator (a durable
+    // subscriber) closes the row on drain — the same clear, now off the
+    // outbox so it survives a daemon-down window (ADR-0027/0030).
+    await ad.ensureAlertDismisser(client)
     await q.updateTask(task.id, { status: 'done' })
+    await ad.drainAlertDismissals(client)
 
     // Item should now be resolved, not open
     const openAfter = await inbox.listInboxItems('open')
