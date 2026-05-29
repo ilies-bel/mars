@@ -163,20 +163,53 @@ export const fetchFailureReasons = async (): Promise<
 
 export interface EventsFilter {
   taskId?: string
+  originId?: string
+  /** Multi-select. Repeats the `kind` param once per value. */
+  kind?: readonly string[]
+  /** Multi-select. Repeats the `severity` param once per value. */
+  severity?: readonly string[]
+  /** Multi-select. Repeats the `phase` param once per value. */
+  phase?: readonly string[]
+  /** ISO timestamp lower bound (inclusive). */
+  since?: string
+  /** ISO timestamp upper bound (exclusive). */
+  until?: string
+  /** Full-text payload search. SQLite LIKE on the JSON column. */
+  q?: string
   cursor?: string
   limit?: number
 }
 
 /**
- * Fetch a page of trace events filtered by `taskId` (and an optional cursor).
- * The inbox detail panel's Traces section calls this when the panel opens,
- * and again for `Load more`. Newest-first ordering.
+ * Fetch a page of trace events from the daemon (via the UI server proxy).
+ *
+ * Two consumers:
+ *   - Inbox detail panel's Traces section — passes `{ taskId, limit }` and
+ *     paginates with `cursor`.
+ *   - The Events tab — passes the full multi-filter surface.
+ *
+ * Multi-select filters (`kind`, `severity`, `phase`) repeat the param key
+ * once per value, matching the `/events` endpoint's `params.getAll(...)`
+ * shape. Newest-first ordering.
  */
 export const fetchEvents = async (
   filter: EventsFilter,
 ): Promise<EventsResponse> => {
   const params = new URLSearchParams()
   if (filter.taskId !== undefined) params.set('taskId', filter.taskId)
+  if (filter.originId !== undefined) params.set('originId', filter.originId)
+  if (filter.kind !== undefined) {
+    for (const k of filter.kind) params.append('kind', k)
+  }
+  if (filter.severity !== undefined) {
+    for (const s of filter.severity) params.append('severity', s)
+  }
+  if (filter.phase !== undefined) {
+    for (const p of filter.phase) params.append('phase', p)
+  }
+  if (filter.since !== undefined) params.set('since', filter.since)
+  if (filter.until !== undefined) params.set('until', filter.until)
+  if (filter.q !== undefined) params.set('q', filter.q)
   if (filter.cursor !== undefined) params.set('cursor', filter.cursor)
   if (filter.limit !== undefined) params.set('limit', String(filter.limit))
   const qs = params.toString()
