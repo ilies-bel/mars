@@ -50,7 +50,7 @@ const NavItem = ({ label, icon, badge, badgeKind, active }: NavItemProps) => {
   const base =
     'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px]'
   const activeCls = active
-    ? 'bg-flame/10 border-l-2 border-flame font-semibold text-fg'
+    ? 'bg-flame/10 font-semibold text-fg'
     : 'font-medium text-fg'
   const badgeCls =
     badgeKind === 'iron'

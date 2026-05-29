@@ -57,8 +57,8 @@ const AgentList = ({ agents, selectedName, onSelect }: AgentListProps) => (
           className={[
             'flex flex-col items-start gap-0.5 rounded px-2.5 py-2 text-left',
             active
-              ? 'border-l-2 border-flame bg-flame/10'
-              : 'border-l-2 border-transparent hover:bg-panel',
+              ? 'bg-flame/10 font-semibold'
+              : 'hover:bg-panel',
           ].join(' ')}
         >
           <span className="text-[13px] font-semibold text-fg">

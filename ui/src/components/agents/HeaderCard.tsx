@@ -46,9 +46,9 @@ const ROLE_META: Record<string, RoleMeta> = {
   },
 }
 
-const sourceRefFor = (role: string): string => {
+const sourceRefFor = (role: string): string | null => {
   if (role === 'vcs-supervisor') return '.claude/agents/vcs-supervisor.md'
-  return 'orchestrator/src/mastra/workers/index.ts'
+  return null
 }
 
 export const HeaderCard = ({ agent }: HeaderCardProps) => {
@@ -56,7 +56,7 @@ export const HeaderCard = ({ agent }: HeaderCardProps) => {
   const invokedBy = meta?.invokedBy ?? agent.name
   const description =
     meta?.description ??
-    `${agent.name} is a Mars worker pinned to ${agent.model}. No long-form description is wired up yet.`
+    `${agent.name} is a Mars worker pinned to ${agent.model}.`
   const sourceRef = sourceRefFor(agent.role)
 
   return (
@@ -74,9 +74,11 @@ export const HeaderCard = ({ agent }: HeaderCardProps) => {
         <span className="rounded border border-border bg-neutral-200 px-1.5 py-0.5 font-mono text-[10px] uppercase text-fg">
           {agent.model}
         </span>
-        <span className="ml-auto truncate font-mono text-[11px] text-muted">
-          {sourceRef}
-        </span>
+        {sourceRef !== null && (
+          <span className="ml-auto truncate font-mono text-[11px] text-muted">
+            {sourceRef}
+          </span>
+        )}
       </div>
       <p
         className="text-[12px] text-fg"
