@@ -55,7 +55,11 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
     ReturnType<typeof loadRecipeCatalog>
   >,
   traceStore: stubTraceStore,
+  viewTasks: async () => ({ tasks: [] }),
   viewProgress: async () => ({ tasks: [], proposals: [] }),
+  inboxAck: async () => {},
+  inboxResolve: async () => {},
+  inboxDismiss: async () => {},
   ...overrides,
 })
 
