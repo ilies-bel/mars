@@ -25,6 +25,12 @@ dist/
 # can never dirty the working tree.
 scheduled_tasks.lock
 
+# mars install manifest — per-install runtime state, never committed.
+mars.lock
+
+# Session-scoped git worktrees (sibling of the gitignored /.worktrees/).
+.worktrees-session/
+
 # Claude Code agent worktrees — live runtime artifacts, never tracked.
 # Match anywhere (not just root) so a sync-claude-templates leak into the
 # template tree can never dirty the working tree, same as the lock above.
