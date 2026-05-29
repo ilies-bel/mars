@@ -311,9 +311,9 @@ Commands:
   arc reflect [<originId>]      deep, arc-level post-mortem. With no argument,
                                 prints the arc list and prompts for an originId.
                                 Accepts an originId or any task id in the arc
-                                (resolved automatically). --session <task-id>
-                                reflects on exactly one Worker session without
-                                Arc selection. Writes report to
+                                (resolved automatically; a one-task arc
+                                collapses to that single transcript). Writes
+                                report to
                                 .mars/deep-reflections/arc-<id>-<iso>.json.
   inbox                         alias for 'inbox list open'
   inbox list [state] [--kind <kind>] [--lean]
@@ -700,29 +700,26 @@ Subcommands:
         --json                 emit a JSON array of ArcCandidate objects
         --with-transcript-only only include arcs with at least one stored transcript
 
-  reflect [<originId-or-task-id>] [--session <task-id>]
-      Deep post-mortem on a Mars arc or a single Worker session.
+  reflect [<originId-or-task-id>]
+      Deep post-mortem on a Mars arc.
 
       When called with no arguments, prints the arc list (same output as
       'mars arc list') and prompts the operator to pick an originId. The
       picker is interactive: type the originId and press Enter.
 
-      Positional argument (arc mode):
+      Positional argument:
         <originId-or-task-id>   Run arc-level reflection across every task in
                                 the arc. Accepts an originId or any task id
                                 that belongs to the arc; the origin is resolved
-                                automatically via COALESCE(origin_id, id).
+                                automatically via COALESCE(origin_id, id). A
+                                one-task arc collapses to that single
+                                transcript, so passing a leaf task id is
+                                supported.
                                 Output: .mars/deep-reflections/arc-<id>-<iso>.json
 
-      --session <task-id>       Escape hatch: reflect on exactly one Worker
-                                session (a single task) without going through
-                                Arc selection. Equivalent to the old
-                                'mars deep-reflect <task-id>' behaviour.
-                                Output: .mars/deep-reflections/<task-id>-<iso>.json
-
-      Both modes walk every transcript event-by-event to surface dissonant
-      tool calls, verify-claim mismatches, and thrashing patterns. Transcripts
-      are read directly from Claude Code's on-disk JSONL files under
+      Walks every transcript event-by-event to surface dissonant tool calls,
+      verify-claim mismatches, and thrashing patterns. Transcripts are read
+      directly from Claude Code's on-disk JSONL files under
       ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl; tasks with no
       recorded session ids (or with files the user has since cleaned) get
       a degraded report that notes the absence instead of crashing.
@@ -2713,89 +2710,8 @@ const main = async (): Promise<void> => {
         return
       }
 
-      const sessionId = flags['--session']
       // positional originId: first element of rest after 'reflect' that isn't a flag
       const inputId = rest.slice(1).find((r) => !r.startsWith('--')) ?? null
-
-      // --session <id>: single-session reflection (no arc selection)
-      if (sessionId) {
-        const { loadDeepReflectSession } = await import('./mastra/lib/deep-reflect-query')
-        const { runDeepReflector } = await import('./mastra/lib/deep-reflector')
-        const { applyVerdicts } = await import('./mastra/lib/reflector')
-        const { insertReflectionTask } = await import('./mastra/queue')
-
-        const session = await loadDeepReflectSession(sessionId)
-        if (!session) {
-          console.error(`no task ${sessionId}`)
-          process.exit(1)
-        }
-
-        console.log(
-          `session ${sessionId}: ${session.conversation.length} event(s), verifyOutput=${session.verifyOutput ? `${session.verifyOutput.length} chars` : 'none'}`,
-        )
-        for (const note of session.transcriptNotes) {
-          console.log(`  note: ${note}`)
-        }
-
-        const result = await runDeepReflector(session)
-        const report = result.report
-
-        const sourceTaskId = await insertReflectionTask(1)
-        const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
-
-        const { mkdir, writeFile } = await import('node:fs/promises')
-        const { resolve: resolvePath } = await import('node:path')
-        const { getStateDir } = await import('./mastra/context')
-        const outDir = resolvePath(getStateDir(), 'deep-reflections')
-        await mkdir(outDir, { recursive: true })
-        const isoStamp = new Date().toISOString().replace(/[:.]/g, '-')
-        const outPath = resolvePath(outDir, `${sessionId}-${isoStamp}.json`)
-        const fullDoc = {
-          taskId: sessionId,
-          recordedAt: new Date().toISOString(),
-          report,
-          sourceTaskId,
-          verdictResult: {
-            saved: verdictResult.saved,
-            absorbed: verdictResult.absorbed,
-            dropped: verdictResult.dropped,
-          },
-          rawOutput: result.rawOutput,
-        }
-        await writeFile(outPath, JSON.stringify(fullDoc, null, 2), 'utf8')
-
-        console.log('')
-        if (report.summary) console.log(`Summary: ${report.summary}`)
-        console.log(
-          `Tool calls: ${report.toolCallStats.total} total — ${
-            Object.entries(report.toolCallStats.byName)
-              .map(([k, v]) => `${k}=${v}`)
-              .join(', ') || 'none'
-          }`,
-        )
-        console.log(
-          `Dissonant calls: ${report.dissonantCalls.length}${
-            report.verifyMismatch ? ` | verify mismatch: ${report.verifyMismatch.severity}` : ''
-          }`,
-        )
-        if (report.dissonantCalls.length > 0) {
-          console.log('Top dissonant calls:')
-          for (const d of report.dissonantCalls.slice(0, 3)) {
-            console.log(
-              `  [${d.severity}] event ${d.eventIndex} ${d.tool}: ${d.statedIntent} → ${d.actualOutcome}`,
-            )
-          }
-        }
-        if (report.rootCause) console.log(`Root cause: ${report.rootCause}`)
-        console.log(
-          `Suggestions: ${verdictResult.saved} saved, ${verdictResult.absorbed} absorbed, ${verdictResult.dropped} dropped`,
-        )
-        console.log(`Full report: ${outPath}`)
-        if (result.exitCode !== 0) {
-          console.error(`deep-reflector exit code ${result.exitCode}`)
-        }
-        return
-      }
 
       // Determine arc origin: from positional arg or interactive picker
       let chosenOriginInput: string

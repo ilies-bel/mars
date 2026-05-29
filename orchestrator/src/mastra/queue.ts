@@ -223,7 +223,7 @@ export interface Task {
    * (kept for backwards compatibility with callers that only want the
    * most recent pointer). Retries append; existing entries are never
    * dropped, so transcripts on disk remain reachable for `mars reflect`
-   * and `mars deep-reflect` across the full retry chain.
+   * and `mars arc reflect` across the full retry chain.
    */
   claudeSessionIds: string[]
   error: string | null
