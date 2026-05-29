@@ -4,7 +4,7 @@ import { extname, join, normalize, resolve } from 'node:path'
 import { hasRecipe } from '../../orchestrator/src/mastra/lib/fix-recipes.ts'
 import { DAEMON_KILLED_SIGNATURE } from '../../orchestrator/src/mastra/lib/retry-budget.ts'
 import { loadAgents } from './agents.ts'
-import { fetchErrorKinds, proxyAction } from './daemonHttp.ts'
+import { fetchErrorKinds, proxyAction, proxyGet } from './daemonHttp.ts'
 import { StateDb, TaskDb } from './db.ts'
 import { listTerminalEvents } from './events.ts'
 import { resolveRepo } from './repo.ts'
@@ -304,6 +304,14 @@ export const startServer = async (
               : { id: string; label: string; op: string }[]
             staleWorktreeDetail: StaleWorktreeDetail | null
             diagnosis: { text: string; diagnosedAt: string } | null
+            /**
+             * Failure-reason catalog code (`tasks.failure_reason_code` /
+             * inbox-row payload). Null on non-failed rows and on legacy rows
+             * landed before slice G started writing the typed code. The UI
+             * looks the code up in the `/failure-reasons` catalog to render
+             * `Reason: <userMessage>` in the detail panel.
+             */
+            failureReasonCode: string | null
           }
 
           const rows: ActionQueueRow[] = []
@@ -444,6 +452,14 @@ export const startServer = async (
               }
             }
 
+            // Pull the failure-reason catalog code from the inbox payload
+            // (inbox-repopulator writes `failureReasonCode` on every
+            // failed-task raise). For non-failure rows this stays null.
+            const failureReasonCode =
+              typeof row.payload.failureReasonCode === 'string'
+                ? row.payload.failureReasonCode
+                : null
+
             rows.push({
               id: row.id,
               kind: uiKind,
@@ -459,6 +475,7 @@ export const startServer = async (
               actions,
               staleWorktreeDetail,
               diagnosis,
+              failureReasonCode,
             })
           }
 
@@ -503,6 +520,7 @@ export const startServer = async (
               actions: batchActions,
               staleWorktreeDetail: null,
               diagnosis: null,
+              failureReasonCode: null,
             })
           }
 
@@ -579,6 +597,35 @@ export const startServer = async (
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }
+      }
+
+      // GET /api/failure-reasons — proxy the daemon's resolved failure-reason
+      // catalog so the inbox detail panel can render `Reason: <userMessage>`.
+      if (path === '/api/failure-reasons' && req.method === 'GET') {
+        const result = await proxyGet(ctx.stateDir, '/failure-reasons')
+        return jsonResponse(result.status, result.body)
+      }
+
+      // GET /api/trace-events — proxy the daemon's unified trace surface.
+      // The path differs from the daemon's `/events` so it doesn't collide
+      // with the UI server's existing `/events` SSE endpoint.
+      if (path === '/api/trace-events' && req.method === 'GET') {
+        const qs = url.search ?? ''
+        const result = await proxyGet(ctx.stateDir, `/events${qs}`)
+        return jsonResponse(result.status, result.body)
+      }
+
+      // GET /api/origins/:taskId — proxy the daemon's origin-tree endpoint.
+      if (path.startsWith('/api/origins/') && req.method === 'GET') {
+        const taskId = decodeURIComponent(path.slice('/api/origins/'.length))
+        if (!taskId) {
+          return jsonResponse(400, { error: 'taskId is required' })
+        }
+        const result = await proxyGet(
+          ctx.stateDir,
+          `/origins/${encodeURIComponent(taskId)}`,
+        )
+        return jsonResponse(result.status, result.body)
       }
 
       if (path === '/api/todo') {

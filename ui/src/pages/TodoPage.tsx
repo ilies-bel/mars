@@ -1,9 +1,29 @@
 import { useMemo, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { invokeAction } from '@/shared/api'
-import type { ActionDescriptor, ActionQueueItem, DagNode } from '@/shared/schemas'
+import {
+  fetchEvents,
+  fetchFailureReasons,
+  fetchOrigins,
+  invokeAction,
+} from '@/shared/api'
+import {
+  catalogActionsForDetail,
+  originKindLabel,
+  resolveFailureReason,
+  severityColor,
+  summarizeTraceEvent,
+  type CatalogActionDescriptor,
+} from '@/shared/inboxDetail'
+import type {
+  ActionDescriptor,
+  ActionQueueItem,
+  DagNode,
+  OriginNode,
+  TraceEvent,
+} from '@/shared/schemas'
+import { relativeTime } from '@/shared/time'
 
 // ---- Helpers ----
 
@@ -234,6 +254,328 @@ const ActionBar = ({ item }: ActionBarProps) => {
   )
 }
 
+// ---- Catalog-driven Reason + Available actions (failed rows only) ----
+
+interface CatalogPanelProps {
+  item: ActionQueueItem
+}
+
+const CatalogReasonAndActions = ({ item }: CatalogPanelProps) => {
+  const qc = useQueryClient()
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  // The catalog is small (a few dozen entries) and rarely changes. One
+  // fetch on panel open is plenty; React Query's default staleTime keeps
+  // it cached across detail-panel re-mounts.
+  const catalogQuery = useQuery({
+    queryKey: ['failure-reasons'],
+    queryFn: fetchFailureReasons,
+  })
+
+  const mutation = useMutation({
+    mutationFn: (op: string) => invokeAction(op, item.entityId),
+    onMutate: () => setErrorMsg(null),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['action-queue'] })
+      void qc.invalidateQueries({ queryKey: ['tasks'] })
+      void qc.invalidateQueries({ queryKey: ['progress'] })
+    },
+    onError: (err) => setErrorMsg((err as Error).message),
+  })
+
+  if (catalogQuery.isPending) {
+    return (
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Reason
+        </dt>
+        <dd className="text-iron/60">Loading catalog…</dd>
+      </div>
+    )
+  }
+  if (catalogQuery.isError || !catalogQuery.data) {
+    return (
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Reason
+        </dt>
+        <dd className="text-[#ff4f4f]">
+          Failed to load failure-reason catalog
+          {catalogQuery.error ? `: ${(catalogQuery.error as Error).message}` : ''}
+        </dd>
+      </div>
+    )
+  }
+
+  const entry = resolveFailureReason(item.failureReasonCode, catalogQuery.data)
+  if (!entry) {
+    return null
+  }
+  const actions = catalogActionsForDetail(entry.availableActions, item.entityId)
+
+  const run = (action: CatalogActionDescriptor) => {
+    if (mutation.isPending || action.disabled) return
+    if (
+      action.id === 'purge' &&
+      !window.confirm(`${action.raw.label}: ${item.entityId}. Proceed?`)
+    ) {
+      return
+    }
+    mutation.mutate(action.op)
+  }
+
+  return (
+    <>
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Reason
+        </dt>
+        <dd className="text-fg">{entry.userMessage}</dd>
+      </div>
+      <div>
+        <dt className="mb-2 text-[10px] uppercase tracking-wider text-iron">
+          Available actions
+        </dt>
+        <dd className="flex flex-wrap gap-2">
+          {actions.map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              disabled={mutation.isPending || action.disabled}
+              onClick={() => run(action)}
+              className={[
+                'border px-3 py-1.5 font-mono text-[11px] uppercase transition-colors disabled:opacity-50',
+                action.id === 'purge'
+                  ? 'border-[#ff4f4f]/50 text-[#ff4f4f] hover:bg-[#ff4f4f]/10'
+                  : 'border-iron/40 text-fg hover:bg-iron/20',
+              ].join(' ')}
+            >
+              {action.label}
+            </button>
+          ))}
+        </dd>
+        {errorMsg ? (
+          <p className="mt-2 font-mono text-[10px] text-[#ff4f4f]">{errorMsg}</p>
+        ) : null}
+      </div>
+    </>
+  )
+}
+
+// ---- Traces section ----
+
+interface TracesProps {
+  taskId: string
+}
+
+const TracesSection = ({ taskId }: TracesProps) => {
+  // Hold the appended pages from `Load more`; the first page comes from the
+  // React Query cache so a pre-warmed test sees it on initial render.
+  const [extraPages, setExtraPages] = useState<TraceEvent[][]>([])
+  const [overrideCursor, setOverrideCursor] = useState<string | null | undefined>(
+    undefined,
+  )
+
+  const initial = useQuery({
+    queryKey: ['events', taskId],
+    queryFn: () => fetchEvents({ taskId, limit: 50 }),
+  })
+
+  const more = useMutation({
+    mutationFn: async (cursor: string) =>
+      fetchEvents({ taskId, cursor, limit: 50 }),
+    onSuccess: (res) => {
+      setExtraPages((p) => [...p, res.events])
+      setOverrideCursor(res.nextCursor)
+    },
+  })
+
+  if (initial.isPending) {
+    return (
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Traces
+        </dt>
+        <dd className="text-iron/60">Loading…</dd>
+      </div>
+    )
+  }
+  if (initial.isError || !initial.data) {
+    return (
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Traces
+        </dt>
+        <dd className="text-[#ff4f4f]">
+          Failed to load traces
+          {initial.error ? `: ${(initial.error as Error).message}` : ''}
+        </dd>
+      </div>
+    )
+  }
+
+  const events = [initial.data.events, ...extraPages].flat()
+  const nextCursor =
+    overrideCursor === undefined ? initial.data.nextCursor : overrideCursor
+
+  if (events.length === 0) {
+    return (
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Traces
+        </dt>
+        <dd className="text-iron/60">No trace events recorded for this task.</dd>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+        Traces
+      </dt>
+      <dd>
+        <ul className="flex flex-col gap-1">
+          {events.map((e) => (
+            <li key={e.id} className="text-fg">
+              <span className="text-iron/60">{relativeTime(e.timestamp)}</span>{' '}
+              <span className={`font-mono text-[10px] uppercase ${severityColor(e.severity)}`}>
+                [{e.severity}]
+              </span>{' '}
+              <span className="font-mono text-[10px] text-iron">{e.kind}</span>
+              {e.phase ? (
+                <span className="font-mono text-[10px] text-iron/60">
+                  {' '}
+                  ·{' '}
+                  {e.phase}
+                </span>
+              ) : null}{' '}
+              <span>{summarizeTraceEvent(e)}</span>
+            </li>
+          ))}
+        </ul>
+        {nextCursor !== null ? (
+          <button
+            type="button"
+            disabled={more.isPending}
+            onClick={() => more.mutate(nextCursor)}
+            className="mt-2 font-mono text-[10px] uppercase text-fg underline disabled:opacity-50"
+          >
+            {more.isPending ? 'Loading…' : 'Load more'}
+          </button>
+        ) : null}
+      </dd>
+    </div>
+  )
+}
+
+// ---- Origins section ----
+
+interface OriginsProps {
+  taskId: string
+}
+
+const OriginNodeRow = ({
+  node,
+  depth,
+  currentTaskId,
+}: {
+  node: OriginNode
+  depth: number
+  currentTaskId: string
+}) => {
+  const isCurrent = node.id === currentTaskId
+  return (
+    <>
+      <li
+        className={[
+          'flex items-baseline gap-2 text-fg',
+          isCurrent ? 'border-l-2 border-fg pl-2 font-bold' : '',
+        ].join(' ')}
+        style={{ marginLeft: `${depth * 12}px` }}
+      >
+        <span className="font-mono text-[9px] uppercase text-iron">
+          {originKindLabel(node.kind)}
+        </span>
+        <span className="break-all font-mono text-[10px] text-iron/80">
+          {node.id}
+        </span>
+        <span className="break-words">
+          {node.title.length > 70 ? `${node.title.slice(0, 69)}…` : node.title}
+        </span>
+        <span className="ml-auto font-mono text-[10px] uppercase text-iron/60">
+          {node.status}
+        </span>
+      </li>
+      {node.children.map((c) => (
+        <OriginNodeRow
+          key={c.id}
+          node={c}
+          depth={depth + 1}
+          currentTaskId={currentTaskId}
+        />
+      ))}
+    </>
+  )
+}
+
+const OriginsSection = ({ taskId }: OriginsProps) => {
+  const query = useQuery({
+    queryKey: ['origins', taskId],
+    queryFn: () => fetchOrigins(taskId),
+  })
+
+  if (query.isPending) {
+    return (
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Origins
+        </dt>
+        <dd className="text-iron/60">Loading…</dd>
+      </div>
+    )
+  }
+  if (query.isError || !query.data) {
+    return (
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Origins
+        </dt>
+        <dd className="text-[#ff4f4f]">
+          Failed to load origins
+          {query.error ? `: ${(query.error as Error).message}` : ''}
+        </dd>
+      </div>
+    )
+  }
+
+  const root = query.data.node
+  // Single-node tree, no real ancestry — collapse to the empty-state line.
+  if (root.children.length === 0 && root.id === taskId) {
+    return (
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Origins
+        </dt>
+        <dd className="text-iron/60">No origin recorded for this task.</dd>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+        Origins
+      </dt>
+      <dd>
+        <ul className="flex flex-col gap-1">
+          <OriginNodeRow node={root} depth={0} currentTaskId={taskId} />
+        </ul>
+      </dd>
+    </div>
+  )
+}
+
 // ---- Detail panel ----
 
 interface DetailProps {
@@ -264,7 +606,11 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
 
       <main className="flex-1 px-6 py-4">
         <dl className="flex flex-col gap-4 font-mono text-[12px]">
-          <ActionBar item={item} />
+          {item.kind === 'failed-task' ? (
+            <CatalogReasonAndActions item={item} />
+          ) : (
+            <ActionBar item={item} />
+          )}
           {item.kind === 'stale-worktree' && (
             <>
               <div>
@@ -362,6 +708,12 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
               />
             </>
           )}
+          {item.kind === 'failed-task' && item.entityId !== '__daemon-killed-batch__' ? (
+            <>
+              <TracesSection taskId={item.entityId} />
+              <OriginsSection taskId={item.entityId} />
+            </>
+          ) : null}
           <div>
             <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
               Last updated

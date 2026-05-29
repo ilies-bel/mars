@@ -7,7 +7,16 @@
  */
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import type { Mock } from 'bun:test'
-import { fetchActionQueue, fetchAgents, fetchProgress, fetchTasks, fetchTodo } from './api'
+import {
+  fetchActionQueue,
+  fetchAgents,
+  fetchEvents,
+  fetchFailureReasons,
+  fetchOrigins,
+  fetchProgress,
+  fetchTasks,
+  fetchTodo,
+} from './api'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -350,5 +359,119 @@ describe('fetchActionQueue', () => {
   it('throws on HTTP error', async () => {
     fetchSpy.mockResolvedValue(json({ error: 'not found' }, 500))
     await expect(fetchActionQueue()).rejects.toThrow('500')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// fetchFailureReasons / fetchEvents / fetchOrigins (slice H)
+// ---------------------------------------------------------------------------
+
+describe('fetchFailureReasons', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('returns the typed catalog on a valid response', async () => {
+    fetchSpy.mockResolvedValue(
+      json([
+        {
+          code: 'verify:typecheck',
+          userMessage: 'msg',
+          recipe: null,
+          availableActions: [
+            { id: 'restart', label: 'Restart', cliHint: 'mars restart <id>' },
+          ],
+        },
+      ]),
+    )
+    const r = await fetchFailureReasons()
+    expect(r).toHaveLength(1)
+    expect(r[0].code).toBe('verify:typecheck')
+    expect(r[0].availableActions[0].id).toBe('restart')
+  })
+
+  it('throws when an entry is missing required fields', async () => {
+    fetchSpy.mockResolvedValue(json([{ code: 'x' }]))
+    await expect(fetchFailureReasons()).rejects.toThrow('schema validation')
+  })
+})
+
+describe('fetchEvents', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('passes taskId + limit as query params and parses the response', async () => {
+    fetchSpy.mockResolvedValue(
+      json({
+        events: [
+          {
+            id: 'e1',
+            timestamp: new Date().toISOString(),
+            kind: 'task_failed',
+            severity: 'error',
+            taskId: 't1',
+            originId: null,
+            phase: 'verify',
+            payload: { failureReasonCode: 'verify:typecheck' },
+          },
+        ],
+        nextCursor: 'opaque-cursor',
+      }),
+    )
+    const r = await fetchEvents({ taskId: 't1', limit: 50 })
+    expect(r.events).toHaveLength(1)
+    expect(r.nextCursor).toBe('opaque-cursor')
+    // The fetch call carried the expected URL.
+    const url = fetchSpy.mock.calls[0]![0] as string
+    expect(url).toContain('taskId=t1')
+    expect(url).toContain('limit=50')
+  })
+})
+
+describe('fetchOrigins', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('parses a recursive origin tree', async () => {
+    fetchSpy.mockResolvedValue(
+      json({
+        node: {
+          id: 'prop-1',
+          kind: 'prd',
+          title: 'big feature',
+          status: 'sliced',
+          children: [
+            {
+              id: 'task-1',
+              kind: 'task',
+              title: 'slice',
+              status: 'failed',
+              children: [],
+            },
+          ],
+        },
+      }),
+    )
+    const r = await fetchOrigins('task-1')
+    expect(r.node.kind).toBe('prd')
+    expect(r.node.children).toHaveLength(1)
+    expect(r.node.children[0].id).toBe('task-1')
   })
 })

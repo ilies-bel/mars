@@ -77,6 +77,35 @@ export const fetchErrorKinds = async (
 }
 
 /**
+ * Forward an arbitrary GET to the daemon, relaying its status + parsed JSON
+ * body verbatim. Used by the inbox detail panel to surface the failure-reason
+ * catalog, per-task trace events, and the origin tree. A missing daemon
+ * yields a synthetic 503; a transport error yields a 502.
+ */
+export const proxyGet = async (
+  stateDir: string,
+  path: string,
+): Promise<DaemonActionResult> => {
+  const port = await readDaemonHttpPort(stateDir)
+  if (port === null) {
+    return {
+      status: 503,
+      body: { ok: false, error: 'daemon not running', errorCode: 'NO_DAEMON' },
+    }
+  }
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`)
+    const body = await res.json().catch(() => ({}))
+    return { status: res.status, body }
+  } catch (err) {
+    return {
+      status: 502,
+      body: { ok: false, error: (err as Error).message, errorCode: 'PROXY_FAILED' },
+    }
+  }
+}
+
+/**
  * Forward a recovery action to the daemon. `op` is the verb from the registry;
  * `entityId` is the task/worktree id (omitted for process-level ops like
  * `restart-daemon`). Returns the daemon's status + parsed body so the route can

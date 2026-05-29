@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
 import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
+import { nullTraceStore } from '../../lib/run-tool'
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-http-restart-'))
@@ -71,6 +72,7 @@ const makeDeps = (
   failureReasonCatalog:
     catalogOverride ?? (cachedBuiltInCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>),
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
+  traceStore: nullTraceStore,
   ...overrides,
 })
 
