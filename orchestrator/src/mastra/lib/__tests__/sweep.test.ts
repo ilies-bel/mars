@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   findOrphanTaskBranches,
   runSweep,
+  runSweepVerb,
+  type OrphanCommit,
   type SweepDeps,
+  type SweepVerbDeps,
 } from '../sweep'
 import type { Task } from '../../queue'
 
@@ -116,6 +119,148 @@ describe('findOrphanTaskBranches', () => {
     expect(result.map((o) => o.branch)).toEqual(['task/mars-orphan'])
     // Only the task/<id> branch should be queried against the queue.
     expect(taskCalls).toEqual(['mars-orphan'])
+  })
+})
+
+const makeSweepVerbDeps = (
+  overrides: Partial<SweepVerbDeps> = {},
+): SweepVerbDeps => ({
+  listTaskBranches: async () => ['task/mars-orphan'],
+  getTask: async () => null,
+  listUniqueCommits: async () => [
+    { shortSha: 'abc1234', subject: 'first commit' },
+    { shortSha: 'def5678', subject: 'second commit' },
+  ],
+  prompt: async () => 'keep',
+  deleteBranch: async () => {},
+  cherryPickCommits: async () => ({ ok: true as const }),
+  ...overrides,
+})
+
+describe('runSweepVerb (interactive)', () => {
+  it('keep — branch and commits are untouched', async () => {
+    const deleteCalls: string[] = []
+    const cherryPickCalls: OrphanCommit[][] = []
+    const result = await runSweepVerb({
+      integrationBranch: 'main',
+      log: () => {},
+      deps: makeSweepVerbDeps({
+        prompt: async () => 'keep',
+        deleteBranch: async (b) => {
+          deleteCalls.push(b)
+        },
+        cherryPickCommits: async (c) => {
+          cherryPickCalls.push(c)
+          return { ok: true as const }
+        },
+      }),
+    })
+    expect(result.kept).toEqual(['task/mars-orphan'])
+    expect(deleteCalls).toEqual([])
+    expect(cherryPickCalls).toEqual([])
+  })
+
+  it('delete — deleteBranch is called with the branch name', async () => {
+    const deleteCalls: string[] = []
+    const result = await runSweepVerb({
+      integrationBranch: 'main',
+      log: () => {},
+      deps: makeSweepVerbDeps({
+        prompt: async () => 'delete',
+        deleteBranch: async (b) => {
+          deleteCalls.push(b)
+        },
+      }),
+    })
+    expect(result.deleted).toEqual(['task/mars-orphan'])
+    expect(deleteCalls).toEqual(['task/mars-orphan'])
+  })
+
+  it('cherry-pick — commits applied oldest-first, then branch deleted', async () => {
+    const cherryPickOrder: string[] = []
+    const deleteCalls: string[] = []
+    const result = await runSweepVerb({
+      integrationBranch: 'main',
+      log: () => {},
+      deps: makeSweepVerbDeps({
+        // git log order is newest-first: abc1234 newest, def5678 oldest
+        listUniqueCommits: async () => [
+          { shortSha: 'abc1234', subject: 'newest commit' },
+          { shortSha: 'def5678', subject: 'oldest commit' },
+        ],
+        prompt: async () => 'cherry-pick',
+        deleteBranch: async (b) => {
+          deleteCalls.push(b)
+        },
+        cherryPickCommits: async (commits) => {
+          for (const c of commits) cherryPickOrder.push(c.shortSha)
+          return { ok: true as const }
+        },
+      }),
+    })
+    // oldest-first: def5678 then abc1234
+    expect(cherryPickOrder).toEqual(['def5678', 'abc1234'])
+    expect(deleteCalls).toEqual(['task/mars-orphan'])
+    expect(result.cherryPicked).toEqual(['task/mars-orphan'])
+  })
+
+  it('cherry-pick conflict — logs the conflicting commit, branch left intact', async () => {
+    const deleteCalls: string[] = []
+    const lines: string[] = []
+    const result = await runSweepVerb({
+      integrationBranch: 'main',
+      log: (line) => lines.push(line),
+      deps: makeSweepVerbDeps({
+        prompt: async () => 'cherry-pick',
+        deleteBranch: async (b) => {
+          deleteCalls.push(b)
+        },
+        cherryPickCommits: async () => ({
+          ok: false as const,
+          conflictingCommit: { shortSha: 'abc1234', subject: 'first commit' },
+        }),
+      }),
+    })
+    expect(deleteCalls).toEqual([])
+    expect(result.conflicted).toEqual(['task/mars-orphan'])
+    expect(
+      lines.some((l) => l.includes('abc1234') && l.includes('conflict')),
+    ).toBe(true)
+  })
+
+  it('each orphan gets its own prompt — no branch touched without explicit choice', async () => {
+    const promptedBranches: string[] = []
+    const deleteCalls: string[] = []
+    await runSweepVerb({
+      integrationBranch: 'main',
+      log: () => {},
+      deps: makeSweepVerbDeps({
+        listTaskBranches: async () => ['task/mars-a', 'task/mars-b'],
+        prompt: async (orphan) => {
+          promptedBranches.push(orphan.branch)
+          return orphan.branch === 'task/mars-a' ? 'keep' : 'delete'
+        },
+        deleteBranch: async (b) => {
+          deleteCalls.push(b)
+        },
+      }),
+    })
+    expect(promptedBranches).toEqual(['task/mars-a', 'task/mars-b'])
+    // only mars-b was deleted
+    expect(deleteCalls).toEqual(['task/mars-b'])
+  })
+
+  it('prints no orphan message and returns empty result when no orphans exist', async () => {
+    const lines: string[] = []
+    const result = await runSweepVerb({
+      integrationBranch: 'main',
+      log: (line) => lines.push(line),
+      deps: makeSweepVerbDeps({
+        listTaskBranches: async () => [],
+      }),
+    })
+    expect(result.orphans).toEqual([])
+    expect(lines).toEqual(['no orphan task branches'])
   })
 })
 
