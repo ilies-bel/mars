@@ -47,6 +47,10 @@ mock.module('@/entities/todo/useTodo', () => ({
   useTodo: () => ({ drafts: [], staleWorktrees: [], error: null, connected: true }),
 }))
 
+mock.module('@/entities/kpi/useKpis', () => ({
+  useKpis: () => ({ data: undefined, isLoading: false, error: null }),
+}))
+
 const { ProgressPage } = await import('./ProgressPage')
 
 // ---------------------------------------------------------------------------
