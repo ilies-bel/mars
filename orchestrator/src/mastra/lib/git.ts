@@ -184,7 +184,7 @@ const branchExists = async (
   // `git show-ref --verify --quiet` returns non-zero when the ref is missing.
   // That's a probe, not an error, so mark expectsFailure on the trace.
   const r = await execProbe(
-    'git',
+    resolveGitBin(),
     ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
     { cwd: repoRoot() },
     traceCtx,
@@ -264,7 +264,7 @@ export const createWorktree = async ({
   // It's stale state from a previous run — drop it.
   if (existingForPath && existingForPath.branch !== branch) {
     await execProbe(
-      'git',
+      resolveGitBin(),
       ['worktree', 'remove', '--force', existingForPath.path],
       { cwd },
       setupCtx,
@@ -275,7 +275,7 @@ export const createWorktree = async ({
   // registration so we can re-attach the branch at the canonical path.
   if (existingForBranch && existingForBranch.path !== path) {
     await execProbe(
-      'git',
+      resolveGitBin(),
       ['worktree', 'remove', '--force', existingForBranch.path],
       { cwd },
       setupCtx,
@@ -348,7 +348,7 @@ export const provisionCommitterWorktree = async (
   // our probe and this call) doesn't hard-fail the recovery spawn.
   const stashMessage = `mars main-commiter spawn ${args.recoveryTaskId}`
   const stashed = await execProbe(
-    'git',
+    resolveGitBin(),
     ['stash', 'push', '--include-untracked', '-m', stashMessage],
     { cwd },
     ctx,
@@ -374,7 +374,7 @@ export const provisionCommitterWorktree = async (
     // recoverable state for the agent (it sees the conflicted files in
     // `git status`); we surface the exit code as a probe rather than
     // throwing, so the recipe can decide what to do.
-    await execProbe('git', ['stash', 'pop'], { cwd: worktree.path }, ctx)
+    await execProbe(resolveGitBin(), ['stash', 'pop'], { cwd: worktree.path }, ctx)
   }
 
   return worktree
@@ -1137,7 +1137,7 @@ export const checkBranchHasDiff = async (
     : undefined
   try {
     const { stdout } = await exec(
-      'git',
+      resolveGitBin(),
       ['rev-list', '--count', `${integrationBranch}..${branch}`],
       { cwd },
       verifyCtx,
@@ -1248,7 +1248,7 @@ export const cleanWorktreeIfNoCommitsAhead = async (
   let count: number
   try {
     const { stdout } = await exec(
-      'git',
+      resolveGitBin(),
       ['rev-list', '--count', `${args.integrationBranch}..HEAD`],
       { cwd: args.worktreePath },
       ctx,
@@ -1280,7 +1280,7 @@ export const cleanWorktreeIfNoCommitsAhead = async (
 
   try {
     const { stdout, stderr } = await exec(
-      'git',
+      resolveGitBin(),
       ['clean', '-fd'],
       { cwd: args.worktreePath },
       ctx,
@@ -1492,7 +1492,7 @@ export const getChangedFiles = async (
 ): Promise<string[]> => {
   try {
     const { stdout } = await exec(
-      'git',
+      resolveGitBin(),
       ['diff', '--name-only', `${integrationBranch}..${branch}`],
       { cwd },
       traceCtx,
@@ -1622,7 +1622,7 @@ export const checkMergeTargetStatus = async (
     // codes on usage/IO errors. Use execProbe so non-zero exits are warn-level
     // probes in the trace rather than spurious errors.
     const ancestry = await execProbe(
-      'git',
+      resolveGitBin(),
       ['merge-base', '--is-ancestor', integrationBranch, taskBranch],
       { cwd: targetPath },
       mergeCtx,
@@ -1646,7 +1646,7 @@ export const checkMergeTargetStatus = async (
     }
 
     const diff = await exec(
-      'git',
+      resolveGitBin(),
       ['diff', '--name-only', `${integrationBranch}..${taskBranch}`],
       { cwd: targetPath },
       mergeCtx,
@@ -1956,7 +1956,7 @@ export const mergeBranch = async ({
     // Confirm fast-forward is valid: integrationSha must be an ancestor of taskSha.
     // `git merge-base --is-ancestor` exits 0 when true, 1 when false.
     const ancestryProbe = await execProbe(
-      'git',
+      resolveGitBin(),
       ['merge-base', '--is-ancestor', integrationSha, taskSha],
       { cwd: repoRoot() },
       mergeCtx,
@@ -1979,7 +1979,7 @@ export const mergeBranch = async ({
     // race-safety as the file lock, with an additional CAS layer).
     try {
       await exec(
-        'git',
+        resolveGitBin(),
         ['update-ref', `refs/heads/${integrationBranch}`, taskSha, integrationSha],
         { cwd: repoRoot() },
         mergeCtx,
@@ -2033,7 +2033,7 @@ export const mergeBranch = async ({
         // `git diff --quiet <sha>` exits 0 when the working tree + index match
         // <sha> exactly (no genuine local work), non-zero otherwise. Probe form.
         const diffProbe = await execProbe(
-          'git',
+          resolveGitBin(),
           ['diff', '--quiet', integrationSha],
           { cwd: repoRoot() },
           mergeCtx,
@@ -2082,7 +2082,7 @@ export const isBranchMergedIntoMain = async (
   if (probe.exitCode !== 0) return false
   try {
     const { stdout } = await exec(
-      'git',
+      resolveGitBin(),
       ['rev-list', '--count', `${branch}..main`],
       { cwd: repoRoot },
       traceCtx,
@@ -2108,7 +2108,7 @@ export const isZeroCommitBranch = async (
       traceCtx,
     )
     const { stdout: base } = await exec(
-      'git',
+      resolveGitBin(),
       ['merge-base', branch, 'main'],
       { cwd: repoRoot },
       traceCtx,
