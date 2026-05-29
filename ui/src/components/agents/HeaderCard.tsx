@@ -66,16 +66,16 @@ export const HeaderCard = ({ agent }: HeaderCardProps) => {
           {agent.name}
         </h2>
         <span
-          className="rounded bg-flame/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase text-flame"
+          className="rounded bg-flame/10 px-1.5 py-0.5 font-mono text-micro font-semibold uppercase text-flame"
           style={{ letterSpacing: '0.6px' }}
         >
           DISPATCHED
         </span>
-        <span className="rounded border border-border bg-neutral-200 px-1.5 py-0.5 font-mono text-[10px] uppercase text-fg">
+        <span className="rounded border border-border bg-neutral-200 px-1.5 py-0.5 font-mono text-micro uppercase text-fg">
           {agent.model}
         </span>
         {sourceRef !== null && (
-          <span className="ml-auto truncate font-mono text-[11px] text-muted">
+          <span className="ml-auto truncate font-mono text-meta text-muted">
             {sourceRef}
           </span>
         )}
@@ -88,12 +88,12 @@ export const HeaderCard = ({ agent }: HeaderCardProps) => {
       </p>
       <div className="flex items-center gap-2 pt-1">
         <span
-          className="font-mono text-[10px] uppercase text-muted"
+          className="font-mono text-micro uppercase text-muted"
           style={{ letterSpacing: '1.2px' }}
         >
           INVOKED BY
         </span>
-        <span className="rounded bg-neutral-200 px-2 py-0.5 font-mono text-[11px] text-fg">
+        <span className="rounded bg-neutral-200 px-2 py-0.5 font-mono text-meta text-fg">
           {invokedBy}
         </span>
       </div>

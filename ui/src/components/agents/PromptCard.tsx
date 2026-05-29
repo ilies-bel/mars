@@ -40,12 +40,12 @@ export const PromptCard = ({ agent }: PromptCardProps) => {
     <div className="flex w-full flex-col gap-[10px] rounded-lg border border-border bg-surface p-[18px]">
       <div className="flex items-baseline gap-3">
         <h3
-          className="font-mono text-[10px] uppercase text-fg"
+          className="font-mono text-micro uppercase text-fg"
           style={{ letterSpacing: '1.2px' }}
         >
           SYSTEM PROMPT
         </h3>
-        <span className="font-mono text-[11px] text-muted">
+        <span className="font-mono text-meta text-muted">
           rendered markdown · scroll for full
         </span>
       </div>
