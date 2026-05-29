@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import { focusSubgraph } from '@/shared/focusSubgraph'
+import { dagClusterStyle, DAG_EDGE_BLOCKER, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
 
 interface TaskDetailDrawerProps {
   /** Task id pulled from `#/task/<id>`. */
@@ -55,27 +56,9 @@ const MINI_LAYER_H = 44
 const MINI_PAD_X = 12
 const MINI_PAD_Y = 12
 
-// Identical hex values to TopologyView.nodeStyle so nodes carry the same
-// cluster semantics on the drawer canvas as on the main canvas.
-const miniNodeStyle = (
-  kind: string,
-  cluster: string | undefined,
-): { fill: string; stroke: string; text: string } => {
-  if (kind === 'idea') {
-    // Proposal / provenance node — purple, matching TopologyView's proposal style.
-    return { fill: '#2e1065', stroke: '#7c3aed', text: '#c4b5fd' }
-  }
-  switch (cluster) {
-    case 'In progress':
-      return { fill: '#431407', stroke: '#ea580c', text: '#fdba74' }
-    case 'Blocked':
-      return { fill: '#18181b', stroke: '#71717a', text: '#a1a1aa' }
-    case 'Failed':
-      return { fill: '#450a0a', stroke: '#dc2626', text: '#fca5a5' }
-    default: // Queued
-      return { fill: '#1c1917', stroke: '#78716c', text: '#d6d3d1' }
-  }
-}
+// Delegates to the shared dagClusterStyle so both canvases always match.
+// The 'idea' kind is TaskDetailDrawer's alias for proposal nodes.
+const miniNodeStyle = dagClusterStyle
 
 interface PositionedMiniNode {
   id: string
@@ -366,7 +349,7 @@ export const TaskDetailDrawer = ({
                     d={`M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`}
                     data-edge-kind={e.kind}
                     fill="none"
-                    stroke={e.kind === 'provenance' ? '#7c3aed' : '#52525b'}
+                    style={{ stroke: e.kind === 'provenance' ? DAG_EDGE_PROVENANCE : DAG_EDGE_BLOCKER }}
                     strokeWidth={1.5}
                     strokeDasharray={e.kind === 'provenance' ? '4 2' : undefined}
                   />
@@ -391,8 +374,7 @@ export const TaskDetailDrawer = ({
                       width={MINI_NODE_W}
                       height={MINI_NODE_H}
                       rx={3}
-                      fill={s.fill}
-                      stroke={s.stroke}
+                      style={{ fill: s.fill, stroke: s.stroke }}
                       strokeWidth={1.5}
                     />
                     <text
@@ -400,7 +382,7 @@ export const TaskDetailDrawer = ({
                       y={MINI_NODE_H / 2 + 4}
                       fontSize={10}
                       fontFamily="monospace"
-                      fill={s.text}
+                      style={{ fill: s.text }}
                     >
                       {node.label}
                     </text>

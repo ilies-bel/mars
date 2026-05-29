@@ -12,6 +12,7 @@
 
 import { useMemo } from 'react'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
+import { dagClusterStyle, DAG_EDGE_BLOCKER, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
 
 // ---------------------------------------------------------------------------
 // Internal graph model
@@ -180,30 +181,11 @@ const edgePath = (
 }
 
 // ---------------------------------------------------------------------------
-// Node styling by cluster / kind
+// Node styling by cluster / kind — delegated to the shared dagColors module
 // ---------------------------------------------------------------------------
 
-type NodeStyle = {
-  fill: string
-  stroke: string
-  text: string
-}
-
-const nodeStyle = (node: PositionedNode): NodeStyle => {
-  if (node.kind === 'proposal') {
-    return { fill: '#2e1065', stroke: '#7c3aed', text: '#c4b5fd' }
-  }
-  switch (node.cluster) {
-    case 'In progress':
-      return { fill: '#431407', stroke: '#ea580c', text: '#fdba74' }
-    case 'Blocked':
-      return { fill: '#18181b', stroke: '#71717a', text: '#a1a1aa' }
-    case 'Failed':
-      return { fill: '#450a0a', stroke: '#dc2626', text: '#fca5a5' }
-    case 'Queued':
-      return { fill: '#1c1917', stroke: '#78716c', text: '#d6d3d1' }
-  }
-}
+const nodeStyle = (node: PositionedNode) =>
+  dagClusterStyle(node.kind, node.kind === 'task' ? node.cluster : undefined)
 
 // ---------------------------------------------------------------------------
 // TopologyView component
@@ -280,7 +262,7 @@ export const TopologyView = ({
               d={edgePath(from, to)}
               data-edge-kind={e.kind}
               fill="none"
-              stroke={e.kind === 'provenance' ? '#7c3aed' : '#52525b'}
+              style={{ stroke: e.kind === 'provenance' ? DAG_EDGE_PROVENANCE : DAG_EDGE_BLOCKER }}
               strokeWidth={1.5}
               strokeDasharray={e.kind === 'provenance' ? '4 2' : undefined}
               markerEnd="url(#arrow)"
@@ -298,7 +280,7 @@ export const TopologyView = ({
             refY="3"
             orient="auto"
           >
-            <path d="M0,0 L0,6 L6,3 z" fill="#52525b" />
+            <path d="M0,0 L0,6 L6,3 z" style={{ fill: DAG_EDGE_BLOCKER }} />
           </marker>
         </defs>
 
@@ -326,8 +308,7 @@ export const TopologyView = ({
                 width={NODE_W}
                 height={NODE_H}
                 rx={4}
-                fill={s.fill}
-                stroke={s.stroke}
+                style={{ fill: s.fill, stroke: s.stroke }}
                 strokeWidth={1.5}
               />
               <text
@@ -335,7 +316,7 @@ export const TopologyView = ({
                 y={NODE_H / 2 + 4}
                 fontSize={11}
                 fontFamily="monospace"
-                fill={s.text}
+                style={{ fill: s.text }}
               >
                 {node.label}
               </text>

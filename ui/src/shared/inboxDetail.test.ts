@@ -186,9 +186,9 @@ describe('summarizeTraceEvent', () => {
 })
 
 describe('severityColor', () => {
-  it('uses red for error, amber for warn, grey for info', () => {
-    expect(severityColor('error')).toContain('#ff4f4f')
-    expect(severityColor('warn')).toContain('#ff944d')
+  it('uses design-token classes for error, warn, and info', () => {
+    expect(severityColor('error')).toBe('text-error')
+    expect(severityColor('warn')).toBe('text-warn')
     expect(severityColor('info')).toContain('iron')
   })
 })

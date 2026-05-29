@@ -54,7 +54,7 @@ const NavItem = ({ label, icon, badge, badgeKind, active }: NavItemProps) => {
     : 'font-medium text-fg'
   const badgeCls =
     badgeKind === 'iron'
-      ? 'bg-iron text-white'
+      ? 'bg-iron text-surface'
       : 'text-muted'
   return (
     <div className={`${base} ${activeCls}`}>

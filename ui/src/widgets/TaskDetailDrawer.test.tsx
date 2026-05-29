@@ -309,9 +309,9 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
         proposals={[]}
       />,
     )
-    // Queued fill and stroke colours from TopologyView
-    expect(html).toContain('#1c1917') // fill
-    expect(html).toContain('#78716c') // stroke
+    // Colours are now CSS design-token references so both canvases stay in sync.
+    expect(html).toContain('var(--color-dag-queued-fill)')
+    expect(html).toContain('var(--color-dag-queued-stroke)')
   })
 
   it('colours a Failed task node with the Failed palette (same as TopologyView)', () => {
@@ -323,8 +323,9 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
         proposals={[]}
       />,
     )
-    expect(html).toContain('#450a0a') // fill
-    expect(html).toContain('#dc2626') // stroke
+    // Colours are now CSS design-token references so both canvases stay in sync.
+    expect(html).toContain('var(--color-dag-failed-fill)')
+    expect(html).toContain('var(--color-dag-failed-stroke)')
   })
 
   it('colours a Blocked task node with the Blocked palette (same as TopologyView)', () => {
@@ -336,8 +337,8 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
         proposals={[]}
       />,
     )
-    expect(html).toContain('#18181b') // fill
-    expect(html).toContain('#71717a') // stroke
+    expect(html).toContain('var(--color-dag-blocked-fill)')
+    expect(html).toContain('var(--color-dag-blocked-stroke)')
   })
 
   it('colours an In progress task node with the In progress palette (same as TopologyView)', () => {
@@ -349,8 +350,8 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
         proposals={[]}
       />,
     )
-    expect(html).toContain('#431407') // fill
-    expect(html).toContain('#ea580c') // stroke
+    expect(html).toContain('var(--color-dag-in-progress-fill)')
+    expect(html).toContain('var(--color-dag-in-progress-stroke)')
   })
 
   it('colours a proposal node with the purple proposal palette (same as TopologyView)', () => {
@@ -362,8 +363,8 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
         proposals={[proposal('p1')]}
       />,
     )
-    expect(html).toContain('#2e1065') // fill
-    expect(html).toContain('#7c3aed') // stroke
+    expect(html).toContain('var(--color-dag-proposal-fill)')
+    expect(html).toContain('var(--color-dag-proposal-stroke)')
   })
 
   it('attaches data-cluster to task nodes for cluster identification', () => {
