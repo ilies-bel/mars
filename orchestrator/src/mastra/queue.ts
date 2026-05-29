@@ -572,22 +572,8 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_parent_proposal_id ON tasks(parent_proposal_id)`,
   )
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS task_signals (
-      task_id TEXT NOT NULL,
-      step_id TEXT NOT NULL,
-      input_tokens INTEGER NOT NULL DEFAULT 0,
-      output_tokens INTEGER NOT NULL DEFAULT 0,
-      cache_create_tokens INTEGER NOT NULL DEFAULT 0,
-      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-      message_count INTEGER NOT NULL DEFAULT 0,
-      recorded_at TEXT NOT NULL,
-      PRIMARY KEY (task_id, step_id)
-    )
-  `)
-  await c.execute(`
-    CREATE INDEX IF NOT EXISTS idx_task_signals_task_id ON task_signals(task_id)
-  `)
+  // task_signals table intentionally omitted: migrated to trace_events in
+  // PRD 436f14c7 slice 5 (see migrateSignalsAndTranscriptsToTraceEvents below).
   await c.execute(`
     CREATE TABLE IF NOT EXISTS task_blockers (
       task_id TEXT NOT NULL,
@@ -783,18 +769,8 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_task_acceptance_task ON task_acceptance(task_id)`,
   )
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS task_transcripts (
-      task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
-      conversation_json TEXT NOT NULL,
-      verify_output TEXT,
-      bytes INTEGER NOT NULL,
-      recorded_at TEXT NOT NULL
-    )
-  `)
-  await c.execute(`
-    CREATE INDEX IF NOT EXISTS idx_task_transcripts_recorded_at ON task_transcripts(recorded_at)
-  `)
+  // task_transcripts table intentionally omitted: migrated to trace_events in
+  // PRD 436f14c7 slice 5 (see migrateSignalsAndTranscriptsToTraceEvents below).
   // self_heal_attempts: append-only ledger of fix-tasks the sweeper enqueues
   // in response to a parent task's verify failure. Keyed by (parent_task_id,
   // failure_signature) so the sweeper can dedupe — if a row already exists
@@ -857,6 +833,159 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_kpi_snapshots_taken_at ON kpi_snapshots(taken_at)`,
   )
+  await migrateSignalsAndTranscriptsToTraceEvents(c)
+}
+
+/**
+ * One-time startup migration (PRD 436f14c7 slice 5): lift every row from the
+ * legacy task_signals and task_transcripts tables into the unified trace_events
+ * table as synthesised step_ended events, then drop the old tables.
+ *
+ * Synthesis rules (documented honestly so future readers are not surprised):
+ *   - step_name = 'code'  All historical coder runs lived in these tables.
+ *                          The original step_id from task_signals is preserved
+ *                          in payload.legacyStepId for auditability.
+ *   - outcome   = 'success'  Synthesised — failed tasks were retried and their
+ *                             final state is recorded in tasks.status, not here.
+ *   - timestamp = recorded_at  The legacy column held a write-time ISO string
+ *                               so this approximates span end time, not exact
+ *                               start time.
+ *   - payload.migrated = true  Marker so callers can identify reconstructed rows.
+ *
+ * Idempotent: if both tables are absent the function is a no-op.
+ * INSERT OR IGNORE ensures partial migrations (crash between copy and DROP)
+ * do not produce duplicates.
+ */
+const migrateSignalsAndTranscriptsToTraceEvents = async (c: Client): Promise<void> => {
+  // Ensure trace_events exists — it may not yet if the daemon has never opened it.
+  // This DDL mirrors trace-events-store.ts (canonical owner); the duplication is
+  // intentional so the migration has no cross-module import dependency here.
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS trace_events (
+      id        TEXT PRIMARY KEY,
+      timestamp TEXT NOT NULL,
+      kind      TEXT NOT NULL,
+      severity  TEXT NOT NULL DEFAULT 'info',
+      task_id   TEXT,
+      origin_id TEXT,
+      phase     TEXT,
+      payload   TEXT NOT NULL DEFAULT '{}'
+    )
+  `)
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_trace_events_task_time ON trace_events (task_id, timestamp)`,
+  )
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_trace_events_time_desc ON trace_events (timestamp DESC)`,
+  )
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_trace_events_origin_time ON trace_events (origin_id, timestamp)`,
+  )
+
+  // ── task_signals → trace_events ──────────────────────────────────────────
+  const sigTableCheck = await c.execute(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='task_signals'`,
+  )
+  if (sigTableCheck.rows.length > 0) {
+    const sigRows = await c.execute(`SELECT * FROM task_signals`)
+    for (const row of sigRows.rows) {
+      const r = row as unknown as {
+        task_id: string
+        step_id: string
+        input_tokens: number
+        output_tokens: number
+        cache_create_tokens: number
+        cache_read_tokens: number
+        message_count: number
+        recorded_at: string
+      }
+      const taskRow = await c.execute({
+        sql: `SELECT COALESCE(origin_id, id) AS origin_id FROM tasks WHERE id = ?`,
+        args: [r.task_id],
+      })
+      const originId =
+        taskRow.rows.length > 0
+          ? ((taskRow.rows[0] as unknown as { origin_id: string }).origin_id ?? r.task_id)
+          : r.task_id
+      await c.execute({
+        sql: `INSERT OR IGNORE INTO trace_events
+                (id, timestamp, kind, severity, task_id, origin_id, phase, payload)
+              VALUES (?, ?, 'step_ended', 'info', ?, ?, 'code', ?)`,
+        args: [
+          `migrated-sig-${r.task_id}-${r.step_id}`,
+          r.recorded_at,
+          r.task_id,
+          originId,
+          JSON.stringify({
+            stepName: 'code',
+            legacyStepId: r.step_id,
+            workflowInstanceId: `migrated-sig-${r.task_id}-${r.step_id}`,
+            outcome: 'success',
+            durationMs: 0,
+            migrated: true,
+            usageSignals: {
+              inputTokens: r.input_tokens,
+              outputTokens: r.output_tokens,
+              cacheCreateTokens: r.cache_create_tokens,
+              cacheReadTokens: r.cache_read_tokens,
+              messageCount: r.message_count,
+            },
+          }),
+        ],
+      })
+    }
+    await c.execute(`DROP TABLE task_signals`)
+    await c.execute(`DROP INDEX IF EXISTS idx_task_signals_task_id`)
+  }
+
+  // ── task_transcripts → trace_events ─────────────────────────────────────
+  const txTableCheck = await c.execute(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='task_transcripts'`,
+  )
+  if (txTableCheck.rows.length > 0) {
+    const txRows = await c.execute(
+      `SELECT task_id, verify_output, recorded_at FROM task_transcripts`,
+    )
+    for (const row of txRows.rows) {
+      const r = row as unknown as {
+        task_id: string
+        verify_output: string | null
+        recorded_at: string
+      }
+      const taskRow = await c.execute({
+        sql: `SELECT COALESCE(origin_id, id) AS origin_id FROM tasks WHERE id = ?`,
+        args: [r.task_id],
+      })
+      const originId =
+        taskRow.rows.length > 0
+          ? ((taskRow.rows[0] as unknown as { origin_id: string }).origin_id ?? r.task_id)
+          : r.task_id
+      const payloadObj: Record<string, unknown> = {
+        stepName: 'code',
+        workflowInstanceId: `migrated-tx-${r.task_id}`,
+        outcome: 'success',
+        durationMs: 0,
+        migrated: true,
+      }
+      if (r.verify_output !== null && r.verify_output !== undefined) {
+        payloadObj.verifyOutput = r.verify_output
+      }
+      await c.execute({
+        sql: `INSERT OR IGNORE INTO trace_events
+                (id, timestamp, kind, severity, task_id, origin_id, phase, payload)
+              VALUES (?, ?, 'step_ended', 'info', ?, ?, 'code', ?)`,
+        args: [
+          `migrated-tx-${r.task_id}`,
+          r.recorded_at,
+          r.task_id,
+          originId,
+          JSON.stringify(payloadObj),
+        ],
+      })
+    }
+    await c.execute(`DROP TABLE task_transcripts`)
+    await c.execute(`DROP INDEX IF EXISTS idx_task_transcripts_recorded_at`)
+  }
 }
 
 const MAX_CONVERSATION_BYTES = 2 * 1024 * 1024
@@ -881,48 +1010,39 @@ export const upsertTranscript = async (
   input: UpsertTranscriptInput,
   store?: TaskStore,
 ): Promise<void> => {
+  // After PRD 436f14c7 slice 5, transcripts and verify output are stored as
+  // step_ended trace events rather than task_transcripts rows (which have been
+  // migrated and dropped). Each call appends a new event; readers use ORDER BY
+  // timestamp DESC LIMIT 1 to get the latest.
   const now = new Date().toISOString()
-
-  if (input.conversationJson !== undefined) {
-    const capped = capConversationJson(input.conversationJson)
-    const stmt = {
-      sql: `INSERT INTO task_transcripts
-              (task_id, conversation_json, verify_output, bytes, recorded_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(task_id) DO UPDATE SET
-              conversation_json = excluded.conversation_json,
-              bytes             = excluded.bytes,
-              recorded_at       = excluded.recorded_at`,
-      args: [input.taskId, capped, input.verifyOutput ?? null, capped.length, now],
-    }
-    if (store) {
-      await store.execute(stmt)
-    } else {
-      await initQueue()
-      await getClient().execute(stmt)
-    }
-    return
+  const payloadObj: Record<string, unknown> = {
+    stepName: 'code',
+    workflowInstanceId: `upsert-${input.taskId}`,
+    outcome: 'success',
+    durationMs: 0,
   }
-
-  if (input.verifyOutput !== undefined) {
+  if (input.conversationJson !== undefined) {
+    payloadObj.transcript = capConversationJson(input.conversationJson)
+  }
+  if (input.verifyOutput !== undefined && input.verifyOutput !== null) {
     const cappedVerify =
-      input.verifyOutput === null
-        ? null
-        : input.verifyOutput.length > 64 * 1024
-          ? input.verifyOutput.slice(0, 64 * 1024)
-          : input.verifyOutput
-    const stmt = {
-      sql: `UPDATE task_transcripts
-              SET verify_output = ?, recorded_at = ?
-            WHERE task_id = ?`,
-      args: [cappedVerify, now, input.taskId],
-    }
-    if (store) {
-      await store.execute(stmt)
-    } else {
-      await initQueue()
-      await getClient().execute(stmt)
-    }
+      input.verifyOutput.length > 64 * 1024
+        ? input.verifyOutput.slice(0, 64 * 1024)
+        : input.verifyOutput
+    payloadObj.verifyOutput = cappedVerify
+  }
+  const id = `upsert-${input.taskId}-${randomUUID()}`
+  const stmt = {
+    sql: `INSERT INTO trace_events
+            (id, timestamp, kind, severity, task_id, phase, payload)
+          VALUES (?, ?, 'step_ended', 'info', ?, 'code', ?)`,
+    args: [id, now, input.taskId, JSON.stringify(payloadObj)],
+  }
+  if (store) {
+    await store.execute(stmt)
+  } else {
+    await initQueue()
+    await getClient().execute(stmt)
   }
 }
 
@@ -937,21 +1057,33 @@ export interface TaskTranscriptRow {
 export const getTranscript = async (
   taskId: string,
 ): Promise<TaskTranscriptRow | null> => {
+  // After PRD 436f14c7 slice 5, transcript data lives in trace_events.
+  // Return the most recent step_ended event for this task that has either
+  // a transcript or verifyOutput in its payload.
   await initQueue()
   const r = await getClient().execute({
-    sql: `SELECT task_id, conversation_json, verify_output, bytes, recorded_at
-            FROM task_transcripts
-           WHERE task_id = ?`,
+    sql: `SELECT timestamp, payload
+            FROM trace_events
+           WHERE kind = 'step_ended' AND task_id = ?
+           ORDER BY timestamp DESC
+           LIMIT 1`,
     args: [taskId],
   })
   if (r.rows.length === 0) return null
-  const row = r.rows[0] as unknown as Record<string, unknown>
+  const row = r.rows[0] as unknown as { timestamp: string; payload: string }
+  let payload: Record<string, unknown> = {}
+  try {
+    payload = JSON.parse(row.payload) as Record<string, unknown>
+  } catch {
+    /* ignore malformed payload */
+  }
+  const conversationJson = (payload.transcript as string | null | undefined) ?? ''
   return {
-    taskId: row.task_id as string,
-    conversationJson: row.conversation_json as string,
-    verifyOutput: (row.verify_output as string | null) ?? null,
-    bytes: Number(row.bytes ?? 0),
-    recordedAt: row.recorded_at as string,
+    taskId,
+    conversationJson,
+    verifyOutput: (payload.verifyOutput as string | null | undefined) ?? null,
+    bytes: conversationJson.length,
+    recordedAt: row.timestamp,
   }
 }
 

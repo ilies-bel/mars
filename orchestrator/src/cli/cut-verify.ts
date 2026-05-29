@@ -67,10 +67,10 @@ const ENTITY_TABLES: ReadonlyArray<string> = [
   'tasks',
   'proposals',
   'task_blockers',
-  'task_signals',
+  // task_signals removed: migrated to trace_events (PRD 436f14c7 slice 5)
   'task_proposal_blockers',
   'task_acceptance',
-  'task_transcripts',
+  // task_transcripts removed: migrated to trace_events (PRD 436f14c7 slice 5)
   'self_heal_attempts',
   'events',
   'kpi_snapshots',
@@ -78,6 +78,7 @@ const ENTITY_TABLES: ReadonlyArray<string> = [
   'inbox_history',
   'proposal_user_stories',
   'proposal_dependencies',
+  'trace_events',
 ]
 
 /**

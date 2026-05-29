@@ -53,12 +53,19 @@ export const loadOriginTimeline = async (
 ): Promise<OriginTimeline | null> => {
   await initQueue()
   const c = getClient()
+  // After PRD 436f14c7 slice 5, verify output lives in trace_events.
+  // A correlated EXISTS subquery avoids JOIN-multiplication when a task has
+  // multiple step_ended events.
   const r = await c.execute({
     sql: `
       SELECT t.id, t.status, t.prompt, t.error, t.created_at, t.kind, t.fix_for_task_id,
-             CASE WHEN tt.verify_output IS NOT NULL AND tt.verify_output != '' THEN 1 ELSE 0 END AS has_verify_output
+             CASE WHEN EXISTS (
+               SELECT 1 FROM trace_events te
+               WHERE te.task_id = t.id AND te.kind = 'step_ended'
+                 AND json_extract(te.payload, '$.verifyOutput') IS NOT NULL
+                 AND json_extract(te.payload, '$.verifyOutput') != ''
+             ) THEN 1 ELSE 0 END AS has_verify_output
         FROM tasks t
-        LEFT JOIN task_transcripts tt ON tt.task_id = t.id
        WHERE COALESCE(t.origin_id, t.id) = ?
        ORDER BY t.created_at ASC`,
     args: [originId],
@@ -105,15 +112,21 @@ export const pickTopOrigin = async (): Promise<{
 } | null> => {
   await initQueue()
   const c = getClient()
+  // After PRD 436f14c7 slice 5, verify output lives in trace_events.
+  // A correlated EXISTS subquery avoids JOIN-multiplication per task.
   const r = await c.execute(`
     SELECT
       COALESCE(t.origin_id, t.id) AS origin_id,
       COUNT(*) AS span_count,
       SUM(CASE WHEN t.fix_for_task_id IS NOT NULL THEN 1 ELSE 0 END) AS retry_count,
-      SUM(CASE WHEN tt.verify_output IS NOT NULL AND tt.verify_output != '' THEN 1 ELSE 0 END) AS verify_failure_count,
+      SUM(CASE WHEN EXISTS (
+        SELECT 1 FROM trace_events te
+        WHERE te.task_id = t.id AND te.kind = 'step_ended'
+          AND json_extract(te.payload, '$.verifyOutput') IS NOT NULL
+          AND json_extract(te.payload, '$.verifyOutput') != ''
+      ) THEN 1 ELSE 0 END) AS verify_failure_count,
       MAX(COALESCE(t.updated_at, t.created_at)) AS last_activity
     FROM tasks t
-    LEFT JOIN task_transcripts tt ON tt.task_id = t.id
     WHERE t.status IN ('done', 'failed')
     GROUP BY COALESCE(t.origin_id, t.id)
   `)
