@@ -100,7 +100,7 @@ export const runWorkerWithSpan = async (
         stepName,
         workflowInstanceId,
         workerName: worker.config.name,
-        outcome: 'failure',
+        outcome: 'failed',
         failureReason: msg.slice(0, 200),
         durationMs: Date.now() - startedAt,
       },
@@ -109,9 +109,19 @@ export const runWorkerWithSpan = async (
   }
 
   const usage = summarizeUsage(result.conversation)
-  const outcome = result.exitCode === 0 ? 'success' : 'failure'
+  // Exit code 138 means the run was terminated by an external abort signal
+  // (read/grep span watchdog). This is a distinct outcome from a genuine
+  // task failure — the worker was killed, not broken.
+  const outcome =
+    result.exitCode === 0
+      ? 'completed'
+      : result.exitCode === 138
+        ? 'killed'
+        : 'failed'
   const failureReason =
-    result.exitCode === 0 ? undefined : `exit-${result.exitCode}`
+    result.exitCode === 0 || result.exitCode === 138
+      ? undefined
+      : `exit-${result.exitCode}`
   const transcript = isReflectDisabled()
     ? undefined
     : JSON.stringify(result.conversation)

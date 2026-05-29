@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { HeaderCard } from '../components/agents/HeaderCard'
 import { PromptCard } from '../components/agents/PromptCard'
+import { SessionsList } from '../components/agents/SessionsList'
 import { ToolsCard } from '../components/agents/ToolsCard'
 import { useAgents } from '../hooks/useAgents'
+import { useWorkerSessions } from '../hooks/useWorkerSessions'
 import type { Agent } from '@/shared/schemas'
 
 interface TopBarProps {
@@ -83,6 +85,10 @@ export const AgentsPage = () => {
   const selectedAgent =
     agents?.find((a) => a.name === selectedName) ?? agents?.[0] ?? null
 
+  const { sessions, error: sessionsError } = useWorkerSessions(
+    selectedAgent?.name ?? null,
+  )
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-bg text-fg">
       <TopBar
@@ -116,6 +122,7 @@ export const AgentsPage = () => {
               {selectedAgent ? (
                 <>
                   <HeaderCard agent={selectedAgent} />
+                  <SessionsList sessions={sessions} error={sessionsError} />
                   <ToolsCard agent={selectedAgent} />
                   <PromptCard agent={selectedAgent} />
                 </>

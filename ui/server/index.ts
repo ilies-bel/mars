@@ -3,6 +3,7 @@ import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { hasRecipe } from '../../orchestrator/src/mastra/lib/fix-recipes.ts'
 import { DAEMON_KILLED_SIGNATURE } from '../../orchestrator/src/mastra/lib/retry-budget.ts'
+import { openTraceEventStore } from '../../orchestrator/src/mastra/lib/trace-events-store.ts'
 import { loadAgents } from './agents.ts'
 import { fetchErrorKinds, fetchKpis, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'
 import { StateDb, TaskDb } from './db.ts'
@@ -665,6 +666,56 @@ export const startServer = async (
             'Access-Control-Allow-Origin': '*',
           },
         })
+      }
+
+      // GET /api/sessions?agentName=<name> — recent finished sessions for a
+      // Worker, keyed by the workerName field in step_ended trace events.
+      // Returns sessions in reverse-chronological order (newest first).
+      if (path === '/api/sessions' && req.method === 'GET') {
+        const agentName = url.searchParams.get('agentName')
+        if (!agentName) {
+          return jsonResponse(400, { error: 'agentName query parameter is required' })
+        }
+        try {
+          const store = await openTraceEventStore(ctx.queueDbPath)
+          try {
+            // Filter step_ended events by workerName substring in the JSON payload.
+            // The payload is stored as JSON.stringify(payload), so the worker name
+            // will appear as "workerName":"<name>" in the serialised form.
+            const events = await store.query({
+              kind: ['step_ended'],
+              q: `"workerName":"${agentName}"`,
+              limit: 50,
+            })
+            const sessions = events.map((e) => ({
+              id: e.id,
+              sessionId: typeof e.payload.sessionId === 'string'
+                ? e.payload.sessionId
+                : null,
+              workerName: typeof e.payload.workerName === 'string'
+                ? e.payload.workerName
+                : agentName,
+              stepName: typeof e.payload.stepName === 'string'
+                ? e.payload.stepName
+                : '',
+              workflowInstanceId: typeof e.payload.workflowInstanceId === 'string'
+                ? e.payload.workflowInstanceId
+                : '',
+              outcome: typeof e.payload.outcome === 'string'
+                ? e.payload.outcome
+                : 'failed',
+              endedAt: e.timestamp,
+              durationMs: typeof e.payload.durationMs === 'number'
+                ? e.payload.durationMs
+                : null,
+            }))
+            return jsonResponse(200, { sessions })
+          } finally {
+            await store.close()
+          }
+        } catch (err) {
+          return jsonResponse(500, { error: (err as Error).message })
+        }
       }
 
       if (path.startsWith('/api/')) {

@@ -94,7 +94,9 @@ export interface TraceEventStore {
  * Map `(kind, payload)` to a severity level. Single source of truth.
  *
  * - `task_blocked`, `recovery_spawned` → `warn`
- * - `task_failed`, `step_ended` with `payload.outcome === 'failure'` → `error`
+ * - `task_failed`, `step_ended` with `payload.outcome === 'failed'` → `error`
+ * - `step_ended` with `payload.outcome === 'killed'` → `warn`
+ *   (watchdog-killed runs are problems but not hard failures)
  * - `tool_invoked` with `payload.exitCode === 0` → `info`
  * - `tool_invoked` with non-zero exit AND `payload.expectsFailure === true` → `warn`
  * - `tool_invoked` with non-zero exit AND falsy `expectsFailure` → `error`
@@ -105,7 +107,8 @@ export const deriveSeverity = (
   payload: Record<string, unknown>,
 ): TraceEventSeverity => {
   if (kind === 'task_failed') return 'error'
-  if (kind === 'step_ended' && payload.outcome === 'failure') return 'error'
+  if (kind === 'step_ended' && payload.outcome === 'failed') return 'error'
+  if (kind === 'step_ended' && payload.outcome === 'killed') return 'warn'
   if (kind === 'task_blocked' || kind === 'recovery_spawned') return 'warn'
   if (kind === 'tool_invoked') {
     const exitCode = payload.exitCode
