@@ -96,6 +96,83 @@ describe('ProposalDetailDrawer – entrance / exit animation structure', () => {
   })
 })
 
+// ── CLI commands section ─────────────────────────────────────────────────────
+
+describe('ProposalDetailDrawer – CLI commands section', () => {
+  it('draft proposal shows promote and show commands with real id substituted', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ id: 'prop-abc', status: 'draft' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('mars proposal promote prop-abc')
+    expect(html).toContain('mars proposal show prop-abc')
+  })
+
+  it('prd-ready proposal shows slice and show commands with real id substituted', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ id: 'prop-xyz', status: 'prd-ready' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('mars proposal slice prop-xyz')
+    expect(html).toContain('mars proposal show prop-xyz')
+  })
+
+  it('sliced proposal shows only the show command', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ id: 'prop-sliced', status: 'sliced' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('mars proposal show prop-sliced')
+    expect(html).not.toContain('mars proposal promote')
+    expect(html).not.toContain('mars proposal slice prop-sliced')
+  })
+
+  it('dismissed proposal shows only the show command', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ id: 'prop-dismissed', status: 'dismissed' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('mars proposal show prop-dismissed')
+    expect(html).not.toContain('mars proposal promote')
+    expect(html).not.toContain('mars proposal slice')
+  })
+
+  it('each command has a copy-to-clipboard affordance', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ id: 'prop-1', status: 'draft' })}
+        onClose={() => {}}
+      />,
+    )
+    // draft has 2 commands → 2 copy buttons
+    const copyCount = (html.match(/data-testid="copy-cli-cmd"/g) ?? []).length
+    expect(copyCount).toBe(2)
+  })
+
+  it('no mutation buttons appear in the drawer for any status', () => {
+    const statuses = ['draft', 'prd-ready', 'sliced', 'dismissed']
+    for (const status of statuses) {
+      const html = renderToStaticMarkup(
+        <ProposalDetailDrawer
+          proposal={draftProposal({ status })}
+          onClose={() => {}}
+        />,
+      )
+      expect(html).not.toContain('data-testid="btn-promote"')
+      expect(html).not.toContain('data-testid="btn-reject"')
+      expect(html).not.toContain('data-testid="btn-slice"')
+    }
+  })
+})
+
 // ── A11y: scrim + focusable drawer ───────────────────────────────────────────
 
 /**
