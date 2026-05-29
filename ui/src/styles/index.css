@@ -10,14 +10,38 @@
 @import "@fontsource/jetbrains-mono/700.css";
 
 @theme {
-  --color-bg:        #F5EDE4;
-  --color-surface:   #FFFFFF;
-  --color-panel:     #FBF7F2;
-  --color-fg:        #1A0F0A;
-  --color-muted:     #705F50;  /* was #7A6B5C — darkened for 4.9:1 on bg */
-  --color-border:    #E5D9CB;
+  /* ── Mars neutral ramp (warm browns, 50–900) ── */
+  --color-neutral-50:  #FBF7F2;
+  --color-neutral-100: #F5EDE4;
+  --color-neutral-200: #E5D9CB;
+  --color-neutral-300: #D1BFAB;
+  --color-neutral-400: #A89684;
+  --color-neutral-500: #7A6B5C;
+  --color-neutral-600: #574A3F;
+  --color-neutral-700: #3A2C24;
+  --color-neutral-800: #251812;
+  --color-neutral-900: #1A0F0A;
 
-  --color-flame:     #9A4F00;  /* was #F48A36 — darkened for 4.7:1 on bg */
+  /* ── Mars semantic light tokens ── */
+  --color-bg:        #F5EDE4;   /* neutral-100 */
+  --color-surface:   #FFFFFF;
+  --color-panel:     #FBF7F2;   /* neutral-50  */
+  --color-fg:        #1A0F0A;   /* neutral-900 */
+  --color-muted:     #705F50;   /* was #7A6B5C (neutral-500) — darkened for 4.9:1 on bg */
+  --color-border:    #E5D9CB;   /* neutral-200 */
+
+  /* ── Mars brand aliases ── */
+  --color-dust:      #F5EDE4;   /* mars-dust  */
+  --color-night:     #1A0F0A;   /* mars-night */
+
+  /* ── Dark-surface tokens (DAG / SVG views) ── */
+  --color-surface-dark: #251812;
+  --color-fg-dark:      #F5EDE4;
+  --color-muted-dark:   #A89684;
+  --color-border-dark:  #3A2820;
+
+  /* ── Brand palette ── */
+  --color-flame:     #9A4F00;   /* was #F48A36 — darkened for 4.7:1 on bg */
   --color-amber:     #E8A33D;
   --color-iron:      #9C2E35;
   --color-ochre:     #8B5023;  /* was #B6732F — darkened for 5.0:1 on bg */
@@ -48,6 +72,11 @@
   --color-dag-queued-text:         #d6d3d1;
   --color-dag-edge-provenance:     #7c3aed;
   --color-dag-edge-blocker:        #52525b;
+
+  /* ── Type scale ── */
+  --text-micro: 0.625rem;    /* 10px */
+  --text-meta:  0.6875rem;   /* 11px */
+  --text-body:  0.875rem;    /* 14px */
 
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
