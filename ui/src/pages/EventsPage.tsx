@@ -1,27 +1,27 @@
-import { useState, useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
-import { useProgress } from '@/hooks/useProgress'
-import type { Cluster, ProgressTask, TaskStatus } from '@/shared/schemas'
+import { fetchEvents, type EventsFilter } from '@/shared/api'
+import { severityColor, summarizeTraceEvent } from '@/shared/inboxDetail'
+import type { TraceEvent } from '@/shared/schemas'
+import { relativeTime } from '@/shared/time'
 
 /**
- * Events view (renamed from Topology).
+ * Events tab — the unified trace stream.
  *
- * Renders the current task set as a layered list grouped by depth in the
- * blocker graph, with search and filtering. Each row links to `#/task/<id>`
- * so the existing TaskDetailDrawer opens for inspection.
+ * Repurposed from the prior "topology-rendered-as-events" page: the rows are
+ * now real trace events from the daemon's `/events` endpoint (proxied as
+ * `/api/trace-events`), not task records pretending to be events. Filters
+ * mirror the endpoint's filter surface. Newest-first, cursor-paginated
+ * `Load more`. Rows reuse the same summary helpers as the inbox detail
+ * panel's Traces section so the two surfaces stay visually consistent.
  *
- * Field mapping note: ProgressTask has no dedicated "worker/agent name" or
- * "severity" field. `status` is used for both the Event-type filter and the
- * Severity filter (they are the same field — the task lifecycle status).
- * `cluster` ('Queued' | 'In progress' | 'Blocked' | 'Failed') is surfaced as
- * the Severity filter because it maps naturally to error/warn/info severity
- * levels. `prompt` is the event message/text body.
- *
- * TODO(events-graph): swap this list rendering for a real DAG layout.
+ * Manual refresh only — no SSE, no polling in this slice. The Refresh
+ * button re-runs the active query.
  */
 
 // ---------------------------------------------------------------------------
-// Time-range filter
+// Filter vocabulary
 // ---------------------------------------------------------------------------
 
 type TimeRange = 'all' | '15m' | '1h' | '24h'
@@ -39,48 +39,125 @@ const TIME_RANGE_MS: Record<Exclude<TimeRange, 'all'>, number> = {
   '24h': 24 * 60 * 60 * 1000,
 }
 
+const sinceFromRange = (range: TimeRange, now = Date.now()): string | undefined =>
+  range === 'all' ? undefined : new Date(now - TIME_RANGE_MS[range]).toISOString()
+
+/** Closed vocabulary — must stay in sync with the daemon's TRACE_EVENT_KINDS. */
+const KIND_OPTIONS = [
+  'origin_created',
+  'step_started',
+  'step_ended',
+  'tool_invoked',
+  'task_blocked',
+  'recovery_spawned',
+  'task_failed',
+] as const
+type Kind = (typeof KIND_OPTIONS)[number]
+
+const SEVERITY_OPTIONS = ['info', 'warn', 'error'] as const
+type Severity = (typeof SEVERITY_OPTIONS)[number]
+
+/**
+ * Phase options surface a synthetic `(n/a)` entry so the operator can
+ * include events with no phase (e.g. `origin_created`) without having to
+ * leave the filter unset. The synthetic value never reaches the endpoint;
+ * we just omit it when normalising to the wire filter — and when ALL real
+ * phases are selected alongside it, that matches the unfiltered default,
+ * so we drop the phase filter entirely.
+ */
+const PHASE_OPTIONS = ['setup', 'code', 'verify', 'merge', '(n/a)'] as const
+type Phase = (typeof PHASE_OPTIONS)[number]
+
 // ---------------------------------------------------------------------------
-// Depth layering (unchanged from former TopologyPage)
+// Filter state → wire filter
 // ---------------------------------------------------------------------------
 
-interface LayeredTask {
-  task: ProgressTask
-  depth: number
+interface FilterState {
+  range: TimeRange
+  severities: ReadonlySet<Severity>
+  kinds: ReadonlySet<Kind>
+  phases: ReadonlySet<Phase>
+  taskId: string
+  originId: string
+  q: string
 }
 
-const layerByBlocker = (tasks: readonly ProgressTask[]): LayeredTask[] => {
-  const byId = new Map<string, ProgressTask>()
-  for (const t of tasks) byId.set(t.id, t)
+const ALL_SEVERITIES: ReadonlySet<Severity> = new Set(SEVERITY_OPTIONS)
+const ALL_KINDS: ReadonlySet<Kind> = new Set(KIND_OPTIONS)
+const ALL_PHASES: ReadonlySet<Phase> = new Set(PHASE_OPTIONS)
 
-  const depths = new Map<string, number>()
-  const visiting = new Set<string>()
+const initialFilterState = (): FilterState => ({
+  range: 'all',
+  severities: new Set(SEVERITY_OPTIONS),
+  kinds: new Set(KIND_OPTIONS),
+  phases: new Set(PHASE_OPTIONS),
+  taskId: '',
+  originId: '',
+  q: '',
+})
 
-  const depthOf = (id: string): number => {
-    const cached = depths.get(id)
-    if (cached !== undefined) return cached
-    if (visiting.has(id)) return 0
-    const task = byId.get(id)
-    if (!task) return 0
-    visiting.add(id)
-    const blockerId = task.blockerTaskId ?? null
-    const d = blockerId ? 1 + depthOf(blockerId) : 0
-    visiting.delete(id)
-    depths.set(id, d)
-    return d
+/**
+ * Build the wire-shape filter. Omits a multi-select entirely when every
+ * option is selected (the endpoint treats absence as "no constraint").
+ * The synthetic `(n/a)` phase is dropped before reaching the wire — we
+ * can't ask the daemon for "events with no phase" today, so when the
+ * operator deselects every real phase but keeps `(n/a)` we still send no
+ * phase filter and rely on local rendering for the rest.
+ */
+const toWireFilter = (
+  state: FilterState,
+  cursor: string | null,
+  limit: number,
+): EventsFilter => {
+  const filter: EventsFilter = { limit }
+  const since = sinceFromRange(state.range)
+  if (since !== undefined) filter.since = since
+  if (state.severities.size > 0 && state.severities.size < SEVERITY_OPTIONS.length) {
+    filter.severity = [...state.severities]
   }
-
-  return tasks
-    .map((task) => ({ task, depth: depthOf(task.id) }))
-    .sort((a, b) => a.depth - b.depth || a.task.id.localeCompare(b.task.id))
+  if (state.kinds.size > 0 && state.kinds.size < KIND_OPTIONS.length) {
+    filter.kind = [...state.kinds]
+  }
+  const realPhases = [...state.phases].filter((p): p is Exclude<Phase, '(n/a)'> =>
+    p !== '(n/a)',
+  )
+  // Drop the phase filter when every real phase is selected; otherwise pass
+  // only the real phases (the synthetic `(n/a)` filter is local-only).
+  if (
+    realPhases.length > 0 &&
+    realPhases.length < PHASE_OPTIONS.length - 1
+  ) {
+    filter.phase = realPhases
+  }
+  const taskId = state.taskId.trim()
+  if (taskId !== '') filter.taskId = taskId
+  const originId = state.originId.trim()
+  if (originId !== '') filter.originId = originId
+  const q = state.q.trim()
+  if (q !== '') filter.q = q
+  if (cursor !== null) filter.cursor = cursor
+  return filter
 }
 
-const titleFromPrompt = (prompt: string): string => {
-  const first = prompt.split(/\r?\n/, 1)[0]?.trim() ?? ''
-  return first.length > 0 ? first : prompt.trim()
+/**
+ * Locally honour the synthetic `(n/a)` phase option: hide events whose
+ * phase column we don't want to see. The daemon can't filter on "phase is
+ * null" today, so we always fetch the broadest matching set and trim
+ * here. Cheap because pages are bounded by `limit`.
+ */
+const applyLocalPhaseFilter = (
+  events: readonly TraceEvent[],
+  phases: ReadonlySet<Phase>,
+): TraceEvent[] => {
+  if (phases.size === PHASE_OPTIONS.length) return [...events]
+  return events.filter((e) => {
+    if (e.phase === null) return phases.has('(n/a)')
+    return phases.has(e.phase as Phase)
+  })
 }
 
 // ---------------------------------------------------------------------------
-// Filter helpers
+// Filter UI primitives
 // ---------------------------------------------------------------------------
 
 const chipClass = (active: boolean): string =>
@@ -91,138 +168,220 @@ const chipClass = (active: boolean): string =>
       : 'border-iron/30 bg-transparent text-iron hover:border-iron/50 hover:text-fg',
   ].join(' ')
 
+interface MultiSelectProps<T extends string> {
+  label: string
+  options: readonly T[]
+  selected: ReadonlySet<T>
+  onToggle: (value: T) => void
+  testId: string
+}
+
+const MultiSelect = <T extends string>({
+  label,
+  options,
+  selected,
+  onToggle,
+  testId,
+}: MultiSelectProps<T>) => (
+  <div className="flex flex-wrap items-center gap-1" data-testid={testId}>
+    <span className="self-center font-mono text-[10px] uppercase tracking-wide text-iron">
+      {label}:
+    </span>
+    {options.map((opt) => {
+      const active = selected.has(opt)
+      return (
+        <button
+          key={opt}
+          type="button"
+          aria-pressed={active}
+          onClick={() => onToggle(opt)}
+          className={chipClass(active)}
+          data-testid={`${testId}-${opt}`}
+        >
+          {opt}
+        </button>
+      )
+    })}
+  </div>
+)
+
+// ---------------------------------------------------------------------------
+// Row render
+// ---------------------------------------------------------------------------
+
+const truncateId = (id: string): string =>
+  id.length > 12 ? `${id.slice(0, 8)}…${id.slice(-3)}` : id
+
+interface EventRowProps {
+  event: TraceEvent
+}
+
+const EventRow = ({ event }: EventRowProps) => {
+  const href = event.taskId
+    ? `#/task/${encodeURIComponent(event.taskId)}`
+    : undefined
+  const body = (
+    <>
+      <span className="text-iron/60">{relativeTime(event.timestamp)}</span>{' '}
+      <span
+        className={`font-mono text-[10px] uppercase ${severityColor(event.severity)}`}
+      >
+        [{event.severity}]
+      </span>{' '}
+      <span className="font-mono text-[10px] text-iron">{event.kind}</span>
+      {event.phase ? (
+        <span className="font-mono text-[10px] text-iron/60">
+          {' '}
+          · {event.phase}
+        </span>
+      ) : null}
+      {event.taskId ? (
+        <span className="ml-2 font-mono text-[10px] text-iron/70">
+          {truncateId(event.taskId)}
+        </span>
+      ) : null}{' '}
+      <span>{summarizeTraceEvent(event)}</span>
+    </>
+  )
+  if (href === undefined) {
+    return (
+      <li
+        className="block rounded border border-iron/30 bg-iron/5 px-3 py-1.5 font-mono text-[12px] text-fg"
+        data-testid={`event-row-${event.id}`}
+      >
+        {body}
+      </li>
+    )
+  }
+  return (
+    <li>
+      <a
+        href={href}
+        className="block rounded border border-iron/30 bg-iron/5 px-3 py-1.5 font-mono text-[12px] text-fg hover:bg-iron/15"
+        data-testid={`event-row-${event.id}`}
+      >
+        {body}
+      </a>
+    </li>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
+const PAGE_LIMIT = 100
+
 export const EventsPage = () => {
-  const { tasks, error } = useProgress()
+  const [state, setState] = useState<FilterState>(initialFilterState)
+  const [extraPages, setExtraPages] = useState<TraceEvent[][]>([])
+  const [overrideCursor, setOverrideCursor] = useState<
+    string | null | undefined
+  >(undefined)
 
-  // --- filter state ---
-  const [search, setSearch] = useState('')
-  const [selectedStatuses, setSelectedStatuses] = useState<Set<TaskStatus>>(new Set())
-  const [timeRange, setTimeRange] = useState<TimeRange>('all')
-  const [taskIdFilter, setTaskIdFilter] = useState('')
-  const [selectedClusters, setSelectedClusters] = useState<Set<Cluster>>(new Set())
-
-  // --- derived: full layered list ---
-  const layered = useMemo(() => (tasks ? layerByBlocker(tasks) : []), [tasks])
-
-  // --- distinct values for filter chips (from full set) ---
-  const distinctStatuses = useMemo(
-    () =>
-      [...new Set(layered.map(({ task }) => task.status))].sort() as TaskStatus[],
-    [layered],
+  // The query key folds in every filter so a filter change forces a
+  // refetch (and resets pagination via the `useMemo` reset below).
+  const queryKey = useMemo(
+    () => [
+      'events-page',
+      state.range,
+      [...state.severities].sort(),
+      [...state.kinds].sort(),
+      [...state.phases].sort(),
+      state.taskId.trim(),
+      state.originId.trim(),
+      state.q.trim(),
+    ],
+    [state],
   )
 
-  const distinctClusters = useMemo(
-    () =>
-      [...new Set(layered.map(({ task }) => task.cluster))].sort() as Cluster[],
-    [layered],
+  const initial = useQuery({
+    queryKey,
+    queryFn: () => fetchEvents(toWireFilter(state, null, PAGE_LIMIT)),
+  })
+
+  // Reset the paginated tail whenever the underlying filter set changes.
+  // Using a memo-derived key avoids a useEffect.
+  const filterKey = useMemo(
+    () => JSON.stringify(queryKey),
+    [queryKey],
   )
+  const [resetKey, setResetKey] = useState(filterKey)
+  if (resetKey !== filterKey) {
+    setResetKey(filterKey)
+    if (extraPages.length > 0) setExtraPages([])
+    if (overrideCursor !== undefined) setOverrideCursor(undefined)
+  }
 
-  // --- toggle helpers ---
-  const toggleStatus = (s: TaskStatus): void =>
-    setSelectedStatuses((prev) => {
-      const next = new Set(prev)
-      if (next.has(s)) next.delete(s)
-      else next.add(s)
-      return next
+  const more = useMutation({
+    mutationFn: async (cursor: string) =>
+      fetchEvents(toWireFilter(state, cursor, PAGE_LIMIT)),
+    onSuccess: (res) => {
+      setExtraPages((p) => [...p, res.events])
+      setOverrideCursor(res.nextCursor)
+    },
+  })
+
+  // --- filter mutators ---
+  const toggleIn = <T extends string>(
+    key: 'severities' | 'kinds' | 'phases',
+    value: T,
+  ): void =>
+    setState((prev) => {
+      const next = new Set(
+        prev[key] as ReadonlySet<string>,
+      ) as Set<string>
+      if (next.has(value)) next.delete(value)
+      else next.add(value)
+      return { ...prev, [key]: next as ReadonlySet<unknown> } as FilterState
     })
 
-  const toggleCluster = (c: Cluster): void =>
-    setSelectedClusters((prev) => {
-      const next = new Set(prev)
-      if (next.has(c)) next.delete(c)
-      else next.add(c)
-      return next
-    })
+  const onRefresh = (): void => {
+    setExtraPages([])
+    setOverrideCursor(undefined)
+    void initial.refetch()
+  }
 
-  // --- filtered list (AND across filters) ---
-  const filtered = useMemo(() => {
-    const cutoff =
-      timeRange !== 'all' ? Date.now() - TIME_RANGE_MS[timeRange] : null
-    const q = search.trim().toLowerCase()
-    const idExact = taskIdFilter.trim()
-
-    return layered.filter(({ task }) => {
-      // Search: case-insensitive match across prompt, id, status
-      if (q !== '') {
-        const hit =
-          task.prompt.toLowerCase().includes(q) ||
-          task.id.toLowerCase().includes(q) ||
-          task.status.toLowerCase().includes(q)
-        if (!hit) return false
-      }
-
-      // Event-type multi-select
-      if (selectedStatuses.size > 0 && !selectedStatuses.has(task.status))
-        return false
-
-      // Time range
-      if (cutoff !== null) {
-        const ts = new Date(task.createdAt).getTime()
-        if (Number.isNaN(ts) || ts < cutoff) return false
-      }
-
-      // Task ID exact match
-      if (idExact !== '' && task.id !== idExact) return false
-
-      // Severity / cluster multi-select
-      if (selectedClusters.size > 0 && !selectedClusters.has(task.cluster))
-        return false
-
-      return true
-    })
-  }, [layered, search, selectedStatuses, timeRange, taskIdFilter, selectedClusters])
-
-  if (error && tasks === null) {
+  if (initial.isError && !initial.data) {
+    const msg = initial.error instanceof Error
+      ? initial.error.message
+      : 'Failed to load events'
     return (
       <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
-        <ApiErrorPanel error={error} />
+        <ApiErrorPanel error={msg} />
       </main>
     )
   }
 
+  const rawEvents = initial.data
+    ? [initial.data.events, ...extraPages].flat()
+    : []
+  const events = applyLocalPhaseFilter(rawEvents, state.phases)
+  const nextCursor =
+    overrideCursor === undefined
+      ? (initial.data?.nextCursor ?? null)
+      : overrideCursor
+
   return (
     <main className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-auto bg-bg p-4">
       {/* Header */}
-      <header className="font-mono text-[11px] uppercase tracking-wide text-iron">
-        Events — {layered.length} task{layered.length === 1 ? '' : 's'}
+      <header className="flex items-center gap-3">
+        <h1 className="font-mono text-[11px] uppercase tracking-wide text-iron">
+          Events — {events.length} event{events.length === 1 ? '' : 's'}
+        </h1>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={initial.isFetching}
+          data-testid="events-refresh"
+          className="ml-auto rounded border border-iron/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-fg hover:bg-iron/15 disabled:opacity-50"
+        >
+          {initial.isFetching ? 'Refreshing…' : 'Refresh'}
+        </button>
       </header>
-
-      {/* Search bar */}
-      <input
-        type="text"
-        aria-label="Search events"
-        placeholder="Search by message, task id, or type…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="w-full rounded border border-iron/30 bg-iron/5 px-3 py-1.5 font-mono text-[12px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
-      />
 
       {/* Filter row */}
       <div className="flex flex-wrap items-start gap-4">
-        {/* Event type chips */}
-        {distinctStatuses.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="self-center font-mono text-[10px] uppercase tracking-wide text-iron">
-              Type:
-            </span>
-            {distinctStatuses.map((s) => (
-              <button
-                key={s}
-                type="button"
-                aria-pressed={selectedStatuses.has(s)}
-                onClick={() => toggleStatus(s)}
-                className={chipClass(selectedStatuses.has(s))}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
-
         {/* Time range */}
         <div className="flex items-center gap-1">
           <span className="font-mono text-[10px] uppercase tracking-wide text-iron">
@@ -230,8 +389,14 @@ export const EventsPage = () => {
           </span>
           <select
             aria-label="Time range"
-            value={timeRange}
-            onChange={(e) => setTimeRange(e.target.value as TimeRange)}
+            data-testid="events-time-range"
+            value={state.range}
+            onChange={(e) =>
+              setState((prev) => ({
+                ...prev,
+                range: e.target.value as TimeRange,
+              }))
+            }
             className="rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg focus:border-iron/60 focus:outline-none"
           >
             {TIME_RANGE_OPTIONS.map((o) => (
@@ -242,6 +407,30 @@ export const EventsPage = () => {
           </select>
         </div>
 
+        <MultiSelect
+          label="Severity"
+          options={SEVERITY_OPTIONS}
+          selected={state.severities}
+          onToggle={(v) => toggleIn<Severity>('severities', v)}
+          testId="events-severity"
+        />
+
+        <MultiSelect
+          label="Kind"
+          options={KIND_OPTIONS}
+          selected={state.kinds}
+          onToggle={(v) => toggleIn<Kind>('kinds', v)}
+          testId="events-kind"
+        />
+
+        <MultiSelect
+          label="Phase"
+          options={PHASE_OPTIONS}
+          selected={state.phases}
+          onToggle={(v) => toggleIn<Phase>('phases', v)}
+          testId="events-phase"
+        />
+
         {/* Task ID exact match */}
         <div className="flex items-center gap-1">
           <span className="font-mono text-[10px] uppercase tracking-wide text-iron">
@@ -250,74 +439,98 @@ export const EventsPage = () => {
           <input
             type="text"
             aria-label="Filter by task ID"
+            data-testid="events-task-id"
             placeholder="exact id…"
-            value={taskIdFilter}
-            onChange={(e) => setTaskIdFilter(e.target.value)}
+            value={state.taskId}
+            onChange={(e) =>
+              setState((prev) => ({ ...prev, taskId: e.target.value }))
+            }
             className="rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
           />
         </div>
 
-        {/* Severity / cluster chips */}
-        {distinctClusters.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="self-center font-mono text-[10px] uppercase tracking-wide text-iron">
-              Severity:
-            </span>
-            {distinctClusters.map((c) => (
-              <button
-                key={c}
-                type="button"
-                aria-pressed={selectedClusters.has(c)}
-                onClick={() => toggleCluster(c)}
-                className={chipClass(selectedClusters.has(c))}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Origin ID exact match */}
+        <div className="flex items-center gap-1">
+          <span className="font-mono text-[10px] uppercase tracking-wide text-iron">
+            Origin&nbsp;ID:
+          </span>
+          <input
+            type="text"
+            aria-label="Filter by origin ID"
+            data-testid="events-origin-id"
+            placeholder="exact id…"
+            value={state.originId}
+            onChange={(e) =>
+              setState((prev) => ({ ...prev, originId: e.target.value }))
+            }
+            className="rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
+          />
+        </div>
+
+        {/* Full-text */}
+        <div className="flex flex-1 items-center gap-1 min-w-[180px]">
+          <span className="font-mono text-[10px] uppercase tracking-wide text-iron">
+            Search:
+          </span>
+          <input
+            type="text"
+            aria-label="Search payload"
+            data-testid="events-q"
+            placeholder="payload contains…"
+            value={state.q}
+            onChange={(e) =>
+              setState((prev) => ({ ...prev, q: e.target.value }))
+            }
+            className="flex-1 rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
+          />
+        </div>
       </div>
 
       {/* Events list */}
       <ul className="flex flex-col gap-1" data-testid="events-list">
-        {filtered.map(({ task, depth }) => (
-          <li key={task.id}>
-            <a
-              href={`#/task/${encodeURIComponent(task.id)}`}
-              className="block rounded border border-iron/30 bg-iron/5 px-3 py-2 font-mono text-[12px] text-fg hover:bg-iron/15"
-              style={{ marginLeft: `${depth * 24}px` }}
-              data-testid={`event-node-${task.id}`}
-              data-depth={depth}
-            >
-              <span className="text-iron">[{task.status}]</span>{' '}
-              <span>{titleFromPrompt(task.prompt)}</span>
-              {task.blockerTaskId ? (
-                <span className="ml-2 text-iron">
-                  ↳ blocked by {task.blockerTaskId}
-                </span>
-              ) : null}
-            </a>
-          </li>
-        ))}
-
-        {/* Empty state */}
-        {filtered.length === 0 && layered.length > 0 ? (
+        {initial.isPending ? (
+          <li className="font-mono text-[11px] text-iron">Loading events…</li>
+        ) : events.length === 0 ? (
           <li
             data-testid="events-empty"
             className="font-mono text-[11px] text-iron"
           >
             No events match the current filters.
           </li>
-        ) : filtered.length === 0 && !error ? (
-          <li className="font-mono text-[11px] text-iron">No tasks to display.</li>
-        ) : null}
+        ) : (
+          events.map((e) => <EventRow key={e.id} event={e} />)
+        )}
       </ul>
 
-      {error ? (
-        <div className="border-t border-iron/40 bg-iron/10 px-6 py-1.5 font-mono text-[11px] text-iron">
-          {error}
+      {/* Pagination */}
+      {nextCursor !== null && events.length > 0 ? (
+        <div>
+          <button
+            type="button"
+            disabled={more.isPending}
+            onClick={() => more.mutate(nextCursor)}
+            data-testid="events-load-more"
+            className="font-mono text-[10px] uppercase text-fg underline disabled:opacity-50"
+          >
+            {more.isPending ? 'Loading…' : 'Load more'}
+          </button>
         </div>
       ) : null}
     </main>
   )
+}
+
+// Internal helpers exported for unit tests. Not part of the page's public API.
+export const __test__ = {
+  toWireFilter,
+  applyLocalPhaseFilter,
+  sinceFromRange,
+  initialFilterState,
+  ALL_SEVERITIES,
+  ALL_KINDS,
+  ALL_PHASES,
+  KIND_OPTIONS,
+  SEVERITY_OPTIONS,
+  PHASE_OPTIONS,
+  TIME_RANGE_MS,
 }
