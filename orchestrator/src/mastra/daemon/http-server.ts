@@ -85,6 +85,12 @@ export interface HttpServerDeps {
    * real persistence layer (proposal 9a2ab5f8) is wired in.
    */
   listKpis?: () => Promise<KpiRecord[]>
+  /**
+   * Return the full task list from the daemon's DomainTaskStore.
+   * Served by `GET /view/tasks` so the read-only UI renders only what the
+   * daemon exposes — no direct DB access on the UI side.
+   */
+  viewTasks: () => Promise<{ tasks: unknown[] }>
 }
 
 export interface HttpServerHandle {
@@ -318,6 +324,18 @@ export const startHttpServer = async (
       const fn = deps.listKpis ?? defaultListKpis
       fn()
         .then((kpis) => sendJson(res, 200, { kpis }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/tasks — full task list from the daemon's DomainTaskStore.
+    // The read-only UI proxies this endpoint instead of opening the DB
+    // directly, so the daemon is the single reader of its own database.
+    // Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/tasks') {
+      deps
+        .viewTasks()
+        .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return
     }
