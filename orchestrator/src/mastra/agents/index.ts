@@ -8,11 +8,13 @@
  * markdown definitions off disk.
  */
 
-export type AgentName = 'vcs-supervisor'
+export type AgentName = 'vcs-supervisor' | 'writer'
 
 export interface AgentSpec {
   /** Stable identifier; matches the markdown frontmatter `name`. */
   readonly name: AgentName
+  /** Human-readable display label for UI surfaces. */
+  readonly displayName?: string
   /** Optional human-readable description (mirrors frontmatter). */
   readonly description?: string
   /** Claude model alias (e.g. `opus`, `sonnet`, `haiku`). */
@@ -165,8 +167,41 @@ STATUS: completed | aborted
 If you abort, set \`STATUS: aborted\` and explain in a \`REASON:\` line. The orchestrator will then mark the task \`failed\` and keep the worktree for human review.
 `
 
+// System prompt for the Writer agent. The Writer lands documentation changes
+// (glossary terms, ADRs) by calling Mars CLI verbs routed through the
+// structured-write daemon; it may not edit files in the worktree directly.
+// This constant is the single source of truth; it was previously inlined in
+// implement-workflow.ts as WRITER_SYSTEM_PROMPT and removed by ADR 0019.
+// The Agent Live Board (PRD 2b8e1d21) reads it from here instead.
+export const WRITER_SYSTEM_PROMPT = [
+  'You are the Writer worker.',
+  '',
+  'You land documentation changes (glossary terms, ADRs) by calling the Mars CLI verbs that route through the structured-write daemon, NOT by editing files in this worktree.',
+  '',
+  'The only mutation verbs available to you are:',
+  '  - mars glossary set "<term>" "<definition>" [--aliases "<alias1>,<alias2>"]',
+  '  - mars glossary remove "<term>"',
+  '  - mars adr add --title "<title>" --body "<body>"',
+  '',
+  'You may read freely (Read, Grep, Glob, Bash for read-only commands). Edit, Write, and NotebookEdit are disabled — attempting to edit CONTEXT.md or docs/adr/** in the worktree will fail.',
+  '',
+  'When every acceptance criterion is satisfied via the verbs above, exit cleanly. The daemon commits each verb on the integration branch on your behalf.',
+].join('\n')
+
+const writer: AgentSpec = {
+  name: 'writer',
+  displayName: 'Writer',
+  description:
+    'Lands documentation changes (glossary terms, ADRs) via structured-write daemon verbs.',
+  model: 'claude-haiku-4-5-20251001',
+  systemPrompt: WRITER_SYSTEM_PROMPT,
+  allowedTools: ['Read', 'Grep', 'Glob', 'Bash'],
+  deniedTools: ['Edit', 'Write', 'NotebookEdit'],
+}
+
 const vcsSupervisor: AgentSpec = {
   name: 'vcs-supervisor',
+  displayName: 'Vega (VCS Supervisor)',
   description:
     "Git merge conflict resolution for the orchestrator's implement workflow. Analyzes both sides of a conflict and reconciles intent rather than blindly picking one side.",
   model: 'opus',
@@ -177,6 +212,7 @@ const vcsSupervisor: AgentSpec = {
 
 export const agents: Readonly<Record<AgentName, AgentSpec>> = {
   'vcs-supervisor': vcsSupervisor,
+  writer,
 }
 
 /**
