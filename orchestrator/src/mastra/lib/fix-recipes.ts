@@ -1160,47 +1160,69 @@ const testLibsqlNotAnErrorRecipe: FixRecipe = {
 //     then `mars restart <task-id>` to re-run the merge step.
 //
 // • merge:vcs-supervisor-aborted/unclassified
-//     Historical-only. The post-supervisor `git merge --ff-only <branch>` failed
-//     with `fatal: Not possible to fast-forward` because integration advanced in
-//     the window between the supervisor's rebase and the orchestrator's ff
-//     attempt. This is the exact error shape commit cab1551 added a classifier
-//     rule for (`matchFull: /Not possible to fast-forward/i`) and a recipe for
-//     (`merge:vcs-supervisor-aborted/not-fast-forward`, see
-//     `vcsAbortedNotFastForwardRecipe` above). A failure whose signature is
-//     still `merge:vcs-supervisor-aborted/unclassified` for this error body was
-//     recorded BEFORE cab1551 landed — the signature is frozen on the failed row
-//     and isn't recomputed. There is no live failure mode here to write a recipe
-//     for: any fresh occurrence of this race classifies as `not-fast-forward`
-//     and routes to the existing recipe. Investigated 2026-05-19 (task
-//     ba603773, origin mars-e2587d97 / f1dd72b3). Operator fix: `mars restart
-//     mars-e2587d97` so the merge step retries against the current integration
-//     branch; the new failure (if any) will be classified correctly.
+//     Previously concluded "historical-only" (investigation 2026-05-19, task
+//     ba603773, origin mars-e2587d97). That conclusion was WRONG. Two live
+//     failure modes in the current git.ts `mergeBranch()` produce this
+//     signature because their first-line messages are not covered by any
+//     existing classifier rule:
+//
+//     Path 2 — ancestry check: After the VCS supervisor completes a rebase,
+//     git.ts calls `merge-base --is-ancestor` to confirm the fast-forward is
+//     valid. If integration advanced in that window, it returns aborted=true
+//     with the first-line message:
+//       "fast-forward into <branch> not possible: <sha> is not an ancestor of <sha>."
+//     The phrase "is not an ancestor of" does NOT match the existing
+//     `not-fast-forward` rule's `match: /is not a fast-forward of/i`, and the
+//     full output does NOT contain "Not possible to fast-forward" (different
+//     wording), so `matchFull` also fails → unclassified.
+//
+//     Path 3 — CAS race: `git update-ref <ref> <new> <old>` (the atomic
+//     fast-forward in mergeBranch) rejects if integration advanced between the
+//     ancestry check and the CAS write. First-line message:
+//       "integration moved during merge, retry needed: <branch> advanced concurrently."
+//     No existing rule matches → unclassified.
+//
+//     Both paths produce the same aborted=true state as not-fast-forward and
+//     have identical recovery: the code is committed on the task branch, just
+//     re-land it. Fix: commit failure-signature.ts that added
+//     `match: /is not an ancestor of/i` and `match: /integration moved during merge/i`
+//     rules (both mapping to errorClass 'not-fast-forward'), closing the gap.
+//     Future occurrences route to `merge:vcs-supervisor-aborted/not-fast-forward`
+//     and are handled by `vcsAbortedNotFastForwardRecipe`.
+//
+//     Investigated 2026-05-30 (task mars-c5b48744, origin
+//     6bc00239-add-a-retry-button-on-every-user-facing). Confirmed fresh (task
+//     updated 2026-05-29, well after cab1551 landed 2026-05-18).
 //
 //     Diagnose discipline — ranked hypotheses considered:
-//       (1) [WINNER] Stale unclassified signature: the failure was recorded
-//           before cab1551 added the classifier rule, so the row carries
-//           `/unclassified` even though the same error body now classifies as
-//           `/not-fast-forward`. Verified by reading `errorClassRules` in
-//           failure-signature.ts (matchFull rule present) and the existing
-//           test at failure-signature.test.ts:166-189 which exercises the
-//           exact JSON+hint+fatal shape this failure exhibits.
-//       (2) Falsified — race between supervisor and ff that the existing rule
-//           misses: would require the body NOT to contain "Not possible to
-//           fast-forward", but the captured `m.output` tail shows that exact
-//           string. classifyError's matchFull would fire.
-//       (3) Falsified — supervisor returning aborted=true with a different
-//           error shape: would require sup.exitCode !== 0 or
-//           stillInProgress=true, but the captured supervisor output ends in
-//           `STATUS: completed` and `COMMIT: rebase complete`. The aborted
-//           path here is git.ts:1596 (ff failure after successful rebase), not
-//           git.ts:1567 (supervisor failure).
-//     Repro: not deterministically reproducible — the underlying race
-//     condition is reproducible (rebase then advance main concurrently then
-//     ff), but the failing task's stored signature can only be changed by
-//     re-running it. cab1551's test
-//     (`computeFailureSignature produces merge:vcs-supervisor-aborted/not-fast-forward
-//     for the git merge --ff-only error shape`) is the deterministic check
-//     that the live classifier handles this body correctly.
+//       (1) [WINNER, tie] Path 2 — ancestry check race: supervisor completed
+//           (STATUS: completed, HEAD at 441c150 from 3fe69e3), so Path 1
+//           (supervisor rejected) is ruled out. Ancestry check fires if
+//           integration advanced in the supervisor→check window. First-line
+//           "is not an ancestor of" explains the `/unclassified` outcome.
+//           Falsification: would require the first line NOT to contain "is not
+//           an ancestor of" — the truncated tail (showing supervisor JSON at
+//           end) is consistent with both Path 2 and Path 3 since output
+//           appends rebase_output+supervisor_json+[err] in all paths.
+//       (2) [WINNER, tie] Path 3 — CAS race on update-ref: ancestry check
+//           passes but integration advances before the CAS write. First-line
+//           "integration moved during merge" also explains `/unclassified`.
+//           Falsification: same as above — cannot distinguish 2 from 3
+//           without the non-truncated error output.
+//       (3) [Falsified] Supervisor rejected (Path 1): supervisor says
+//           "No conflict markers remain; working tree is clean" and advanced
+//           HEAD from 3fe69e3 to 441c150. git.ts's stillInProgress=false,
+//           advanced=true, treeClean=true would all pass → no reject.
+//       (4) [Falsified] Historical frozen signature: task updated 2026-05-29,
+//           cab1551 landed 2026-05-18 → this is a fresh occurrence.
+//       (5) [Falsified] git merge --ff-only path: git.ts no longer uses
+//           `git merge --ff-only`; it uses `git update-ref` with CAS.
+//     Repro: race conditions — not deterministically reproducible via a single
+//     shell command. The classifier fix (pure function) is fully deterministic
+//     and covered by the two new unit tests in failure-signature.test.ts.
+//     Operator fix for mars-c5b48744: `mars restart mars-c5b48744` — the
+//     merge step will retry; any fresh failure will now classify as
+//     `not-fast-forward` and route to the existing recipe.
 
 const recipeList: readonly FixRecipe[] = [
   dirtyMergeTargetRecipe,
