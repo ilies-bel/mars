@@ -2752,6 +2752,36 @@ export const startDaemon = async (
   }, STALE_SWEEP_MS)
   staleSweep.unref()
 
+  // ── Observability store size watchdog ─────────────────────────────────────
+  // Periodically checks the observability store (observability.duckdb) file
+  // size. When the store exceeds 500 MB a single open inbox item is raised so
+  // the operator notices a runaway daemon or telemetry-capture bug.
+  // Re-detecting the oversize condition bumps the existing item rather than
+  // spawning a sibling. NEVER prunes the store or alters retention.
+  // .unref() so the interval never prevents a clean shutdown.
+  const OBSERVABILITY_WATCHDOG_MS = Number(
+    process.env.MARS_OBSERVABILITY_WATCHDOG_MS ?? 5 * 60_000,
+  )
+  const { checkObservabilityStoreSize } = await import('./observability-watchdog')
+  const observabilityWatchdog = setInterval(() => {
+    void (async () => {
+      try {
+        const itemId = await checkObservabilityStoreSize(
+          resolveContext().observabilityDbPath,
+        )
+        if (itemId) {
+          log(
+            `[observability-watchdog] store oversize — raised/bumped inbox item ${itemId}`,
+          )
+          viewStreamHub.broadcast('inbox')
+        }
+      } catch (err) {
+        log(`[observability-watchdog] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, OBSERVABILITY_WATCHDOG_MS)
+  observabilityWatchdog.unref()
+
   // ── Alert-dismisser drain ─────────────────────────────────────────────────
   // Polls the outbox for status-transition events and clears the implicated
   // task's action-queue alert(s). This keeps the "status change clears
@@ -2795,6 +2825,7 @@ export const startDaemon = async (
     shuttingDown = true
     clearInterval(pollFallback)
     clearInterval(staleSweep)
+    clearInterval(observabilityWatchdog)
     clearInterval(alertDrain)
     clearInterval(inboxRepopulatorDrain)
     // Once shutdown starts, stop dispatching new work even if drain wasn't

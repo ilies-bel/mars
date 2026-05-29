@@ -46,6 +46,9 @@ export const INBOX_KINDS = [
   // a row; its cursor is blocked (ADR-0032). The operator surface for an
   // otherwise-silent stall — there is no DLQ.
   'subscriber-stalled',
+  // The observability store (observability.duckdb) has exceeded 500 MB.
+  // Raised by the daemon's periodic size watchdog; never triggers pruning.
+  'observability-store-oversize',
 ] as const
 
 export type InboxKind = (typeof INBOX_KINDS)[number]
