@@ -171,16 +171,27 @@ export interface RunNonLlmStepOptions<T> {
    */
   traceStore?: TraceEventStore
   fn: () => Promise<T>
+  /**
+   * Optional. Called after fn() succeeds to check whether the step upgraded
+   * to a Worker Session (e.g. the merge step that routed to Vega for conflict
+   * resolution). When it returns non-null, the step_ended event carries
+   * `workerName` and `sessionId`, satisfying the invariant
+   * "a Step span is a Session iff worker IS NOT NULL".
+   * Returning null / undefined keeps the span a plain non-LLM Step span.
+   */
+  getVegaInfo?: () => { workerName: string; sessionId: string | null } | null | undefined
 }
 
 /**
  * Run an async function representing a non-LLM workflow step (setup, verify,
- * fast-forward merge) and bracket its execution with `step_started` /
- * `step_ended` trace events.
+ * merge) and bracket its execution with `step_started` / `step_ended` trace
+ * events.
  *
- * Unlike `runWorkerWithSpan`, these events carry no `workerName` and no
- * `sessionId` — making this a Step span that is NOT a Session (the invariant
- * "a Step span is a Session iff worker IS NOT NULL" holds).
+ * By default these events carry no `workerName` and no `sessionId` — making
+ * this a Step span that is NOT a Session. The optional `getVegaInfo` callback
+ * upgrades the step_ended event to a Session when the step routed to a Worker
+ * (e.g. the merge step invoking Vega for conflict resolution). The invariant
+ * "a Step span is a Session iff worker IS NOT NULL" holds across both paths.
  *
  * Outcome vocabulary: `completed` on success, `failed` on any throw.
  * A live in-flight step is represented by a `step_started` event with no
@@ -196,7 +207,7 @@ export interface RunNonLlmStepOptions<T> {
 export const runNonLlmStepWithSpan = async <T>(
   options: RunNonLlmStepOptions<T>,
 ): Promise<T> => {
-  const { stepName, workflowInstanceId, originId, phase, traceStore, fn } = options
+  const { stepName, workflowInstanceId, originId, phase, traceStore, fn, getVegaInfo } = options
 
   const startedAt = Date.now()
   await safeRecord(traceStore, {
@@ -209,6 +220,7 @@ export const runNonLlmStepWithSpan = async <T>(
 
   try {
     const result = await fn()
+    const vegaInfo = getVegaInfo?.() ?? null
     await safeRecord(traceStore, {
       kind: 'step_ended',
       taskId: originId,
@@ -219,6 +231,9 @@ export const runNonLlmStepWithSpan = async <T>(
         workflowInstanceId,
         outcome: 'completed',
         durationMs: Date.now() - startedAt,
+        ...(vegaInfo !== null
+          ? { workerName: vegaInfo.workerName, sessionId: vegaInfo.sessionId }
+          : {}),
       },
     })
     return result

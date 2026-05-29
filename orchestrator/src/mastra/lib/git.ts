@@ -1723,6 +1723,12 @@ export interface MergeResult {
   aborted: boolean
   output: string
   supervisorConversation: ClaudeEvent[]
+  /**
+   * Claude session id from the vcs-supervisor run, or null when no supervisor
+   * was invoked (fast-forward merge) or when the supervisor conversation
+   * contained no session_id event.
+   */
+  vegaSessionId: string | null
 }
 
 let cachedSupervisorSpec: string | null = null
@@ -1878,6 +1884,7 @@ export const mergeBranch = async ({
   try {
     let output = ''
     let conflictResolved = false
+    let vegaSessionId: string | null = null
     const supervisorConversation: ClaudeEvent[] = []
 
     // Step 1: ensure the task branch is up-to-date with integration via rebase
@@ -1949,9 +1956,11 @@ export const mergeBranch = async ({
           aborted: true,
           output: `vcs-supervisor outcome rejected by git tree (stillInProgress=${stillInProgress}, advanced=${advanced}, treeClean=${treeClean}); rebase aborted.\n${output}`,
           supervisorConversation,
+          vegaSessionId: null,
         }
       }
       conflictResolved = true
+      vegaSessionId = extractSessionIdFromConversation(supervisorConversation)
     }
 
     // Step 2: fast-forward integration to the (now-rebased) task branch via a
@@ -1983,6 +1992,7 @@ export const mergeBranch = async ({
         aborted: true,
         output: `fast-forward into ${integrationBranch} not possible: ${integrationSha} is not an ancestor of ${taskSha}.\n${output}`,
         supervisorConversation,
+        vegaSessionId,
       }
     }
 
@@ -2006,6 +2016,7 @@ export const mergeBranch = async ({
         aborted: true,
         output: `integration moved during merge, retry needed: ${integrationBranch} advanced concurrently.\n${output}`,
         supervisorConversation,
+        vegaSessionId,
       }
     }
 
@@ -2075,6 +2086,7 @@ export const mergeBranch = async ({
       aborted: false,
       output,
       supervisorConversation,
+      vegaSessionId,
     }
   } finally {
     await release()
