@@ -2357,6 +2357,19 @@ export const startDaemon = async (
       getDefaultDomainTaskStore()
         .listTasks()
         .then((tasks) => ({ tasks })),
+    viewProgress: async ({ failedWindowMs }) => {
+      const {
+        buildProgressView,
+        createProgressTaskStore,
+        createProposalReader,
+      } = await import('./view/progress')
+      const client = getClient()
+      return buildProgressView(
+        createProgressTaskStore(client),
+        createProposalReader(client),
+        { now: Date.now(), failedWindowMs },
+      )
+    },
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
