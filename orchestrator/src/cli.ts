@@ -2282,6 +2282,31 @@ const main = async (): Promise<void> => {
     process.exit(2)
   }
 
+  if (cmd === 'kpi') {
+    const sub = rest[0]
+    if (sub === 'snapshot') {
+      const { takeKpiSnapshot } = await import('./mastra/lib/kpi-snapshots.js')
+      const { getDefaultTaskStore } = await import('./mastra/lib/task-store.js')
+      const surface = await getDefaultTaskStore()
+      const snapshot = await takeKpiSnapshot({
+        surface,
+        now: new Date().toISOString(),
+      })
+      console.log(JSON.stringify(snapshot, null, 2))
+      return
+    }
+    if (sub === 'show') {
+      const { readLatestKpiSnapshot } = await import('./mastra/lib/kpi-snapshots.js')
+      const { getDefaultTaskStore } = await import('./mastra/lib/task-store.js')
+      const store = await getDefaultTaskStore()
+      const snapshot = await readLatestKpiSnapshot(store)
+      console.log(JSON.stringify(snapshot, null, 2))
+      return
+    }
+    console.error('usage: mars kpi <snapshot|show>')
+    process.exit(1)
+  }
+
   if (cmd === 'sweep') {
     const { runSweep } = await import('./mastra/lib/sweep')
     await runSweep({ log: (line) => console.log(line) })
