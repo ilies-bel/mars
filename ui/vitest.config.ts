@@ -19,5 +19,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    // Include all src/ tests plus the one server test that uses Node.js HTTP
+    // (server/kpis.test.ts). All other server/*.test.ts files start a
+    // Bun.serve() HTTP server and can only run under `bun test`.
+    include: ['src/**/*.test.{ts,tsx}', 'server/kpis.test.ts'],
   },
 })

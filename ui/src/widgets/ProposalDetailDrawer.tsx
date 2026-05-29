@@ -30,10 +30,23 @@ const badgeClass = (status: string): string =>
   STATUS_BADGE[status] ?? 'bg-iron/10 text-iron'
 
 /**
+ * Copy-pasteable CLI commands shown in the drawer for each proposal status.
+ * Only informational — no mutation buttons.
+ */
+const STATUS_CLI_VERBS: Record<string, string[]> = {
+  draft: ['promote', 'show'],
+  'prd-ready': ['slice', 'show'],
+  sliced: ['show'],
+  dismissed: ['show'],
+}
+
+/**
  * Slice 1 of the Proposal drawer: renders the proposal-specific header —
  * title, a status badge matching the Progress status legend, and the source
  * label (reflection / human / planner). Read-only; mutation surfaces and the
  * body sections land in later slices.
+ *
+ * Slice 3 adds: CLI commands section with copy-to-clipboard affordance.
  */
 export const ProposalDetailDrawer = ({
   proposal,
@@ -197,6 +210,34 @@ export const ProposalDetailDrawer = ({
           </ul>
         </section>
       ) : null}
+
+      {/* CLI commands — read-only, status-appropriate, copy-to-clipboard */}
+      <section className="border-t border-iron/40 px-4 py-3">
+        <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-iron/60">
+          CLI
+        </p>
+        {(STATUS_CLI_VERBS[proposal.status] ?? ['show']).map((verb) => {
+          const cmd = `mars proposal ${verb} ${proposal.id}`
+          return (
+            <div key={verb} className="mb-1.5 flex items-center gap-2">
+              <code className="flex-1 truncate rounded bg-iron/10 px-2 py-1 font-mono text-xs text-fg">
+                {cmd}
+              </code>
+              <button
+                type="button"
+                data-testid="copy-cli-cmd"
+                aria-label={`Copy: ${cmd}`}
+                onClick={() => {
+                  navigator.clipboard?.writeText(cmd)
+                }}
+                className="shrink-0 rounded border border-iron/40 px-2 py-0.5 font-mono text-xs text-iron hover:bg-iron/10"
+              >
+                Copy
+              </button>
+            </div>
+          )
+        })}
+      </section>
     </aside>
     </>
   )
