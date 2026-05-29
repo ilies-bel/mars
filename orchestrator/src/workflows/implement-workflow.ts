@@ -95,9 +95,9 @@ export const isTooHardAbortError = (err: unknown): boolean =>
   errorHaystack(err).includes('aborted by read-span guard: diagnose Chore spawned')
 
 import { summarizeUsage } from '../mastra/lib/claude-usage'
-import { recordSignals, isReflectDisabled } from '../mastra/lib/reflect-signals'
+import { recordSignals } from '../mastra/lib/reflect-signals'
 import { openTraceEventStore, type TraceEventStore } from '../mastra/lib/trace-events-store'
-import { runWorkerWithSpan } from '../mastra/lib/run-worker-with-span'
+import { runWorkerWithSpan, runNonLlmStepWithSpan } from '../mastra/lib/run-worker-with-span'
 import { resolveVerifyCwd, type RanVerifyStep } from '../mastra/lib/derive-repro-command'
 import { resolveTaskCwd } from '../mastra/lib/resolve-task-cwd'
 import { relative } from 'node:path'
@@ -657,6 +657,9 @@ export const implementWorkflow = defineWorkflow<
         // progresses through draft → queued → running purely on plan
         // completeness (PRD eb6f8cc6). Do not reintroduce question-gating
         // here.
+        //
+        // Check blockers BEFORE starting the span: an abort due to incomplete
+        // blockers means no setup work ran at all, so no span should be emitted.
         if (await hasIncompleteBlockers(input.taskId, store)) {
           throw new Error(BLOCKERS_ABORT_MESSAGE(input.taskId))
         }
@@ -670,6 +673,14 @@ export const implementWorkflow = defineWorkflow<
         // behind the `main-commiter` recovery. The legacy setup-time
         // `checkSetupPreflight` backstop was retired in slice K.
 
+        const setupSpanStore = workflowTraceStore === nullTraceStore ? undefined : workflowTraceStore
+        return await runNonLlmStepWithSpan({
+          stepName: 'setup-worktree',
+          workflowInstanceId: ctx.runId,
+          originId: workflowOriginId,
+          phase: 'setup',
+          traceStore: setupSpanStore,
+          fn: async () => {
         await updateTask(input.taskId, { status: 'running' }, store)
         const ref = await createWorktree({
           taskId: input.taskId,
@@ -761,6 +772,8 @@ export const implementWorkflow = defineWorkflow<
         // Recorded by the engine; a resumed run reuses this without
         // re-creating the worktree or re-reading the DB.
         return { path: ref.path, branch: ref.branch }
+          },
+        })
       },
     )
 
@@ -975,6 +988,16 @@ export const implementWorkflow = defineWorkflow<
         return { verified: true }
       }
 
+      // Wrap the real verify work in a non-LLM span so it shows up in the
+      // unified trace surface alongside the setup / code / merge spans.
+      const verifySpanStore = workflowTraceStore === nullTraceStore ? undefined : workflowTraceStore
+      return await runNonLlmStepWithSpan({
+        stepName: 'verify',
+        workflowInstanceId: ctx.runId,
+        originId: workflowOriginId,
+        phase: 'verify',
+        traceStore: verifySpanStore,
+        fn: async (): Promise<VerifyResult> => {
       // Slice F.2: verify-time dirty-main check. Runs at the top of the
       // verify step, BEFORE typecheck/test/lint. If the integration branch
       // is dirty right now, we park this task behind a `main-commiter`
@@ -1074,26 +1097,6 @@ export const implementWorkflow = defineWorkflow<
         traceCtx: buildCtx('verify'),
       })
 
-      // Open a trace-event surface around verify so the verify output is
-      // captured in the unified trace surface rather than the legacy
-      // task_transcripts table. Best-effort: a DB hiccup must never fail
-      // the task.
-      const verifyTraceStore: TraceEventStore | undefined = isReflectDisabled()
-        ? undefined
-        : await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)
-      const verifyStartedAt = Date.now()
-      if (verifyTraceStore !== undefined) {
-        await verifyTraceStore
-          .record({
-            kind: 'step_started',
-            taskId: input.taskId,
-            originId: input.taskId,
-            phase: 'verify',
-            payload: { stepName: 'verify', workflowInstanceId: ctx.runId },
-          })
-          .catch(() => {})
-      }
-
       const verifyOutput = r.steps
         .map((s) => `=== ${s.name} (${s.passed ? 'pass' : 'fail'}) ===\n${s.output}`)
         .join('\n\n')
@@ -1153,51 +1156,16 @@ export const implementWorkflow = defineWorkflow<
             err,
           )
         })
-        // Capture the verify output in the trace surface before throwing.
-        if (verifyTraceStore !== undefined) {
-          await verifyTraceStore
-            .record({
-              kind: 'step_ended',
-              taskId: input.taskId,
-              originId: input.taskId,
-              phase: 'verify',
-              payload: {
-                stepName: 'verify',
-                workflowInstanceId: ctx.runId,
-                outcome: 'failure',
-                failureReason: firstFailedName,
-                durationMs: Date.now() - verifyStartedAt,
-                verifyOutput,
-              },
-            })
-            .catch(() => {})
-        }
         // Throw instead of returning `{verified:false}`: the engine records
         // verify `failed` and stops the run before merge. The self-heal
         // side-effects above already spawned the recovery task.
         throw new Error(`task ${input.taskId} verify:${firstFailedName} failed`)
       }
 
-      // Capture the verify output in the trace surface before returning.
-      if (verifyTraceStore !== undefined) {
-        await verifyTraceStore
-          .record({
-            kind: 'step_ended',
-            taskId: input.taskId,
-            originId: input.taskId,
-            phase: 'verify',
-            payload: {
-              stepName: 'verify',
-              workflowInstanceId: ctx.runId,
-              outcome: 'success',
-              durationMs: Date.now() - verifyStartedAt,
-              verifyOutput,
-            },
-          })
-          .catch(() => {})
-      }
       // Verify passed → return normally so the merge step runs.
       return { verified: true }
+        },
+      })
     })
 
     // ── merge ──────────────────────────────────────────────────────────────
@@ -1206,6 +1174,7 @@ export const implementWorkflow = defineWorkflow<
     // unreachable and has been dropped.
     return await ctx.step('merge', async (): Promise<ImplementOutput> => {
       const originId = await resolveOriginIdForTask(input.taskId)
+      void originId // resolved for potential future use within this step
 
       // Diagnose Chore short-circuit: the Chore never commits and therefore
       // has nothing to merge. Its deliverable is the structured verdict in
@@ -1223,6 +1192,14 @@ export const implementWorkflow = defineWorkflow<
         }
       }
 
+      const mergeSpanStore = workflowTraceStore === nullTraceStore ? undefined : workflowTraceStore
+      return await runNonLlmStepWithSpan({
+        stepName: 'merge',
+        workflowInstanceId: ctx.runId,
+        originId: workflowOriginId,
+        phase: 'merge',
+        traceStore: mergeSpanStore,
+        fn: async (): Promise<ImplementOutput> => {
       // Any unhandled throw from mergeBranch (e.g. an unexpected git failure)
       // must transition the task to a terminal status. Otherwise the queue row
       // stays at 'merging' forever and `mars list` hides the failure.
@@ -1401,6 +1378,8 @@ export const implementWorkflow = defineWorkflow<
         // Throw so the engine records merge `failed`.
         throw error instanceof Error ? error : new Error(message)
       }
+        },
+      })
     })
   },
 })
