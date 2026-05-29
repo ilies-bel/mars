@@ -44,6 +44,7 @@ import { resolveGitBin } from '../lib/git'
 import { getDefaultTaskStore } from '../lib/task-store'
 import { getDefaultDomainTaskStore } from '../store/task-store'
 import { listProposals, promoteProposal } from '../proposals'
+import type { DraftFeature, StaleWorktreeAlert } from './http-server'
 import {
   CANCELLED_FAILURE_REASON,
   markOriginDoneFromRecovery,
@@ -2357,6 +2358,84 @@ export const startDaemon = async (
       getDefaultDomainTaskStore()
         .listTasks()
         .then((tasks) => ({ tasks })),
+    viewTodo: async () => {
+      const client = getClient()
+      // Check if the proposals table exists (absent on a fresh repo before
+      // the first `mars init` / daemon run that initialises the schema).
+      const tablesResult = await client.execute(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='proposals'`,
+      )
+      const drafts: DraftFeature[] = []
+      if (tablesResult.rows.length > 0) {
+        const r = await client.execute(
+          `SELECT p.id, p.title, p.problem, p.solution, p.status, p.source,
+                  p.created_at, p.updated_at,
+                  (SELECT COUNT(*) FROM proposal_user_stories s WHERE s.proposal_id = p.id) AS acceptance_count
+           FROM proposals p
+           WHERE p.status = 'draft'
+           ORDER BY p.created_at DESC`,
+        )
+        for (const row of r.rows) {
+          const r0 = row as unknown as Record<string, unknown>
+          const src = r0.source
+          const source: DraftFeature['source'] =
+            src === 'reflection' || src === 'planner' || src === 'human' ? src : 'human'
+          drafts.push({
+            id: r0.id as string,
+            title: (r0.title as string | null) ?? '',
+            problem: (r0.problem as string | null) ?? '',
+            solution: (r0.solution as string | null) ?? '',
+            status: (r0.status as string | null) ?? 'draft',
+            source,
+            createdAt: Number(r0.created_at ?? 0),
+            updatedAt: Number(r0.updated_at ?? 0),
+            acceptanceCount: Number(r0.acceptance_count ?? 0),
+          })
+        }
+      }
+
+      const staleWorktrees: StaleWorktreeAlert[] = []
+      try {
+        const r = await client.execute(
+          `SELECT context, payload, last_seen_at, raised_at
+             FROM inbox_items
+            WHERE kind = 'stale-worktree' AND state = 'open'
+            ORDER BY raised_at DESC`,
+        )
+        for (const row of r.rows) {
+          const r0 = row as unknown as Record<string, unknown>
+          let ctx: Record<string, unknown> = {}
+          let pld: Record<string, unknown> = {}
+          try {
+            const p = JSON.parse(r0.context as string)
+            if (p && typeof p === 'object') ctx = p as Record<string, unknown>
+          } catch { /* ignore */ }
+          try {
+            const p = JSON.parse(r0.payload as string)
+            if (p && typeof p === 'object') pld = p as Record<string, unknown>
+          } catch { /* ignore */ }
+          const taskId = typeof ctx.taskId === 'string' ? ctx.taskId : null
+          if (!taskId) continue
+          staleWorktrees.push({
+            taskId,
+            status: typeof pld.status === 'string' ? pld.status : 'unknown',
+            ageHours: typeof pld.ageHours === 'number' ? pld.ageHours : 0,
+            updatedAt:
+              typeof r0.last_seen_at === 'string'
+                ? r0.last_seen_at
+                : typeof r0.raised_at === 'string'
+                  ? r0.raised_at
+                  : new Date().toISOString(),
+            prompt: typeof pld.prompt === 'string' ? pld.prompt : '',
+            error: typeof pld.error === 'string' ? pld.error : null,
+            branch: typeof pld.branch === 'string' ? pld.branch : null,
+            blockerTaskId: null,
+          })
+        }
+      } catch { /* inbox_items table may not exist on a fresh repo */ }
+
+      return { drafts, staleWorktrees }
+    },
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
