@@ -19,7 +19,7 @@ export interface UiPidEntry {
   startedAt: string
 }
 
-const resolveLauncher = (): string | null => {
+export const resolveLauncher = (): string | null => {
   const here = dirname(fileURLToPath(import.meta.url))
   const candidates = [
     resolve(here, '../../../ui/bin/mars-ui.mjs'),
@@ -29,6 +29,18 @@ const resolveLauncher = (): string | null => {
     if (existsSync(candidate)) return candidate
   }
   return null
+}
+
+export const printUiDiscoveryHint = (repoRoot: string, launcher: string | null): void => {
+  if (launcher !== null) {
+    process.stdout.write(
+      `[mars init] dashboard:  mars ui --repo ${repoRoot}   (read-only Kanban + trace stream at http://127.0.0.1:7777)\n`,
+    )
+  } else {
+    process.stdout.write(
+      `[mars init] dashboard not available: UI package not found — build it with: cd ui && npm install && npm run build\n`,
+    )
+  }
 }
 
 export const getPidFilePath = (repo?: string): string => {
