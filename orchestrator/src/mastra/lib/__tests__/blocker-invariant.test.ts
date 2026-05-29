@@ -124,7 +124,7 @@ const insertFixTaskRow = async (
   return id
 }
 
-describe('ADR-0038 recovery-leaf guard', () => {
+describe('ADR-0040 recovery-leaf guard', () => {
   let repo: string
 
   beforeEach(() => {
@@ -207,7 +207,7 @@ describe('ADR-0038 recovery-leaf guard', () => {
   })
 
   it('cascade does not walk further when a recovery completes (none can exist)', async () => {
-    // ADR-0038's cascade-no-recurse rule is structurally bounded: because no
+    // ADR-0040's cascade-no-recurse rule is structurally bounded: because no
     // recovery can be the task_id of any task_blockers row (guarded above),
     // a recovery completing has no dependents-of-dependents to walk. This
     // test pins that exact invariant: even after spawning a recovery,
@@ -248,7 +248,7 @@ describe('ADR-0038 recovery-leaf guard', () => {
     const fixId = await insertFixTaskRow(q, origin.id)
     const other = await q.enqueueTask('other', undefined, { skipTriage: true })
     // Bypass the user-facing guard to simulate a row inserted before the
-    // ADR-0038 enforcement landed: raw INSERT both directions.
+    // ADR-0040 enforcement landed: raw INSERT both directions.
     const now = new Date().toISOString()
     await q.getClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,

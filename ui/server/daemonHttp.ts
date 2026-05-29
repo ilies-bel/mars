@@ -76,6 +76,34 @@ export const fetchErrorKinds = async (
   }
 }
 
+/** Mirror of the orchestrator's KpiRecord (received over the wire). */
+export interface KpiRecord {
+  key: 'cost_per_arc' | 'failure_rate' | 'autonomous_completion_rate' | 'recovery_success_rate'
+  currentValue: number
+  priorValue: number
+  delta: number
+  sampleCount: number
+  lowConfidence: boolean
+}
+
+/**
+ * Fetch the KPI vector from the daemon. Returns an empty array when the daemon
+ * is unreachable — the UI then renders tiles in a loading/unavailable state
+ * rather than failing the whole page.
+ */
+export const fetchKpis = async (stateDir: string): Promise<KpiRecord[]> => {
+  const port = await readDaemonHttpPort(stateDir)
+  if (port === null) return []
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/kpis`)
+    if (!res.ok) return []
+    const body = (await res.json()) as { kpis?: KpiRecord[] }
+    return Array.isArray(body.kpis) ? body.kpis : []
+  } catch {
+    return []
+  }
+}
+
 /**
  * Forward an arbitrary GET to the daemon, relaying its status + parsed JSON
  * body verbatim. Used by the inbox detail panel to surface the failure-reason

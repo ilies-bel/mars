@@ -219,7 +219,7 @@ const removeLegacyMastraDb = (
 }
 
 /**
- * ADR-0038 forensic backfill: scan `task_blockers` for rows that violate the
+ * ADR-0040 forensic backfill: scan `task_blockers` for rows that violate the
  * recovery-leaf invariant (either endpoint is a kind='fix' / fixForTaskId-set
  * task) and log them so the operator can resolve via `mars unblock <id>`.
  * Read-only — never mutates the table.
@@ -230,7 +230,7 @@ const scanRecoveryLeafViolations = async (
   const violations = await scanRecoveryBlockerEdges()
   if (violations.length === 0) return
   log(
-    `[adr-0038] found ${violations.length} task_blockers row(s) involving a recovery task (pre-leaf-guard residue). ` +
+    `[adr-0040] found ${violations.length} task_blockers row(s) involving a recovery task (pre-leaf-guard residue). ` +
       `Recovery tasks must be leaf nodes — run \`mars unblock <id>\` on each to clear them.`,
   )
   for (const v of violations) {
@@ -238,7 +238,7 @@ const scanRecoveryLeafViolations = async (
     if (v.taskIsRecovery) roles.push(`task=${v.taskId}`)
     if (v.blockerIsRecovery) roles.push(`blocker=${v.blockerTaskId}`)
     log(
-      `[adr-0038]   edge (task=${v.taskId}, blocker=${v.blockerTaskId}) violates leaf invariant: ${roles.join(', ')}`,
+      `[adr-0040]   edge (task=${v.taskId}, blocker=${v.blockerTaskId}) violates leaf invariant: ${roles.join(', ')}`,
     )
   }
 }
@@ -359,7 +359,7 @@ export const startDaemon = async (
     )
   }
 
-  // Forensic backfill check for ADR-0038 (recovery tasks are leaf nodes).
+  // Forensic backfill check for ADR-0040 (recovery tasks are leaf nodes).
   // Read-only scan of `task_blockers` for rows where either endpoint is a
   // recovery (fix) task — those edges predate the leaf-node guard and must
   // be cleared by the operator (`mars unblock <id>`). The check never
@@ -368,7 +368,7 @@ export const startDaemon = async (
     await scanRecoveryLeafViolations(log)
   } catch (err) {
     log(
-      `[adr-0038] recovery-leaf backfill scan failed: ${(err as Error).message}`,
+      `[adr-0040] recovery-leaf backfill scan failed: ${(err as Error).message}`,
     )
   }
 
@@ -577,7 +577,7 @@ export const startDaemon = async (
           taskId: task.id,
           prompt: task.prompt,
           plan: task.plan,
-          tag: task.tag ?? 'coder',
+          tags: task.tags ?? ['coder'],
           kind: task.kind ?? 'task',
           integrationBranch,
           spec: task.spec
@@ -1010,14 +1010,14 @@ export const startDaemon = async (
     author?: Task['author'],
     blockerIds?: readonly string[],
     priority?: number,
-    tag?: Task['tag'],
+    tags?: Task['tags'],
     spec?: Task['spec'],
   ): Promise<Task> => {
     const opts: Parameters<typeof enqueueTask>[2] = {}
     if (skipTriage) opts.skipTriage = true
     if (author) opts.author = author
     if (priority !== undefined) opts.priority = priority
-    if (tag !== undefined) opts.tag = tag
+    if (tags !== undefined) opts.tags = tags
     if (spec) opts.spec = spec
     const task = await enqueueTask(
       prompt,
@@ -1704,7 +1704,7 @@ export const startDaemon = async (
             req.author,
             req.blockerIds,
             req.priority,
-            req.tag,
+            req.tags,
             req.spec,
           )
           return { ok: true, data: task }

@@ -285,7 +285,7 @@ export interface SpawnOrAttachInput {
  * recovery_payload-hash dedup is the source of truth for committer
  * identity.
  *
- * This function is ALSO the legitimate exemption from the F.1 ADR-0038
+ * This function is ALSO the legitimate exemption from the F.1 ADR-0040
  * leaf-node guard: the fresh-spawn branch inserts an origin → recovery
  * `task_blockers` edge directly, mirroring `upsertFixTask`'s exemption.
  * The attach branch goes through `attachToExistingFixTask`, which carries

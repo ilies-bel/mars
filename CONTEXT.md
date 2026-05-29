@@ -46,8 +46,8 @@ A task arc whose merge step could not land as an instant git fast-forward into t
 _Avoid_: non-fast-forward, conflicted merge, vega merge
 
 **KPI**:
-A read-only aggregate health number derived from completed task arcs over a rolling time window, surfaced on the dashboard so the operator can spot orchestrator drift at a glance.
-_Avoid_: metric, stat, gauge
+One of a small fixed vector of read-only health numbers derived from completed Arcs over a rolling time window, surfaced on the dashboard so the operator can spot orchestrator drift at a glance. KPIs are defined over framework primitives (Arc, Task, Worker, recovery, Action queue) and never over codebase-specific artifacts, so they hold for any Mars deployment regardless of what its agents produce. A single 'harness health' scalar is deliberately rejected: the goals (autonomy, frugality, resilience, operator ergonomics) trade against each other, so health is a vector and a regression in one KPI is only meaningful held against the others. The canonical vector: Cost per completed Arc, Failure rate, Autonomous completion rate, Recovery success rate.
+_Avoid_: metric, stat, gauge, harness health score
 
 **Chore**:
 A Mars work unit whose purpose is a side-effecting repair (a fix or follow-up after a failure) rather than feature work; goes through the same code/verify/merge workflow as a Task.
@@ -140,11 +140,11 @@ A tarball asset (mars-bundle-vX.Y.Z.tar.gz) containing manifest.json plus exactl
 _Avoid_: release tarball, framework bundle, mars bundle
 
 **Mars id**:
-An entity identifier rendered as 'mars-<kind>-<hex>' (with an optional '-<slug>' suffix for proposals), where the bare hex is the canonical identity: equality is on the hex alone, the kind/slug are presentation framing.
-_Avoid_: prefixed id, namespaced id
+An entity identifier rendered as '<tag>-<hex>', where <tag> is a fixed 4-letter kind code (e.g. task, prop, orig, alrt) and the bare hex is the canonical identity: equality is on the hex alone, the tag is presentation framing. No slug suffix.
+_Avoid_: prefixed id, namespaced id, slugged id
 
 **Bare id**:
-The hex-only portion of a Mars id, stored as the primary key on every entity table (tasks, proposals, etc.). All SQL indexes and foreign keys use the bare form; the 'mars-<kind>-' prefix is added on render and stripped on parse.
+The hex-only core of a Mars id. It is NOT the stored identity: every entity table stores the full '<tag>-<hex>' string as its primary key, and foreign keys, worktree directory names, and git branch names all carry the tag. The bare hex is used only for equality/partial-match lookups.
 _Avoid_: short id, raw id, hex id
 
 **UI**:
@@ -319,3 +319,31 @@ _Avoid_: admission control, pressure gate, load gate, governor
 **Pressure level**:
 The Spawn governor's per-tick verdict on host resource state — Normal, Elevated, High, or Critical — computed as the worst band across load-ratio (loadavg-1 / cpu-count) and memory-used (1 - freemem / totalmem); High and Critical both refuse spawns, Elevated and Normal allow them.
 _Avoid_: pressure band, governor band, load level
+
+**Cost per completed Arc**:
+The headline frugality KPI: cache-weighted tokens summed across an Arc, divided by the count of Arcs that reached done over the window — an outcome-denominated cost, so failed work is not amortised away into a flattering average. Chosen over raw tokens-per-task because tasks differ in size and the field rejects size normalisation (lines-changed is gameable and weakly correlates with difficulty); anchoring the denominator to completed Arcs is the accepted framing (cf. SWE-bench 'cost per resolved issue'). Per-Arc token spend is also reported as a distribution (median and p90), never a bare mean, because the variance from task size lives in the distribution: a regressing p90 is signal, a regressing mean may just be bigger legitimate work.
+_Avoid_: tokens per task, tokens per arc, average cost, mean token spend
+
+**Failure rate**:
+A reliability KPI: the fraction of Arcs over the window whose origin reached failed (recovery exhausted, operator not yet resolved). Sibling to Autonomous completion rate — failure rate counts terminal failure, autonomous completion counts clean success with no human touch; the band between them is work that finished only because the operator stepped in.
+_Avoid_: error rate, fail percentage
+
+**Autonomous completion rate**:
+The autonomy KPI: the fraction of Arcs over the window that reached done while raising zero Action queue items — i.e. completed with no human intervention beyond the planning phase. Directly measures the project's headline goal (no human touch except planning). Trades against Cost per completed Arc and Recovery success rate: pushing autonomy up (never ask the operator) tends to cost more tokens and risks a wrong unsupervised choice compounding, which is why it is read as a vector member, not maximised alone.
+_Avoid_: autonomy rate, hands-off rate, no-touch rate
+
+**Recovery success rate**:
+The resilience (self-healing) KPI: the fraction of origin failures whose recovery task reached done AND whose origin then reached done, over the window — i.e. how often self-healing actually heals, per ADR-0002's one-shot recovery. Not capturable today: nothing records recovery outcome distinctly from a normal task transition. Deferred deliberately — it is to be derived from the forthcoming queryable workflow surface rather than bolted onto the current model, so this term names the target without mandating a schema that the workflow rework would obsolete.
+_Avoid_: heal rate, fix success rate, recovery rate
+
+**KPI drift**:
+A sustained move in a KPI against its own rolling baseline (this window vs. prior) — the signal the dashboard exists to surface. Detecting drift requires a persisted KPI time-series; today KPIs are recomputed and printed, never stored, so drift is invisible. Drift in one KPI is read against the rest of the vector, never alone (see KPI).
+_Avoid_: regression, metric drift, trend
+
+**Self-evolve loop**:
+The closed feedback arc that turns KPI drift into corrective work: KPI regression -> reflection -> draft proposal -> operator promotes -> merge -> KPI re-measured to confirm the change moved the number. The framework does NOT rewrite itself: it surfaces drift and proposes; the operator owns every promotion, keeping planning the single human touchpoint. The automatic KPI-regression->proposal trigger is opt-in and off by default; with it off, deep-reflect is the manual entry point to the same loop. Agnostic by construction — it tunes any project's specifics via proposals, carrying no codebase assumptions.
+_Avoid_: auto-evolve, self-improvement, feedback loop, evolve loop
+
+**Effectiveness-under-budget**:
+The rigorous, size-fair backstop to Cost per completed Arc: success rate plotted against cumulative token spend, integrated as normalised area-under-curve up to a budget cap (after SWE-Effi). Because it never divides per-task, the one-line-vs-500-line size-variance problem dissolves entirely — it rewards cheaply-solved Arcs and discounts expensive or unsolved ones. Computed only during deep-reflect (too heavy and too hard to read for the daily dashboard), where Cost per completed Arc is the at-a-glance number and Effectiveness-under-budget is the audit-grade view.
+_Avoid_: AUC, SWE-Effi, budget AUC, resource-bounded effectiveness
