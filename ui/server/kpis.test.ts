@@ -51,6 +51,7 @@ const makeKpiDeps = (kpis: KpiRecord[]): HttpServerDeps => ({
   todoDismiss: async () => {},
   viewInbox: async () => [],
   viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
+  viewTerminalEvents: async () => ({ events: [] }),
   listKpis: async () => kpis,
 })
 
