@@ -350,3 +350,7 @@ Transient lifecycle phase between a freshly-promoted task and dispatch-eligibili
 
 **vega-reconciling (task)**:
 The lifecycle phase a task enters when its merge hits a non-FF conflict and is handed to the vcs-supervisor for reconciliation before re-attempting the merge.
+
+**UI fallback surface**:
+A UI region that renders in place of real data when a fetch fails (error) or returns nothing (empty); error variants split copy by build mode, empty variants do not.
+_Avoid_: error panel, error state, fallback UI
