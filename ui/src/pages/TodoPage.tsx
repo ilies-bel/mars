@@ -35,8 +35,8 @@ const formatTime = (iso: string): string => {
 }
 
 const priorityBadgeClass = (priority: string): string => {
-  if (priority === 'high') return 'text-[#ff4f4f]'
-  if (priority === 'normal') return 'text-[#ff944d]'
+  if (priority === 'high') return 'text-error'
+  if (priority === 'normal') return 'text-warn'
   return 'text-iron/60'
 }
 
@@ -117,7 +117,7 @@ export const ActionQueueRow = ({
         )}
       </div>
       {restartError !== null && (
-        <div className="mt-1 font-mono text-[10px] text-[#ff4f4f]">
+        <div className="mt-1 font-mono text-[10px] text-error">
           {restartError}
         </div>
       )}
@@ -241,7 +241,7 @@ const ActionBar = ({ item }: ActionBarProps) => {
               className={[
                 'border px-3 py-1.5 font-mono text-[11px] uppercase transition-colors disabled:opacity-50',
                 action.needsConfirm
-                  ? 'border-[#ff4f4f]/50 text-[#ff4f4f] hover:bg-[#ff4f4f]/10'
+                  ? 'border-error/50 text-error hover:bg-error/10'
                   : 'border-iron/40 text-fg hover:bg-iron/20',
               ].join(' ')}
             >
@@ -255,7 +255,7 @@ const ActionBar = ({ item }: ActionBarProps) => {
         )}
       </dd>
       {errorMsg ? (
-        <p className="mt-2 font-mono text-[10px] text-[#ff4f4f]">{errorMsg}</p>
+        <p className="mt-2 font-mono text-[10px] text-error">{errorMsg}</p>
       ) : null}
     </div>
   )
@@ -305,7 +305,7 @@ const CatalogReasonAndActions = ({ item }: CatalogPanelProps) => {
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Reason
         </dt>
-        <dd className="text-[#ff4f4f]">
+        <dd className="text-error">
           Failed to load failure-reason catalog
           {catalogQuery.error ? `: ${(catalogQuery.error as Error).message}` : ''}
         </dd>
@@ -352,7 +352,7 @@ const CatalogReasonAndActions = ({ item }: CatalogPanelProps) => {
               className={[
                 'border px-3 py-1.5 font-mono text-[11px] uppercase transition-colors disabled:opacity-50',
                 action.id === 'purge'
-                  ? 'border-[#ff4f4f]/50 text-[#ff4f4f] hover:bg-[#ff4f4f]/10'
+                  ? 'border-error/50 text-error hover:bg-error/10'
                   : 'border-iron/40 text-fg hover:bg-iron/20',
               ].join(' ')}
             >
@@ -361,7 +361,7 @@ const CatalogReasonAndActions = ({ item }: CatalogPanelProps) => {
           ))}
         </dd>
         {errorMsg ? (
-          <p className="mt-2 font-mono text-[10px] text-[#ff4f4f]">{errorMsg}</p>
+          <p className="mt-2 font-mono text-[10px] text-error">{errorMsg}</p>
         ) : null}
       </div>
     </>
@@ -412,7 +412,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Traces
         </dt>
-        <dd className="text-[#ff4f4f]">
+        <dd className="text-error">
           Failed to load traces
           {initial.error ? `: ${(initial.error as Error).message}` : ''}
         </dd>
@@ -547,7 +547,7 @@ const OriginsSection = ({ taskId }: OriginsProps) => {
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Origins
         </dt>
-        <dd className="text-[#ff4f4f]">
+        <dd className="text-error">
           Failed to load origins
           {query.error ? `: ${(query.error as Error).message}` : ''}
         </dd>
