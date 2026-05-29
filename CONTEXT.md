@@ -354,3 +354,7 @@ The lifecycle phase a task enters when its merge hits a non-FF conflict and is h
 **UI fallback surface**:
 A UI region that renders in place of real data when a fetch fails (error) or returns nothing (empty); error variants split copy by build mode, empty variants do not.
 _Avoid_: error panel, error state, fallback UI
+
+**Mars project**:
+A repository with a .mars/ directory on disk; the unit the global dashboard scans for and aggregates, independent of whether its daemon is currently running.
+_Avoid_: repo, workspace, project root
