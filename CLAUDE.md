@@ -190,6 +190,25 @@ recovery-spawn path itself.
   hits the wrong DB. Use `git -C <path>`, tool `--cwd` flags, absolute
   paths, or `mars --repo <root> …`. If a one-off subshell is unavoidable,
   spell it `(cd <abs-path> && …)` so the parent shell never moves.
+- The daemon's HTTP server binds an OS-assigned ephemeral port
+  (`listen(0, '127.0.0.1', ...)` in
+  `orchestrator/src/mastra/daemon/http-server.ts`) and publishes it to
+  `.mars/http.port`. To reach the daemon API (e.g. `/failure-reasons`,
+  `/events`), read `PORT=$(cat .mars/http.port)` first — never guess the
+  port. A 200 from a guessed port is usually an unrelated server (the
+  UI/Vite catch-all returns index.html for any path), so a
+  guessed-port probe proves nothing.
+- A 404 on a daemon route that exists in source usually means the running
+  daemon predates that route — restart with `mars daemon restart` rather
+  than scoping a code task. (Caveat: restart hard-stops in-flight tasks;
+  they re-queue.)
+- Before enqueueing a task off a `tsc`/build error, confirm the error
+  actually reproduces in the correct directory (use
+  `(cd <abs-path> && npx tsc --noEmit)`, not a bare `cd`) and run it
+  twice — transient `node_modules`/install states have produced phantom
+  TS2307 'cannot find module' errors that vanish on re-run. Only an error
+  that reproduces in the isolated, correct context belongs in a task
+  prompt.
 
 ## Installation
 
