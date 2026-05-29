@@ -18,6 +18,43 @@ const minTask = (id: string, overrides: Partial<UITask> = {}): UITask => ({
   ...overrides,
 })
 
+describe('TaskCard – live-activity pulse', () => {
+  it('applies animate-mars-pulse to a running task card', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard task={minTask('t1', { status: 'running' })} index={0} />,
+    )
+    expect(html).toContain('animate-mars-pulse')
+  })
+
+  it('applies animate-mars-pulse to a merging task card', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard task={minTask('t1', { status: 'merging' })} index={0} />,
+    )
+    expect(html).toContain('animate-mars-pulse')
+  })
+
+  it('applies animate-mars-pulse to a verifying task card', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard task={minTask('t1', { status: 'verifying' })} index={0} />,
+    )
+    expect(html).toContain('animate-mars-pulse')
+  })
+
+  it('does NOT apply animate-mars-pulse to a queued task card', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard task={minTask('t1', { status: 'queued' })} index={0} />,
+    )
+    expect(html).not.toContain('animate-mars-pulse')
+  })
+
+  it('does NOT apply animate-mars-pulse to a failed task card', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard task={minTask('t1', { status: 'failed' })} index={0} />,
+    )
+    expect(html).not.toContain('animate-mars-pulse')
+  })
+})
+
 describe('TaskCard – task drawer navigation', () => {
   it('renders a link to the task drawer for this task', () => {
     const html = renderToStaticMarkup(<TaskCard task={minTask('mars-abc123')} index={0} />)

@@ -48,6 +48,31 @@ describe('ProposalDetailDrawer', () => {
   })
 })
 
+// ── Drawer entrance animation ────────────────────────────────────────────────
+
+describe('ProposalDetailDrawer – entrance / exit animation structure', () => {
+  it('aside panel carries the drawer-panel CSS class (entrance animation anchor)', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={draftProposal()} onClose={() => {}} />,
+    )
+    expect(html).toContain('drawer-panel')
+  })
+
+  it('scrim carries the drawer-scrim CSS class (scrim fade anchor)', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={draftProposal()} onClose={() => {}} />,
+    )
+    expect(html).toContain('drawer-scrim')
+  })
+
+  it('data-closing is absent on initial render — exit animation not yet active', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={draftProposal()} onClose={() => {}} />,
+    )
+    expect(html).not.toContain('data-closing="true"')
+  })
+})
+
 // ── A11y: scrim + focusable drawer ───────────────────────────────────────────
 
 /**

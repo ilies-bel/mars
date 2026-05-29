@@ -297,6 +297,37 @@ describe('TaskDetailDrawer – a11y overlay and focusability', () => {
   })
 })
 
+// ── Drawer entrance animation ────────────────────────────────────────────────
+
+/**
+ * These tests verify the static HTML structure that enables the CSS entrance
+ * and exit animations.  The actual motion (transform/opacity transitions) is a
+ * browser concern and is not exercised in unit tests; these tests confirm that
+ * the CSS anchor classes and data attributes are present in the rendered markup.
+ */
+describe('TaskDetailDrawer – entrance / exit animation structure', () => {
+  it('aside panel carries the drawer-panel CSS class (entrance animation anchor)', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
+    )
+    expect(html).toContain('drawer-panel')
+  })
+
+  it('scrim carries the drawer-scrim CSS class (scrim fade anchor)', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
+    )
+    expect(html).toContain('drawer-scrim')
+  })
+
+  it('data-closing is absent on initial render — exit animation not yet active', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
+    )
+    expect(html).not.toContain('data-closing="true"')
+  })
+})
+
 // ── Subgraph: cluster colours match main canvas ───────────────────────────────
 
 describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', () => {
