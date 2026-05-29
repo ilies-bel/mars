@@ -96,13 +96,31 @@ export const errorClassRules: readonly ErrorClassRule[] = [
   },
   {
     errorClass: 'not-fast-forward',
-    // Matches the pre-flight message emitted when the task branch has diverged
-    // from integration before the VCS supervisor even runs (first-line match).
-    // Also matches the `git merge --ff-only` fatal that surfaces when main
+    // Covers three distinct first-line patterns that all mean "integration
+    // advanced after the task branch was last rebased; the code is committed
+    // on the branch, just re-land it":
+    //
+    //  (a) Pre-flight divergence: emitted before the VCS supervisor runs when
+    //      the task branch has already diverged from integration.
+    //        "task branch task/x is not a fast-forward of main"
+    //
+    //  (b) Post-supervisor ancestry check (mergeBranch Path 2): after the VCS
+    //      supervisor completes a rebase, git.ts verifies the fast-forward via
+    //      `merge-base --is-ancestor`. If integration advanced in the window
+    //      between the supervisor finishing and this check, it returns aborted=true
+    //      with first-line:
+    //        "fast-forward into <branch> not possible: <sha> is not an ancestor of <sha>."
+    //
+    //  (c) CAS race on update-ref (mergeBranch Path 3): the ancestry check
+    //      passes but integration advances before `git update-ref <ref> <new>
+    //      <old>` executes. mergeBranch returns aborted=true with first-line:
+    //        "integration moved during merge, retry needed: <branch> advanced concurrently."
+    //
+    // Also covers the `git merge --ff-only` fatal that surfaces when main
     // advances AFTER the VCS supervisor rebases but BEFORE the fast-forward
     // completes — a race condition where the distinguishing signal appears in
     // the body rather than the first line (hence the matchFull guard too).
-    match: /is not a fast-forward of/i,
+    match: /is not a fast-forward of|is not an ancestor of|integration moved during merge/i,
     matchFull: /Not possible to fast-forward/i,
   },
   {
