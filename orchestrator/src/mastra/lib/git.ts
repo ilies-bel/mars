@@ -1201,10 +1201,23 @@ export const checkBranchHasDiff = async (
     return { name: 'has-diff', passed: true, output: `${count} commit(s) ahead of ${integrationBranch}` }
   } catch (error: unknown) {
     const e = error as { stdout?: string; stderr?: string; message?: string }
+    const msg = e.message ?? ''
+    // runTool surfaces "working directory no longer exists: <path>" when the
+    // spawn's cwd is absent. Propagate that as a distinct, named failure so a
+    // post-mortem can immediately distinguish a deleted worktree from a git
+    // binary that is missing from PATH — both produce the same raw ENOENT.
+    const cwdMissingMatch = /working directory no longer exists: (.+)/.exec(msg)
+    if (cwdMissingMatch) {
+      return {
+        name: 'has-diff',
+        passed: false,
+        output: `has-diff: worktree path ${cwdMissingMatch[1]} no longer exists`,
+      }
+    }
     return {
       name: 'has-diff',
       passed: false,
-      output: `git rev-list failed: ${(e.stderr ?? '') + (e.message ?? '')}`,
+      output: `git rev-list failed: ${(e.stderr ?? '') + msg}`,
     }
   }
 }
