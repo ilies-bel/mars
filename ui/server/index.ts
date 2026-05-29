@@ -6,7 +6,6 @@ import { DAEMON_KILLED_SIGNATURE } from '../../orchestrator/src/mastra/lib/retry
 import { loadAgents } from './agents.ts'
 import { fetchErrorKinds, fetchKpis, proxyAction, proxyGet } from './daemonHttp.ts'
 import { StateDb, TaskDb } from './db.ts'
-import { listTerminalEvents } from './events.ts'
 import { resolveRepo } from './repo.ts'
 import { SseHub } from './sse.ts'
 import { watchQueue } from './watch.ts'
@@ -567,12 +566,8 @@ export const startServer = async (
       }
 
       if (path === '/api/events') {
-        try {
-          const events = await listTerminalEvents(db)
-          return jsonResponse(200, { events })
-        } catch (err) {
-          return jsonResponse(500, { error: (err as Error).message })
-        }
+        const result = await proxyGet(ctx.stateDir, '/view/terminal-events')
+        return jsonResponse(result.status, result.body)
       }
 
       // GET /api/failure-reasons — proxy the daemon's resolved failure-reason

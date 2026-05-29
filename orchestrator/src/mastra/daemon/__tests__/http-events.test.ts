@@ -47,6 +47,7 @@ const makeDeps = (
   traceStore: store,
   viewTasks: async () => ({ tasks: [] }),
   viewProgress: async () => ({ tasks: [], proposals: [] }),
+  viewTerminalEvents: async () => ({ events: [] }),
   ...overrides,
 })
 

@@ -43,6 +43,7 @@ import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
 import { resolveGitBin } from '../lib/git'
 import { getDefaultTaskStore } from '../lib/task-store'
 import { getDefaultDomainTaskStore } from '../store/task-store'
+import { listTerminalEvents } from './view/terminal-events'
 import { listProposals, promoteProposal } from '../proposals'
 import {
   CANCELLED_FAILURE_REASON,
@@ -2370,6 +2371,10 @@ export const startDaemon = async (
         { now: Date.now(), failedWindowMs },
       )
     },
+    viewTerminalEvents: () =>
+      listTerminalEvents(getDefaultDomainTaskStore()).then((events) => ({
+        events,
+      })),
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
