@@ -276,6 +276,131 @@ const parseSlicerOutput = (
 ): z.infer<typeof slicerOutputSchema> =>
   slicerOutputSchema.parse(parseClaudeJsonResult(claudeStdout))
 
+// ---------------------------------------------------------------------------
+// Action quality guard — regex anti-pattern detector
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimum number of whitespace-separated words a prescriptiveAction must
+ * contain to be considered non-trivially specific.
+ */
+const MIN_ACTION_WORD_COUNT = 6
+
+/**
+ * Fluff phrases that, when present as standalone words/phrases, indicate the
+ * action is too generic to be useful to a coder. Matched case-insensitively
+ * with word-boundary anchors so "misalign" does not trip the "align" rule.
+ */
+const FLUFF_PATTERNS: ReadonlyArray<{ re: RegExp; phrase: string }> = [
+  { re: /\bimplement\b/i, phrase: 'implement' },
+  { re: /\bensure\b/i, phrase: 'ensure' },
+  { re: /\bproperly\b/i, phrase: 'properly' },
+  { re: /\bcorrectly\b/i, phrase: 'correctly' },
+  { re: /\balign\b/i, phrase: 'align' },
+  { re: /\bhandle the case\b/i, phrase: 'handle the case' },
+  { re: /\bmake sure\b/i, phrase: 'make sure' },
+  { re: /\bas needed\b/i, phrase: 'as needed' },
+  { re: /\bwhere appropriate\b/i, phrase: 'where appropriate' },
+]
+
+/** Matches a file-path-shaped token: at least one slash surrounded by path
+ *  segments (word chars, dashes, dots). */
+const HAS_FILE_PATH = /\b[a-zA-Z][a-zA-Z0-9_\-.]*(?:\/[a-zA-Z0-9_\-.]+)+/
+
+/** Matches the opening of a backtick-quoted identifier or path. */
+const HAS_BACKTICK_IDENT = /`[a-zA-Z_$./][a-zA-Z0-9_$./]*/
+
+/**
+ * Inspect a slice's prescriptiveAction for vague-prose anti-patterns.
+ * Returns a human-readable description of the first violation found, or
+ * `null` when the action looks concrete enough.
+ *
+ * Checks (in order):
+ * 1. Word count below the minimum threshold.
+ * 2. Presence of a fluff word/phrase as a standalone token.
+ * 3. Absence of both a file-path-shaped token and a backtick-quoted identifier.
+ *
+ * Exported for unit testing.
+ */
+export const detectActionAntiPattern = (action: string): string | null => {
+  const wordCount = action.trim().split(/\s+/).length
+  if (wordCount < MIN_ACTION_WORD_COUNT) {
+    return `action is too short (${wordCount} word${wordCount === 1 ? '' : 's'}; minimum is ${MIN_ACTION_WORD_COUNT})`
+  }
+  for (const { re, phrase } of FLUFF_PATTERNS) {
+    if (re.test(action)) {
+      return `contains vague phrase "${phrase}"`
+    }
+  }
+  if (!HAS_FILE_PATH.test(action) && !HAS_BACKTICK_IDENT.test(action)) {
+    return 'missing a concrete anchor: no file path or backtick-quoted identifier found'
+  }
+  return null
+}
+
+/**
+ * Build the re-prompt sent to the Slicer worker when a single slice's
+ * prescriptiveAction trips the anti-pattern detector. The anti-pattern
+ * description is embedded verbatim so the model can target the rewrite.
+ */
+const buildActionRepromptPrompt = (
+  sliceTitle: string,
+  currentAction: string,
+  antiPattern: string,
+): string =>
+  `The prescriptiveAction for slice "${sliceTitle}" was flagged as too vague.
+
+Anti-pattern: ${antiPattern}
+
+Current prescriptiveAction:
+${currentAction}
+
+Rewrite ONLY the prescriptiveAction to be concrete and code-level specific:
+- Name at least one file path (e.g. src/foo/bar.ts) or backtick-quoted identifier (\`symbolName\`)
+- Name the specific function, type, variable, SQL column, or line range to change
+- Use exact values — not vague directives like "implement", "ensure", "properly", or "correctly"
+- Minimum ${MIN_ACTION_WORD_COUNT} words
+
+Return only valid JSON: {"prescriptiveAction": "<rewritten action here>"}`
+
+/** Schema used to parse the slicer's response to an action re-prompt. */
+const actionRepromptSchema = z.object({ prescriptiveAction: z.string().min(1) })
+
+/**
+ * For each slice whose prescriptiveAction trips the anti-pattern detector,
+ * call `reprompt` exactly once with the slice and the named anti-pattern.
+ * If the reprompt returns a concrete rewrite (passes the detector), the
+ * slice is updated in place. If the reprompt returns null or still-vague
+ * prose, the original action is kept and the pipeline continues unchanged.
+ *
+ * Exported so tests can inject a mock reprompt function without spawning a
+ * real Claude worker.
+ */
+export const applyActionQualityGuard = async (
+  slices: Array<{ title: string; prescriptiveAction: string }>,
+  reprompt: (
+    slice: { title: string; prescriptiveAction: string },
+    antiPattern: string,
+  ) => Promise<string | null>,
+): Promise<void> => {
+  for (const slice of slices) {
+    const antiPattern = detectActionAntiPattern(slice.prescriptiveAction)
+    if (antiPattern === null) continue
+
+    // Pass a snapshot (shallow copy) so the spy / caller never sees the
+    // post-mutation state of the slice object.
+    const rewritten = await reprompt({ ...slice }, antiPattern).catch(() => null)
+    if (rewritten === null) continue
+
+    // Only swap if the rewrite itself passes the detector.
+    if (detectActionAntiPattern(rewritten) === null) {
+      slice.prescriptiveAction = rewritten
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+
 /**
  * Schema-drop / breaking-shape signal in a slice title or whatToBuild.
  * Keyed to vocabulary already used by the slicer for this case ("Drop
@@ -639,6 +764,33 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     parsed.slices = dropAlreadySatisfiedSlices(parsed.slices, getRepoRoot())
     const droppedCount = preDropCount - parsed.slices.length
     const total = parsed.slices.length
+
+    // Action quality guard: for each slice whose prescriptiveAction is vague,
+    // re-prompt the slicer exactly once naming the specific anti-pattern.
+    // Non-fatal: errors in the reprompt are swallowed and the original action
+    // is kept so the pipeline never blocks on a quality issue.
+    await applyActionQualityGuard(parsed.slices, async (slice, antiPattern) => {
+      const rr = await runWorkerWithSpan({
+        worker: Workers.Slicer,
+        prompt: buildActionRepromptPrompt(
+          slice.title,
+          slice.prescriptiveAction,
+          antiPattern,
+        ),
+        runOptions: { cwd: getRepoRoot() },
+        traceStore,
+        stepName: 'action-quality-reprompt',
+        workflowInstanceId: ctx.runId,
+        originId: inputData.proposalId,
+      }).catch(() => null)
+      if (!rr || rr.exitCode !== 0) return null
+      try {
+        return actionRepromptSchema.parse(parseClaudeJsonResult(rr.stdout))
+          .prescriptiveAction
+      } catch {
+        return null
+      }
+    })
 
     // Validate dependency indices before any DB writes.
     for (let i = 0; i < total; i += 1) {
