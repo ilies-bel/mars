@@ -81,6 +81,10 @@ const VERIFY_DEFAULTS_BY_SUPERVISOR: Record<string, VerifyStepEntry[]> = {
   'python-backend-supervisor': [
     { name: 'test', cmd: 'pytest', args: ['-q'], required: true },
   ],
+  'jvm-backend-supervisor': [
+    { name: 'build', cmd: './gradlew', args: ['build'], required: true },
+    { name: 'test', cmd: './gradlew', args: ['test'], required: true },
+  ],
   'flutter-supervisor': [
     { name: 'analyze', cmd: 'flutter', args: ['analyze'], required: true },
     { name: 'test', cmd: 'flutter', args: ['test'], required: true },

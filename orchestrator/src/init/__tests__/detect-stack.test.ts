@@ -208,4 +208,83 @@ describe('detectStack (recursive)', () => {
     expect(detected.manifests).toHaveLength(1)
     expect(detected.manifests[0]?.dir).toBe('real')
   })
+
+  // Android / JVM detection
+
+  it('does NOT detect Android when "android" appears only in a line comment in build.gradle.kts', () => {
+    make(root, {
+      'backend/build.gradle.kts': [
+        'plugins {',
+        '    kotlin("jvm")',
+        '    kotlin("plugin.spring")',
+        '    id("org.springframework.boot") version "3.2.0"',
+        '}',
+        '',
+        '// This library avoids Android AAR SDK incompatibility issues',
+        'dependencies {',
+        '    implementation("org.springframework.boot:spring-boot-starter-web")',
+        '}',
+      ].join('\n'),
+    })
+
+    const detected = detectStack(root)
+    expect(detected.supervisors.some((s) => s.name === 'android-supervisor')).toBe(false)
+    expect(detected.supervisors.some((s) => s.name === 'jvm-backend-supervisor')).toBe(true)
+  })
+
+  it('does NOT detect Android when "android" appears only in a block comment', () => {
+    make(root, {
+      'backend/build.gradle.kts': [
+        'plugins {',
+        '    kotlin("jvm")',
+        '    id("org.springframework.boot") version "3.2.0"',
+        '}',
+        '',
+        '/*',
+        ' * avoids Android AAR SDK incompatibility',
+        ' */',
+        'dependencies {}',
+      ].join('\n'),
+    })
+
+    const detected = detectStack(root)
+    expect(detected.supervisors.some((s) => s.name === 'android-supervisor')).toBe(false)
+    expect(detected.supervisors.some((s) => s.name === 'jvm-backend-supervisor')).toBe(true)
+  })
+
+  it('detects Android for a real com.android.application build.gradle', () => {
+    make(root, {
+      'app/build.gradle': [
+        'plugins {',
+        '    id "com.android.application"',
+        '}',
+        '',
+        'android {',
+        '    compileSdk 34',
+        '}',
+      ].join('\n'),
+    })
+
+    const detected = detectStack(root)
+    expect(detected.supervisors.some((s) => s.name === 'android-supervisor')).toBe(true)
+    expect(detected.supervisors.some((s) => s.name === 'jvm-backend-supervisor')).toBe(false)
+  })
+
+  it('detects JVM backend via kotlin("jvm") without Spring Boot annotation', () => {
+    make(root, {
+      'lib/build.gradle.kts': [
+        'plugins {',
+        '    kotlin("jvm") version "1.9.0"',
+        '}',
+        '',
+        'dependencies {',
+        '    implementation("io.ktor:ktor-server-core:2.3.0")',
+        '}',
+      ].join('\n'),
+    })
+
+    const detected = detectStack(root)
+    expect(detected.supervisors.some((s) => s.name === 'jvm-backend-supervisor')).toBe(true)
+    expect(detected.supervisors.some((s) => s.name === 'android-supervisor')).toBe(false)
+  })
 })
