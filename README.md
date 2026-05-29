@@ -41,6 +41,28 @@ Verify:
 mars --version
 ```
 
+### Register Claude Code skills (one-time)
+
+The `mars:*` slash commands, agents, and session hooks live in the
+framework's `.claude/` plugin directory. To make them available in every
+Claude Code session, register that directory globally **once per machine**:
+
+```sh
+mars plugin activate ~/.mars/.claude        # default MARS_HOME
+# override if you set MARS_HOME:
+# mars plugin activate "$MARS_HOME/.claude"
+```
+
+This writes one entry to `~/.claude/settings.json`. It is **not** per-repo
+— run it once and all repos on this machine gain the `mars:*` skills.
+
+**Source installs** (`install-dev.sh`) run this step automatically.
+**Binary installs** must run it manually after the binary is in place.
+
+> **Upcoming:** folding plugin activation (and the dashboard hint) into
+> `mars init` is in progress — a future `mars init` will cover all three
+> setup legs in a single command. It does not work that way yet.
+
 ### Uninstall
 
 ```sh
@@ -75,10 +97,18 @@ Leaves alone:
 
 ## Quick start
 
-From inside any git repo:
+A complete Mars install has three legs. Run them in order:
 
 ```sh
-mars init                                # detect stack, generate supervisors
+# leg 1 — scaffold repo state (once per repo)
+mars init
+
+# leg 2 — register mars:* Claude Code skills (once per machine, global)
+#          source installs run this automatically; binary installs must
+#          run it manually (see Register Claude Code skills above)
+mars plugin activate ~/.mars/.claude
+
+# leg 3 — add work and watch it run
 mars task add "implement X in src/foo.ts"
 # the daemon auto-spawns on the first write and dispatches the task
 mars list                                # see current statuses
@@ -291,8 +321,12 @@ The CLI is the only write surface — the UI never mutates state.
 
 ## Bundled Claude Code skills
 
-Mars ships slash commands in `.claude/skills/` that the Claude Code
-session loads automatically when invoked inside this repo:
+Mars ships slash commands, agents, and session hooks in the framework's
+`.claude/` plugin directory. They are available in any Claude Code session
+once the plugin is registered globally via `mars plugin activate` (see
+[Register Claude Code skills](#register-claude-code-skills-one-time)).
+The skills are **not** installed per-repo by `mars init` — the one-time
+plugin registration in `~/.claude/settings.json` is what activates them.
 
 | Skill | Purpose |
 | --- | --- |
