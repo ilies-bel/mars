@@ -376,6 +376,14 @@ Commands:
                                 .worktrees/ directories are never touched.
                                 --yes / -y skips the confirmation prompt
                                 (required from a non-TTY stdin).
+  cut verify <drain|reset|recreate>
+                                gate checks for the hard-cut to 4-letter id
+                                tags (PRD 52ec700f). drain: exits 0 only when
+                                no tasks are queued/blocked/running. reset:
+                                exits 0 only when every id-bearing table has
+                                zero rows. recreate: exits 0 only when no
+                                forbidden ids appear, and prints a checklist
+                                of the seven carry-forward proposal titles.
   where                         print resolved repo + state directory
   help                          show this message
   --version, -v                 print mars version and exit
@@ -818,6 +826,26 @@ Flags:
   --repo <path>   target repo (defaults to the resolver: --repo > MARS_REPO > git toplevel)
   --port <n>      bind port (default: 7777)
   --host <h>      bind host (default: 127.0.0.1)`,
+  cut: `mars cut verify <drain|reset|recreate>
+
+Gate checks for the hard-cut to 4-letter id tags (PRD 52ec700f).
+Run each command at the corresponding phase of the runbook.
+
+Phases:
+  drain
+      Exits 0 only when no tasks are in queued, blocked, or running status.
+      Lists any remaining in-flight tasks so the operator can wait or purge.
+
+  reset
+      Exits 0 only when every id-bearing table (tasks, proposals, inbox_items,
+      etc.) has zero rows in the DB. Run after deleting .mars/mars.db and
+      re-initialising with 'mars init'.
+
+  recreate
+      Exits 0 only when none of the superseded/dropped ids (04830c8e,
+      07201a16, 26471262) appear as a hex suffix of any current id.
+      Also prints a checklist of the seven carry-forward proposal titles,
+      marking each as ✓ (re-entered) or ✗ (still missing).`,
   help: `mars help [command]
 
 Show top-level help, or detailed help for a single command. Equivalent
@@ -3370,6 +3398,32 @@ const main = async (): Promise<void> => {
     console.error(`mars plugin: unknown subcommand '${subCmd ?? ''}'`)
     console.error('usage: mars plugin activate <path> | mars plugin deactivate')
     process.exit(1)
+  }
+
+  // -------------------------------------------------------------------------
+  // cut verify <phase>
+  //
+  // Gate checks for the hard-cut to 4-letter id tags (PRD 52ec700f).
+  // Three phases: drain, reset, recreate.
+  // -------------------------------------------------------------------------
+  if (cmd === 'cut') {
+    const subCmd = rest[0]
+    if (subCmd !== 'verify') {
+      console.error(
+        `usage: mars cut verify <drain|reset|recreate>`,
+      )
+      process.exit(1)
+    }
+    const phase = rest[1]
+    const { isCutPhase, runCutVerify } = await import('./cli/cut-verify.js')
+    if (!isCutPhase(phase)) {
+      console.error(
+        `mars cut verify: unknown phase '${phase ?? ''}'\nusage: mars cut verify <drain|reset|recreate>`,
+      )
+      process.exit(1)
+    }
+    await runCutVerify(phase, repo)
+    return
   }
 
   console.error(`unknown command: ${cmd}`)
