@@ -28,6 +28,17 @@ const OUTCOME_META: Record<
   },
 }
 
+/**
+ * Pulsing dot shown alongside a live (running) session to distinguish it
+ * from a static finished-session badge at a glance.
+ */
+const LiveDot = () => (
+  <span
+    aria-label="live"
+    className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-blue-400"
+  />
+)
+
 const OutcomeBadge = ({ outcome }: { outcome: SessionOutcome }) => {
   const meta =
     OUTCOME_META[outcome] ?? OUTCOME_META.failed
@@ -98,7 +109,7 @@ export const SessionsList = ({ sessions, error }: SessionsListProps) => {
       </div>
 
       {sessions.length === 0 ? (
-        <p className="font-mono text-[12px] text-muted">
+        <p className="font-mono text-[12px] text-fg/60" data-empty="true">
           No sessions recorded yet.
         </p>
       ) : (
@@ -109,6 +120,7 @@ export const SessionsList = ({ sessions, error }: SessionsListProps) => {
               className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-panel"
               aria-label={`Session ${s.outcome}`}
             >
+              {s.outcome === 'running' && <LiveDot />}
               <OutcomeBadge outcome={s.outcome as SessionOutcome} />
               <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg">
                 {s.stepName || s.workflowInstanceId}
