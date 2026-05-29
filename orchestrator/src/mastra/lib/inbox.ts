@@ -42,6 +42,10 @@ export const INBOX_KINDS = [
   'draft-proposal',
   'slices-dropped',
   'hitl-slice-needs-operator',
+  // A durable Subscriber's handler has thrown on the same event K times in
+  // a row; its cursor is blocked (ADR-0032). The operator surface for an
+  // otherwise-silent stall — there is no DLQ.
+  'subscriber-stalled',
 ] as const
 
 export type InboxKind = (typeof INBOX_KINDS)[number]
@@ -731,6 +735,7 @@ export type SupersedeReason =
   | 'origin-dropped'
   | 'origin-purged'
   | 'status-changed'
+  | 'subscriber-unstalled'
 
 /**
  * Auto-close every open inbox item keyed to the given origin task. Called
@@ -753,6 +758,38 @@ export const supersedeInboxItemsForOrigin = async (
   const rows = await c.execute({
     sql: `SELECT id FROM inbox_items WHERE fingerprint = ? AND state = 'open'`,
     args: [fingerprint],
+  })
+  const ids: string[] = []
+  for (const row of rows.rows) {
+    const id = (row as unknown as { id: string }).id
+    await setInboxState(id, 'resolved', {
+      resolution: 'superseded',
+      note: `superseded: ${reason}`,
+      by,
+    })
+    ids.push(id)
+  }
+  return ids
+}
+
+/**
+ * Close every open inbox row matching a (kind, signature) pair. Used by the
+ * Subscriber stall machinery (ADR-0032): when a previously-blocked event
+ * finally processes, the `subscriber-stalled` row keyed on
+ * `${subscriberId}:${eventId}` is superseded. Idempotent — no open match is
+ * a silent no-op.
+ */
+export const supersedeInboxItemsBySignature = async (
+  kind: InboxKind,
+  signature: string,
+  reason: SupersedeReason,
+  by = 'daemon:auto-supersede',
+): Promise<string[]> => {
+  await initInbox()
+  const c = getClient()
+  const rows = await c.execute({
+    sql: `SELECT id FROM inbox_items WHERE kind = ? AND signature = ? AND state = 'open'`,
+    args: [kind, signature],
   })
   const ids: string[] = []
   for (const row of rows.rows) {
