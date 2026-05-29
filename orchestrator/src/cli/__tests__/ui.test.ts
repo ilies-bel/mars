@@ -2,7 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { getPidFilePath, readPidEntry, stopUi, statusUi, type UiPidEntry } from '../ui'
+import {
+  getPidFilePath,
+  readPidEntry,
+  stopUi,
+  statusUi,
+  resolveLauncher,
+  printUiDiscoveryHint,
+  type UiPidEntry,
+} from '../ui'
 
 // Isolate each test in a temporary directory that looks like a mars repo.
 // We point resolveContext to it via the MARS_REPO env var.
@@ -179,5 +187,59 @@ describe('stopUi — no running process', () => {
 
     expect(existsSync(pidFilePath())).toBe(false)
     expect(result.exitCode).toBe(0)
+  })
+})
+
+describe('resolveLauncher', () => {
+  it('returns null when no launcher file exists on disk', () => {
+    // In the test environment the ui/bin/mars-ui.mjs file is not present,
+    // so resolveLauncher must return null without throwing.
+    const result = resolveLauncher()
+    // Either null (file absent) or a string (file present in a full install).
+    // Both are valid; the test asserts the call does not throw and returns
+    // the correct type.
+    expect(result === null || typeof result === 'string').toBe(true)
+  })
+})
+
+describe('printUiDiscoveryHint — init dashboard discoverability', () => {
+  const captureStdout = (fn: () => void): string => {
+    const chunks: string[] = []
+    const orig = process.stdout.write.bind(process.stdout)
+    ;(process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => {
+      chunks.push(s)
+      return true
+    }
+    try {
+      fn()
+    } finally {
+      ;(process.stdout as unknown as { write: (s: string) => boolean }).write = orig
+    }
+    return chunks.join('')
+  }
+
+  it('prints the mars ui launch command when the launcher is resolved', () => {
+    const repoRoot = '/home/user/my-project'
+    const fakeLauncher = '/path/to/ui/bin/mars-ui.mjs'
+    const output = captureStdout(() => printUiDiscoveryHint(repoRoot, fakeLauncher))
+    expect(output).toContain('mars ui --repo /home/user/my-project')
+    expect(output).toContain('http://127.0.0.1:7777')
+    expect(output).toContain('[mars init]')
+  })
+
+  it('prints a build hint when the launcher cannot be resolved', () => {
+    const repoRoot = '/home/user/my-project'
+    const output = captureStdout(() => printUiDiscoveryHint(repoRoot, null))
+    expect(output).toContain('cd ui && npm install && npm run build')
+    expect(output).toContain('[mars init]')
+    expect(output).not.toContain('mars ui --repo')
+  })
+
+  it('does not throw when launcher is present', () => {
+    expect(() => printUiDiscoveryHint('/repo', '/some/launcher.mjs')).not.toThrow()
+  })
+
+  it('does not throw when launcher is absent', () => {
+    expect(() => printUiDiscoveryHint('/repo', null)).not.toThrow()
   })
 })

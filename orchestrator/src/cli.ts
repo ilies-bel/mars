@@ -140,6 +140,8 @@ Commands:
                                 ayush-that/sub-agents.directory over HTTPS, cached
                                 under .mars/cache/sub-agents/ (7-day TTL).
                                 --verbose lists each discovered manifest on stderr.
+                                On success, prints 'mars ui --repo <root>' to launch
+                                the read-only Kanban + trace dashboard.
   task add "<prompt>" [--author kind:name] [--blocked-by <id>] [--tag <tag>] [plan flags]
                                 enqueue a runnable task directly (status='queued',
                                 skips triage; can be picked up by agent runners).
@@ -425,6 +427,13 @@ Detect tech stack and generate specialized supervisors in
 subdirectories (depth cap 6) to merge manifests from monorepo layouts;
 honors .gitignore and skips .git, node_modules, .mars, .worktrees, dist,
 build, .next, target, out, plus git submodules.
+
+After a successful init, mars prints the exact command to launch the
+read-only Kanban + trace dashboard:
+
+  mars ui --repo <abs-repo-root>   (serves at http://127.0.0.1:7777)
+
+If the UI package is not yet built, init prints instructions to build it.
 
 Flags:
   --force       overwrite existing supervisors
@@ -968,6 +977,8 @@ const main = async (): Promise<void> => {
 
     console.log('wrote:')
     for (const w of result.written ?? []) console.log(`  ${w}`)
+    const { resolveLauncher, printUiDiscoveryHint } = await import('./cli/ui')
+    printUiDiscoveryHint(ctx.repoRoot, resolveLauncher())
     return
   }
 
