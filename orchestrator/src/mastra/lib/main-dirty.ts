@@ -23,6 +23,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { runTool, type TraceCtx } from './run-tool'
 import { attachToExistingFixTask } from '../queue-fix-tasks'
 import { getDefaultTaskStore, type TaskStore } from './task-store'
+import { buildEventInsert } from './outbox'
 import { internalBus } from '../../internal-bus'
 import type { TraceEventStore } from './trace-events-store'
 
@@ -398,6 +399,14 @@ const spawnFresh = async (
           input.sourceTaskId,
         ],
       },
+      // Durable task.blocked in the same atomic batch (ADR-0030); the
+      // internalBus().emit below stays only as an in-process wake-hint.
+      buildEventInsert('task.blocked', {
+        taskId: input.sourceTaskId,
+        fixTaskId,
+        failureSignature: VERIFY_MAIN_DIRTY_CODE,
+        failingStep: `${input.dispatchPhase}:main-dirty`,
+      }),
     ],
     'write',
   )

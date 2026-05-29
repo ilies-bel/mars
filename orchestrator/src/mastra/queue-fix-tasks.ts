@@ -13,6 +13,7 @@ import {
 import { type InboxKind, raiseInboxItem } from './lib/inbox'
 import { truncateFailure } from './lib/truncate-failure'
 import { internalBus } from '../internal-bus'
+import { buildEventInsert } from './lib/outbox'
 import {
   getTask,
   MAX_PRIORITY,
@@ -201,6 +202,14 @@ export const upsertFixTask = async (
                WHERE id = ?`,
           args: [nextRetryCount, errorSummary, now, input.sourceTaskId],
         },
+        // Durable task.blocked in the same atomic batch (ADR-0030); the
+        // internalBus().emit below stays only as an in-process wake-hint.
+        buildEventInsert('task.blocked', {
+          taskId: input.sourceTaskId,
+          fixTaskId: existingId,
+          failureSignature: input.failureSignature,
+          failingStep: input.failingStep,
+        }),
       ],
       'write',
     )
@@ -279,6 +288,13 @@ export const upsertFixTask = async (
             ) VALUES (?, ?, ?, ?)`,
         args: [input.sourceTaskId, input.failureSignature, fixTaskId, now],
       },
+      // Durable task.blocked in the same atomic batch (ADR-0030).
+      buildEventInsert('task.blocked', {
+        taskId: input.sourceTaskId,
+        fixTaskId,
+        failureSignature: input.failureSignature,
+        failingStep: input.failingStep,
+      }),
     ],
     'write',
   )
@@ -370,6 +386,13 @@ export const attachToExistingFixTask = async (
           input.sourceTaskId,
         ],
       },
+      // Durable task.blocked in the same atomic batch (ADR-0030).
+      buildEventInsert('task.blocked', {
+        taskId: input.sourceTaskId,
+        fixTaskId: input.fixTaskId,
+        failureSignature: input.failureReasonCode ?? 'verify:main-dirty',
+        failingStep: 'dispatch:main-dirty',
+      }),
     ],
     'write',
   )
@@ -785,6 +808,10 @@ export const handleTaskFailureWithFixTask = async (
     // survives until explicitly cleared by `mars unblock`, so this branch
     // re-stamps a status the row already has.
     const now = new Date().toISOString()
+    // No durable task.blocked emit here: per the AUDIT note above this
+    // re-stamps a status the row already holds (no real transition), so an
+    // event would be spurious. The file is on the build-guard allowlist for
+    // exactly these intentional same-status writes (ADR-0030).
     await s.execute({
       sql: `UPDATE tasks
                SET status = 'blocked', updated_at = ?

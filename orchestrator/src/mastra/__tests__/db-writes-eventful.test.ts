@@ -3,43 +3,47 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { resolve, relative, sep } from 'node:path'
 
 /**
- * Architecture guard for the outbox pattern (Phase 1 of the bus migration).
+ * Architecture guard for the single-writer-emit seam (PRD 12fdef39 / ADR
+ * for the outbox-driven Invalidator).
  *
- * Every direct DB write that mutates `tasks` or `task_blockers` must be
- * wrapped in a libsql write transaction and emit the matching event via
- * `publish(tx, '<type>', { ... })` before commit. To make that
- * enforceable we keep a tiny allowlist of files that are *allowed* to
- * INSERT/UPDATE/DELETE on those tables; every other file must route
- * through one of them.
+ * Every code path that changes `tasks.status` or deletes a `tasks` row must
+ * emit its lifecycle event into the outbox in the SAME transaction as the
+ * write, so the Invalidator (a durable subscriber) reliably clears the
+ * task's Action-queue rows. To make that structurally enforceable — rather
+ * than convention-policed — we keep a tiny allowlist of files allowed to
+ * write `tasks.status` / delete `tasks`; every other file must route through
+ * one of them. A new raw status write anywhere else fails this test.
  *
- * Today the allowlist is the four writer-pattern files. As new
- * outbox-eventful tables come online (task_transcripts, inbox_items,
- * idea_user_stories, …) the regex on the LHS widens and additional
- * allowlisted writer files join the RHS.
+ * The pattern is intentionally narrowed to STATUS writes and row DELETEs:
+ * the broad "any write to tasks" net would flag harmless schema backfills
+ * (e.g. `UPDATE tasks SET tag = ...`) that carry no lifecycle meaning.
  *
- * The two assertions are split intentionally:
- *   1. NO writes to scoped tables exist outside the allowlist.
- *   2. Every allowlisted file actually calls `publish(` — i.e., it has
- *      been converted to the outbox pattern rather than parked.
- *
- * Assertion 2 is currently `.todo` because the writer-conversion work
- * (wrapping every queue.ts write in a tx + publish) has not landed yet.
- * Re-enable it once those follow-ups merge.
+ * Two assertions:
+ *   1. NO `UPDATE tasks SET ... status` or `DELETE FROM tasks` outside the
+ *      allowlist.
+ *   2. Every allowlisted file actually calls `publish(` or
+ *      `buildEventInsert(` — i.e., it emits, rather than silently writing.
  */
 
-const SRC_ROOT = resolve(__dirname, '..', '..')
-const IN_SCOPE_TABLES = /(tasks|task_blockers)/
-const WRITE_PATTERN = new RegExp(
-  `INSERT INTO ${IN_SCOPE_TABLES.source}\\b` +
-    `|UPDATE ${IN_SCOPE_TABLES.source} SET` +
-    `|DELETE FROM ${IN_SCOPE_TABLES.source}\\b`,
-)
+// Scan all of src/ (not just src/mastra) so workflow writers are covered.
+const SRC_ROOT = resolve(__dirname, '..', '..', '..', 'src')
+// A status write: `UPDATE tasks SET ... status = ...`. The SET clause and the
+// `status =` assignment frequently sit on different physical lines, so the
+// scan joins the whole file into one string before matching (see below).
+const STATUS_WRITE_PATTERN =
+  /UPDATE\s+tasks\s+SET[\s\S]*?\bstatus\s*=/
+const DELETE_PATTERN = /DELETE\s+FROM\s+tasks\b/
+// Also catch a `buildEventInsert`-free status write that happens to live on a
+// single line (defence in depth for the per-line smoke scan).
+const SINGLE_LINE_STATUS = /UPDATE\s+tasks\s+SET\b[^;]*\bstatus\s*=/
 
 const ALLOWLIST = [
   'mastra/queue.ts',
   'mastra/queue-fix-tasks.ts',
   'mastra/queue-retry.ts',
   'mastra/blocker-resolution.ts',
+  'mastra/lib/main-dirty.ts',
+  'workflows/slice-workflow.ts',
 ].map((p) => p.split('/').join(sep))
 
 const SKIP_DIRS = new Set(['node_modules', '__tests__', '.git', 'dist', 'build'])
@@ -52,48 +56,82 @@ const walk = (dir: string): string[] => {
     const s = statSync(full)
     if (s.isDirectory()) {
       out.push(...walk(full))
-    } else if (s.isFile() && /\.ts$/.test(name)) {
+    } else if (s.isFile() && /\.ts$/.test(name) && !/\.test\.ts$/.test(name)) {
+      // Test files legitimately embed SQL strings; the guard scans
+      // production source only.
       out.push(full)
     }
   }
   return out
 }
 
-const collectWriters = (): { file: string; rel: string; line: number; text: string }[] => {
-  const hits: { file: string; rel: string; line: number; text: string }[] = []
+/**
+ * Strip line and block comments so prose that quotes a SQL statement (e.g.
+ * a doc comment "call before an `UPDATE tasks SET status = 'blocked'`
+ * write") is not mistaken for an actual write.
+ */
+const stripComments = (src: string): string =>
+  src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+
+/** A file whose (comment-stripped) source matches a status-write or delete. */
+const collectStatusWriters = (): { rel: string; text: string }[] => {
+  const hits: { rel: string; text: string }[] = []
   for (const file of walk(SRC_ROOT)) {
     const rel = relative(SRC_ROOT, file)
-    const lines = readFileSync(file, 'utf8').split('\n')
-    lines.forEach((text, i) => {
-      if (WRITE_PATTERN.test(text)) {
-        hits.push({ file, rel, line: i + 1, text: text.trim() })
-      }
-    })
+    const src = stripComments(readFileSync(file, 'utf8'))
+    if (
+      STATUS_WRITE_PATTERN.test(src) ||
+      SINGLE_LINE_STATUS.test(src) ||
+      DELETE_PATTERN.test(src)
+    ) {
+      hits.push({ rel, text: src })
+    }
   }
   return hits
 }
 
-describe('architecture: tasks/task_blockers writes route through the outbox', () => {
-  it('scanner finds at least the allowlisted writer files', () => {
-    // Smoke test: the scanner is wired correctly and the allowlist
-    // matches existing files on disk. Catches typos in ALLOWLIST or a
-    // refactor that moves a writer without updating this guard.
-    const hits = collectWriters()
-    const filesWithWrites = new Set(hits.map((h) => h.rel))
-    for (const allowed of ALLOWLIST) {
-      // queue-retry.ts / queue.ts / queue-fix-tasks.ts are known to have
-      // such writes today. blocker-resolution.ts is allowlisted ahead of
-      // its conversion and may have zero writes yet — skip it.
-      if (allowed.endsWith('blocker-resolution.ts')) continue
-      expect(filesWithWrites, `expected ${allowed} to be detected by the writer scanner`).toContain(allowed)
-    }
+describe('architecture: tasks.status writes route through the single-writer emit', () => {
+  it('the scanner regex actually matches a known raw status write', () => {
+    // Meta-guard: a regex typo that matches nothing would make every other
+    // assertion vacuously pass. Pin the pattern against representative SQL.
+    expect(
+      STATUS_WRITE_PATTERN.test(`UPDATE tasks\n  SET status = 'failed'`),
+    ).toBe(true)
+    expect(SINGLE_LINE_STATUS.test(`UPDATE tasks SET status = ? WHERE id = ?`)).toBe(
+      true,
+    )
+    expect(DELETE_PATTERN.test(`DELETE FROM tasks WHERE id = ?`)).toBe(true)
+    // Must NOT flag a non-status backfill write.
+    expect(
+      STATUS_WRITE_PATTERN.test(`UPDATE tasks SET tag = 'coder' WHERE tag IS NULL`),
+    ).toBe(false)
   })
 
-  // TODO(phase-1b): re-enable once migration of writers into the outbox
-  // is complete. Currently slice-workflow.ts and lib/diagnose-followup.ts
-  // still INSERT/UPDATE/DELETE on tasks/task_blockers outside the
-  // allowlist, and the four allowlisted files do not yet call
-  // `publish(tx, ...)` inside a write transaction.
-  it.todo('no out-of-allowlist file writes to tasks/task_blockers')
-  it.todo('every allowlisted file contains a publish( call (outbox emission)')
+  it('no out-of-allowlist file writes tasks.status or deletes a tasks row', () => {
+    const hits = collectStatusWriters()
+    const offenders = hits
+      .map((h) => h.rel)
+      .filter((rel) => !ALLOWLIST.includes(rel))
+    expect(
+      offenders,
+      `these files write tasks.status / delete tasks outside the allowlist — ` +
+        `route them through a writer that emits its lifecycle event in-tx, ` +
+        `or add them to the allowlist with a publish() emit:\n${offenders.join('\n')}`,
+    ).toEqual([])
+  })
+
+  it('every allowlisted writer file emits (publish( or buildEventInsert()', () => {
+    const byRel = new Map(collectStatusWriters().map((h) => [h.rel, h.text]))
+    for (const allowed of ALLOWLIST) {
+      const text = byRel.get(allowed)
+      expect(text, `allowlisted writer ${allowed} not found on disk`).toBeDefined()
+      const emits =
+        /\bpublish\s*\(/.test(text!) || /\bbuildEventInsert\s*\(/.test(text!)
+      expect(
+        emits,
+        `${allowed} writes tasks.status but never calls publish(/buildEventInsert( — ` +
+          `it must emit its lifecycle event in the same transaction`,
+      ).toBe(true)
+    }
+  })
 })

@@ -1,14 +1,8 @@
 import type { Client } from '@libsql/client'
 import type { BusEvent, EventName } from '../../bus/events.js'
-import {
-  advanceCursor,
-  fetchPending,
-  registerSubscriber,
-} from '../../bus/subscribers.js'
-import {
-  ensureProcessedOnceSchema,
-  processedOnce,
-} from '../../bus/processed-once.js'
+import { registerSubscriber } from '../../bus/subscribers.js'
+import { ensureProcessedOnceSchema } from '../../bus/processed-once.js'
+import { drainWithStall } from './subscriber-drain.js'
 import {
   type FailureReasonCatalog,
   failureReasonStringToCode,
@@ -249,51 +243,24 @@ export async function drainInboxRepopulations(
   catalog: FailureReasonCatalog,
   log?: (msg: string) => void,
 ): Promise<{ processed: number }> {
-  const pending = await fetchPending(client, INBOX_REPOPULATOR_SUBSCRIBER)
-  let processed = 0
-
-  for (const event of pending) {
-    const isMapped =
-      TASK_RAISE_EVENTS.has(event.type) ||
-      event.type in TASK_EVICT_REASONS ||
-      event.type === 'proposal.added' ||
-      event.type in PROPOSAL_EVICT_REASONS
-
-    if (isMapped) {
-      try {
-        // Phase 1: Atomically claim the at-most-once dedup slot in queue.db.
-        // The sideEffect is intentionally empty: running inbox mutations inside
-        // the write transaction would cause SQLITE_BUSY if queue.db and state.db
-        // share the same file (as they do in some test configurations). Instead,
-        // the actual inbox writes happen in Phase 2, after the transaction commits.
-        const { ran } = await processedOnce({
-          client,
-          subscriberId: INBOX_REPOPULATOR_SUBSCRIBER,
-          eventId: event.id,
-          sideEffect: async (_tx) => {},
-        })
-
-        if (ran) {
-          // Phase 2: Apply the inbox mutation now that the dedup row is committed.
-          // processedOnce guarantees this branch runs at most once per (subscriber,
-          // event) — concurrent drain calls cannot double-apply.
-          await applyInboxMutation(event, catalog)
-          processed++
-        }
-      } catch (err) {
-        log?.(
-          `[inbox-repopulator] event ${event.id} (${event.type}) failed: ${(err as Error).message}`,
-        )
-        // Do NOT advance the cursor for this event — break so the next
-        // drain retries from here rather than skipping past the failure.
-        break
-      }
-    }
-
-    // Reached for both mapped (success) and unmapped events.
-    // A throw in the mapped branch breaks above, before this line.
-    await advanceCursor(client, INBOX_REPOPULATOR_SUBSCRIBER, event.id)
-  }
-
-  return { processed }
+  // Stall contract (ADR-0032) is shared with the Invalidator via
+  // drainWithStall: a thrown handler blocks this subscriber's cursor and
+  // raises a subscriber-stalled inbox row after K failures. The inbox
+  // mutation is idempotent and runs after the dedup commit (Phase 2), so the
+  // cross-DB crash window stays benign.
+  return drainWithStall({
+    client,
+    subscriberId: INBOX_REPOPULATOR_SUBSCRIBER,
+    log,
+    handle: async (event) => {
+      const isMapped =
+        TASK_RAISE_EVENTS.has(event.type) ||
+        event.type in TASK_EVICT_REASONS ||
+        event.type === 'proposal.added' ||
+        event.type in PROPOSAL_EVICT_REASONS
+      if (!isMapped) return false
+      await applyInboxMutation(event, catalog)
+      return true
+    },
+  })
 }

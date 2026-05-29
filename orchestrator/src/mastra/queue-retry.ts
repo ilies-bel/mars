@@ -40,6 +40,7 @@ export const markTaskDropped = async (
       args: [taskId],
     })
     await publish(tx, 'task.dropped', { taskId, dropReason: reason })
+    await publish(tx, 'task.terminal', { taskId, reason: 'dropped' })
     await tx.commit()
   } catch (error: unknown) {
     tx.close()
@@ -80,6 +81,7 @@ export const markTaskFailed = async (
       args: [taskId],
     })
     await publish(tx, 'task.failed', { taskId, error: reason })
+    await publish(tx, 'task.terminal', { taskId, reason: 'failed' })
     await tx.commit()
   } catch (error: unknown) {
     tx.close()

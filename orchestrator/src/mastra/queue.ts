@@ -4,8 +4,6 @@ import { resolveContext } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
-import { dismissAlertsOnStatusChange } from './lib/inbox'
-import { clearDismissalForEntity } from './lib/inbox-dismissals'
 import { openLibsql } from './lib/libsql'
 import { buildEventInsert, withWriteTx } from './lib/outbox'
 import type { TaskStore } from './lib/task-store'
@@ -1331,33 +1329,47 @@ export const updateTask = async (
     patch.claudeSessionId !== null &&
     patch.claudeSessionId.length > 0
 
-  // Build the event INSERT statement upfront (validates payload via Zod;
-  // throws before any DB write if the payload is invalid).  null means no
-  // event should be emitted for this call (unchanged-status or non-status
-  // write).
-  let eventStmt: InStatement | null = null
+  // Build the event INSERT statements upfront (validates payload via Zod;
+  // throws before any DB write if the payload is invalid).  An empty array
+  // means no event should be emitted for this call (unchanged-status or
+  // non-status write).  Every terminal transition (done/dropped/failed)
+  // additionally emits one `task.terminal` event in the same transaction so
+  // the Invalidator (alert-dismisser) has a single subscription point for
+  // closing Action-queue rows; see ADR-0028/0030.
+  const eventStmts: InStatement[] = []
   if (isStatusChange) {
     if (patch.status === 'failed') {
-      eventStmt = buildEventInsert('task.failed', {
-        taskId: id,
-        error: patch.error ?? patch.failureReason ?? '',
-      })
+      eventStmts.push(
+        buildEventInsert('task.failed', {
+          taskId: id,
+          error: patch.error ?? patch.failureReason ?? '',
+        }),
+        buildEventInsert('task.terminal', { taskId: id, reason: 'failed' }),
+      )
     } else if (patch.status === 'dropped') {
-      eventStmt = buildEventInsert('task.dropped', {
-        taskId: id,
-        dropReason: patch.failureReason ?? '',
-      })
+      eventStmts.push(
+        buildEventInsert('task.dropped', {
+          taskId: id,
+          dropReason: patch.failureReason ?? '',
+        }),
+        buildEventInsert('task.terminal', { taskId: id, reason: 'dropped' }),
+      )
     } else if (patch.status === 'queued') {
-      eventStmt = buildEventInsert('task.queued', { taskId: id })
+      eventStmts.push(buildEventInsert('task.queued', { taskId: id }))
     } else if (patch.status === 'blocked') {
-      eventStmt = buildEventInsert('task.blocked', {
-        taskId: id,
-        fixTaskId: null,
-        failureSignature: patch.failureSignature ?? '',
-        failingStep: patch.failedPhase ?? '',
-      })
+      eventStmts.push(
+        buildEventInsert('task.blocked', {
+          taskId: id,
+          fixTaskId: null,
+          failureSignature: patch.failureSignature ?? '',
+          failingStep: patch.failedPhase ?? '',
+        }),
+      )
     } else if (patch.status === 'done') {
-      eventStmt = buildEventInsert('task.completed', { taskId: id, result: null })
+      eventStmts.push(
+        buildEventInsert('task.completed', { taskId: id, result: null }),
+        buildEventInsert('task.terminal', { taskId: id, reason: 'done' }),
+      )
     }
   }
 
@@ -1398,41 +1410,30 @@ export const updateTask = async (
     await withWriteTx(getClient(), async (tx) => {
       await tx.execute(updateStmt)
       await tx.execute(sessionIdStmt)
-      // Event INSERT shares the same transaction: if it throws the whole
+      // Event INSERTs share the same transaction: if any throws the whole
       // transaction rolls back (no orphan state row without event).
-      if (eventStmt) await tx.execute(eventStmt)
+      for (const stmt of eventStmts) await tx.execute(stmt)
     })
   } else if (store) {
     // store.batch runs all statements atomically (BEGIN IMMEDIATE … COMMIT)
-    // so the state write and event insert are in the same commit.
-    const stmts: InStatement[] = [updateStmt]
-    if (eventStmt) stmts.push(eventStmt)
-    await store.batch(stmts, 'write')
+    // so the state write and event inserts are in the same commit.
+    await store.batch([updateStmt, ...eventStmts], 'write')
   } else {
-    // Common path: wrap state write and event insert in a single write
+    // Common path: wrap state write and event inserts in a single write
     // transaction.  withWriteTx retries on SQLITE_BUSY so a transient lock
     // contention doesn't drop the event.
     await withWriteTx(getClient(), async (tx) => {
       await tx.execute(updateStmt)
-      if (eventStmt) await tx.execute(eventStmt)
+      for (const stmt of eventStmts) await tx.execute(stmt)
     })
   }
 
-  // Dismiss open inbox alerts and stale-worktree dismissal rows whenever
-  // the task's status actually changes (no-op writes are excluded so a
-  // caller that writes the same status twice doesn't wipe a freshly-raised
-  // alert that arrived between the two writes).
-  if (
-    patch.status !== undefined &&
-    previousStatus !== null &&
-    patch.status !== previousStatus
-  ) {
-    await dismissAlertsOnStatusChange(id, patch.status)
-    // The derived inbox honours one persistent operator opinion — a
-    // dismissal. Wipe it on any real status change so a dismissed-then-
-    // restarted task resurfaces if it gets stuck again.
-    await clearDismissalForEntity('task', id)
-  }
+  // NOTE: Action-queue clearing on status change is NOT done inline here.
+  // The Invalidator (alert-dismisser) subscribes to the task lifecycle
+  // events emitted above and is the SOLE closer of Action-queue rows and
+  // dismissals — see ADR-0027/0030. Clearing inline would (a) duplicate the
+  // subscriber and (b) be lost for any writer that bypasses updateTask, the
+  // exact staleness class this design eliminates.
 
   if (patch.status === 'done') {
     const dependents = store
@@ -1603,6 +1604,18 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
         args: [new Date().toISOString(), id],
       })
     }
+    // Emit the terminal event BEFORE deleting the task row, in the same
+    // transaction. A deleted task can never emit afterwards, so without this
+    // the Invalidator never learns the task is gone and its Action-queue
+    // rows + dismissal go stale — the measured purge-staleness class. The
+    // discrete `task.dropped` keeps the inbox-repopulator path consistent;
+    // `task.terminal{purged}` is what the Invalidator closes on. (ADR-0030)
+    await tx.execute(
+      buildEventInsert('task.dropped', { taskId: id, dropReason: 'purged' }),
+    )
+    await tx.execute(
+      buildEventInsert('task.terminal', { taskId: id, reason: 'purged' }),
+    )
     await tx.execute({
       sql: `DELETE FROM tasks WHERE id = ?`,
       args: [id],
@@ -1957,16 +1970,33 @@ export const unblockTask = async (
     return { taskId, outcome: 'noop', previousStatus }
   }
   const now = new Date().toISOString()
-  await c.execute({
-    sql: `UPDATE tasks
-             SET status = 'failed',
-                 updated_at = ?
-           WHERE id = ? AND status IN ('blocked', 'queued')`,
-    args: [now, taskId],
-  })
-  await c.execute({
-    sql: `DELETE FROM task_blockers WHERE task_id = ?`,
-    args: [taskId],
+  // Status write + blocker clear + lifecycle emit share one transaction so
+  // this is not a silent bypass of the event substrate (ADR-0030). The
+  // terminal event fires with reason 'failed'; per ADR-0028 the Invalidator
+  // deliberately does NOT close Action-queue rows on `failed` — the operator
+  // resolves the failed task explicitly (a subsequent `mars purge` emits the
+  // 'purged' terminal that does clear the row).
+  await withWriteTx(c, async (tx) => {
+    await tx.execute({
+      sql: `UPDATE tasks
+               SET status = 'failed',
+                   updated_at = ?
+             WHERE id = ? AND status IN ('blocked', 'queued')`,
+      args: [now, taskId],
+    })
+    await tx.execute({
+      sql: `DELETE FROM task_blockers WHERE task_id = ?`,
+      args: [taskId],
+    })
+    await tx.execute(
+      buildEventInsert('task.failed', {
+        taskId,
+        error: 'unblocked via mars unblock',
+      }),
+    )
+    await tx.execute(
+      buildEventInsert('task.terminal', { taskId, reason: 'failed' }),
+    )
   })
   return { taskId, outcome: 'unblocked', previousStatus }
 }
@@ -2120,18 +2150,29 @@ export const promoteDraftToQueued = async (
   const now = new Date().toISOString()
   // PRD 2be831da: 'queued' requires zero confirmed-or-pending-review rows;
   // rejected rows are historical and must not gate the promote.
-  const upd = await getClient().execute({
-    sql: `UPDATE tasks
-             SET status = 'queued', updated_at = ?
-           WHERE id = ?
-             AND status IN ('draft', 'triaging')
-             AND NOT EXISTS (
-               SELECT 1 FROM task_blockers b
-               JOIN tasks t ON t.id = b.blocker_task_id
-               WHERE b.task_id = ? AND t.status != 'done'
-                 AND b.state IN ('confirmed', 'pending-review')
-             )`,
-    args: [now, taskId, taskId],
+  // The guarded UPDATE + the task.queued emit share one transaction; the
+  // event is appended only when the row actually flipped (rowsAffected > 0),
+  // so a no-op promote emits nothing. Emitting task.queued lets the
+  // Invalidator evict any stale failure row for a task that is live again
+  // (ADR-0030).
+  const upd = await withWriteTx(getClient(), async (tx) => {
+    const res = await tx.execute({
+      sql: `UPDATE tasks
+               SET status = 'queued', updated_at = ?
+             WHERE id = ?
+               AND status IN ('draft', 'triaging')
+               AND NOT EXISTS (
+                 SELECT 1 FROM task_blockers b
+                 JOIN tasks t ON t.id = b.blocker_task_id
+                 WHERE b.task_id = ? AND t.status != 'done'
+                   AND b.state IN ('confirmed', 'pending-review')
+               )`,
+      args: [now, taskId, taskId],
+    })
+    if (res.rowsAffected > 0) {
+      await tx.execute(buildEventInsert('task.queued', { taskId }))
+    }
+    return res
   })
   if (upd.rowsAffected === 0) return null
   const r = await getClient().execute({

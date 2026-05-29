@@ -411,6 +411,16 @@ export const onBlockerTaskFailed = async (
         args: [now, row.id],
       })
       flipped = upd.rowsAffected > 0
+      // Emit the blocked transition durably, in the same tx, only when the
+      // guarded UPDATE actually flipped the row (ADR-0030).
+      if (flipped) {
+        await publish(tx, 'task.blocked', {
+          taskId: row.id,
+          fixTaskId: null,
+          failureSignature: `prerequisite-failed:${failedBlockerTaskId}`,
+          failingStep: 'blocked-dependent',
+        })
+      }
       await tx.commit()
     } catch (error: unknown) {
       tx.close()
@@ -738,6 +748,10 @@ export const markOriginDoneFromRecovery = async (
       await publish(tx, 'task.completed', {
         taskId: originTaskId,
         result: { via: 'recovery' },
+      })
+      await publish(tx, 'task.terminal', {
+        taskId: originTaskId,
+        reason: 'done',
       })
     }
     await tx.commit()
