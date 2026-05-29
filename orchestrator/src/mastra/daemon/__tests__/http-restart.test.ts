@@ -78,6 +78,7 @@ const makeDeps = (
   inboxAck: async () => {},
   inboxResolve: async () => {},
   inboxDismiss: async () => {},
+  todoDismiss: async () => {},
   ...overrides,
 })
 

@@ -629,18 +629,8 @@ export const startServer = async (
         try {
           const body = await req.json() as { id?: unknown; kind?: unknown }
           const { id, kind } = body
-          if (!id || typeof id !== 'string') {
-            return jsonResponse(400, { error: 'id is required and must be a string' })
-          }
-          if (kind !== 'draft' && kind !== 'stale') {
-            return jsonResponse(400, { error: 'kind must be "draft" or "stale"' })
-          }
-          if (kind === 'draft') {
-            await stateDb.dismissDraftFeature(id)
-          } else {
-            await stateDb.dismissStaleWorktree(id)
-          }
-          return jsonResponse(200, { ok: true })
+          const result = await proxyPost(ctx.stateDir, '/view/todo/dismiss', { id, kind })
+          return jsonResponse(result.status, result.body)
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }
