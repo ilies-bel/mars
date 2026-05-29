@@ -71,6 +71,15 @@ export interface ErrorClassRule {
  * occurrences. Investigated: 2026-05-18 (inbox item 7eaf941e, task
  * mars-eaad74d8); confirmed that the right resolution is a targeted
  * follow-up task rather than a generic recipe entry.
+ *
+ * `verify:typecheck` failures that produce a V8/Node.js native crash dump
+ * (C++ stack trace, no TypeScript error code) also remain unclassified by
+ * design. The crash is an OS-level runtime event — OOM, Node.js bug, or
+ * transient system pressure — not a code defect a recipe can fix. These
+ * are environmental failures; the correct resolution is operator triage.
+ * Investigated: 2026-05-30 (inbox item ab6a5e3f, task mars-e4a7152f);
+ * confirmed non-reproducible (branch and orchestrator dir absent from
+ * worktree), deliverable already on main, no recipe warranted.
  */
 export const errorClassRules: readonly ErrorClassRule[] = [
   {
