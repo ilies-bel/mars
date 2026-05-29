@@ -8,7 +8,7 @@ const COLOR: Record<Role, string> = {
 }
 
 export const RoleTag = ({ role }: { role: Role }) => (
-  <span className={`font-mono text-[11px] font-medium ${COLOR[role]}`}>
+  <span className={`font-mono text-meta font-medium ${COLOR[role]}`}>
     /{role}
   </span>
 )
