@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { UITask } from '@/shared/types'
 import { relativeTime } from '@/shared/time'
 import { RoleTag } from './RoleTag'
@@ -11,7 +12,7 @@ interface Props {
 const truncate = (s: string, n: number): string =>
   s.length > n ? `${s.slice(0, n - 1)}…` : s
 
-export const TaskCard = ({ task, index }: Props) => {
+export const TaskCard = memo(({ task, index }: Props) => {
   const accent =
     task.status === 'failed'
       ? 'bg-iron/10'
@@ -151,4 +152,4 @@ export const TaskCard = ({ task, index }: Props) => {
       </div>
     </article>
   )
-}
+})
