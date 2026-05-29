@@ -685,3 +685,279 @@ describe('runNonLlmStepWithSpan — trace store write errors are non-fatal', () 
     ).rejects.toThrow('fn failed')
   })
 })
+
+// ── getCommandOutput callback ──────────────────────────────────────────────
+
+describe('runNonLlmStepWithSpan — command output', () => {
+  it('stores command output in step_ended payload when getCommandOutput returns a string', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'verify',
+      workflowInstanceId: 'wf-cmdout-001',
+      originId: 'task-cmdout-pass',
+      phase: 'verify',
+      traceStore,
+      getCommandOutput: () => '=== typecheck (pass) ===\n0 errors',
+      fn: async () => undefined,
+    })
+
+    const ended = (await traceStore.query({ taskId: 'task-cmdout-pass', kind: ['step_ended'] }))[0]
+    expect(ended.payload.commandOutput).toBe('=== typecheck (pass) ===\n0 errors')
+  })
+
+  it('stores command output in step_ended payload even when fn throws', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await expect(
+      runNonLlmStepWithSpan({
+        stepName: 'verify',
+        workflowInstanceId: 'wf-cmdout-002',
+        originId: 'task-cmdout-fail',
+        phase: 'verify',
+        traceStore,
+        getCommandOutput: () => '=== typecheck (fail) ===\nerror TS2345: bad type',
+        fn: async () => {
+          throw new Error('verify:typecheck failed')
+        },
+      }),
+    ).rejects.toThrow()
+
+    const ended = (await traceStore.query({ taskId: 'task-cmdout-fail', kind: ['step_ended'] }))[0]
+    expect(ended.payload.commandOutput).toBe('=== typecheck (fail) ===\nerror TS2345: bad type')
+  })
+
+  it('omits commandOutput from step_ended payload when getCommandOutput is absent', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'setup-worktree',
+      workflowInstanceId: 'wf-cmdout-003',
+      originId: 'task-cmdout-absent',
+      phase: 'setup',
+      traceStore,
+      fn: async () => undefined,
+    })
+
+    const ended = (
+      await traceStore.query({ taskId: 'task-cmdout-absent', kind: ['step_ended'] })
+    )[0]
+    expect(ended.payload.commandOutput).toBeUndefined()
+  })
+
+  it('omits commandOutput from step_ended payload when getCommandOutput returns undefined', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'verify',
+      workflowInstanceId: 'wf-cmdout-004',
+      originId: 'task-cmdout-undef',
+      phase: 'verify',
+      traceStore,
+      getCommandOutput: () => undefined,
+      fn: async () => undefined,
+    })
+
+    const ended = (
+      await traceStore.query({ taskId: 'task-cmdout-undef', kind: ['step_ended'] })
+    )[0]
+    expect(ended.payload.commandOutput).toBeUndefined()
+  })
+
+  it('does NOT include commandOutput in step_started — only step_ended', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'verify',
+      workflowInstanceId: 'wf-cmdout-005',
+      originId: 'task-cmdout-started',
+      phase: 'verify',
+      traceStore,
+      getCommandOutput: () => 'some output',
+      fn: async () => undefined,
+    })
+
+    const started = (
+      await traceStore.query({ taskId: 'task-cmdout-started', kind: ['step_started'] })
+    )[0]
+    expect(started.payload.commandOutput).toBeUndefined()
+  })
+})
+
+// ── multiple verify spans (three verify attempts) ──────────────────────────
+
+describe('runNonLlmStepWithSpan — three verify attempts produce three spans', () => {
+  it('three calls with the same originId produce three step_ended events all with stepName=verify', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const originId = 'task-triple-verify'
+
+    for (let i = 0; i < 3; i++) {
+      await runNonLlmStepWithSpan({
+        stepName: 'verify',
+        workflowInstanceId: `wf-triple-${i}`,
+        originId,
+        phase: 'verify',
+        traceStore,
+        fn: async () => undefined,
+      })
+    }
+
+    const ended = await traceStore.query({ taskId: originId, kind: ['step_ended'] })
+    expect(ended).toHaveLength(3)
+    for (const e of ended) {
+      expect(e.payload.stepName).toBe('verify')
+    }
+  })
+
+  it('each of the three spans has a distinct workflowInstanceId', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const originId = 'task-triple-wfid'
+
+    for (let i = 0; i < 3; i++) {
+      await runNonLlmStepWithSpan({
+        stepName: 'verify',
+        workflowInstanceId: `wf-triple-distinct-${i}`,
+        originId,
+        phase: 'verify',
+        traceStore,
+        fn: async () => undefined,
+      })
+    }
+
+    const ended = await traceStore.query({ taskId: originId, kind: ['step_ended'] })
+    const wfIds = ended.map((e) => e.payload.workflowInstanceId as string)
+    const uniqueWfIds = new Set(wfIds)
+    expect(uniqueWfIds.size).toBe(3)
+  })
+
+  it('three verify spans each store distinct command output', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const originId = 'task-triple-output'
+
+    for (let i = 0; i < 3; i++) {
+      const output = `attempt-${i}: verify output`
+      await runNonLlmStepWithSpan({
+        stepName: 'verify',
+        workflowInstanceId: `wf-triple-out-${i}`,
+        originId,
+        phase: 'verify',
+        traceStore,
+        getCommandOutput: () => output,
+        fn: async () => undefined,
+      })
+    }
+
+    const ended = await traceStore.query({ taskId: originId, kind: ['step_ended'] })
+    expect(ended).toHaveLength(3)
+    const outputs = ended.map((e) => e.payload.commandOutput as string)
+    // Each attempt has distinct output
+    expect(new Set(outputs).size).toBe(3)
+  })
+})
+
+// ── recovery dispatch produces distinct span ──────────────────────────────
+
+describe('runNonLlmStepWithSpan — recovery dispatch produces distinct span', () => {
+  it('recovery-dispatch span coexists with the verify span under the same originId', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const originId = 'task-recovery-span'
+    const wfId = 'wf-recovery-001'
+
+    // Simulate: verify fails and dispatches recovery inside the verify span
+    await expect(
+      runNonLlmStepWithSpan({
+        stepName: 'verify',
+        workflowInstanceId: wfId,
+        originId,
+        phase: 'verify',
+        traceStore,
+        fn: async () => {
+          // Recovery dispatch gets its own span
+          await runNonLlmStepWithSpan({
+            stepName: 'recovery-dispatch',
+            workflowInstanceId: wfId,
+            originId,
+            phase: 'verify',
+            traceStore,
+            fn: async () => ({ fixTaskId: 'fix-001', created: true }),
+          })
+          // Verify then throws
+          throw new Error('verify:typecheck failed')
+        },
+      }),
+    ).rejects.toThrow('verify:typecheck failed')
+
+    const allEvents = await traceStore.query({ taskId: originId })
+    const stepNames = allEvents.map((e) => e.payload.stepName as string)
+
+    expect(stepNames).toContain('verify')
+    expect(stepNames).toContain('recovery-dispatch')
+  })
+
+  it('recovery-dispatch span closes with outcome=completed when dispatch succeeds', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const originId = 'task-recovery-outcome'
+    const wfId = 'wf-recovery-002'
+
+    await expect(
+      runNonLlmStepWithSpan({
+        stepName: 'verify',
+        workflowInstanceId: wfId,
+        originId,
+        phase: 'verify',
+        traceStore,
+        fn: async () => {
+          await runNonLlmStepWithSpan({
+            stepName: 'recovery-dispatch',
+            workflowInstanceId: wfId,
+            originId,
+            phase: 'verify',
+            traceStore,
+            fn: async () => ({ fixTaskId: 'fix-002', created: true }),
+          })
+          throw new Error('verify:test failed')
+        },
+      }),
+    ).rejects.toThrow()
+
+    const recoveryEnded = (
+      await traceStore.query({ taskId: originId, kind: ['step_ended'] })
+    ).find((e) => e.payload.stepName === 'recovery-dispatch')
+    expect(recoveryEnded).toBeDefined()
+    expect(recoveryEnded?.payload.outcome).toBe('completed')
+    expect(recoveryEnded?.severity).toBe('info')
+  })
+
+  it('verify span closes with outcome=failed after recovery-dispatch completes', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const originId = 'task-verify-failed-after-recovery'
+    const wfId = 'wf-recovery-003'
+
+    await expect(
+      runNonLlmStepWithSpan({
+        stepName: 'verify',
+        workflowInstanceId: wfId,
+        originId,
+        phase: 'verify',
+        traceStore,
+        fn: async () => {
+          await runNonLlmStepWithSpan({
+            stepName: 'recovery-dispatch',
+            workflowInstanceId: wfId,
+            originId,
+            phase: 'verify',
+            traceStore,
+            fn: async () => undefined,
+          })
+          throw new Error('verify:lint failed')
+        },
+      }),
+    ).rejects.toThrow()
+
+    const verifyEnded = (
+      await traceStore.query({ taskId: originId, kind: ['step_ended'] })
+    ).find((e) => e.payload.stepName === 'verify')
+    expect(verifyEnded?.payload.outcome).toBe('failed')
+    expect(verifyEnded?.severity).toBe('error')
+  })
+})
