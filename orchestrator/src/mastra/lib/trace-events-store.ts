@@ -346,3 +346,70 @@ export const openTraceEventStore = async (
 /** Build a cursor pointing at the last event in a page so the next call resumes after it. */
 export const cursorAfter = (event: TraceEvent): string =>
   encodeCursor({ ts: event.timestamp, id: event.id })
+
+/**
+ * Find every step_started event that has no corresponding step_ended with the
+ * same workflowInstanceId + stepName and record a step_ended for each with
+ * outcome=killed.
+ *
+ * Called at daemon startup (inside the reconcile seam) to close Step spans
+ * that were left running by a prior daemon that crashed. A span that is
+ * already closed (outcome completed / failed / killed) is left untouched.
+ *
+ * Returns the count of spans swept to killed.
+ */
+export const sweepOrphanRunningSpans = async (
+  store: TraceEventStore,
+): Promise<number> => {
+  // A single reconcile pass — use a large limit since the event store should
+  // never approach this cardinality at daemon-restart time.
+  const RECONCILE_LIMIT = 100_000
+
+  const [allStarted, allEnded] = await Promise.all([
+    store.query({ kind: ['step_started'], limit: RECONCILE_LIMIT }),
+    store.query({ kind: ['step_ended'], limit: RECONCILE_LIMIT }),
+  ])
+
+  // Build a set of (workflowInstanceId, stepName) pairs that are already closed.
+  // The null byte separator avoids collisions between adjacent string values.
+  const closedKeys = new Set<string>()
+  for (const e of allEnded) {
+    const wfId = e.payload.workflowInstanceId
+    const stepName = e.payload.stepName
+    if (typeof wfId === 'string' && typeof stepName === 'string') {
+      closedKeys.add(`${wfId}\0${stepName}`)
+    }
+  }
+
+  const orphans = allStarted.filter((e) => {
+    const wfId = e.payload.workflowInstanceId
+    const stepName = e.payload.stepName
+    if (typeof wfId !== 'string' || typeof stepName !== 'string') return false
+    return !closedKeys.has(`${wfId}\0${stepName}`)
+  })
+
+  await Promise.all(
+    orphans.map((e) => {
+      const wfId = e.payload.workflowInstanceId as string
+      const stepName = e.payload.stepName as string
+      const payload: Record<string, unknown> = {
+        stepName,
+        workflowInstanceId: wfId,
+        outcome: 'killed',
+        durationMs: -1,
+      }
+      if (typeof e.payload.workerName === 'string') {
+        payload.workerName = e.payload.workerName
+      }
+      return store.record({
+        kind: 'step_ended',
+        taskId: e.taskId,
+        originId: e.originId,
+        phase: e.phase,
+        payload,
+      })
+    }),
+  )
+
+  return orphans.length
+}
