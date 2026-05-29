@@ -1,11 +1,18 @@
-// Thin wrapper that records a step_started event before a Worker run and a
-// step_ended event after — on success or failure. Every LLM-backed Worker
-// (Coder, Fixer, Planner, Slicer, Triager) calls this wrapper so any session
-// shows up in the unified trace surface.
+// Thin wrappers that bracket step execution with step_started / step_ended
+// trace events.
 //
-// Only the transcript is gated behind isReflectDisabled() (it can be large).
-// Session id and usage signals are always recorded so lightweight queries
-// remain accurate even when reflection is globally disabled.
+// `runWorkerWithSpan` covers LLM-backed Workers (Coder, Fixer, Planner,
+// Slicer, Triager). It records the worker name and Claude session id so every
+// claude -p execution shows up as a Session in the unified trace surface.
+//
+// `runNonLlmStepWithSpan` covers non-LLM workflow steps (setup, verify,
+// fast-forward merge). It records start time, end time, and outcome but carries
+// no worker name and no session id — the invariant "a Step span is a Session iff
+// worker IS NOT NULL" means these are Step spans, not Sessions.
+//
+// Only the transcript in `runWorkerWithSpan` is gated behind isReflectDisabled()
+// (it can be large). Session id and usage signals are always recorded so
+// lightweight queries remain accurate even when reflection is globally disabled.
 
 import { summarizeUsage } from './claude-usage'
 import { isReflectDisabled } from './reflect-signals'
@@ -151,4 +158,85 @@ export const runWorkerWithSpan = async (
   })
 
   return result
+}
+
+export interface RunNonLlmStepOptions<T> {
+  stepName: string
+  workflowInstanceId: string
+  originId: string
+  phase: TraceEventPhase
+  /**
+   * Optional — when absent (or when `record` fails) no trace events are
+   * written and the step fn still runs normally.
+   */
+  traceStore?: TraceEventStore
+  fn: () => Promise<T>
+}
+
+/**
+ * Run an async function representing a non-LLM workflow step (setup, verify,
+ * fast-forward merge) and bracket its execution with `step_started` /
+ * `step_ended` trace events.
+ *
+ * Unlike `runWorkerWithSpan`, these events carry no `workerName` and no
+ * `sessionId` — making this a Step span that is NOT a Session (the invariant
+ * "a Step span is a Session iff worker IS NOT NULL" holds).
+ *
+ * Outcome vocabulary: `completed` on success, `failed` on any throw.
+ * A live in-flight step is represented by a `step_started` event with no
+ * corresponding `step_ended` — query by (kind=step_started, stepName,
+ * workflowInstanceId) to detect running state.
+ *
+ * Trace capture is best-effort: errors from `record` are swallowed so a
+ * DB hiccup can never fail the step.
+ *
+ * Re-throws the original error unchanged so callers preserve their own
+ * error-handling invariants.
+ */
+export const runNonLlmStepWithSpan = async <T>(
+  options: RunNonLlmStepOptions<T>,
+): Promise<T> => {
+  const { stepName, workflowInstanceId, originId, phase, traceStore, fn } = options
+
+  const startedAt = Date.now()
+  await safeRecord(traceStore, {
+    kind: 'step_started',
+    taskId: originId,
+    originId,
+    phase,
+    payload: { stepName, workflowInstanceId },
+  })
+
+  try {
+    const result = await fn()
+    await safeRecord(traceStore, {
+      kind: 'step_ended',
+      taskId: originId,
+      originId,
+      phase,
+      payload: {
+        stepName,
+        workflowInstanceId,
+        outcome: 'completed',
+        durationMs: Date.now() - startedAt,
+      },
+    })
+    return result
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await safeRecord(traceStore, {
+      kind: 'step_ended',
+      taskId: originId,
+      originId,
+      phase,
+      payload: {
+        stepName,
+        workflowInstanceId,
+        outcome: 'failed',
+        failureReason: msg.slice(0, 200),
+        durationMs: Date.now() - startedAt,
+      },
+    })
+    throw err
+  }
 }
