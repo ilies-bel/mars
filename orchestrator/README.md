@@ -193,7 +193,7 @@ Both Claude dispatches (the `code` step and the `vcs-supervisor` invocation in
   completes, open Studio → Run history → click the step → **Metadata** tab.
   The `code` step exposes `claudeSessionId` and `usage`; the full
   conversation is persisted to `task_transcripts.conversation_json` in
-  `.mars/queue.db` (LibSQL) instead, which is what `mars deep-reflect` and
+  `.mars/queue.db` (LibSQL) instead, which is what `mars arc reflect` and
   external skills read. The `merge` step still exposes
   `supervisorConversation` and `supervisorConversationBytes` (only
   populated when a conflict triggered the supervisor).
@@ -249,12 +249,13 @@ deliberately on-demand, not auto-run per task.
 until the user hits Ctrl-C. There is no wall-clock timeout and no
 `MARS_REFLECT_TIMEOUT` knob.
 
-**Deep, single-session post-mortem.** `mars deep-reflect [<task-id>]`
-runs a transcript-aware analysis on one task instead of an aggregate
-window. The implement workflow persists the full trimmed
-`ClaudeEvent[]` conversation (and the concatenated typecheck/test/lint
-output) into a `task_transcripts` row in `.mars/queue.db` after each
-run. `deep-reflect` walks that transcript event-by-event and surfaces:
+**Deep, arc-level post-mortem.** `mars arc reflect <originId>` runs a
+transcript-aware analysis across every task in a Mars arc (the origin
+task plus any recovery / fix tasks that share its `originId`). The
+implement workflow persists the full trimmed `ClaudeEvent[]`
+conversation (and the concatenated typecheck/test/lint output) into a
+`task_transcripts` row in `.mars/queue.db` after each run. `arc reflect`
+walks every transcript event-by-event and surfaces:
 
 - **Dissonant tool calls** — successful tool calls that did not achieve
   the assistant's stated intent (e.g. an `Edit` whose new content
@@ -263,31 +264,30 @@ run. `deep-reflect` walks that transcript event-by-event and surfaces:
   reported pass with `0 passed, 0 failed`).
 - **Verify-claim mismatches** — assistant said "all tests pass" but the
   recorded verify output shows a typecheck/test failure.
-- **Thrashing** — same file Read 5+ times, Edit-then-revert pairs, etc.
+- **Thrashing** — same file Read 5+ times across the arc, fixes that
+  re-do the parent's failing strategy, work in task N that task N+1
+  silently undoes.
 
 ```
-mars deep-reflect            # auto-pick (failed > expensive done > recent)
-mars deep-reflect <task-id>  # explicit
+mars arc reflect             # interactive picker over recent arcs
+mars arc reflect <originId>  # explicit; a leaf task id also resolves
+                             # to its arc via COALESCE(origin_id, id)
 ```
 
-Auto-pick rules, in priority order:
-
-1. Most recent `failed` task with a stored transcript.
-2. Highest-cost `done` task in the last 7 days whose total cost ≥ 2×
-   the median.
-3. Most recent `done` task with a transcript.
-4. Otherwise prints `no eligible session found` and exits 0.
+A one-task arc collapses to that single transcript, so passing a leaf
+task id with no recovery siblings is the supported way to do a
+single-session post-mortem.
 
 Suggestions are filtered through `save|absorb|drop` verdicts and only
 "save" verdicts land as draft ideas with `source='reflection'` (review
 with `mars idea list --source reflection`). The full structured report
-is persisted to `.mars/deep-reflections/<task-id>-<iso>.json`
+is persisted to `.mars/deep-reflections/arc-<id>-<iso>.json`
 (gitignored).
 
-Model defaults to `opus`; override with `MARS_DEEP_REFLECT_MODEL`. The
-timeout is 10 minutes — these analyses can be large. Setting
-`MARS_REFLECT_DISABLED=1` disables transcript capture and short-circuits
-`mars deep-reflect` along with `mars reflect`.
+Model used by `mars arc reflect` defaults to `opus`; override with
+`MARS_DEEP_REFLECT_MODEL`. The timeout is 10 minutes — these analyses
+can be large. Setting `MARS_REFLECT_DISABLED=1` disables transcript
+capture and short-circuits `mars arc reflect` along with `mars reflect`.
 
 ## Failure handling
 

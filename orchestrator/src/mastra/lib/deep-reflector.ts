@@ -403,27 +403,6 @@ const emptyReport = (): DeepReflectionReport => ({
   suggestions: [],
 })
 
-export const runDeepReflector = async (
-  session: DeepReflectSession,
-  timeoutMs: number = 10 * 60 * 1000,
-  originContext?: string,
-): Promise<DeepReflectionResult> => {
-  const model = process.env.MARS_DEEP_REFLECT_MODEL ?? 'opus'
-  const r = await runClaudeCode({
-    cwd: getRepoRoot(),
-    prompt: buildPrompt(session, originContext),
-    timeoutMs,
-    model,
-  })
-  const text = collectAssistantText(r.conversation) || r.stdout
-  const report = parseDeepReflectionReport(text)
-  return {
-    report: report ?? emptyReport(),
-    rawOutput: text,
-    exitCode: r.exitCode,
-  }
-}
-
 export const runDeepReflectorArc = async (
   arc: DeepReflectArc,
   timeoutMs: number = 10 * 60 * 1000,
