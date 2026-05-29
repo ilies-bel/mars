@@ -2143,6 +2143,39 @@ export const listAllBlockers = async (taskId: string): Promise<Blocker[]> => {
   return blockers
 }
 
+/**
+ * Transition a task from `'draft'` to `'triaging'`. This is the entry-point
+ * for the deterministic Linker path (PRD 2be831da): the dispatcher calls this
+ * immediately after picking a draft task so the task is observable in the
+ * transient `'triaging'` phase while the Linker runs keyword-overlap analysis
+ * and may attach `'pending-review'` Blocker rows. Once the Linker completes,
+ * {@link promoteDraftToQueued} (which accepts both `'draft'` and `'triaging'`)
+ * advances the task to `'queued'` — gated on zero incomplete blockers.
+ *
+ * Returns the updated {@link Task} on success; `null` if the task does not
+ * exist or is not currently in `'draft'` status.
+ */
+export const promoteDraftToTriaging = async (
+  taskId: string,
+): Promise<Task | null> => {
+  await initQueue()
+  const now = new Date().toISOString()
+  const upd = await getClient().execute({
+    sql: `UPDATE tasks
+             SET status = 'triaging', updated_at = ?
+           WHERE id = ?
+             AND status = 'draft'`,
+    args: [now, taskId],
+  })
+  if (upd.rowsAffected === 0) return null
+  const r = await getClient().execute({
+    sql: `SELECT * FROM tasks WHERE id = ?`,
+    args: [taskId],
+  })
+  if (r.rows.length === 0) return null
+  return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+}
+
 export const promoteDraftToQueued = async (
   taskId: string,
 ): Promise<Task | null> => {
