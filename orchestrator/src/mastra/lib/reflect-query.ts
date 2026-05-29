@@ -240,12 +240,21 @@ export const loadRecentTaskCorpus = async (
   const taskIds = taskRows.rows.map((r) => (r as unknown as { id: string }).id)
   const placeholders = taskIds.map(() => '?').join(',')
 
+  // After PRD 436f14c7 slice 5, usage signals live in trace_events as step_ended
+  // events. json_extract reads the usageSignals sub-object; rows without it
+  // (e.g. verify-output-only events) are excluded by the IS NOT NULL filter.
   const signalRows = await queue.query({
-    sql: `SELECT task_id, step_id, input_tokens, output_tokens,
-                 cache_create_tokens, cache_read_tokens,
-                 message_count
-            FROM task_signals
-           WHERE task_id IN (${placeholders})`,
+    sql: `SELECT task_id,
+                 json_extract(payload, '$.stepName') AS step_id,
+                 CAST(json_extract(payload, '$.usageSignals.inputTokens') AS INTEGER) AS input_tokens,
+                 CAST(json_extract(payload, '$.usageSignals.outputTokens') AS INTEGER) AS output_tokens,
+                 CAST(json_extract(payload, '$.usageSignals.cacheCreateTokens') AS INTEGER) AS cache_create_tokens,
+                 CAST(json_extract(payload, '$.usageSignals.cacheReadTokens') AS INTEGER) AS cache_read_tokens,
+                 CAST(json_extract(payload, '$.usageSignals.messageCount') AS INTEGER) AS message_count
+            FROM trace_events
+           WHERE kind = 'step_ended'
+             AND json_extract(payload, '$.usageSignals') IS NOT NULL
+             AND task_id IN (${placeholders})`,
     args: taskIds,
   })
 
@@ -255,7 +264,7 @@ export const loadRecentTaskCorpus = async (
     const taskId = r.task_id as string
     const list = signalsByTask.get(taskId) ?? []
     list.push({
-      stepId: r.step_id as string,
+      stepId: (r.step_id as string | null) ?? 'code',
       inputTokens: Number(r.input_tokens ?? 0),
       outputTokens: Number(r.output_tokens ?? 0),
       cacheCreateTokens: Number(r.cache_create_tokens ?? 0),

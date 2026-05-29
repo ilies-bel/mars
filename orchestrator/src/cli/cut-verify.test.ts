@@ -79,15 +79,7 @@ const initTables = async (repo: string): Promise<void> => {
       PRIMARY KEY (task_id, blocker_task_id)
     )
   `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS task_signals (
-      task_id TEXT NOT NULL,
-      step_id TEXT NOT NULL,
-      input_tokens INTEGER NOT NULL DEFAULT 0,
-      output_tokens INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (task_id, step_id)
-    )
-  `)
+  // task_signals removed (migrated to trace_events in PRD 436f14c7 slice 5)
   await c.execute(`
     CREATE TABLE IF NOT EXISTS task_proposal_blockers (
       task_id TEXT NOT NULL,
@@ -105,12 +97,17 @@ const initTables = async (repo: string): Promise<void> => {
       state TEXT NOT NULL DEFAULT 'pending'
     )
   `)
+  // task_transcripts removed (migrated to trace_events in PRD 436f14c7 slice 5)
   await c.execute(`
-    CREATE TABLE IF NOT EXISTS task_transcripts (
-      task_id TEXT PRIMARY KEY,
-      conversation_json TEXT NOT NULL,
-      verify_output TEXT,
-      bytes INTEGER NOT NULL
+    CREATE TABLE IF NOT EXISTS trace_events (
+      id        TEXT PRIMARY KEY,
+      timestamp TEXT NOT NULL,
+      kind      TEXT NOT NULL,
+      severity  TEXT NOT NULL DEFAULT 'info',
+      task_id   TEXT,
+      origin_id TEXT,
+      phase     TEXT,
+      payload   TEXT NOT NULL DEFAULT '{}'
     )
   `)
   await c.execute(`

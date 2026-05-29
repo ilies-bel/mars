@@ -185,19 +185,28 @@ const loadTaskTranscript = async (
   store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
   taskId: string,
 ): Promise<LoadedTaskTranscript> => {
-  // Verify output still lives on task_transcripts.verify_output (recorded
-  // by the verify span writer). The conversation_json column is no longer
-  // read — we stream the on-disk JSONL transcripts instead.
+  // After PRD 436f14c7 slice 5, verify output lives in trace_events as the
+  // verifyOutput field inside the payload of step_ended events. We take the
+  // most recent non-null value for this task.
   const r = await store.query({
-    sql: `SELECT verify_output FROM task_transcripts WHERE task_id = ?`,
+    sql: `SELECT payload
+            FROM trace_events
+           WHERE kind = 'step_ended' AND task_id = ?
+             AND json_extract(payload, '$.verifyOutput') IS NOT NULL
+           ORDER BY timestamp DESC
+           LIMIT 1`,
     args: [taskId],
   })
-  const verifyOutput =
-    r.rows.length === 0
-      ? null
-      : ((r.rows[0] as unknown as Record<string, unknown>).verify_output as
-          | string
-          | null) ?? null
+  let verifyOutput: string | null = null
+  if (r.rows.length > 0) {
+    const row = r.rows[0] as unknown as { payload: string }
+    try {
+      const p = JSON.parse(row.payload) as Record<string, unknown>
+      verifyOutput = (p.verifyOutput as string | null | undefined) ?? null
+    } catch {
+      /* ignore malformed payload */
+    }
+  }
 
   const stream = await loadTranscriptStream(taskId)
   return {
@@ -350,18 +359,22 @@ interface ArcAggregateRow {
 const fetchArcAggregateRows = async (
   store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
 ): Promise<ArcAggregateRow[]> => {
+  // After PRD 436f14c7 slice 5, usage signals and transcript markers live in
+  // trace_events. json_extract reads the usageSignals sub-object from step_ended
+  // payloads; SUM over NULLs resolves to NULL which COALESCE converts to 0.
+  // has_transcript is 1 when any step_ended event for the task carries a
+  // 'transcript' key in its payload (written by runWorkerWithSpan or upsertTranscript).
   const r = await store.query(`
     SELECT t.id AS task_id,
            COALESCE(t.origin_id, t.id) AS origin_id,
            t.status AS status,
            t.created_at AS created_at,
            t.updated_at AS updated_at,
-           COALESCE(SUM(s.input_tokens), 0) AS total_input,
-           COALESCE(SUM(s.output_tokens), 0) AS total_output,
-           CASE WHEN MAX(tt.task_id) IS NULL THEN 0 ELSE 1 END AS has_transcript
+           COALESCE(CAST(SUM(json_extract(te.payload, '$.usageSignals.inputTokens')) AS INTEGER), 0) AS total_input,
+           COALESCE(CAST(SUM(json_extract(te.payload, '$.usageSignals.outputTokens')) AS INTEGER), 0) AS total_output,
+           MAX(CASE WHEN json_extract(te.payload, '$.transcript') IS NOT NULL THEN 1 ELSE 0 END) AS has_transcript
       FROM tasks t
-      LEFT JOIN task_signals s ON s.task_id = t.id
-      LEFT JOIN task_transcripts tt ON tt.task_id = t.id
+      LEFT JOIN trace_events te ON te.task_id = t.id AND te.kind = 'step_ended'
      GROUP BY t.id
   `)
   return r.rows.map((row) => {

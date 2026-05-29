@@ -268,3 +268,201 @@ describe('schema bootstrap: task_proposal_blockers table + indexes', () => {
     q.close()
   })
 })
+
+describe('migration: task_signals + task_transcripts → trace_events (PRD 436f14c7 slice 5)', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('copies task_signals rows into trace_events and drops the table', async () => {
+    const dbPath = `file:${repo}/.mars/mars.db`
+    const q = createClient({ url: dbPath })
+    const now = '2025-01-01T00:00:00.000Z'
+
+    // Seed a minimal tasks table so the migration can look up origin_id.
+    await q.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
+      origin_id TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`)
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      args: ['task-a', 'do thing', 'done', 'task-a', now, now],
+    })
+
+    // Create legacy task_signals.
+    await q.execute(`CREATE TABLE task_signals (
+      task_id TEXT NOT NULL,
+      step_id TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      recorded_at TEXT NOT NULL,
+      PRIMARY KEY (task_id, step_id)
+    )`)
+    await q.execute({
+      sql: `INSERT INTO task_signals VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: ['task-a', 'run-claude-code', 1000, 500, 200, 100, 5, now],
+    })
+    q.close()
+
+    // Run the migration.
+    const { initQueue } = await import('../queue')
+    await initQueue()
+
+    const db = createClient({ url: dbPath })
+
+    // task_signals must be gone.
+    const sigTable = await db.execute(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='task_signals'`,
+    )
+    expect(sigTable.rows).toHaveLength(0)
+
+    // trace_events must contain the migrated row.
+    const events = await db.execute(
+      `SELECT * FROM trace_events WHERE id = 'migrated-sig-task-a-run-claude-code'`,
+    )
+    expect(events.rows).toHaveLength(1)
+    const row = events.rows[0] as unknown as Record<string, unknown>
+    expect(row.kind).toBe('step_ended')
+    expect(row.task_id).toBe('task-a')
+    expect(row.timestamp).toBe(now)
+    const payload = JSON.parse(row.payload as string) as Record<string, unknown>
+    expect(payload.stepName).toBe('code')
+    expect(payload.outcome).toBe('success')
+    expect(payload.migrated).toBe(true)
+    const usage = payload.usageSignals as Record<string, unknown>
+    expect(usage.inputTokens).toBe(1000)
+    expect(usage.outputTokens).toBe(500)
+
+    db.close()
+  })
+
+  it('copies task_transcripts rows into trace_events and drops the table', async () => {
+    const dbPath = `file:${repo}/.mars/mars.db`
+    const q = createClient({ url: dbPath })
+    const now = '2025-06-01T00:00:00.000Z'
+
+    await q.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
+      origin_id TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`)
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      args: ['task-b', 'verify thing', 'done', 'task-b', now, now],
+    })
+
+    await q.execute(`CREATE TABLE task_transcripts (
+      task_id TEXT PRIMARY KEY,
+      conversation_json TEXT NOT NULL,
+      verify_output TEXT,
+      bytes INTEGER NOT NULL,
+      recorded_at TEXT NOT NULL
+    )`)
+    await q.execute({
+      sql: `INSERT INTO task_transcripts VALUES (?, ?, ?, ?, ?)`,
+      args: ['task-b', '[]', 'FAIL: 1 test failed', 2, now],
+    })
+    q.close()
+
+    const { initQueue } = await import('../queue')
+    await initQueue()
+
+    const db = createClient({ url: dbPath })
+
+    // task_transcripts must be gone.
+    const txTable = await db.execute(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='task_transcripts'`,
+    )
+    expect(txTable.rows).toHaveLength(0)
+
+    // trace_events must contain the migrated row with verifyOutput.
+    const events = await db.execute(
+      `SELECT * FROM trace_events WHERE id = 'migrated-tx-task-b'`,
+    )
+    expect(events.rows).toHaveLength(1)
+    const row = events.rows[0] as unknown as Record<string, unknown>
+    expect(row.kind).toBe('step_ended')
+    expect(row.task_id).toBe('task-b')
+    expect(row.timestamp).toBe(now)
+    const payload = JSON.parse(row.payload as string) as Record<string, unknown>
+    expect(payload.stepName).toBe('code')
+    expect(payload.outcome).toBe('success')
+    expect(payload.migrated).toBe(true)
+    expect(payload.verifyOutput).toBe('FAIL: 1 test failed')
+
+    db.close()
+  })
+
+  it('is a no-op when both legacy tables are already absent', async () => {
+    // Run initQueue twice; the second run must not error even though
+    // neither task_signals nor task_transcripts exists.
+    const { initQueue } = await import('../queue')
+    await initQueue()
+
+    vi.resetModules()
+    process.env.MARS_REPO = repo
+    const { initQueue: initQueue2 } = await import('../queue')
+    await expect(initQueue2()).resolves.not.toThrow()
+  })
+
+  it('pre-existing arc is still walkable by listDeepReflectArcCandidates after migration', async () => {
+    const dbPath = `file:${repo}/.mars/mars.db`
+    const q = createClient({ url: dbPath })
+    const now = '2025-03-01T00:00:00.000Z'
+
+    // Seed tasks.
+    await q.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
+      origin_id TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`)
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ['arc-task', 'old work', 'done', 'arc-task', 0, now, now],
+    })
+
+    // Seed task_transcripts so migration produces a step_ended with transcript.
+    await q.execute(`CREATE TABLE task_transcripts (
+      task_id TEXT PRIMARY KEY,
+      conversation_json TEXT NOT NULL,
+      verify_output TEXT,
+      bytes INTEGER NOT NULL,
+      recorded_at TEXT NOT NULL
+    )`)
+    await q.execute({
+      sql: `INSERT INTO task_transcripts VALUES (?, ?, ?, ?, ?)`,
+      args: ['arc-task', '[{"type":"assistant"}]', null, 20, now],
+    })
+    q.close()
+
+    const { initQueue } = await import('../queue')
+    await initQueue()
+
+    // task_transcripts dropped.
+    const db = createClient({ url: dbPath })
+    const txCheck = await db.execute(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='task_transcripts'`,
+    )
+    expect(txCheck.rows).toHaveLength(0)
+
+    // The arc task is still present in trace_events (migrated-tx row).
+    const evts = await db.execute(
+      `SELECT id FROM trace_events WHERE task_id = 'arc-task' AND kind = 'step_ended'`,
+    )
+    expect(evts.rows.length).toBeGreaterThan(0)
+    db.close()
+  })
+})
