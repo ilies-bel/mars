@@ -122,3 +122,24 @@ describe('TaskCard – focus-visible ring', () => {
     expect(html).toContain('focus-visible:ring-flame')
   })
 })
+
+describe('TaskCard – type scale', () => {
+  it('uses text-body scale class for the task title', () => {
+    const html = renderToStaticMarkup(<TaskCard task={minTask('t-scale-1')} index={0} />)
+    expect(html).toContain('text-body')
+    expect(html).not.toContain('text-[14px]')
+  })
+
+  it('uses text-meta scale class for secondary labels', () => {
+    const html = renderToStaticMarkup(<TaskCard task={minTask('t-scale-2')} index={0} />)
+    expect(html).toContain('text-meta')
+    expect(html).not.toContain('text-[11px]')
+  })
+
+  it('uses text-micro scale class for tertiary labels', () => {
+    const task = minTask('t-scale-3', { retryCount: 2 })
+    const html = renderToStaticMarkup(<TaskCard task={task} index={0} />)
+    expect(html).toContain('text-micro')
+    expect(html).not.toContain('text-[10px]')
+  })
+})

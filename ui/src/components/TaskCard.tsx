@@ -60,14 +60,14 @@ export const TaskCard = memo(({ task, index }: Props) => {
       <div className="flex items-start justify-between gap-2">
         <a
           href={`#/task/${encodeURIComponent(task.id)}`}
-          className="break-all font-mono text-[11px] text-muted hover:text-fg hover:underline"
+          className="break-all font-mono text-meta text-muted hover:text-fg hover:underline"
         >
           {task.id}
         </a>
         <div className="flex shrink-0 items-center gap-1.5">
           {task.retryCount > 0 ? (
             <span
-              className="rounded bg-basalt/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wide text-basalt"
+              className="rounded bg-basalt/10 px-1.5 py-0.5 font-mono text-micro font-semibold tracking-wide text-basalt"
               title={`retried ${task.retryCount}x`}
             >
               ↻ {task.retryCount}x
@@ -77,19 +77,19 @@ export const TaskCard = memo(({ task, index }: Props) => {
         </div>
       </div>
       <div
-        className={`text-[14px] font-medium leading-snug text-fg ${
+        className={`text-body font-medium leading-snug text-fg ${
           task.status === 'dropped' ? 'line-through' : ''
         }`}
       >
         {task.title}
       </div>
       {task.status === 'dropped' && task.dropReason ? (
-        <div className="font-mono text-[11px] text-muted">
+        <div className="font-mono text-meta text-muted">
           {truncate(task.dropReason, 120)}
         </div>
       ) : null}
       {task.status === 'blocked' ? (
-        <div className="font-mono text-[11px] text-ochre">
+        <div className="font-mono text-meta text-ochre">
           {task.blockerTaskId ? (
             <a
               href={`#/task/${task.blockerTaskId}`}
@@ -103,7 +103,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
         </div>
       ) : null}
       {spec !== null ? (
-        <div className="flex flex-col gap-1 border-t border-border/50 pt-2 font-mono text-[10px] text-muted">
+        <div className="flex flex-col gap-1 border-t border-border/50 pt-2 font-mono text-micro text-muted">
           {spec.files.length > 0 ? (
             <div>
               <span className="font-semibold text-fg/60">files</span>
@@ -146,7 +146,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
       ) : null}
       <div className="flex items-center justify-between gap-2">
         <RoleTag role={task.role} />
-        <span className="font-mono text-[11px] text-muted">
+        <span className="font-mono text-meta text-muted">
           {relativeTime(task.createdAt)}
         </span>
       </div>
