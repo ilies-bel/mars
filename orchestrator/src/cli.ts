@@ -423,10 +423,16 @@ const COMMAND_HELP: Record<string, string> = {
   init: `mars init [--force] [--no-fetch] [--dry-run] [--refresh] [--verbose]
 
 Detect tech stack and generate specialized supervisors in
-.mars/supervisors/ (skeleton + workflow contract). Recurses into
-subdirectories (depth cap 6) to merge manifests from monorepo layouts;
-honors .gitignore and skips .git, node_modules, .mars, .worktrees, dist,
-build, .next, target, out, plus git submodules.
+.mars/supervisors/ (skeleton + workflow contract). Also activates the Mars
+Claude Code plugin so mars:* skills, agents, and hooks are available in
+Claude Code immediately — idempotent, so re-running is safe. If plugin
+activation fails (exotic install layout, unwritable settings file), mars
+prints a warning and continues; run \`mars plugin activate <dir>\` manually
+to fix it.
+
+Recurses into subdirectories (depth cap 6) to merge manifests from
+monorepo layouts; honors .gitignore and skips .git, node_modules, .mars,
+.worktrees, dist, build, .next, target, out, plus git submodules.
 
 After a successful init, mars prints the exact command to launch the
 read-only Kanban + trace dashboard:
