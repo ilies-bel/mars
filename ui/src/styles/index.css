@@ -67,3 +67,64 @@ html, body, #root {
   50%      { opacity: 0.35; }
 }
 .animate-mars-pulse { animation: mars-pulse 1.6s ease-in-out infinite; }
+
+/* ── Drawer entrance / exit animations ──────────────────────────────────────
+ * Enter: slides in from the right over 260 ms (iOS drawer curve).
+ * Exit:  slides back to the right over 180 ms (snappier than enter).
+ * GPU-only: animates transform + opacity, never width/right.
+ * -------------------------------------------------------------------------*/
+.drawer-panel {
+  transition:
+    transform 260ms cubic-bezier(0.32, 0.72, 0, 1),
+    opacity   260ms cubic-bezier(0.32, 0.72, 0, 1);
+  transform: translateX(0);
+  opacity: 1;
+}
+
+@starting-style {
+  .drawer-panel {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+.drawer-panel[data-closing="true"] {
+  transition:
+    transform 180ms cubic-bezier(0.32, 0.72, 0, 1),
+    opacity   180ms cubic-bezier(0.32, 0.72, 0, 1);
+  transform: translateX(100%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Scrim — fades in with the drawer, fades out faster */
+.drawer-scrim {
+  transition: opacity 260ms cubic-bezier(0.32, 0.72, 0, 1);
+  opacity: 1;
+}
+
+@starting-style {
+  .drawer-scrim {
+    opacity: 0;
+  }
+}
+
+.drawer-scrim[data-closing="true"] {
+  transition: opacity 180ms cubic-bezier(0.32, 0.72, 0, 1);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Reduced motion — keep opacity fade, drop the translate */
+@media (prefers-reduced-motion: reduce) {
+  .drawer-panel,
+  .drawer-panel[data-closing="true"] {
+    transform: none !important;
+    transition: opacity 200ms;
+  }
+
+  .drawer-scrim,
+  .drawer-scrim[data-closing="true"] {
+    transition: opacity 200ms;
+  }
+}
