@@ -12,7 +12,7 @@
  * semantics in both contexts.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 
@@ -277,15 +277,22 @@ export const TaskDetailDrawer = ({
   // Compute the focus subgraph from props. This is independent of the detail
   // fetch so it renders immediately — the operator sees relationship context
   // while the status row is still loading.
-  const subgraph =
-    tasks != null && proposals != null
-      ? buildSubgraphLayout(tasks, proposals, taskId)
-      : null
+  const subgraph = useMemo(
+    () =>
+      tasks != null && proposals != null
+        ? buildSubgraphLayout(tasks, proposals, taskId)
+        : null,
+    [tasks, proposals, taskId],
+  )
 
   // Precompute a lookup for edge rendering.
-  const posById = subgraph
-    ? new Map(subgraph.positioned.map((n) => [n.id, n]))
-    : new Map<string, PositionedMiniNode>()
+  const posById = useMemo(
+    () =>
+      subgraph
+        ? new Map(subgraph.positioned.map((n) => [n.id, n]))
+        : new Map<string, PositionedMiniNode>(),
+    [subgraph],
+  )
 
   const svgWidth = subgraph
     ? subgraph.positioned.reduce((acc, n) => Math.max(acc, n.x + MINI_NODE_W), 0) + MINI_PAD_X

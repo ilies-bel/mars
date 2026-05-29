@@ -10,6 +10,7 @@
  * vertically within each layer.  Pure SVG — no external graph library.
  */
 
+import { useMemo } from 'react'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
@@ -231,7 +232,9 @@ export const TopologyView = ({
   ghostedClusters,
   selectedProposalId,
 }: TopologyViewProps) => {
-  const { nodes, edges } = buildGraph(tasks, proposals)
+  const { nodes, edges } = useMemo(() => buildGraph(tasks, proposals), [tasks, proposals])
+
+  const positioned = useMemo(() => layoutNodes(nodes, edges), [nodes, edges])
 
   if (nodes.length === 0) {
     return (
@@ -252,7 +255,6 @@ export const TopologyView = ({
       ])
     : null
 
-  const positioned = layoutNodes(nodes, edges)
   const posById = new Map(positioned.map((n) => [n.id, n]))
 
   // Canvas size: fit all nodes with padding

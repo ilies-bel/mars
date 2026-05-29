@@ -185,7 +185,6 @@ const ActionBar = ({ item }: ActionBarProps) => {
     onMutate: () => setErrorMsg(null),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['action-queue'] })
-      void qc.invalidateQueries({ queryKey: ['tasks'] })
       void qc.invalidateQueries({ queryKey: ['progress'] })
     },
     onError: (err) => setErrorMsg((err as Error).message),
@@ -285,7 +284,6 @@ const CatalogReasonAndActions = ({ item }: CatalogPanelProps) => {
     onMutate: () => setErrorMsg(null),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['action-queue'] })
-      void qc.invalidateQueries({ queryKey: ['tasks'] })
       void qc.invalidateQueries({ queryKey: ['progress'] })
     },
     onError: (err) => setErrorMsg((err as Error).message),
@@ -746,7 +744,6 @@ export const ActionQueuePage = () => {
     mutationFn: (entityId: string) => invokeAction('restart', entityId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['action-queue'] })
-      void qc.invalidateQueries({ queryKey: ['tasks'] })
       void qc.invalidateQueries({ queryKey: ['progress'] })
     },
   })
