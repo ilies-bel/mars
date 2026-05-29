@@ -90,6 +90,12 @@ export interface FailureReasonCatalog {
 export const failureReasonStringToCode = (raw: string | null): string => {
   if (raw === null) return UNKNOWN_FAILURE_CODE
   const s = raw.toLowerCase()
+  // Slice K legacy bridge: rows landed before the F.2 dirty-main rework
+  // carry the old `setup:preflight/dirty-main` signature (often wrapped as
+  // `retry_budget_exhausted:setup:preflight/dirty-main`). The codepath is
+  // gone but historical rows still need to resolve to the catalog entry
+  // that replaced it, so they don't fall through to `unknown`.
+  if (s.includes('preflight/dirty-main')) return 'verify:main-dirty'
   // `verify:main-dirty` is the F.2-owned code; the legacy column stores the
   // catalog code verbatim there, so it round-trips. The substring 'main-dirty'
   // is a stronger signal than 'dirty' alone.

@@ -23,7 +23,6 @@ import { isAbsolute, resolve } from 'node:path'
 import {
   acquireLock,
   buildWorkerEnv,
-  checkSetupPreflight,
   claudeBinEnvFingerprint,
   resolveClaudeBin,
   resolveGitBin,
@@ -648,75 +647,6 @@ describe('checkMergeTargetStatus', () => {
   })
 })
 
-describe('checkSetupPreflight', () => {
-  // Each test gets a fresh temp repo so tests are isolated and independent of
-  // the real Mars checkout state.
-  let repo: string
-
-  beforeEach(() => {
-    repo = mkdtempSync(resolve(tmpdir(), 'mars-setup-preflight-'))
-    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
-    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
-    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
-    writeFileSync(resolve(repo, 'README'), 'hello\n')
-    execFileSync('git', ['add', 'README'], { cwd: repo })
-    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
-  })
-
-  afterEach(() => {
-    rmSync(repo, { recursive: true, force: true })
-  })
-
-  it('reports clean when the working tree has no tracked or untracked changes', async () => {
-    const result = await checkSetupPreflight(repo)
-    expect(result.dirty).toBe(false)
-    expect(result.dirtyLines).toEqual([])
-  })
-
-  it('ignores untracked files — they cannot block git merge --ff-only', async () => {
-    writeFileSync(resolve(repo, 'scratch.tmp'), 'untracked\n')
-    mkdirSync(resolve(repo, '.idea'), { recursive: true })
-    writeFileSync(resolve(repo, '.idea', 'workspace.xml'), '<x/>\n')
-    const result = await checkSetupPreflight(repo)
-    expect(result.dirty).toBe(false)
-    expect(result.dirtyLines).toEqual([])
-  })
-
-  it('reports dirty when a tracked file has uncommitted changes', async () => {
-    writeFileSync(resolve(repo, 'README'), 'modified\n')
-    const result = await checkSetupPreflight(repo)
-    expect(result.dirty).toBe(true)
-    expect(result.dirtyLines.length).toBeGreaterThan(0)
-    // The porcelain line should reference the modified file
-    expect(result.dirtyLines.join('\n')).toContain('README')
-  })
-
-  it('reports dirty when a new file is staged but not committed', async () => {
-    writeFileSync(resolve(repo, 'staged.ts'), 'export const x = 1\n')
-    execFileSync('git', ['add', 'staged.ts'], { cwd: repo })
-    const result = await checkSetupPreflight(repo)
-    expect(result.dirty).toBe(true)
-    expect(result.dirtyLines.join('\n')).toContain('staged.ts')
-  })
-
-  it('reports dirty when a tracked file is deleted without committing', async () => {
-    execFileSync('git', ['rm', '--cached', 'README'], { cwd: repo })
-    const result = await checkSetupPreflight(repo)
-    expect(result.dirty).toBe(true)
-    expect(result.dirtyLines.join('\n')).toContain('README')
-  })
-
-  it('returns one dirtyLine per dirty tracked path', async () => {
-    writeFileSync(resolve(repo, 'README'), 'modified\n')
-    writeFileSync(resolve(repo, 'extra.ts'), 'export const y = 2\n')
-    execFileSync('git', ['add', 'extra.ts'], { cwd: repo })
-    const result = await checkSetupPreflight(repo)
-    expect(result.dirty).toBe(true)
-    // README is modified, extra.ts is staged — both must appear
-    expect(result.dirtyLines.length).toBeGreaterThanOrEqual(2)
-  })
-})
-
 describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
   let repo: string
   let worktreeDir: string
@@ -846,9 +776,10 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
   it('leaves the integration checkout CLEAN when the main repo is on the integration branch', async () => {
     // Regression: update-ref advances refs/heads/main without touching the
     // checkout's index. When the main repo IS on main, the merged files then
-    // show as phantom staged changes, tripping setup:preflight/dirty-main and
-    // mass-failing the queue. mergeBranch's post-merge `git reset --keep` must
-    // re-sync the checkout so `git status` is clean.
+    // show as phantom staged changes, tripping the dispatch-time
+    // `verify:main-dirty` guard and mass-parking the queue behind a
+    // `main-commiter` recovery. mergeBranch's post-merge `git reset --keep`
+    // must re-sync the checkout so `git status` is clean.
     const { execFile: execFileCb } = await import('node:child_process')
     const { promisify } = await import('node:util')
     const execP = promisify(execFileCb)

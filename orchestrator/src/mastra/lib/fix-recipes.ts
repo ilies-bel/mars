@@ -102,48 +102,6 @@ const dirtyMergeTargetRecipe: FixRecipe = {
   },
 }
 
-const dirtyMainAtSetupRecipe: FixRecipe = {
-  signature: 'setup:preflight/dirty-main',
-  shared: true,
-  title: (ctx) =>
-    `Auto-commit dirty changes on ${ctx.targetBranch} blocking task setup`,
-  buildPrompt: (ctx) => {
-    const status = ctx.statusOutput.length > 0 ? ctx.statusOutput : '(empty)'
-    return [
-      `The merge target ${ctx.targetBranch} (checked out at ${ctx.targetPath}) had uncommitted changes when the orchestrator's setup pre-flight ran, so one or more queued tasks could not start. Your job is to commit those changes on ${ctx.targetBranch} so the blocked tasks can proceed. By the time you read this another recovery may already have cleaned it up.`,
-      '',
-      ...renderReproSection(ctx.reproCommand),
-      `Operate on the merge target directly with \`git -C ${ctx.targetPath} ...\`. Do NOT \`cd\` into ${ctx.targetPath} — the orchestrator's "never cd" rule applies, and \`git -C\` keeps every command bound to the right tree.`,
-      '',
-      `STEP 1 — re-check first. Run \`git -C ${ctx.targetPath} status --porcelain\` right now.`,
-      ` - If the output is empty, the tree is already clean: do NOT touch any file, do NOT commit. Exit successfully — the blocked tasks will be released as soon as this recovery is marked done.`,
-      ` - If the output is non-empty, proceed to STEP 2 with the CURRENT status, not the snapshot below.`,
-      '',
-      `STEP 2 — commit everything on ${ctx.targetBranch}. This recovery auto-commits without judgement (per the dirty-main policy): the operator deliberately chose auto-commit over stash/triage.`,
-      ` 1. Stage every change, tracked and untracked: \`git -C ${ctx.targetPath} add -A\`.`,
-      ` 2. Inspect what you are about to commit so the message is accurate: \`git -C ${ctx.targetPath} diff --cached --stat\`.`,
-      ` 3. Commit on ${ctx.targetBranch} with a message that names the touched files/areas, e.g.:`,
-      '    ```',
-      `    git -C ${ctx.targetPath} commit -m "chore: auto-commit dirty merge target before task setup" \\`,
-      `      -m "<one line listing the files/areas committed>"`,
-      '    ```',
-      ` 4. Confirm the tree is clean: \`git -C ${ctx.targetPath} status --porcelain\` must now print nothing.`,
-      '',
-      `Do NOT push. Do NOT create or switch branches — the commit lands on ${ctx.targetBranch} exactly where the dirty files were. Do NOT edit files in this recovery worktree; the work to commit is in ${ctx.targetPath}, not here.`,
-      '',
-      `Merge target path: ${ctx.targetPath}`,
-      `Merge target branch: ${ctx.targetBranch}`,
-      '',
-      'Dirty files captured at pre-flight time (may be stale — re-check before committing):',
-      '```',
-      status,
-      '```',
-      '',
-      `Save your work. The orchestrator does not commit on your behalf — the \`git commit\` above IS your deliverable. Once it lands and the tree is clean, exit successfully so every task blocked on this recovery is released.`,
-    ].join('\n')
-  },
-}
-
 const worktreeInstallFrozenLockfileRecipe: FixRecipe = {
   signature: 'setup:install/install-frozen-lockfile',
   title: () => `Resolve dependency install failure in worktree setup`,
@@ -1246,7 +1204,6 @@ const testLibsqlNotAnErrorRecipe: FixRecipe = {
 
 const recipeList: readonly FixRecipe[] = [
   dirtyMergeTargetRecipe,
-  dirtyMainAtSetupRecipe,
   worktreeInstallFrozenLockfileRecipe,
   worktreeInstallTimeoutRecipe,
   noCommitsAheadRecipe,

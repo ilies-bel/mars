@@ -25,6 +25,7 @@ interface InboxModule {
   setRecoveryFindings: typeof import('./inbox').setRecoveryFindings
   supersedeInboxItemsForOrigin: typeof import('./inbox').supersedeInboxItemsForOrigin
   reconcileStaleInboxItems: typeof import('./inbox').reconcileStaleInboxItems
+  supersedeObsoletePreflightDirtyMainRows: typeof import('./inbox').supersedeObsoletePreflightDirtyMainRows
 }
 
 const setupRepo = (): string => {
@@ -607,6 +608,125 @@ describe('inbox', () => {
       ])
 
       expect(result.closed).toBe(0)
+    })
+  })
+
+  describe('supersedeObsoletePreflightDirtyMainRows (slice K cleanup)', () => {
+    it('supersedes rows whose payload references the legacy signature', async () => {
+      const inbox = await loadModule(repo)
+      const id = await inbox.raiseInboxItem(
+        baseItem({
+          kind: 'failed',
+          signature: 'setup:preflight/dirty-main',
+          payload: { failureSignature: 'setup:preflight/dirty-main' },
+        }),
+      )
+
+      const closed = await inbox.supersedeObsoletePreflightDirtyMainRows()
+      expect(closed).toContain(id)
+
+      const item = await inbox.getInboxItem(id)
+      expect(item!.state).toBe('resolved')
+      expect(item!.resolution).toBe('superseded')
+      expect(item!.resolutionNote).toBe(
+        'superseded by slice K: preflight code path retired',
+      )
+    })
+
+    it('supersedes rows whose payload references the retry_budget_exhausted wrapper', async () => {
+      const inbox = await loadModule(repo)
+      const id = await inbox.raiseInboxItem(
+        baseItem({
+          kind: 'failed',
+          signature: 'rb-1',
+          payload: {
+            lastErrorSignature:
+              'retry_budget_exhausted:setup:preflight/dirty-main',
+          },
+        }),
+      )
+
+      const closed = await inbox.supersedeObsoletePreflightDirtyMainRows()
+      expect(closed).toContain(id)
+
+      const item = await inbox.getInboxItem(id)
+      expect(item!.state).toBe('resolved')
+    })
+
+    it('supersedes rows whose body literally contains the legacy phrase', async () => {
+      const inbox = await loadModule(repo)
+      const id = await inbox.raiseInboxItem(
+        baseItem({
+          kind: 'failed',
+          signature: 'body-1',
+          body: 'Task parked with setup:preflight/dirty-main; merge target dirty.',
+          payload: {},
+        }),
+      )
+
+      const closed = await inbox.supersedeObsoletePreflightDirtyMainRows()
+      expect(closed).toContain(id)
+    })
+
+    it('leaves untouched rows that do not reference the legacy strings', async () => {
+      const inbox = await loadModule(repo)
+      const id = await inbox.raiseInboxItem(
+        baseItem({
+          kind: 'failed',
+          signature: 'verify:main-dirty',
+          body: 'integration branch dirty; main-commiter recovery spawned.',
+          payload: { failureSignature: 'verify:main-dirty' },
+        }),
+      )
+
+      const closed = await inbox.supersedeObsoletePreflightDirtyMainRows()
+      expect(closed).not.toContain(id)
+
+      const item = await inbox.getInboxItem(id)
+      expect(item!.state).toBe('open')
+    })
+
+    it('is idempotent: rerunning closes zero additional rows', async () => {
+      const inbox = await loadModule(repo)
+      await inbox.raiseInboxItem(
+        baseItem({
+          kind: 'failed',
+          signature: 'setup:preflight/dirty-main',
+          payload: { failureSignature: 'setup:preflight/dirty-main' },
+        }),
+      )
+
+      const first = await inbox.supersedeObsoletePreflightDirtyMainRows()
+      expect(first.length).toBe(1)
+
+      const second = await inbox.supersedeObsoletePreflightDirtyMainRows()
+      expect(second).toEqual([])
+    })
+
+    it('is a silent no-op when no rows match', async () => {
+      const inbox = await loadModule(repo)
+      const closed = await inbox.supersedeObsoletePreflightDirtyMainRows()
+      expect(closed).toEqual([])
+    })
+
+    it('does not touch rows that are already resolved', async () => {
+      const inbox = await loadModule(repo)
+      const id = await inbox.raiseInboxItem(
+        baseItem({
+          kind: 'failed',
+          signature: 'setup:preflight/dirty-main',
+          payload: { failureSignature: 'setup:preflight/dirty-main' },
+        }),
+      )
+      // Pre-resolve via a different path.
+      await inbox.setInboxState(id, 'resolved', { resolution: 'fixed' })
+
+      const closed = await inbox.supersedeObsoletePreflightDirtyMainRows()
+      expect(closed).toEqual([])
+
+      const item = await inbox.getInboxItem(id)
+      // Original resolution preserved.
+      expect(item!.resolution).toBe('fixed')
     })
   })
 
