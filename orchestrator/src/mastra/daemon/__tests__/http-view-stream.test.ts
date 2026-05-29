@@ -54,6 +54,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   todoDismiss: async () => {},
   viewInbox: async () => [],
   viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
+  viewTerminalEvents: async () => ({ events: [] }),
   ...overrides,
 })
 
