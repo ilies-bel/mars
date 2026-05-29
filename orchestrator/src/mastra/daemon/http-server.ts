@@ -3,6 +3,7 @@ import { listErrorKinds } from '../lib/error-kinds'
 import type { FailureReasonCatalog } from '../lib/failure-reasons'
 import type { RecipeCatalog } from '../lib/recipes'
 import { buildOriginTree } from '../lib/origin-tree'
+import type { ActionQueueRow, DerivedInboxFilter } from './view/inbox'
 import {
   cursorAfter,
   TRACE_EVENT_KINDS,
@@ -133,6 +134,11 @@ export interface HttpServerDeps {
    * (the endpoint still serves the greeting but broadcasts are no-ops).
    */
   viewStreamHub?: ViewStreamHub
+  /**
+   * Derive the full inbox action-queue view. Served by `GET /view/inbox`.
+   * The daemon builds this from its own database; the read-only UI proxies it.
+   */
+  viewInbox: (filter: DerivedInboxFilter) => Promise<ActionQueueRow[]>
 }
 
 export interface HttpServerHandle {
@@ -431,6 +437,22 @@ export const startHttpServer = async (
       deps
         .viewProgress({ failedWindowMs })
         .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/inbox?filter=open|dismissed|all — the full derived inbox view.
+    // The daemon builds this from its own database and is the sole source of
+    // truth; the read-only UI proxies this endpoint instead of re-deriving it.
+    // Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/inbox')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const filterRaw = parsed.searchParams.get('filter')
+      const filter: DerivedInboxFilter =
+        filterRaw === 'dismissed' || filterRaw === 'all' ? filterRaw : 'open'
+      deps
+        .viewInbox(filter)
+        .then((rows) => sendJson(res, 200, rows))
         .catch((err: unknown) => sendError(res, err))
       return
     }
