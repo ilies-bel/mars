@@ -516,7 +516,13 @@ Subcommands:
       proposal's status to 'sliced'.
   reject <id>
       Mark a draft proposal as 'dismissed' so it stops surfacing in reflection
-      follow-ups.`,
+      follow-ups.
+  ship-summary <id> [--json]
+      Print the arc-completion summary for a proposal: title, overall arc state
+      (in-progress / arc-done / arc-failed), and one row per derived task showing
+      its id, short title, and either the merged commit sha + subject (for landed
+      tasks) or the current status (for in-flight tasks). Dropped tasks render as
+      'dismissed'. --json emits a structured object instead of human-readable output.`,
   'set-functional': `mars set-functional <id> <text|@file>
 
 Set the functional plan on a draft/queued task. Use @path to read from a
@@ -1932,8 +1938,124 @@ const main = async (): Promise<void> => {
       }
       return
     }
+    if (sub === 'ship-summary') {
+      const id = rest[1]
+      const emitJson = rest.includes('--json')
+      if (!id) {
+        console.error('usage: mars proposal ship-summary <id> [--json]')
+        process.exit(1)
+      }
+      const { resolveProposalId, getProposal } = await import('./mastra/proposals')
+      const resolved = await resolveProposalId(id)
+      if (resolved.kind === 'ambiguous') {
+        console.error(
+          `ambiguous prefix '${id}' matches ${resolved.count} proposals`,
+        )
+        process.exit(1)
+      }
+      const proposal =
+        resolved.kind === 'unique' ? await getProposal(resolved.id) : null
+      if (!proposal) {
+        console.error(`proposal ${id} not found`)
+        process.exit(1)
+      }
+
+      const { getDefaultTaskStore } = await import('./mastra/lib/task-store')
+      const taskStore = await getDefaultTaskStore()
+      const arc = await taskStore.arcStatus(proposal.id, { cwd: ctx.repoRoot })
+
+      const { getTask } = await import('./mastra/queue')
+      const { execFile } = await import('node:child_process')
+      const { promisify } = await import('node:util')
+      const execFileAsync = promisify(execFile)
+
+      type TaskRow = {
+        id: string
+        shortTitle: string
+        status: string
+        sha: string | null
+        commitSubject: string | null
+      }
+
+      const taskRows: TaskRow[] = await Promise.all(
+        arc.tasks.map(async (t): Promise<TaskRow> => {
+          const full = await getTask(t.id)
+          const shortTitle = (full?.prompt ?? t.id).split('\n')[0].trim()
+
+          let sha: string | null = null
+          let commitSubject: string | null = null
+
+          if (t.status === 'done') {
+            try {
+              const { stdout } = await execFileAsync(
+                'git',
+                [
+                  'log',
+                  'main',
+                  `--grep=${t.id}`,
+                  '--fixed-strings',
+                  '--format=%H\t%s',
+                  '-1',
+                ],
+                { cwd: ctx.repoRoot },
+              )
+              const line = stdout.trim()
+              if (line) {
+                const tab = line.indexOf('\t')
+                sha = tab >= 0 ? line.slice(0, tab) : line
+                commitSubject = tab >= 0 ? line.slice(tab + 1) : ''
+              }
+            } catch {
+              // best-effort: no commit found for this task id
+            }
+          }
+
+          return { id: t.id, shortTitle, status: t.status, sha, commitSubject }
+        }),
+      )
+
+      if (emitJson) {
+        console.log(
+          JSON.stringify(
+            {
+              proposalId: proposal.id,
+              title: proposal.title.split('\n')[0].trim(),
+              arcState: arc.status,
+              tasks: taskRows.map((r) => ({
+                id: r.id,
+                shortTitle: r.shortTitle,
+                status: r.status,
+                sha: r.sha,
+                commitSubject: r.commitSubject,
+              })),
+              landedCommits: arc.landedCommits,
+            },
+            null,
+            2,
+          ),
+        )
+        return
+      }
+
+      console.log(`proposal: ${proposal.id}`)
+      console.log(`title:    ${proposal.title.split('\n')[0].trim()}`)
+      console.log(`arc:      ${arc.status}`)
+      if (taskRows.length > 0) {
+        console.log()
+        for (const row of taskRows) {
+          const display =
+            row.status === 'dropped'
+              ? 'dismissed'
+              : row.status === 'done' && row.sha !== null
+                ? `${row.sha.slice(0, 7)} ${row.commitSubject ?? ''}`
+                : row.status
+          console.log(`  ${row.id}  ${row.shortTitle}  ${display}`)
+        }
+      }
+      return
+    }
     console.error(
-      'usage: mars proposal <add|new|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers> ...',
+      'usage: mars proposal <add|new|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
     )
     process.exit(1)
   }
