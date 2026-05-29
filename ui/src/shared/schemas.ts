@@ -217,6 +217,46 @@ export const actionQueueItemSchema = z.object({
 
 export const actionQueueResponseSchema = z.array(actionQueueItemSchema)
 
+// ----------------------------------------------------------------------------
+// Worker Sessions (GET /api/sessions?agentName=X)
+// Per-step execution spans where a Worker ran claude -p, queryable by worker
+// name. Outcome is the closed {running, completed, failed, killed} set from
+// ADR-0021; 'running' spans are open step_started events with no step_ended.
+// ----------------------------------------------------------------------------
+
+export const sessionOutcomeSchema = z.enum([
+  'running',
+  'completed',
+  'failed',
+  'killed',
+])
+
+export const workerSessionSchema = z.object({
+  /** Trace event id for the step_ended row. */
+  id: z.string(),
+  /** Claude session id from the step_ended payload, or null when not recorded. */
+  sessionId: z.string().nullable(),
+  /** Worker that ran this session (e.g. 'Coder', 'Fixer'). */
+  workerName: z.string(),
+  /** Step name within the workflow (e.g. 'run-claude-code'). */
+  stepName: z.string(),
+  /** Workflow instance id this session belonged to. */
+  workflowInstanceId: z.string(),
+  /** How the session ended. */
+  outcome: sessionOutcomeSchema,
+  /** ISO timestamp when the step_ended event was recorded (= span end time). */
+  endedAt: z.string(),
+  /** Duration in milliseconds, or null when the payload did not include it. */
+  durationMs: z.number().nullable(),
+})
+
+export const workerSessionsResponseSchema = z.object({
+  sessions: z.array(workerSessionSchema),
+})
+
+export type SessionOutcome = z.infer<typeof sessionOutcomeSchema>
+export type WorkerSession = z.infer<typeof workerSessionSchema>
+
 export const agentSchema = z.object({
   name: z.string(),
   model: z.string(),

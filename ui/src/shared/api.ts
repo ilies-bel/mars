@@ -9,6 +9,7 @@ import {
   progressResponseSchema,
   tasksResponseSchema,
   todoResponseSchema,
+  workerSessionsResponseSchema,
   type ActionQueueItem,
   type Agent,
   type EventsResponse,
@@ -19,6 +20,7 @@ import {
   type ProgressTask,
   type Task,
   type TodoPayload,
+  type WorkerSession,
 } from './schemas'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -123,6 +125,22 @@ export const resolveInboxItem = async (id: string): Promise<void> => {
 export const fetchAgents = async (): Promise<Agent[]> => {
   const json = await fetchJson('/api/agents', agentsResponseSchema)
   return json.agents
+}
+
+/**
+ * Fetch recent finished sessions for a Worker by name. Sessions are returned
+ * newest-first. The outcome is from the closed set {running, completed,
+ * failed, killed}; a killed outcome means the read-span watchdog terminated
+ * the session.
+ */
+export const fetchWorkerSessions = async (
+  agentName: string,
+): Promise<WorkerSession[]> => {
+  const json = await fetchJson(
+    `/api/sessions?agentName=${encodeURIComponent(agentName)}`,
+    workerSessionsResponseSchema,
+  )
+  return json.sessions
 }
 
 export const fetchKpis = async (): Promise<Kpi[]> => {
@@ -263,7 +281,9 @@ export type {
   Kpi,
   OriginsResponse,
   ProgressProposalNode,
+  SessionOutcome,
   StaleWorktree,
   TodoPayload,
   TraceEvent,
+  WorkerSession,
 } from './schemas'
