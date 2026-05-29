@@ -250,6 +250,12 @@ export const initProposals = async (): Promise<void> => {
     )
     await c.execute(`DROP TABLE idea_acceptance`)
   }
+  // KPI dedup tag: added for the self-evolve trigger so the drift checker
+  // can look up open reflection drafts by the KPI they cover without
+  // parsing free-form titles.
+  if (!colNames.has('kpi_tag')) {
+    await c.execute(`ALTER TABLE proposals ADD COLUMN kpi_tag TEXT`)
+  }
   // Run after `initQueue` has had a chance to migrate `tasks.blocker_id`
   // out into `task_blockers` rows, since that migration reads
   // `task_suggestions` and we are about to drop it.
@@ -468,6 +474,7 @@ export interface CreateProposalOptions {
   solution?: string
   outOfScope?: string
   notes?: string
+  kpiTag?: string
 }
 
 export const createProposal = async (
@@ -490,6 +497,7 @@ export const createProposal = async (
   const solution = opts?.solution ?? ''
   const outOfScope = opts?.outOfScope ?? ''
   const notes = opts?.notes ?? ''
+  const kpiTag = opts?.kpiTag ?? null
   // Detect whether the legacy goal/story/technical columns still exist as
   // NOT NULL — pre-existing repos do, fresh repos don't. Write to both
   // sets when present so the legacy NOT NULL constraint is satisfied.
@@ -503,8 +511,8 @@ export const createProposal = async (
               (id, goal, story, technical,
                title, problem, solution, out_of_scope, notes,
                status, source, author_kind, author_name,
-               created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`,
+               kpi_tag, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         title,
@@ -518,6 +526,7 @@ export const createProposal = async (
         source,
         authorKind,
         authorName,
+        kpiTag,
         now,
         now,
       ],
@@ -527,8 +536,8 @@ export const createProposal = async (
       sql: `INSERT INTO proposals
               (id, title, problem, solution, out_of_scope, notes,
                status, source, author_kind, author_name,
-               created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`,
+               kpi_tag, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         title,
@@ -539,6 +548,7 @@ export const createProposal = async (
         source,
         authorKind,
         authorName,
+        kpiTag,
         now,
         now,
       ],
@@ -1084,6 +1094,32 @@ export const rejectProposal = async (
     throw new Error(`proposal ${id} disappeared after rejection`)
   }
   return updated
+}
+
+/**
+ * Return the most recent open (status='draft') reflection-sourced proposal
+ * tagged with the given KPI identifier, or null if none exists.
+ *
+ * Used by the KPI-drift trigger to skip raising a duplicate draft when an
+ * operator has not yet acted on a prior reflection for the same KPI.
+ */
+export const findOpenReflectionDraftForKpi = async (
+  kpi: string,
+): Promise<{ id: string; title: string } | null> => {
+  await initProposals()
+  const c = getClient()
+  const r = await c.execute({
+    sql: `SELECT id, title FROM proposals
+           WHERE source = 'reflection'
+             AND status = 'draft'
+             AND kpi_tag = ?
+           ORDER BY created_at DESC
+           LIMIT 1`,
+    args: [kpi],
+  })
+  if (r.rows.length === 0) return null
+  const row = r.rows[0] as unknown as { id: string; title: string }
+  return { id: row.id, title: row.title }
 }
 
 /**

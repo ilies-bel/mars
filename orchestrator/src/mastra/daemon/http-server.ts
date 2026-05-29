@@ -12,6 +12,7 @@ import {
   type TraceEventSeverity,
   type TraceEventStore,
 } from '../lib/trace-events-store'
+import { listKpis as defaultListKpis, type KpiRecord } from './kpi-store'
 import type { RestartTaskError } from './restart-task'
 
 /**
@@ -78,6 +79,12 @@ export interface HttpServerDeps {
    * in the dedicated Events tab).
    */
   traceStore: TraceEventStore
+  /**
+   * Query the current KPI vector. When omitted, the built-in {@link defaultListKpis}
+   * from `kpi-store.ts` is used. Inject a replacement here in tests or once the
+   * real persistence layer (proposal 9a2ab5f8) is wired in.
+   */
+  listKpis?: () => Promise<KpiRecord[]>
 }
 
 export interface HttpServerHandle {
@@ -291,8 +298,7 @@ export const startHttpServer = async (
     // the task has no known ancestry. Pure read; no draining gate.
     {
       const originsMatch =
-        req.method === 'GET' &&
-        req.url
+        req.method === 'GET' && req.url
           ? req.url.match(/^\/origins\/([^/?]+)(?:\?.*)?$/)
           : null
       if (originsMatch && originsMatch[1]) {
@@ -302,6 +308,18 @@ export const startHttpServer = async (
           .catch((err: unknown) => sendError(res, err))
         return
       }
+    }
+
+    // GET /kpis — the four-KPI vector (ADR-0040, the harness-health KPI ADR
+    // that was originally numbered 0038 on main while this branch held that
+    // number for the recovery-tasks-are-leaf-nodes ADR — renumbered to 0040
+    // during the merge). Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/kpis') {
+      const fn = deps.listKpis ?? defaultListKpis
+      fn()
+        .then((kpis) => sendJson(res, 200, { kpis }))
+        .catch((err: unknown) => sendError(res, err))
+      return
     }
 
     if (req.method !== 'POST') {

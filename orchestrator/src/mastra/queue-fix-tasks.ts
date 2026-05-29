@@ -298,7 +298,7 @@ export const upsertFixTask = async (
  * without spawning a fresh recovery row.
  *
  * Background. `upsertFixTask` is the canonical origin → recovery edge writer
- * and is the documented exemption from F.1's ADR-0038 leaf-node guard (every
+ * and is the documented exemption from F.1's ADR-0040 leaf-node guard (every
  * other `task_blockers` writer goes through `assertNotRecoveryEdge`). When
  * dirty-main dedup determines that a queued / in-flight / failed
  * `main-commiter` already exists for the current diff hash, we still need
@@ -347,8 +347,8 @@ export const attachToExistingFixTask = async (
       {
         // F.1 exemption: this insert reaches `task_blockers` directly because
         // the legitimate origin → recovery edge writer (`upsertFixTask`) is
-        // the documented bypass of the ADR-0038 guard, and this helper is its
-        // dedup sibling. See ADR-0038 clarification: the origin → recovery
+        // the documented bypass of the ADR-0040 guard, and this helper is its
+        // dedup sibling. See ADR-0040 clarification: the origin → recovery
         // edge is the canonical attach mechanism.
         sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at)
               VALUES (?, ?, 'confirmed', ?)`,

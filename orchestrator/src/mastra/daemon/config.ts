@@ -9,8 +9,14 @@ export interface DaemonCaps {
   structuredWrite: number
 }
 
+export interface SelfEvolveConfig {
+  autoTrigger: boolean
+  driftThresholdPct: number
+}
+
 export interface DaemonConfig {
   caps: DaemonCaps
+  selfEvolve: SelfEvolveConfig
 }
 
 const DEFAULTS: DaemonCaps = {
@@ -20,11 +26,24 @@ const DEFAULTS: DaemonCaps = {
   structuredWrite: 1,
 }
 
+const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
+  autoTrigger: false,
+  driftThresholdPct: 10,
+}
+
 const envInt = (name: string, fallback: number): number => {
   const raw = process.env[name]
   if (raw === undefined || raw === '') return fallback
   const n = Number.parseInt(raw, 10)
   return Number.isFinite(n) && n > 0 ? n : fallback
+}
+
+const envBool = (name: string, fallback: boolean): boolean => {
+  const raw = process.env[name]
+  if (raw === undefined || raw === '') return fallback
+  if (raw === '1' || raw === 'true') return true
+  if (raw === '0' || raw === 'false') return false
+  return fallback
 }
 
 const positiveInt = (value: unknown, fallback: number): number => {
@@ -49,10 +68,27 @@ export const loadDaemonConfig = (): DaemonConfig => {
     structuredWrite: envInt('MARS_MAX_STRUCTURED_WRITE', DEFAULTS.structuredWrite),
   }
 
+  const envAutoTrigger = envBool(
+    'MARS_SELF_EVOLVE_AUTO_TRIGGER',
+    DEFAULT_SELF_EVOLVE.autoTrigger,
+  )
+  const rawDrift = process.env['MARS_SELF_EVOLVE_DRIFT_THRESHOLD']
+  const envDriftNum = rawDrift !== undefined && rawDrift !== '' ? Number(rawDrift) : NaN
+  const envDriftPct =
+    Number.isFinite(envDriftNum) && envDriftNum > 0
+      ? envDriftNum
+      : DEFAULT_SELF_EVOLVE.driftThresholdPct
+
   let fileCaps: Partial<DaemonCaps> = {}
+  let fileAutoTrigger: boolean | undefined
+  let fileDriftPct: number | undefined
+
   try {
     const raw = readFileSync(daemonConfigPath(), 'utf8')
-    const parsed = JSON.parse(raw) as { caps?: Record<string, unknown> }
+    const parsed = JSON.parse(raw) as {
+      caps?: Record<string, unknown>
+      selfEvolve?: Record<string, unknown>
+    }
     const c = parsed.caps ?? {}
     fileCaps = {
       implement: positiveInt(c.implement, envCaps.implement),
@@ -62,6 +98,14 @@ export const loadDaemonConfig = (): DaemonConfig => {
         c.structuredWrite ?? c['structured-write'],
         envCaps.structuredWrite,
       ),
+    }
+    const se = parsed.selfEvolve ?? {}
+    if (typeof se.autoTrigger === 'boolean') {
+      fileAutoTrigger = se.autoTrigger
+    }
+    const seThreshold = se.driftThresholdPct
+    if (typeof seThreshold === 'number' && Number.isFinite(seThreshold) && seThreshold > 0) {
+      fileDriftPct = seThreshold
     }
   } catch {
     // No file, unreadable, or invalid JSON — fall back to env+defaults.
@@ -73,6 +117,10 @@ export const loadDaemonConfig = (): DaemonConfig => {
       triage: fileCaps.triage ?? envCaps.triage,
       refine: fileCaps.refine ?? envCaps.refine,
       structuredWrite: fileCaps.structuredWrite ?? envCaps.structuredWrite,
+    },
+    selfEvolve: {
+      autoTrigger: fileAutoTrigger ?? envAutoTrigger,
+      driftThresholdPct: fileDriftPct ?? envDriftPct,
     },
   }
 }

@@ -4,6 +4,7 @@ import {
   agentsResponseSchema,
   eventsResponseSchema,
   failureReasonsResponseSchema,
+  kpisResponseSchema,
   originsResponseSchema,
   progressResponseSchema,
   tasksResponseSchema,
@@ -12,6 +13,7 @@ import {
   type Agent,
   type EventsResponse,
   type FailureReasonCatalogEntry,
+  type Kpi,
   type OriginsResponse,
   type ProgressProposalNode,
   type ProgressTask,
@@ -121,6 +123,11 @@ export const resolveInboxItem = async (id: string): Promise<void> => {
 export const fetchAgents = async (): Promise<Agent[]> => {
   const json = await fetchJson('/api/agents', agentsResponseSchema)
   return json.agents
+}
+
+export const fetchKpis = async (): Promise<Kpi[]> => {
+  const json = await fetchJson('/api/kpis', kpisResponseSchema)
+  return json.kpis
 }
 
 /**
@@ -253,6 +260,7 @@ export type {
   Agent,
   EventsResponse,
   FailureReasonCatalogEntry,
+  Kpi,
   OriginsResponse,
   ProgressProposalNode,
   StaleWorktree,

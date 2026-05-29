@@ -13,7 +13,7 @@ import { getDefaultQueueClient } from './task-store'
  *     for the call-site inventory.
  *
  *  2. The recovery-leaf guard (`isRecoveryTask` / `assertNotRecoveryEdge` /
- *     `RecoveryTaskBlockerError`): per ADR-0038 recovery tasks are leaf nodes
+ *     `RecoveryTaskBlockerError`): per ADR-0040 recovery tasks are leaf nodes
  *     in the task graph — they cannot have blockers, cannot be blocked by
  *     anything, and cannot themselves be recovered. Every user-facing edge
  *     writer (`addBlockers`, `addPendingReviewBlockers`,
@@ -23,7 +23,7 @@ import { getDefaultQueueClient } from './task-store'
  *     (`upsertFixTask`) is the one legitimate origin → fix edge writer and
  *     bypasses the guard — "fix is leaf" still holds because the recovery
  *     dispatcher refuses to spawn a fix for a task that is itself a fix
- *     (`handleTaskFailureWithFixTask`, ADR-0002 / ADR-0038).
+ *     (`handleTaskFailureWithFixTask`, ADR-0002 / ADR-0040).
  *
  * Call sites that transition a task to `'blocked'` should call
  * `assertHasBlockerEdge` inside the SAME transaction that inserts the edge —
@@ -128,7 +128,7 @@ export interface RecoveryTaskProbe {
  * non-null on every such row (enforced by `assertTaskKindInvariant` in
  * `queue.ts`); we accept the pointer alone as a fallback so the predicate
  * stays robust against rows fetched before the `kind` column was populated.
- * Both signals are equivalent — see ADR-0038.
+ * Both signals are equivalent — see ADR-0040.
  */
 export const isRecoveryTask = (probe: RecoveryTaskProbe): boolean => {
   if (probe.kind === 'fix') return true
@@ -148,7 +148,7 @@ export class RecoveryTaskBlockerError extends Error {
 
   constructor(taskId: string, role: 'task' | 'blocker') {
     super(
-      `Recovery task ${taskId} cannot be the ${role} of a blocker edge (ADR-0038).`,
+      `Recovery task ${taskId} cannot be the ${role} of a blocker edge (ADR-0040).`,
     )
     this.name = 'RecoveryTaskBlockerError'
     this.taskId = taskId
@@ -218,7 +218,7 @@ export interface RecoveryEdgeViolation {
 }
 
 /**
- * Read-only scan of `task_blockers` for rows that violate ADR-0038. Returns
+ * Read-only scan of `task_blockers` for rows that violate ADR-0040. Returns
  * the offending edges so the daemon startup hook can log a one-shot warning
  * for the operator. Never mutates the DB — cleanup is operator-driven via
  * `mars unblock <id>`.

@@ -2796,3 +2796,430 @@ describe('runSlice: hitl slice routing → inbox item + Coder sub-task + blocked
     expect(items).toHaveLength(0)
   })
 })
+
+describe('hitl slice completion: both inbox resolved and sub-task done required', () => {
+  // Acceptance criteria:
+  // - Resolving the inbox item while the sub-task is still in-flight leaves the
+  //   hitl slice's task in 'blocked'.
+  // - The sub-task reaching 'done' while the inbox item is still open leaves the
+  //   hitl slice's task in 'blocked'.
+  // - Once both the inbox item is resolved (or dismissed) AND the sub-task is
+  //   'done', the hitl slice's task row flips to 'done'.
+  // - Coder-only PRDs continue to reach full completion exactly as today.
+  //
+  // All three orderings are exercised: inbox first, sub-task first, simultaneous.
+
+  let repo: string
+
+  const setupRepo = (): string => {
+    const r = mkdtempSync(resolve(tmpdir(), 'mars-hitl-completion-'))
+    execFileSync('git', ['init', '-q'], { cwd: r })
+    mkdirSync(resolve(r, '.mars'), { recursive: true })
+    return r
+  }
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+    vi.doUnmock('../../mastra/lib/git')
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  const envelope = (jsonResult: unknown): string =>
+    JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
+
+  const seedPrdReadyIdea = async (): Promise<string> => {
+    const proposals = await import('../../mastra/proposals')
+    await proposals.initProposals()
+    const idea = await proposals.createProposal('HITL completion test PRD', {
+      problem: 'operator must confirm manually',
+      solution: 'route hitl slices to operator and complete when both conditions met',
+    })
+    await proposals.addProposalUserStory(idea.id, 'as an operator, I confirm the step')
+    const promoted = await proposals.promoteProposal(idea.id)
+    expect(promoted.status).toBe('prd-ready')
+    return idea.id
+  }
+
+  // Single HITL slice fixture reused across all tests in this describe block.
+  const hitlSlicerOutput = {
+    slices: [
+      {
+        title: 'Publish release to GitHub',
+        type: 'HITL' as const,
+        kind: 'hitl' as const,
+        whatToBuild:
+          'Operator downloads the artifact and pushes a tag to the remote.',
+        acceptanceCriteria: [
+          'release page shows the correct artifact',
+          'tag is pushed to remote',
+        ],
+        blockedBy: [] as number[],
+        readFirst: ['scripts/release.sh'] as string[],
+        prescriptiveAction:
+          'In scripts/release.sh, add a step that pushes the release tag.',
+        modifies: [] as string[],
+        creates: [] as string[],
+        verifyCmd: null,
+        taskType: 'auto' as const,
+        subDeliverable: {
+          title: 'Release verification script',
+          whatToBuild:
+            'Write scripts/verify-release.sh that checks the release page.',
+          acceptanceCriteria: [
+            'script exits 0 when artifact is present',
+            'script exits 1 when artifact is missing',
+          ],
+          files: ['scripts/verify-release.sh'],
+        },
+      },
+    ],
+  }
+
+  // Helper: find the Coder sub-task id for a given hitl slice task.
+  // Self-imports the queue module so callers don't need to pass a reference.
+  const findSubTaskId = async (hitlSliceTaskId: string): Promise<string> => {
+    const queue = await import('../../mastra/queue')
+    await queue.initQueue()
+    const r = await queue.getClient().execute({
+      sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ?`,
+      args: [hitlSliceTaskId],
+    })
+    expect(r.rows).toHaveLength(1)
+    return (r.rows[0] as unknown as { blocker_task_id: string }).blocker_task_id
+  }
+
+  // Helper: find and return the inbox item id for the hitl slice.
+  const findHitlInboxItemId = async (): Promise<string> => {
+    const inbox = await import('../../mastra/lib/inbox')
+    await inbox.initInbox()
+    const items = await inbox.listInboxItems('all', {
+      kind: 'hitl-slice-needs-operator',
+    })
+    expect(items).toHaveLength(1)
+    return items[0].id
+  }
+
+  // Helper: mark a task as 'done' directly in the DB (simulates daemon behaviour
+  // after a Coder worktree successfully merges).
+  const markTaskDone = async (taskId: string): Promise<void> => {
+    const queue = await import('../../mastra/queue')
+    await queue.initQueue()
+    await queue.getClient().execute({
+      sql: `UPDATE tasks SET status = 'done', updated_at = datetime('now') WHERE id = ?`,
+      args: [taskId],
+    })
+  }
+
+  it('resolving the inbox item while the sub-task is still in-flight leaves the hitl slice blocked', async () => {
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(hitlSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+    expect(result.taskIds).toHaveLength(1)
+    const hitlSliceTaskId = result.taskIds[0]
+
+    const queue = await import('../../mastra/queue')
+    await queue.initQueue()
+    const inbox = await import('../../mastra/lib/inbox')
+
+    // Resolve the inbox item — but sub-task is still 'queued' (in-flight).
+    const inboxItemId = await findHitlInboxItemId()
+    await inbox.setInboxState(inboxItemId, 'resolved')
+
+    // Sub-task is still in-flight: tryCompleteHitlSlice must return false.
+    const completed = await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)
+    expect(completed).toBe(false)
+
+    // The hitl slice must remain 'blocked'.
+    const hitlRow = await queue.getClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [hitlSliceTaskId],
+    })
+    expect(
+      (hitlRow.rows[0] as unknown as { status: string }).status,
+    ).toBe('blocked')
+  })
+
+  it('the sub-task reaching done while the inbox item is still open leaves the hitl slice blocked', async () => {
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(hitlSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+    expect(result.taskIds).toHaveLength(1)
+    const hitlSliceTaskId = result.taskIds[0]
+
+    const queue = await import('../../mastra/queue')
+    await queue.initQueue()
+
+    // Mark the Coder sub-task as 'done' — inbox item is still open.
+    const subTaskId = await findSubTaskId(hitlSliceTaskId)
+    await markTaskDone(subTaskId)
+
+    // Inbox item is still open: tryCompleteHitlSlice must return false.
+    const completed = await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)
+    expect(completed).toBe(false)
+
+    // The hitl slice must remain 'blocked'.
+    const hitlRow = await queue.getClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [hitlSliceTaskId],
+    })
+    expect(
+      (hitlRow.rows[0] as unknown as { status: string }).status,
+    ).toBe('blocked')
+  })
+
+  it('inbox-first ordering: hitl slice flips to done once both conditions are met', async () => {
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(hitlSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+    const hitlSliceTaskId = result.taskIds[0]
+
+    const queue = await import('../../mastra/queue')
+    await queue.initQueue()
+    const inbox = await import('../../mastra/lib/inbox')
+
+    // Step 1: operator resolves inbox item first.
+    const inboxItemId = await findHitlInboxItemId()
+    await inbox.setInboxState(inboxItemId, 'resolved')
+
+    // Sub-task not yet done → still blocked.
+    expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(false)
+    const afterStep1 = await queue.getClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [hitlSliceTaskId],
+    })
+    expect((afterStep1.rows[0] as unknown as { status: string }).status).toBe('blocked')
+
+    // Step 2: sub-task reaches done.
+    const subTaskId = await findSubTaskId(hitlSliceTaskId)
+    await markTaskDone(subTaskId)
+
+    // Both conditions now met → hitl slice must flip to done.
+    expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(true)
+    const afterStep2 = await queue.getClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [hitlSliceTaskId],
+    })
+    expect((afterStep2.rows[0] as unknown as { status: string }).status).toBe('done')
+  })
+
+  it('sub-task-first ordering: hitl slice flips to done once both conditions are met', async () => {
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(hitlSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+    const hitlSliceTaskId = result.taskIds[0]
+
+    const queue = await import('../../mastra/queue')
+    await queue.initQueue()
+    const inbox = await import('../../mastra/lib/inbox')
+
+    // Step 1: sub-task reaches done first.
+    const subTaskId = await findSubTaskId(hitlSliceTaskId)
+    await markTaskDone(subTaskId)
+
+    // Inbox item not yet resolved → still blocked.
+    expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(false)
+    const afterStep1 = await queue.getClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [hitlSliceTaskId],
+    })
+    expect((afterStep1.rows[0] as unknown as { status: string }).status).toBe('blocked')
+
+    // Step 2: operator resolves inbox item.
+    const inboxItemId = await findHitlInboxItemId()
+    await inbox.setInboxState(inboxItemId, 'resolved')
+
+    // Both conditions now met → hitl slice must flip to done.
+    expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(true)
+    const afterStep2 = await queue.getClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [hitlSliceTaskId],
+    })
+    expect((afterStep2.rows[0] as unknown as { status: string }).status).toBe('done')
+  })
+
+  it('simultaneous ordering: hitl slice flips to done when both conditions are met at once', async () => {
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(hitlSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+    const hitlSliceTaskId = result.taskIds[0]
+
+    const queue = await import('../../mastra/queue')
+    await queue.initQueue()
+    const inbox = await import('../../mastra/lib/inbox')
+
+    // Both conditions fulfilled back-to-back (simultaneous from the function's
+    // perspective — no intermediate tryCompleteHitlSlice call).
+    const subTaskId = await findSubTaskId(hitlSliceTaskId)
+    await markTaskDone(subTaskId)
+    const inboxItemId = await findHitlInboxItemId()
+    await inbox.setInboxState(inboxItemId, 'dismissed') // dismissed counts too
+
+    // Single call completes the slice.
+    expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(true)
+    const hitlRow = await queue.getClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [hitlSliceTaskId],
+    })
+    expect((hitlRow.rows[0] as unknown as { status: string }).status).toBe('done')
+    // The hitl slice must never have been 'in-progress' — it jumps directly
+    // from 'blocked' to 'done', bypassing the Coder dispatch queue.
+    // (No dispatch would ever flip it to 'running'; the history here confirms
+    // the only transition we made was blocked→done via tryCompleteHitlSlice.)
+  })
+
+  it('coder-only PRDs are unaffected: tryCompleteHitlSlice returns false for a coder task', async () => {
+    const coderOnlyOutput = {
+      slices: [
+        {
+          title: 'Refactor the parser',
+          type: 'AFK' as const,
+          kind: 'coder' as const,
+          whatToBuild: 'Improve parser performance.',
+          acceptanceCriteria: ['parser is faster'],
+          blockedBy: [] as number[],
+          readFirst: ['src/parser.ts'] as string[],
+          prescriptiveAction: 'Optimise parseToken() in src/parser.ts.',
+          modifies: [] as string[],
+          creates: [] as string[],
+          verifyCmd: null,
+          taskType: 'auto' as const,
+        },
+      ],
+    }
+
+    vi.doMock('../../mastra/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
+        '../../mastra/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(coderOnlyOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+    expect(result.taskIds).toHaveLength(1)
+    const coderTaskId = result.taskIds[0]
+
+    const queue = await import('../../mastra/queue')
+    await queue.initQueue()
+
+    // Coder task starts 'queued' (dispatchable), not 'blocked'.
+    const coderRow = await queue.getClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [coderTaskId],
+    })
+    expect((coderRow.rows[0] as unknown as { status: string }).status).toBe('queued')
+
+    // tryCompleteHitlSlice must be a no-op on non-hitl tasks.
+    const completed = await sliceModule.tryCompleteHitlSlice(coderTaskId)
+    expect(completed).toBe(false)
+
+    // Coder task status must be unchanged.
+    const coderRowAfter = await queue.getClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [coderTaskId],
+    })
+    expect((coderRowAfter.rows[0] as unknown as { status: string }).status).toBe('queued')
+  })
+})

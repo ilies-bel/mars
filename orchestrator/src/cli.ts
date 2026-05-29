@@ -62,7 +62,7 @@ const FLAGS_WITH_VALUES = new Set([
   '--session',
 ])
 
-const REPEATABLE_FLAGS = new Set(['--blocked-by', '--files', '--done'])
+const REPEATABLE_FLAGS = new Set(['--blocked-by', '--files', '--done', '--tag'])
 
 const parseArgs = (argv: readonly string[]): ParsedArgs => {
   const positional: string[] = []
@@ -140,14 +140,15 @@ Commands:
                                 ayush-that/sub-agents.directory over HTTPS, cached
                                 under .mars/cache/sub-agents/ (7-day TTL).
                                 --verbose lists each discovered manifest on stderr.
-  task add "<prompt>" [--author kind:name] [--blocked-by <id>] [--tag coder] [plan flags]
+  task add "<prompt>" [--author kind:name] [--blocked-by <id>] [--tag <tag>] [plan flags]
                                 enqueue a runnable task directly (status='queued',
                                 skips triage; can be picked up by agent runners).
                                 --blocked-by <id> is repeatable; every id must
                                 already exist. The task will not dispatch until
-                                every listed blocker reaches 'done'. --tag picks
-                                the Worker that implements the task: 'coder'
-                                (default, only valid value) edits the worktree.
+                                every listed blocker reaches 'done'. --tag is
+                                repeatable; collected values form the tags list.
+                                The first tag routes to a Worker ('coder' is
+                                the default). Unknown tags fall back to Coder.
   proposal add "<goal>" [--author kind:name]
                                 create a proposal/plan in .mars/state.db. Author
                                 is detected from env/git when omitted: human if
@@ -375,6 +376,14 @@ Commands:
                                 .worktrees/ directories are never touched.
                                 --yes / -y skips the confirmation prompt
                                 (required from a non-TTY stdin).
+  cut verify <drain|reset|recreate>
+                                gate checks for the hard-cut to 4-letter id
+                                tags (PRD 52ec700f). drain: exits 0 only when
+                                no tasks are queued/blocked/running. reset:
+                                exits 0 only when every id-bearing table has
+                                zero rows. recreate: exits 0 only when no
+                                forbidden ids appear, and prints a checklist
+                                of the seven carry-forward proposal titles.
   where                         print resolved repo + state directory
   help                          show this message
   --version, -v                 print mars version and exit
@@ -819,6 +828,26 @@ Flags:
   --repo <path>   target repo (defaults to the resolver: --repo > MARS_REPO > git toplevel)
   --port <n>      bind port (default: 7777)
   --host <h>      bind host (default: 127.0.0.1)`,
+  cut: `mars cut verify <drain|reset|recreate>
+
+Gate checks for the hard-cut to 4-letter id tags (PRD 52ec700f).
+Run each command at the corresponding phase of the runbook.
+
+Phases:
+  drain
+      Exits 0 only when no tasks are in queued, blocked, or running status.
+      Lists any remaining in-flight tasks so the operator can wait or purge.
+
+  reset
+      Exits 0 only when every id-bearing table (tasks, proposals, inbox_items,
+      etc.) has zero rows in the DB. Run after deleting .mars/mars.db and
+      re-initialising with 'mars init'.
+
+  recreate
+      Exits 0 only when none of the superseded/dropped ids (04830c8e,
+      07201a16, 26471262) appear as a hex suffix of any current id.
+      Also prints a checklist of the seven carry-forward proposal titles,
+      marking each as ✓ (re-entered) or ✗ (still missing).`,
   help: `mars help [command]
 
 Show top-level help, or detailed help for a single command. Equivalent
@@ -950,7 +979,7 @@ const main = async (): Promise<void> => {
     skipTriage: boolean,
     blockerIds?: readonly string[],
     priority?: number,
-    tag?: 'coder',
+    tags?: string[],
     spec?: {
       files: readonly string[]
       verifyCmd: string | null
@@ -1000,7 +1029,7 @@ const main = async (): Promise<void> => {
         author,
         ...(blockerIds && blockerIds.length > 0 ? { blockerIds } : {}),
         ...(priority !== undefined ? { priority } : {}),
-        ...(tag !== undefined ? { tag } : {}),
+        ...(tags !== undefined ? { tags } : {}),
         ...(spec !== undefined ? { spec } : {}),
       },
       {
@@ -1050,15 +1079,10 @@ const main = async (): Promise<void> => {
         }
         priority = n
       }
-      const tagRaw = flags['--tag']
-      let tag: 'coder' | undefined
-      if (tagRaw !== undefined) {
-        if (tagRaw !== 'coder') {
-          console.error(`tag must be one of coder; got '${tagRaw}'`)
-          process.exit(1)
-        }
-        tag = tagRaw
-      }
+      const tags: string[] | undefined =
+        multiFlags['--tag'] && multiFlags['--tag'].length > 0
+          ? multiFlags['--tag']
+          : undefined
       // Structured-task spec (gsd-style). Any of --files/--verify/--done/--type
       // promotes the row from free-prose to structured. If none are passed, the
       // row keeps the legacy shape (spec column NULL) and the agent sees only
@@ -1098,7 +1122,7 @@ const main = async (): Promise<void> => {
           taskType,
         }
       }
-      await enqueueViaDaemon(prompt, true, blockerIds, priority, tag, spec)
+      await enqueueViaDaemon(prompt, true, blockerIds, priority, tags, spec)
       return
     }
     if (sub === 'show') {
@@ -1119,7 +1143,7 @@ const main = async (): Promise<void> => {
       console.log(`kind:       task`)
       console.log(`id:         ${task.id}`)
       console.log(`Status:     ${task.status}`)
-      console.log(`tag:        ${task.tag ?? 'coder'}`)
+      console.log(`tags:       ${(task.tags ?? ['coder']).join(', ')}`)
       console.log(`author:     ${formatAuthor(task.author)}`)
       console.log(`branch:     ${task.branch ?? '-'}`)
       console.log(`worktree:   ${task.worktreePath ?? '-'}`)
@@ -1717,7 +1741,7 @@ const main = async (): Promise<void> => {
       console.log(`kind:       task`)
       console.log(`id:         ${task.id}`)
       console.log(`Status:     ${task.status}`)
-      console.log(`tag:        ${task.tag ?? 'coder'}`)
+      console.log(`tags:       ${(task.tags ?? ['coder']).join(', ')}`)
       console.log(`author:     ${formatAuthor(task.author)}`)
       console.log(`branch:     ${task.branch ?? '-'}`)
       console.log(`worktree:   ${task.worktreePath ?? '-'}`)
@@ -2285,6 +2309,31 @@ const main = async (): Promise<void> => {
 
     console.error('usage: mars daemon <start|stop|restart|kill|status|reload|set-flag> [flags]')
     process.exit(2)
+  }
+
+  if (cmd === 'kpi') {
+    const sub = rest[0]
+    if (sub === 'snapshot') {
+      const { takeKpiSnapshot } = await import('./mastra/lib/kpi-snapshots.js')
+      const { getDefaultTaskStore } = await import('./mastra/lib/task-store.js')
+      const surface = await getDefaultTaskStore()
+      const snapshot = await takeKpiSnapshot({
+        surface,
+        now: new Date().toISOString(),
+      })
+      console.log(JSON.stringify(snapshot, null, 2))
+      return
+    }
+    if (sub === 'show') {
+      const { readLatestKpiSnapshot } = await import('./mastra/lib/kpi-snapshots.js')
+      const { getDefaultTaskStore } = await import('./mastra/lib/task-store.js')
+      const store = await getDefaultTaskStore()
+      const snapshot = await readLatestKpiSnapshot(store)
+      console.log(JSON.stringify(snapshot, null, 2))
+      return
+    }
+    console.error('usage: mars kpi <snapshot|show>')
+    process.exit(1)
   }
 
   if (cmd === 'sweep') {
@@ -3358,6 +3407,32 @@ const main = async (): Promise<void> => {
     console.error(`mars plugin: unknown subcommand '${subCmd ?? ''}'`)
     console.error('usage: mars plugin activate <path> | mars plugin deactivate')
     process.exit(1)
+  }
+
+  // -------------------------------------------------------------------------
+  // cut verify <phase>
+  //
+  // Gate checks for the hard-cut to 4-letter id tags (PRD 52ec700f).
+  // Three phases: drain, reset, recreate.
+  // -------------------------------------------------------------------------
+  if (cmd === 'cut') {
+    const subCmd = rest[0]
+    if (subCmd !== 'verify') {
+      console.error(
+        `usage: mars cut verify <drain|reset|recreate>`,
+      )
+      process.exit(1)
+    }
+    const phase = rest[1]
+    const { isCutPhase, runCutVerify } = await import('./cli/cut-verify.js')
+    if (!isCutPhase(phase)) {
+      console.error(
+        `mars cut verify: unknown phase '${phase ?? ''}'\nusage: mars cut verify <drain|reset|recreate>`,
+      )
+      process.exit(1)
+    }
+    await runCutVerify(phase, repo)
+    return
   }
 
   console.error(`unknown command: ${cmd}`)

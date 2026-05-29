@@ -353,7 +353,7 @@ describe('spawnOrAttachMainCommitter', () => {
   })
 })
 
-describe('attachToExistingFixTask preserves the ADR-0038 leaf invariant', () => {
+describe('attachToExistingFixTask preserves the ADR-0040 leaf invariant', () => {
   let repo: string
 
   beforeEach(() => {
