@@ -115,7 +115,7 @@ export interface ArcTaskEntry {
   hasTranscript: boolean
   /** Per-tool counts derived from this task's JSONL transcripts. */
   toolCallCounts: Record<string, number>
-  /** Notes about transcript coverage; see DeepReflectSession.transcriptNotes. */
+  /** Notes about transcript coverage (missing JSONL files, no session ids, …). */
   transcriptNotes: string[]
 }
 

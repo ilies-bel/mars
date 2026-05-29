@@ -196,9 +196,10 @@ mars adr add "<title>" "<body|@path>"
 ### Reflection
 
 `mars reflect` synthesises draft ideas from recent completed tasks
-(token spend, scorer signals); `mars deep-reflect [<id>]` walks one
-task's stored `claude -p` transcript event-by-event to surface dissonant
-tool calls and verify-claim mismatches. Both write back as drafts in
+(token spend, scorer signals); `mars arc reflect <originId>` walks every
+task in one arc's stored `claude -p` transcripts event-by-event to
+surface dissonant tool calls and verify-claim mismatches (a one-task
+arc collapses to that single transcript). Both write back as drafts in
 `ideas` — they never auto-run. Disable signal capture with
 `MARS_REFLECT_DISABLED=1`.
 
@@ -334,7 +335,7 @@ Environment variables:
 | `MARS_MAX_REFINE` | `2` | Daemon concurrency cap for refine. |
 | `MARS_MAX_STRUCTURED_WRITE` | `1` | Daemon concurrency cap for glossary / ADR writes. |
 | `MARS_REFLECT_DISABLED` | (unset) | When `=1`, skip per-task token/cost capture and short-circuit `mars reflect`. Scorers stay attached. |
-| `MARS_DEEP_REFLECT_MODEL` | `opus` | Model used by `mars deep-reflect`. |
+| `MARS_DEEP_REFLECT_MODEL` | `opus` | Model used by `mars arc reflect`. |
 | `MARS_AGENT_NAME` | (unset) | Author tag when an agent invokes `task add` / `idea add`. Also auto-detected from `CLAUDE_CODE` / `CLAUDECODE`. |
 
 `mars daemon reload` re-reads `.mars/daemon.json` and the `MARS_MAX_*`
