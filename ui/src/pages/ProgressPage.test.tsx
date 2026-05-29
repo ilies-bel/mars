@@ -90,3 +90,15 @@ describe('ProgressPage – proposal filter control', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Responsive layout: nav sidebar must not squeeze content on narrow viewports.
+// ---------------------------------------------------------------------------
+
+describe('ProgressPage – responsive layout', () => {
+  it('nav sidebar is hidden on mobile and visible on sm+ breakpoint', () => {
+    const html = renderToStaticMarkup(<ProgressPage />)
+    // hidden hides on all sizes; sm:flex reveals it at ≥640px.
+    expect(html).toContain('hidden sm:flex')
+  })
+})
