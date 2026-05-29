@@ -178,8 +178,8 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
  * accents from elsewhere in the codebase).
  */
 export const severityColor = (severity: TraceEvent['severity']): string => {
-  if (severity === 'error') return 'text-[#ff4f4f]'
-  if (severity === 'warn') return 'text-[#ff944d]'
+  if (severity === 'error') return 'text-error'
+  if (severity === 'warn') return 'text-warn'
   return 'text-iron/70'
 }
 
