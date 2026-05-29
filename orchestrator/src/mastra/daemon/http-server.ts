@@ -4,6 +4,7 @@ import type { FailureReasonCatalog } from '../lib/failure-reasons'
 import type { RecipeCatalog } from '../lib/recipes'
 import { buildOriginTree } from '../lib/origin-tree'
 import type { ActionQueueRow, DerivedInboxFilter } from './view/inbox'
+import type { TerminalEvent } from './view/terminal-events'
 import {
   cursorAfter,
   TRACE_EVENT_KINDS,
@@ -170,6 +171,12 @@ export interface HttpServerDeps {
    * UI server proxies this endpoint instead of querying the DB directly.
    */
   viewTodo: () => Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[] }>
+  /**
+   * Return the terminal-event feed from the daemon's DomainTaskStore.
+   * Served by `GET /view/terminal-events` so the read-only UI renders only
+   * what the daemon exposes — no direct DB access on the UI side.
+   */
+  viewTerminalEvents: () => Promise<{ events: TerminalEvent[] }>
 }
 
 export interface HttpServerHandle {
@@ -479,6 +486,18 @@ export const startHttpServer = async (
     if (req.method === 'GET' && req.url === '/view/todo') {
       deps
         .viewTodo()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/terminal-events — reverse-chronological feed of terminal-state
+    // task moments (completed/failed/dropped). The read-only UI proxies this
+    // endpoint instead of opening the DB directly, so the daemon is the single
+    // reader of its own database. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/terminal-events') {
+      deps
+        .viewTerminalEvents()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return
