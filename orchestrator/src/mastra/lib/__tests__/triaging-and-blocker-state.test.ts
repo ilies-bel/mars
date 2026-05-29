@@ -278,4 +278,41 @@ describe('Triaging status + Blocker state schema', () => {
       c.close()
     }
   })
+
+  it('promoteDraftToTriaging advances a draft task into triaging', async () => {
+    const { initQueue, enqueueTask, promoteDraftToTriaging } = await import(
+      '../../queue'
+    )
+    await initQueue()
+    const t = await enqueueTask('do a thing')
+    expect(t.status).toBe('draft')
+
+    const triaging = await promoteDraftToTriaging(t.id)
+    expect(triaging).not.toBeNull()
+    expect(triaging!.status).toBe('triaging')
+  })
+
+  it('promoteDraftToTriaging is a no-op when the task is not in draft', async () => {
+    const { initQueue, enqueueTask, promoteDraftToTriaging } = await import(
+      '../../queue'
+    )
+    await initQueue()
+    const t = await enqueueTask('do another thing', undefined, { skipTriage: true })
+    // Task lands in 'queued', not 'draft' — promote should return null.
+    expect(t.status).toBe('queued')
+    const result = await promoteDraftToTriaging(t.id)
+    expect(result).toBeNull()
+  })
+
+  it('promoteDraftToQueued accepts a triaging task once blockers are clear', async () => {
+    const { initQueue, enqueueTask, promoteDraftToTriaging, promoteDraftToQueued } =
+      await import('../../queue')
+    await initQueue()
+    const t = await enqueueTask('do yet another thing')
+    await promoteDraftToTriaging(t.id)
+
+    const queued = await promoteDraftToQueued(t.id)
+    expect(queued).not.toBeNull()
+    expect(queued!.status).toBe('queued')
+  })
 })
