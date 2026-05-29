@@ -405,9 +405,14 @@ export const startServer = async (
                     : (task?.branch ?? null),
                 empty,
                 investigation:
-                  typeof row.payload.investigation === 'string'
-                    ? row.payload.investigation
-                    : null,
+                  row.payload.investigation !== null &&
+                  typeof row.payload.investigation === 'object' &&
+                  typeof (row.payload.investigation as { text?: unknown }).text ===
+                    'string'
+                    ? (row.payload.investigation as { text: string }).text
+                    : typeof row.payload.investigation === 'string'
+                      ? row.payload.investigation
+                      : null,
               }
             }
 
