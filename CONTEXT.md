@@ -347,3 +347,6 @@ _Avoid_: AUC, SWE-Effi, budget AUC, resource-bounded effectiveness
 
 **triaging (task)**:
 Transient lifecycle phase between a freshly-promoted task and dispatch-eligibility; the task is visible to readers but the dispatcher must not pick it up while linker analysis may still attach blockers.
+
+**vega-reconciling (task)**:
+The lifecycle phase a task enters when its merge hits a non-FF conflict and is handed to the vcs-supervisor for reconciliation before re-attempting the merge.
