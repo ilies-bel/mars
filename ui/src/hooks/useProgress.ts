@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchProgress } from '@/shared/api'
 import { useSseConnected } from '@/shared/sseStatus'
@@ -37,18 +38,22 @@ export const useProgress = (options: UseProgressOptions = {}): State => {
 
   const tasks = query.data?.tasks ?? null
   const proposals = query.data?.proposals ?? []
-  const byCluster = emptyByCluster()
-  if (tasks) {
-    for (const t of tasks) {
-      byCluster[t.cluster].push(t)
+
+  const byCluster = useMemo(() => {
+    const clusters = emptyByCluster()
+    if (tasks) {
+      for (const t of tasks) {
+        clusters[t.cluster].push(t)
+      }
+      const byUpdatedDesc = (a: ProgressTask, b: ProgressTask): number =>
+        b.updatedAt.localeCompare(a.updatedAt)
+      clusters.Queued.sort(byUpdatedDesc)
+      clusters['In progress'].sort(byUpdatedDesc)
+      clusters.Blocked.sort(byUpdatedDesc)
+      clusters.Failed.sort(byUpdatedDesc)
     }
-    const byUpdatedDesc = (a: ProgressTask, b: ProgressTask): number =>
-      b.updatedAt.localeCompare(a.updatedAt)
-    byCluster.Queued.sort(byUpdatedDesc)
-    byCluster['In progress'].sort(byUpdatedDesc)
-    byCluster.Blocked.sort(byUpdatedDesc)
-    byCluster.Failed.sort(byUpdatedDesc)
-  }
+    return clusters
+  }, [tasks])
 
   const error = query.error ? (query.error as Error).message : null
 
