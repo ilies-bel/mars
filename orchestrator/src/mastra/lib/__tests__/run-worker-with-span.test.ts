@@ -544,6 +544,102 @@ describe('runNonLlmStepWithSpan — failed step', () => {
   })
 })
 
+describe('runNonLlmStepWithSpan — Vega upgrade (conflicted merge)', () => {
+  it('records workerName=Vega and sessionId when getVegaInfo returns non-null', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'merge',
+      workflowInstanceId: 'wf-vega-001',
+      originId: 'task-vega-abc',
+      phase: 'merge',
+      traceStore,
+      getVegaInfo: () => ({ workerName: 'Vega', sessionId: 'sess-vega-xyz' }),
+      fn: async () => undefined,
+    })
+
+    const ended = (await traceStore.query({ taskId: 'task-vega-abc', kind: ['step_ended'] }))[0]
+    expect(ended.payload.workerName).toBe('Vega')
+    expect(ended.payload.sessionId).toBe('sess-vega-xyz')
+    expect(ended.payload.outcome).toBe('completed')
+  })
+
+  it('carries NO workerName and NO sessionId when getVegaInfo returns null (fast-forward merge)', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'merge',
+      workflowInstanceId: 'wf-ff-001',
+      originId: 'task-ff-abc',
+      phase: 'merge',
+      traceStore,
+      getVegaInfo: () => null,
+      fn: async () => undefined,
+    })
+
+    const events = await traceStore.query({ taskId: 'task-ff-abc' })
+    for (const e of events) {
+      expect(e.payload.workerName).toBeUndefined()
+      expect(e.payload.sessionId).toBeUndefined()
+    }
+  })
+
+  it('produces exactly one step_started and one step_ended — not two spans', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'merge',
+      workflowInstanceId: 'wf-vega-single-span',
+      originId: 'task-vega-single',
+      phase: 'merge',
+      traceStore,
+      getVegaInfo: () => ({ workerName: 'Vega', sessionId: 'sess-vega-single' }),
+      fn: async () => undefined,
+    })
+
+    const events = await traceStore.query({ taskId: 'task-vega-single' })
+    expect(events).toHaveLength(2)
+    expect(events.map((e) => e.kind).sort()).toEqual(['step_ended', 'step_started'])
+  })
+
+  it('satisfies the Session invariant: step_ended has workerName iff getVegaInfo is non-null', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    // Conflicted merge: getVegaInfo returns Vega info → span IS a Session
+    await runNonLlmStepWithSpan({
+      stepName: 'merge',
+      workflowInstanceId: 'wf-invariant-conflict',
+      originId: 'task-invariant-conflict',
+      phase: 'merge',
+      traceStore,
+      getVegaInfo: () => ({ workerName: 'Vega', sessionId: 'sess-invariant' }),
+      fn: async () => undefined,
+    })
+
+    // Fast-forward merge: no getVegaInfo → span is NOT a Session
+    await runNonLlmStepWithSpan({
+      stepName: 'merge',
+      workflowInstanceId: 'wf-invariant-ff',
+      originId: 'task-invariant-ff',
+      phase: 'merge',
+      traceStore,
+      fn: async () => undefined,
+    })
+
+    const conflictEnded = (
+      await traceStore.query({ taskId: 'task-invariant-conflict', kind: ['step_ended'] })
+    )[0]
+    const ffEnded = (
+      await traceStore.query({ taskId: 'task-invariant-ff', kind: ['step_ended'] })
+    )[0]
+
+    // Conflicted merge span IS a Session (workerName present)
+    expect(typeof conflictEnded.payload.workerName).toBe('string')
+    // Fast-forward span is NOT a Session (no workerName)
+    expect(ffEnded.payload.workerName).toBeUndefined()
+  })
+})
+
 describe('runNonLlmStepWithSpan — trace store write errors are non-fatal', () => {
   it('still runs and returns even when record() throws', async () => {
     const brokenStore = {

@@ -83,9 +83,12 @@ const fromVcsSupervisor = async (
   try {
     const source = await readFile(path, 'utf8')
     const fm = parseSupervisorFrontmatter(source)
-    if (!fm?.name || !fm.model) return null
+    if (!fm?.model) return null
     return {
-      name: fm.name,
+      // Use 'Vega' as the canonical worker name so that the sessions endpoint
+      // (which queries "workerName":"Vega" in step_ended payloads) returns the
+      // conflicted-merge Sessions recorded by the merge step span.
+      name: 'Vega',
       model: fm.model,
       effort: null,
       permissionMode: null,
