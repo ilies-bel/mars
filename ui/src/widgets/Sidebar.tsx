@@ -5,7 +5,7 @@ interface Props {
 }
 
 export const Sidebar = ({ tasksCount, triageCount, connected }: Props) => (
-  <aside className="flex h-full w-[200px] flex-col gap-1.5 border-r border-border bg-bg px-3 py-4">
+  <aside className="hidden sm:flex h-full w-[200px] flex-col gap-1.5 border-r border-border bg-bg px-3 py-4">
     <div className="flex items-center gap-2 px-1 pb-3">
       <div className="h-3.5 w-3.5 rotate-45 bg-flame" />
       <span className="text-[14px] font-bold text-fg">mars</span>
