@@ -204,6 +204,36 @@ describe('matchFull rules are checked against full output', () => {
     expect(classifyError(gitOnlyError)).toBe('not-fast-forward')
   })
 
+  it('computeFailureSignature produces merge:vcs-supervisor-aborted/not-fast-forward for the Path 2 ancestry-check error shape', () => {
+    // mergeBranch (git.ts) Path 2: VCS supervisor completed the rebase but
+    // integration advanced before git.ts ran `merge-base --is-ancestor`.
+    // First-line message: "fast-forward into <branch> not possible: <sha> is not
+    // an ancestor of <sha>." followed by supervisor JSON in the accumulated output.
+    // "is not an ancestor of" is NOT matched by the old `/is not a fast-forward of/i`
+    // rule, so this previously produced /unclassified (task mars-c5b48744, 2026-05-30).
+    const errorOutput = [
+      'fast-forward into main not possible: abc123def456abc123 is not an ancestor of def456abc123def4.',
+      '{"type":"result","subtype":"success","result":"COMMIT: rebase complete\\nSTATUS: completed"}',
+    ].join('\n')
+    expect(
+      computeFailureSignature('merge:vcs-supervisor-aborted', errorOutput),
+    ).toBe('merge:vcs-supervisor-aborted/not-fast-forward')
+  })
+
+  it('computeFailureSignature produces merge:vcs-supervisor-aborted/not-fast-forward for the Path 3 CAS-race error shape', () => {
+    // mergeBranch (git.ts) Path 3: ancestry check passed but integration advanced
+    // in the window before `git update-ref <ref> <new> <old>` executed.
+    // First-line message: "integration moved during merge, retry needed: <branch>
+    // advanced concurrently." also previously produced /unclassified.
+    const errorOutput = [
+      'integration moved during merge, retry needed: main advanced concurrently.',
+      '{"type":"result","subtype":"success","result":"COMMIT: rebase complete\\nSTATUS: completed"}',
+    ].join('\n')
+    expect(
+      computeFailureSignature('merge:vcs-supervisor-aborted', errorOutput),
+    ).toBe('merge:vcs-supervisor-aborted/not-fast-forward')
+  })
+
   it('computeFailureSignature produces verify:test/test-libsql-no-such-table for the real libsql concurrent-transaction error shape', () => {
     // The actual error captured when two concurrent publishWithRetry() calls race
     // against a libsql client backed by ':memory:'. The second transaction gets a

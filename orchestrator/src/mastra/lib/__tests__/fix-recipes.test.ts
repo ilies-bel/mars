@@ -1107,6 +1107,41 @@ describe('fix-recipes', () => {
     })
   })
 
+  describe('merge:vcs-supervisor-aborted/not-fast-forward covers Path 2 and Path 3 classifier extensions', () => {
+    // Confirmed in investigation 2026-05-30 (task mars-c5b48744): two live
+    // failure paths in mergeBranch (git.ts) produce first-line messages that
+    // previously classified as /unclassified. The not-fast-forward rule's
+    // `match` regex was extended to cover both shapes so they route to the
+    // existing recipe instead of raising a no-recipe inbox item.
+    it('has a registered recipe under merge:vcs-supervisor-aborted/not-fast-forward', () => {
+      expect(hasRecipe('merge:vcs-supervisor-aborted/not-fast-forward')).toBe(true)
+    })
+
+    it('recipe prompt instructs the recovery agent to lift the committed diff and re-land it — correct for all three not-fast-forward variants', () => {
+      const ctx = {
+        targetPath: '/tmp/worktrees/task-mars-c5b48744',
+        statusOutput: '',
+        targetBranch: 'task/mars-c5b48744',
+        integrationBranch: 'main',
+        originalPrompt: '',
+      }
+      const recipe = getRecipe('merge:vcs-supervisor-aborted/not-fast-forward')
+      const prompt = recipe.buildPrompt(ctx)
+      // The code is committed on the task branch; the agent must lift it.
+      expect(prompt).toContain(`git -C ${ctx.targetPath} diff`)
+      expect(prompt).toMatch(/commit immediately/i)
+      // Agent must work in their own recovery worktree, not the failing one.
+      expect(prompt).toMatch(/FRESH recovery worktree/i)
+      expect(prompt).toMatch(/never edit there/i)
+      // False-positive escape hatch must be gated on a non-zero rev-list count.
+      const exitLine = prompt
+        .split('\n')
+        .find((line) => /exit successfully/i.test(line))
+      expect(exitLine).toBeDefined()
+      expect(exitLine).toMatch(/non-zero/i)
+    })
+  })
+
   describe('intentionally absent recipes (documented investigation outcomes)', () => {
     it('merge:crashed/index-lock-contention has no recipe — environmental transient failure; operator restarts with `mars restart`', () => {
       // Investigated 2026-05-18 (task 5c15a8e1). Root cause: git checkout main
