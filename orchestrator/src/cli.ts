@@ -60,6 +60,10 @@ const FLAGS_WITH_VALUES = new Set([
   '--type',
   '--wrapper',
   '--session',
+  '--model',
+  '--effort',
+  '--permission-mode',
+  '--max-messages',
 ])
 
 const REPEATABLE_FLAGS = new Set(['--blocked-by', '--files', '--done', '--tag'])
@@ -386,6 +390,15 @@ Commands:
                                 zero rows. recreate: exits 0 only when no
                                 forbidden ids appear, and prints a checklist
                                 of the seven carry-forward proposal titles.
+  worker list                   print all known Workers (hard-coded defaults
+                                merged with any persisted registry)
+  worker add <name> --model <model> [flags]
+                                write a Worker declaration to the registry
+                                file (.mars/worker-registry.json). Seeds
+                                the file from hard-coded defaults on first
+                                write. Flags: --effort (default: high),
+                                --permission-mode (default: default),
+                                --max-messages (default: 0 = unbounded).
   where                         print resolved repo + state directory
   help                          show this message
   --version, -v                 print mars version and exit
@@ -860,6 +873,28 @@ Phases:
       07201a16, 26471262) appear as a hex suffix of any current id.
       Also prints a checklist of the seven carry-forward proposal titles,
       marking each as ✓ (re-entered) or ✗ (still missing).`,
+  worker: `mars worker <subcommand> ...
+
+Subcommands:
+  list
+      Print all known Workers — hard-coded defaults merged with any
+      entries in the persisted registry (.mars/worker-registry.json).
+      When no registry file exists, only the five built-in Workers
+      (Coder, Planner, Slicer, Triager, Fixer) are shown.
+
+  add <name> --model <model> [flags]
+      Write a Worker declaration to the registry file. Seeds the file
+      from hard-coded defaults on the first write. If the name matches
+      an existing worker (built-in or registry), it is overwritten.
+
+      Required:
+        <name>            Worker name (case-sensitive)
+        --model <model>   Claude model identifier
+
+      Optional:
+        --effort <level>          one of low|medium|high|xhigh|max (default: high)
+        --permission-mode <mode>  one of default|bypassPermissions|... (default: default)
+        --max-messages <n>        non-negative integer; 0 = unbounded (default: 0)`,
   help: `mars help [command]
 
 Show top-level help, or detailed help for a single command. Equivalent
@@ -934,6 +969,106 @@ const main = async (): Promise<void> => {
     console.log(`supervisorsDir: ${ctx.supervisorsDir}`)
     console.log(`cacheDir:       ${ctx.cacheDir}`)
     return
+  }
+
+  if (cmd === 'worker') {
+    const sub = rest[0]
+
+    if (sub === 'list') {
+      const { listMergedWorkers } = await import(
+        './mastra/workers/persisted-registry'
+      )
+      const workers = listMergedWorkers(ctx.stateDir)
+      const header =
+        'NAME'.padEnd(20) +
+        'MODEL'.padEnd(36) +
+        'EFFORT'.padEnd(10) +
+        'PERMISSION'
+      console.log(header)
+      for (const w of workers) {
+        const perm =
+          w.permissionMode === 'bypassPermissions' ? 'bypass' : w.permissionMode
+        console.log(
+          w.name.padEnd(20) + w.model.padEnd(36) + w.effort.padEnd(10) + perm,
+        )
+      }
+      return
+    }
+
+    if (sub === 'add') {
+      const name = rest[1]
+      const model = flags['--model']
+      if (!name || !model) {
+        console.error(
+          'usage: mars worker add <name> --model <model> [--effort high|medium|...] [--permission-mode default|bypassPermissions] [--max-messages <n>]',
+        )
+        process.exit(1)
+      }
+
+      const effortRaw = flags['--effort'] ?? 'high'
+      const VALID_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
+      if (!VALID_EFFORTS.has(effortRaw)) {
+        console.error(
+          `effort must be one of low, medium, high, xhigh, max; got '${effortRaw}'`,
+        )
+        process.exit(1)
+      }
+
+      const permRaw = flags['--permission-mode'] ?? 'default'
+      const VALID_PERMS = new Set([
+        'acceptEdits',
+        'auto',
+        'bypassPermissions',
+        'default',
+        'dontAsk',
+        'plan',
+      ])
+      if (!VALID_PERMS.has(permRaw)) {
+        console.error(
+          `permission-mode must be one of acceptEdits, auto, bypassPermissions, default, dontAsk, plan; got '${permRaw}'`,
+        )
+        process.exit(1)
+      }
+
+      let maxMessages = 0
+      const maxRaw = flags['--max-messages']
+      if (maxRaw !== undefined) {
+        const n = Number(maxRaw)
+        if (!Number.isInteger(n) || n < 0) {
+          console.error(
+            `max-messages must be a non-negative integer; got '${maxRaw}'`,
+          )
+          process.exit(1)
+        }
+        maxMessages = n
+      }
+
+      const { addWorkerToRegistry } = await import(
+        './mastra/workers/persisted-registry'
+      )
+      addWorkerToRegistry(ctx.stateDir, {
+        name,
+        model,
+        effort: effortRaw as 'low' | 'medium' | 'high' | 'xhigh' | 'max',
+        permissionMode: permRaw as
+          | 'acceptEdits'
+          | 'auto'
+          | 'bypassPermissions'
+          | 'default'
+          | 'dontAsk'
+          | 'plan',
+        bare: false,
+        disallowedTools: [],
+        outputFormat: 'stream-json',
+        maxMessages,
+        runtime: 'headless',
+      })
+      console.log(`added worker ${name}`)
+      return
+    }
+
+    console.error('usage: mars worker <list|add>')
+    process.exit(2)
   }
 
   if (cmd === 'init') {
