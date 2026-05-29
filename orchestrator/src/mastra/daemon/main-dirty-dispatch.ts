@@ -60,12 +60,14 @@ export const runMainDirtyDispatchCheck = async (
   const recipe = recipeCatalog.get(MAIN_COMMITER_RECIPE)
   if (!recipe) {
     // Recipe missing means the binary was shipped without its built-in
-    // file (or a broken override stripped it). We cannot spawn a
-    // committer without a prompt — fall through and let the legacy
-    // `setup:preflight/dirty-main` path inside the workflow handle it
-    // (until slice K retires the legacy path).
+    // file (or a broken override stripped it). With the legacy
+    // `setup:preflight/dirty-main` backstop retired (slice K), there is
+    // nothing to fall back to inside the workflow — the dispatch must
+    // proceed and the verify-time dirty-main check (also wired to
+    // `main-commiter`) will park the task. Surface a warn-level log so
+    // an operator notices the broken catalog.
     log(
-      `[main-dirty] dispatch-time: integration branch ${integrationBranch} is dirty for task ${task.id}, but recipe '${MAIN_COMMITER_RECIPE}' is missing from the catalog; falling back to legacy preflight`,
+      `[main-dirty] dispatch-time: integration branch ${integrationBranch} is dirty for task ${task.id}, but recipe '${MAIN_COMMITER_RECIPE}' is missing from the catalog; proceeding to dispatch (verify-time check still applies)`,
     )
     return false
   }

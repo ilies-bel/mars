@@ -3,7 +3,6 @@ import { z } from 'zod'
 
 import { runTool, nullTraceStore, type TraceCtx } from '../mastra/lib/run-tool'
 import {
-  checkSetupPreflight,
   cleanWorktreeIfNoCommitsAhead,
   createWorktree,
   removeWorktree,
@@ -71,26 +70,6 @@ const errorHaystack = (err: unknown): string => {
 
 export const isBlockersAbortError = (err: unknown): boolean =>
   errorHaystack(err).includes('has incomplete blockers; aborting dispatch')
-
-// Thrown by the setup step when the merge target (integration branch) has
-// uncommitted tracked changes at the moment the worktree would be created.
-// The leading phrase is classified as `dirty-main` by failure-signature.ts,
-// producing signature `setup:preflight/dirty-main`, which the shared
-// `dirtyMainAtSetupRecipe` in fix-recipes.ts handles by auto-committing the
-// dirty files on the merge target. Routing through the standard
-// failure-handler means the source task is parked `blocked` WITH a
-// task_blockers edge to the recovery task — no empty-blocker exception.
-// The first task to hit it spawns the recovery; every later task attaches
-// an edge via `findSharedFixTask`, so one commit unblocks the herd.
-export const DIRTY_MAIN_SETUP_MESSAGE =
-  'merge target is dirty before coding'
-
-// True when an error is the dirty-main setup abort thrown by the setup step.
-// The daemon uses it to suppress the misleading `task.completed status=failed`
-// emit — the failure-handler has already parked the source `blocked` with a
-// real task_blockers edge.
-export const isDirtyMainSetupError = (err: unknown): boolean =>
-  errorHaystack(err).includes('setup:preflight/dirty-main')
 
 // Thrown by the verify step's slice-F.2 dirty-main check. The verify step
 // detects an uncommitted state on the integration branch and parks the task
@@ -682,73 +661,14 @@ export const implementWorkflow = defineWorkflow<
           throw new Error(BLOCKERS_ABORT_MESSAGE(input.taskId))
         }
 
-        // Setup-time pre-flight: abort before creating the worktree or
-        // dispatching the coding agent when the merge target already has
-        // uncommitted changes on tracked paths. This is the same condition
-        // that checkMergeTargetStatus catches at merge time — detecting it
-        // here prevents the full coding cost (historically ~$1–2 per
-        // occurrence). Only tracked files matter: untracked/ignored files
-        // cannot block `git merge --ff-only`.
-        try {
-          const { repoRoot: preflightRoot } = resolveContext()
-          const preflight = await checkSetupPreflight(preflightRoot, buildCtx('setup'))
-          if (preflight.dirty) {
-            const dirtyFiles = preflight.dirtyLines
-            // Detection only — no inbox-raise, no manual status write. Hand
-            // the failure to the standard self-heal pipeline so it spawns (or
-            // attaches to) the shared `setup:preflight/dirty-main` recovery
-            // task and parks THIS task `blocked` with a real task_blockers
-            // edge. No empty-blocker exception: blocked always implies an
-            // edge.
-            const errorOutput = `${DIRTY_MAIN_SETUP_MESSAGE} on ${input.integrationBranch}\n\n${dirtyFiles.join('\n')}`
-            await handleTaskFailureWithFixTask({
-              taskId: input.taskId,
-              failingStep: 'setup:preflight',
-              errorOutput,
-              branch: input.integrationBranch,
-              store,
-              recipeContext: {
-                // The dirty files live on the merge target itself, in the
-                // repo root — NOT in a worktree (none was created). The
-                // recovery recipe operates there via `git -C <targetPath>`.
-                targetPath: preflightRoot,
-                statusOutput: dirtyFiles.join('\n'),
-                targetBranch: input.integrationBranch,
-                integrationBranch: input.integrationBranch,
-                originalPrompt: '',
-              },
-            }).catch((err) => {
-              console.error(
-                `[setup:preflight] task ${input.taskId} dirty-main handling errored:`,
-                err,
-              )
-            })
-            // Throw the sentinel: the engine records setup-worktree as
-            // `failed` and `runWorkflow` returns `{status:'failed', error}`.
-            // The failure-handler above already parked the source `blocked`
-            // with a real task_blockers edge; the daemon's
-            // `isDirtyMainSetupError` suppression keeps the misleading
-            // `task.completed status=failed` emit from firing.
-            throw new Error(
-              `task ${input.taskId} setup:preflight/dirty-main: ${DIRTY_MAIN_SETUP_MESSAGE}`,
-            )
-          }
-        } catch (gitErr) {
-          // Re-throw only our own dirty-main abort. Git/IO failures are
-          // swallowed: the pre-flight is best-effort — if we cannot determine
-          // the target's state we proceed and let the merge-time check catch
-          // it.
-          if (
-            gitErr instanceof Error &&
-            gitErr.message.includes('setup:preflight/dirty-main')
-          ) {
-            throw gitErr
-          }
-          console.warn(
-            `[setup:preflight] task ${input.taskId} dirty-main pre-flight threw, continuing:`,
-            gitErr,
-          )
-        }
+        // Dirty integration-branch detection lives in two places now:
+        //   - dispatch-time, before runWorkflow is called at all
+        //     (`runMainDirtyDispatchCheck` in `daemon/main-dirty-dispatch.ts`),
+        //   - verify-time, at the top of the verify step below
+        //     (sentinel `verify:main-dirty`).
+        // Both route through `spawnOrAttachMainCommitter` and park the task
+        // behind the `main-commiter` recovery. The legacy setup-time
+        // `checkSetupPreflight` backstop was retired in slice K.
 
         await updateTask(input.taskId, { status: 'running' }, store)
         const ref = await createWorktree({

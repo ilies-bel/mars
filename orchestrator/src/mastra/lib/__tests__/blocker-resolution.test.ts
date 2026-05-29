@@ -671,7 +671,7 @@ describe('blocker-resolution (task_blockers)', () => {
         payload: {},
         context: {},
         raisedBy: 'test',
-        signature: 'setup:preflight/dirty-main',
+        signature: 'verify:main-dirty',
         originTaskId: orphanOriginId,
       })
 

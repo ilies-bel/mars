@@ -45,19 +45,6 @@ describe('computeFailureSignature', () => {
     ).toBe('merge:preflight/not-fast-forward')
   })
 
-  it('classifies the setup-time dirty merge target as dirty-main, distinct from the merge-time uncommitted-changes', () => {
-    // setupStep emits `merge target is dirty before coding on <branch>` as
-    // the first line. It must classify as `dirty-main` (its own recipe),
-    // NOT `uncommitted-changes` (the merge-time variant) — the phrasing
-    // deliberately omits "has uncommitted changes" to avoid the collision.
-    expect(
-      computeFailureSignature(
-        'setup:preflight',
-        'merge target is dirty before coding on main\n\n M orchestrator/src/foo.ts',
-      ),
-    ).toBe('setup:preflight/dirty-main')
-  })
-
   it('returns the unclassified slug when no rule matches', () => {
     const sig = computeFailureSignature(
       'verify:test',
@@ -322,13 +309,6 @@ describe('errorClassRules registry', () => {
 })
 
 describe('causeForSignature', () => {
-  it('renders an operator-owned cause for the setup-time dirty-main signature directing operator to clean main and restart', () => {
-    const cause = causeForSignature('setup:preflight/dirty-main', 'mars-1234abcd')
-    expect(cause).not.toBeNull()
-    expect(cause!.toLowerCase()).toContain('dirty')
-    expect(cause).toContain('mars restart mars-1234abcd')
-  })
-
   it('renders an operator-owned cause for the dirty-integration-branch signature naming clean main + restart', () => {
     const cause = causeForSignature(
       'merge:preflight/uncommitted-changes',

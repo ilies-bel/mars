@@ -52,7 +52,10 @@ import {
   onBlockerTaskFailed,
   recoverBlockedTasks,
 } from '../blocker-resolution'
-import { supersedeInboxItemsForOrigin } from '../lib/inbox'
+import {
+  supersedeInboxItemsForOrigin,
+  supersedeObsoletePreflightDirtyMainRows,
+} from '../lib/inbox'
 import {
   raiseAggregatedMainCommiterFailureRow,
   sweepStaleFailedMainCommiterInbox,
@@ -338,6 +341,24 @@ export const startDaemon = async (
 
   await initQueue()
 
+  // Slice K one-shot cleanup: supersede any open inbox rows that still
+  // describe the retired `setup:preflight/dirty-main` failure mode. The
+  // codepath no longer exists, so these rows can never reach a true
+  // resolution from the operator side. Idempotent: silent when no rows
+  // match; one info line when at least one row was closed.
+  try {
+    const closed = await supersedeObsoletePreflightDirtyMainRows()
+    if (closed.length > 0) {
+      log(
+        `[slice K] resolved ${closed.length} obsolete preflight-dirty-main inbox rows`,
+      )
+    }
+  } catch (err) {
+    log(
+      `[slice K] preflight-dirty-main inbox cleanup failed: ${(err as Error).message}`,
+    )
+  }
+
   // Forensic backfill check for ADR-0038 (recovery tasks are leaf nodes).
   // Read-only scan of `task_blockers` for rows where either endpoint is a
   // recovery (fix) task — those edges predate the leaf-node guard and must
@@ -580,7 +601,6 @@ export const startDaemon = async (
       )
       const {
         isBlockersAbortError,
-        isDirtyMainSetupError,
         isMainDirtyVerifyError,
         isTooHardAbortError,
       } = await import('../../workflows/implement-workflow')
@@ -593,20 +613,13 @@ export const startDaemon = async (
         log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
         return
       }
-      // A dirty merge target at setup routes through the standard self-heal
-      // handler (setup:preflight/dirty-main): the source task is already
-      // parked `blocked` with a task_blockers edge to the shared recovery
-      // task. The step still throws to abort the run, so the result surfaces
-      // as `failed` — suppress the misleading `task.completed status=failed`
-      // emit and let the blocked state stand.
-      if (result.status === 'failed' && isDirtyMainSetupError(resultError)) {
-        log(`[implement] ${task.id} parked blocked: merge target dirty at setup; shared recovery task spawned/attached`)
-        return
-      }
       // Slice F.2: verify-time dirty-main detection. The verify step parked
       // the source `blocked` behind a `main-commiter` recovery and threw a
       // sentinel; suppress the misleading `task.completed status=failed`
-      // emit, same shape as the setup-preflight case above.
+      // emit. (Slice K retired the legacy setup-time preflight; the
+      // equivalent dispatch-time check runs in `runMainDirtyDispatchCheck`
+      // before the workflow is dispatched, so no in-workflow suppression
+      // pair is needed there.)
       if (result.status === 'failed' && isMainDirtyVerifyError(resultError)) {
         log(`[implement] ${task.id} parked blocked: integration branch dirty at verify; main-commiter spawned/attached`)
         return

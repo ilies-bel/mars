@@ -798,6 +798,59 @@ export const reconcileStaleInboxItems = async (
 }
 
 /**
+ * Slice K one-shot cleanup: supersede every open inbox row whose payload or
+ * body still references the retired `setup:preflight/dirty-main` failure
+ * mode. F.2's `verify:main-dirty` + `main-commiter` path replaced that code
+ * path entirely; rows from a pre-F.2 daemon describe a system that no longer
+ * exists and can never reach a true resolution from the operator side.
+ *
+ * Each matching row is closed via `setInboxState` with
+ * `resolution: 'superseded'`, `note: 'superseded by slice K: preflight code
+ * path retired'`, and a matching `inbox_history` entry. The supersede goes
+ * through the standard lifecycle (NOT a raw DELETE) so the trail is visible
+ * to anyone reading `inbox_history`.
+ *
+ * Idempotent — rerunning matches no open rows (closed rows are excluded by
+ * the WHERE clause) and produces no further writes.
+ *
+ * @returns The ids of the rows that were superseded.
+ */
+export const supersedeObsoletePreflightDirtyMainRows = async (
+  by = 'daemon:slice-k-cleanup',
+): Promise<string[]> => {
+  await initInbox()
+  const c = getClient()
+  // The legacy strings can appear in any of three places:
+  //  - `payload` (JSON blob) → matches the failure-signature or wrapped
+  //    `retry_budget_exhausted:setup:preflight/...` form;
+  //  - `body` (rendered markdown) → matches the inbox row's own description
+  //    of the failure mode.
+  // SQL LIKE substring match is enough here because the legacy strings are
+  // distinctive enough not to collide with live wording.
+  const rows = await c.execute({
+    sql: `SELECT id FROM inbox_items
+           WHERE state = 'open'
+             AND (
+               payload LIKE '%setup:preflight/dirty-main%'
+               OR payload LIKE '%retry_budget_exhausted:setup:preflight%'
+               OR body LIKE '%setup:preflight/dirty-main%'
+             )`,
+    args: [],
+  })
+  const ids: string[] = []
+  for (const row of rows.rows) {
+    const id = (row as unknown as { id: string }).id
+    await setInboxState(id, 'resolved', {
+      resolution: 'superseded',
+      note: 'superseded by slice K: preflight code path retired',
+      by,
+    })
+    ids.push(id)
+  }
+  return ids
+}
+
+/**
  * Delete the stale-worktree dismissal row for a task so a future
  * stale-worktree alert can re-fire cleanly if the task becomes stale again.
  * No-op when no row exists.

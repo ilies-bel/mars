@@ -7,14 +7,12 @@ import {
   COMMIT_FOOTER,
   CODING_DISCIPLINE,
   BLOCKERS_ABORT_MESSAGE,
-  DIRTY_MAIN_SETUP_MESSAGE,
   DEVIATION_RULES,
   TOO_HARD_ABORT_MESSAGE,
   composePrompt,
   detectPostCoderState,
   failureExcerpt,
   isBlockersAbortError,
-  isDirtyMainSetupError,
   isTooHardAbortError,
   resolveWorkerSystemPrompt,
   shouldWireReadSpanWatcher,
@@ -496,49 +494,6 @@ describe('isBlockersAbortError — cause-chain robustness', () => {
     ;(a as { cause?: unknown }).cause = b
     expect(() => isBlockersAbortError(a)).not.toThrow()
     expect(isBlockersAbortError(a)).toBe(false)
-  })
-})
-
-describe('isDirtyMainSetupError', () => {
-  // setupStep throws `task <id> setup:preflight/dirty-main: <message>`; the
-  // detector keys on the signature substring so the daemon can suppress the
-  // misleading `task.completed status=failed` emit (the source is already
-  // parked blocked with a real task_blockers edge).
-  const thrown = (taskId: string): string =>
-    `task ${taskId} setup:preflight/dirty-main: ${DIRTY_MAIN_SETUP_MESSAGE}`
-
-  it('matches the dirty-main setup abort', () => {
-    expect(isDirtyMainSetupError(new Error(thrown('mars-abc')))).toBe(true)
-  })
-
-  it('does not false-positive on unrelated errors', () => {
-    expect(isDirtyMainSetupError(new Error('tsc failed: TS2304'))).toBe(false)
-    expect(isDirtyMainSetupError(new Error('verify command exited 1'))).toBe(false)
-    // The merge-time dirty-target failure is a different signature and must
-    // NOT be swallowed by this detector.
-    expect(
-      isDirtyMainSetupError(new Error('merge:preflight/uncommitted-changes')),
-    ).toBe(false)
-    expect(isDirtyMainSetupError(null)).toBe(false)
-    expect(isDirtyMainSetupError(undefined)).toBe(false)
-  })
-
-  it('matches when Mastra wraps the error on the cause chain', () => {
-    const wrapped = new Error('Step setup-worktree failed', {
-      cause: new Error(thrown('mars-xyz')),
-    })
-    expect(isDirtyMainSetupError(wrapped)).toBe(true)
-  })
-
-  it('does not match the blockers sentinel', () => {
-    expect(isDirtyMainSetupError(new Error(BLOCKERS_ABORT_MESSAGE('mars-abc')))).toBe(false)
-  })
-
-  it('DIRTY_MAIN_SETUP_MESSAGE avoids the uncommitted-changes substring', () => {
-    // Critical: the classifier rule for `dirty-main` must win over the
-    // `uncommitted-changes` rule, which it only does if the message does
-    // not contain "has uncommitted changes".
-    expect(DIRTY_MAIN_SETUP_MESSAGE).not.toContain('has uncommitted changes')
   })
 })
 
