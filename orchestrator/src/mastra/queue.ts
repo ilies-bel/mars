@@ -800,6 +800,30 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_events_id ON events(id)`,
   )
+  // ADR-0038: KPI snapshot table. One row per operator-triggered snapshot.
+  // Holds a 7-day rolling window of the four-KPI vector. failure_rate is
+  // populated in slice 1; other KPI columns (cost_per_arc_*, autonomous_
+  // completion_rate, recovery_success_rate) are reserved as NULL until later
+  // slices fill them. No composite health-score column is permitted (ADR-0038
+  // explicitly forbids it).
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS kpi_snapshots (
+      id TEXT PRIMARY KEY,
+      taken_at TEXT NOT NULL,
+      window_start TEXT NOT NULL,
+      window_end TEXT NOT NULL,
+      sample_count INTEGER NOT NULL,
+      low_confidence INTEGER NOT NULL,
+      cost_per_arc_p50 REAL,
+      cost_per_arc_p90 REAL,
+      failure_rate REAL,
+      autonomous_completion_rate REAL,
+      recovery_success_rate REAL
+    )
+  `)
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_kpi_snapshots_taken_at ON kpi_snapshots(taken_at)`,
+  )
 }
 
 const MAX_CONVERSATION_BYTES = 2 * 1024 * 1024
