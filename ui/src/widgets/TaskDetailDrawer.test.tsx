@@ -465,6 +465,71 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
   })
 })
 
+// ── Subgraph: node click affordance (drill-in) ────────────────────────────────
+
+/**
+ * Each subgraph node must be wrapped in an SVG <a> element so clicking (or
+ * pressing Enter) invokes navigate() and updates the breadcrumb trail — the
+ * same drill-in mechanic the OriginTree rows use.  The <a> also provides
+ * native keyboard focus without custom key handlers (matching TopologyView).
+ */
+describe('TaskDetailDrawer – subgraph node click affordance', () => {
+  it('task subgraph nodes are wrapped in anchor links for click/keyboard drill-in', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="focus"
+        onClose={() => {}}
+        tasks={[
+          task({ id: 'blocker', cluster: 'Queued' }),
+          task({ id: 'focus', cluster: 'Blocked', blockedBy: ['blocker'] }),
+        ]}
+        proposals={[]}
+      />,
+    )
+    // Both nodes are reachable via their anchor href.
+    expect(html).toContain('href="#/task/focus"')
+    expect(html).toContain('href="#/task/blocker"')
+  })
+
+  it('proposal/idea nodes in the subgraph also carry a click affordance', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' })]}
+        proposals={[proposal('p1')]}
+      />,
+    )
+    // The proposal node must also be clickable (navigate() handles proposal ids).
+    expect(html).toContain('href="#/task/p1"')
+  })
+
+  it('subgraph anchor nodes carry cursor-pointer styling (same as TopologyView)', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('cursor:pointer')
+  })
+
+  it('data-node-id attribute is still present on the inner <g> after adding the anchor wrapper', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    // Existing structural test must still pass after wrapping in <a>.
+    expect(html).toContain('data-node-id="t1"')
+  })
+})
+
 // ── Detail body: tiered metadata + spec + origin mount ────────────────────────
 
 /**
