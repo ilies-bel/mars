@@ -247,14 +247,8 @@ export const startServer = async (
       }
 
       if (path === '/api/todo') {
-        try {
-          const proposalsExist = await stateDb.proposalsTableExists()
-          const drafts = proposalsExist ? await stateDb.listDraftFeatures() : []
-          const staleWorktrees = await stateDb.listOpenStaleWorktreeAlerts()
-          return jsonResponse(200, { drafts, staleWorktrees })
-        } catch (err) {
-          return jsonResponse(500, { error: (err as Error).message })
-        }
+        const r = await proxyGet(ctx.stateDir, '/view/todo')
+        return jsonResponse(r.status, r.body)
       }
 
       if (path === '/api/kpis') {

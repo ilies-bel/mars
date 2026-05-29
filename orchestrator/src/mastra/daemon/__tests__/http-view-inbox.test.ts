@@ -614,6 +614,7 @@ describe('GET /view/inbox via HTTP server', () => {
       inboxResolve: async () => {},
       inboxDismiss: async () => {},
       todoDismiss: async () => {},
+      viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
       viewInbox: async (filter) => {
         // Return a predictable payload based on filter.
         const row: ActionQueueRow = {

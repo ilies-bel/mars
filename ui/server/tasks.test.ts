@@ -58,6 +58,7 @@ const makeDaemonDeps = (
   inboxDismiss: async () => {},
   todoDismiss: async () => {},
   viewInbox: async () => [],
+  viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
 })
 
 describe('GET /api/tasks — proxies daemon /view/tasks', () => {
