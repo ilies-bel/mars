@@ -28,6 +28,15 @@ describe('deriveSeverity', () => {
     ).toBe('error')
   })
 
+  it('returns error for step_ended with outcome=failed (non-LLM step vocabulary)', () => {
+    expect(
+      deriveSeverity('step_ended', { stepName: 'setup-worktree', outcome: 'failed' }),
+    ).toBe('error')
+    expect(
+      deriveSeverity('step_ended', { stepName: 'merge', outcome: 'failed' }),
+    ).toBe('error')
+  })
+
   it('returns warn for step_ended with outcome=killed (watchdog-terminated session)', () => {
     expect(
       deriveSeverity('step_ended', { stepName: 'code', outcome: 'killed' }),

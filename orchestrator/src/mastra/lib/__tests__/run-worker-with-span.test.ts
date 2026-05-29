@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { openTraceEventStore } from '../trace-events-store'
-import { runWorkerWithSpan } from '../run-worker-with-span'
+import { runWorkerWithSpan, runNonLlmStepWithSpan } from '../run-worker-with-span'
 import type { Worker, WorkerConfig, RunOptions } from '../../workers'
 import type { RunClaudeResult } from '../git'
 
@@ -353,5 +353,239 @@ describe('runWorkerWithSpan — phase tag', () => {
     for (const e of events) {
       expect(e.phase).toBe('code')
     }
+  })
+})
+
+// ── runNonLlmStepWithSpan ──────────────────────────────────────────────────
+
+describe('runNonLlmStepWithSpan — successful step', () => {
+  it('records one step_started and one step_ended event', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'setup-worktree',
+      workflowInstanceId: 'wf-nonllm-001',
+      originId: 'task-nonllm-abc',
+      phase: 'setup',
+      traceStore,
+      fn: async () => 'done',
+    })
+
+    const events = await traceStore.query({ taskId: 'task-nonllm-abc' })
+    expect(events).toHaveLength(2)
+    expect(events.map((e) => e.kind).sort()).toEqual(['step_ended', 'step_started'])
+  })
+
+  it('records stepName and workflowInstanceId in both events', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'setup-worktree',
+      workflowInstanceId: 'wf-nonllm-002',
+      originId: 'task-nonllm-payload',
+      phase: 'setup',
+      traceStore,
+      fn: async () => undefined,
+    })
+
+    const events = await traceStore.query({ taskId: 'task-nonllm-payload' })
+    for (const e of events) {
+      expect(e.payload.stepName).toBe('setup-worktree')
+      expect(e.payload.workflowInstanceId).toBe('wf-nonllm-002')
+    }
+  })
+
+  it('carries NO workerName and NO sessionId — these are Step spans, not Sessions', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'merge',
+      workflowInstanceId: 'wf-nonllm-003',
+      originId: 'task-nonllm-nosession',
+      phase: 'merge',
+      traceStore,
+      fn: async () => undefined,
+    })
+
+    const events = await traceStore.query({ taskId: 'task-nonllm-nosession' })
+    for (const e of events) {
+      expect(e.payload.workerName).toBeUndefined()
+      expect(e.payload.sessionId).toBeUndefined()
+    }
+  })
+
+  it('records outcome=completed on success with durationMs', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'verify',
+      workflowInstanceId: 'wf-nonllm-004',
+      originId: 'task-nonllm-completed',
+      phase: 'verify',
+      traceStore,
+      fn: async () => 42,
+    })
+
+    const ended = (
+      await traceStore.query({ taskId: 'task-nonllm-completed', kind: ['step_ended'] })
+    )[0]
+    expect(ended.payload.outcome).toBe('completed')
+    expect(ended.severity).toBe('info')
+    expect(typeof ended.payload.durationMs).toBe('number')
+  })
+
+  it('attaches the phase tag to both events', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'merge',
+      workflowInstanceId: 'wf-nonllm-phase',
+      originId: 'task-nonllm-phase',
+      phase: 'merge',
+      traceStore,
+      fn: async () => undefined,
+    })
+
+    const events = await traceStore.query({ taskId: 'task-nonllm-phase' })
+    for (const e of events) {
+      expect(e.phase).toBe('merge')
+    }
+  })
+
+  it('returns the value the fn resolved to', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    const result = await runNonLlmStepWithSpan({
+      stepName: 'setup-worktree',
+      workflowInstanceId: 'wf-nonllm-ret',
+      originId: 'task-nonllm-ret',
+      phase: 'setup',
+      traceStore,
+      fn: async () => ({ path: '/tmp/wt', branch: 'task/abc' }),
+    })
+
+    expect(result).toEqual({ path: '/tmp/wt', branch: 'task/abc' })
+  })
+})
+
+describe('runNonLlmStepWithSpan — live in-flight state', () => {
+  it('shows only step_started before fn completes — the in-flight "running" state', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    let midRunStarted: unknown[] = []
+    let midRunEnded: unknown[] = []
+
+    await runNonLlmStepWithSpan({
+      stepName: 'setup-worktree',
+      workflowInstanceId: 'wf-inflight',
+      originId: 'task-inflight',
+      phase: 'setup',
+      traceStore,
+      fn: async () => {
+        midRunStarted = await traceStore.query({ taskId: 'task-inflight', kind: ['step_started'] })
+        midRunEnded = await traceStore.query({ taskId: 'task-inflight', kind: ['step_ended'] })
+        return 'result'
+      },
+    })
+
+    // During fn execution: step_started present, step_ended absent → running
+    expect(midRunStarted).toHaveLength(1)
+    expect(midRunEnded).toHaveLength(0)
+
+    // After completion: both events present
+    const allEvents = await traceStore.query({ taskId: 'task-inflight' })
+    expect(allEvents).toHaveLength(2)
+  })
+})
+
+describe('runNonLlmStepWithSpan — failed step', () => {
+  it('records outcome=failed and re-throws when fn throws', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const boom = new Error('worktree creation failed')
+
+    await expect(
+      runNonLlmStepWithSpan({
+        stepName: 'setup-worktree',
+        workflowInstanceId: 'wf-fail-nonllm',
+        originId: 'task-fail-nonllm',
+        phase: 'setup',
+        traceStore,
+        fn: async () => {
+          throw boom
+        },
+      }),
+    ).rejects.toBe(boom)
+
+    const ended = (
+      await traceStore.query({ taskId: 'task-fail-nonllm', kind: ['step_ended'] })
+    )[0]
+    expect(ended.payload.outcome).toBe('failed')
+    expect(ended.payload.failureReason).toContain('worktree creation failed')
+    expect(ended.severity).toBe('error')
+  })
+
+  it('records step_started before step_ended even on failure', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await expect(
+      runNonLlmStepWithSpan({
+        stepName: 'verify',
+        workflowInstanceId: 'wf-fail-verify',
+        originId: 'task-fail-verify',
+        phase: 'verify',
+        traceStore,
+        fn: async () => {
+          throw new Error('verify:typecheck failed')
+        },
+      }),
+    ).rejects.toThrow()
+
+    const started = await traceStore.query({ taskId: 'task-fail-verify', kind: ['step_started'] })
+    expect(started).toHaveLength(1)
+  })
+})
+
+describe('runNonLlmStepWithSpan — trace store write errors are non-fatal', () => {
+  it('still runs and returns even when record() throws', async () => {
+    const brokenStore = {
+      record: async (): Promise<void> => {
+        throw new Error('DB unavailable')
+      },
+      query: async () => [],
+      close: async () => {},
+    }
+
+    const result = await runNonLlmStepWithSpan({
+      stepName: 'merge',
+      workflowInstanceId: 'wf-broken-nonllm',
+      originId: 'task-broken-nonllm',
+      phase: 'merge',
+      traceStore: brokenStore,
+      fn: async () => 'success',
+    })
+
+    expect(result).toBe('success')
+  })
+
+  it('still re-throws fn errors even when the store is broken', async () => {
+    const brokenStore = {
+      record: async (): Promise<void> => {
+        throw new Error('DB unavailable')
+      },
+      query: async () => [],
+      close: async () => {},
+    }
+
+    await expect(
+      runNonLlmStepWithSpan({
+        stepName: 'merge',
+        workflowInstanceId: 'wf-broken-throw',
+        originId: 'task-broken-throw',
+        phase: 'merge',
+        traceStore: brokenStore,
+        fn: async () => {
+          throw new Error('fn failed')
+        },
+      }),
+    ).rejects.toThrow('fn failed')
   })
 })
