@@ -25,15 +25,27 @@ export const TaskCard = ({ task, index }: Props) => {
 
   const spec = task.spec
 
+  const openDrawer = () => {
+    window.location.hash = `#/task/${encodeURIComponent(task.id)}`
+  }
+
   return (
     <article
       data-task-index={index}
       data-task-status={task.status}
-      className={`flex flex-col gap-2 rounded-md border border-border bg-surface p-3 cursor-pointer ${accent}`}
+      tabIndex={0}
+      role="button"
+      className={`flex flex-col gap-2 rounded-md border border-border bg-surface p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-panel active:scale-[0.99] motion-reduce:transform-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-flame ${accent}`}
       onClick={(e) => {
         // Let inner anchors (e.g. the blocker link) handle their own navigation
         if ((e.target as HTMLElement).closest('a') !== null) return
-        window.location.hash = `#/task/${encodeURIComponent(task.id)}`
+        openDrawer()
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        if ((e.target as HTMLElement).closest('a') !== null) return
+        e.preventDefault()
+        openDrawer()
       }}
     >
       <div className="flex items-start justify-between gap-2">
