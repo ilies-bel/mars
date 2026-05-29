@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
+import type { StepSpan } from './TaskDetailDrawer'
 import { TaskDetailDrawer } from './TaskDetailDrawer'
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -408,5 +409,130 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
       />,
     )
     expect(html).toContain('data-cluster="Failed"')
+  })
+})
+
+// ── Step timeline ─────────────────────────────────────────────────────────────
+
+/**
+ * The step timeline renders inside TaskDetailDrawer when `stepSpans` is passed
+ * as a prop. Each span row shows the step name, outcome, and timing. Running
+ * steps are highlighted with a distinct 'currently executing' indicator.
+ *
+ * In production the drawer fetches spans from /api/step-spans; the prop path
+ * exists so tests can verify rendering without a live server.
+ */
+
+const span = (overrides: Partial<StepSpan> & { stepName: string }): StepSpan => ({
+  stepName: overrides.stepName,
+  phase: overrides.phase ?? null,
+  workflowInstanceId: overrides.workflowInstanceId ?? 'wf-test',
+  workerName: overrides.workerName ?? null,
+  outcome: overrides.outcome ?? 'completed',
+  startedAt: overrides.startedAt ?? '2026-01-01T10:00:00.000Z',
+  endedAt: overrides.endedAt ?? '2026-01-01T10:00:01.000Z',
+  durationMs: overrides.durationMs ?? 1000,
+  taskId: overrides.taskId ?? 'task-t1',
+  originId: overrides.originId ?? 'task-t1',
+})
+
+describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
+  it('renders a step timeline section when stepSpans prop is provided', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[]} />,
+    )
+    expect(html).toContain('data-testid="task-step-timeline"')
+  })
+
+  it('does not render the step timeline section when stepSpans prop is omitted', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} />,
+    )
+    expect(html).not.toContain('data-testid="task-step-timeline"')
+  })
+
+  it('renders one row per step span', () => {
+    const spans = [
+      span({ stepName: 'setup', workflowInstanceId: 'wf-1' }),
+      span({ stepName: 'code', workflowInstanceId: 'wf-1', workerName: 'Coder' }),
+      span({ stepName: 'verify', workflowInstanceId: 'wf-1' }),
+      span({ stepName: 'merge', workflowInstanceId: 'wf-1' }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
+    )
+    const rowCount = (html.match(/data-testid="step-timeline-row"/g) ?? []).length
+    expect(rowCount).toBe(4)
+  })
+
+  it('shows setup, code, verify, merge step names in the rendered rows', () => {
+    const spans = [
+      span({ stepName: 'setup', workflowInstanceId: 'wf-1' }),
+      span({ stepName: 'code', workflowInstanceId: 'wf-1', workerName: 'Coder' }),
+      span({ stepName: 'verify', workflowInstanceId: 'wf-1' }),
+      span({ stepName: 'merge', workflowInstanceId: 'wf-1' }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
+    )
+    expect(html).toContain('setup')
+    expect(html).toContain('code')
+    expect(html).toContain('verify')
+    expect(html).toContain('merge')
+  })
+
+  it('marks a running step with data-outcome="running" for distinct highlighting', () => {
+    const spans = [
+      span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'running', endedAt: null, durationMs: null }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
+    )
+    expect(html).toContain('data-outcome="running"')
+  })
+
+  it('marks a completed step with data-outcome="completed"', () => {
+    const spans = [
+      span({ stepName: 'setup', workflowInstanceId: 'wf-1', outcome: 'completed' }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
+    )
+    expect(html).toContain('data-outcome="completed"')
+  })
+
+  it('marks a failed step with data-outcome="failed"', () => {
+    const spans = [
+      span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'failed' }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
+    )
+    expect(html).toContain('data-outcome="failed"')
+  })
+
+  it('renders each recover step as its own distinct row (not collapsed with code)', () => {
+    const spans = [
+      span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'failed', workerName: 'Coder' }),
+      span({ stepName: 'recover', workflowInstanceId: 'wf-2', outcome: 'completed', workerName: 'Fixer' }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
+    )
+    const rowCount = (html.match(/data-testid="step-timeline-row"/g) ?? []).length
+    expect(rowCount).toBe(2)
+    // Both step names appear in the output
+    expect(html).toContain('code')
+    expect(html).toContain('recover')
+  })
+
+  it('shows an empty-state message when stepSpans is an empty array', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[]} />,
+    )
+    // Empty state is present and no rows are rendered
+    expect(html).toContain('data-testid="task-step-timeline"')
+    const rowCount = (html.match(/data-testid="step-timeline-row"/g) ?? []).length
+    expect(rowCount).toBe(0)
   })
 })

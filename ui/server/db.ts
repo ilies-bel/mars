@@ -64,6 +64,8 @@ interface TaskRow {
   blocker_task_id: string | null
   blocker_task_ids: string | null
   parent_proposal_id: string | null
+  /** Set on recovery/fix tasks; null on the origin task itself. */
+  origin_id: string | null
   created_at: string
   updated_at: string
   files_json: string | null
@@ -114,6 +116,12 @@ export interface Task {
    * Drives provenance edges in the Topology DAG view.
    */
   parentProposalId: string | null
+  /**
+   * The origin task id for this arc. Set on recovery/fix tasks; null on the
+   * origin task itself (where originId === id). Used by the step timeline to
+   * query all spans for the entire task arc via /api/step-spans.
+   */
+  originId: string | null
   /**
    * Structured-task contract. Null for ad-hoc tasks enqueued without
    * --files/--verify/--done flags or slicer-generated spec.
@@ -179,6 +187,7 @@ const rowToTask = (row: TaskRow): Task => {
     blockerTaskId: row.blocker_task_id ?? null,
     blockedBy: parseBlockedBy(row.blocker_task_ids ?? null),
     parentProposalId: row.parent_proposal_id ?? null,
+    originId: row.origin_id ?? null,
     spec,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -253,6 +262,7 @@ export class TaskDb {
     const hasDoneCriteriaJson = colNames.has('done_criteria_json')
     const hasTaskType = colNames.has('task_type')
     const hasParentProposalId = colNames.has('parent_proposal_id')
+    const hasOriginId = colNames.has('origin_id')
 
     const select: string[] = [
       't.id',
@@ -278,6 +288,7 @@ export class TaskDb {
     ]
 
     select.push(hasParentProposalId ? 't.parent_proposal_id' : 'NULL AS parent_proposal_id')
+    select.push(hasOriginId ? 't.origin_id' : 'NULL AS origin_id')
 
     const blockersTableExists = await this.blockersTableExists()
     // For blocked tasks, surface the first blocker task id (if any) so the
