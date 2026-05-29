@@ -344,3 +344,6 @@ _Avoid_: auto-evolve, self-improvement, feedback loop, evolve loop
 **Effectiveness-under-budget**:
 The rigorous, size-fair backstop to Cost per completed Arc: success rate plotted against cumulative token spend, integrated as normalised area-under-curve up to a budget cap (after SWE-Effi). Because it never divides per-task, the one-line-vs-500-line size-variance problem dissolves entirely — it rewards cheaply-solved Arcs and discounts expensive or unsolved ones. Computed only during deep-reflect (too heavy and too hard to read for the daily dashboard), where Cost per completed Arc is the at-a-glance number and Effectiveness-under-budget is the audit-grade view.
 _Avoid_: AUC, SWE-Effi, budget AUC, resource-bounded effectiveness
+
+**triaging (task)**:
+Transient lifecycle phase between a freshly-promoted task and dispatch-eligibility; the task is visible to readers but the dispatcher must not pick it up while linker analysis may still attach blockers.
