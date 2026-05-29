@@ -64,7 +64,7 @@ import {
 } from './main-dirty-inbox'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { failureReasonStringToCode } from '../lib/failure-reasons'
-import { openTraceEventStore, type TraceEventStore } from '../lib/trace-events-store'
+import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore } from '../lib/trace-events-store'
 import { internalBus } from '../../internal-bus'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
 import { loadDaemonConfig } from './config'
@@ -1565,6 +1565,18 @@ export const startDaemon = async (
         log(`[reconcile] task ${taskId} was running on prior daemon; requeued from setup`)
         bus.emit('task.queued', { taskId })
       }
+    }
+
+    // Sweep orphan running Step spans — any step_started with no step_ended
+    // belongs to a prior daemon that crashed without closing its spans. Mark
+    // them killed so the Agents page never shows a permanently-live Session.
+    try {
+      const swept = await sweepOrphanRunningSpans(traceStore)
+      if (swept > 0) {
+        log(`[reconcile] swept ${swept} orphan running span(s) to killed`)
+      }
+    } catch (err) {
+      log(`[reconcile] orphan span sweep failed: ${(err as Error).message}`)
     }
 
     const verifying = await listTasks('verifying')
