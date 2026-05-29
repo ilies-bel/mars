@@ -358,3 +358,7 @@ _Avoid_: error panel, error state, fallback UI
 **Mars project**:
 A repository with a .mars/ directory on disk; the unit the global dashboard scans for and aggregates, independent of whether its daemon is currently running.
 _Avoid_: repo, workspace, project root
+
+**Daemon health**:
+A scanned Mars project's live/degraded/down status, derived by the global dashboard from healthchecking that project's daemon over its loopback HTTP via the .mars/http.port file.
+_Avoid_: daemon status, liveness, heartbeat
