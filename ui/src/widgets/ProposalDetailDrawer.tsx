@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DraftFeature } from '@/shared/schemas'
+import type { DraftFeature, ProgressTask } from '@/shared/schemas'
 
 interface ProposalDetailDrawerProps {
   /** Proposal sourced from the existing `/api/todo` drafts fetch. */
   proposal: DraftFeature
   /** Clears the `#/proposal/<id>` hash so the drawer closes. */
   onClose: () => void
+  /**
+   * Task list already loaded by the Progress tab. Used to show child tasks
+   * when the proposal status is `sliced`. No new HTTP request is made.
+   */
+  tasks?: ProgressTask[]
 }
 
 /**
@@ -33,7 +38,11 @@ const badgeClass = (status: string): string =>
 export const ProposalDetailDrawer = ({
   proposal,
   onClose,
+  tasks = [],
 }: ProposalDetailDrawerProps) => {
+  const childTasks = proposal.status === 'sliced'
+    ? tasks.filter((t) => t.parentProposalId === proposal.id)
+    : []
   const drawerRef = useRef<HTMLElement>(null)
   const [closing, setClosing] = useState(false)
   // Synchronous guard — prevents double-scheduling the close timer.
@@ -158,6 +167,36 @@ export const ProposalDetailDrawer = ({
           Close
         </button>
       </header>
+      {childTasks.length > 0 ? (
+        <section
+          data-testid="sliced-tasks"
+          className="flex flex-col gap-2 overflow-y-auto border-b border-iron/40 px-4 py-3"
+        >
+          <h3 className="font-mono text-[10px] uppercase tracking-wide text-iron/80">
+            Sliced tasks
+          </h3>
+          <ul className="flex flex-col gap-1.5">
+            {childTasks.map((task) => (
+              <li key={task.id}>
+                <a
+                  href={`#/task/${encodeURIComponent(task.id)}`}
+                  className="flex items-center gap-2 rounded border border-iron/20 px-2 py-1.5 font-mono text-xs transition-colors hover:bg-iron/5"
+                >
+                  <span className="shrink-0 text-iron">{task.id}</span>
+                  <span
+                    className={`inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${badgeClass(task.status)}`}
+                  >
+                    {task.status}
+                  </span>
+                  <span className="min-w-0 truncate text-fg">
+                    {task.prompt.split('\n')[0]?.slice(0, 80) ?? ''}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </aside>
     </>
   )
