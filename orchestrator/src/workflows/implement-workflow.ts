@@ -1193,12 +1193,17 @@ export const implementWorkflow = defineWorkflow<
       }
 
       const mergeSpanStore = workflowTraceStore === nullTraceStore ? undefined : workflowTraceStore
+      // Capture Vega info when a conflicted merge routes to the vcs-supervisor.
+      // Set inside fn() after mergeBranch returns; read by getVegaInfo() after
+      // fn() completes so the single step_ended event carries the session info.
+      let vegaSpanInfo: { workerName: string; sessionId: string | null } | null = null
       return await runNonLlmStepWithSpan({
         stepName: 'merge',
         workflowInstanceId: ctx.runId,
         originId: workflowOriginId,
         phase: 'merge',
         traceStore: mergeSpanStore,
+        getVegaInfo: () => vegaSpanInfo,
         fn: async (): Promise<ImplementOutput> => {
       // Any unhandled throw from mergeBranch (e.g. an unexpected git failure)
       // must transition the task to a terminal status. Otherwise the queue row
@@ -1301,6 +1306,15 @@ export const implementWorkflow = defineWorkflow<
           await recordSignals(input.taskId, 'vcs-supervisor', supervisorUsage, store).catch(() => {
             // signal capture must never fail the task
           })
+        }
+
+        // Upgrade the merge span to a Vega Session when the conflict was
+        // resolved by the vcs-supervisor. vegaSpanInfo is read by getVegaInfo()
+        // after fn() returns so the single step_ended event carries the worker
+        // name and session id (the Session invariant: worker IS NOT NULL iff
+        // this is a Session).
+        if (m.conflictResolved) {
+          vegaSpanInfo = { workerName: 'Vega', sessionId: m.vegaSessionId }
         }
 
         if (m.aborted) {
