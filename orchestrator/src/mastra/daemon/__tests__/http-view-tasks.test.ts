@@ -63,6 +63,10 @@ const makeDeps = (
   recipeCatalog: cachedRecipeCatalog!,
   traceStore: nullTraceStore,
   viewTasks,
+  viewProgress: async () => ({ tasks: [], proposals: [] }),
+  inboxAck: async () => {},
+  inboxResolve: async () => {},
+  inboxDismiss: async () => {},
   ...overrides,
 })
 

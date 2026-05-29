@@ -4,7 +4,7 @@ import { extname, join, normalize, resolve } from 'node:path'
 import { hasRecipe } from '../../orchestrator/src/mastra/lib/fix-recipes.ts'
 import { DAEMON_KILLED_SIGNATURE } from '../../orchestrator/src/mastra/lib/retry-budget.ts'
 import { loadAgents } from './agents.ts'
-import { fetchErrorKinds, fetchKpis, proxyAction, proxyGet } from './daemonHttp.ts'
+import { fetchErrorKinds, fetchKpis, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'
 import { StateDb, TaskDb } from './db.ts'
 import { listTerminalEvents } from './events.ts'
 import { resolveRepo } from './repo.ts'
@@ -530,14 +530,15 @@ export const startServer = async (
           if (entityKind === null) {
             return jsonResponse(400, { error: `unknown inbox kind: ${kind}` })
           }
-          if (path === '/api/inbox/ack') {
-            await stateDb.ackInboxEntity(entityKind, entityId)
-          } else if (path === '/api/inbox/resolve') {
-            await stateDb.resolveInboxEntity(entityKind, entityId)
-          } else {
-            await stateDb.dismissInboxEntity(entityKind, entityId)
-          }
-          return jsonResponse(200, { ok: true })
+          const verb =
+            path === '/api/inbox/ack' ? 'ack'
+            : path === '/api/inbox/resolve' ? 'resolve'
+            : 'dismiss'
+          const result = await proxyPost(ctx.stateDir, `/view/inbox/${verb}`, {
+            kind: entityKind,
+            entityId,
+          })
+          return jsonResponse(result.status, result.body)
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }
