@@ -53,6 +53,7 @@ const makeDeps = (
   inboxDismiss: async () => {},
   todoDismiss: async () => {},
   viewInbox: async () => [],
+  viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
   ...overrides,
 })
 
