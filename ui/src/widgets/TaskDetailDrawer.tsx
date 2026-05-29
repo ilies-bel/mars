@@ -12,7 +12,7 @@
  * semantics in both contexts.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 
@@ -192,7 +192,59 @@ export const TaskDetailDrawer = ({
   tasks,
   proposals,
 }: TaskDetailDrawerProps) => {
+  const drawerRef = useRef<HTMLElement>(null)
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
+
+  // On open: save the previously focused element and move focus into the drawer.
+  // On close (cleanup): restore focus to where it was.
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement | null
+    drawerRef.current?.focus()
+    return () => {
+      prev?.focus?.()
+    }
+  }, [])
+
+  // Escape-to-close + Tab focus trap.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        onClose()
+        return
+      }
+      if (e.key === 'Tab') {
+        const container = drawerRef.current
+        if (!container) return
+        const focusable = [
+          ...container.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        ]
+        if (focusable.length === 0) {
+          e.preventDefault()
+          return
+        }
+        const first = focusable[0]!
+        const last = focusable[focusable.length - 1]!
+        if (e.shiftKey) {
+          if (document.activeElement === first || document.activeElement === container) {
+            e.preventDefault()
+            last.focus()
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault()
+            first.focus()
+          }
+        }
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [onClose])
 
   useEffect(() => {
     let cancelled = false
@@ -243,14 +295,24 @@ export const TaskDetailDrawer = ({
     : 0
 
   return (
-    <aside
-      role="dialog"
-      aria-modal="true"
-      aria-label="Task detail"
-      data-testid="task-detail-drawer"
-      data-state={state.kind}
-      className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-iron/40 bg-bg shadow-2xl"
-    >
+    <>
+      {/* Scrim — sits at z-40 (below the drawer's z-50) so clicks outside dismiss the panel */}
+      <div
+        data-testid="task-detail-overlay"
+        aria-hidden="true"
+        className="fixed inset-0 z-40 bg-fg/40"
+        onClick={onClose}
+      />
+      <aside
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Task detail"
+        data-testid="task-detail-drawer"
+        data-state={state.kind}
+        tabIndex={-1}
+        className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-iron/40 bg-bg shadow-2xl outline-none"
+      >
       <header className="flex items-center justify-between border-b border-iron/40 px-4 py-3">
         <h2 className="font-mono text-sm uppercase tracking-wide text-iron">
           Task {taskId}
@@ -375,5 +437,6 @@ export const TaskDetailDrawer = ({
         </div>
       ) : null}
     </aside>
+    </>
   )
 }

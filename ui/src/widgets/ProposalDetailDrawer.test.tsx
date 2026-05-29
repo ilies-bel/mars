@@ -47,3 +47,40 @@ describe('ProposalDetailDrawer', () => {
     expect(html).toContain('planner')
   })
 })
+
+// ── A11y: scrim + focusable drawer ───────────────────────────────────────────
+
+/**
+ * Same structural checks as TaskDetailDrawer – the two drawers share the same
+ * a11y contract (scrim, focus-trap infrastructure, Escape-to-close).
+ */
+describe('ProposalDetailDrawer – a11y overlay and focusability', () => {
+  it('renders a scrim overlay element alongside the drawer panel', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={draftProposal()} onClose={() => {}} />,
+    )
+    expect(html).toContain('data-testid="proposal-detail-overlay"')
+  })
+
+  it('scrim is aria-hidden so it does not pollute the screen reader tree', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={draftProposal()} onClose={() => {}} />,
+    )
+    expect(html).toContain('aria-hidden="true"')
+  })
+
+  it('scrim uses z-40 (lower than the drawer z-50) so the drawer stays on top', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={draftProposal()} onClose={() => {}} />,
+    )
+    expect(html).toContain('z-40')
+    expect(html).toContain('z-50')
+  })
+
+  it('drawer panel has tabindex="-1" so it can receive programmatic focus on open', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={draftProposal()} onClose={() => {}} />,
+    )
+    expect(html).toContain('tabindex="-1"')
+  })
+})
