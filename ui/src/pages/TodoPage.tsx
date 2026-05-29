@@ -194,7 +194,7 @@ const ActionBar = ({ item }: ActionBarProps) => {
 
   // Gate Investigate out for empty stale worktrees — there is nothing to analyse.
   const visibleActions =
-    item.kind === 'stale-worktree' && item.staleWorktreeDetail?.empty === true
+    item.kind === 'stale-worktree' && item.staleWorktreeDetail.empty === true
       ? item.actions.filter((a) => a.op !== INVESTIGATE_OP)
       : item.actions
 
@@ -626,48 +626,44 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
                   Task prompt
                 </dt>
                 <dd className="whitespace-pre-wrap text-fg">
-                  {item.staleWorktreeDetail?.prompt ?? (
+                  {item.staleWorktreeDetail.prompt ?? (
                     <span className="text-iron/70">absent (no matching task)</span>
                   )}
                 </dd>
               </div>
-              {item.staleWorktreeDetail && (
-                <>
-                  <div>
-                    <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-                      Status · Age · Branch
-                    </dt>
-                    <dd className="text-fg">
-                      <span>{item.staleWorktreeDetail.status}</span>
-                      {' · '}
-                      <span>{item.staleWorktreeDetail.ageHours.toFixed(1)}h</span>
-                      {' · '}
-                      <span>{item.staleWorktreeDetail.branch ?? '—'}</span>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-                      Investigation
-                    </dt>
-                    <dd>
-                      {item.staleWorktreeDetail.investigation ? (
-                        <>
-                          <p className="mb-1 text-[10px] text-iron/60">
-                            {formatTime(item.staleWorktreeDetail.updatedAt)}
-                          </p>
-                          <p className="whitespace-pre-wrap text-fg">
-                            {item.staleWorktreeDetail.investigation}
-                          </p>
-                        </>
-                      ) : item.staleWorktreeDetail.empty ? null : (
-                        <span className="text-iron/70">
-                          None yet — use Investigate to analyse this worktree.
-                        </span>
-                      )}
-                    </dd>
-                  </div>
-                </>
-              )}
+              <div>
+                <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+                  Status · Age · Branch
+                </dt>
+                <dd className="text-fg">
+                  <span>{item.staleWorktreeDetail.status}</span>
+                  {' · '}
+                  <span>{item.staleWorktreeDetail.ageHours.toFixed(1)}h</span>
+                  {' · '}
+                  <span>{item.staleWorktreeDetail.branch ?? '—'}</span>
+                </dd>
+              </div>
+              <div>
+                <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+                  Investigation
+                </dt>
+                <dd>
+                  {item.staleWorktreeDetail.investigation ? (
+                    <>
+                      <p className="mb-1 text-[10px] text-iron/60">
+                        {formatTime(item.staleWorktreeDetail.updatedAt)}
+                      </p>
+                      <p className="whitespace-pre-wrap text-fg">
+                        {item.staleWorktreeDetail.investigation}
+                      </p>
+                    </>
+                  ) : item.staleWorktreeDetail.empty ? null : (
+                    <span className="text-iron/70">
+                      None yet — use Investigate to analyse this worktree.
+                    </span>
+                  )}
+                </dd>
+              </div>
             </>
           )}
           <div>

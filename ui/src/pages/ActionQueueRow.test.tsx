@@ -34,14 +34,14 @@ const BASE_ITEM: ActionQueueItem = {
     { id: 'restart', label: 'Restart', op: 'restart' },
     { id: 'purge', label: 'Purge', op: 'purge', needsConfirm: true },
   ],
-  staleWorktreeDetail: null,
   diagnosis: null,
 }
 
-const makeItem = (overrides: Partial<ActionQueueItem>): ActionQueueItem => ({
-  ...BASE_ITEM,
-  ...overrides,
-})
+// Accepts any field combination so tests can construct cross-variant items
+// (e.g. kind:'stale-worktree' + staleWorktreeDetail) without TypeScript
+// complaining about union-specific properties.
+const makeItem = (overrides: Record<string, unknown>): ActionQueueItem =>
+  ({ ...BASE_ITEM, ...overrides } as ActionQueueItem)
 
 const renderRow = (
   item: ActionQueueItem,
@@ -93,6 +93,15 @@ describe('ActionQueueRow – Restart button visibility', () => {
         { id: 'investigate', label: 'Investigate', op: 'investigate' },
         { id: 'prune', label: 'Prune worktree', op: 'prune-worktree', needsConfirm: true },
       ],
+      staleWorktreeDetail: {
+        prompt: 'some task',
+        status: 'running',
+        ageHours: 24,
+        updatedAt: '2026-01-01T00:00:00Z',
+        branch: 'task/task-abc',
+        empty: false,
+        investigation: null,
+      },
     })
     const html = renderRow(staleItem, { onRestart: null })
     expect(html).not.toContain('Restart')

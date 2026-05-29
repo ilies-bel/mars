@@ -138,17 +138,9 @@ export const actionDescriptorSchema = z.object({
   hint: z.string().optional(),
 })
 
-export const actionQueueItemSchema = z.object({
+// Shared base schema — fields present on every action-queue row regardless of kind.
+const actionQueueBaseSchema = z.object({
   id: z.string(),
-  // unknown kinds coerce to 'failed-task' to mirror server toUiKind and keep
-  // one bad row (e.g. a stale persisted kind) from failing the whole response.
-  // .catch() intentionally swallows any non-member value into the default —
-  // for a closed enum this is the desired safe behaviour, not a masked bug.
-  kind: z.enum([
-    'failed-task',
-    'stale-worktree',
-    'draft-proposal',
-  ]).catch('failed-task'),
   entityId: z.string(),
   priority: z.enum(['high', 'normal', 'low']),
   title: z.string(),
@@ -169,37 +161,9 @@ export const actionQueueItemSchema = z.object({
   // daemon is unreachable.
   actions: z.array(actionDescriptorSchema),
   /**
-   * Populated only for stale-worktree rows; null for all other kinds.
-   * Carries the originating task context and a git-derived emptiness flag
-   * so the UI can decide which action buttons to show (prune-only vs
-   * prune + investigate).
-   */
-  staleWorktreeDetail: z.object({
-    /** Task prompt, or null when no matching task row exists. */
-    prompt: z.string().nullable(),
-    /** Task status string, or 'unknown' when the task row is absent. */
-    status: z.string(),
-    /** Worktree age in hours (derived from task updatedAt). */
-    ageHours: z.number(),
-    /** ISO timestamp of the task's last update. */
-    updatedAt: z.string(),
-    /** Worktree branch (task/<id>), or null when not resolvable. */
-    branch: z.string().nullable(),
-    /**
-     * True when the worktree has no diff against the merge-base with main
-     * AND no untracked files. False when git is unavailable or the worktree
-     * directory is absent (conservative: assume non-empty).
-     */
-    empty: z.boolean(),
-    /**
-     * Investigation text written by the investigate action, or null when
-     * no investigation has been run yet.
-     */
-    investigation: z.string().nullable(),
-  }).nullish(),
-  /**
    * Root-cause diagnosis written by the diagnose-failure action, or null when
-   * none has been run. Only populated for unknown-signature failed-task rows.
+   * none has been run. Only populated for failed-task rows; kept on the base so
+   * call sites can access it without narrowing on kind.
    */
   diagnosis: z
     .object({
@@ -215,7 +179,94 @@ export const actionQueueItemSchema = z.object({
   failureReasonCode: z.string().nullable().optional(),
 })
 
-export const actionQueueResponseSchema = z.array(actionQueueItemSchema)
+// Detail block carried by every 'stale-worktree' row — absent on all other kinds.
+const staleWorktreeDetailSchema = z.object({
+  /** Task prompt, or null when no matching task row exists. */
+  prompt: z.string().nullable(),
+  /** Task status string, or 'absent (no matching task)' when the task row is missing. */
+  status: z.string(),
+  /** Worktree age in hours (derived from task updatedAt). */
+  ageHours: z.number(),
+  /** ISO timestamp of the task's last update. */
+  updatedAt: z.string(),
+  /** Worktree branch (task/<id>), or null when not resolvable. */
+  branch: z.string().nullable(),
+  /**
+   * True when the worktree has no diff against the merge-base with main
+   * AND no untracked files. False when git is unavailable or the worktree
+   * directory is absent (conservative: assume non-empty).
+   */
+  empty: z.boolean(),
+  /**
+   * Investigation text written by the investigate action, or null when
+   * no investigation has been run yet.
+   */
+  investigation: z.string().nullable(),
+})
+
+const failedTaskItemSchema = actionQueueBaseSchema.extend({
+  kind: z.literal('failed-task'),
+})
+
+const staleWorktreeItemSchema = actionQueueBaseSchema.extend({
+  kind: z.literal('stale-worktree'),
+  /**
+   * Populated only for stale-worktree rows; always an object (never null/absent)
+   * because the server always constructs it before emitting a stale-worktree item.
+   * Replaces the former .nullish() on the flat schema — absent on all other kinds.
+   */
+  staleWorktreeDetail: staleWorktreeDetailSchema,
+})
+
+const draftProposalItemSchema = actionQueueBaseSchema.extend({
+  kind: z.literal('draft-proposal'),
+})
+
+export const actionQueueItemSchema = z.discriminatedUnion('kind', [
+  failedTaskItemSchema,
+  staleWorktreeItemSchema,
+  draftProposalItemSchema,
+])
+
+// Element-level catch: when a row has an unrecognised 'kind' value (e.g. a stale
+// persisted row) or is otherwise malformed, coerce it to the failed-task variant
+// rather than rejecting the whole array. This preserves the safety net that the
+// old flat-enum '.catch("failed-task")' gave on the discriminator — one bad row
+// must not fail a 300-row response.
+export const actionQueueResponseSchema = z.array(
+  actionQueueItemSchema.catch((ctx) => {
+    const raw =
+      typeof ctx.input === 'object' && ctx.input !== null
+        ? (ctx.input as Record<string, unknown>)
+        : {}
+    // Re-parse with kind overridden to 'failed-task'; preserves all other base
+    // fields the failed-task variant accepts. Falls back to a minimal sentinel
+    // when even the failed-task variant rejects the row.
+    const attempt = failedTaskItemSchema.safeParse({ ...raw, kind: 'failed-task' })
+    if (attempt.success) return attempt.data
+    return {
+      id: typeof raw.id === 'string' ? raw.id : 'unknown',
+      kind: 'failed-task' as const,
+      entityId: typeof raw.entityId === 'string' ? raw.entityId : '',
+      priority: 'high' as const,
+      title: typeof raw.title === 'string' ? raw.title : '',
+      body: typeof raw.body === 'string' ? raw.body : '',
+      at: '1970-01-01T00:00:00.000Z',
+      dag: null,
+      dismissed: false,
+      ackState: null,
+      errorKind:
+        typeof raw.errorKind === 'string'
+          ? raw.errorKind
+          : typeof raw.kind === 'string'
+            ? raw.kind
+            : 'unknown',
+      actions: [],
+      diagnosis: null,
+      failureReasonCode: null,
+    }
+  }),
+)
 
 // ----------------------------------------------------------------------------
 // Worker Sessions (GET /api/sessions?agentName=X)

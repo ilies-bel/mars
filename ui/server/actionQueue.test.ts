@@ -639,7 +639,16 @@ describe('actionQueueResponseSchema resilience', () => {
     ackState: null,
     errorKind: 'daemon-killed',
     actions: [],
-    staleWorktreeDetail: null,
+  }
+
+  const minimalStaleDetail = {
+    prompt: 'fix the bug',
+    status: 'running',
+    ageHours: 24,
+    updatedAt: new Date().toISOString(),
+    branch: 'task/task-1',
+    empty: false,
+    investigation: null,
   }
 
   it('parses a response array containing an unknown kind (daemon-killed) without throwing', () => {
@@ -653,12 +662,49 @@ describe('actionQueueResponseSchema resilience', () => {
     expect(parsed[0].kind).toBe('failed-task')
   })
 
-  it('preserves valid kinds unchanged', () => {
-    const validKinds = ['failed-task', 'stale-worktree', 'draft-proposal'] as const
-    for (const kind of validKinds) {
-      const parsed = actionQueueResponseSchema.parse([{ ...minimalRow, kind }])
-      expect(parsed[0].kind).toBe(kind)
+  it('preserves failed-task kind unchanged', () => {
+    const parsed = actionQueueResponseSchema.parse([{ ...minimalRow, kind: 'failed-task' }])
+    expect(parsed[0].kind).toBe('failed-task')
+  })
+
+  it('preserves draft-proposal kind unchanged', () => {
+    const parsed = actionQueueResponseSchema.parse([{ ...minimalRow, kind: 'draft-proposal' }])
+    expect(parsed[0].kind).toBe('draft-proposal')
+  })
+
+  it('preserves stale-worktree kind when staleWorktreeDetail is present', () => {
+    const staleRow = { ...minimalRow, kind: 'stale-worktree', staleWorktreeDetail: minimalStaleDetail }
+    const parsed = actionQueueResponseSchema.parse([staleRow])
+    expect(parsed[0].kind).toBe('stale-worktree')
+  })
+
+  it('a stale-worktree row WITH staleWorktreeDetail parses correctly', () => {
+    const staleRow = { ...minimalRow, kind: 'stale-worktree', staleWorktreeDetail: minimalStaleDetail }
+    const parsed = actionQueueResponseSchema.parse([staleRow])
+    expect(parsed[0].kind).toBe('stale-worktree')
+    if (parsed[0].kind === 'stale-worktree') {
+      expect(parsed[0].staleWorktreeDetail.prompt).toBe('fix the bug')
+      expect(parsed[0].staleWorktreeDetail.empty).toBe(false)
     }
+  })
+
+  it('a failed-task row WITHOUT staleWorktreeDetail parses correctly', () => {
+    const parsed = actionQueueResponseSchema.parse([{ ...minimalRow, kind: 'failed-task' }])
+    expect(parsed[0].kind).toBe('failed-task')
+    // staleWorktreeDetail is absent on the failed-task variant
+    expect((parsed[0] as Record<string, unknown>)['staleWorktreeDetail']).toBeUndefined()
+  })
+
+  it('a row with an unknown kind coerces to the failed-task variant — does NOT throw, does NOT drop the array', () => {
+    const raw = [
+      { ...minimalRow, id: 'row-unknown', kind: 'some-future-kind' },
+      { ...minimalRow, id: 'row-known', kind: 'failed-task' },
+    ]
+    let parsed: ReturnType<typeof actionQueueResponseSchema.parse> | undefined
+    expect(() => { parsed = actionQueueResponseSchema.parse(raw) }).not.toThrow()
+    expect(parsed).toHaveLength(2)
+    expect(parsed![0].kind).toBe('failed-task')
+    expect(parsed![1].kind).toBe('failed-task')
   })
 
   it('does not discard other rows when one row has an unknown kind', () => {
