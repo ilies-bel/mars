@@ -769,8 +769,8 @@ export const ActionQueuePage = () => {
   const noMatches = !empty && filtered.length === 0
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-bg">
-      <aside className="flex w-80 shrink-0 flex-col border-r border-iron/30">
+    <div className="flex flex-col sm:flex-row h-full w-full overflow-hidden bg-bg">
+      <aside className="flex w-full shrink-0 flex-col border-b border-iron/30 sm:w-80 sm:border-b-0 sm:border-r max-h-[40vh] sm:max-h-none">
         <header className="border-b border-iron/30 px-4 py-3">
           <h1 className="font-mono text-sm uppercase tracking-wide text-fg">
             Action queue

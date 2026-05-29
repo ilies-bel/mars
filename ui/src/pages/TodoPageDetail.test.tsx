@@ -285,3 +285,23 @@ describe('inbox detail – Origins section', () => {
     expect(html).toContain('No origin recorded for this task.')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Responsive layout: panes must stack on narrow viewports.
+// ---------------------------------------------------------------------------
+
+describe('ActionQueuePage – responsive layout', () => {
+  it('container switches from column to row at the sm breakpoint', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(BASE_ITEM, qc)
+    // flex-col stacks panes on mobile; sm:flex-row restores side-by-side on ≥640px.
+    expect(html).toContain('sm:flex-row')
+  })
+
+  it('list pane is full-width on mobile and fixed-width on sm+', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(BASE_ITEM, qc)
+    // sm:w-80 (320 px) is the desktop list-pane width; w-full is the mobile override.
+    expect(html).toContain('sm:w-80')
+  })
+})
