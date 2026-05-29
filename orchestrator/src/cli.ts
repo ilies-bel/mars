@@ -274,6 +274,11 @@ Commands:
                                 in-flight tasks and desyncs (done+not-merged).
                                 --force-orphans extends removal to orphan
                                 worktrees that did contribute commits.
+  worktree prune [--dry-run]    remove all done and dropped worktrees (regardless
+                                of merge status) and all orphan directories (no
+                                matching task row). Keeps failed worktrees and
+                                any in-flight worktree (queued/running/verifying/
+                                merging). The bigger hammer versus clean.
   daemon <start|stop|restart|kill|status|reload|set-flag> [flags]
                                 run the orchestration daemon. 'start' forks to
                                 background (also --detach). 'stop' stops
@@ -637,11 +642,12 @@ No branch is ever modified without an explicit per-branch choice.
 Requires an interactive terminal. Prints 'no orphan task branches' when
 there are none.`,
   worktree: `mars worktree clean [--dry-run] [--force-orphans]
+mars worktree prune [--dry-run]
 
 Walk .mars/worktrees/ (and legacy .worktrees/), classify each directory
 by joining against the matching queue.db row, and remove the safe ones.
 
-Classifications:
+'clean' classifications:
   done + branch merged into main          → remove
   failed/dropped + zero-commit branch     → remove
   orphan (no queue row) + zero-commit     → remove
@@ -651,8 +657,19 @@ Classifications:
     merging/ready)
   draft / blocked                         → kept
 
-Flags:
+'prune' classifications (the bigger hammer):
+  done                                    → remove (regardless of merge status)
+  dropped                                 → remove (regardless of commit status)
+  orphan (no queue row)                   → remove (always)
+  failed                                  → kept (may contain useful work)
+  in-flight (queued/running/verifying/    → kept (never touch)
+    merging)
+  draft / blocked                         → kept
+
+Flags (both subcommands):
   --dry-run         print what would happen, change nothing, exit 0.
+
+Flags (clean only):
   --force-orphans   also remove orphan worktrees whose branches contributed
                     commits (work is dropped — use with care).
 
@@ -2784,14 +2801,33 @@ const main = async (): Promise<void> => {
 
   if (cmd === 'worktree') {
     const sub = rest[0]
-    if (sub !== 'clean') {
+    if (sub !== 'clean' && sub !== 'prune') {
       console.error('usage: mars worktree clean [--dry-run] [--force-orphans]')
+      console.error('       mars worktree prune [--dry-run]')
       process.exit(1)
     }
     const wtFlags = new Set(rest.slice(1).filter((a) => a.startsWith('--')))
     const dryRun = wtFlags.has('--dry-run')
-    const forceOrphans = wtFlags.has('--force-orphans')
 
+    if (sub === 'prune') {
+      const { runWorktreePrune } = await import('./mastra/lib/worktree-prune')
+      const summary = await runWorktreePrune({
+        dryRun,
+        log: (line) => console.log(line),
+      })
+      if (
+        summary.errors > 0 &&
+        summary.removed === 0 &&
+        summary.keptInFlight === 0 &&
+        summary.keptFailed === 0 &&
+        summary.keptOther === 0
+      ) {
+        process.exit(1)
+      }
+      return
+    }
+
+    const forceOrphans = wtFlags.has('--force-orphans')
     const { runWorktreeClean } = await import('./mastra/lib/worktree-clean')
 
     const summary = await runWorktreeClean({
