@@ -16,7 +16,7 @@
     "test": "vitest run",
     "dev": "tsx src/cli.ts",
     "cli": "tsx src/cli.ts",
-    "build:binary": "bash scripts/build-binary.sh",
+    "build:binary": "tsx scripts/build-binary.ts",
     "typecheck": "tsc --noEmit",
     "knip": "knip --no-exit-code"
   },
