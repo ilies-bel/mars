@@ -48,9 +48,6 @@ export const PromptCard = ({ agent }: PromptCardProps) => {
         <span className="font-mono text-[11px] text-muted">
           rendered markdown · scroll for full
         </span>
-        <span className="ml-auto font-mono text-[10px] uppercase text-muted">
-          (placeholder — wire to real prompt source in a follow-up)
-        </span>
       </div>
       <div
         className="flex flex-col gap-2 overflow-auto rounded-md bg-neutral-50 p-[14px]"

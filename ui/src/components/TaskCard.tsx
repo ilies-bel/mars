@@ -14,9 +14,9 @@ const truncate = (s: string, n: number): string =>
 export const TaskCard = ({ task, index }: Props) => {
   const accent =
     task.status === 'failed'
-      ? 'border-l-2 border-l-iron'
+      ? 'bg-iron/10'
       : task.status === 'dropped'
-        ? 'border-l-2 border-l-muted opacity-70'
+        ? 'opacity-70'
         : ''
   const showChip =
     task.status === 'blocked' ||

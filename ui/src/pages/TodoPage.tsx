@@ -75,8 +75,8 @@ export const ActionQueueRow = ({
   restartError,
 }: RowProps) => {
   const baseClass = [
-    'cursor-pointer border-l-2 px-3 py-2 transition-colors',
-    active ? 'border-fg bg-iron/20' : 'border-transparent hover:bg-iron/10',
+    'cursor-pointer px-3 py-2 transition-colors',
+    active ? 'bg-iron/20' : 'hover:bg-iron/10',
   ].join(' ')
 
   return (
@@ -498,7 +498,7 @@ const OriginNodeRow = ({
       <li
         className={[
           'flex items-baseline gap-2 text-fg',
-          isCurrent ? 'border-l-2 border-fg pl-2 font-bold' : '',
+          isCurrent ? 'font-bold pl-2' : '',
         ].join(' ')}
         style={{ marginLeft: `${depth * 12}px` }}
       >
