@@ -63,6 +63,7 @@ const makeDeps = (
   recipeCatalog: cachedRecipeCatalog!,
   traceStore: nullTraceStore,
   viewTasks,
+  viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
   ...overrides,
 })
 
