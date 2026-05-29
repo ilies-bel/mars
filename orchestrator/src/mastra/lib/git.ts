@@ -1035,8 +1035,11 @@ export interface VerifyArgs {
   branch?: string
   integrationBranch?: string
   // No skip option: the diff / commits-ahead gate runs for every dispatched
-  // task. A task that exits with zero commits ahead of integration fails with
-  // the uniform no-commits-ahead outcome (ADR 0019).
+  // task (ADR 0019). It fails only the genuine no-work case — a branch that has
+  // diverged from integration without landing a commit on it. A branch whose
+  // tip equals integration (legitimate no-op, e.g. the main-committer finding
+  // the tree already clean) or is an ancestor of integration (work already
+  // merged) passes: the integration branch is clean and nothing is un-merged.
   /** Optional trace context. When supplied, each verify step's shell-out
    *  emits a `tool_invoked` event under `phase: 'verify'`. Steps are probes
    *  whose non-zero exit IS the failure signal — passed through with
@@ -1141,11 +1144,28 @@ export const checkBranchHasDiff = async (
     )
     const count = Number.parseInt(stdout.trim(), 10)
     if (!Number.isInteger(count) || count <= 0) {
-      // Distinguish "branch tip is strictly behind integration" (work
-      // already shipped — fast-forward merged it into main between this
-      // task's setup and this check) from "branch tip equals integration"
-      // (genuine no-op — agent set up the worktree and didn't commit).
-      // Only the latter is a failure.
+      // Zero commits ahead is benign, not a failure. `integration..branch == 0`
+      // means every commit reachable from the branch is already reachable from
+      // integration — i.e. the branch tip is an ancestor of, or equal to,
+      // integration. Two sub-shapes, both fine:
+      //
+      //   - tip != integration → the branch's commit already fast-forwarded
+      //     into integration between this task's setup and this check (the
+      //     late-merge / runClaudeCode timeout-leak class). Work shipped.
+      //   - tip == integration → either the just-merged commit lands the tip
+      //     exactly on integration, or the agent legitimately concluded there
+      //     was nothing to do. This is the main-committer no-op: the dirty
+      //     state it was spawned to clean was already resolved upstream, so it
+      //     leaves the integration branch clean — its success condition. (An
+      //     empty `recover(noop)` commit collapses to this shape once merged.)
+      //
+      // In every case the integration branch already contains everything the
+      // task produced and is clean: there is no un-integrated work to lose and
+      // no dirty tree, so failing the task would recover nothing and only
+      // strand any chain blocked on it (the 2026-05-29 main-committer incident,
+      // where a correct no-op was failed as verify:has-diff/no-commits-ahead).
+      // Pass. The diagnostics still ride along so a post-mortem can tell a
+      // no-op apart from real shipped work without re-shelling into the tree.
       const branchSha = (
         await exec(
           resolveGitBin(),
@@ -1162,27 +1182,20 @@ export const checkBranchHasDiff = async (
           verifyCtx,
         )
       ).stdout.trim()
-      if (branchSha !== integrationSha) {
-        return {
-          name: 'has-diff',
-          passed: true,
-          output: `branch ${branch} is an ancestor of ${integrationBranch} — work already merged`,
-        }
-      }
-      // Append diagnostic context (SHAs, porcelain status, recent log) so
-      // a recurrence is debuggable from the inbox payload alone — without
-      // it the 'no commits ahead' message is indistinguishable from a
-      // late-arriving commit produced by a leaked subprocess.
       const diagnostics = await captureHasDiffDiagnostics(
         cwd,
         branch,
         integrationBranch,
         verifyCtx,
       )
+      const summary =
+        branchSha === integrationSha
+          ? `branch ${branch} tip equals ${integrationBranch} — no un-integrated work, tree clean (no-op accepted)`
+          : `branch ${branch} is an ancestor of ${integrationBranch} — work already merged`
       return {
         name: 'has-diff',
-        passed: false,
-        output: `no commits ahead of integration branch — task did not produce any changes\n${diagnostics}`,
+        passed: true,
+        output: `${summary}\n${diagnostics}`,
       }
     }
     return { name: 'has-diff', passed: true, output: `${count} commit(s) ahead of ${integrationBranch}` }

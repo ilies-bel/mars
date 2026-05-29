@@ -65,7 +65,7 @@ describe('verifyChanges (data-driven)', () => {
   })
 })
 
-describe('checkBranchHasDiff (empty-diff guard)', () => {
+describe('checkBranchHasDiff (zero-ahead is benign)', () => {
   let repo: string
 
   beforeAll(() => {
@@ -103,11 +103,15 @@ describe('checkBranchHasDiff (empty-diff guard)', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('returns passed=false when the branch has no commits ahead of integration', async () => {
+  it('passes a legitimate no-op when the branch tip equals integration', async () => {
+    // The branch never moved off the integration tip (the agent did nothing,
+    // e.g. a main-committer finding the tree already clean). The integration
+    // branch is clean and nothing is un-merged, so this must pass rather than
+    // fail and strand any chain blocked on it (the 2026-05-29 incident).
     const step = await checkBranchHasDiff(repo, 'task/empty', 'main')
     expect(step.name).toBe('has-diff')
-    expect(step.passed).toBe(false)
-    expect(step.output).toContain('no commits ahead')
+    expect(step.passed).toBe(true)
+    expect(step.output).toContain('no un-integrated work')
   })
 
   it('returns passed=true when the branch has commits ahead', async () => {
@@ -121,11 +125,28 @@ describe('checkBranchHasDiff (empty-diff guard)', () => {
     expect(step.output).toContain('already merged')
   })
 
-  it('verifyChanges short-circuits when empty-diff guard fails', async () => {
+  it('verifyChanges proceeds to the configured steps for a no-op branch', async () => {
+    // A no-op branch (tip == integration) passes the gate, so the configured
+    // steps still run — the gate no longer short-circuits a clean no-op. (A
+    // passing gate is not appended to steps; only a failing gate is returned.)
     const r = await verifyChanges({
       cwd: repo,
       branch: 'task/empty',
       integrationBranch: 'main',
+      steps: [{ name: 'runs-after-gate', ...truthyCmd, required: true }],
+    })
+    expect(r.passed).toBe(true)
+    expect(r.steps.map((s) => s.name)).toEqual(['runs-after-gate'])
+    expect(r.steps[0].passed).toBe(true)
+  })
+
+  it('verifyChanges still short-circuits when the has-diff gate cannot compute the range', async () => {
+    // A genuine gate error (unknown integration ref) must still fail fast,
+    // before any configured step runs.
+    const r = await verifyChanges({
+      cwd: repo,
+      branch: 'task/empty',
+      integrationBranch: 'no-such-ref',
       steps: [{ name: 'should-not-run', ...truthyCmd, required: true }],
     })
     expect(r.passed).toBe(false)
@@ -147,11 +168,11 @@ describe('checkBranchHasDiff (empty-diff guard)', () => {
     expect(step.output).toMatch(/commit\(s\) ahead/)
   })
 
-  it('embeds diagnostic context in the no-commits-ahead failure', async () => {
+  it('embeds diagnostic context in the accepted no-op output', async () => {
     const step = await checkBranchHasDiff(repo, 'task/empty', 'main')
-    expect(step.passed).toBe(false)
-    // SHA probes — the integration tip SHA must show up so a flapping
-    // failure can be cross-referenced against the actual ref state.
+    expect(step.passed).toBe(true)
+    // SHA probes still ride along on the (now passing) no-op so a post-mortem
+    // can cross-reference the ref state without re-shelling into the worktree.
     expect(step.output).toContain('HEAD:')
     expect(step.output).toContain('task/empty:')
     expect(step.output).toContain('main:')
