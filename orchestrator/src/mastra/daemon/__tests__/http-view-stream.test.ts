@@ -48,6 +48,10 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),
   viewProgress: async () => ({ tasks: [], proposals: [] }),
+  inboxAck: async () => {},
+  inboxResolve: async () => {},
+  inboxDismiss: async () => {},
+  todoDismiss: async () => {},
   ...overrides,
 })
 

@@ -2412,6 +2412,15 @@ export const startDaemon = async (
       const { dismissEntity } = await import('../lib/inbox-dismissals')
       await dismissEntity(kind, id, { by: 'daemon' })
     },
+    todoDismiss: async (kind, id) => {
+      if (kind === 'draft') {
+        const { rejectProposal } = await import('../proposals')
+        await rejectProposal(id)
+      } else {
+        const { dismissStaleWorktree } = await import('../lib/inbox')
+        await dismissStaleWorktree(id)
+      }
+    },
     viewStreamHub,
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')

@@ -888,6 +888,26 @@ export const supersedeObsoletePreflightDirtyMainRows = async (
 }
 
 /**
+ * Record an operator dismissal for a stale-worktree alert. Inserts into
+ * `stale_worktree_dismissals` (creating the table on first use) so the sweep
+ * skips the worktree on subsequent passes. No-op when the row already exists.
+ */
+export const dismissStaleWorktree = async (taskId: string): Promise<void> => {
+  await initInbox()
+  const c = getClient()
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS stale_worktree_dismissals (
+      task_id TEXT PRIMARY KEY,
+      dismissed_at INTEGER NOT NULL
+    )
+  `)
+  await c.execute({
+    sql: `INSERT OR IGNORE INTO stale_worktree_dismissals (task_id, dismissed_at) VALUES (?, ?)`,
+    args: [taskId, Date.now()],
+  })
+}
+
+/**
  * Delete the stale-worktree dismissal row for a task so a future
  * stale-worktree alert can re-fire cleanly if the task becomes stale again.
  * No-op when no row exists.
