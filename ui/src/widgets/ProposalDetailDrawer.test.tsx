@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ProposalDetailDrawer } from './ProposalDetailDrawer'
-import type { DraftFeature } from '@/shared/schemas'
+import type { DraftFeature, ProgressTask } from '@/shared/schemas'
 
 const draftProposal = (overrides: Partial<DraftFeature> = {}): DraftFeature => ({
   id: 'prop-1',
@@ -13,6 +13,29 @@ const draftProposal = (overrides: Partial<DraftFeature> = {}): DraftFeature => (
   createdAt: Date.now(),
   updatedAt: Date.now(),
   acceptanceCount: 3,
+  ...overrides,
+})
+
+const makeTask = (
+  id: string,
+  overrides: Partial<ProgressTask> = {},
+): ProgressTask => ({
+  id,
+  prompt: `Task prompt for ${id}`,
+  status: 'done',
+  plan: null,
+  branch: null,
+  worktreePath: null,
+  error: null,
+  dropReason: null,
+  retryCount: 0,
+  blockerTaskId: null,
+  blockedBy: [],
+  parentProposalId: null,
+  spec: null,
+  createdAt: '2024-01-01T00:00:00Z',
+  updatedAt: '2024-01-01T00:00:00Z',
+  cluster: 'Queued',
   ...overrides,
 })
 
@@ -107,5 +130,91 @@ describe('ProposalDetailDrawer – a11y overlay and focusability', () => {
       <ProposalDetailDrawer proposal={draftProposal()} onClose={() => {}} />,
     )
     expect(html).toContain('tabindex="-1"')
+  })
+})
+
+// ── Sliced-tasks list section ────────────────────────────────────────────────
+
+describe('ProposalDetailDrawer – sliced-tasks list', () => {
+  const slicedProposal = draftProposal({ id: 'prop-sliced', status: 'sliced' })
+
+  const tasks: ProgressTask[] = [
+    makeTask('task-alpha', {
+      parentProposalId: 'prop-sliced',
+      status: 'done',
+      prompt: 'Alpha task title\nsome extra detail that should be ignored',
+    }),
+    makeTask('task-beta', {
+      parentProposalId: 'prop-sliced',
+      status: 'running',
+      prompt: 'Beta task title',
+    }),
+    makeTask('task-other', {
+      parentProposalId: 'other-prop',
+      status: 'done',
+      prompt: 'Unrelated task',
+    }),
+  ]
+
+  it('renders child task ids, statuses, and first-line titles for a sliced proposal', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={slicedProposal} onClose={() => {}} tasks={tasks} />,
+    )
+    // Both child tasks appear.
+    expect(html).toContain('task-alpha')
+    expect(html).toContain('Alpha task title')
+    expect(html).toContain('task-beta')
+    expect(html).toContain('Beta task title')
+    // Unrelated task is excluded.
+    expect(html).not.toContain('task-other')
+    expect(html).not.toContain('Unrelated task')
+  })
+
+  it('each child task entry links to the task hash to focus that row', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={slicedProposal} onClose={() => {}} tasks={tasks} />,
+    )
+    expect(html).toContain('#/task/task-alpha')
+    expect(html).toContain('#/task/task-beta')
+  })
+
+  it('shows the status of each child task', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={slicedProposal} onClose={() => {}} tasks={tasks} />,
+    )
+    expect(html).toContain('done')
+    expect(html).toContain('running')
+  })
+
+  it('does not render the sliced-tasks section for non-sliced proposals', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ status: 'draft' })}
+        onClose={() => {}}
+        tasks={tasks}
+      />,
+    )
+    expect(html).not.toContain('data-testid="sliced-tasks"')
+    expect(html).not.toContain('task-alpha')
+    expect(html).not.toContain('task-beta')
+  })
+
+  it('does not render the sliced-tasks section for prd-ready proposals', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ status: 'prd-ready' })}
+        onClose={() => {}}
+        tasks={tasks}
+      />,
+    )
+    expect(html).not.toContain('data-testid="sliced-tasks"')
+  })
+
+  it('only shows the first line of the prompt as the task title', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={slicedProposal} onClose={() => {}} tasks={tasks} />,
+    )
+    // The second line of the alpha prompt should NOT appear.
+    expect(html).not.toContain('some extra detail that should be ignored')
   })
 })
