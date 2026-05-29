@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DraftFeature } from '@/shared/schemas'
 
 interface ProposalDetailDrawerProps {
@@ -35,6 +35,21 @@ export const ProposalDetailDrawer = ({
   onClose,
 }: ProposalDetailDrawerProps) => {
   const drawerRef = useRef<HTMLElement>(null)
+  const [closing, setClosing] = useState(false)
+  // Synchronous guard — prevents double-scheduling the close timer.
+  const closingRef = useRef(false)
+
+  /**
+   * Initiates the exit animation (180 ms) then calls the onClose prop.
+   * All close triggers (button, scrim, Escape) funnel through here so the
+   * transition always plays before the parent unmounts the drawer.
+   */
+  const handleClose = useCallback(() => {
+    if (closingRef.current) return
+    closingRef.current = true
+    setClosing(true)
+    setTimeout(() => onClose(), 180)
+  }, [onClose])
 
   // On open: save the previously focused element and move focus into the drawer.
   // On close (cleanup): restore focus to where it was.
@@ -51,7 +66,7 @@ export const ProposalDetailDrawer = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation()
-        onClose()
+        handleClose()
         return
       }
       if (e.key === 'Tab') {
@@ -85,7 +100,7 @@ export const ProposalDetailDrawer = ({
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [onClose])
+  }, [handleClose])
 
   return (
     <>
@@ -93,8 +108,9 @@ export const ProposalDetailDrawer = ({
       <div
         data-testid="proposal-detail-overlay"
         aria-hidden="true"
-        className="fixed inset-0 z-40 bg-fg/40"
-        onClick={onClose}
+        data-closing={closing ? 'true' : undefined}
+        className="drawer-scrim fixed inset-0 z-40 bg-fg/40"
+        onClick={handleClose}
       />
       <aside
         ref={drawerRef}
@@ -102,8 +118,9 @@ export const ProposalDetailDrawer = ({
         aria-modal="true"
         aria-label="Proposal detail"
         data-testid="proposal-detail-drawer"
+        data-closing={closing ? 'true' : undefined}
         tabIndex={-1}
-        className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-iron/40 bg-bg shadow-2xl outline-none"
+        className="drawer-panel fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-iron/40 bg-bg shadow-2xl outline-none"
       >
       <header className="flex items-start justify-between gap-3 border-b border-iron/40 px-4 py-3">
         <div className="flex min-w-0 flex-col gap-2">
@@ -133,7 +150,7 @@ export const ProposalDetailDrawer = ({
         </div>
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleClose}
           aria-label="Close proposal detail"
           data-testid="proposal-detail-close"
           className="shrink-0 rounded border border-iron/40 px-2 py-0.5 font-mono text-xs text-iron hover:bg-iron/10"
