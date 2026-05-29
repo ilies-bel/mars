@@ -2422,6 +2422,102 @@ export const startDaemon = async (
       }
     },
     viewStreamHub,
+    viewInbox: async (filter) => {
+      const { buildInboxView } = await import('./view/inbox')
+      const { listInboxItems } = await import('../lib/inbox')
+      const { listDismissals } = await import('../lib/inbox-dismissals')
+      const { listTasks: qListTasks, initQueue, getClient: getQueueClient } = await import('../queue')
+      const { listErrorKinds: listErrKinds } = await import('../lib/error-kinds')
+      const { hasRecipe } = await import('../lib/fix-recipes')
+      const { getRepoRoot } = await import('../context')
+
+      await initQueue()
+
+      // Build the state store adapter.
+      const stateStore = {
+        listOpenInboxItems: async () => {
+          const items = await listInboxItems('open')
+          return items.map((item) => ({
+            id: item.id,
+            kind: item.kind as string,
+            priority: item.priority as string,
+            title: item.title,
+            body: item.body,
+            payload: item.payload,
+            context: item.context,
+            raisedAt: item.raisedAt,
+            lastSeenAt: item.lastSeenAt,
+          }))
+        },
+        listInboxDismissals: async () => {
+          const dismissals = await listDismissals()
+          const map = new Map<string, string | null>()
+          for (const d of dismissals) {
+            map.set(`${d.entityKind}:${d.entityId}`, d.note)
+          }
+          return map
+        },
+      }
+
+      // Build the task store adapter: tasks + blocker info + parentProposalId.
+      const taskStore = {
+        listTasks: async () => {
+          const tasks = await qListTasks()
+          const c = getQueueClient()
+          // Build blockedBy map from task_blockers.
+          let blockedByMap = new Map<string, string[]>()
+          let proposalMap = new Map<string, string | null>()
+          try {
+            const blockersResult = await c.execute(
+              `SELECT task_id, blocker_task_id FROM task_blockers`,
+            )
+            for (const row of blockersResult.rows) {
+              const r = row as unknown as { task_id: string; blocker_task_id: string }
+              const arr = blockedByMap.get(r.task_id) ?? []
+              arr.push(r.blocker_task_id)
+              blockedByMap.set(r.task_id, arr)
+            }
+          } catch {
+            // task_blockers may not exist on a fresh repo — empty map.
+          }
+          try {
+            const proposalResult = await c.execute(
+              `SELECT id, parent_proposal_id FROM tasks WHERE parent_proposal_id IS NOT NULL`,
+            )
+            for (const row of proposalResult.rows) {
+              const r = row as unknown as { id: string; parent_proposal_id: string | null }
+              proposalMap.set(r.id, r.parent_proposal_id)
+            }
+          } catch {
+            // Tolerate missing column on legacy repos.
+          }
+          return tasks.map((t) => ({
+            id: t.id,
+            status: t.status,
+            prompt: t.prompt,
+            blockedBy: blockedByMap.get(t.id) ?? [],
+            parentProposalId: proposalMap.get(t.id) ?? null,
+            failureSignature: t.failureSignature,
+            branch: t.branch,
+            updatedAt: t.updatedAt,
+          }))
+        },
+      }
+
+      const errorKinds = listErrKinds()
+      const errorKindRegistry = new Map(
+        errorKinds.map((ek) => [ek.kind, ek]),
+      )
+
+      return buildInboxView({
+        stateStore,
+        taskStore,
+        errorKindRegistry,
+        recipeCatalog: { has: hasRecipe },
+        repoRoot: getRepoRoot(),
+        filter,
+      })
+    },
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
