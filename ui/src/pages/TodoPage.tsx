@@ -3,15 +3,14 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { OriginTree } from '@/widgets/OriginTree'
 import {
   fetchEvents,
   fetchFailureReasons,
-  fetchOrigins,
   invokeAction,
 } from '@/shared/api'
 import {
   catalogActionsForDetail,
-  originKindLabel,
   resolveFailureReason,
   severityColor,
   summarizeTraceEvent,
@@ -21,10 +20,10 @@ import type {
   ActionDescriptor,
   ActionQueueItem,
   DagNode,
-  OriginNode,
   TraceEvent,
 } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
+import { taskHash } from '@/shared/routing'
 
 // ---- Helpers ----
 
@@ -477,113 +476,6 @@ const TracesSection = ({ taskId }: TracesProps) => {
   )
 }
 
-// ---- Origins section ----
-
-interface OriginsProps {
-  taskId: string
-}
-
-const OriginNodeRow = ({
-  node,
-  depth,
-  currentTaskId,
-}: {
-  node: OriginNode
-  depth: number
-  currentTaskId: string
-}) => {
-  const isCurrent = node.id === currentTaskId
-  return (
-    <>
-      <li
-        className={[
-          'flex items-baseline gap-2 text-fg',
-          isCurrent ? 'font-bold pl-2' : '',
-        ].join(' ')}
-        style={{ marginLeft: `${depth * 12}px` }}
-      >
-        <span className="font-mono text-[9px] uppercase text-iron">
-          {originKindLabel(node.kind)}
-        </span>
-        <span className="break-all font-mono text-[10px] text-iron/80">
-          {node.id}
-        </span>
-        <span className="break-words">
-          {node.title.length > 70 ? `${node.title.slice(0, 69)}…` : node.title}
-        </span>
-        <span className="ml-auto font-mono text-[10px] uppercase text-iron/60">
-          {node.status}
-        </span>
-      </li>
-      {node.children.map((c) => (
-        <OriginNodeRow
-          key={c.id}
-          node={c}
-          depth={depth + 1}
-          currentTaskId={currentTaskId}
-        />
-      ))}
-    </>
-  )
-}
-
-const OriginsSection = ({ taskId }: OriginsProps) => {
-  const query = useQuery({
-    queryKey: ['origins', taskId],
-    queryFn: () => fetchOrigins(taskId),
-  })
-
-  if (query.isPending) {
-    return (
-      <div>
-        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-          Origins
-        </dt>
-        <dd className="text-iron/60">Loading…</dd>
-      </div>
-    )
-  }
-  if (query.isError || !query.data) {
-    return (
-      <div>
-        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-          Origins
-        </dt>
-        <dd className="text-error">
-          Failed to load origins
-          {query.error ? `: ${(query.error as Error).message}` : ''}
-        </dd>
-      </div>
-    )
-  }
-
-  const root = query.data.node
-  // Single-node tree, no real ancestry — collapse to the empty-state line.
-  if (root.children.length === 0 && root.id === taskId) {
-    return (
-      <div>
-        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-          Origins
-        </dt>
-        <dd className="text-iron/60">No origin recorded for this task.</dd>
-      </div>
-    )
-  }
-
-  return (
-    <div>
-      <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-        Origins
-      </dt>
-      <dd>
-        <ul className="flex flex-col gap-1">
-          <OriginNodeRow node={root} depth={0} currentTaskId={taskId} />
-        </ul>
-      </dd>
-    </div>
-  )
-}
-
 // ---- Detail panel ----
 
 interface DetailProps {
@@ -591,6 +483,12 @@ interface DetailProps {
 }
 
 const ActionQueueDetail = ({ item }: DetailProps) => {
+  // A real failed task (not the daemon-killed-batch sentinel) can open the
+  // shared TaskDetailDrawer. The `from=action-queue` tag keeps the Action queue
+  // list mounted behind the drawer and returns here on close.
+  const canOpenTaskDetail =
+    item.kind === 'failed-task' && item.entityId !== '__daemon-killed-batch__'
+
   return (
     <div className="flex h-full flex-col overflow-auto">
       <header className="border-b border-iron/30 px-6 py-4">
@@ -610,6 +508,18 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
         <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
           {item.title || '(no title)'}
         </h2>
+        {canOpenTaskDetail ? (
+          <button
+            type="button"
+            data-testid="aq-open-task-detail"
+            onClick={() => {
+              window.location.hash = taskHash(item.entityId, 'action-queue')
+            }}
+            className="mt-3 border border-iron/40 px-3 py-1.5 font-mono text-[10px] uppercase text-fg transition-colors hover:bg-iron/20"
+          >
+            Open task detail
+          </button>
+        ) : null}
       </header>
 
       <main className="flex-1 px-6 py-4">
@@ -719,7 +629,7 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
           {item.kind === 'failed-task' && item.entityId !== '__daemon-killed-batch__' ? (
             <>
               <TracesSection taskId={item.entityId} />
-              <OriginsSection taskId={item.entityId} />
+              <OriginTree taskId={item.entityId} />
             </>
           ) : null}
           <div>

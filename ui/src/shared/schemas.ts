@@ -45,7 +45,7 @@ const taskSpecSchema = z
   })
   .nullable()
 
-const taskSchema = z.object({
+export const taskSchema = z.object({
   id: z.string(),
   prompt: z.string(),
   status: taskStatusSchema,
@@ -56,6 +56,13 @@ const taskSchema = z.object({
   dropReason: z.string().nullable(),
   retryCount: z.number(),
   blockerTaskId: z.string().nullable(),
+  /**
+   * Machine-readable failure signature stamped at failure time (e.g.
+   * `'daemon-killed'`). The server already computes and serialises this; the
+   * task detail drawer surfaces it under the failure banner. Null/absent for
+   * non-failed or legacy rows.
+   */
+  failureSignature: z.string().nullable().optional(),
   /**
    * Full list of blocker task IDs. Empty array for tasks with no blockers.
    * Drives the Topology tab's DAG edges without a second round-trip.

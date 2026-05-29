@@ -13,9 +13,36 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
+import type { ReactNode } from 'react'
+import type { ProgressProposalNode, ProgressTask, Task } from '@/shared/schemas'
+import { taskSchema } from '@/shared/schemas'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 import { dagClusterStyle, DAG_EDGE_BLOCKER, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
+import { relativeTime } from '@/shared/time'
+import { OriginTree } from './OriginTree'
+
+// ── Drill-in trail helpers ────────────────────────────────────────────────────
+
+/**
+ * Computes the next breadcrumb trail after a drill-in click.
+ *
+ * Pure and order-preserving: if `id` already appears in `trail`, the trail is
+ * TRUNCATED to it (clicking a crumb/ancestor walks back up); otherwise `id` is
+ * PUSHED onto the end. The returned array's last element is always the
+ * now-current task.
+ */
+export const applyNavigate = (trail: string[], id: string): string[] => {
+  const at = trail.indexOf(id)
+  return at === -1 ? [...trail, id] : trail.slice(0, at + 1)
+}
+
+/**
+ * Compact crumb label: strips a leading `mars-` prefix, else falls back to the
+ * last 8 characters. Keeps the breadcrumb tight while the header keeps the
+ * full id.
+ */
+export const crumbLabel = (id: string): string =>
+  id.startsWith('mars-') ? id.slice('mars-'.length) : id.length > 8 ? id.slice(-8) : id
 
 interface TaskDetailDrawerProps {
   /** Task id pulled from `#/task/<id>`. */
@@ -37,13 +64,20 @@ interface TaskDetailDrawerProps {
    * Pass an empty array when there are no proposals.
    */
   proposals?: ProgressProposalNode[]
+  /**
+   * Seeds the drill-in breadcrumb trail. Test-only seam: production callers
+   * omit it and the trail initialises to `[taskId]`. When supplied it must end
+   * with `taskId` so the external-reset logic still treats `taskId` as the
+   * current node; otherwise the next `taskId` effect would reset the trail.
+   */
+  initialTrail?: string[]
 }
 
 type LoadState =
   | { kind: 'loading' }
   | { kind: 'not-found' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; taskStatus: string }
+  | { kind: 'ready'; task: Task }
 
 // ── Mini-subgraph SVG constants ───────────────────────────────────────────────
 // Slightly smaller than TopologyView's main-canvas constants; the drawer
@@ -168,18 +202,297 @@ const buildSubgraphLayout = (
   return { positioned, edges: subgraph.edges }
 }
 
+// ── Detail body ───────────────────────────────────────────────────────────────
+// Pure, fetch-free presentation of a fully-loaded Task. Split out from the
+// drawer shell so it renders synchronously in unit tests (the drawer's own
+// fetch effect never fires under renderToStaticMarkup).
+
+const SECTION_LABEL = 'font-mono text-[11px] uppercase tracking-[0.1em] text-muted'
+
+/** A section header in the drawer body, matching the existing "Context" style. */
+const SectionLabel = ({ children }: { children: ReactNode }) => (
+  <h3 className={`mb-1.5 ${SECTION_LABEL}`}>{children}</h3>
+)
+
+/** A bullet list of strings; renders nothing when the array is empty. */
+const StringList = ({ items }: { items: string[] }) =>
+  items.length > 0 ? (
+    <ul className="flex flex-col gap-0.5">
+      {items.map((s) => (
+        <li key={s} className="break-all font-mono text-[11px] text-iron">
+          {s}
+        </li>
+      ))}
+    </ul>
+  ) : null
+
+/** One labelled cell in the compact meta grid. */
+const MetaCell = ({ label, value }: { label: string; value: ReactNode }) => (
+  <div className="flex flex-col gap-0.5">
+    <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+      {label}
+    </span>
+    <span className="break-all font-mono text-[11px] text-fg">{value}</span>
+  </div>
+)
+
+/**
+ * Renders the STATUS-FIRST tiered detail body for a fully-loaded Task.
+ *
+ * Section order: Header → Failure/blocker banner → Prompt → Plan → Spec →
+ * Origins → Meta grid → Diagnostics. Every section after the header is omitted
+ * entirely (no empty header) when its backing data is null/empty.
+ */
+export const TaskDetailBody = ({
+  task,
+  onNavigate,
+  currentId,
+}: {
+  task: Task
+  /** Drill-in handler threaded into the OriginTree; omit for display-only. */
+  onNavigate?: (id: string) => void
+  /** Id the OriginTree bolds as "current"; defaults to the task's own id. */
+  currentId?: string
+}) => {
+  const firstLine = task.prompt.split('\n')[0] ?? task.prompt
+  // The header already shows the whole prompt when it's a single short line;
+  // in that case the dedicated Prompt section would be redundant.
+  const title = firstLine
+  const promptFullyShownInHeader =
+    task.prompt === firstLine && firstLine.length <= 80
+  const isBlocked = task.status === 'blocked'
+  const showBanner =
+    task.status === 'failed' || isBlocked || task.error != null
+  const spec = task.spec ?? null
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* a. Header tier — always present. */}
+      <div>
+        <p className="break-words text-sm font-medium text-fg">{title}</p>
+        <div className="mt-1 flex items-baseline gap-2">
+          <span
+            data-testid="task-detail-status"
+            className="font-mono text-xs uppercase tracking-wide text-iron"
+          >
+            {task.status}
+          </span>
+          <span className="break-all font-mono text-[10px] text-muted">{task.id}</span>
+        </div>
+      </div>
+
+      {/* b. Failure / blocker banner — prominent. */}
+      {showBanner ? (
+        <div
+          data-testid="task-detail-error"
+          className="rounded border border-error/50 bg-error/5 px-3 py-2"
+        >
+          <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-error">
+            {task.status === 'failed' ? 'Failure' : isBlocked ? 'Blocked' : 'Error'}
+          </p>
+          {isBlocked ? (
+            <p className="mt-1 text-[11px] text-iron">
+              Waiting on {task.blockedBy.length} blocker
+              {task.blockedBy.length === 1 ? '' : 's'}.
+            </p>
+          ) : null}
+          {task.error != null ? (
+            <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-error">
+              {task.error}
+            </pre>
+          ) : null}
+          {task.failureSignature != null ? (
+            <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em] text-error/70">
+              {task.failureSignature}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* c. Prompt — only when not already fully shown in the header. */}
+      {!promptFullyShownInHeader ? (
+        <div>
+          <SectionLabel>Prompt</SectionLabel>
+          <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-fg">
+            {task.prompt}
+          </pre>
+        </div>
+      ) : null}
+
+      {/* d. Plan. */}
+      {task.plan != null ? (
+        <div className="flex flex-col gap-2">
+          <SectionLabel>Plan</SectionLabel>
+          {task.plan.functional ? (
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Functional
+              </p>
+              <p className="mt-0.5 whitespace-pre-wrap break-words text-[11px] text-fg">
+                {task.plan.functional}
+              </p>
+            </div>
+          ) : null}
+          {task.plan.technical ? (
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Technical
+              </p>
+              <p className="mt-0.5 whitespace-pre-wrap break-words text-[11px] text-fg">
+                {task.plan.technical}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* e. Spec. */}
+      {spec != null ? (
+        <div data-testid="task-detail-spec" className="flex flex-col gap-2">
+          <SectionLabel>Spec</SectionLabel>
+          {spec.files.length > 0 ? (
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Files
+              </p>
+              <StringList items={spec.files} />
+            </div>
+          ) : null}
+          {spec.readFirst.length > 0 ? (
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Read first
+              </p>
+              <StringList items={spec.readFirst} />
+            </div>
+          ) : null}
+          {spec.prescriptiveAction != null ? (
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Action
+              </p>
+              <p className="mt-0.5 whitespace-pre-wrap break-words text-[11px] text-fg">
+                {spec.prescriptiveAction}
+              </p>
+            </div>
+          ) : null}
+          {spec.verifyCmd != null ? (
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Verify
+              </p>
+              <p className="mt-0.5 break-all font-mono text-[11px] text-fg">
+                {spec.verifyCmd}
+              </p>
+            </div>
+          ) : null}
+          {spec.doneCriteria.length > 0 ? (
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Done
+              </p>
+              <StringList items={spec.doneCriteria} />
+            </div>
+          ) : null}
+          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-iron/60">
+            {spec.taskType}
+          </p>
+        </div>
+      ) : null}
+
+      {/* f. Origins — drill-in capable when the drawer passes onNavigate. */}
+      <div className="text-[11px]">
+        <OriginTree taskId={task.id} onNavigate={onNavigate} currentId={currentId} />
+      </div>
+
+      {/* g. Meta grid. */}
+      <div data-testid="task-detail-meta" className="flex flex-col gap-2">
+        <SectionLabel>Meta</SectionLabel>
+        <div className="grid grid-cols-2 gap-2">
+          <MetaCell label="Type" value={spec?.taskType ?? '—'} />
+          <MetaCell label="Branch" value={task.branch ?? '—'} />
+          <MetaCell label="Created" value={relativeTime(task.createdAt) || task.createdAt} />
+          <MetaCell label="Updated" value={relativeTime(task.updatedAt) || task.updatedAt} />
+        </div>
+        <p className="font-mono text-[10px] text-iron">retries: {task.retryCount}</p>
+      </div>
+
+      {/* h. Diagnostics — collapsed by default. */}
+      <details data-testid="task-detail-diagnostics" className="text-[11px]">
+        <summary className={`cursor-pointer ${SECTION_LABEL}`}>Diagnostics</summary>
+        <dl className="mt-2 flex flex-col gap-1.5">
+          <div>
+            <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+              Worktree
+            </dt>
+            <dd className="break-all font-mono text-[11px] text-iron">
+              {task.worktreePath ?? '—'}
+            </dd>
+          </div>
+          {task.blockerTaskId != null ? (
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Blocker task id
+              </dt>
+              <dd className="break-all font-mono text-[11px] text-iron">
+                {task.blockerTaskId}
+              </dd>
+            </div>
+          ) : null}
+          {task.blockedBy.length > 0 ? (
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Blocked by
+              </dt>
+              <dd>
+                <StringList items={task.blockedBy} />
+              </dd>
+            </div>
+          ) : null}
+        </dl>
+      </details>
+    </div>
+  )
+}
+
 export const TaskDetailDrawer = ({
   taskId,
   onClose,
   fetchImpl,
   tasks,
   proposals,
+  initialTrail,
 }: TaskDetailDrawerProps) => {
   const drawerRef = useRef<HTMLElement>(null)
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [closing, setClosing] = useState(false)
   // Synchronous guard — prevents double-scheduling the close timer.
   const closingRef = useRef(false)
+
+  // Drill-in breadcrumb trail. The LAST element is the currently-shown task;
+  // it always starts as (and, for a single task, stays) `[taskId]`.
+  const [trail, setTrail] = useState<string[]>(() => initialTrail ?? [taskId])
+  const currentId = trail[trail.length - 1] ?? taskId
+
+  // Distinguish an external open from our own drill-in. Both arrive as a
+  // changed `taskId` prop (a self-nav writes the hash, which re-derives the
+  // prop), so we can't react to the prop alone. A self-nav has already pushed
+  // the id onto the trail, so `taskId` is the last element — leave the trail
+  // untouched. An external open targets an id the trail has never seen as
+  // current, so reset to `[taskId]`.
+  useEffect(() => {
+    setTrail((prev) => (prev[prev.length - 1] === taskId ? prev : [taskId]))
+  }, [taskId])
+
+  // Drill-in / crumb click: truncate-or-push the trail, then write the hash so
+  // the rest of the app (and our own taskId prop) follows. Matches TaskCard's
+  // `window.location.hash = '#/task/<id>'` mechanism.
+  const navigate = useCallback((id: string) => {
+    setTrail((prev) => applyNavigate(prev, id))
+    if (typeof window !== 'undefined') {
+      window.location.hash = `#/task/${encodeURIComponent(id)}`
+    }
+  }, [])
 
   /**
    * Initiates the exit animation (180 ms) then calls the onClose prop.
@@ -244,11 +557,13 @@ export const TaskDetailDrawer = ({
     }
   }, [handleClose])
 
+  // Loads the CURRENT task (last trail element), so drilling in fetches the
+  // newly-focused task's data rather than the original prop.
   useEffect(() => {
     let cancelled = false
     setState({ kind: 'loading' })
     const f = fetchImpl ?? fetch
-    f(`/api/tasks/${encodeURIComponent(taskId)}`)
+    f(`/api/tasks/${encodeURIComponent(currentId)}`)
       .then(async (res) => {
         if (cancelled) return
         if (res.status === 404) {
@@ -259,8 +574,13 @@ export const TaskDetailDrawer = ({
           setState({ kind: 'error', message: `HTTP ${res.status}` })
           return
         }
-        const data = (await res.json()) as { task: { status: string } }
-        setState({ kind: 'ready', taskStatus: data.task.status })
+        const raw = (await res.json()) as { task: unknown }
+        const parsed = taskSchema.safeParse(raw.task)
+        if (!parsed.success) {
+          setState({ kind: 'error', message: 'response failed schema validation' })
+          return
+        }
+        setState({ kind: 'ready', task: parsed.data })
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -270,7 +590,7 @@ export const TaskDetailDrawer = ({
     return () => {
       cancelled = true
     }
-  }, [taskId, fetchImpl])
+  }, [currentId, fetchImpl])
 
   // Compute the focus subgraph from props. This is independent of the detail
   // fetch so it renders immediately — the operator sees relationship context
@@ -278,9 +598,9 @@ export const TaskDetailDrawer = ({
   const subgraph = useMemo(
     () =>
       tasks != null && proposals != null
-        ? buildSubgraphLayout(tasks, proposals, taskId)
+        ? buildSubgraphLayout(tasks, proposals, currentId)
         : null,
-    [tasks, proposals, taskId],
+    [tasks, proposals, currentId],
   )
 
   // Precompute a lookup for edge rendering.
@@ -306,7 +626,7 @@ export const TaskDetailDrawer = ({
         data-testid="task-detail-overlay"
         aria-hidden="true"
         data-closing={closing ? 'true' : undefined}
-        className="drawer-scrim fixed inset-0 z-40 bg-fg/40"
+        className="drawer-scrim fixed inset-0 z-40 hidden bg-fg/40 xl:block"
         onClick={handleClose}
       />
       <aside
@@ -318,11 +638,11 @@ export const TaskDetailDrawer = ({
         data-state={state.kind}
         data-closing={closing ? 'true' : undefined}
         tabIndex={-1}
-        className="drawer-panel fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-iron/40 bg-bg shadow-2xl outline-none"
+        className="drawer-panel fixed inset-0 z-50 flex w-full flex-col border-iron/40 bg-bg outline-none xl:inset-y-0 xl:left-auto xl:right-0 xl:w-[min(560px,100vw)] xl:border-l xl:shadow-2xl"
       >
       <header className="flex items-center justify-between border-b border-iron/40 px-4 py-3">
         <h2 className="font-mono text-sm uppercase tracking-wide text-iron">
-          Task {taskId}
+          Task {currentId}
         </h2>
         <button
           type="button"
@@ -334,6 +654,38 @@ export const TaskDetailDrawer = ({
           Close
         </button>
       </header>
+
+      {/* Drill-in breadcrumb — only once the trail has more than one hop. */}
+      {trail.length > 1 ? (
+        <nav
+          data-testid="task-detail-breadcrumb"
+          aria-label="Task drill-in trail"
+          className="flex flex-wrap items-center gap-1 border-b border-iron/20 px-4 py-2 font-mono text-[11px]"
+        >
+          {trail.map((id, i) => {
+            const isCurrent = i === trail.length - 1
+            return (
+              <span key={id} className="flex items-center gap-1">
+                {i > 0 ? <span className="text-iron/50">▸</span> : null}
+                {isCurrent ? (
+                  <span data-crumb-id={id} className="font-medium text-fg">
+                    {crumbLabel(id)}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    data-crumb-id={id}
+                    onClick={() => navigate(id)}
+                    className="text-iron hover:underline"
+                  >
+                    {crumbLabel(id)}
+                  </button>
+                )}
+              </span>
+            )
+          })}
+        </nav>
+      ) : null}
 
       {subgraph != null ? (
         <section
@@ -427,19 +779,7 @@ export const TaskDetailDrawer = ({
           data-testid="task-detail-body"
           className="flex-1 overflow-y-auto p-4"
         >
-          <dl className="flex flex-col gap-3">
-            <div>
-              <dt className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
-                Status
-              </dt>
-              <dd
-                data-testid="task-detail-status"
-                className="mt-1 font-mono text-sm text-fg"
-              >
-                {state.taskStatus}
-              </dd>
-            </div>
-          </dl>
+          <TaskDetailBody task={state.task} onNavigate={navigate} currentId={currentId} />
         </div>
       ) : null}
     </aside>

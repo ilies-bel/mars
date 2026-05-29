@@ -3,8 +3,10 @@ import {
   detectRoute,
   actionQueueCount,
   parseTaskRoute,
+  parseTaskOrigin,
   parseProposalRoute,
   resolvePageRoute,
+  taskHash,
 } from './routing'
 import type { TodoPayload } from './schemas'
 
@@ -125,6 +127,57 @@ describe('parseTaskRoute', () => {
   it('does not match a proposal route', () => {
     expect(parseTaskRoute('#/proposal/abc-123')).toBeNull()
   })
+
+  it('returns the id even with a ?from=<route> suffix', () => {
+    // The `[^/?#]+` capture stops at the `?`, so the origin suffix is ignored.
+    expect(parseTaskRoute('#/task/x?from=action-queue')).toBe('x')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseTaskOrigin — reads the `from` query param off a task hash
+// ---------------------------------------------------------------------------
+
+describe('parseTaskOrigin', () => {
+  it('returns the route from ?from=<route>', () => {
+    expect(parseTaskOrigin('#/task/x?from=action-queue')).toBe('action-queue')
+    expect(parseTaskOrigin('#/task/x?from=progress')).toBe('progress')
+    expect(parseTaskOrigin('#/task/x?from=agents')).toBe('agents')
+    expect(parseTaskOrigin('#/task/x?from=events')).toBe('events')
+  })
+
+  it('returns null when the task hash carries no from', () => {
+    expect(parseTaskOrigin('#/task/x')).toBeNull()
+  })
+
+  it('returns null for an unrecognised from value', () => {
+    expect(parseTaskOrigin('#/task/x?from=bogus')).toBeNull()
+  })
+
+  it('returns null for a non-task hash', () => {
+    expect(parseTaskOrigin('#/progress')).toBeNull()
+    expect(parseTaskOrigin('#/proposal/x?from=action-queue')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// taskHash — builds the overlay hash, optionally tagging the origin
+// ---------------------------------------------------------------------------
+
+describe('taskHash', () => {
+  it('builds a plain task hash with no origin', () => {
+    expect(taskHash('x')).toBe('#/task/x')
+  })
+
+  it('appends ?from=<route> when an origin is given', () => {
+    expect(taskHash('x', 'action-queue')).toBe('#/task/x?from=action-queue')
+  })
+
+  it('percent-encodes the id', () => {
+    expect(taskHash('mars-123', 'action-queue')).toBe(
+      '#/task/mars-123?from=action-queue',
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -160,6 +213,20 @@ describe('resolvePageRoute', () => {
     // A task drawer hash forces the Progress page to stay mounted so that
     // the operator's view state (active tab, cluster toggles) is preserved.
     expect(resolvePageRoute('#/task/mars-abc123')).toBe('progress')
+  })
+
+  it('returns the from-route when a task overlay carries ?from=', () => {
+    // Opening the drawer from the Action queue keeps the AQ list mounted
+    // behind it (and closing returns there).
+    expect(resolvePageRoute('#/task/x?from=action-queue')).toBe('action-queue')
+  })
+
+  it('still returns progress for a plain task hash (no from)', () => {
+    expect(resolvePageRoute('#/task/x')).toBe('progress')
+  })
+
+  it('falls back to progress for an unrecognised from value', () => {
+    expect(resolvePageRoute('#/task/x?from=bogus')).toBe('progress')
   })
 
   it('returns progress after the drawer closes (hash reset to #/progress)', () => {

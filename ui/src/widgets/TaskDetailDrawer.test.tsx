@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
-import { TaskDetailDrawer } from './TaskDetailDrawer'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type {
+  OriginsResponse,
+  ProgressProposalNode,
+  ProgressTask,
+  Task,
+} from '@/shared/schemas'
+import {
+  TaskDetailDrawer,
+  TaskDetailBody,
+  applyNavigate,
+  crumbLabel,
+} from './TaskDetailDrawer'
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -328,6 +339,48 @@ describe('TaskDetailDrawer – entrance / exit animation structure', () => {
   })
 })
 
+// ── Responsive shell: full-bleed sheet < xl, right drawer ≥ xl ────────────────
+
+/**
+ * The shell is responsive at the Tailwind `xl` breakpoint (1280px): below xl it
+ * is a full-bleed sheet (covers the viewport, no scrim), at xl it is the
+ * original right-side drawer with the dimming scrim behind it. The suite runs
+ * under renderToStaticMarkup (no real viewport), so these assertions check the
+ * className strings rather than computed layout.
+ */
+describe('TaskDetailDrawer – responsive shell (sheet < xl, drawer ≥ xl)', () => {
+  // Pull the class attribute off a single element by testid from the markup.
+  const classOf = (html: string, testid: string): string => {
+    const re = new RegExp(`data-testid="${testid}"[^>]*?\\sclass="([^"]*)"`)
+    const m = html.match(re)
+    return m?.[1] ?? ''
+  }
+
+  it('panel is full-bleed below xl and a right drawer at xl', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
+    )
+    const cls = classOf(html, 'task-detail-drawer')
+    // Full-bleed sheet defaults.
+    expect(cls).toContain('inset-0')
+    expect(cls).toContain('w-full')
+    // xl: right-side drawer overrides.
+    expect(cls).toContain('xl:right-0')
+    expect(cls).toContain('xl:left-auto')
+    expect(cls).toContain('xl:w-[min(560px,100vw)]')
+    expect(cls).toContain('xl:border-l')
+  })
+
+  it('scrim is hidden below xl and shown at xl', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
+    )
+    const cls = classOf(html, 'task-detail-overlay')
+    expect(cls).toContain('hidden')
+    expect(cls).toContain('xl:block')
+  })
+})
+
 // ── Subgraph: cluster colours match main canvas ───────────────────────────────
 
 describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', () => {
@@ -408,5 +461,330 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
       />,
     )
     expect(html).toContain('data-cluster="Failed"')
+  })
+})
+
+// ── Detail body: tiered metadata + spec + origin mount ────────────────────────
+
+/**
+ * The `ready` body is split into the pure `TaskDetailBody` so it renders
+ * synchronously here — the drawer's own fetch effect never fires under
+ * `renderToStaticMarkup` (no DOM env). The body mounts `OriginTree`, which
+ * calls `useQuery`, so each render is wrapped in a `QueryClientProvider` with
+ * the origins response pre-seeded (the TodoPageDetail convention).
+ */
+
+const fullTask = (overrides: Partial<Task> & { id: string }): Task => ({
+  id: overrides.id,
+  prompt: overrides.prompt ?? `Task ${overrides.id}`,
+  status: overrides.status ?? 'queued',
+  plan: overrides.plan ?? null,
+  branch: overrides.branch ?? null,
+  worktreePath: overrides.worktreePath ?? null,
+  error: overrides.error ?? null,
+  failureSignature: overrides.failureSignature ?? null,
+  dropReason: overrides.dropReason ?? null,
+  retryCount: overrides.retryCount ?? 0,
+  blockerTaskId: overrides.blockerTaskId ?? null,
+  blockedBy: overrides.blockedBy ?? [],
+  parentProposalId: overrides.parentProposalId ?? null,
+  spec: overrides.spec ?? null,
+  createdAt: overrides.createdAt ?? '2024-01-01T00:00:00Z',
+  updatedAt: overrides.updatedAt ?? '2024-01-01T00:00:00Z',
+  ...overrides,
+})
+
+const SINGLE_NODE_ORIGINS = (taskId: string): OriginsResponse => ({
+  node: { id: taskId, kind: 'task', title: 'lone task', status: 'queued', children: [] },
+})
+
+const renderBody = (t: Task, origins?: OriginsResponse): string => {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  })
+  qc.setQueryData(['origins', t.id], origins ?? SINGLE_NODE_ORIGINS(t.id))
+  return renderToStaticMarkup(
+    <QueryClientProvider client={qc}>
+      <TaskDetailBody task={t} />
+    </QueryClientProvider>,
+  )
+}
+
+describe('TaskDetailBody – failed task with error + spec', () => {
+  const failed = fullTask({
+    id: 'task-fail',
+    status: 'failed',
+    prompt: 'A long multi-line prompt that must surface in its own block.\nSecond line.',
+    error: 'boom: something exploded\n  at frobnicate()',
+    failureSignature: 'daemon-killed',
+    spec: {
+      files: ['src/a.ts', 'src/b.ts'],
+      readFirst: ['docs/x.md'],
+      prescriptiveAction: 'Refactor the frobnicator',
+      verifyCmd: 'bun test src',
+      doneCriteria: ['tests pass', 'lint clean'],
+      taskType: 'auto',
+    },
+  })
+
+  it('keeps the task-detail-status testid showing the status string', () => {
+    const html = renderBody(failed)
+    expect(html).toContain('data-testid="task-detail-status"')
+    expect(html).toContain('failed')
+  })
+
+  it('renders the failure banner with the error text and failure signature', () => {
+    const html = renderBody(failed)
+    expect(html).toContain('data-testid="task-detail-error"')
+    expect(html).toContain('boom: something exploded')
+    expect(html).toContain('at frobnicate()')
+    expect(html).toContain('daemon-killed')
+  })
+
+  it('renders the spec section with files, read-first, verify, and done criteria', () => {
+    const html = renderBody(failed)
+    expect(html).toContain('data-testid="task-detail-spec"')
+    expect(html).toContain('src/a.ts')
+    expect(html).toContain('src/b.ts')
+    expect(html).toContain('docs/x.md')
+    expect(html).toContain('Refactor the frobnicator')
+    expect(html).toContain('bun test src')
+    expect(html).toContain('tests pass')
+    expect(html).toContain('lint clean')
+  })
+
+  it('mounts the origin tree and the meta + diagnostics sections', () => {
+    const html = renderBody(failed)
+    // OriginTree single-node empty-state still renders its Origins header.
+    expect(html).toContain('Origins')
+    expect(html).toContain('data-testid="task-detail-meta"')
+    expect(html).toContain('data-testid="task-detail-diagnostics"')
+  })
+
+  it('shows the full prompt block when the prompt is multi-line', () => {
+    const html = renderBody(failed)
+    expect(html).toContain('must surface in its own block')
+    expect(html).toContain('Second line.')
+  })
+})
+
+describe('TaskDetailBody – blocked task', () => {
+  it('renders the blocked banner noting the blocker count', () => {
+    const html = renderBody(
+      fullTask({ id: 'task-blocked', status: 'blocked', blockedBy: ['task-up'] }),
+    )
+    expect(html).toContain('data-testid="task-detail-error"')
+    expect(html).toContain('Blocked')
+    expect(html).toContain('Waiting on 1 blocker')
+  })
+})
+
+describe('TaskDetailBody – minimal task omits empty sections', () => {
+  // A short, single-line prompt with no error/spec/plan/blockers.
+  const minimal = fullTask({ id: 'task-min', prompt: 'tiny', status: 'queued' })
+
+  it('does not render the failure banner when there is no error/failure/block', () => {
+    const html = renderBody(minimal)
+    expect(html).not.toContain('data-testid="task-detail-error"')
+  })
+
+  it('does not render the spec section when spec is null', () => {
+    const html = renderBody(minimal)
+    expect(html).not.toContain('data-testid="task-detail-spec"')
+  })
+
+  it('does not render a Plan header when plan is null', () => {
+    const html = renderBody(minimal)
+    expect(html).not.toContain('>Plan<')
+  })
+
+  it('does not render a redundant Prompt block when the prompt fits the header', () => {
+    const html = renderBody(minimal)
+    expect(html).not.toContain('>Prompt<')
+  })
+
+  it('still renders the always-present meta grid', () => {
+    const html = renderBody(minimal)
+    expect(html).toContain('data-testid="task-detail-meta"')
+  })
+})
+
+// ── Drill-in: pure trail helpers ──────────────────────────────────────────────
+
+/**
+ * The trail-mutation logic is extracted as the pure `applyNavigate` helper so
+ * its truncate-or-push semantics can be exercised without a renderer. Clicking
+ * a node already in the trail walks back up (truncate); clicking a fresh node
+ * drills in (push). The last element is always the now-current task.
+ */
+describe('applyNavigate – truncate-or-push trail semantics', () => {
+  it('pushes an id that is not yet in the trail (drill-in)', () => {
+    expect(applyNavigate(['a'], 'b')).toEqual(['a', 'b'])
+    expect(applyNavigate(['a', 'b'], 'c')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('truncates to an id already in the trail (crumb / ancestor click)', () => {
+    expect(applyNavigate(['a', 'b', 'c'], 'b')).toEqual(['a', 'b'])
+    expect(applyNavigate(['a', 'b', 'c'], 'a')).toEqual(['a'])
+  })
+
+  it('re-clicking the current (last) id is a no-op-shaped truncation to itself', () => {
+    expect(applyNavigate(['a', 'b', 'c'], 'c')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('does not mutate the input trail', () => {
+    const input = ['a', 'b', 'c']
+    applyNavigate(input, 'b')
+    applyNavigate(input, 'd')
+    expect(input).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('crumbLabel – compact id form', () => {
+  it('strips a leading mars- prefix', () => {
+    expect(crumbLabel('mars-12939470')).toBe('12939470')
+  })
+
+  it('falls back to the last 8 chars for long non-prefixed ids', () => {
+    expect(crumbLabel('abcdefghijklmnop')).toBe('ijklmnop')
+  })
+
+  it('returns short ids unchanged', () => {
+    expect(crumbLabel('t-b34')).toBe('t-b34')
+  })
+})
+
+// ── Drill-in: breadcrumb rendering ────────────────────────────────────────────
+
+/**
+ * The breadcrumb lives in drawer state (the trail). A fresh single-task open
+ * has a one-element trail and renders no breadcrumb; a multi-hop trail (seeded
+ * here via the test-only `initialTrail` prop) renders one crumb per id with a
+ * `▸` separator, earlier crumbs as buttons and the last as the styled current.
+ */
+describe('TaskDetailDrawer – drill-in breadcrumb', () => {
+  it('renders NO breadcrumb for a freshly-opened single task (trail length 1)', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
+    )
+    expect(html).not.toContain('data-testid="task-detail-breadcrumb"')
+  })
+
+  it('renders NO breadcrumb when initialTrail is a single element', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="solo"
+        onClose={() => {}}
+        initialTrail={['solo']}
+      />,
+    )
+    expect(html).not.toContain('data-testid="task-detail-breadcrumb"')
+  })
+
+  it('renders the breadcrumb container with one crumb per trail id', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="c"
+        onClose={() => {}}
+        initialTrail={['a', 'b', 'c']}
+      />,
+    )
+    expect(html).toContain('data-testid="task-detail-breadcrumb"')
+    expect((html.match(/data-crumb-id=/g) ?? []).length).toBe(3)
+    expect(html).toContain('data-crumb-id="a"')
+    expect(html).toContain('data-crumb-id="b"')
+    expect(html).toContain('data-crumb-id="c"')
+  })
+
+  it('separates crumbs with the ▸ glyph', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="c"
+        onClose={() => {}}
+        initialTrail={['a', 'b', 'c']}
+      />,
+    )
+    // Two separators for a three-crumb trail.
+    expect((html.match(/▸/g) ?? []).length).toBe(2)
+  })
+
+  it('renders earlier crumbs as buttons and the current crumb as non-button', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="c"
+        onClose={() => {}}
+        initialTrail={['a', 'b', 'c']}
+      />,
+    )
+    // Earlier crumbs are <button data-crumb-id=...>.
+    expect(html).toMatch(/<button[^>]*data-crumb-id="a"/)
+    expect(html).toMatch(/<button[^>]*data-crumb-id="b"/)
+    // The current crumb is a <span>, not a button.
+    expect(html).not.toMatch(/<button[^>]*data-crumb-id="c"/)
+    expect(html).toMatch(/<span[^>]*data-crumb-id="c"[^>]*class="[^"]*font-medium/)
+  })
+
+  it('shows the current (last) trail id in the header, not the original prop', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="c"
+        onClose={() => {}}
+        initialTrail={['a', 'b', 'c']}
+      />,
+    )
+    expect(html).toContain('Task c')
+  })
+})
+
+// ── Drill-in: OriginTree wiring ───────────────────────────────────────────────
+
+/**
+ * `TaskDetailBody` threads its `onNavigate`/`currentId` into the `OriginTree`.
+ * With a multi-node origins tree, `onNavigate` turns each node row into a
+ * `<button>` (the OriginTree contract), so we can assert the wiring
+ * structurally without a live DOM. `currentId` selects which row is bolded.
+ */
+describe('TaskDetailBody – OriginTree drill-in wiring', () => {
+  const TREE_ORIGINS = (focusId: string): OriginsResponse => ({
+    node: {
+      id: 'prop-x',
+      kind: 'proposal',
+      title: 'parent proposal',
+      status: 'prd-ready',
+      children: [
+        { id: focusId, kind: 'task', title: 'the task', status: 'running', children: [] },
+      ],
+    },
+  })
+
+  it('passes onNavigate so origin rows render as buttons', () => {
+    const t = fullTask({ id: 'focus' })
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['origins', 'focus'], TREE_ORIGINS('focus'))
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <TaskDetailBody task={t} onNavigate={() => {}} currentId="focus" />
+      </QueryClientProvider>,
+    )
+    expect(html).toContain('data-origin-node-id="prop-x"')
+    expect(html).toMatch(/<button[^>]*>[\s\S]*?prop-x/)
+  })
+
+  it('renders origin rows as plain cells (no buttons) when onNavigate is omitted', () => {
+    const t = fullTask({ id: 'focus' })
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['origins', 'focus'], TREE_ORIGINS('focus'))
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <TaskDetailBody task={t} />
+      </QueryClientProvider>,
+    )
+    expect(html).toContain('data-origin-node-id="prop-x"')
+    // No origin-row button wraps the node id when display-only.
+    expect(html).not.toMatch(/<button[^>]*>[\s\S]*?prop-x/)
   })
 })

@@ -2,7 +2,13 @@ import { NavBar } from '@/widgets/NavBar'
 import { TaskDetailDrawer } from '@/widgets/TaskDetailDrawer'
 import { ProposalDetailDrawer } from '@/widgets/ProposalDetailDrawer'
 import { useHashRoute } from '@/shared/useHashRoute'
-import { parseProposalRoute, parseTaskRoute, resolvePageRoute } from '@/shared/routing'
+import {
+  parseProposalRoute,
+  parseTaskOrigin,
+  parseTaskRoute,
+  resolvePageRoute,
+} from '@/shared/routing'
+import type { RouteName } from '@/shared/routing'
 import { useTodo } from '@/entities/todo/useTodo'
 import { useProgress } from '@/hooks/useProgress'
 import { AgentsPage } from '@/pages/AgentsPage'
@@ -10,9 +16,23 @@ import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/TodoPage'
 import { EventsPage } from '@/pages/EventsPage'
 
-const clearTaskHash = (): void => {
+/** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
+const ROUTE_BASE: Record<RouteName, string> = {
+  'action-queue': '#/action-queue',
+  progress: '#/progress',
+  agents: '#/agents',
+  events: '#/events',
+}
+
+/**
+ * Closes a drawer opened from `closeHash` by returning to its origin page.
+ * A `#/task/<id>?from=<route>` hash returns to `<route>`; a plain task hash
+ * (or any hash with no recorded origin) returns to Progress — today's default.
+ */
+const clearTaskHash = (closeHash: string): void => {
   if (typeof window === 'undefined') return
-  window.location.hash = '#/progress'
+  const origin = parseTaskOrigin(closeHash)
+  window.location.hash = origin ? ROUTE_BASE[origin] : '#/progress'
 }
 
 const App = () => {
@@ -46,13 +66,18 @@ const App = () => {
       {taskId ? (
         <TaskDetailDrawer
           taskId={taskId}
-          onClose={clearTaskHash}
+          onClose={() => clearTaskHash(hash)}
           tasks={tasks ?? []}
           proposals={proposals}
         />
       ) : null}
       {proposal ? (
-        <ProposalDetailDrawer proposal={proposal} onClose={clearTaskHash} />
+        <ProposalDetailDrawer
+          proposal={proposal}
+          onClose={() => {
+            if (typeof window !== 'undefined') window.location.hash = '#/progress'
+          }}
+        />
       ) : null}
     </div>
   )
