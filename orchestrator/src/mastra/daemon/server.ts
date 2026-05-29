@@ -611,6 +611,7 @@ export const startDaemon = async (
         isBlockersAbortError,
         isMainDirtyVerifyError,
         isTooHardAbortError,
+        isExplorationLoopAbortError,
       } = await import('../../workflows/implement-workflow')
       // Read the failure off RunResult.error (the engine puts the thrown Error
       // there verbatim on the `failed` path). The detectors flatten the cause
@@ -641,6 +642,15 @@ export const startDaemon = async (
         log(`[implement] ${task.id} parked blocked: read-span guard tripped; diagnose Chore spawned as blocker`)
         return
       }
+      // An exploration-loop ceiling abort marks the task `failed` with cause
+      // 'exploration-loop' and enqueues one follow-up task. The task IS
+      // genuinely failed so we emit `task.completed` — the dedicated log line
+      // is the only difference from the generic path.
+      if (result.status === 'failed' && isExplorationLoopAbortError(resultError)) {
+        log(`[implement] ${task.id} failed: exploration-loop ceiling abort; follow-up enqueued`)
+        bus.emit('task.completed', { taskId: task.id, status: result.status })
+        return
+      }
       log(`[implement] ${task.id} -> ${result.status}`)
       bus.emit('task.completed', { taskId: task.id, status: result.status })
     } catch (err) {
@@ -659,9 +669,11 @@ export const startDaemon = async (
       // import fails, treat the error as an ordinary failure rather than a
       // benign blockers-abort — failing the task is the safe default.
       let isBlockersAbort = false
+      let isExplorationLoopAbort = false
       try {
-        const { isBlockersAbortError } = await import('../../workflows/implement-workflow')
+        const { isBlockersAbortError, isExplorationLoopAbortError } = await import('../../workflows/implement-workflow')
         isBlockersAbort = isBlockersAbortError(err)
+        isExplorationLoopAbort = isExplorationLoopAbortError(err)
       } catch (importErr) {
         log(
           `[implement] ${task.id} could not load blockers-abort detector (${
@@ -671,6 +683,11 @@ export const startDaemon = async (
       }
       if (isBlockersAbort) {
         log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
+      } else if (isExplorationLoopAbort) {
+        // The workflow already marked this task failed with cause 'exploration-loop'
+        // before throwing the sentinel. Suppress the re-update that would overwrite
+        // that carefully-set failure record.
+        log(`[implement] ${task.id} exploration-loop ceiling abort (exception path); task already marked failed`)
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
         try {

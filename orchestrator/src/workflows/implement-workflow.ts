@@ -94,6 +94,18 @@ export const TOO_HARD_ABORT_MESSAGE = (taskId: string): string =>
 export const isTooHardAbortError = (err: unknown): boolean =>
   errorHaystack(err).includes('aborted by read-span guard: diagnose Chore spawned')
 
+// Thrown by the code step when the read-span hard-abort ceiling fires
+// (MARS_READ_SPAN_ABORT_LIMIT). The worker is killed via its externalAbort
+// signal (exit code 138). The task is already marked failed with
+// 'exploration-loop' as the abort cause before this sentinel is thrown.
+// The daemon uses `isExplorationLoopAbortError` to suppress re-updating the
+// task in its exception-catch path so our failure record is not overwritten.
+export const EXPLORATION_LOOP_ABORT_MESSAGE = (taskId: string): string =>
+  `task ${taskId} aborted by exploration-loop ceiling: coder crossed the read-span hard-abort limit`
+
+export const isExplorationLoopAbortError = (err: unknown): boolean =>
+  errorHaystack(err).includes('aborted by exploration-loop ceiling')
+
 import { summarizeUsage } from '../mastra/lib/claude-usage'
 import { recordSignals } from '../mastra/lib/reflect-signals'
 import { openTraceEventStore, type TraceEventStore } from '../mastra/lib/trace-events-store'
@@ -104,6 +116,7 @@ import { relative } from 'node:path'
 import {
   createReadSpanWatcher,
   resolveReadSpanLimit,
+  resolveReadSpanAbortLimit,
 } from '../mastra/lib/read-span-watch'
 import { TDD_WORKER_BRIEF } from './tdd-brief'
 import { CONTEXT_GATHERING_BRIEF } from './context-gathering-brief'
@@ -835,12 +848,27 @@ export const implementWorkflow = defineWorkflow<
       // Diagnose Chores are exempt (their job IS heavy reading; PRD 06e677fb —
       // their backstop is the time/turn cap). Every other dispatched task gets
       // the watcher.
+      // AbortController bridged into the worker via externalAbort. When the
+      // read-span hard-abort ceiling fires (MARS_READ_SPAN_ABORT_LIMIT) the
+      // onAbort callback signals this controller; the worker exits with
+      // exitCode 138 (the 'external abort' exit code). The exploration-loop
+      // check below then handles the aftermath.
+      const ac = new AbortController()
+      let spanCeilingAborted = false
       const watcher = shouldWireReadSpanWatcher(input.kind)
         ? createReadSpanWatcher({
             limit: resolveReadSpanLimit(),
             onThreshold: (info) => {
               console.log(
                 `[span] task ${input.taskId}: ${info.limit} consecutive Read/Grep/Glob calls without action (trace=${info.trace.map((t) => t.tool).join('+')}).`,
+              )
+            },
+            abortLimit: resolveReadSpanAbortLimit(),
+            onAbort: (info) => {
+              spanCeilingAborted = true
+              ac.abort()
+              console.log(
+                `[span] task ${input.taskId}: abort ceiling hit (${info.limit} reads without action); signalling external abort`,
               )
             },
           })
@@ -856,6 +884,7 @@ export const implementWorkflow = defineWorkflow<
         runOptions: {
           cwd: worktreePath,
           systemPrompt: resolveWorkerSystemPrompt(primaryTag),
+          externalAbort: ac.signal,
           onEvent: async (event) => {
             watcher?.observe(event)
             // Was `writer.write({type:'claude-event', event})`; the engine's
@@ -876,6 +905,66 @@ export const implementWorkflow = defineWorkflow<
         console.log(
           `[span-summary] task ${input.taskId}: maxStreak=${watcher.maxStreak} totalReads=${watcher.totalReads} totalActions=${watcher.totalActions} tripped=${watcher.thresholdEverReached}`,
         )
+      }
+      // Exploration-loop hard abort: the worker was killed by the read-span
+      // abort ceiling (MARS_READ_SPAN_ABORT_LIMIT). The worker exits with
+      // exitCode 138. Record 'exploration-loop' as the abort cause, enqueue
+      // exactly one follow-up task blocked by this task so the operator can
+      // inspect the transcript, and exit WITHOUT triggering the Fixer pipeline
+      // (no handleTaskFailureWithFixTask call). This check runs before the
+      // lower-threshold 'diagnose Chore' guard below so the two paths are
+      // mutually exclusive.
+      if (spanCeilingAborted && r.exitCode === 138) {
+        const followUpPrompt = [
+          `## exploration-loop follow-up for task ${input.taskId}`,
+          '',
+          `Task \`${input.taskId}\` was aborted by the read-span hard-abort ceiling`,
+          `(MARS_READ_SPAN_ABORT_LIMIT). The coder crossed the ceiling after`,
+          `${watcher!.maxStreak} consecutive reads without taking any action.`,
+          '',
+          `Inspect the coder transcript for task \`${input.taskId}\` to understand`,
+          `why it stalled in an exploration-loop. Once the original task is`,
+          `restarted or resolved, this follow-up will unblock automatically.`,
+        ].join('\n')
+        try {
+          const followUp = await enqueueTask(followUpPrompt, undefined, {
+            skipTriage: true,
+          })
+          await addBlockers(followUp.id, [input.taskId])
+          await updateTask(
+            input.taskId,
+            {
+              status: 'failed',
+              error: `exploration-loop: coder hit the read-span abort ceiling (maxStreak=${watcher!.maxStreak})`,
+              failedPhase: 'code',
+              failureReason: 'exploration-loop',
+              failureReasonCode: 'exploration-loop',
+            },
+            store,
+          )
+          console.log(
+            `[span] task ${input.taskId}: exploration-loop abort; follow-up ${followUp.id} enqueued and blocked by this task`,
+          )
+          throw new Error(EXPLORATION_LOOP_ABORT_MESSAGE(input.taskId))
+        } catch (err) {
+          if (err instanceof Error && isExplorationLoopAbortError(err)) throw err
+          console.error(
+            `[span] task ${input.taskId}: failed to handle exploration-loop abort:`,
+            err,
+          )
+          await updateTask(
+            input.taskId,
+            {
+              status: 'failed',
+              error: `exploration-loop abort (follow-up failed: ${String(err).slice(0, 400)})`,
+              failedPhase: 'code',
+              failureReasonCode: 'exploration-loop',
+              failureReason: 'exploration-loop',
+            },
+            store,
+          ).catch(() => {})
+          throw err instanceof Error ? err : new Error(String(err))
+        }
       }
       // Read-span guard: if the agent tripped the threshold AND never took any
       // action during the entire run, spawn a single diagnose Chore and park
