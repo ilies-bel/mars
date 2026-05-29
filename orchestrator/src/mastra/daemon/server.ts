@@ -2370,6 +2370,18 @@ export const startDaemon = async (
         { now: Date.now(), failedWindowMs },
       )
     },
+    inboxAck: async (kind, id) => {
+      const { dismissEntity } = await import('../lib/inbox-dismissals')
+      await dismissEntity(kind, id, { by: 'daemon', note: 'ack' })
+    },
+    inboxResolve: async (kind, id) => {
+      const { dismissEntity } = await import('../lib/inbox-dismissals')
+      await dismissEntity(kind, id, { by: 'daemon', note: 'resolved' })
+    },
+    inboxDismiss: async (kind, id) => {
+      const { dismissEntity } = await import('../lib/inbox-dismissals')
+      await dismissEntity(kind, id, { by: 'daemon' })
+    },
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)

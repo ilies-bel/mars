@@ -134,6 +134,41 @@ export const proxyGet = async (
 }
 
 /**
+ * Forward a POST with a JSON body to the daemon, relaying its status + parsed
+ * JSON body verbatim. Used to forward inbox mutation verbs (ack/resolve/dismiss)
+ * to the daemon — the single writer — so the UI no longer calls the state DB
+ * directly. A missing daemon yields a synthetic 503; a transport error yields a
+ * 502.
+ */
+export const proxyPost = async (
+  stateDir: string,
+  path: string,
+  body: unknown,
+): Promise<DaemonActionResult> => {
+  const port = await readDaemonHttpPort(stateDir)
+  if (port === null) {
+    return {
+      status: 503,
+      body: { ok: false, error: 'daemon not running', errorCode: 'NO_DAEMON' },
+    }
+  }
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const responseBody = await res.json().catch(() => ({}))
+    return { status: res.status, body: responseBody }
+  } catch (err) {
+    return {
+      status: 502,
+      body: { ok: false, error: (err as Error).message, errorCode: 'PROXY_FAILED' },
+    }
+  }
+}
+
+/**
  * Forward a recovery action to the daemon. `op` is the verb from the registry;
  * `entityId` is the task/worktree id (omitted for process-level ops like
  * `restart-daemon`). Returns the daemon's status + parsed body so the route can

@@ -104,6 +104,21 @@ export interface HttpServerDeps {
   viewProgress: (q: {
     failedWindowMs: number | null
   }) => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[] }>
+  /**
+   * Acknowledge an inbox row for the given entity: marks it as seen without
+   * hiding it from the open filter. Backed by `POST /view/inbox/ack`.
+   */
+  inboxAck: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
+  /**
+   * Resolve an inbox row for the given entity: hides it from the open filter
+   * and marks it as operator-resolved. Backed by `POST /view/inbox/resolve`.
+   */
+  inboxResolve: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
+  /**
+   * Dismiss an inbox row for the given entity: hides it until the entity's
+   * state changes. Backed by `POST /view/inbox/dismiss`.
+   */
+  inboxDismiss: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
 }
 
 export interface HttpServerHandle {
@@ -377,6 +392,53 @@ export const startHttpServer = async (
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return
+    }
+
+    // POST /view/inbox/{ack,resolve,dismiss} — inbox mutation verbs. These
+    // are UI-state writes (operator opinion), not work-dispatch actions, so
+    // they are NOT gated by isAcceptingWork(). Accepted body:
+    //   { kind: 'task' | 'worktree' | 'proposal', entityId: string }
+    {
+      const inboxVerbMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/view\/inbox\/(ack|resolve|dismiss)$/)
+          : null
+      if (inboxVerbMatch && inboxVerbMatch[1]) {
+        const verb = inboxVerbMatch[1] as 'ack' | 'resolve' | 'dismiss'
+        let rawBody: string = ''
+        req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+        req.on('end', () => {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(rawBody)
+          } catch {
+            sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+            return
+          }
+          const body = parsed as Record<string, unknown>
+          const kind = body.kind
+          const entityId = body.entityId
+          if (kind !== 'task' && kind !== 'worktree' && kind !== 'proposal') {
+            sendJson(res, 400, {
+              ok: false,
+              error: `kind must be 'task', 'worktree', or 'proposal'; got: ${String(kind)}`,
+            })
+            return
+          }
+          if (typeof entityId !== 'string' || entityId.length === 0) {
+            sendJson(res, 400, { ok: false, error: 'entityId must be a non-empty string' })
+            return
+          }
+          const handler =
+            verb === 'ack' ? deps.inboxAck
+            : verb === 'resolve' ? deps.inboxResolve
+            : deps.inboxDismiss
+          handler(kind, entityId)
+            .then(() => sendJson(res, 200, { ok: true }))
+            .catch((err: unknown) => sendError(res, err))
+        })
+        return
+      }
     }
 
     if (req.method !== 'POST') {
