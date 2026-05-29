@@ -19,6 +19,7 @@ import {
 import { Sidebar } from '@/widgets/Sidebar'
 import { TabStrip } from '@/widgets/TabStrip'
 import { TopologyView } from '@/widgets/TopologyView'
+import { KpiVector } from '@/widgets/KpiVector'
 import { TopStripe } from '@/widgets/TopStripe'
 
 export const ProgressPage = () => {
@@ -64,6 +65,7 @@ export const ProgressPage = () => {
           done={failedCount}
           connected={connected}
         />
+        <KpiVector />
         <TabStrip active={activeTab} onSelect={setActiveTab} />
         <ClusterToggleBar active={activeToggles} onToggle={handleToggle} />
         <div className="flex items-center border-b border-iron/20 bg-bg px-4 py-1">

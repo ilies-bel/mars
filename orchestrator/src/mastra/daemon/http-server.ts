@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http'
 import { listErrorKinds } from '../lib/error-kinds'
+import { listKpis as defaultListKpis, type KpiRecord } from './kpi-store'
 import type { RestartTaskError } from './restart-task'
 
 /**
@@ -47,6 +48,12 @@ export interface HttpServerDeps {
   restartAllDaemonKilled: () => Promise<string[]>
   /** Returns `true` while the daemon is accepting work (draining → `false`). */
   isAcceptingWork: () => boolean
+  /**
+   * Query the current KPI vector. When omitted, the built-in {@link defaultListKpis}
+   * from `kpi-store.ts` is used. Inject a replacement here in tests or once the
+   * real persistence layer (proposal 9a2ab5f8) is wired in.
+   */
+  listKpis?: () => Promise<KpiRecord[]>
 }
 
 export interface HttpServerHandle {
@@ -131,6 +138,15 @@ export const startHttpServer = async (
     // GET /error-kinds — the action-menu registry. Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/error-kinds') {
       sendJson(res, 200, { ok: true, errorKinds: listErrorKinds() })
+      return
+    }
+
+    // GET /kpis — the four-KPI vector (ADR-0038). Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/kpis') {
+      const fn = deps.listKpis ?? defaultListKpis
+      fn()
+        .then((kpis) => sendJson(res, 200, { kpis }))
+        .catch((err: unknown) => sendError(res, err))
       return
     }
 

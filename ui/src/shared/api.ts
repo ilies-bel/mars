@@ -2,11 +2,13 @@ import type { ZodType } from 'zod'
 import {
   actionQueueResponseSchema,
   agentsResponseSchema,
+  kpisResponseSchema,
   progressResponseSchema,
   tasksResponseSchema,
   todoResponseSchema,
   type ActionQueueItem,
   type Agent,
+  type Kpi,
   type ProgressProposalNode,
   type ProgressTask,
   type Task,
@@ -117,6 +119,11 @@ export const fetchAgents = async (): Promise<Agent[]> => {
   return json.agents
 }
 
+export const fetchKpis = async (): Promise<Kpi[]> => {
+  const json = await fetchJson('/api/kpis', kpisResponseSchema)
+  return json.kpis
+}
+
 /**
  * Invoke a recovery action against the daemon (via the UI server proxy). `op`
  * is the registry verb; `entityId` is the task/worktree id, omitted for
@@ -162,6 +169,7 @@ export const dismissTodoItem = async (
 export type {
   ActionQueueItem,
   Agent,
+  Kpi,
   ProgressProposalNode,
   StaleWorktree,
   TodoPayload,

@@ -4,7 +4,7 @@ import { extname, join, normalize, resolve } from 'node:path'
 import { hasRecipe } from '../../orchestrator/src/mastra/lib/fix-recipes.ts'
 import { DAEMON_KILLED_SIGNATURE } from '../../orchestrator/src/mastra/lib/retry-budget.ts'
 import { loadAgents } from './agents.ts'
-import { fetchErrorKinds, proxyAction } from './daemonHttp.ts'
+import { fetchErrorKinds, fetchKpis, proxyAction } from './daemonHttp.ts'
 import { StateDb, TaskDb } from './db.ts'
 import { listTerminalEvents } from './events.ts'
 import { resolveRepo } from './repo.ts'
@@ -587,6 +587,15 @@ export const startServer = async (
           const drafts = proposalsExist ? await stateDb.listDraftFeatures() : []
           const staleWorktrees = await stateDb.listOpenStaleWorktreeAlerts()
           return jsonResponse(200, { drafts, staleWorktrees })
+        } catch (err) {
+          return jsonResponse(500, { error: (err as Error).message })
+        }
+      }
+
+      if (path === '/api/kpis') {
+        try {
+          const kpis = await fetchKpis(ctx.stateDir)
+          return jsonResponse(200, { kpis })
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }
