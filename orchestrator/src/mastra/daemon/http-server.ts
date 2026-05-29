@@ -18,6 +18,31 @@ import type { RestartTaskError } from './restart-task'
 import type { ProgressTask, ProposalNode } from './view/progress'
 import type { ViewStreamHub } from './view/stream-hub'
 
+/** Wire shape returned by GET /view/todo for a single draft proposal. */
+export interface DraftFeature {
+  id: string
+  title: string
+  problem: string
+  solution: string
+  status: string
+  source: 'reflection' | 'human' | 'planner'
+  createdAt: number
+  updatedAt: number
+  acceptanceCount: number
+}
+
+/** Wire shape returned by GET /view/todo for a single stale-worktree alert. */
+export interface StaleWorktreeAlert {
+  taskId: string
+  status: string
+  ageHours: number
+  updatedAt: string
+  prompt: string
+  error: string | null
+  branch: string | null
+  blockerTaskId: string | null
+}
+
 /**
  * Handlers the daemon supplies for each recovery verb the local HTTP server
  * exposes. Each should throw {@link RestartTaskError} (with `code` set to
@@ -139,6 +164,12 @@ export interface HttpServerDeps {
    * The daemon builds this from its own database; the read-only UI proxies it.
    */
   viewInbox: (filter: DerivedInboxFilter) => Promise<ActionQueueRow[]>
+  /**
+   * Return the combined payload for GET /view/todo: draft proposals + open
+   * stale-worktree alerts. The daemon is the sole reader of its own DB; the
+   * UI server proxies this endpoint instead of querying the DB directly.
+   */
+  viewTodo: () => Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[] }>
 }
 
 export interface HttpServerHandle {
@@ -436,6 +467,18 @@ export const startHttpServer = async (
       }
       deps
         .viewProgress({ failedWindowMs })
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/todo — draft proposals + open stale-worktree alerts for the
+    // Todo tab. The daemon is the sole reader of its own DB; the UI server
+    // proxies this endpoint instead of querying state.db directly. Pure read;
+    // no draining gate.
+    if (req.method === 'GET' && req.url === '/view/todo') {
+      deps
+        .viewTodo()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return
