@@ -9,11 +9,13 @@ import {
   BLOCKERS_ABORT_MESSAGE,
   DEVIATION_RULES,
   TOO_HARD_ABORT_MESSAGE,
+  EXPLORATION_LOOP_ABORT_MESSAGE,
   composePrompt,
   detectPostCoderState,
   failureExcerpt,
   isBlockersAbortError,
   isTooHardAbortError,
+  isExplorationLoopAbortError,
   resolveWorkerSystemPrompt,
   shouldWireReadSpanWatcher,
 } from '../implement-workflow'
@@ -802,5 +804,39 @@ describe('read-span trip — diagnose Chore prompt contract', () => {
   it('forbids spawning another diagnose Chore (terminality invariant)', () => {
     const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
     expect(prompt).toMatch(/spawn another diagnose Chore|any other follow-up task/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// exploration-loop abort sentinel
+// ---------------------------------------------------------------------------
+
+describe('isExplorationLoopAbortError — exploration-loop ceiling sentinel', () => {
+  it('recognises the sentinel emitted by the codeStep on ceiling abort', () => {
+    const err = new Error(EXPLORATION_LOOP_ABORT_MESSAGE('mars-abc12345'))
+    expect(isExplorationLoopAbortError(err)).toBe(true)
+  })
+
+  it('does not false-positive on unrelated errors', () => {
+    expect(isExplorationLoopAbortError(new Error('some other failure'))).toBe(false)
+    expect(isExplorationLoopAbortError(new Error('aborted by read-span guard: diagnose Chore spawned'))).toBe(false)
+    expect(isExplorationLoopAbortError(new Error('verify command exited 1'))).toBe(false)
+    expect(isExplorationLoopAbortError(null)).toBe(false)
+    expect(isExplorationLoopAbortError(undefined)).toBe(false)
+  })
+
+  it('recognises the sentinel through a wrapped cause chain', () => {
+    const cause = new Error(EXPLORATION_LOOP_ABORT_MESSAGE('mars-abc12345'))
+    const wrapped = new Error('Step run-claude-code failed: something')
+    Object.assign(wrapped, { cause })
+    expect(isExplorationLoopAbortError(wrapped)).toBe(true)
+  })
+
+  it('sentinel message is distinct from the too-hard-abort sentinel', () => {
+    // Regression guard: the two sentinels must not cross-detect.
+    const tooHardErr = new Error(TOO_HARD_ABORT_MESSAGE('mars-xyz'))
+    const loopErr = new Error(EXPLORATION_LOOP_ABORT_MESSAGE('mars-xyz'))
+    expect(isExplorationLoopAbortError(tooHardErr)).toBe(false)
+    expect(isTooHardAbortError(loopErr)).toBe(false)
   })
 })
