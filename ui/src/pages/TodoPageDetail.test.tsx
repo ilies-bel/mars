@@ -163,7 +163,10 @@ const renderDetail = (item: ActionQueueItem, qc: QueryClient): string => {
 
 describe('TodoPage exports', () => {
   it('still exports ActionQueueRow for the sidebar', () => {
-    expect(typeof ActionQueueRow).toBe('function')
+    // React.memo wraps the component in an object; verify the export is defined
+    // and its underlying type is still a function.
+    expect(ActionQueueRow).toBeDefined()
+    expect(typeof (ActionQueueRow as { type?: unknown }).type).toBe('function')
   })
 })
 

@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { DraftFeature } from '@/shared/schemas'
 
 interface Props {
@@ -7,7 +8,7 @@ interface Props {
 const truncate = (s: string, n: number): string =>
   s.length > n ? `${s.slice(0, n - 1)}…` : s
 
-export const ProposalCard = ({ proposal }: Props) => (
+export const ProposalCard = memo(({ proposal }: Props) => (
   <article className="flex flex-col gap-2 rounded-md border border-border bg-surface p-3">
     <div className="flex items-start justify-between gap-2">
       <a
@@ -25,4 +26,4 @@ export const ProposalCard = ({ proposal }: Props) => (
     </div>
     <div className="font-mono text-[11px] text-muted">{proposal.source}</div>
   </article>
-)
+))

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useRef, useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
@@ -216,7 +217,7 @@ interface EventRowProps {
   event: TraceEvent
 }
 
-const EventRow = ({ event }: EventRowProps) => {
+const EventRow = memo(({ event }: EventRowProps) => {
   const href = event.taskId
     ? `#/task/${encodeURIComponent(event.taskId)}`
     : undefined
@@ -245,16 +246,16 @@ const EventRow = ({ event }: EventRowProps) => {
   )
   if (href === undefined) {
     return (
-      <li
+      <div
         className="block rounded border border-iron/30 bg-iron/5 px-3 py-1.5 font-mono text-[12px] text-fg"
         data-testid={`event-row-${event.id}`}
       >
         {body}
-      </li>
+      </div>
     )
   }
   return (
-    <li>
+    <div>
       <a
         href={href}
         className="block rounded border border-iron/30 bg-iron/5 px-3 py-1.5 font-mono text-[12px] text-fg hover:bg-iron/15"
@@ -262,9 +263,9 @@ const EventRow = ({ event }: EventRowProps) => {
       >
         {body}
       </a>
-    </li>
+    </div>
   )
-}
+})
 
 // ---------------------------------------------------------------------------
 // Component
@@ -322,6 +323,31 @@ export const EventsPage = () => {
     },
   })
 
+  // Derive the event list before hooks that depend on it (hooks must all
+  // come before any conditional return).
+  const rawEvents = initial.data
+    ? [initial.data.events, ...extraPages].flat()
+    : []
+  const events = applyLocalPhaseFilter(rawEvents, state.phases)
+  const nextCursor =
+    overrideCursor === undefined
+      ? (initial.data?.nextCursor ?? null)
+      : overrideCursor
+
+  // Virtual list for the events stream (100+ items per page, multiple pages possible).
+  // scrollRef and virtualizer are declared here — before the conditional early
+  // return — to satisfy the rules of hooks.
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const virtualizer = useVirtualizer({
+    count: events.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 45,
+    overscan: 5,
+    // initialRect ensures items render during SSR (renderToStaticMarkup in tests)
+    // where scrollRef.current is null and no ResizeObserver fires.
+    initialRect: { width: 0, height: 4000 },
+  })
+
   // --- filter mutators ---
   const toggleIn = <T extends string>(
     key: 'severities' | 'kinds' | 'phases',
@@ -353,18 +379,9 @@ export const EventsPage = () => {
     )
   }
 
-  const rawEvents = initial.data
-    ? [initial.data.events, ...extraPages].flat()
-    : []
-  const events = applyLocalPhaseFilter(rawEvents, state.phases)
-  const nextCursor =
-    overrideCursor === undefined
-      ? (initial.data?.nextCursor ?? null)
-      : overrideCursor
-
   return (
-    <main className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-auto bg-bg p-4">
-      {/* Header */}
+    <main className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden bg-bg p-4">
+      {/* Header — fixed above the scrollable list */}
       <header className="flex items-center gap-3">
         <h1 className="font-mono text-[11px] uppercase tracking-wide text-iron">
           Events — {events.length} event{events.length === 1 ? '' : 's'}
@@ -380,7 +397,7 @@ export const EventsPage = () => {
         </button>
       </header>
 
-      {/* Filter row */}
+      {/* Filter row — fixed above the scrollable list */}
       <div className="flex flex-wrap items-start gap-4">
         {/* Time range */}
         <div className="flex items-center gap-1">
@@ -486,36 +503,64 @@ export const EventsPage = () => {
         </div>
       </div>
 
-      {/* Events list */}
-      <ul className="flex flex-col gap-1" data-testid="events-list">
+      {/* Virtualized events list — dedicated scroll container keeps filters sticky */}
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-auto"
+        data-testid="events-list"
+      >
         {initial.isPending ? (
-          <li className="font-mono text-[11px] text-iron">Loading events…</li>
+          <div className="font-mono text-[11px] text-iron">Loading events…</div>
         ) : events.length === 0 ? (
-          <li
+          <div
             data-testid="events-empty"
             className="font-mono text-[11px] text-iron"
           >
             No events match the current filters.
-          </li>
+          </div>
         ) : (
-          events.map((e) => <EventRow key={e.id} event={e} />)
-        )}
-      </ul>
-
-      {/* Pagination */}
-      {nextCursor !== null && events.length > 0 ? (
-        <div>
-          <button
-            type="button"
-            disabled={more.isPending}
-            onClick={() => more.mutate(nextCursor)}
-            data-testid="events-load-more"
-            className="font-mono text-[10px] uppercase text-fg underline disabled:opacity-50"
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              position: 'relative',
+            }}
           >
-            {more.isPending ? 'Loading…' : 'Load more'}
-          </button>
-        </div>
-      ) : null}
+            {virtualizer.getVirtualItems().map((vItem) => (
+              <div
+                key={vItem.key}
+                data-index={vItem.index}
+                ref={virtualizer.measureElement}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${vItem.start}px)`,
+                  // replicate original gap-1 (4px) between rows
+                  paddingBottom: '4px',
+                }}
+              >
+                <EventRow event={events[vItem.index]} />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Pagination — inside the scroll container so it appears after all events */}
+        {nextCursor !== null && events.length > 0 ? (
+          <div className="pt-2">
+            <button
+              type="button"
+              disabled={more.isPending}
+              onClick={() => more.mutate(nextCursor)}
+              data-testid="events-load-more"
+              className="font-mono text-[10px] uppercase text-fg underline disabled:opacity-50"
+            >
+              {more.isPending ? 'Loading…' : 'Load more'}
+            </button>
+          </div>
+        ) : null}
+      </div>
     </main>
   )
 }
