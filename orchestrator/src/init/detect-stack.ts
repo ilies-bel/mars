@@ -35,6 +35,7 @@ export interface StackDetection {
 const PERSONAS: Record<string, string> = {
   'python-backend-supervisor': 'Tessa',
   'node-backend-supervisor': 'Nina',
+  'jvm-backend-supervisor': 'Jade',
   'go-supervisor': 'Grace',
   'rust-supervisor': 'Ruby',
   'react-supervisor': 'Luna',
@@ -422,20 +423,54 @@ const detectInDirectory = (dir: string, prefix: string): DirAccumulator => {
   } catch {
     // ignore
   }
-  const buildGradle =
+  const buildGradleRaw =
     readText(resolve(dir, 'build.gradle')) ?? readText(resolve(dir, 'build.gradle.kts'))
-  if (buildGradle && /android/i.test(buildGradle)) {
-    acc.mobile.add('android')
-    acc.techs.add('android')
-    addSupervisor(
-      buildSpec(
-        'android-supervisor',
-        'mobile',
-        scope,
-        [`${prefix}build.gradle:android`],
-        ['android-developer', 'mobile-developer'],
-      ),
-    )
+  if (buildGradleRaw) {
+    // Strip block comments (/* ... */) and line comments (// ...) so that
+    // "android" appearing only in a comment cannot trigger Android detection.
+    const buildGradle = buildGradleRaw
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '')
+
+    // Real Android Gradle plugin signals: com.android.application / com.android.library
+    // applied via plugins {} DSL or legacy apply plugin syntax, or an android { } block.
+    const isAndroid =
+      /com\.android\.(application|library|test|dynamic-feature)/.test(buildGradle) ||
+      /\bandroid\s*\{/.test(buildGradle)
+
+    if (isAndroid) {
+      acc.mobile.add('android')
+      acc.techs.add('android')
+      addSupervisor(
+        buildSpec(
+          'android-supervisor',
+          'mobile',
+          scope,
+          [`${prefix}build.gradle:android`],
+          ['android-developer', 'mobile-developer'],
+        ),
+      )
+    } else {
+      // JVM / Spring Boot backend: Kotlin JVM or Spring Boot plugin present.
+      const isJvmBackend =
+        /org\.springframework\.boot/.test(buildGradle) ||
+        /kotlin\s*\(\s*["']jvm["']/.test(buildGradle) ||
+        /id\s*\(\s*["']org\.jetbrains\.kotlin\.jvm["']/.test(buildGradle)
+
+      if (isJvmBackend) {
+        acc.techs.add('jvm')
+        acc.techs.add('gradle')
+        addSupervisor(
+          buildSpec(
+            'jvm-backend-supervisor',
+            'backend',
+            scope,
+            [`${prefix}build.gradle:jvm`],
+            ['java-developer', 'kotlin-developer', 'backend-developer'],
+          ),
+        )
+      }
+    }
   }
 
   // Finalize the per-supervisor tech list once the directory's accumulator is

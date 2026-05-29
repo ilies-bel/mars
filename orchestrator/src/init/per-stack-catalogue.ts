@@ -34,6 +34,7 @@ export const CATALOGUE_ENTRIES = [
   'angular-supervisor',
   'node-backend-supervisor',
   'python-backend-supervisor',
+  'jvm-backend-supervisor',
   'go-supervisor',
   'rust-supervisor',
   'infra-supervisor',
