@@ -121,6 +121,12 @@ export interface HttpServerDeps {
    */
   inboxDismiss: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
   /**
+   * Dismiss a Todo-tab item: mark a draft proposal as dismissed, or record a
+   * stale-worktree dismissal so the sweep skips it on subsequent passes.
+   * Backed by `POST /view/todo/dismiss`.
+   */
+  todoDismiss: (kind: 'draft' | 'stale', id: string) => Promise<void>
+  /**
    * SSE hub for `GET /view/stream`. When provided, the stream endpoint
    * registers each connecting client here and delivers invalidation events
    * whenever the daemon mutates a store. Omitting this dep disables fan-out
@@ -474,6 +480,41 @@ export const startHttpServer = async (
         })
         return
       }
+    }
+
+    // POST /view/todo/dismiss — dismiss a Todo-tab item (draft proposal or
+    // stale worktree). UI-state write, NOT gated by isAcceptingWork().
+    // Accepted body: { kind: 'draft' | 'stale', id: string }
+    if (req.method === 'POST' && req.url === '/view/todo/dismiss') {
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const body = parsed as Record<string, unknown>
+        const kind = body.kind
+        const id = body.id
+        if (kind !== 'draft' && kind !== 'stale') {
+          sendJson(res, 400, {
+            ok: false,
+            error: `kind must be 'draft' or 'stale'; got: ${String(kind)}`,
+          })
+          return
+        }
+        if (typeof id !== 'string' || id.length === 0) {
+          sendJson(res, 400, { ok: false, error: 'id must be a non-empty string' })
+          return
+        }
+        deps.todoDismiss(kind, id)
+          .then(() => sendJson(res, 200, { ok: true }))
+          .catch((err: unknown) => sendError(res, err))
+      })
+      return
     }
 
     if (req.method !== 'POST') {

@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -9,15 +9,13 @@ import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
 const setupRepo = (): string => {
-  const repo = mkdtempSync(resolve(tmpdir(), 'mars-http-inbox-mutate-'))
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-http-todo-dismiss-'))
   execFileSync('git', ['init', '-q'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
 }
 
 const loadModules = async (repo: string) => {
-  vi.resetModules()
-  process.env.MARS_REPO = repo
   const httpServer = (await import(
     '../http-server'
   )) as typeof import('../http-server')
@@ -30,7 +28,7 @@ let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = 
 const getBuiltInFailureReasonCatalog = async () => {
   if (!cachedFailureReasonCatalog) {
     cachedFailureReasonCatalog = await loadFailureReasonCatalog(
-      mkdtempSync(resolve(tmpdir(), 'mars-http-inbox-cat-')),
+      mkdtempSync(resolve(tmpdir(), 'mars-todo-dismiss-cat-')),
     )
   }
   return cachedFailureReasonCatalog
@@ -39,7 +37,7 @@ const getBuiltInFailureReasonCatalog = async () => {
 const getBuiltInRecipeCatalog = async () => {
   if (!cachedRecipeCatalog) {
     cachedRecipeCatalog = await loadRecipeCatalog(
-      mkdtempSync(resolve(tmpdir(), 'mars-http-inbox-rec-')),
+      mkdtempSync(resolve(tmpdir(), 'mars-todo-dismiss-rec-')),
     )
   }
   return cachedRecipeCatalog
@@ -72,98 +70,70 @@ beforeAll(async () => {
   await getBuiltInRecipeCatalog()
 })
 
-describe('POST /view/inbox/{ack,resolve,dismiss}', () => {
+describe('POST /view/todo/dismiss', () => {
   let repo: string
 
   beforeEach(() => {
     repo = setupRepo()
+    process.env.MARS_REPO = repo
   })
 
   afterEach(() => {
     delete process.env.MARS_REPO
-    vi.resetModules()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('POST /view/inbox/ack dispatches to inboxAck with kind and entityId', async () => {
+  it('dispatches to todoDismiss with kind=draft and id', async () => {
     const { httpServer } = await loadModules(repo)
     const calls: Array<{ kind: string; id: string }> = []
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        inboxAck: async (kind, id) => {
+        todoDismiss: async (kind, id) => {
           calls.push({ kind, id })
         },
       }),
     )
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/inbox/ack`, {
+      const res = await fetch(`http://127.0.0.1:${port}/view/todo/dismiss`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'task', entityId: 'mars-abc123' }),
+        body: JSON.stringify({ kind: 'draft', id: 'proposal-abc' }),
       })
 
       expect(res.status).toBe(200)
       const body = (await res.json()) as { ok: boolean }
       expect(body.ok).toBe(true)
-      expect(calls).toEqual([{ kind: 'task', id: 'mars-abc123' }])
+      expect(calls).toEqual([{ kind: 'draft', id: 'proposal-abc' }])
     } finally {
       await close()
     }
   })
 
-  it('POST /view/inbox/resolve dispatches to inboxResolve with kind and entityId', async () => {
+  it('dispatches to todoDismiss with kind=stale and id', async () => {
     const { httpServer } = await loadModules(repo)
     const calls: Array<{ kind: string; id: string }> = []
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        inboxResolve: async (kind, id) => {
+        todoDismiss: async (kind, id) => {
           calls.push({ kind, id })
         },
       }),
     )
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/inbox/resolve`, {
+      const res = await fetch(`http://127.0.0.1:${port}/view/todo/dismiss`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'worktree', entityId: 'wt-id-42' }),
+        body: JSON.stringify({ kind: 'stale', id: 'mars-xyz789' }),
       })
 
       expect(res.status).toBe(200)
       const body = (await res.json()) as { ok: boolean }
       expect(body.ok).toBe(true)
-      expect(calls).toEqual([{ kind: 'worktree', id: 'wt-id-42' }])
-    } finally {
-      await close()
-    }
-  })
-
-  it('POST /view/inbox/dismiss dispatches to inboxDismiss with kind and entityId', async () => {
-    const { httpServer } = await loadModules(repo)
-    const calls: Array<{ kind: string; id: string }> = []
-
-    const { port, close } = await httpServer.startHttpServer(
-      makeDeps({
-        inboxDismiss: async (kind, id) => {
-          calls.push({ kind, id })
-        },
-      }),
-    )
-
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/inbox/dismiss`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'proposal', entityId: 'prop-xyz' }),
-      })
-
-      expect(res.status).toBe(200)
-      const body = (await res.json()) as { ok: boolean }
-      expect(body.ok).toBe(true)
-      expect(calls).toEqual([{ kind: 'proposal', id: 'prop-xyz' }])
+      expect(calls).toEqual([{ kind: 'stale', id: 'mars-xyz789' }])
     } finally {
       await close()
     }
@@ -175,10 +145,10 @@ describe('POST /view/inbox/{ack,resolve,dismiss}', () => {
     const { port, close } = await httpServer.startHttpServer(makeDeps())
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/inbox/ack`, {
+      const res = await fetch(`http://127.0.0.1:${port}/view/todo/dismiss`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'unknown-entity', entityId: 'mars-abc' }),
+        body: JSON.stringify({ kind: 'unknown', id: 'some-id' }),
       })
 
       expect(res.status).toBe(400)
@@ -190,34 +160,16 @@ describe('POST /view/inbox/{ack,resolve,dismiss}', () => {
     }
   })
 
-  it('returns 400 when kind is missing', async () => {
+  it('returns 400 when id is missing', async () => {
     const { httpServer } = await loadModules(repo)
 
     const { port, close } = await httpServer.startHttpServer(makeDeps())
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/inbox/dismiss`, {
+      const res = await fetch(`http://127.0.0.1:${port}/view/todo/dismiss`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entityId: 'some-id' }),
-      })
-
-      expect(res.status).toBe(400)
-    } finally {
-      await close()
-    }
-  })
-
-  it('returns 400 when entityId is missing', async () => {
-    const { httpServer } = await loadModules(repo)
-
-    const { port, close } = await httpServer.startHttpServer(makeDeps())
-
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/inbox/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'task' }),
+        body: JSON.stringify({ kind: 'draft' }),
       })
 
       expect(res.status).toBe(400)
