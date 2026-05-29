@@ -121,27 +121,8 @@ export const startServer = async (
       }
 
       if (path === '/api/progress') {
-        try {
-          const failedWindowParam = url.searchParams.get('failedWindow')
-          let windowMs: number | null = 24 * 60 * 60 * 1000
-          if (failedWindowParam === 'all') {
-            windowMs = null
-          } else if (failedWindowParam !== null) {
-            const parsed = Number(failedWindowParam)
-            if (!Number.isNaN(parsed) && parsed > 0) windowMs = parsed
-          }
-          const tasks = await db.listProgressTasks(Date.now(), windowMs)
-          // Collect unique proposal IDs referenced by in-scope tasks
-          const proposalIds = [
-            ...new Set(
-              tasks.map((t) => t.parentProposalId).filter((id): id is string => id !== null),
-            ),
-          ]
-          const proposals = await stateDb.listProposalsByIds(proposalIds)
-          return jsonResponse(200, { tasks, proposals })
-        } catch (err) {
-          return jsonResponse(500, { error: (err as Error).message })
-        }
+        const r = await proxyGet(ctx.stateDir, `/view/progress${url.search}`)
+        return jsonResponse(r.status, r.body)
       }
 
       if (path.startsWith('/api/tasks/')) {

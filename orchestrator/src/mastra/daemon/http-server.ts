@@ -14,6 +14,7 @@ import {
 } from '../lib/trace-events-store'
 import { listKpis as defaultListKpis, type KpiRecord } from './kpi-store'
 import type { RestartTaskError } from './restart-task'
+import type { ProgressTask, ProposalNode } from './view/progress'
 
 /**
  * Handlers the daemon supplies for each recovery verb the local HTTP server
@@ -91,6 +92,18 @@ export interface HttpServerDeps {
    * daemon exposes — no direct DB access on the UI side.
    */
   viewTasks: () => Promise<{ tasks: unknown[] }>
+  /**
+   * Build the Progress-tab view: tasks with cluster tags + referenced proposals.
+   * Called by GET /view/progress; the UI server proxies this endpoint rather
+   * than reading the DB directly.
+   *
+   * `failedWindowMs` controls the Failed cluster recency window:
+   * - positive number → include failed tasks updated within the last N ms
+   * - null → all failed tasks regardless of age ("all" mode)
+   */
+  viewProgress: (q: {
+    failedWindowMs: number | null
+  }) => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[] }>
 }
 
 export interface HttpServerHandle {
@@ -335,6 +348,32 @@ export const startHttpServer = async (
     if (req.method === 'GET' && req.url === '/view/tasks') {
       deps
         .viewTasks()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/progress?failedWindow=<ms>|all — Progress-tab view.
+    // Returns { tasks: ProgressTask[], proposals: ProposalNode[] } with
+    // cluster tags already attached. The UI server proxies this endpoint
+    // rather than computing the view locally. Pure read; no draining gate.
+    //
+    // failedWindow parsing (mirrors ui/server/index.ts:130-137):
+    //   - absent or invalid → default 24 h
+    //   - "all"             → null (every failed task in scope)
+    //   - positive number   → that many ms
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/progress')) {
+      const parsedUrl = new URL(req.url, 'http://localhost')
+      const failedWindowParam = parsedUrl.searchParams.get('failedWindow')
+      let failedWindowMs: number | null = 24 * 60 * 60 * 1000
+      if (failedWindowParam === 'all') {
+        failedWindowMs = null
+      } else if (failedWindowParam !== null) {
+        const parsed = Number(failedWindowParam)
+        if (!Number.isNaN(parsed) && parsed > 0) failedWindowMs = parsed
+      }
+      deps
+        .viewProgress({ failedWindowMs })
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return

@@ -50,6 +50,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),
+  viewProgress: async () => ({ tasks: [], proposals: [] }),
   ...overrides,
 })
 
