@@ -124,10 +124,10 @@ describe('alert-dismisser outbox subscriber', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('clears an open alert and the dismissal row on a task.failed event', async () => {
+  it('clears an open alert and the dismissal row on a task.terminal{done} event', async () => {
     const { q, inbox, dismissals, ad, pub } = await loadModules(repo)
     const client = q.getClient()
-    const taskId = 'T-failed'
+    const taskId = 'T-done'
 
     const itemId = await raiseOpenItemFor(inbox, taskId)
     await dismissals.dismissEntity('task', taskId, { by: 'op' })
@@ -137,7 +137,7 @@ describe('alert-dismisser outbox subscriber', () => {
     // then publish — mirrors the daemon, where the subscriber is registered
     // at boot and transition events arrive afterwards.
     await ad.ensureAlertDismisser(client)
-    await publish(pub, client, 'task.failed', { taskId, error: 'boom' })
+    await publish(pub, client, 'task.terminal', { taskId, reason: 'done' })
 
     const { processed } = await ad.drainAlertDismissals(client)
 
@@ -149,22 +149,45 @@ describe('alert-dismisser outbox subscriber', () => {
     expect(await dismissals.isEntityDismissed('task', taskId)).toBe(false)
   })
 
-  it('clears an open alert for task.completed, task.dropped, and task.unblocked', async () => {
+  it('KEEPS an open alert on task.terminal{failed} (ADR-0028: failed needs a human)', async () => {
+    const { q, inbox, dismissals, ad, pub } = await loadModules(repo)
+    const client = q.getClient()
+    const taskId = 'T-failed'
+
+    const itemId = await raiseOpenItemFor(inbox, taskId)
+    await dismissals.dismissEntity('task', taskId, { by: 'op' })
+
+    await ad.ensureAlertDismisser(client)
+    // Both the discrete failure event and the terminal{failed} event must
+    // leave the actionable row untouched.
+    await publish(pub, client, 'task.failed', { taskId, error: 'boom' })
+    await publish(pub, client, 'task.terminal', { taskId, reason: 'failed' })
+
+    const { processed } = await ad.drainAlertDismissals(client)
+
+    // Neither event is a closing trigger, so nothing is processed and the
+    // operator's row + dismissal survive.
+    expect(processed).toBe(0)
+    expect((await inbox.getInboxItem(itemId))!.state).toBe('open')
+    expect(await dismissalExists(client, taskId)).toBe(true)
+  })
+
+  it('clears open alerts on task.terminal{done}, task.terminal{purged}, and task.unblocked', async () => {
     const { q, inbox, ad, pub } = await loadModules(repo)
     const client = q.getClient()
 
     const completedId = await raiseOpenItemFor(inbox, 'T-completed')
-    const droppedId = await raiseOpenItemFor(inbox, 'T-dropped')
+    const purgedId = await raiseOpenItemFor(inbox, 'T-purged')
     const unblockedId = await raiseOpenItemFor(inbox, 'T-unblocked')
 
     await ad.ensureAlertDismisser(client)
-    await publish(pub, client, 'task.completed', {
+    await publish(pub, client, 'task.terminal', {
       taskId: 'T-completed',
-      result: { status: 'done' },
+      reason: 'done',
     })
-    await publish(pub, client, 'task.dropped', {
-      taskId: 'T-dropped',
-      dropReason: 'obsolete',
+    await publish(pub, client, 'task.terminal', {
+      taskId: 'T-purged',
+      reason: 'purged',
     })
     await publish(pub, client, 'task.unblocked', {
       taskId: 'T-unblocked',
@@ -175,7 +198,7 @@ describe('alert-dismisser outbox subscriber', () => {
 
     expect(processed).toBe(3)
     expect((await inbox.getInboxItem(completedId))!.state).toBe('resolved')
-    expect((await inbox.getInboxItem(droppedId))!.state).toBe('resolved')
+    expect((await inbox.getInboxItem(purgedId))!.state).toBe('resolved')
     expect((await inbox.getInboxItem(unblockedId))!.state).toBe('resolved')
   })
 
@@ -214,9 +237,9 @@ describe('alert-dismisser outbox subscriber', () => {
 
     await raiseOpenItemFor(inbox, 'T-once')
     await ad.ensureAlertDismisser(client)
-    await publish(pub, client, 'task.failed', {
+    await publish(pub, client, 'task.terminal', {
       taskId: 'T-once',
-      error: 'boom',
+      reason: 'done',
     })
 
     const first = await ad.drainAlertDismissals(client)

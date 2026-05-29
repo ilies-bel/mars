@@ -44,6 +44,16 @@ export const EventMap = {
     taskId: z.string(),
     dropReason: z.string(),
   }),
+  // Single terminal event fired alongside the discrete done/dropped/failed
+  // event, in the same transaction. The Invalidator (alert-dismisser)
+  // subscribes to this and closes Action-queue rows for the task on
+  // reason ∈ {done, dropped, purged}, never `failed` (ADR-0028). `purged`
+  // is emitted by dropTask before the row is deleted so a removed task
+  // still produces a terminal event the closer can consume (ADR-0030).
+  'task.terminal': z.object({
+    taskId: z.string(),
+    reason: z.enum(['done', 'dropped', 'failed', 'purged']),
+  }),
   'task.priority_changed': z.object({
     taskId: z.string(),
     priority: z.number(),

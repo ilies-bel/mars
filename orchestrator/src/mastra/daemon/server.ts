@@ -1157,6 +1157,15 @@ export const startDaemon = async (
         // Auto-supersede the inbox row keyed to this origin task, if any.
         // The operator no longer needs to ack/dismiss: the underlying
         // stuck task has reached a terminal state on its own.
+        //
+        // NOTE: this is now redundant with the Invalidator, which closes
+        // the same row off the task.terminal{done} event updateTask emits
+        // in-tx. It is kept as an idempotent same-process fast path (the
+        // supersede only touches OPEN rows, so a double-close is a no-op)
+        // and because this block also drives the main-committer sweep and
+        // recovery→origin propagation below. Folding these into the
+        // Invalidator is deferred follow-up, not required for the
+        // staleness guarantee (ADR-0027/0030).
         try {
           const closed = await supersedeInboxItemsForOrigin(id, 'origin-done')
           if (closed.length > 0) {
@@ -1315,18 +1324,11 @@ export const startDaemon = async (
     const { corePurgeTask } = await import('./purge-task')
     const { getRepoRoot } = await import('../context')
     await corePurgeTask(id, force, integrationBranch, getRepoRoot())
-    try {
-      const closed = await supersedeInboxItemsForOrigin(id, 'origin-purged')
-      if (closed.length > 0) {
-        log(
-          `[inbox] superseded ${closed.length} item(s) for origin ${id} on purge`,
-        )
-      }
-    } catch (err) {
-      log(
-        `[inbox] error superseding items for origin ${id} on purge: ${(err as Error).message}`,
-      )
-    }
+    // Action-queue rows for the purged task are closed by the Invalidator,
+    // which consumes the task.terminal{purged} event dropTask emits in-tx
+    // before deleting the row. No inline supersede here — that best-effort
+    // path was lost when the daemon was down and is the staleness class this
+    // design removes (ADR-0027/0030).
   }
 
   const handleUnblock = async (id: string): Promise<UnblockTaskResult> => {
@@ -1388,18 +1390,9 @@ export const startDaemon = async (
       .catch(() => false)
 
     const result = await dropTask(id)
-    try {
-      const closed = await supersedeInboxItemsForOrigin(id, 'origin-dropped')
-      if (closed.length > 0) {
-        log(
-          `[inbox] superseded ${closed.length} item(s) for origin ${id} on drop`,
-        )
-      }
-    } catch (err) {
-      log(
-        `[inbox] error superseding items for origin ${id} on drop: ${(err as Error).message}`,
-      )
-    }
+    // Action-queue rows are closed by the Invalidator off the
+    // task.terminal{purged} event dropTask emits in-tx before the row is
+    // deleted; no inline supersede (ADR-0027/0030).
     log(
       `[drop] ${id} (was ${result.previousStatus}; force=${force}, ` +
         `incoming=${result.edgesRemoved.incoming}, outgoing=${result.edgesRemoved.outgoing}, ` +
