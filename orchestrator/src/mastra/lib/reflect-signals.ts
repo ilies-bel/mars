@@ -4,40 +4,19 @@ import type { UsageTotals } from './claude-usage'
 export const isReflectDisabled = (): boolean =>
   process.env.MARS_REFLECT_DISABLED === '1'
 
+/**
+ * Superseded by runWorkerWithSpan (PRD 436f14c7 slice 1).
+ * Usage signals are now captured as step_ended trace events by the span
+ * lifecycle. This stub exists so callers in implement-workflow.ts compile
+ * without changes in this slice; it is a no-op.
+ */
 export const recordSignals = async (
-  taskId: string,
-  stepId: string,
-  totals: UsageTotals,
-  store?: TaskStore,
+  _taskId: string,
+  _stepId: string,
+  _totals: UsageTotals,
+  _store?: TaskStore,
 ): Promise<void> => {
-  if (isReflectDisabled()) return
-  const now = new Date().toISOString()
-  const stmt = {
-    sql: `INSERT INTO task_signals
-            (task_id, step_id, input_tokens, output_tokens,
-             cache_create_tokens, cache_read_tokens,
-             message_count, recorded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(task_id, step_id) DO UPDATE SET
-            input_tokens        = excluded.input_tokens,
-            output_tokens       = excluded.output_tokens,
-            cache_create_tokens = excluded.cache_create_tokens,
-            cache_read_tokens   = excluded.cache_read_tokens,
-            message_count       = excluded.message_count,
-            recorded_at         = excluded.recorded_at`,
-    args: [
-      taskId,
-      stepId,
-      totals.inputTokens,
-      totals.outputTokens,
-      totals.cacheCreateTokens,
-      totals.cacheReadTokens,
-      totals.messageCount,
-      now,
-    ],
-  }
-  const s = store ?? (await getDefaultTaskStore())
-  await s.execute(stmt)
+  // No-op: usage signals are recorded via runWorkerWithSpan → step_ended events.
 }
 
 export interface TaskSignalRow {
@@ -51,28 +30,42 @@ export interface TaskSignalRow {
   recordedAt: string
 }
 
+/**
+ * Return usage signal rows for a task. After PRD 436f14c7 slice 5,
+ * signals live in trace_events as step_ended events with a usageSignals
+ * object in the payload. Rows without usageSignals (e.g. verify-output-only
+ * events) are skipped.
+ */
 export const listTaskSignals = async (taskId: string): Promise<TaskSignalRow[]> => {
   const store = await getDefaultTaskStore()
   const r = await store.query({
-    sql: `SELECT task_id, step_id, input_tokens, output_tokens,
-                 cache_create_tokens, cache_read_tokens,
-                 message_count, recorded_at
-            FROM task_signals
-           WHERE task_id = ?
-           ORDER BY recorded_at`,
+    sql: `SELECT task_id, timestamp, payload
+            FROM trace_events
+           WHERE kind = 'step_ended' AND task_id = ?
+           ORDER BY timestamp`,
     args: [taskId],
   })
-  return r.rows.map((row) => {
-    const r0 = row as unknown as Record<string, unknown>
-    return {
-      taskId: r0.task_id as string,
-      stepId: r0.step_id as string,
-      inputTokens: Number(r0.input_tokens ?? 0),
-      outputTokens: Number(r0.output_tokens ?? 0),
-      cacheCreateTokens: Number(r0.cache_create_tokens ?? 0),
-      cacheReadTokens: Number(r0.cache_read_tokens ?? 0),
-      messageCount: Number(r0.message_count ?? 0),
-      recordedAt: r0.recorded_at as string,
+  return r.rows.flatMap((row) => {
+    const r0 = row as unknown as { task_id: string; timestamp: string; payload: string }
+    let payload: Record<string, unknown> = {}
+    try {
+      payload = JSON.parse(r0.payload) as Record<string, unknown>
+    } catch {
+      return []
     }
+    const usageSignals = payload.usageSignals as Record<string, unknown> | undefined
+    if (!usageSignals) return []
+    return [
+      {
+        taskId: r0.task_id,
+        stepId: (payload.stepName as string | undefined) ?? 'code',
+        inputTokens: Number(usageSignals.inputTokens ?? 0),
+        outputTokens: Number(usageSignals.outputTokens ?? 0),
+        cacheCreateTokens: Number(usageSignals.cacheCreateTokens ?? 0),
+        cacheReadTokens: Number(usageSignals.cacheReadTokens ?? 0),
+        messageCount: Number(usageSignals.messageCount ?? 0),
+        recordedAt: r0.timestamp,
+      },
+    ]
   })
 }

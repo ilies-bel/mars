@@ -107,7 +107,9 @@ describe('queue prompt type guards', () => {
     expect((again.rows[0] as unknown as { t: string }).t).toBe('text')
   })
 
-  it('initQueue creates the task_transcripts table', async () => {
+  it('initQueue does not create task_transcripts (migrated to trace_events in PRD 436f14c7)', async () => {
+    // task_transcripts is no longer created on fresh databases; data from
+    // pre-migration databases is lifted into trace_events and the table is dropped.
     const q = await loadQueue(repo)
     await q.initQueue()
     const dbPath = resolve(repo, '.mars/mars.db')
@@ -115,16 +117,14 @@ describe('queue prompt type guards', () => {
     const tables = await direct.execute(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_transcripts'`,
     )
-    expect(tables.rows.length).toBe(1)
-    const cols = await direct.execute(`PRAGMA table_info(task_transcripts)`)
-    const names = new Set(
-      cols.rows.map((r) => (r as unknown as { name: string }).name),
+    expect(tables.rows.length).toBe(0)
+
+    // trace_events must exist (migration ensures it).
+    const traceTable = await direct.execute(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'trace_events'`,
     )
-    expect(names.has('task_id')).toBe(true)
-    expect(names.has('conversation_json')).toBe(true)
-    expect(names.has('verify_output')).toBe(true)
-    expect(names.has('bytes')).toBe(true)
-    expect(names.has('recorded_at')).toBe(true)
+    expect(traceTable.rows.length).toBe(1)
+    direct.close()
   })
 
   it('reading a row whose prompt was forced to a Uint8Array decodes via rowToTask', async () => {

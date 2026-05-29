@@ -22,24 +22,24 @@ const TASKS_DDL = `
   )
 `
 
-const TASK_SIGNALS_DDL = `
-  CREATE TABLE IF NOT EXISTS task_signals (
-    task_id TEXT NOT NULL,
-    step_id TEXT NOT NULL,
-    input_tokens INTEGER NOT NULL DEFAULT 0,
-    output_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_create_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-    message_count INTEGER NOT NULL DEFAULT 0,
-    recorded_at TEXT NOT NULL,
-    PRIMARY KEY (task_id, step_id)
+// After PRD 436f14c7 slice 5, signals live in trace_events, not task_signals.
+const TRACE_EVENTS_DDL = `
+  CREATE TABLE IF NOT EXISTS trace_events (
+    id        TEXT PRIMARY KEY,
+    timestamp TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    severity  TEXT NOT NULL DEFAULT 'info',
+    task_id   TEXT,
+    origin_id TEXT,
+    phase     TEXT,
+    payload   TEXT NOT NULL DEFAULT '{}'
   )
 `
 
 const makeStore = async (): Promise<TaskStore> => {
   const client = openLibsql({ url: `file:${tmpDbPath()}` })
   await client.execute(TASKS_DDL)
-  await client.execute(TASK_SIGNALS_DDL)
+  await client.execute(TRACE_EVENTS_DDL)
   return createLibsqlTaskStore(client)
 }
 
@@ -79,22 +79,25 @@ const insertSignal = async (
     messageCount?: number
   },
 ): Promise<void> => {
+  // After PRD 436f14c7 slice 5, signals are stored as step_ended trace events.
+  const payload = JSON.stringify({
+    stepName: opts.stepId,
+    workflowInstanceId: `test-${opts.taskId}-${opts.stepId}`,
+    outcome: 'success',
+    durationMs: 0,
+    usageSignals: {
+      inputTokens: opts.inputTokens ?? 0,
+      outputTokens: opts.outputTokens ?? 0,
+      cacheCreateTokens: opts.cacheCreateTokens ?? 0,
+      cacheReadTokens: opts.cacheReadTokens ?? 0,
+      messageCount: opts.messageCount ?? 0,
+    },
+  })
   await store.execute({
-    sql: `INSERT INTO task_signals
-            (task_id, step_id, input_tokens, output_tokens,
-             cache_create_tokens, cache_read_tokens,
-             message_count, recorded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [
-      opts.taskId,
-      opts.stepId,
-      opts.inputTokens ?? 0,
-      opts.outputTokens ?? 0,
-      opts.cacheCreateTokens ?? 0,
-      opts.cacheReadTokens ?? 0,
-      opts.messageCount ?? 0,
-      '2026-01-01T00:00:01Z',
-    ],
+    sql: `INSERT OR REPLACE INTO trace_events
+            (id, timestamp, kind, severity, task_id, payload)
+          VALUES (?, ?, 'step_ended', 'info', ?, ?)`,
+    args: [`test-${opts.taskId}-${opts.stepId}`, '2026-01-01T00:00:01Z', opts.taskId, payload],
   })
 }
 
