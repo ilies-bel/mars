@@ -7,7 +7,7 @@ import {
   type SuggestionVerdict,
   type VerdictedSuggestion,
 } from './reflector'
-import type { DeepReflectSession, DeepReflectArc } from './deep-reflect-query'
+import type { DeepReflectArc } from './deep-reflect-query'
 
 export interface DissonantCall {
   taskId: string | null
@@ -48,99 +48,6 @@ export interface DeepReflectionResult {
   rawOutput: string
   exitCode: number
 }
-
-const SYNTHESIS_INSTRUCTIONS_SINGLE = `You are an expert post-mortem analyst for the Mars task orchestrator. You
-will be given the FULL claude -p conversation that ran for one Mars task,
-plus per-step token+cost signals, scorer scores, and the concatenated
-verify-step (typecheck/test/lint) output.
-
-Your job is to walk the conversation event-by-event and surface things
-aggregate signal-only reflection cannot see — most importantly, **tool
-calls that succeeded but did not achieve the intended outcome**.
-
-Procedure:
-
-1. Walk every event. Build an inventory of tool calls (\`tool_use\` blocks):
-   the tool name, a short summary of the input, and the corresponding
-   \`tool_result\`.
-
-2. Flag **dissonant tool calls** — calls where the result returned success
-   but the actual outcome diverges from the assistant's stated goal in the
-   surrounding text. Examples to watch for, not exhaustive:
-   - \`Edit\` succeeded but the new content does not match the assistant's
-     stated intent ("remove the catch block" → catch block still present).
-   - \`Bash\` exited 0 but the stdout reveals failure
-     (\`git commit\` printing "nothing to commit, working tree clean";
-     \`npm test\` printing "0 passed, 0 failed" or "tests skipped";
-     \`grep\` printing nothing when the assistant claimed a match).
-   - \`Write\` overwrote the wrong file (path differs from the stated target).
-   - A merge or supervisor action that "resolved" a conflict by deleting
-     both sides.
-   For each dissonant call, cite \`eventIndex\` (0-based index into the
-   conversation array), the tool name, the stated_intent (a short quote
-   from the assistant's text near the call), the actual_outcome (a short
-   quote or summary from the tool_result/output), and severity.
-
-3. Cross-reference end-of-turn assistant claims with verifyOutput. If the
-   assistant said "all tests pass" but verifyOutput shows a typecheck or
-   test failure, record that as verifyMismatch with severity=high.
-
-4. Identify thrashing — same file Read 5+ times, Edit-then-revert pairs on
-   the same range, repeated identical Bash invocations.
-
-5. Synthesize a 1–3 sentence rootCause and a small set of actionable
-   suggestions (≤5). Each suggestion gets a verdict:
-   - "save"   — file as a fresh proposal (default).
-   - "absorb" — finding folds into an existing suggestion / task; provide
-                target_id when known, else null.
-   - "drop"   — cosmetic / not actionable; do not persist.
-   Each suggestion's prompt MUST be self-contained and end with
-   "Save your work."
-
-Output a SINGLE JSON document on stdout. No prose, no markdown, no fences.
-
-Schema:
-
-{
-  "summary": "1-2 sentences on the session outcome",
-  "toolCallStats": { "total": N, "byName": { "Edit": N, "Bash": N } },
-  "dissonantCalls": [
-    {
-      "eventIndex": N,
-      "tool": "Edit",
-      "stated_intent": "...",
-      "actual_outcome": "...",
-      "severity": "high|medium|low",
-      "evidence": "quoted excerpt"
-    }
-  ],
-  "verifyMismatch": {
-    "claimed": "...",
-    "actual": "...",
-    "severity": "high|medium|low"
-  },
-  "thrashingPatterns": [
-    { "pattern": "...", "occurrences": N, "evidence": "..." }
-  ],
-  "rootCause": "1-3 sentences",
-  "suggestions": [
-    {
-      "title": "short imperative title",
-      "prompt": "self-contained Mars task prompt ending with 'Save your work.'",
-      "rationale": "cite event indices and quoted excerpts from this session",
-      "verdict": "save|absorb|drop",
-      "target_id": "<id>|null",
-      "dup_of": "<id>|null"
-    }
-  ]
-}
-
-Rules:
-- If there are no dissonant calls, return dissonantCalls: [] (empty array,
-  not omitted).
-- If the verify output is empty or missing, return verifyMismatch: null.
-- Do not invent event indices. If you cannot pinpoint one, omit the entry.
-- Quote text verbatim in evidence; do not paraphrase.`
 
 const SYNTHESIS_INSTRUCTIONS_ARC = `You are an expert post-mortem analyst for the Mars task orchestrator. You
 will be given the FULL claude -p conversations for EVERY task in a single
@@ -238,46 +145,6 @@ Rules:
 - Do not invent event indices or task ids. If you cannot pinpoint one,
   omit the entry.
 - Quote text verbatim in evidence; do not paraphrase.`
-
-export const buildPrompt = (
-  session: DeepReflectSession,
-  originContext?: string,
-): string => {
-  const head = {
-    taskId: session.taskId,
-    status: session.status,
-    prompt: session.prompt,
-    error: session.error,
-    createdAt: session.createdAt,
-    totals: session.totals,
-    signals: session.signals,
-    scores: session.scores,
-    toolCallCounts: session.toolCallCounts,
-  }
-  const headJson = JSON.stringify(head, null, 2)
-  // Pass the full conversation array verbatim; no summarisation, no
-  // event-level truncation. The reader (claude-transcript.ts) streams
-  // every Claude Code on-disk JSONL event in session order; we forward
-  // them intact.
-  const conversationJson = JSON.stringify(session.conversation)
-  const verifyBlock = session.verifyOutput
-    ? `\n\nVerify output (raw):\n\`\`\`\n${session.verifyOutput}\n\`\`\``
-    : '\n\n(verify output: none recorded)'
-  const transcriptBlock =
-    session.transcriptNotes.length > 0
-      ? `\n\nTranscript notes:\n${session.transcriptNotes.map((n) => `- ${n}`).join('\n')}`
-      : ''
-  const originBlock = originContext
-    ? `\n\nOrigin arc context:\n${originContext}`
-    : ''
-  return `${SYNTHESIS_INSTRUCTIONS_SINGLE}${originBlock}
-
-Session metadata:
-${headJson}
-
-Conversation (ClaudeEvent[] JSON; index into this array for eventIndex):
-${conversationJson}${verifyBlock}${transcriptBlock}`
-}
 
 const buildArcPrompt = (arc: DeepReflectArc): string => {
   const head = {
