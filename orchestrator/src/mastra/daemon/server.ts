@@ -344,6 +344,24 @@ export const startDaemon = async (
 
   await initQueue()
 
+  // Load the persisted Worker registry. When the file is absent, the existing
+  // hard-coded WORKER_CONFIGS continue to serve as defaults. Dispatch
+  // behaviour is unchanged in this cut — this call establishes the registry
+  // load path at startup so later cuts can wire it into the dispatch surface.
+  try {
+    const { loadWorkerRegistry } = await import('../workers/persisted-registry')
+    const registered = loadWorkerRegistry(resolveContext().stateDir)
+    if (registered.length > 0) {
+      log(
+        `[worker-registry] ${registered.length} worker declaration(s) loaded from registry`,
+      )
+    }
+  } catch (err) {
+    log(
+      `[worker-registry] failed to load registry: ${(err as Error).message}`,
+    )
+  }
+
   // Slice K one-shot cleanup: supersede any open inbox rows that still
   // describe the retired `setup:preflight/dirty-main` failure mode. The
   // codepath no longer exists, so these rows can never reach a true
