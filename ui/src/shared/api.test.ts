@@ -314,7 +314,6 @@ const minActionQueueItem = (overrides: Record<string, unknown> = {}) => ({
   ackState: null,
   errorKind: 'generic',
   actions: [],
-  staleWorktreeDetail: null,
   ...overrides,
 })
 
@@ -338,22 +337,29 @@ describe('fetchActionQueue', () => {
     expect(result[0].kind).toBe('failed-task')
   })
 
-  it('parses a failed-task row with staleWorktreeDetail absent (undefined) without error', async () => {
-    // Omit the key entirely — simulates an older server build or a non-stale row
-    const rowWithoutKey = minActionQueueItem()
-    delete (rowWithoutKey as Record<string, unknown>)['staleWorktreeDetail']
-
-    fetchSpy.mockResolvedValue(json([rowWithoutKey]))
+  it('parses a failed-task row without staleWorktreeDetail without error', async () => {
+    // failed-task rows do not carry staleWorktreeDetail — the field belongs only
+    // to the stale-worktree variant of the discriminated union and is stripped by
+    // zod for all other kinds.
+    fetchSpy.mockResolvedValue(json([minActionQueueItem()]))
     const result = await fetchActionQueue()
     expect(result).toHaveLength(1)
-    // The field resolves to undefined (not null) when the key is absent
-    expect(result[0].staleWorktreeDetail).toBeUndefined()
+    expect(result[0].kind).toBe('failed-task')
+    // Narrowing inside the kind guard confirms the field is absent on this variant.
+    if (result[0].kind === 'failed-task') {
+      // staleWorktreeDetail is not a property of the failed-task variant;
+      // runtime value is undefined (zod strips unknown keys by default).
+      expect((result[0] as Record<string, unknown>)['staleWorktreeDetail']).toBeUndefined()
+    }
   })
 
-  it('parses a row with staleWorktreeDetail null without error', async () => {
+  it('parses a failed-task row with staleWorktreeDetail null in server payload without error', async () => {
+    // When an older server build sends staleWorktreeDetail:null on a failed-task row,
+    // the discriminated-union schema strips the unknown key — the row still parses.
     fetchSpy.mockResolvedValue(json([minActionQueueItem({ staleWorktreeDetail: null })]))
     const result = await fetchActionQueue()
-    expect(result[0].staleWorktreeDetail).toBeNull()
+    expect(result).toHaveLength(1)
+    expect(result[0].kind).toBe('failed-task')
   })
 
   it('throws on HTTP error', async () => {

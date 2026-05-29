@@ -95,15 +95,15 @@ const BASE_ITEM: ActionQueueItem = {
   ackState: null,
   errorKind: 'failed-task',
   actions: [{ id: 'restart', label: 'Restart', op: 'restart' }],
-  staleWorktreeDetail: null,
   diagnosis: null,
   failureReasonCode: 'verify:typecheck',
 }
 
-const makeItem = (overrides: Partial<ActionQueueItem>): ActionQueueItem => ({
-  ...BASE_ITEM,
-  ...overrides,
-})
+// Accepts any field combination so tests can construct cross-variant items
+// (e.g. kind:'stale-worktree' + staleWorktreeDetail) without TypeScript
+// complaining about union-specific properties.
+const makeItem = (overrides: Record<string, unknown>): ActionQueueItem =>
+  ({ ...BASE_ITEM, ...overrides } as ActionQueueItem)
 
 // ---------------------------------------------------------------------------
 // React Query cache helpers
