@@ -17,6 +17,7 @@ import { buildEventInsert } from './lib/outbox'
 import {
   getTask,
   MAX_PRIORITY,
+  setTaskStatus,
   updateTask,
   type Task,
 } from './queue'
@@ -810,14 +811,9 @@ export const handleTaskFailureWithFixTask = async (
     const now = new Date().toISOString()
     // No durable task.blocked emit here: per the AUDIT note above this
     // re-stamps a status the row already holds (no real transition), so an
-    // event would be spurious. The file is on the build-guard allowlist for
-    // exactly these intentional same-status writes (ADR-0030).
-    await s.execute({
-      sql: `UPDATE tasks
-               SET status = 'blocked', updated_at = ?
-             WHERE id = ?`,
-      args: [now, input.taskId],
-    })
+    // event would be spurious. setTaskStatus('blocked') satisfies the
+    // single-writer invariant; the no-mapping path skips the publish.
+    await setTaskStatus(input.taskId, 'blocked')
 
     const actionQueueItemId = await raiseActionQueueItem({
       kind: FIX_FAIL_LOOP_ACTION_QUEUE_KIND,
