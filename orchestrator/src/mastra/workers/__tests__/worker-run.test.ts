@@ -166,6 +166,7 @@ tick();
       disallowedTools: [],
       outputFormat: 'stream-json',
       maxMessages: 3,
+      maxContextTokens: 0,
       runtime: 'headless',
     }
     const capper = createWorker(capCfg)
