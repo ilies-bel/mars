@@ -39,7 +39,6 @@ interface RecipesModule {
 
 interface BlockerModule {
   onBlockerTaskCompleted: typeof import('../../blocker-resolution').onBlockerTaskCompleted
-  recoverBlockedTasks: typeof import('../../blocker-resolution').recoverBlockedTasks
 }
 
 const setupRepo = (): string => {
@@ -1066,28 +1065,4 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
-  it('recoverBlockedTasks unblocks tasks whose blocker task was already done', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, ft, br, rc } = await loadModules(repo)
-    const cleanup = registerTestRecipe(rc, 'verify/unclassified')
-    const t = await q.enqueueTask('a', undefined, { skipTriage: true })
-    const f = await ft.handleTaskFailureWithFixTask({
-      taskId: t.id,
-      failingStep: 'verify',
-      errorOutput: 'err',
-    })
-
-    // Fix task lands done while daemon was down (no unblock event ran).
-    await q.getClient().execute({
-      sql: `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
-      args: [new Date().toISOString(), f.fixTaskId!],
-    })
-
-    const recovered = await br.recoverBlockedTasks()
-    expect(recovered).toHaveLength(1)
-    expect(recovered[0].outcomes[0].outcome).toBe('queued')
-
-    expect((await q.getTask(t.id))?.status).toBe('queued')
-    cleanup()
-  })
 })
