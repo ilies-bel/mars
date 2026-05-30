@@ -417,6 +417,13 @@ Commands:
                                 --permission-mode (default: default),
                                 --max-messages (default: 0 = unbounded),
                                 --tag (repeatable, routing tags).
+  statusline                    print a one-line Claude Code status segment.
+                                Reads stdin for session JSON (tolerated but
+                                optional). Reads .mars/update.json for an
+                                update nudge — never hits the network. Appends
+                                "⚡ v<latest> available" only when
+                                available===true; silent otherwise. Exits 0
+                                always.
   where                         print resolved repo + state directory
   help                          show this message
   --version, -v                 print mars version and exit
@@ -3971,6 +3978,12 @@ const main = async (): Promise<void> => {
       process.exit(1)
     }
     await runCutVerify(phase, repo)
+    return
+  }
+
+  if (cmd === 'statusline') {
+    const { statuslineCommand } = await import('./cli/statusline.js')
+    await statuslineCommand(repo)
     return
   }
 
