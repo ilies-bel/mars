@@ -860,38 +860,38 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
 describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
   // Mirrors the concrete failure from PRD
   // 1b7498f6-remove-all-usd-cost-usd-mentions-from-th: a "Drop
-  // total_cost_usd column from queue.db schema (hard cut, no migration)"
+  // legacy_data_col column from queue.db schema (hard cut, no migration)"
   // slice was emitted with ZERO blocker edges even though three sibling
   // slices removed the read-side of the same column. The drop dispatched
   // first and burned its full retry budget on
-  // `SQLITE_ERROR: no such column: s.total_cost_usd`. Six actionQueue items
+  // `SQLITE_ERROR: no such column: s.legacy_data_col`. Six actionQueue items
   // later (final one 496b528e), the operator manually wired the edges.
   // This test pins the injection so the regression cannot recur silently.
   it('blocks a schema-drop slice on every consumer slice that mentions the dropped column (1b7498f6 shape)', () => {
     const slices = [
       {
-        title: 'Update README to drop mentions of total_cost_usd from cost docs',
-        whatToBuild: 'Edit README to remove the total_cost_usd column from cost docs',
+        title: 'Update README to drop mentions of legacy_data_col from cost docs',
+        whatToBuild: 'Edit README to remove the legacy_data_col column from cost docs',
         blockedBy: [] as number[],
       },
       {
-        title: 'Remove total_cost_usd from claude-usage parser',
-        whatToBuild: 'Stop reading total_cost_usd from the parser output',
+        title: 'Remove legacy_data_col from claude-usage parser',
+        whatToBuild: 'Stop reading legacy_data_col from the parser output',
         blockedBy: [] as number[],
       },
       {
-        title: 'Remove total_cost_usd from reflect-signals storage layer',
-        whatToBuild: 'Stop writing total_cost_usd through the storage layer',
+        title: 'Remove legacy_data_col from reflect-signals storage layer',
+        whatToBuild: 'Stop writing legacy_data_col through the storage layer',
         blockedBy: [] as number[],
       },
       {
-        title: 'Remove total_cost_usd from reflect-query aggregation',
-        whatToBuild: 'Stop summing total_cost_usd in the aggregation query',
+        title: 'Remove legacy_data_col from reflect-query aggregation',
+        whatToBuild: 'Stop summing legacy_data_col in the aggregation query',
         blockedBy: [] as number[],
       },
       {
-        title: 'Drop total_cost_usd column from queue.db schema (hard cut, no migration)',
-        whatToBuild: 'Drop the total_cost_usd column from the tasks table',
+        title: 'Drop legacy_data_col column from queue.db schema (hard cut, no migration)',
+        whatToBuild: 'Drop the legacy_data_col column from the tasks table',
         blockedBy: [] as number[],
       },
     ]
@@ -899,7 +899,7 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
     injectSchemaDropBlockers(slices)
 
     // Schema-drop (slice 5, 1-based) must wait on every consumer slice
-    // (1..4) that mentions total_cost_usd.
+    // (1..4) that mentions legacy_data_col.
     expect(slices[4].blockedBy).toEqual([1, 2, 3, 4])
     // Consumer slices must NOT acquire reverse edges — only the drop is
     // repaired.
@@ -963,12 +963,12 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
       {
         // Inverted slicer ordering: consumer says it waits on the drop.
         // Adding the reverse edge would produce a 1↔2 cycle.
-        title: 'Remove total_cost_usd from parser',
+        title: 'Remove legacy_data_col from parser',
         whatToBuild: '',
         blockedBy: [2],
       },
       {
-        title: 'Drop total_cost_usd column from schema',
+        title: 'Drop legacy_data_col column from schema',
         whatToBuild: '',
         blockedBy: [] as number[],
       },
@@ -988,7 +988,7 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
         blockedBy: [] as number[],
       },
       {
-        title: 'Drop total_cost_usd column from queue.db schema',
+        title: 'Drop legacy_data_col column from queue.db schema',
         whatToBuild: '',
         blockedBy: [] as number[],
       },
@@ -1002,12 +1002,12 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
   it('is idempotent — re-running over already-injected slices produces no duplicates', () => {
     const slices = [
       {
-        title: 'Remove total_cost_usd from parser',
+        title: 'Remove legacy_data_col from parser',
         whatToBuild: '',
         blockedBy: [] as number[],
       },
       {
-        title: 'Drop total_cost_usd column from schema',
+        title: 'Drop legacy_data_col column from schema',
         whatToBuild: '',
         blockedBy: [] as number[],
       },
@@ -1053,7 +1053,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
   const seedPrdReadyIdea = async (): Promise<string> => {
     const proposals = await import('../../mastra/proposals')
     await proposals.initProposals()
-    const idea = await proposals.createProposal('Remove total_cost_usd', {
+    const idea = await proposals.createProposal('Remove legacy_data_col', {
       problem: 'p',
       solution: 's',
     })
@@ -1066,58 +1066,58 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
   // Mirrors the 8-slice / no-blockers shape that PRD
   // 1b7498f6-remove-all-usd-cost-usd-mentions-from-th emitted: a
   // schema-drop slice plus four consumer slices that mention
-  // total_cost_usd, every slice's `blockedBy` empty. After runSlice
+  // legacy_data_col, every slice's `blockedBy` empty. After runSlice
   // lands, the schema-drop task must have task_blocker rows pointing
   // at each consumer.
   const slicer1b7498f6Shape = {
     slices: [
       {
-        title: 'Update README to drop mentions of total_cost_usd from cost docs',
+        title: 'Update README to drop mentions of legacy_data_col from cost docs',
         type: 'AFK' as const,
-        whatToBuild: 'Edit the README to drop mentions of total_cost_usd',
+        whatToBuild: 'Edit the README to drop mentions of legacy_data_col',
         acceptanceCriteria: ['README updated'],
         blockedBy: [] as number[],
         readFirst: ['README.md'] as string[],
-        prescriptiveAction: 'Remove the total_cost_usd column from the cost-tracking table in README.md.',
+        prescriptiveAction: 'Remove the legacy_data_col column from the cost-tracking table in README.md.',
         modifies: [] as string[],
         creates: [] as string[],
         verifyCmd: null,
         taskType: 'auto' as const,
       },
       {
-        title: 'Remove total_cost_usd from claude-usage parser',
+        title: 'Remove legacy_data_col from claude-usage parser',
         type: 'AFK' as const,
-        whatToBuild: 'Stop reading total_cost_usd from the parser output',
-        acceptanceCriteria: ['parser no longer references total_cost_usd'],
+        whatToBuild: 'Stop reading legacy_data_col from the parser output',
+        acceptanceCriteria: ['parser no longer references legacy_data_col'],
         blockedBy: [] as number[],
         readFirst: ['orchestrator/src/mastra/lib/claude-usage.ts'] as string[],
-        prescriptiveAction: 'Delete the total_cost_usd field from the ClaudeUsage type and its parser in claude-usage.ts.',
+        prescriptiveAction: 'Delete the legacy_data_col field from the ClaudeUsage type and its parser in claude-usage.ts.',
         modifies: [] as string[],
         creates: [] as string[],
         verifyCmd: null,
         taskType: 'auto' as const,
       },
       {
-        title: 'Remove total_cost_usd from reflect-signals storage layer',
+        title: 'Remove legacy_data_col from reflect-signals storage layer',
         type: 'AFK' as const,
-        whatToBuild: 'Stop writing total_cost_usd through the storage layer',
-        acceptanceCriteria: ['storage layer no longer writes total_cost_usd'],
+        whatToBuild: 'Stop writing legacy_data_col through the storage layer',
+        acceptanceCriteria: ['storage layer no longer writes legacy_data_col'],
         blockedBy: [] as number[],
         readFirst: ['orchestrator/src/mastra/reflect-signals.ts'] as string[],
-        prescriptiveAction: 'Remove total_cost_usd from the INSERT statement and the ReflectSignal type in reflect-signals.ts.',
+        prescriptiveAction: 'Remove legacy_data_col from the INSERT statement and the ReflectSignal type in reflect-signals.ts.',
         modifies: [] as string[],
         creates: [] as string[],
         verifyCmd: null,
         taskType: 'auto' as const,
       },
       {
-        title: 'Remove total_cost_usd from reflect-query aggregation',
+        title: 'Remove legacy_data_col from reflect-query aggregation',
         type: 'AFK' as const,
-        whatToBuild: 'Stop summing total_cost_usd in the aggregation query',
-        acceptanceCriteria: ['aggregation no longer references total_cost_usd'],
+        whatToBuild: 'Stop summing legacy_data_col in the aggregation query',
+        acceptanceCriteria: ['aggregation no longer references legacy_data_col'],
         blockedBy: [] as number[],
         readFirst: ['orchestrator/src/mastra/reflect-query.ts'] as string[],
-        prescriptiveAction: 'Remove `SUM(s.total_cost_usd)` from the SELECT in the aggregation query in reflect-query.ts.',
+        prescriptiveAction: 'Remove `SUM(s.legacy_data_col)` from the SELECT in the aggregation query in reflect-query.ts.',
         modifies: [] as string[],
         creates: [] as string[],
         verifyCmd: null,
@@ -1125,13 +1125,13 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
       },
       {
         title:
-          'Drop total_cost_usd column from queue.db schema (hard cut, no migration)',
+          'Drop legacy_data_col column from queue.db schema (hard cut, no migration)',
         type: 'AFK' as const,
-        whatToBuild: 'Drop the total_cost_usd column from the tasks table',
-        acceptanceCriteria: ['total_cost_usd column dropped'],
+        whatToBuild: 'Drop the legacy_data_col column from the tasks table',
+        acceptanceCriteria: ['legacy_data_col column dropped'],
         blockedBy: [] as number[],
         readFirst: ['orchestrator/src/mastra/queue.ts'] as string[],
-        prescriptiveAction: 'In queue.ts, remove the `total_cost_usd REAL` column definition from the CREATE TABLE tasks DDL and drop it from all INSERT/SELECT statements.',
+        prescriptiveAction: 'In queue.ts, remove the `legacy_data_col REAL` column definition from the CREATE TABLE tasks DDL and drop it from all INSERT/SELECT statements.',
         modifies: [] as string[],
         creates: [] as string[],
         verifyCmd: null,
