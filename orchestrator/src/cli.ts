@@ -2724,11 +2724,9 @@ const main = async (): Promise<void> => {
       return
     }
     if (sub === 'show') {
-      const { readLatestKpiSnapshot } = await import('./mastra/lib/kpi-snapshots.js')
-      const { getDefaultTaskStore } = await import('./mastra/lib/task-store.js')
-      const store = await getDefaultTaskStore()
-      const snapshot = await readLatestKpiSnapshot(store)
-      console.log(JSON.stringify(snapshot, null, 2))
+      const { readKpiWindowComparison } = await import('./mastra/lib/kpi-snapshots.js')
+      const result = await readKpiWindowComparison({ now: new Date().toISOString() })
+      console.log(JSON.stringify(result, null, 2))
       return
     }
     console.error('usage: mars kpi <snapshot|show>')

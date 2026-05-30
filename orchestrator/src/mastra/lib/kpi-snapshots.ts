@@ -26,6 +26,24 @@ export interface KpiSnapshot {
   recovery_success_rate: number | null
 }
 
+export type KpiDeltaEntry = { value: number | null; lowConfidenceSuppressed: boolean }
+
+/**
+ * Per-KPI deltas between a current and prior window snapshot.
+ * A delta is suppressed (value=null, lowConfidenceSuppressed=true) when either
+ * window's low_confidence flag is set. When prior is absent,
+ * lowConfidenceSuppressed is false — there is simply no comparison to make.
+ *
+ * ADR-0038: no composite/rollup field is emitted here.
+ */
+export interface KpiDeltas {
+  failure_rate: KpiDeltaEntry
+  autonomous_completion_rate: KpiDeltaEntry
+  recovery_success_rate: KpiDeltaEntry
+  cost_per_arc_p50: KpiDeltaEntry
+  cost_per_arc_p90: KpiDeltaEntry
+}
+
 interface TakeKpiSnapshotOpts {
   /** The queryable workflow surface to read Arc data from */
   surface: TaskStore
@@ -102,6 +120,35 @@ export async function takeKpiSnapshot(
   return snapshot
 }
 
+function rowToSnapshot(raw: unknown): KpiSnapshot {
+  const r = raw as {
+    id: string
+    taken_at: string
+    window_start: string
+    window_end: string
+    sample_count: number
+    low_confidence: number
+    cost_per_arc_p50: number | null
+    cost_per_arc_p90: number | null
+    failure_rate: number | null
+    autonomous_completion_rate: number | null
+    recovery_success_rate: number | null
+  }
+  return {
+    id: r.id,
+    taken_at: r.taken_at,
+    window_start: r.window_start,
+    window_end: r.window_end,
+    sample_count: r.sample_count,
+    low_confidence: r.low_confidence,
+    cost_per_arc_p50: r.cost_per_arc_p50,
+    cost_per_arc_p90: r.cost_per_arc_p90,
+    failure_rate: r.failure_rate,
+    autonomous_completion_rate: r.autonomous_completion_rate,
+    recovery_success_rate: r.recovery_success_rate,
+  }
+}
+
 /**
  * Return the most-recently-taken kpi_snapshots row, or null if none exists.
  * Accepts an optional TaskStore for test injection; defaults to the
@@ -123,32 +170,88 @@ export async function readLatestKpiSnapshot(
   })
 
   if (result.rows.length === 0) return null
+  return rowToSnapshot(result.rows[0])
+}
 
-  const row = result.rows[0] as unknown as {
-    id: string
-    taken_at: string
-    window_start: string
-    window_end: string
-    sample_count: number
-    low_confidence: number
-    cost_per_arc_p50: number | null
-    cost_per_arc_p90: number | null
-    failure_rate: number | null
-    autonomous_completion_rate: number | null
-    recovery_success_rate: number | null
+const KPI_KEYS: ReadonlyArray<keyof KpiDeltas> = [
+  'failure_rate',
+  'autonomous_completion_rate',
+  'recovery_success_rate',
+  'cost_per_arc_p50',
+  'cost_per_arc_p90',
+]
+
+function buildDeltas(
+  current: KpiSnapshot | null,
+  prior: KpiSnapshot | null,
+): KpiDeltas {
+  const deltas = {} as KpiDeltas
+  for (const key of KPI_KEYS) {
+    if (current === null || prior === null) {
+      deltas[key] = { value: null, lowConfidenceSuppressed: false }
+    } else if (current.low_confidence === 1 || prior.low_confidence === 1) {
+      deltas[key] = { value: null, lowConfidenceSuppressed: true }
+    } else {
+      const cv = current[key] as number | null
+      const pv = prior[key] as number | null
+      deltas[key] = {
+        value: cv !== null && pv !== null ? cv - pv : null,
+        lowConfidenceSuppressed: false,
+      }
+    }
+  }
+  return deltas
+}
+
+const SNAPSHOT_COLS = `id, taken_at, window_start, window_end,
+               sample_count, low_confidence,
+               cost_per_arc_p50, cost_per_arc_p90,
+               failure_rate, autonomous_completion_rate, recovery_success_rate`
+
+/**
+ * Return the current and immediately preceding KPI window snapshots, plus
+ * per-KPI deltas (current - prior).
+ *
+ * • current: latest snapshot whose window_end <= now
+ * • prior:   latest snapshot whose window_end <= current.window_start
+ *
+ * A delta is suppressed (value=null, lowConfidenceSuppressed=true) when either
+ * side has low_confidence=1. When prior is absent, all deltas are
+ * value=null, lowConfidenceSuppressed=false.
+ */
+export async function readKpiWindowComparison(opts: {
+  now: string
+  windowDays?: number
+  store?: TaskStore
+}): Promise<{ current: KpiSnapshot | null; prior: KpiSnapshot | null; deltas: KpiDeltas }> {
+  const { now, store: injectedStore } = opts
+  const s = injectedStore ?? (await getDefaultTaskStore())
+
+  const currentResult = await s.query({
+    sql: `SELECT ${SNAPSHOT_COLS} FROM kpi_snapshots
+          WHERE window_end <= ?
+          ORDER BY window_end DESC, taken_at DESC
+          LIMIT 1`,
+    args: [now],
+  })
+
+  const current =
+    currentResult.rows.length === 0 ? null : rowToSnapshot(currentResult.rows[0])
+
+  if (current === null) {
+    return { current: null, prior: null, deltas: buildDeltas(null, null) }
   }
 
-  return {
-    id: row.id,
-    taken_at: row.taken_at,
-    window_start: row.window_start,
-    window_end: row.window_end,
-    sample_count: row.sample_count,
-    low_confidence: row.low_confidence,
-    cost_per_arc_p50: row.cost_per_arc_p50,
-    cost_per_arc_p90: row.cost_per_arc_p90,
-    failure_rate: row.failure_rate,
-    autonomous_completion_rate: row.autonomous_completion_rate,
-    recovery_success_rate: row.recovery_success_rate,
-  }
+  const priorResult = await s.query({
+    sql: `SELECT ${SNAPSHOT_COLS} FROM kpi_snapshots
+          WHERE window_end <= ?
+          ORDER BY window_end DESC, taken_at DESC
+          LIMIT 1`,
+    args: [current.window_start],
+  })
+
+  const prior =
+    priorResult.rows.length === 0 ? null : rowToSnapshot(priorResult.rows[0])
+
+  return { current, prior, deltas: buildDeltas(current, prior) }
 }
