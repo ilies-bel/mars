@@ -156,7 +156,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     expect(taskItems[0].seenCount).toBe(1)
   })
 
-  it('produces zero actionQueue rows for task.blocked', async () => {
+  it('produces zero actionQueue rows for task.blocked (no prior failed row)', async () => {
     const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-blocked'
@@ -169,11 +169,47 @@ describe('action-queue-repopulator outbox subscriber', () => {
       failingStep: 'verify',
     })
 
+    // task.blocked is now a mapped evict event (supersedes any prior failed row).
+    // When no prior row exists the supersede is a no-op, but the event is still
+    // counted as processed (handler returned true, cursor advances).
     const { processed } = await rep.drainActionQueueRepopulations(client, catalog)
-    expect(processed).toBe(0)
+    expect(processed).toBe(1)
 
     const openItems = await actionQueue.listActionQueueItems('open')
     expect(openItems.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
+  })
+
+  it('supersedes the failed row when a task transitions to blocked (regression: stale failed rows)', async () => {
+    // Reproduce the scenario: task.failed raises a row, then a fix task is
+    // spawned and the task transitions to blocked. The stale failed row must
+    // be superseded so it does not surface as a spurious "needs attention" card.
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
+    const client = q.getClient()
+    const taskId = 'T-failed-then-blocked'
+
+    await rep.ensureActionQueueRepopulator(client)
+
+    // Phase 1: task.failed → one open row
+    await publish(pub, client, 'task.failed', { taskId, error: 'verify failed' })
+    const { processed: p1 } = await rep.drainActionQueueRepopulations(client, catalog)
+    expect(p1).toBe(1)
+    expect(
+      (await actionQueue.listActionQueueItems('open')).filter((i) => i.payload['taskId'] === taskId),
+    ).toHaveLength(1)
+
+    // Phase 2: task.blocked → stale row must be superseded
+    await publish(pub, client, 'task.blocked', {
+      taskId,
+      fixTaskId: 'fix-task-001',
+      failureSignature: 'verify:test',
+      failingStep: 'verify',
+    })
+    const { processed: p2 } = await rep.drainActionQueueRepopulations(client, catalog)
+    expect(p2).toBe(1)
+
+    // Zero open rows — the stale failed row was superseded
+    const openAfterBlocked = await actionQueue.listActionQueueItems('open')
+    expect(openAfterBlocked.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
   })
 
   it('nets zero open draft rows: proposal.added then proposal.promoted', async () => {
