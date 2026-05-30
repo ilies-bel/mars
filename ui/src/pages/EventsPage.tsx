@@ -1,8 +1,8 @@
-import { memo, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
+import { getFallbackCopy, logFallbackError } from '@/shared/uiFallback'
 import { severityColor, summarizeTraceEvent } from '@/shared/actionQueueDetail'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { TraceEvent } from '@/shared/schemas'
@@ -372,13 +372,28 @@ export const EventsPage = () => {
     void initial.refetch()
   }
 
+  useEffect(() => {
+    if (initial.error) {
+      logFallbackError(initial.error)
+    }
+  }, [initial.error])
+
   if (initial.isError && !initial.data) {
-    const msg = initial.error instanceof Error
-      ? initial.error.message
-      : 'Failed to load events'
+    const { headline, detail } = getFallbackCopy('the events stream', initial.error)
     return (
       <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
-        <ApiErrorPanel error={msg} />
+        <div
+          role="alert"
+          data-testid="api-error-panel"
+          className="flex h-full flex-col items-center justify-center px-6 text-center"
+        >
+          <div className="max-w-lg border border-iron/40 bg-iron/10 p-6 font-mono text-left">
+            <p className="text-[13px] uppercase tracking-wide text-fg">{headline}</p>
+            {detail !== null && (
+              <p className="mt-3 whitespace-pre-wrap break-all text-[11px] text-iron">{detail}</p>
+            )}
+          </div>
+        </div>
       </main>
     )
   }

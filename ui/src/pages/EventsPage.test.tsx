@@ -12,11 +12,12 @@
  * The legacy topology tests (depth layering, blocker chains, layered
  * rendering) are deliberately removed — that surface no longer exists.
  */
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn, vi } from 'bun:test'
 import type { Mock } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { EventsResponse, TraceEvent } from '@/shared/schemas'
+import { logFallbackError } from '@/shared/uiFallback'
 
 // ---------------------------------------------------------------------------
 // Module under test
@@ -389,3 +390,73 @@ describe('fetchEvents URL shape via toWireFilter', () => {
 // Silence the unused-binding lint warning for mock — bun:test pulls it via the
 // module-level import but the helper functions below don't reference it.
 void mock
+
+// ---------------------------------------------------------------------------
+// 4. Error-state fallback copy — prod vs dev mode
+//
+// These tests verify that the EventsPage error branch:
+//   - Routes through getFallbackCopy so no hard-coded 'Failed to load events'
+//     appears in prod output.
+//   - Renders the raw diagnostic detail only in dev mode.
+//   - Calls logFallbackError (which calls console.error) only in dev mode.
+//
+// Since renderToStaticMarkup is synchronous, useEffect does not run.
+// The console.error assertion therefore calls logFallbackError directly —
+// the same pattern used in ApiErrorPanel.test.tsx.
+// ---------------------------------------------------------------------------
+
+const makeErrorClient = (error: Error): QueryClient => {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  })
+  const query = qc.getQueryCache().build(qc, { queryKey: QUERY_KEY_FOR() })
+  query.setState({ status: 'error', error, fetchStatus: 'idle' })
+  return qc
+}
+
+describe('EventsPage error state – prod mode (DEV=false)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  it('renders the warm headline', () => {
+    vi.stubEnv('DEV', false)
+    const html = renderPage(makeErrorClient(new Error('Connection refused')))
+    expect(html).toContain("reach the dashboard server right now")
+  })
+
+  it('omits "Failed to load events" and the raw error', () => {
+    vi.stubEnv('DEV', false)
+    const html = renderPage(makeErrorClient(new Error('Connection refused')))
+    expect(html).not.toContain('Failed to load events')
+    expect(html).not.toContain('Connection refused')
+  })
+
+  it('console.error is not called', () => {
+    vi.stubEnv('DEV', false)
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    logFallbackError(new Error('Connection refused'))
+    expect(spy).not.toHaveBeenCalled()
+  })
+})
+
+describe('EventsPage error state – dev mode (DEV=true)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  it('renders the raw error in the detail block', () => {
+    vi.stubEnv('DEV', true)
+    const html = renderPage(makeErrorClient(new Error('Connection refused')))
+    expect(html).toContain('Error: Connection refused')
+  })
+
+  it('console.error is called once', () => {
+    vi.stubEnv('DEV', true)
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    logFallbackError(new Error('Connection refused'))
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+})
