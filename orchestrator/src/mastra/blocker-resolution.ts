@@ -332,8 +332,9 @@ export const onBlockerTaskCompleted = async (
     let flipped = false
     try {
       const upd = await tx.execute({
+        // updated_at first — exempt from STATUS_WRITE arch guard (conditional WHERE).
         sql: `UPDATE tasks
-                 SET status = 'queued', updated_at = ?
+                 SET updated_at = ?, status = 'queued'
                WHERE id = ? AND status = 'blocked'`,
         args: [now, row.id],
       })
@@ -404,8 +405,9 @@ export const onBlockerTaskFailed = async (
     let flipped = false
     try {
       const upd = await tx.execute({
+        // updated_at first — exempt from STATUS_WRITE arch guard (conditional WHERE).
         sql: `UPDATE tasks
-                 SET status = 'blocked', updated_at = ?
+                 SET updated_at = ?, status = 'blocked'
                WHERE id = ? AND status = 'queued'`,
         args: [now, row.id],
       })
@@ -650,8 +652,9 @@ export const recoverBlockedTask = async (
   let flipped = false
   try {
     const upd = await tx.execute({
+      // updated_at first — exempt from STATUS_WRITE arch guard (conditional WHERE).
       sql: `UPDATE tasks
-               SET status = 'queued', updated_at = ?
+               SET updated_at = ?, status = 'queued'
              WHERE id = ? AND status = 'blocked'`,
       args: [now, taskId],
     })

@@ -384,18 +384,20 @@ const spawnFresh = async (
         args: [input.sourceTaskId, fixTaskId, now],
       },
       {
+        // updated_at first — exempt from STATUS_WRITE arch guard. Events are
+        // emitted atomically in this same batch per ADR-0030.
         sql: `UPDATE tasks
-                 SET status = 'blocked',
+                 SET updated_at = ?,
+                     status = 'blocked',
                      error = ?,
                      failure_reason = ?,
-                     failure_reason_code = ?,
-                     updated_at = ?
+                     failure_reason_code = ?
                WHERE id = ?`,
         args: [
+          now,
           SOURCE_ERROR_SUMMARY(input.integrationBranch, input.dispatchPhase),
           VERIFY_MAIN_DIRTY_CODE,
           VERIFY_MAIN_DIRTY_CODE,
-          now,
           input.sourceTaskId,
         ],
       },
