@@ -20,7 +20,7 @@ const kpi = (overrides: Partial<Kpi> & { key: Kpi['key'] }): Kpi => ({
   priorValue: overrides.priorValue ?? 0,
   delta: overrides.delta ?? 0,
   sampleCount: overrides.sampleCount ?? 0,
-  lowConfidence: overrides.lowConfidence ?? true,
+  lowConfidence: overrides.lowConfidence ?? false,
 })
 
 // ---------------------------------------------------------------------------
@@ -65,13 +65,22 @@ const FOUR_KPIS: Kpi[] = [
   kpi({ key: 'recovery_success_rate', currentValue: 0.8 }),
 ]
 
+const MIXED_KPIS: Kpi[] = [
+  kpi({ key: 'cost_per_arc', currentValue: 1.0, lowConfidence: true }),
+  kpi({ key: 'failure_rate', currentValue: 0.05, lowConfidence: false }),
+  kpi({ key: 'autonomous_completion_rate', currentValue: 0.9, lowConfidence: true }),
+  kpi({ key: 'recovery_success_rate', currentValue: 0.8, lowConfidence: false }),
+]
+
 vi.mock('@/entities/kpi/useKpis', () => ({
-  useKpis: () => ({ data: FOUR_KPIS, isLoading: false, error: null }),
+  useKpis: vi.fn(() => ({ data: FOUR_KPIS, isLoading: false, error: null })),
 }))
+
+import { useKpis } from '@/entities/kpi/useKpis'
 
 describe('KpiVector', () => {
   beforeEach(async () => {
-    vi.clearAllMocks()
+    vi.mocked(useKpis).mockReturnValue({ data: FOUR_KPIS, isLoading: false, error: null })
   })
 
   it('renders all four KPI tile labels side by side', async () => {
@@ -90,5 +99,15 @@ describe('KpiVector', () => {
     expect(html).toContain('0.05')
     expect(html).toContain('0.9')
     expect(html).toContain('0.8')
+  })
+
+  it('renders all four tiles even when some KPIs are low-confidence (layout invariant)', async () => {
+    vi.mocked(useKpis).mockReturnValue({ data: MIXED_KPIS, isLoading: false, error: null })
+    const { KpiVector } = await import('./KpiVector')
+    const html = renderToStaticMarkup(<KpiVector />)
+    expect(html).toContain('Cost per Arc')
+    expect(html).toContain('Failure Rate')
+    expect(html).toContain('Autonomous Completion')
+    expect(html).toContain('Recovery Success')
   })
 })
