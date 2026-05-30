@@ -51,13 +51,9 @@ export const GENERIC_BASELINE_KEY: CatalogueKey = 'generic'
 
 /**
  * Deterministic body for one catalogue entry. The body is intentionally
- * minimal in this tracer slice — a follow-up slice will wire the regen
- * script to `fetch-specialist` and richer rendering. The key invariant is
- * that `generateCatalogueEntries()` returns the same Map for the same
- * inputs, byte-for-byte.
- *
- * TODO: replace static bodies with `fetch-specialist`-driven content in a
- * follow-up slice.
+ * minimal and fully offline — no network fetch is involved. The key
+ * invariant is that `generateCatalogueEntries()` returns the same Map
+ * for the same inputs, byte-for-byte.
  */
 const bodyFor = (name: string): string => {
   if (name === 'generic') {

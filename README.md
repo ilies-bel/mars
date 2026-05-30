@@ -372,8 +372,6 @@ mars init                # scaffold + activate plugin + print dashboard hint
 mars init --verbose      # also list each manifest + techs on stderr
 mars init --dry-run      # print without writing
 mars init --force        # overwrite existing supervisors
-mars init --refresh      # invalidate the specialist cache and refetch
-mars init --no-fetch     # use only fallback templates, skip HTTPS
 ```
 
 Recursion is the default. The walker stops at depth 6 and skips `.git`,
@@ -383,11 +381,6 @@ submodule. Tech-bearing manifests must be siblings, not nested — `mars
 init` errors out if it sees `frontend/package.json` AND
 `frontend/admin/package.json`. Empty repos still get a baseline supervisor
 plus an empty-stack `manifest.json`.
-
-Specialist knowledge is fetched once from
-[`ayush-that/sub-agents.directory`](https://github.com/ayush-that/sub-agents.directory)
-over plain HTTPS and cached for 7 days at
-`.mars/cache/sub-agents/trees.json`. No API keys involved.
 
 ## State
 
@@ -400,7 +393,6 @@ Everything Mars touches in a target repo lives under `.mars/`:
 | `mastra.db` | Mastra observability (workflow runs, spans, transcripts) |
 | `supervisors/*.md` | Generated supervisor system prompts |
 | `supervisors/manifest.json` | Supervisor registry |
-| `cache/sub-agents/trees.json` | 7-day cached specialist index |
 | `worktrees/<task-id>/` | Per-task git worktree on branch `task/<id>` |
 | `.merge.lock` | Serializes the merge step (5-min ttl) |
 | `daemon.json` | Daemon config (concurrency caps, poll interval) |

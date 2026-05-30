@@ -133,7 +133,7 @@ Usage:
   mars [--repo <path>] <command> [args]
 
 Commands:
-  init [--force] [--no-fetch] [--dry-run] [--refresh] [--verbose]
+  init [--force] [--dry-run] [--verbose]
                                 detect tech stack and generate specialized supervisors
                                 in .mars/supervisors/ (skeleton + workflow contract).
                                 Recurses into subdirectories (depth cap 6) to merge
@@ -142,9 +142,6 @@ Commands:
                                 dist, build, .next, target, out, plus git submodules.
                                 Nested tech-bearing manifests (e.g. frontend/ AND
                                 frontend/admin/ both with package.json) are rejected.
-                                Pulls specialist knowledge from
-                                ayush-that/sub-agents.directory over HTTPS, cached
-                                under .mars/cache/sub-agents/ (7-day TTL).
                                 --verbose lists each discovered manifest on stderr.
                                 On success, prints 'mars ui --repo <root>' to launch
                                 the read-only Kanban + trace dashboard.
@@ -458,7 +455,7 @@ Other env:
 const HELP_FLAGS = new Set(['--help', '-h', 'help'])
 
 const COMMAND_HELP: Record<string, string> = {
-  init: `mars init [--force] [--no-fetch] [--dry-run] [--refresh] [--verbose]
+  init: `mars init [--force] [--dry-run] [--verbose]
 
 Detect tech stack and generate specialized supervisors in
 .mars/supervisors/ (skeleton + workflow contract). Also activates the Mars
@@ -481,9 +478,7 @@ If the UI package is not yet built, init prints instructions to build it.
 
 Flags:
   --force       overwrite existing supervisors
-  --no-fetch    skip pulling specialist knowledge from the network
   --dry-run     show detected stack and proposed supervisors only
-  --refresh     bypass the 7-day specialist cache
   --verbose     list discovered manifests on stderr`,
   add: `mars add "<prompt>" [plan flags] [--author kind:name]
 
@@ -1061,7 +1056,6 @@ const main = async (): Promise<void> => {
     console.log(`stateDir:       ${ctx.stateDir}`)
     console.log(`queueDb:        ${ctx.queueDbPath}`)
     console.log(`supervisorsDir: ${ctx.supervisorsDir}`)
-    console.log(`cacheDir:       ${ctx.cacheDir}`)
     return
   }
 
@@ -1171,16 +1165,14 @@ const main = async (): Promise<void> => {
   if (cmd === 'init') {
     const boolFlags = new Set(rest.filter((a) => a.startsWith('--')))
     const force = boolFlags.has('--force')
-    const fetch = !boolFlags.has('--no-fetch')
     const dryRun = boolFlags.has('--dry-run')
-    const refresh = boolFlags.has('--refresh')
     const verbose = boolFlags.has('--verbose')
     const { sendRequest } = await import('./mastra/daemon/client')
     let result
     try {
       result = (await sendRequest({
         op: 'init',
-        opts: { force, fetch, dryRun, refresh, verbose },
+        opts: { force, dryRun, verbose },
       })) as Awaited<
         ReturnType<typeof import('./workflows/init-workflow').runInit>
       >

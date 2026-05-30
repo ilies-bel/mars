@@ -236,7 +236,7 @@ export interface PerFolderClaudeMdResult {
  * Write a per-folder CLAUDE.md into every detected manifest directory that
  * is not the repo root. Content comes from the committed per-stack catalogue
  * keyed by supervisor name; unknown supervisor names fall back to the generic
- * baseline. No network access or fetch-specialist invocation is required.
+ * baseline. Fully offline — no network access required.
  *
  * When `marsDir` is provided the function consults the init manifest:
  * - First run (no manifest yet): all supervisor CLAUDE.md files are written.

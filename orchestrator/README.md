@@ -409,10 +409,6 @@ finds into a single supervisor set under `.mars/supervisors/`.
 Flags:
 
 - `--force` — overwrite an existing `.mars/supervisors/manifest.json`.
-- `--no-fetch` — skip the upstream specialist fetch from
-  `ayush-that/sub-agents.directory`; render minimal templates.
-- `--refresh` — force re-fetch of the specialist cache (filesystem walk
-  is always fresh regardless).
 - `--dry-run` — print the detected stack and proposed supervisors without
   writing.
 - `--verbose` — print each discovered manifest and the techs derived from
