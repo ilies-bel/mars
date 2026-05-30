@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -35,12 +36,53 @@ const KPI_SNAPSHOTS_DDL = `
   )
 `
 
+const TRACE_EVENTS_DDL = `
+  CREATE TABLE IF NOT EXISTS trace_events (
+    id        TEXT PRIMARY KEY,
+    timestamp TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    severity  TEXT NOT NULL DEFAULT 'info',
+    task_id   TEXT,
+    origin_id TEXT,
+    phase     TEXT,
+    payload   TEXT NOT NULL DEFAULT '{}'
+  )
+`
+
 const makeStore = async (): Promise<TaskStore> => {
   const dir = mkdtempSync(join(tmpdir(), 'mars-kpi-snapshots-'))
   const client = openLibsql({ url: `file:${join(dir, 'queue.db')}` })
   await client.execute(TASKS_DDL)
   await client.execute(KPI_SNAPSHOTS_DDL)
+  await client.execute(TRACE_EVENTS_DDL)
   return createLibsqlTaskStore(client)
+}
+
+const insertSignal = async (
+  store: TaskStore,
+  opts: {
+    taskId: string
+    inputTokens?: number
+    outputTokens?: number
+    cacheCreateTokens?: number
+    cacheReadTokens?: number
+  },
+): Promise<void> => {
+  const payload = JSON.stringify({
+    stepName: 'code',
+    usageSignals: {
+      inputTokens: opts.inputTokens ?? 0,
+      outputTokens: opts.outputTokens ?? 0,
+      cacheCreateTokens: opts.cacheCreateTokens ?? 0,
+      cacheReadTokens: opts.cacheReadTokens ?? 0,
+      messageCount: 1,
+    },
+  })
+  await store.execute({
+    sql: `INSERT INTO trace_events (id, timestamp, kind, task_id, payload)
+          VALUES (?, ?, 'step_ended', ?, ?)`,
+    args: [randomUUID(), '2026-01-04T12:00:01Z', opts.taskId, payload],
+  })
 }
 
 const insertTask = async (
@@ -265,5 +307,53 @@ describe('takeKpiSnapshot — window metadata', () => {
     ).toISOString()
 
     expect(snapshot.window_start).toBe(expectedStart)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. cost_per_arc_p50 and cost_per_arc_p90 are persisted and round-trip
+// ---------------------------------------------------------------------------
+
+describe('takeKpiSnapshot — cost_per_arc columns', () => {
+  it('persists cost_per_arc_p50 and cost_per_arc_p90 from done Arcs with signals', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'arc-a', status: 'done' })
+    await insertSignal(store, { taskId: 'arc-a', inputTokens: 1000 })
+    await insertTask(store, { id: 'arc-b', status: 'done' })
+    await insertSignal(store, { taskId: 'arc-b', inputTokens: 3000 })
+
+    const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
+
+    expect(snapshot.cost_per_arc_p50).not.toBeNull()
+    expect(snapshot.cost_per_arc_p90).not.toBeNull()
+    // Sorted costs: [1000, 3000], n=2
+    // p50 index = 0.5, lo=0, hi=1 → 1000 + 0.5*2000 = 2000
+    // p90 index = 0.9, lo=0, hi=1 → 1000 + 0.9*2000 = 2800
+    expect(snapshot.cost_per_arc_p50).toBeCloseTo(2000, 5)
+    expect(snapshot.cost_per_arc_p90).toBeCloseTo(2800, 5)
+  })
+
+  it('sets both to null when no done Arcs are in the window', async () => {
+    const store = await makeStore()
+    // A failed arc — must not contribute to cost distribution
+    await insertTask(store, { id: 'fail-arc', status: 'failed' })
+    await insertSignal(store, { taskId: 'fail-arc', inputTokens: 5000 })
+
+    const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
+
+    expect(snapshot.cost_per_arc_p50).toBeNull()
+    expect(snapshot.cost_per_arc_p90).toBeNull()
+  })
+
+  it('readLatestKpiSnapshot returns persisted cost_per_arc values', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'arc-x', status: 'done' })
+    await insertSignal(store, { taskId: 'arc-x', inputTokens: 500 })
+
+    const written = await takeKpiSnapshot({ surface: store, now: NOW })
+    const read = await readLatestKpiSnapshot(store)
+
+    expect(read!.cost_per_arc_p50).toBeCloseTo(written.cost_per_arc_p50!, 5)
+    expect(read!.cost_per_arc_p90).toBeCloseTo(written.cost_per_arc_p90!, 5)
   })
 })
