@@ -149,8 +149,10 @@ describe('buildActionQueueView — failed-task row', () => {
     expect(row.kind).toBe('failed-task')
     expect(row.entityId).toBe('task-1')
     expect(row.priority).toBe('high')
-    expect(row.title).toBe('Task failed')
-    expect(row.body).toBe('Some error occurred')
+    // title and body are now derived from the Failure kind registry; with
+    // failureSignature: null the unknownFailureKind fallback is used.
+    expect(row.title).toBe('The unknown step failed — see the transcript')
+    expect(row.body).toContain('The unknown step failed')
     expect(row.dismissed).toBe(false)
     expect(row.ackState).toBeNull()
     expect(row.errorKind).toBe('failed-task')
