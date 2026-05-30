@@ -10,12 +10,14 @@ import {
   DEVIATION_RULES,
   TOO_HARD_ABORT_MESSAGE,
   EXPLORATION_LOOP_ABORT_MESSAGE,
+  CONTEXT_EXHAUSTED_ABORT_MESSAGE,
   composePrompt,
   detectPostCoderState,
   failureExcerpt,
   isBlockersAbortError,
   isTooHardAbortError,
   isExplorationLoopAbortError,
+  isContextExhaustedAbortError,
   resolveWorkerSystemPrompt,
   shouldWireReadSpanWatcher,
 } from '../implement-workflow'
@@ -838,5 +840,41 @@ describe('isExplorationLoopAbortError — exploration-loop ceiling sentinel', ()
     const loopErr = new Error(EXPLORATION_LOOP_ABORT_MESSAGE('mars-xyz'))
     expect(isExplorationLoopAbortError(tooHardErr)).toBe(false)
     expect(isTooHardAbortError(loopErr)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// context-exhausted abort sentinel
+// ---------------------------------------------------------------------------
+
+describe('isContextExhaustedAbortError — context-budget ceiling sentinel', () => {
+  it('recognises the sentinel emitted by the codeStep on context-budget abort', () => {
+    const err = new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE('mars-abc12345'))
+    expect(isContextExhaustedAbortError(err)).toBe(true)
+  })
+
+  it('does not false-positive on unrelated errors', () => {
+    expect(isContextExhaustedAbortError(new Error('some other failure'))).toBe(false)
+    expect(isContextExhaustedAbortError(new Error('aborted by exploration-loop ceiling'))).toBe(false)
+    expect(isContextExhaustedAbortError(new Error('verify command exited 1'))).toBe(false)
+    expect(isContextExhaustedAbortError(null)).toBe(false)
+    expect(isContextExhaustedAbortError(undefined)).toBe(false)
+  })
+
+  it('recognises the sentinel through a wrapped cause chain', () => {
+    const cause = new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE('mars-abc12345'))
+    const wrapped = new Error('Step run-claude-code failed: something')
+    Object.assign(wrapped, { cause })
+    expect(isContextExhaustedAbortError(wrapped)).toBe(true)
+  })
+
+  it('sentinel is distinct from exploration-loop and too-hard-abort sentinels', () => {
+    const ctxErr = new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE('mars-xyz'))
+    const loopErr = new Error(EXPLORATION_LOOP_ABORT_MESSAGE('mars-xyz'))
+    const tooHardErr = new Error(TOO_HARD_ABORT_MESSAGE('mars-xyz'))
+    expect(isContextExhaustedAbortError(loopErr)).toBe(false)
+    expect(isContextExhaustedAbortError(tooHardErr)).toBe(false)
+    expect(isExplorationLoopAbortError(ctxErr)).toBe(false)
+    expect(isTooHardAbortError(ctxErr)).toBe(false)
   })
 })

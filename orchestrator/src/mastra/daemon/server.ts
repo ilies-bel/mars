@@ -630,6 +630,7 @@ export const startDaemon = async (
         isMainDirtyVerifyError,
         isTooHardAbortError,
         isExplorationLoopAbortError,
+        isContextExhaustedAbortError,
       } = await import('../../workflows/implement-workflow')
       // Read the failure off RunResult.error (the engine puts the thrown Error
       // there verbatim on the `failed` path). The detectors flatten the cause
@@ -669,6 +670,14 @@ export const startDaemon = async (
         bus.emit('task.completed', { taskId: task.id, status: result.status })
         return
       }
+      // A context-budget exhaustion abort marks the task `failed` with cause
+      // 'context-exhausted' and enqueues one follow-up task. Same shape as
+      // exploration-loop: the task is genuinely failed, just log and emit.
+      if (result.status === 'failed' && isContextExhaustedAbortError(resultError)) {
+        log(`[implement] ${task.id} failed: context-budget ceiling abort; follow-up enqueued`)
+        bus.emit('task.completed', { taskId: task.id, status: result.status })
+        return
+      }
       log(`[implement] ${task.id} -> ${result.status}`)
       bus.emit('task.completed', { taskId: task.id, status: result.status })
     } catch (err) {
@@ -688,10 +697,12 @@ export const startDaemon = async (
       // benign blockers-abort — failing the task is the safe default.
       let isBlockersAbort = false
       let isExplorationLoopAbort = false
+      let isContextExhaustedAbort = false
       try {
-        const { isBlockersAbortError, isExplorationLoopAbortError } = await import('../../workflows/implement-workflow')
+        const { isBlockersAbortError, isExplorationLoopAbortError, isContextExhaustedAbortError } = await import('../../workflows/implement-workflow')
         isBlockersAbort = isBlockersAbortError(err)
         isExplorationLoopAbort = isExplorationLoopAbortError(err)
+        isContextExhaustedAbort = isContextExhaustedAbortError(err)
       } catch (importErr) {
         log(
           `[implement] ${task.id} could not load blockers-abort detector (${
@@ -706,6 +717,10 @@ export const startDaemon = async (
         // before throwing the sentinel. Suppress the re-update that would overwrite
         // that carefully-set failure record.
         log(`[implement] ${task.id} exploration-loop ceiling abort (exception path); task already marked failed`)
+      } else if (isContextExhaustedAbort) {
+        // The workflow already marked this task failed with cause 'context-exhausted'
+        // before throwing the sentinel. Suppress the re-update.
+        log(`[implement] ${task.id} context-budget ceiling abort (exception path); task already marked failed`)
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
         try {

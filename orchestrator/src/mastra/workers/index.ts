@@ -97,6 +97,13 @@ export interface WorkerConfig {
   // Per-Worker message cap. Resolved at construction time: explicit override,
   // else DEFAULT_MAX_MESSAGES (0 = unbounded).
   readonly maxMessages: number
+  // Per-Worker context token budget. Compared against the LATEST assistant
+  // event's input-side token count (input + cache_read + cache_creation) on
+  // each turn; 0 = disabled. Set intentionally below the model's real context
+  // window to kill a run before Claude Code auto-compacts. A compression-
+  // induced kill is treated as a FAILURE (reason: context-exhausted) and
+  // routed through the normal recovery flow.
+  readonly maxContextTokens: number
   // Execution runtime for this Worker. Always 'headless' for existing Workers —
   // dispatched via `claude -p` in a non-interactive subprocess. Reserved for
   // future runtimes (e.g. 'tmux'); no dispatch logic branches on this field yet.
@@ -117,6 +124,19 @@ export const resolveWorkerMaxMessages = (override?: number): number => {
     return override
   }
   return DEFAULT_MAX_MESSAGES
+}
+
+// Resolve a Worker's effective context token budget. The env var
+// MARS_CONTEXT_TOKEN_BUDGET globally overrides all per-worker defaults
+// (useful to tighten or loosen the budget at runtime without editing code).
+// Returns 0 (disabled) when neither the env var nor the override is positive.
+export const resolveWorkerMaxContextTokens = (override?: number): number => {
+  const fromEnv = parseInt(process.env.MARS_CONTEXT_TOKEN_BUDGET ?? '0', 10)
+  if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv
+  if (override !== undefined && Number.isInteger(override) && override > 0) {
+    return override
+  }
+  return 0
 }
 
 export interface RunOptions {
@@ -164,6 +184,17 @@ export const CODER_MODEL: string =
 // the locally installed claude CLI 2.1.142 fails authentication when --bare
 // is set (returns "Not logged in") even though keychain auth is valid in
 // non-bare invocations.
+// Per-worker context token budgets. These are intentionally below the model's
+// real context window (200k tokens for Claude Sonnet/Opus) to kill a run
+// before Claude Code would auto-compact. The 80% warn fires at 120k tokens
+// (well inside the window); the kill fires at 150k — leaving 50k of headroom
+// before the model's 200k limit so compaction never gets a chance to trigger.
+// Triager gets a much lower budget (50k) because its 40-message cap already
+// constrains it tightly; the context budget is a belt-and-suspenders guard.
+const CODER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(150_000)
+const GENEROUS_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(150_000)
+const TRIAGER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(50_000)
+
 export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Coder: {
     name: 'Coder',
@@ -174,6 +205,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     disallowedTools: [],
     outputFormat: 'stream-json',
     maxMessages: resolveWorkerMaxMessages(),
+    maxContextTokens: CODER_CONTEXT_TOKENS,
     runtime: 'headless',
   },
   Planner: {
@@ -185,6 +217,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
     maxMessages: resolveWorkerMaxMessages(),
+    maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
   },
   Slicer: {
@@ -201,6 +234,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     // before it could emit the slice JSON. 250 gives ~4x headroom while
     // keeping a hard ceiling so a looping slicer can't burn unbounded tokens.
     maxMessages: resolveWorkerMaxMessages(250),
+    maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
   },
   Triager: {
@@ -212,6 +246,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
     maxMessages: resolveWorkerMaxMessages(40),
+    maxContextTokens: TRIAGER_CONTEXT_TOKENS,
     runtime: 'headless',
   },
   Fixer: {
@@ -223,6 +258,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     disallowedTools: FIXER_BACKLOG_DENIED_TOOLS,
     outputFormat: 'stream-json',
     maxMessages: resolveWorkerMaxMessages(),
+    maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
   },
 } as const
@@ -267,6 +303,7 @@ const buildWorker = (config: WorkerConfig): Worker => {
         agent: config.agent,
         disallowedTools: config.disallowedTools,
         maxMessages: config.maxMessages,
+        maxContextTokens: config.maxContextTokens,
         externalAbort: options.externalAbort,
       }),
   }
