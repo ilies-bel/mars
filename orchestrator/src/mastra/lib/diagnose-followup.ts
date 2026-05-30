@@ -26,8 +26,9 @@ import { raiseActionQueueItem } from './action-queue'
  *
  * The function is idempotent under double-invocation: a second call for
  * the same chore is a no-op if the parent is no longer parked behind a
- * diagnose Chore. Dedup of the actionQueue item is provided by the existing
- * fingerprint(kind, signature) machinery in raiseActionQueueItem.
+ * diagnose Chore. Dedup of the actionQueue item and auto-close when the
+ * parent reaches done/purged/dropped are both provided by origin-keyed
+ * fingerprinting: originTaskId=parentTaskId in raiseActionQueueItem.
  */
 export interface DiagnoseFollowupOutcome {
   /** What the verdict-driven branch decided to do. */
@@ -197,13 +198,22 @@ export const runDiagnoseFollowup = async (
     body: buildInconclusiveActionQueueBody(parentTaskId, verdict),
     payload: {
       parentTaskId,
+      // originTaskId in the payload allows extractEntityId (view/action-queue.ts)
+      // to resolve the parent task for UI rendering. Without it the view falls
+      // through to `return row.id` and shows a bogus '(unknown task)' row.
+      originTaskId: parentTaskId,
       choreId,
       verdictKind: verdict.kind,
     },
     context: {},
     raisedBy: 'diagnose-followup',
-    // Dedup on the parent task id: re-processing the same dead end
-    // collapses onto the existing item instead of piling up look-alikes.
+    // Origin-keyed dedup: re-processing the same dead end collapses onto the
+    // existing item. Also lets dismissAlertsOnStatusChange close this row
+    // automatically when the parent task transitions to done/purged/dropped —
+    // without originTaskId the fingerprint was kind+signature-keyed and the
+    // alert-dismisser (which queries by computeOriginFingerprint) could never
+    // find it, leaving stale rows open forever.
+    originTaskId: parentTaskId,
     signature: parentTaskId,
   })
   return {
