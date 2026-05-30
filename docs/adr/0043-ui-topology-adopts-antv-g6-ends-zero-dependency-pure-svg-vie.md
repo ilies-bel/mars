@@ -1,0 +1,3 @@
+# UI topology adopts @antv/g6; ends zero-dependency pure-SVG viewer
+
+The ui/ topology graph moves from hand-rolled zero-dependency SVG to @antv/g6 (~1.38MB minified, Canvas/WebGL renderer, ~11 transitive @antv/* deps) to get force-clustered comboCombined layout, native collapse-expand, and a crossing-reduced antv-dagre focused view. Trade-off: the deliberate zero-dep SVG ethos of the read-only viewer ends; an SVG renderer (@antv/g-svg) remains available if Canvas becomes a problem. Drill-in is an in-place mode swap (Cloud force-cloud -> Subgraph antv-dagre of one Proposal's Focus subgraph), not nested combo expansion, which sidesteps comboCombined's inability to re-run the inner dagre on expand.
