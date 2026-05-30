@@ -184,6 +184,13 @@ The action queue is the single backlog of human attention:
 - **SessionStart hook** — `mars action-queue --lean` injects a compact snapshot
   (top blockers + drafts) at the start of every Claude Code session;
   Claude proposes one specific next action per session.
+- **Status line** — Mars owns the Claude Code status line in Mars repos
+  (`"statusLine": {"type": "command", "command": "mars statusline"}`).
+  The `mars statusline` command renders Mars context and silently shows an
+  update nudge when a newer framework release is available on GitHub
+  Releases. The nudge is silent (blank) when the consumer is on the latest
+  release; it appears as soon as a newer version is detected and disappears
+  after the consumer upgrades.
 
 ### Glossary and ADRs (structured writes)
 
@@ -316,7 +323,9 @@ machine, not just the current repo.
 | `/mars:deep-reflect [<id>]` | Single-session post-mortem on one task arc; persists a JSON report under `.mars/deep-reflections/`. |
 
 A `SessionStart` hook also runs `mars action-queue --lean` and injects a
-compact snapshot at the top of every Claude Code session.
+compact snapshot at the top of every Claude Code session. Mars also owns
+the Claude Code **status line** — `mars statusline` renders Mars context
+and shows a silent update nudge when a newer framework release is available.
 
 ## Bundled agent
 
