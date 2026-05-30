@@ -64,6 +64,8 @@ const FLAGS_WITH_VALUES = new Set([
   '--effort',
   '--permission-mode',
   '--max-messages',
+  '--name',
+  '--path',
 ])
 
 const REPEATABLE_FLAGS = new Set(['--blocked-by', '--files', '--done', '--tag'])
@@ -762,6 +764,22 @@ Subcommands:
       List all ADRs in docs/adr/.
   show <NNNN|filename>
       Print one ADR's contents. Number prefix is matched after zero-padding.`,
+  project: `mars project <subcommand> ...
+
+Manage the project registry (~/.mars/projects.json). Each entry maps a
+unique projectId to a repoRoot and a human-readable name.
+
+Subcommands:
+  add <path> [--name <label>]
+      Register a project. <path> is resolved to an absolute repoRoot;
+      errors if the directory does not exist or is already registered.
+      Prints the new projectId on success.
+  list
+      Print a table of projectId | name | repoRoot for every registered
+      project. Prints "(no projects registered)" when the list is empty.
+  remove <projectId>
+      Remove a project entry. Prints "removed <id>" on success or
+      "no such project: <id>" when the id is unknown.`,
   arc: `mars arc <subcommand> ...
 
 Subcommands:
@@ -3088,6 +3106,41 @@ const main = async (): Promise<void> => {
     }
 
     console.error('usage: mars adr <add|list|show> ...')
+    process.exit(1)
+  }
+
+  if (cmd === 'project') {
+    const sub = rest[0]
+
+    if (sub === 'add') {
+      const pathArg = rest[1] ?? flags['--path']
+      if (!pathArg) {
+        console.error('usage: mars project add <path> [--name <label>]')
+        process.exit(1)
+      }
+      const { projectAdd } = await import('./cli/project.js')
+      await projectAdd({ path: pathArg, name: flags['--name'] })
+      return
+    }
+
+    if (sub === 'list') {
+      const { projectList } = await import('./cli/project.js')
+      projectList()
+      return
+    }
+
+    if (sub === 'remove') {
+      const projectId = rest[1]
+      if (!projectId) {
+        console.error('usage: mars project remove <projectId>')
+        process.exit(1)
+      }
+      const { projectRemove } = await import('./cli/project.js')
+      projectRemove(projectId)
+      return
+    }
+
+    console.error('usage: mars project <add|list|remove> ...')
     process.exit(1)
   }
 
