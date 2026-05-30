@@ -661,7 +661,7 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
 // ---- Page ----
 
 export const ActionQueuePage = () => {
-  const { items, error } = useActionQueue()
+  const { items, error, projectsError, projectsEmpty } = useActionQueue()
   const [query, setQuery] = useState<string>('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
@@ -734,11 +734,11 @@ export const ActionQueuePage = () => {
         </header>
 
         <div ref={scrollRef} className="flex-1 overflow-auto">
-          {filtered.length === 0 ? (
+          {filtered.length === 0 && (query.trim() || (!projectsEmpty && !projectsError)) ? (
             <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
               {query.trim() ? 'No matches.' : 'No items.'}
             </p>
-          ) : (
+          ) : filtered.length > 0 ? (
             <div
               style={{
                 height: `${virtualizer.getTotalSize()}px`,
@@ -784,19 +784,37 @@ export const ActionQueuePage = () => {
                 )
               })}
             </div>
-          )}
+          ) : null}
         </div>
 
-        {error ? (
+        {(error || projectsError) ? (
           <div className="border-t border-iron/40 bg-iron/10 px-4 py-1.5 font-mono text-[10px] text-iron">
-            {error.message}
+            {(error ?? projectsError)!.message}
           </div>
         ) : null}
       </aside>
 
       <section className="flex min-w-0 flex-1 flex-col">
-        {empty && error ? (
-          <ApiErrorPanel error={error.message} />
+        {empty && (error || projectsError) ? (
+          <ApiErrorPanel error={(error ?? projectsError)!.message} />
+        ) : empty && projectsEmpty ? (
+          <div
+            className="flex h-full items-center justify-center px-6 text-center"
+            data-testid="no-projects-registered"
+          >
+            <div className="font-mono text-[12px] text-iron">
+              <p className="text-[13px] text-fg">No projects registered.</p>
+              <p className="mt-2">
+                Run{' '}
+                <code className="rounded bg-iron/20 px-1">mars init</code>{' '}
+                inside your repo — it registers the project automatically.
+              </p>
+              <p className="mt-1 text-iron/60">
+                Or register an existing repo:{' '}
+                <code className="rounded bg-iron/20 px-1">mars project add &lt;repo&gt;</code>
+              </p>
+            </div>
+          </div>
         ) : empty ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div className="font-mono text-[12px] text-iron">
