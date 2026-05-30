@@ -1,0 +1,3 @@
+# UI server may spawn daemons for registered Projects
+
+The dashboard's ProjectSelector Start control lets the UI server spawn a Daemon for a down Project via 'mars daemon start --repo <repoRoot>', reversing the UI's prior read-only 'never owns processes' posture. The startable set is constrained to the Project registry: an id not in the registry is a 404, never a spawn, so the registry doubles as the spawn allowlist and there is no path-traversal surface from request bodies. We accept the posture reversal because operating multiple Projects from one dashboard is the goal; idempotency leans on 'mars daemon start' being a documented no-op when already running.
