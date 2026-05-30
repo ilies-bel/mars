@@ -1,7 +1,6 @@
 import type { ZodType } from 'zod'
 import {
   actionQueueResponseSchema,
-  agentsResponseSchema,
   eventsResponseSchema,
   failureReasonsResponseSchema,
   kpisResponseSchema,
@@ -12,7 +11,6 @@ import {
   todoResponseSchema,
   workerSessionsResponseSchema,
   type ActionQueueItem,
-  type Agent,
   type EventsResponse,
   type FailureReasonCatalogEntry,
   type Kpi,
@@ -167,11 +165,6 @@ export const resolveActionQueueItem = async (id: string): Promise<void> => {
       `POST /api/action-queue/resolve → ${r.status}${text ? `: ${text}` : ''}`,
     )
   }
-}
-
-export const fetchAgents = async (projectId?: string): Promise<Agent[]> => {
-  const json = await fetchJson(appendProject('/api/agents', projectId), agentsResponseSchema)
-  return json.agents
 }
 
 /**
@@ -358,7 +351,6 @@ export const dismissTodoItem = async (
 
 export type {
   ActionQueueItem,
-  Agent,
   DaemonHealth,
   EventsResponse,
   FailureReasonCatalogEntry,

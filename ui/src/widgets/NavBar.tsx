@@ -1,4 +1,3 @@
-import { useAgents } from '@/hooks/useAgents'
 import { useProgress } from '@/hooks/useProgress'
 import { useTodo } from '@/entities/todo/useTodo'
 import { detectRoute, actionQueueCount } from '@/shared/routing'
@@ -30,11 +29,9 @@ export const NavBar = ({ hash }: NavBarProps) => {
 
   const todo = useTodo()
   const { tasks } = useProgress()
-  const { agents } = useAgents()
 
   const actionCount = actionQueueCount({ drafts: todo.drafts, staleWorktrees: todo.staleWorktrees })
   const progressCount = tasks?.length ?? 0
-  const agentsCount = agents?.length ?? 0
 
   return (
     <nav className="flex items-center gap-2 border-b border-iron/30 bg-bg px-4 py-1.5">
@@ -50,12 +47,6 @@ export const NavBar = ({ hash }: NavBarProps) => {
         <CountBadge count={progressCount} />
         <a className={linkClass(route === 'progress')} href="#/progress">
           Progress
-        </a>
-      </span>
-      <span className="relative">
-        <CountBadge count={agentsCount} />
-        <a className={linkClass(route === 'agents')} href="#/agents">
-          Agents
         </a>
       </span>
       <span className="relative">

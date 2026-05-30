@@ -14,7 +14,6 @@ import type { RouteName } from '@/shared/routing'
 import { useTodo } from '@/entities/todo/useTodo'
 import { useProgress } from '@/hooks/useProgress'
 import { FocusedProjectProvider } from '@/shared/useFocusedProject'
-import { AgentsPage } from '@/pages/AgentsPage'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/TodoPage'
 import { EventsPage } from '@/pages/EventsPage'
@@ -23,7 +22,6 @@ import { EventsPage } from '@/pages/EventsPage'
 const ROUTE_BASE: Record<RouteName, string> = {
   'action-queue': '#/action-queue',
   progress: '#/progress',
-  agents: '#/agents',
   events: '#/events',
 }
 
@@ -57,9 +55,7 @@ const AppInner = () => {
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
       <NavBar hash={hash} />
       <div className="min-h-0 flex-1">
-        {route === 'agents' ? (
-          <AgentsPage />
-        ) : route === 'progress' ? (
+        {route === 'progress' ? (
           <ProgressPage />
         ) : route === 'events' ? (
           <EventsPage />
