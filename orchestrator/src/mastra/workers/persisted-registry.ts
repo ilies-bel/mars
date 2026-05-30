@@ -31,6 +31,13 @@ export interface WorkerDeclaration {
   readonly outputFormat: ClaudeOutputFormat
   readonly maxMessages: number
   readonly runtime: WorkerRuntime
+  // Free-form list of routing tags. pickWorkerForTags routes a task to this
+  // Worker when the task's tag list intersects this set. Any string is valid;
+  // well-known values mirror the built-in Worker names (e.g. 'coder',
+  // 'planner', 'slicer', 'triager', 'fixer'). Operator-defined Workers should
+  // use domain-specific tags (e.g. 'scaffold', 'docs') that do not collide
+  // with built-in tags unless the intent is to override a built-in route.
+  readonly tags?: readonly string[]
 }
 
 const REGISTRY_FILENAME = 'worker-registry.json'
@@ -62,6 +69,7 @@ const configToDeclaration = (
   outputFormat: config.outputFormat,
   maxMessages: config.maxMessages,
   runtime: config.runtime,
+  ...(config.tags !== undefined ? { tags: [...config.tags] } : {}),
 })
 
 // Returns all known Workers: hard-coded defaults merged with registry entries.
