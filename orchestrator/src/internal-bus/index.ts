@@ -1,52 +1,41 @@
-import { EventEmitter } from 'node:events'
+import { signalWakeHint } from '../outbox/wake-hint.js'
 import type { InternalEventName, InternalEvents } from './events'
 
 /**
- * Process-local event bus for cross-module signals emitted from library
- * code (queue mutations, blocker resolution) that the daemon — or any
- * other in-process subscriber — wants to react to without library code
- * holding a reference to the daemon's own EventEmitter.
+ * Process-local wake-hint for cross-module publishers that need to signal
+ * the outbox dispatcher without holding a reference to it.
  *
- * This is intentionally separate from the outbox/wire bus in
- * `src/bus/` (which is durable and consumed by external processes).
- * The internal bus is fire-and-forget and only valid for the lifetime
- * of the current Node process.
+ * The internal bus is intentionally separate from the durable outbox in
+ * `src/bus/`. It is NOT a delivery channel — calling `emit()` does not
+ * fan out to per-event handlers. Instead it calls `signalWakeHint()` so
+ * the dispatcher polls the database immediately after a same-process write,
+ * bypassing the configured poll interval.
+ *
+ * Durable delivery happens via the outbox database, not via this bus.
+ * The payload passed to `emit()` is accepted for type-safety documentation
+ * (it proves the caller knows which outbox event was just written) but is
+ * not stored or forwarded anywhere.
+ *
+ * There is no `on()` method: adding side-effecting subscribers here is
+ * intentionally impossible. React to state changes via outbox subscribers
+ * (`src/outbox/subscribers/`) instead.
  */
 
 export interface InternalBus {
+  /** Signal that an outbox event of type {@link T} was just written. */
   emit<T extends InternalEventName>(type: T, payload: InternalEvents[T]): void
-  on<T extends InternalEventName>(
-    type: T,
-    handler: (payload: InternalEvents[T]) => void,
-  ): () => void
 }
 
-class TypedEmitter implements InternalBus {
-  private readonly inner = new EventEmitter()
-
-  constructor() {
-    this.inner.setMaxListeners(50)
-  }
-
-  emit<T extends InternalEventName>(type: T, payload: InternalEvents[T]): void {
-    this.inner.emit(type, payload)
-  }
-
-  on<T extends InternalEventName>(
-    type: T,
-    handler: (payload: InternalEvents[T]) => void,
-  ): () => void {
-    this.inner.on(type, handler as (p: unknown) => void)
-    return () => {
-      this.inner.off(type, handler as (p: unknown) => void)
-    }
+class WakeHintBus implements InternalBus {
+  emit<T extends InternalEventName>(_type: T, _payload: InternalEvents[T]): void {
+    signalWakeHint()
   }
 }
 
 let singleton: InternalBus | null = null
 
 export const internalBus = (): InternalBus => {
-  if (!singleton) singleton = new TypedEmitter()
+  if (!singleton) singleton = new WakeHintBus()
   return singleton
 }
 
