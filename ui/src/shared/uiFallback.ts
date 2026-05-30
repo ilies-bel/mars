@@ -10,17 +10,16 @@
 /**
  * Returns the copy for a fallback surface.
  *
- * @param surfaceLabel - A human-readable name for the surface (e.g.
- *   'ProgressPage'). Reserved for callers that want to include the surface
- *   name in the headline; the default implementation does not use it.
+ * @param surfaceLabel - A human-readable name for the section that failed to
+ *   load (e.g. 'failure-reason catalog', 'trace events'). Used in the headline.
  * @param error - The raw error value to expose in dev mode.
  */
 export function getFallbackCopy(
-  _surfaceLabel: string,
+  surfaceLabel: string,
   error: unknown,
 ): { headline: string; detail: string | null } {
   return {
-    headline: "Can't reach the dashboard server right now.",
+    headline: `Couldn't load the ${surfaceLabel}.`,
     detail: import.meta.env.DEV ? String(error) : null,
   }
 }

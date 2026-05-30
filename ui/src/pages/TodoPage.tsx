@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
@@ -25,6 +25,7 @@ import type {
 } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
 import { taskHash } from '@/shared/routing'
+import { getFallbackCopy, logFallbackError } from '@/shared/uiFallback'
 
 // ---- Helpers ----
 
@@ -293,6 +294,12 @@ const CatalogReasonAndActions = ({ item }: CatalogPanelProps) => {
     onError: (err) => setErrorMsg((err as Error).message),
   })
 
+  useEffect(() => {
+    if (catalogQuery.isError) {
+      logFallbackError(catalogQuery.error)
+    }
+  }, [catalogQuery.isError, catalogQuery.error])
+
   if (catalogQuery.isPending) {
     return (
       <div>
@@ -304,14 +311,14 @@ const CatalogReasonAndActions = ({ item }: CatalogPanelProps) => {
     )
   }
   if (catalogQuery.isError || !catalogQuery.data) {
+    const { headline, detail } = getFallbackCopy('failure-reason catalog', catalogQuery.error)
     return (
       <div>
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Reason
         </dt>
         <dd className="text-error">
-          Failed to load failure-reason catalog
-          {catalogQuery.error ? `: ${(catalogQuery.error as Error).message}` : ''}
+          {headline}{detail !== null ? ` ${detail}` : null}
         </dd>
       </div>
     )
@@ -402,6 +409,12 @@ const TracesSection = ({ taskId }: TracesProps) => {
     },
   })
 
+  useEffect(() => {
+    if (initial.isError) {
+      logFallbackError(initial.error)
+    }
+  }, [initial.isError, initial.error])
+
   if (initial.isPending) {
     return (
       <div>
@@ -413,14 +426,14 @@ const TracesSection = ({ taskId }: TracesProps) => {
     )
   }
   if (initial.isError || !initial.data) {
+    const { headline, detail } = getFallbackCopy('trace events', initial.error)
     return (
       <div>
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Traces
         </dt>
         <dd className="text-error">
-          Failed to load traces
-          {initial.error ? `: ${(initial.error as Error).message}` : ''}
+          {headline}{detail !== null ? ` ${detail}` : null}
         </dd>
       </div>
     )
