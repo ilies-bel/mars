@@ -13,6 +13,7 @@ interface QueueModule {
 
 interface ActionQueueModule {
   listActionQueueItems: typeof import('../../lib/action-queue').listActionQueueItems
+  raiseActionQueueItem: typeof import('../../lib/action-queue').raiseActionQueueItem
 }
 
 interface RepopulatorModule {
@@ -541,5 +542,69 @@ describe('action-queue-repopulator outbox subscriber', () => {
     expect(row).toBeDefined()
     expect(row!.body).not.toContain('without a specific recovery plan')
     expect(row!.body).not.toContain('Inspect the full log with')
+  })
+
+  it('auto-closes slices-dropped row when the proposal is promoted', async () => {
+    // Mirrors the draft-proposal eviction test. slices-dropped rows are keyed
+    // to the proposal via originTaskId, so supersedeActionQueueItemsForOrigin
+    // (called by the repopulator on proposal.promoted) closes them automatically.
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
+    const client = q.getClient()
+    const proposalId = 'prop-slices-dropped-promoted'
+
+    await rep.ensureActionQueueRepopulator(client)
+
+    // Raise the slices-dropped row directly (as the slicer does in production).
+    await actionQueue.raiseActionQueueItem({
+      kind: 'slices-dropped',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Slicer pre-flight: 2 slices already satisfied for PRD ${proposalId}`,
+      body: `PRD ${proposalId}: 2 slices were dropped as already satisfied on main.`,
+      payload: { proposalId, droppedCount: 2, survivorCount: 1 },
+      context: {},
+      raisedBy: 'slicer',
+      signature: proposalId,
+      originTaskId: proposalId,
+    })
+
+    const openBefore = await actionQueue.listActionQueueItems('open', { kind: 'slices-dropped' })
+    expect(openBefore.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(1)
+
+    // proposal.promoted → repopulator calls supersedeActionQueueItemsForOrigin(proposalId)
+    // which closes ALL open rows keyed to this origin, including slices-dropped.
+    await publish(pub, client, 'proposal.promoted', { proposalId })
+    const { processed } = await rep.drainActionQueueRepopulations(client, catalog)
+    expect(processed).toBe(1)
+
+    const openAfter = await actionQueue.listActionQueueItems('open', { kind: 'slices-dropped' })
+    expect(openAfter.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(0)
+  })
+
+  it('auto-closes slices-dropped row when the proposal is dismissed', async () => {
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
+    const client = q.getClient()
+    const proposalId = 'prop-slices-dropped-dismissed'
+
+    await rep.ensureActionQueueRepopulator(client)
+
+    await actionQueue.raiseActionQueueItem({
+      kind: 'slices-dropped',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Slicer pre-flight: 1 slice already satisfied for PRD ${proposalId}`,
+      body: `PRD ${proposalId}: 1 slice was dropped as already satisfied on main.`,
+      payload: { proposalId, droppedCount: 1, survivorCount: 3 },
+      context: {},
+      raisedBy: 'slicer',
+      signature: proposalId,
+      originTaskId: proposalId,
+    })
+
+    await publish(pub, client, 'proposal.dismissed', { proposalId })
+    await rep.drainActionQueueRepopulations(client, catalog)
+
+    const openAfter = await actionQueue.listActionQueueItems('open', { kind: 'slices-dropped' })
+    expect(openAfter.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(0)
   })
 })
