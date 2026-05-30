@@ -95,8 +95,11 @@ single supervisor set:
   `build`, `.next`, `target`, `out`.
 - Respects `.gitignore` at every level. Skips git submodules and other git
   worktrees.
-- Layout contract: tech-bearing folders must be siblings, not nested. A
-  manifest under a subtree another manifest already claims is a hard error.
+- Layout contract: tech-bearing folders must be siblings, not nested — with
+  one exception: the repo root may have a manifest (e.g. a monorepo workspace
+  root `package.json`) and still contain nested per-package manifests. A
+  manifest under a non-root subtree that another manifest already claims is a
+  hard error.
 - `--verbose` lists discovered manifests on stderr.
 
 ### Never do
