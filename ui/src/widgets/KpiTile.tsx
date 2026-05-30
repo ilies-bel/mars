@@ -13,6 +13,13 @@ interface KpiTileProps {
 
 export const KpiTile = ({ kpi }: KpiTileProps) => {
   const label = KPI_LABELS[kpi.key]
+  if (kpi.lowConfidence) {
+    return (
+      <div className="kpi-tile kpi-tile--low-confidence">
+        {label}: insufficient samples
+      </div>
+    )
+  }
   const drift = kpiDriftDirection(kpi)
   const arrow = drift === 'improved' ? '↓' : drift === 'regressed' ? '↑' : '→'
   const signedDelta = kpi.delta > 0 ? `+${kpi.delta}` : String(kpi.delta)
