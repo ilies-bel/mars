@@ -48,11 +48,18 @@ const TASK_RAISE_EVENTS = new Set<EventName>(['task.failed', 'task.dropped'])
 /**
  * Events that evict open origin rows because the task left the stuck state.
  * Maps event type to the SupersedeReason recorded on the resolution.
+ *
+ * NOTE: `task.blocked` is intentionally included here. A task may have a
+ * previously-raised `failed` row from before the fix-task was spawned. When
+ * the task transitions to `blocked` (a fix task is now working on it), that
+ * stale row must be superseded so it does not appear in the action queue as a
+ * spurious "needs attention" card while the fix task runs.
  */
 const TASK_EVICT_REASONS: Partial<Record<EventName, SupersedeReason>> = {
   'task.queued': 'status-changed',
   'task.completed': 'origin-done',
   'task.unblocked': 'status-changed',
+  'task.blocked': 'status-changed',
 }
 
 /**
