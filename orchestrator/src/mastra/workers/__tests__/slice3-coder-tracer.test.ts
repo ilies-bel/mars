@@ -28,7 +28,7 @@ import {
   Workers,
   createWorker,
   getWorker,
-  getWorkerForTag,
+  pickWorkerForTags,
 } from '..'
 import { pickWorkerForTask } from '../../../workflows/implement-workflow'
 import type { Task } from '../../queue'
@@ -93,10 +93,10 @@ describe('PRD 948691d0 slice 3 — implement workflow routes ordinary tasks to t
     expect(pickWorkerForTask({} as Task)).toBe('Coder') // legacy: undefined kind
   })
 
-  it("getWorkerForTag('coder') resolves to the same Coder singleton the dispatch path uses", () => {
+  it("pickWorkerForTags(['coder'], Workers) resolves to the same Coder singleton the dispatch path uses", () => {
     // AC3 — the tag→Worker seam used in the implement workflow returns
     // the Coder singleton. A future refactor that introduced an inline
     // construction would break this identity check.
-    expect(getWorkerForTag('coder')).toBe(Workers.Coder)
+    expect(pickWorkerForTags(['coder'], Workers)).toBe(Workers.Coder)
   })
 })
