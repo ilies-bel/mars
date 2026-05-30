@@ -5,6 +5,7 @@ import {
   parseTaskRoute,
   parseTaskOrigin,
   parseProposalRoute,
+  parseProposalNodeRoute,
   resolvePageRoute,
   taskHash,
 } from './routing'
@@ -251,5 +252,34 @@ describe('resolvePageRoute', () => {
 
   it('returns agents for #/agents (no overlay)', () => {
     expect(resolvePageRoute('#/agents')).toBe('agents')
+  })
+
+  it('returns progress when a proposal-node overlay hash is present', () => {
+    expect(resolvePageRoute('#/proposal-node/p-abc')).toBe('progress')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseProposalNodeRoute
+// ---------------------------------------------------------------------------
+
+describe('parseProposalNodeRoute', () => {
+  it('returns null when the hash has no proposal-node fragment', () => {
+    expect(parseProposalNodeRoute('')).toBeNull()
+    expect(parseProposalNodeRoute('#/progress')).toBeNull()
+    expect(parseProposalNodeRoute('#/task/abc-123')).toBeNull()
+    expect(parseProposalNodeRoute('#/proposal/abc-123')).toBeNull()
+  })
+
+  it('returns the id from #/proposal-node/<id>', () => {
+    expect(parseProposalNodeRoute('#/proposal-node/abc-123')).toBe('abc-123')
+  })
+
+  it('strips trailing slash and treats empty id as null', () => {
+    expect(parseProposalNodeRoute('#/proposal-node/')).toBeNull()
+  })
+
+  it('decodes percent-encoded ids', () => {
+    expect(parseProposalNodeRoute('#/proposal-node/mars%2D123')).toBe('mars-123')
   })
 })

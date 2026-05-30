@@ -1,9 +1,11 @@
 import { NavBar } from '@/widgets/NavBar'
 import { TaskDetailDrawer } from '@/widgets/TaskDetailDrawer'
 import { ProposalDetailDrawer } from '@/widgets/ProposalDetailDrawer'
+import { ProposalNodeDrawer } from '@/widgets/ProposalNodeDrawer'
 import { useHashRoute } from '@/shared/useHashRoute'
 import {
   parseProposalRoute,
+  parseProposalNodeRoute,
   parseTaskOrigin,
   parseTaskRoute,
   resolvePageRoute,
@@ -40,6 +42,7 @@ const AppInner = () => {
   const hash = useHashRoute()
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
+  const proposalNodeId = parseProposalNodeRoute(hash)
   // Proposal fields come from the existing `/api/todo` drafts fetch — no new
   // endpoint is introduced for the drawer.
   const { drafts } = useTodo()
@@ -79,6 +82,16 @@ const AppInner = () => {
             if (typeof window !== 'undefined') window.location.hash = '#/progress'
           }}
           tasks={tasks ?? []}
+        />
+      ) : null}
+      {proposalNodeId ? (
+        <ProposalNodeDrawer
+          proposalId={proposalNodeId}
+          proposals={proposals}
+          tasks={tasks ?? []}
+          onClose={() => {
+            if (typeof window !== 'undefined') window.location.hash = '#/progress'
+          }}
         />
       ) : null}
     </div>
