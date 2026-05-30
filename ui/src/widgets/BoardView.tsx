@@ -55,7 +55,7 @@ const CLUSTERS: readonly Cluster[] = ['Queued', 'In progress', 'Blocked', 'Faile
 export interface BoardViewProps {
   byCluster: Record<Cluster, ProgressTask[]>
   drafts: DraftFeature[]
-  error: string | null
+  error: Error | null
   selectedProposalId: string | null
   /**
    * Cluster names whose entire column should be suppressed (driven by the
@@ -124,7 +124,7 @@ export const BoardView = ({
       </main>
       {error ? (
         <div className="border-t border-iron/40 bg-iron/10 px-6 py-1.5 font-mono text-[11px] text-iron">
-          {error}
+          {error.message}
         </div>
       ) : null}
     </>

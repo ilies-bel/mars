@@ -5,7 +5,7 @@ import type { Agent } from '@/shared/schemas'
 
 interface State {
   agents: Agent[] | null
-  error: string | null
+  error: Error | null
 }
 
 export const useAgents = (): State => {
@@ -17,7 +17,7 @@ export const useAgents = (): State => {
   })
 
   const agents = query.data ?? null
-  const error = query.error ? (query.error as Error).message : null
+  const error = query.error ?? null
 
   return { agents, error }
 }

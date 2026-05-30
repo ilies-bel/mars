@@ -776,7 +776,7 @@ export const ActionQueuePage = () => {
 
         {error ? (
           <div className="border-t border-iron/40 bg-iron/10 px-4 py-1.5 font-mono text-[10px] text-iron">
-            {error}
+            {error.message}
           </div>
         ) : null}
       </aside>

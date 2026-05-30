@@ -9,7 +9,7 @@ interface State {
   tasks: ProgressTask[] | null
   proposals: ProgressProposalNode[]
   byCluster: Record<Cluster, ProgressTask[]>
-  error: string | null
+  error: Error | null
   connected: boolean
 }
 
@@ -58,7 +58,7 @@ export const useProgress = (options: UseProgressOptions = {}): State => {
     return clusters
   }, [tasks])
 
-  const error = query.error ? (query.error as Error).message : null
+  const error = query.error ?? null
 
   return { tasks, proposals, byCluster, error, connected }
 }
