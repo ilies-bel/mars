@@ -71,6 +71,13 @@ const makeDeps = (
   viewActionQueue: async () => [],
   viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
+  viewFrameworkUpdate: async () => ({
+    installed: '0.1.0',
+    latest: '0.1.0',
+    available: false,
+    checkedAt: null,
+    releaseUrl: null,
+  }),
   ...overrides,
 })
 

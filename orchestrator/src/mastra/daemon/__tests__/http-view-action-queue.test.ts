@@ -618,6 +618,13 @@ describe('GET /view/action-queue via HTTP server', () => {
       todoDismiss: async () => {},
       viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
       viewTerminalEvents: async () => ({ events: [] }),
+      viewFrameworkUpdate: async () => ({
+        installed: '0.1.0',
+        latest: '0.1.0',
+        available: false,
+        checkedAt: null,
+        releaseUrl: null,
+      }),
       viewActionQueue: async (filter) => {
         // Return a predictable payload based on filter.
         const row: ActionQueueRow = {
