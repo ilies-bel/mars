@@ -19,6 +19,11 @@ import {
  *     no longer exists in the tasks table: drops the orphaned dismissal. This
  *     handles tasks that were purged while the daemon was down.
  *
+ * (c) For each open action_queue_items row whose origin_task_id is not present
+ *     in tasks at all (task was purged without an event): resolves the row.
+ *     Covers historical residue from purges that pre-date the lifecycle-event
+ *     plumbing.
+ *
  * Idempotent — safe to call on every daemon start. Returns counts for logging.
  */
 export async function reconcileTerminalTasks(
@@ -46,7 +51,7 @@ export async function reconcileTerminalTasks(
   }
 
   // (b) Dismissals for tasks that no longer exist in the tasks table.
-  const orphanRows = await client.execute(`
+  const orphanDismissalRows = await client.execute(`
     SELECT entity_id
     FROM action_queue_dismissals
     WHERE entity_kind = 'task'
@@ -54,10 +59,26 @@ export async function reconcileTerminalTasks(
   `)
 
   let dismissalsCleared = 0
-  for (const row of orphanRows.rows) {
+  for (const row of orphanDismissalRows.rows) {
     const entityId = (row as unknown as { entity_id: string }).entity_id
     await clearDismissalForEntity('task', entityId)
     dismissalsCleared++
+  }
+
+  // (c) Open action-queue rows whose origin_task_id is absent from tasks
+  //     entirely — covers purged tasks that never emitted a lifecycle event.
+  const purgedTaskRows = await client.execute(`
+    SELECT DISTINCT origin_task_id
+    FROM action_queue_items
+    WHERE state = 'open'
+      AND origin_task_id IS NOT NULL
+      AND origin_task_id NOT IN (SELECT id FROM tasks)
+  `)
+
+  for (const row of purgedTaskRows.rows) {
+    const taskId = (row as unknown as { origin_task_id: string }).origin_task_id
+    await resolveAllRowsForTask(taskId)
+    rowsResolved++
   }
 
   return { rowsResolved, dismissalsCleared }
