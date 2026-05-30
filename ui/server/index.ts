@@ -1,9 +1,11 @@
 import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { openTraceEventStore } from '../../orchestrator/src/mastra/lib/trace-events-store.ts'
+import { loadProjectRegistry } from '../../orchestrator/src/registry/projects.ts'
 import { loadAgents } from './agents.ts'
 import { fetchKpis, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'
 import { StateDb, TaskDb } from './db.ts'
+import { probeDaemonHealth } from './projectHealth.ts'
 import { resolveRepo } from './repo.ts'
 import { handleProjectStart } from './spawnDaemon.ts'
 import { SseHub } from './sse.ts'
@@ -478,6 +480,22 @@ export const startServer = async (
         )
         const { status, body } = await handleProjectStart(projectId)
         return jsonResponse(status, body)
+      }
+
+      // GET /api/projects — return all registered projects with live health.
+      if (path === '/api/projects' && req.method === 'GET') {
+        try {
+          const entries = loadProjectRegistry()
+          const projects = await Promise.all(
+            entries.map(async (e) => ({
+              ...e,
+              health: await probeDaemonHealth(e.repoRoot),
+            })),
+          )
+          return jsonResponse(200, { projects })
+        } catch (err) {
+          return jsonResponse(500, { error: (err as Error).message })
+        }
       }
 
       if (path.startsWith('/api/')) {
