@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { openLibsql } from '../libsql.js'
 import { createLibsqlTaskStore, type TaskStore } from '../task-store.js'
-import { takeKpiSnapshot, readLatestKpiSnapshot } from '../kpi-snapshots.js'
+import { takeKpiSnapshot, readLatestKpiSnapshot, readKpiWindowComparison } from '../kpi-snapshots.js'
 
 // ---------------------------------------------------------------------------
 // Test DB helpers
@@ -96,6 +96,45 @@ const insertTask = async (
 }
 
 const NOW = '2026-01-07T12:00:00Z'
+
+const insertSnapshot = async (
+  store: TaskStore,
+  s: {
+    id: string
+    taken_at: string
+    window_start: string
+    window_end: string
+    sample_count: number
+    low_confidence: number
+    failure_rate?: number | null
+    cost_per_arc_p50?: number | null
+    cost_per_arc_p90?: number | null
+    autonomous_completion_rate?: number | null
+    recovery_success_rate?: number | null
+  },
+): Promise<void> => {
+  await store.execute({
+    sql: `INSERT INTO kpi_snapshots (
+            id, taken_at, window_start, window_end,
+            sample_count, low_confidence,
+            cost_per_arc_p50, cost_per_arc_p90,
+            failure_rate, autonomous_completion_rate, recovery_success_rate
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      s.id,
+      s.taken_at,
+      s.window_start,
+      s.window_end,
+      s.sample_count,
+      s.low_confidence,
+      s.cost_per_arc_p50 ?? null,
+      s.cost_per_arc_p90 ?? null,
+      s.failure_rate ?? null,
+      s.autonomous_completion_rate ?? null,
+      s.recovery_success_rate ?? null,
+    ],
+  })
+}
 
 // ---------------------------------------------------------------------------
 // 1. Basic snapshot insertion and retrieval
@@ -355,5 +394,155 @@ describe('takeKpiSnapshot — cost_per_arc columns', () => {
 
     expect(read!.cost_per_arc_p50).toBeCloseTo(written.cost_per_arc_p50!, 5)
     expect(read!.cost_per_arc_p90).toBeCloseTo(written.cost_per_arc_p90!, 5)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 7. readKpiWindowComparison — current + prior + deltas
+// ---------------------------------------------------------------------------
+
+describe('readKpiWindowComparison', () => {
+  // Window constants (each window is 7 days wide, contiguous)
+  const CMP_NOW = '2026-01-14T12:00:00Z'
+  const CMP_CURRENT_START = '2026-01-07T12:00:00Z' // CMP_NOW - 7 days
+  const CMP_PRIOR_END = CMP_CURRENT_START
+  const CMP_PRIOR_START = '2025-12-31T12:00:00Z' // CMP_PRIOR_END - 7 days
+
+  it('(a) returns numeric deltas when both windows are full-confidence', async () => {
+    const store = await makeStore()
+
+    // Prior window snapshot — full confidence, distinct KPI values
+    await insertSnapshot(store, {
+      id: randomUUID(),
+      taken_at: CMP_PRIOR_END,
+      window_start: CMP_PRIOR_START,
+      window_end: CMP_PRIOR_END,
+      sample_count: 10,
+      low_confidence: 0,
+      failure_rate: 0.2,
+      cost_per_arc_p50: 1000,
+      cost_per_arc_p90: 3000,
+    })
+
+    // Current window snapshot — full confidence, different values
+    await insertSnapshot(store, {
+      id: randomUUID(),
+      taken_at: CMP_NOW,
+      window_start: CMP_CURRENT_START,
+      window_end: CMP_NOW,
+      sample_count: 10,
+      low_confidence: 0,
+      failure_rate: 0.1,
+      cost_per_arc_p50: 1200,
+      cost_per_arc_p90: 3500,
+    })
+
+    const result = await readKpiWindowComparison({ now: CMP_NOW, store })
+
+    expect(result.current).not.toBeNull()
+    expect(result.prior).not.toBeNull()
+
+    // failure_rate: 0.1 - 0.2 = -0.1
+    expect(result.deltas.failure_rate.lowConfidenceSuppressed).toBe(false)
+    expect(result.deltas.failure_rate.value).not.toBeNull()
+    expect(result.deltas.failure_rate.value!).toBeCloseTo(-0.1, 5)
+
+    // cost_per_arc_p50: 1200 - 1000 = 200
+    expect(result.deltas.cost_per_arc_p50.lowConfidenceSuppressed).toBe(false)
+    expect(result.deltas.cost_per_arc_p50.value).not.toBeNull()
+    expect(result.deltas.cost_per_arc_p50.value!).toBeCloseTo(200, 5)
+
+    // cost_per_arc_p90: 3500 - 3000 = 500
+    expect(result.deltas.cost_per_arc_p90.lowConfidenceSuppressed).toBe(false)
+    expect(result.deltas.cost_per_arc_p90.value!).toBeCloseTo(500, 5)
+
+    // Unimplemented KPIs (null in both snapshots): value=null, not suppressed
+    expect(result.deltas.autonomous_completion_rate).toEqual({
+      value: null,
+      lowConfidenceSuppressed: false,
+    })
+    expect(result.deltas.recovery_success_rate).toEqual({
+      value: null,
+      lowConfidenceSuppressed: false,
+    })
+  })
+
+  it('(b) suppresses all deltas when prior window has low_confidence=1 (sample_count=3)', async () => {
+    const store = await makeStore()
+
+    // Prior window snapshot — low confidence (3 samples < default floor 5)
+    await insertSnapshot(store, {
+      id: randomUUID(),
+      taken_at: CMP_PRIOR_END,
+      window_start: CMP_PRIOR_START,
+      window_end: CMP_PRIOR_END,
+      sample_count: 3,
+      low_confidence: 1,
+      failure_rate: 0.33,
+      cost_per_arc_p50: 800,
+      cost_per_arc_p90: 2500,
+    })
+
+    // Current window snapshot — full confidence
+    await insertSnapshot(store, {
+      id: randomUUID(),
+      taken_at: CMP_NOW,
+      window_start: CMP_CURRENT_START,
+      window_end: CMP_NOW,
+      sample_count: 10,
+      low_confidence: 0,
+      failure_rate: 0.1,
+      cost_per_arc_p50: 1000,
+      cost_per_arc_p90: 3000,
+    })
+
+    const result = await readKpiWindowComparison({ now: CMP_NOW, store })
+
+    expect(result.current).not.toBeNull()
+    expect(result.prior).not.toBeNull()
+
+    // All deltas suppressed because prior has low_confidence=1
+    const kpiKeys = [
+      'failure_rate',
+      'cost_per_arc_p50',
+      'cost_per_arc_p90',
+      'autonomous_completion_rate',
+      'recovery_success_rate',
+    ] as const
+    for (const key of kpiKeys) {
+      expect(result.deltas[key]).toEqual({ value: null, lowConfidenceSuppressed: true })
+    }
+  })
+
+  it('(c) returns prior=null and unsuppressed null deltas when no prior snapshot exists', async () => {
+    const store = await makeStore()
+
+    // Only a current snapshot — no prior in the DB
+    await insertSnapshot(store, {
+      id: randomUUID(),
+      taken_at: CMP_NOW,
+      window_start: CMP_CURRENT_START,
+      window_end: CMP_NOW,
+      sample_count: 10,
+      low_confidence: 0,
+      failure_rate: 0.1,
+    })
+
+    const result = await readKpiWindowComparison({ now: CMP_NOW, store })
+
+    expect(result.current).not.toBeNull()
+    expect(result.prior).toBeNull()
+
+    // All deltas: value=null, lowConfidenceSuppressed=false (no prior to compare)
+    const kpiKeys = [
+      'failure_rate',
+      'cost_per_arc_p50',
+      'cost_per_arc_p90',
+      'autonomous_completion_rate',
+      'recovery_success_rate',
+    ] as const
+    for (const key of kpiKeys) {
+      expect(result.deltas[key]).toEqual({ value: null, lowConfidenceSuppressed: false })
+    }
   })
 })
