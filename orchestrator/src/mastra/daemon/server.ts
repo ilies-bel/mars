@@ -2586,7 +2586,6 @@ export const startDaemon = async (
       const { listDismissals } = await import('../lib/action-queue-dismissals')
       const { listTasks: qListTasks, initQueue, getClient: getQueueClient } = await import('../queue')
       const { listErrorKinds: listErrKinds } = await import('../lib/error-kinds')
-      const { hasRecipe } = await import('../lib/fix-recipes')
       const { getRepoRoot } = await import('../context')
 
       await initQueue()
@@ -2671,7 +2670,6 @@ export const startDaemon = async (
         stateStore,
         taskStore,
         errorKindRegistry,
-        recipeCatalog: { has: hasRecipe },
         repoRoot: getRepoRoot(),
         filter,
       })
