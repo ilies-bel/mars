@@ -234,7 +234,7 @@ describe('EventsPage render', () => {
   it('renders the empty-state line when the response has no events', () => {
     const qc = makeClient(EMPTY_RESPONSE)
     const html = renderPage(qc)
-    expect(html).toContain('No events match the current filters.')
+    expect(html).toContain('No events match these filters.')
   })
 
   it('renders one row per event with the severity badge and a #/task/<id> link', () => {

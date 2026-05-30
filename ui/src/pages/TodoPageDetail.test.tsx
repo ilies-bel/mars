@@ -254,7 +254,7 @@ describe('actionQueue detail – Traces section', () => {
   it('renders an empty-state line when there are no events', () => {
     const qc = makeClient({ taskId: 't-1', events: EMPTY_EVENTS })
     const html = renderDetail(BASE_ITEM, qc)
-    expect(html).toContain('No trace events recorded for this task.')
+    expect(html).toContain('No trace events for this task yet.')
   })
 })
 
