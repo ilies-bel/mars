@@ -174,3 +174,40 @@ describe('KpiTile delta display', () => {
     expect(html).toContain('0')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Low-confidence rendering
+// ---------------------------------------------------------------------------
+
+describe('KpiTile low-confidence', () => {
+  it('renders the label and "insufficient samples" when lowConfidence is true', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, delta: -0.5, lowConfidence: true })} />,
+    )
+    expect(html).toContain('Cost per Arc')
+    expect(html).toContain('insufficient samples')
+    expect(html).toContain('kpi-tile--low-confidence')
+  })
+
+  it('suppresses currentValue, delta, and drift arrow when lowConfidence is true', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, delta: -0.5, lowConfidence: true })} />,
+    )
+    expect(html).not.toContain('2.5')
+    expect(html).not.toContain('-0.5')
+    expect(html).not.toContain('↓')
+    expect(html).not.toContain('↑')
+    expect(html).not.toContain('→')
+  })
+
+  it('renders the full numeric tile when lowConfidence is false', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, delta: -0.5, lowConfidence: false })} />,
+    )
+    expect(html).toContain('2.5')
+    expect(html).toContain('↓')
+    expect(html).toContain('-0.5')
+    expect(html).not.toContain('insufficient samples')
+    expect(html).not.toContain('kpi-tile--low-confidence')
+  })
+})
