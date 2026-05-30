@@ -1071,6 +1071,27 @@ export const startDaemon = async (
   bus.on('task.blocked', () => { viewStreamHub.broadcast('tasks') })
   bus.on('task.unblocked', () => { viewStreamHub.broadcast('tasks') })
 
+  // Post-task-completion KPI-drift trigger. Runs fire-and-forget so a trigger
+  // failure never affects the task-completion path. Only active when
+  // selfEvolve.autoTrigger=true (default: false). Never queues tasks.
+  bus.on('task.completed', () => {
+    void (async () => {
+      try {
+        const { runSelfEvolveTrigger } = await import('../lib/self-evolve-trigger')
+        const result = await runSelfEvolveTrigger()
+        if (result.raised.length > 0) {
+          log(
+            `[self-evolve] raised ${result.raised.length} KPI-drift proposal(s): ${result.raised.join(', ')}`,
+          )
+        }
+      } catch (err) {
+        log(
+          `[self-evolve] trigger error: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    })()
+  })
+
   // ── Wrappers around queue ops that emit the right events ──────────────────
 
   const handleAdd = async (
