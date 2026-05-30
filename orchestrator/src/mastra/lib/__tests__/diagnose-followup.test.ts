@@ -27,6 +27,15 @@ interface ActionQueueModule {
   listActionQueueItems: typeof import('../action-queue').listActionQueueItems
 }
 
+interface AlertDismisserModule {
+  ensureAlertDismisser: typeof import('../../daemon/alert-dismisser').ensureAlertDismisser
+  drainAlertDismissals: typeof import('../../daemon/alert-dismisser').drainAlertDismissals
+}
+
+interface PublisherModule {
+  publishWithRetry: typeof import('../../../bus/publisher').publishWithRetry
+}
+
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-diagnose-followup-test-'))
   execFileSync('git', ['init', '-q'], { cwd: repo })
@@ -50,6 +59,28 @@ const loadModules = async (
   const f = (await import('../diagnose-followup')) as unknown as FollowupModule
   const actionQueue = (await import('../action-queue')) as unknown as ActionQueueModule
   return { q, d, f, actionQueue }
+}
+
+const loadModulesWithDismisser = async (
+  repo: string,
+): Promise<{
+  q: QueueModule
+  d: DiagnoseModule
+  f: FollowupModule
+  actionQueue: ActionQueueModule
+  ad: AlertDismisserModule
+  pub: PublisherModule
+}> => {
+  vi.resetModules()
+  process.env.MARS_REPO = repo
+  const q = (await import('../../queue')) as unknown as QueueModule
+  await q.initQueue()
+  const d = (await import('../diagnose')) as unknown as DiagnoseModule
+  const f = (await import('../diagnose-followup')) as unknown as FollowupModule
+  const actionQueue = (await import('../action-queue')) as unknown as ActionQueueModule
+  const ad = (await import('../../daemon/alert-dismisser')) as unknown as AlertDismisserModule
+  const pub = (await import('../../../bus/publisher')) as unknown as PublisherModule
+  return { q, d, f, actionQueue, ad, pub }
 }
 
 const seedParkedParent = async (
@@ -236,5 +267,70 @@ describe('runDiagnoseFollowup', () => {
     const outcome = await f.runDiagnoseFollowup(orphan.id)
     expect(outcome.action).toBe('noop')
     expect(outcome.parentTaskId).toBeNull()
+  })
+
+  it('auto-closes the diagnose-inconclusive row when parent task transitions to done', async () => {
+    // Regression: without originTaskId, dismissAlertsOnStatusChange (which queries
+    // by computeOriginFingerprint) can never find the row, leaving it open forever
+    // even after the parent task completes.
+    const { q, d, f, actionQueue, ad, pub } = await loadModulesWithDismisser(repo)
+    const client = q.getClient()
+    const { parentId, choreId } = await seedParkedParent(q)
+
+    await d.setDiagnosis(choreId, {
+      kind: 'inconclusive',
+      whatChecked: 'inspected all files',
+      whyUnscoped: 'root cause not found in scope',
+    })
+
+    const outcome = await f.runDiagnoseFollowup(choreId)
+    expect(outcome.action).toBe('action-queue-raised')
+    const itemId = outcome.actionQueueItemId!
+
+    // Row is open initially.
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
+
+    // Register the alert-dismisser subscriber, then publish a terminal{done}
+    // event for the parent — mirrors the daemon lifecycle after mars restart.
+    await ad.ensureAlertDismisser(client)
+    await pub.publishWithRetry(client, 'task.terminal', {
+      taskId: parentId,
+      reason: 'done',
+    })
+
+    const { processed } = await ad.drainAlertDismissals(client)
+
+    expect(processed).toBe(1)
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+  })
+
+  it('keeps the diagnose-inconclusive row open when parent task stays failed', async () => {
+    // A parent that ends 'failed' must NOT auto-close the row — the operator
+    // still needs to resolve the inconclusive diagnosis explicitly.
+    const { q, d, f, actionQueue, ad, pub } = await loadModulesWithDismisser(repo)
+    const client = q.getClient()
+    const { parentId, choreId } = await seedParkedParent(q)
+
+    await d.setDiagnosis(choreId, {
+      kind: 'inconclusive',
+      whatChecked: 'checked x',
+      whyUnscoped: 'y',
+    })
+
+    const outcome = await f.runDiagnoseFollowup(choreId)
+    expect(outcome.action).toBe('action-queue-raised')
+    const itemId = outcome.actionQueueItemId!
+
+    await ad.ensureAlertDismisser(client)
+    // task.terminal{failed} must be a no-op for the dismisser.
+    await pub.publishWithRetry(client, 'task.terminal', {
+      taskId: parentId,
+      reason: 'failed',
+    })
+
+    const { processed } = await ad.drainAlertDismissals(client)
+
+    expect(processed).toBe(0)
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
   })
 })
