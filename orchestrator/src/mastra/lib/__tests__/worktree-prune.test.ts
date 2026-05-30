@@ -38,6 +38,11 @@ const wt = (id = 'mars-test'): DiscoveredWorktree => ({
   taskId: id,
 })
 
+// Fixed timestamps for stale-rule tests — arbitrary values, never wall-clock.
+const FIXED_MIDNIGHT_MS = 1_000_000
+const BEFORE_MIDNIGHT_MS = FIXED_MIDNIGHT_MS - 1
+const AFTER_MIDNIGHT_MS = FIXED_MIDNIGHT_MS + 1
+
 describe('classifyWorktreeForPrune', () => {
   it('removes done worktrees', async () => {
     const result = await classifyWorktreeForPrune(wt(), {
@@ -121,5 +126,118 @@ describe('classifyWorktreeForPrune', () => {
     expect(verdictById['running-task']).toBe('skip-in-flight')
     expect(verdictById['verifying-task']).toBe('skip-in-flight')
     expect(verdictById['merging-task']).toBe('skip-in-flight')
+  })
+
+  // ── Stale-rule tests ────────────────────────────────────────────────────────
+
+  it('removes an other-status worktree whose directory mtime is before today midnight', async () => {
+    const result = await classifyWorktreeForPrune(wt(), {
+      getTask: async () => baseTask({ status: 'blocked' }),
+      todayMidnightMs: FIXED_MIDNIGHT_MS,
+      getDirMtimeMs: () => BEFORE_MIDNIGHT_MS,
+    })
+    expect(result.verdict).toBe('remove-stale')
+  })
+
+  it('keeps an other-status worktree whose directory mtime is on or after today midnight', async () => {
+    const result = await classifyWorktreeForPrune(wt(), {
+      getTask: async () => baseTask({ status: 'blocked' }),
+      todayMidnightMs: FIXED_MIDNIGHT_MS,
+      getDirMtimeMs: () => AFTER_MIDNIGHT_MS,
+    })
+    expect(result.verdict).toBe('skip-other')
+  })
+
+  it('keeps an in-flight worktree even when its directory mtime is before today midnight', async () => {
+    const result = await classifyWorktreeForPrune(wt(), {
+      getTask: async () => baseTask({ status: 'running' }),
+      todayMidnightMs: FIXED_MIDNIGHT_MS,
+      getDirMtimeMs: () => BEFORE_MIDNIGHT_MS,
+    })
+    expect(result.verdict).toBe('skip-in-flight')
+  })
+
+  it('keeps a failed worktree even when its directory mtime is before today midnight', async () => {
+    const result = await classifyWorktreeForPrune(wt(), {
+      getTask: async () => baseTask({ status: 'failed' }),
+      todayMidnightMs: FIXED_MIDNIGHT_MS,
+      getDirMtimeMs: () => BEFORE_MIDNIGHT_MS,
+    })
+    expect(result.verdict).toBe('skip-failed')
+  })
+
+  it('uses the injected todayMidnightMs as the cutoff (stale cutoff is caller-supplied)', async () => {
+    // mtime is exactly at midnight — not before it — so NOT stale
+    const atMidnight = await classifyWorktreeForPrune(wt('at'), {
+      getTask: async () => baseTask({ id: 'at', status: 'draft' }),
+      todayMidnightMs: FIXED_MIDNIGHT_MS,
+      getDirMtimeMs: () => FIXED_MIDNIGHT_MS,
+    })
+    expect(atMidnight.verdict).toBe('skip-other')
+
+    // mtime is 1ms before midnight — stale
+    const justBefore = await classifyWorktreeForPrune(wt('before'), {
+      getTask: async () => baseTask({ id: 'before', status: 'draft' }),
+      todayMidnightMs: FIXED_MIDNIGHT_MS,
+      getDirMtimeMs: () => FIXED_MIDNIGHT_MS - 1,
+    })
+    expect(justBefore.verdict).toBe('remove-stale')
+  })
+
+  it('stale rule: mixed set spanning in-flight, failed, prior-day, and today dirs', async () => {
+    type TaskEntry = { status: TaskStatus | null; mtime: number }
+    const entries: Record<string, TaskEntry> = {
+      // Prior-day dirs
+      'stale-blocked': { status: 'blocked', mtime: BEFORE_MIDNIGHT_MS },
+      'stale-draft': { status: 'draft', mtime: BEFORE_MIDNIGHT_MS },
+      // Prior-day dir but in-flight — protected
+      'inflight-old': { status: 'running', mtime: BEFORE_MIDNIGHT_MS },
+      // Prior-day dir but failed — protected
+      'failed-old': { status: 'failed', mtime: BEFORE_MIDNIGHT_MS },
+      // Terminal tasks already removed regardless of mtime
+      'done-old': { status: 'done', mtime: BEFORE_MIDNIGHT_MS },
+      'dropped-old': { status: 'dropped', mtime: BEFORE_MIDNIGHT_MS },
+      // Today's dirs — skip-other regardless
+      'blocked-today': { status: 'blocked', mtime: AFTER_MIDNIGHT_MS },
+      'inflight-today': { status: 'queued', mtime: AFTER_MIDNIGHT_MS },
+      'failed-today': { status: 'failed', mtime: AFTER_MIDNIGHT_MS },
+    }
+
+    const results = await Promise.all(
+      Object.entries(entries).map(([id, { status, mtime }]) =>
+        classifyWorktreeForPrune(wt(id), {
+          getTask: async () => (status ? baseTask({ id, status }) : null),
+          todayMidnightMs: FIXED_MIDNIGHT_MS,
+          getDirMtimeMs: () => mtime,
+        }),
+      ),
+    )
+
+    const verdictById = Object.fromEntries(
+      results.map((r) => [r.worktree.taskId, r.verdict]),
+    )
+
+    // Stale prior-day other-status → removed
+    expect(verdictById['stale-blocked']).toBe('remove-stale')
+    expect(verdictById['stale-draft']).toBe('remove-stale')
+
+    // Prior-day in-flight → protected
+    expect(verdictById['inflight-old']).toBe('skip-in-flight')
+
+    // Prior-day failed → protected
+    expect(verdictById['failed-old']).toBe('skip-failed')
+
+    // Terminal (already removed regardless of mtime)
+    expect(verdictById['done-old']).toBe('remove-done')
+    expect(verdictById['dropped-old']).toBe('remove-dropped')
+
+    // Today's dirs — other-status kept
+    expect(verdictById['blocked-today']).toBe('skip-other')
+
+    // Today's dirs — in-flight always kept
+    expect(verdictById['inflight-today']).toBe('skip-in-flight')
+
+    // Today's dirs — failed always kept
+    expect(verdictById['failed-today']).toBe('skip-failed')
   })
 })
