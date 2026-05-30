@@ -248,47 +248,25 @@ export const walkManifests = (
         throw new NestedTechError(claimed, dir)
       }
       manifests.push({ dir, files: found })
-      claimedSubtrees.push(dir)
 
-      // Enforce "no nested tech": scan the subtree (depth-limited) and reject
-      // if any descendant directory also carries a manifest.
-      const stack: { d: string; depth: number }[] = []
-      let nestedIgnore = ignoreLayers
-      if (entries.includes('.gitignore')) {
-        const rules = readIgnoreFile(dir)
-        if (rules.length > 0) nestedIgnore = [...ignoreLayers, { base: dir, rules }]
-      }
-      for (const name of entries) {
-        if (HARDCODED_IGNORE.has(name)) continue
-        const child = resolve(dir, name)
-        if (gitSkips.has(child)) continue
-        let st
-        try {
-          st = lstatSync(child)
-        } catch {
-          continue
+      // The repo root may coexist with nested per-package manifests (monorepo
+      // layout). For the root, skip subtree-claiming and the inline nested
+      // scan so BFS descends into sub-packages normally. Non-root manifests
+      // claim their subtree and eagerly reject any nested manifest.
+      if (dir !== root) {
+        claimedSubtrees.push(dir)
+
+        // Enforce "no nested tech": scan the subtree (depth-limited) and reject
+        // if any descendant directory also carries a manifest.
+        const stack: { d: string; depth: number }[] = []
+        let nestedIgnore = ignoreLayers
+        if (entries.includes('.gitignore')) {
+          const rules = readIgnoreFile(dir)
+          if (rules.length > 0) nestedIgnore = [...ignoreLayers, { base: dir, rules }]
         }
-        if (st.isSymbolicLink() || !st.isDirectory()) continue
-        if (isIgnored(nestedIgnore, child, true)) continue
-        stack.push({ d: child, depth: depth + 1 })
-      }
-      while (stack.length > 0) {
-        const top = stack.pop()
-        if (!top) break
-        if (top.depth > maxDepth) continue
-        let subEntries: string[]
-        try {
-          subEntries = readdirSync(top.d)
-        } catch (err) {
-          throw new WalkAccessError(top.d, err)
-        }
-        const nestedFound = hasManifest(top.d, subEntries)
-        if (nestedFound.length > 0) {
-          throw new NestedTechError(dir, top.d)
-        }
-        for (const name of subEntries) {
+        for (const name of entries) {
           if (HARDCODED_IGNORE.has(name)) continue
-          const child = resolve(top.d, name)
+          const child = resolve(dir, name)
           if (gitSkips.has(child)) continue
           let st
           try {
@@ -297,10 +275,39 @@ export const walkManifests = (
             continue
           }
           if (st.isSymbolicLink() || !st.isDirectory()) continue
-          stack.push({ d: child, depth: top.depth + 1 })
+          if (isIgnored(nestedIgnore, child, true)) continue
+          stack.push({ d: child, depth: depth + 1 })
         }
+        while (stack.length > 0) {
+          const top = stack.pop()
+          if (!top) break
+          if (top.depth > maxDepth) continue
+          let subEntries: string[]
+          try {
+            subEntries = readdirSync(top.d)
+          } catch (err) {
+            throw new WalkAccessError(top.d, err)
+          }
+          const nestedFound = hasManifest(top.d, subEntries)
+          if (nestedFound.length > 0) {
+            throw new NestedTechError(dir, top.d)
+          }
+          for (const name of subEntries) {
+            if (HARDCODED_IGNORE.has(name)) continue
+            const child = resolve(top.d, name)
+            if (gitSkips.has(child)) continue
+            let st
+            try {
+              st = lstatSync(child)
+            } catch {
+              continue
+            }
+            if (st.isSymbolicLink() || !st.isDirectory()) continue
+            stack.push({ d: child, depth: top.depth + 1 })
+          }
+        }
+        continue
       }
-      continue
     }
 
     if (depth >= maxDepth) {

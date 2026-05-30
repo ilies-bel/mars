@@ -83,6 +83,30 @@ describe('walkManifests', () => {
     expect(() => walkManifests(root)).toThrow(NestedTechError)
   })
 
+  it('allows root manifest to coexist with nested manifests (monorepo layout)', () => {
+    make(root, {
+      'package.json': '{"name":"monorepo","workspaces":["gateway","dashboard"]}',
+      'gateway/package.json': '{"name":"gateway"}',
+      'dashboard/package.json': '{"name":"dashboard"}',
+    })
+
+    const result = walkManifests(root)
+    const dirs = result.manifests.map((m) => m.dir).sort()
+    expect(dirs).toEqual(
+      [root, resolve(root, 'dashboard'), resolve(root, 'gateway')].sort(),
+    )
+  })
+
+  it('still rejects non-root nesting even when root also has a manifest', () => {
+    make(root, {
+      'package.json': '{"name":"monorepo"}',
+      'gateway/package.json': '{"name":"gateway"}',
+      'gateway/sub/package.json': '{"name":"sub"}',
+    })
+
+    expect(() => walkManifests(root)).toThrow(NestedTechError)
+  })
+
   it('honors .gitignore at repo root', () => {
     make(root, {
       '.gitignore': 'vendor/\n',
