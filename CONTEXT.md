@@ -370,3 +370,7 @@ _Avoid_: failure code, failure-reason catalog, error kind, error-kind, failure e
 **Project**:
 A registered repo the dashboard can view, identified by its repo root; the unit a Daemon and its UI are scoped to.
 _Avoid_: repo, workspace, target
+
+**Project registry**:
+The operator-maintained file listing the repo roots the dashboard exposes as Projects; the UI server's sole source of truth for which Projects exist.
+_Avoid_: projects.json, project list, workspace file
