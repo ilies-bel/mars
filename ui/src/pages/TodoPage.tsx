@@ -436,7 +436,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Traces
         </dt>
-        <dd className="text-iron/60">No trace events recorded for this task.</dd>
+        <dd className="text-iron/60">No trace events for this task yet.</dd>
       </div>
     )
   }
