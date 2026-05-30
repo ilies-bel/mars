@@ -970,3 +970,26 @@ export const dismissAlertsOnStatusChange = async (
   await clearStaleWorktreeDismissal(taskId)
   return ids
 }
+
+/**
+ * Resolve every open Action-queue row whose `origin_task_id` matches
+ * `taskId`, regardless of kind. Used by the Invalidator on `task.completed`
+ * and `task.dropped` to ensure no orphaned row survives after a task ends
+ * cleanly (ADR-0028/0030).
+ *
+ * Idempotent — rows that are already resolved/dismissed are untouched.
+ */
+export const resolveAllRowsForTask = async (
+  taskId: string,
+): Promise<void> => {
+  await initActionQueue()
+  const c = getClient()
+  await c.execute({
+    sql: `UPDATE action_queue_items
+             SET state = 'resolved',
+                 resolved_at = ?
+           WHERE origin_task_id = ?
+             AND state = 'open'`,
+    args: [new Date().toISOString(), taskId],
+  })
+}
