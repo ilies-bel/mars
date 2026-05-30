@@ -21,13 +21,14 @@ const read = (name: string): string =>
 describe('PRD 948691d0 slice 4 — stages route through named Workers', () => {
   it('implement workflow dispatches through Coder/Fixer via the Workers registry', () => {
     const src = read('implement-workflow.ts')
-    // Fixer for kind='fix', Coder for everything else (via getWorkerForTag;
-    // 'coder' is the only valid tag after ADR 0019). Both branches go through
-    // the role registry — not a raw `runClaudeCode` call.
+    // Fixer for kind='fix', everything else via pickWorkerForTags — intersects
+    // the task's tag list against each registered Worker's tag set; falls back
+    // to the default headless Worker (Coder) when no Worker claims a tag.
+    // Both branches go through the role registry — not a raw `runClaudeCode` call.
     // Workers are now passed to runWorkerWithSpan (PRD 436f14c7) rather than
     // calling .run() inline; the binding to named Workers is preserved.
     expect(src).toMatch(/Workers\.Fixer/)
-    expect(src).toMatch(/getWorkerForTag/)
+    expect(src).toMatch(/pickWorkerForTags/)
     expect(src).toMatch(/runWorkerWithSpan/)
   })
 

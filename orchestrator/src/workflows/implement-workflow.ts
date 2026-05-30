@@ -13,7 +13,7 @@ import {
   mergeBranch,
   checkMergeTargetStatus,
 } from '../mastra/lib/git'
-import { getWorkerForTag, Workers, type WorkerName } from '../mastra/workers'
+import { pickWorkerForTags, Workers, type WorkerName } from '../mastra/workers'
 import {
   TASK_TAGS,
   isTaskTag,
@@ -847,11 +847,14 @@ export const implementWorkflow = defineWorkflow<
         input.kind,
       )
       // Kind-aware routing: fix tasks go to the Fixer Worker (Opus, backlog-
-      // mutation denied); everything else uses Coder via the primary tag.
+      // mutation denied); everything else selects a Worker by intersecting the
+      // task's tag list against each registered Worker's tag set.
       // Kind takes precedence over tags for the fix → Fixer path because a
       // recovery task must always land on the higher-resilience Worker.
       const worker =
-        input.kind === 'fix' ? Workers.Fixer : getWorkerForTag(primaryTag)
+        input.kind === 'fix'
+          ? Workers.Fixer
+          : pickWorkerForTags(input.tags, Workers)
       // Read/Grep span watcher (gsd-style analysis-paralysis signal). When the
       // threshold is reached AND the agent has taken zero actions for the
       // entire run, a single diagnose Chore is spawned and the original task

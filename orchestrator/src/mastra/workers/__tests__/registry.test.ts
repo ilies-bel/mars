@@ -9,7 +9,7 @@ import {
   Workers,
   createWorker,
   getWorker,
-  getWorkerForTag,
+  pickWorkerForTags,
   resolveWorkerMaxMessages,
   resolveWorkerMaxContextTokens,
   type WorkerConfig,
@@ -209,11 +209,28 @@ describe('MARS_WORKER_MODEL env var', () => {
 // The Writer pinned config describe block was removed by ADR 0019.
 // The Writer Worker no longer exists in the registry.
 
-describe('getWorkerForTag', () => {
-  it('routing seam exists and resolves "coder" to the Coder Worker', () => {
-    // The classification-tag routing seam is preserved (ADR 0019 acceptance
-    // criterion 5). 'coder' is the only valid tag and it resolves to Coder.
-    expect(getWorkerForTag('coder')).toBe(Workers.Coder)
+describe('pickWorkerForTags', () => {
+  it('returns the Coder Worker when tags include "coder"', () => {
+    // A task tagged 'coder' intersects the Coder Worker's tag set → Coder.
+    expect(pickWorkerForTags(['coder'], Workers)).toBe(Workers.Coder)
+  })
+
+  it('falls back to the Coder Worker (default headless Worker) when no tags match', () => {
+    // No registered Worker claims this tag → fall through to default headless
+    // Worker (Coder, full tool surface, bypassPermissions).
+    expect(pickWorkerForTags(['unknown-tag'], Workers)).toBe(Workers.Coder)
+  })
+
+  it('falls back to the Coder Worker for an empty tag list', () => {
+    // An empty tag list never intersects any Worker's tag set.
+    expect(pickWorkerForTags([], Workers)).toBe(Workers.Coder)
+  })
+
+  it('returns the matching Worker when the tag list contains multiple tags', () => {
+    // The first Worker whose tags intersect the list is returned.
+    expect(pickWorkerForTags(['something-else', 'coder'], Workers)).toBe(
+      Workers.Coder,
+    )
   })
 })
 
