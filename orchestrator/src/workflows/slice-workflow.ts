@@ -428,7 +428,7 @@ const isSchemaDropSlice = (s: {
  * Extract snake_case identifiers (one or more underscore-joined lowercase
  * segments) from a slice's title/whatToBuild. These are the textual
  * stand-ins for column/field names the slicer used when describing the
- * drop — e.g. `total_cost_usd`. Identifiers without an underscore are
+ * drop — e.g. `legacy_data_col`. Identifiers without an underscore are
  * intentionally ignored: bare words like `tasks` or `queue` are too
  * generic and would over-match other slices.
  */
@@ -449,10 +449,10 @@ const sliceMentions = (
  *
  * Rationale (concrete failure that motivated this): PRD
  * 1b7498f6-remove-all-usd-cost-usd-mentions-from-th sliced into a
- * "Drop total_cost_usd column" slice plus three "Remove total_cost_usd
+ * "Drop legacy_data_col column" slice plus three "Remove legacy_data_col
  * from <consumer>" slices. The slicer LLM emitted ZERO blocker edges,
  * so the schema-drop slice dispatched first and burned its full retry
- * budget on `SQLITE_ERROR: no such column: s.total_cost_usd` inside
+ * budget on `SQLITE_ERROR: no such column: s.legacy_data_col` inside
  * consumer tests that still read the column. This pass injects the
  * edges the LLM forgot, from the textual signal already in the slice
  * titles (no new heuristics — the language is there). The injection
