@@ -5,6 +5,7 @@ import { loadAgents } from './agents.ts'
 import { fetchKpis, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'
 import { StateDb, TaskDb } from './db.ts'
 import { resolveRepo } from './repo.ts'
+import { handleProjectStart } from './spawnDaemon.ts'
 import { SseHub } from './sse.ts'
 import { watchQueue } from './watch.ts'
 
@@ -462,6 +463,21 @@ export const startServer = async (
         } catch (err) {
           return jsonResponse(500, { error: (err as Error).message })
         }
+      }
+
+      // POST /api/projects/:id/start — start the daemon for a registered project.
+      // The projectId is looked up in the registry; only its registered repoRoot
+      // is ever passed to the spawner (no arbitrary path from the request body).
+      if (
+        path.startsWith('/api/projects/') &&
+        path.endsWith('/start') &&
+        req.method === 'POST'
+      ) {
+        const projectId = decodeURIComponent(
+          path.slice('/api/projects/'.length, -'/start'.length),
+        )
+        const { status, body } = await handleProjectStart(projectId)
+        return jsonResponse(status, body)
       }
 
       if (path.startsWith('/api/')) {
