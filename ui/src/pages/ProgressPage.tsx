@@ -100,7 +100,7 @@ export const ProgressPage = () => {
         ) : null}
         {error && tasks === null ? (
           <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
-            <ApiErrorPanel error={error} />
+            <ApiErrorPanel error={error.message} />
           </main>
         ) : activeTab === 'topology' ? (
           <TopologyView
