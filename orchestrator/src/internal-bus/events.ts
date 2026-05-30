@@ -7,7 +7,8 @@ export interface InternalEvents {
   }
   'task.unblocked': {
     taskId: string
-    blockerTaskId: string
+    /** The blocker that completed, or undefined when unblocked via edge removal. */
+    blockerTaskId?: string
   }
 }
 

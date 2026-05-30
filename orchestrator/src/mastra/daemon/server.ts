@@ -56,6 +56,9 @@ import {
   onBlockerTaskCancelled,
   onBlockerTaskCompleted,
   onBlockerTaskFailed,
+  recoverAllBlockedTasks,
+  recoverBlockedTask,
+  type RecoverAllBlockedTasksResult,
 } from '../blocker-resolution'
 import {
   supersedeActionQueueItemsForOrigin,
@@ -1070,7 +1073,7 @@ export const startDaemon = async (
     bus.emit('task.blocked', e)
   })
   internalBus().on('task.unblocked', (e) => {
-    log(`[unblocked] ${e.taskId} via blocker ${e.blockerTaskId}`)
+    log(`[unblocked] ${e.taskId} via blocker ${e.blockerTaskId ?? '(edge-removed)'}`)
     bus.emit('task.unblocked', e)
     if (!acceptingWork) return
     if (inFlight.has(e.taskId)) return
@@ -1180,7 +1183,30 @@ export const startDaemon = async (
       }
       removed.push(blockerId)
     }
+    // After edge removal, re-evaluate the task: if it was blocked solely on
+    // the edges we just removed (all remaining blockers are done / gone),
+    // flip it to 'queued' immediately so it dispatches without a restart.
+    try {
+      const recovery = await recoverBlockedTask(id)
+      if (recovery.outcome === 'queued') {
+        log(
+          `[blocker-recovery] ${id} queued after blocker edge removal (removed: ${removed.join(', ')})`,
+        )
+      }
+    } catch (err) {
+      log(
+        `[blocker-recovery] error recovering ${id} after edge removal: ${(err as Error).message}`,
+      )
+    }
     return { taskId: id, removed }
+  }
+
+  const handleRecover = async (id?: string): Promise<RecoverAllBlockedTasksResult> => {
+    if (id) {
+      const outcome = await recoverBlockedTask(id)
+      return { outcomes: [outcome] }
+    }
+    return recoverAllBlockedTasks()
   }
 
   const handleUpdate = async (
@@ -1888,6 +1914,10 @@ export const startDaemon = async (
         }
         case 'remove-blockers': {
           const result = await handleRemoveBlockers(req.id, req.blockerIds ?? [])
+          return { ok: true, data: result }
+        }
+        case 'recover': {
+          const result = await handleRecover(req.id)
           return { ok: true, data: result }
         }
         case 'proposal.promote': {

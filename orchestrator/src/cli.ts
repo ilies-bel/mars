@@ -2381,6 +2381,53 @@ const main = async (): Promise<void> => {
     return
   }
 
+  if (cmd === 'recover') {
+    const id = rest[0]
+    const { sendRequest } = await import('./mastra/daemon/client')
+    const data = (await sendRequest({ op: 'recover', id })) as {
+      outcomes: Array<{
+        taskId: string
+        outcome: 'queued' | 'noop' | 'failed' | 'not-blocked'
+        retryCount: number
+        failureReason?: string
+      }>
+    }
+    if (id) {
+      const o = data.outcomes[0]
+      if (!o) {
+        console.log('no result')
+        return
+      }
+      if (o.outcome === 'queued') {
+        console.log(`recovered ${o.taskId}: queued for dispatch`)
+      } else if (o.outcome === 'failed') {
+        console.log(`${o.taskId}: failed at unblock (${o.failureReason ?? 'unknown'})`)
+      } else if (o.outcome === 'not-blocked') {
+        console.log(`${o.taskId}: not blocked — nothing to recover`)
+      } else {
+        console.log(`${o.taskId}: still has unmet blockers`)
+      }
+    } else {
+      const queued = data.outcomes.filter((o) => o.outcome === 'queued')
+      const failed = data.outcomes.filter((o) => o.outcome === 'failed')
+      const noop = data.outcomes.filter(
+        (o) => o.outcome === 'noop' || o.outcome === 'not-blocked',
+      )
+      console.log(
+        `recovered ${queued.length} task(s)${queued.length > 0 ? `: ${queued.map((o) => o.taskId).join(', ')}` : ''}`,
+      )
+      if (failed.length > 0) {
+        console.log(
+          `failed at unblock: ${failed.map((o) => `${o.taskId} (${o.failureReason ?? 'unknown'})`).join(', ')}`,
+        )
+      }
+      if (noop.length > 0) {
+        console.log(`still blocked: ${noop.map((o) => o.taskId).join(', ')}`)
+      }
+    }
+    return
+  }
+
   if (cmd === 'drop') {
     const flags = new Set(rest.filter((a) => a.startsWith('--')))
     const positionals = rest.filter((a) => !a.startsWith('--'))

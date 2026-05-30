@@ -568,6 +568,134 @@ export interface PropagateRecoveryDoneResult {
  * CLAUDE.md contract: "a successful recovery counts as its origin
  * reaching done, so a recovered blocker unblocks the whole chain."
  */
+export interface RecoverBlockedTaskOutcome {
+  taskId: string
+  outcome: 'queued' | 'noop' | 'failed' | 'not-blocked'
+  retryCount: number
+  failureReason?: string
+}
+
+export interface RecoverAllBlockedTasksResult {
+  outcomes: RecoverBlockedTaskOutcome[]
+}
+
+/**
+ * Re-evaluate a single blocked task: if all its remaining blockers have
+ * resolved (are 'done') or have been removed, flip it from 'blocked' to
+ * 'queued' and signal the dispatch loop via internalBus.
+ *
+ * Called after a blocker edge is manually removed (`mars unblock <task>
+ * <blocker>`) so a task that now has zero unmet blockers is released
+ * immediately — no daemon restart required.
+ *
+ * Mirrors the per-row logic inside {@link onBlockerTaskCompleted}: same
+ * retry-budget check, same worktree reset, same durable outbox event.
+ */
+export const recoverBlockedTask = async (
+  taskId: string,
+): Promise<RecoverBlockedTaskOutcome> => {
+  const task = await getTask(taskId)
+  if (!task || task.status !== 'blocked') {
+    return { taskId, outcome: 'not-blocked', retryCount: 0 }
+  }
+
+  const retryCount = task.retryCount ?? 0
+  const budget = getRetryBudget()
+  if (retryBudgetExhausted(retryCount, budget)) {
+    await raiseActionQueueForBlockedTask(taskId)
+    await markTaskFailed(taskId, RETRY_BUDGET_FAILURE_REASON)
+    return { taskId, outcome: 'failed', retryCount, failureReason: RETRY_BUDGET_FAILURE_REASON }
+  }
+
+  const c = await getDefaultQueueClient()
+  const now = new Date().toISOString()
+
+  // Any confirmed/pending-review blocker edge whose blocker is not yet done?
+  const incomplete = await c.execute({
+    sql: `SELECT 1
+            FROM task_blockers b
+            JOIN tasks t ON t.id = b.blocker_task_id
+           WHERE b.task_id = ? AND t.status != 'done'
+             AND b.state IN ('confirmed', 'pending-review')
+           LIMIT 1`,
+    args: [taskId],
+  })
+  if (incomplete.rows.length > 0) {
+    return { taskId, outcome: 'noop', retryCount }
+  }
+
+  // Reset the dependent's worktree to integration HEAD before re-dispatching.
+  const integrationBranch = integrationBranchName()
+  try {
+    await resetDependentWorktreeToIntegration(
+      taskId,
+      task.worktreePath ?? null,
+      integrationBranch,
+    )
+  } catch (err: unknown) {
+    if (err instanceof WorktreeAheadOfIntegrationError) {
+      await raiseWorktreeAheadActionQueue(
+        err.taskId,
+        err.worktreePath,
+        err.aheadCount,
+        err.integrationBranch,
+      )
+      await markTaskFailed(taskId, WORKTREE_AHEAD_FAILURE_REASON)
+      return { taskId, outcome: 'failed', retryCount, failureReason: WORKTREE_AHEAD_FAILURE_REASON }
+    }
+    throw err
+  }
+
+  const tx = await c.transaction('write')
+  let flipped = false
+  try {
+    const upd = await tx.execute({
+      sql: `UPDATE tasks
+               SET status = 'queued', updated_at = ?
+             WHERE id = ? AND status = 'blocked'`,
+      args: [now, taskId],
+    })
+    flipped = upd.rowsAffected > 0
+    if (flipped) {
+      await publish(tx, 'task.unblocked', { taskId })
+    }
+    await tx.commit()
+  } catch (error: unknown) {
+    tx.close()
+    throw error
+  }
+
+  if (flipped) {
+    internalBus().emit('task.unblocked', { taskId })
+    return { taskId, outcome: 'queued', retryCount }
+  }
+  return { taskId, outcome: 'noop', retryCount }
+}
+
+/**
+ * Scan every 'blocked' task and re-evaluate each via
+ * {@link recoverBlockedTask}. Tasks whose blockers are all resolved (done
+ * or removed) are flipped to 'queued' and signalled to the dispatch loop.
+ *
+ * Operator escape hatch: `mars recover` triggers this on the running daemon
+ * without needing a restart. Equivalent in intent to the legacy
+ * `recoverBlockedTasks` boot-time scan, but safe to run on-demand at any
+ * time.
+ */
+export const recoverAllBlockedTasks = async (): Promise<RecoverAllBlockedTasksResult> => {
+  const c = await getDefaultQueueClient()
+  const r = await c.execute({
+    sql: `SELECT id FROM tasks WHERE status = 'blocked'`,
+    args: [],
+  })
+  const outcomes: RecoverBlockedTaskOutcome[] = []
+  for (const row of r.rows as unknown as Array<{ id: string }>) {
+    const outcome = await recoverBlockedTask(row.id)
+    outcomes.push(outcome)
+  }
+  return { outcomes }
+}
+
 export const markOriginDoneFromRecovery = async (
   originTaskId: string,
 ): Promise<PropagateRecoveryDoneResult> => {
