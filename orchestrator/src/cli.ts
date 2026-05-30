@@ -331,14 +331,14 @@ Commands:
                                 collapses to that single transcript). Writes
                                 report to
                                 .mars/deep-reflections/arc-<id>-<iso>.json.
-  inbox                         alias for 'inbox list open'
-  inbox list [state] [--kind <kind>] [--lean]
-                                list inbox items. state one of:
+  action-queue                         alias for 'action-queue list open'
+  action-queue list [state] [--kind <kind>] [--lean]
+                                list action queue items. state one of:
                                 open|acknowledged|resolved|dismissed|all
                                 (default: open). --kind filters by item
                                 kind, e.g. recovery-failed, no-recipe.
                                 Draft proposals (status='draft') surface
-                                alongside inbox rows for state=open|all
+                                alongside action queue rows for state=open|all
                                 with kind='draft(<source>)'; dismissed
                                 drafts surface for state=dismissed. Use
                                 'mars proposal ...' for the draft lifecycle.
@@ -349,20 +349,20 @@ Commands:
                                 totals) instead of one row per item;
                                 intended for SessionStart hooks and
                                 other terse summaries.
-  inbox show <id>               full detail for an inbox item (accepts a
+  action-queue show <id>               full detail for an action queue item (accepts a
                                 full id or a unique 8-char prefix)
-  inbox ack <id>                mark an inbox item acknowledged
-  inbox resolve <id> [--note <text>] [--root-cause <text>]
-                                mark an inbox item resolved
-  inbox dismiss <id> [--note <text>]
-                                mark an inbox item dismissed
-  inbox raise --from <-|path>   file an inbox item from a JSON document
+  action-queue ack <id>                mark an action queue item acknowledged
+  action-queue resolve <id> [--note <text>] [--root-cause <text>]
+                                mark an action queue item resolved
+  action-queue dismiss <id> [--note <text>]
+                                mark an action queue item dismissed
+  action-queue raise --from <-|path>   file an action queue item from a JSON document
                                 (stdin when path is '-'). Replaces the
                                 deprecated pattern of writing one-shot
                                 .ts scripts under orchestrator/scripts/.
-  inbox watch                   live terminal UI for the todo feed
+  action-queue watch                   live terminal UI for the todo feed
                                 (drafts + stale worktrees)
-  inbox reconcile               one-time pass: close every open inbox item
+  action-queue reconcile               one-time pass: close every open action queue item
                                 whose referenced task is already done or
                                 dropped. Items about failed or live tasks
                                 are left open. Idempotent — re-running is
@@ -812,10 +812,10 @@ signal capture entirely with the env var MARS_REFLECT_DISABLED=1.
 Flags:
   --since <iso>   only reflect on tasks completed after this ISO timestamp
   --limit <n>     max number of tasks to include (default: 10)`,
-  inbox: `mars inbox <subcommand> ...
+  'action-queue': `mars action-queue <subcommand> ...
 
 Subcommands:
-  (no args)                          alias for 'inbox list open'
+  (no args)                          alias for 'action-queue list open'
   list [state] [--lean]              list items by state
                                      (open|acknowledged|resolved|dismissed|all,
                                      default: open). --lean prints a
@@ -831,7 +831,7 @@ Subcommands:
   resolve <id> [--note <text>] [--root-cause <text>]
                                      mark item resolved
   dismiss <id> [--note <text>]       mark item dismissed
-  raise --from <-|path>              file a new inbox item from JSON.
+  raise --from <-|path>              file a new action queue item from JSON.
                                      Use --from - to read JSON from stdin,
                                      or --from <path> to read it from a file.
                                      This is the CORRECT entry point for
@@ -850,7 +850,7 @@ Subcommands:
                                      server-side: piping the same payload
                                      twice bumps seen_count instead of
                                      creating a duplicate row. Prints the
-                                     inbox id on stdout, one line, no
+                                     action queue id on stdout, one line, no
                                      decoration. Exit codes: 0 ok, 1
                                      library error, 2 parse/validation
                                      error.
@@ -859,9 +859,9 @@ Subcommands:
                                      by Today / Yesterday / This Week /
                                      Older; ink TUI; j/k move, enter
                                      detail, b/escape back, q quit).
-                                     The non-watch \`mars inbox\` verbs
+                                     The non-watch \`mars action-queue\` verbs
                                      keep managing the orchestrator
-                                     inbox_items table.`,
+                                     action_queue_items table.`,
   uninstall: `mars uninstall [--yes|-y] [--wrapper <path>]
 
 Remove the installed mars wrapper binary and its source clone.
@@ -912,7 +912,7 @@ Phases:
       Lists any remaining in-flight tasks so the operator can wait or purge.
 
   reset
-      Exits 0 only when every id-bearing table (tasks, proposals, inbox_items,
+      Exits 0 only when every id-bearing table (tasks, proposals, action_queue_items,
       etc.) has zero rows in the DB. Run after deleting .mars/mars.db and
       re-initialising with 'mars init'.
 
@@ -3305,18 +3305,18 @@ const main = async (): Promise<void> => {
     return
   }
 
-  if (cmd === 'inbox') {
+  if (cmd === 'action-queue') {
     const lean = rest.includes('--lean')
     const subRest = lean ? rest.filter((a) => a !== '--lean') : rest
     const sub = subRest[0]
-    const inbox = await import('./mastra/lib/inbox')
-    const dismissals = await import('./mastra/lib/inbox-dismissals')
-    type InboxItem = import('./mastra/lib/inbox').InboxItem
+    const actionQueue = await import('./mastra/lib/action-queue')
+    const dismissals = await import('./mastra/lib/action-queue-dismissals')
+    type ActionQueueItem = import('./mastra/lib/action-queue').ActionQueueItem
 
     const LEAN_PREVIEW = 3
 
-    // Map a persisted InboxKind to the dismissal entity kind.
-    const inboxKindToEntityKind = (
+    // Map a persisted ActionQueueKind to the dismissal entity kind.
+    const actionQueueKindToEntityKind = (
       kind: string,
     ): 'task' | 'worktree' | 'proposal' => {
       if (kind === 'stale-worktree') return 'worktree'
@@ -3324,8 +3324,8 @@ const main = async (): Promise<void> => {
       return 'task'
     }
 
-    // Extract the identifying entity id from a persisted inbox row.
-    const extractEntityId = (item: InboxItem): string => {
+    // Extract the identifying entity id from a persisted action queue row.
+    const extractEntityId = (item: ActionQueueItem): string => {
       if (item.kind === 'stale-worktree') {
         if (typeof item.context.taskId === 'string') return item.context.taskId
       }
@@ -3339,9 +3339,9 @@ const main = async (): Promise<void> => {
       return item.signature ?? item.id
     }
 
-    const printList = (items: InboxItem[]): void => {
+    const printList = (items: ActionQueueItem[]): void => {
       if (items.length === 0) {
-        console.log('inbox empty')
+        console.log('action queue empty')
         return
       }
       for (const item of items) {
@@ -3357,9 +3357,9 @@ const main = async (): Promise<void> => {
       }
     }
 
-    const printLean = (items: InboxItem[]): void => {
+    const printLean = (items: ActionQueueItem[]): void => {
       if (items.length === 0) {
-        console.log('inbox empty')
+        console.log('action queue empty')
         return
       }
       const counts: Record<string, number> = {}
@@ -3367,7 +3367,7 @@ const main = async (): Promise<void> => {
         counts[item.kind] = (counts[item.kind] ?? 0) + 1
       }
       const parts = Object.entries(counts).map(([k, n]) => `${k}:${n}`)
-      console.log(`inbox ${items.length} (${parts.join(', ')})`)
+      console.log(`action queue ${items.length} (${parts.join(', ')})`)
       for (const item of items.slice(0, LEAN_PREVIEW)) {
         console.log(`  ${item.id}  ${item.title}`)
       }
@@ -3375,7 +3375,7 @@ const main = async (): Promise<void> => {
       if (overflow > 0) console.log(`  ... +${overflow} more`)
     }
 
-    const printShow = (item: InboxItem): void => {
+    const printShow = (item: ActionQueueItem): void => {
       const entityId = extractEntityId(item)
       const dismissed =
         item.state === 'dismissed' || item.state === 'resolved'
@@ -3391,15 +3391,15 @@ const main = async (): Promise<void> => {
     }
 
     if (sub === 'watch') {
-      const { runInboxWatch } = await import('./cli/inbox-watch')
-      runInboxWatch()
+      const { runActionQueueWatch } = await import('./cli/action-queue-watch')
+      runActionQueueWatch()
       return
     }
 
     if (sub === 'raise') {
       const from = flags['--from']
       if (!from) {
-        console.error('usage: mars inbox raise --from <-|path>')
+        console.error('usage: mars action-queue raise --from <-|path>')
         process.exit(2)
       }
       let raw: string
@@ -3424,10 +3424,10 @@ const main = async (): Promise<void> => {
         console.error(`invalid JSON: ${(err as Error).message}`)
         process.exit(2)
       }
-      const { inboxRaiseSchema } = await import('./cli/inbox-raise-schema')
-      const parseResult = inboxRaiseSchema.safeParse(json)
+      const { actionQueueRaiseSchema } = await import('./cli/action-queue-raise-schema')
+      const parseResult = actionQueueRaiseSchema.safeParse(json)
       if (!parseResult.success) {
-        console.error('inbox raise: schema validation failed')
+        console.error('action-queue raise: schema validation failed')
         for (const issue of parseResult.error.issues) {
           const path = issue.path.length > 0 ? issue.path.join('.') : '<root>'
           console.error(`  ${path}: ${issue.message}`)
@@ -3440,10 +3440,10 @@ const main = async (): Promise<void> => {
         raisedBy: data.raisedBy === '' ? 'agent:cli' : data.raisedBy,
       }
       try {
-        const id = await inbox.raiseInboxItem(payload)
+        const id = await actionQueue.raiseActionQueueItem(payload)
         console.log(id)
       } catch (err) {
-        console.error(`inbox raise: ${(err as Error).message}`)
+        console.error(`action-queue raise: ${(err as Error).message}`)
         process.exit(1)
       }
       return
@@ -3454,10 +3454,10 @@ const main = async (): Promise<void> => {
       const filter = filterRaw ?? 'open'
       const allowed = new Set(['open', 'dismissed', 'all'])
       if (!allowed.has(filter)) {
-        console.error('usage: mars inbox list [open|dismissed|all] [--lean]')
+        console.error('usage: mars action-queue list [open|dismissed|all] [--lean]')
         process.exit(1)
       }
-      // Map filter to the inbox_items state vocabulary.
+      // Map filter to the action_queue_items state vocabulary.
       // 'open' → only state='open'; 'dismissed' → state='dismissed';
       // 'all' → no state filter (acknowledged + open + dismissed).
       const stateFilter =
@@ -3466,7 +3466,7 @@ const main = async (): Promise<void> => {
           : filter === 'all'
             ? ('all' as const)
             : ('open' as const)
-      const items = await inbox.listInboxItems(stateFilter)
+      const items = await actionQueue.listActionQueueItems(stateFilter)
       if (lean) {
         printLean(items)
       } else {
@@ -3478,12 +3478,12 @@ const main = async (): Promise<void> => {
     if (sub === 'show') {
       const id = subRest[1]
       if (!id) {
-        console.error('usage: mars inbox show <id>')
+        console.error('usage: mars action-queue show <id>')
         process.exit(1)
       }
-      const item = await inbox.getInboxItem(id)
+      const item = await actionQueue.getActionQueueItem(id)
       if (!item) {
-        console.error(`no inbox item matching ${id}`)
+        console.error(`no action queue item matching ${id}`)
         process.exit(1)
       }
       printShow(item)
@@ -3493,15 +3493,15 @@ const main = async (): Promise<void> => {
     if (sub === 'ack' || sub === 'resolve') {
       const id = subRest[1]
       if (!id) {
-        console.error(`usage: mars inbox ${sub} <id>`)
+        console.error(`usage: mars action-queue ${sub} <id>`)
         process.exit(1)
       }
-      const item = await inbox.getInboxItem(id)
+      const item = await actionQueue.getActionQueueItem(id)
       if (!item) {
-        console.error(`no inbox item matching ${id}`)
+        console.error(`no action queue item matching ${id}`)
         process.exit(1)
       }
-      const entityKind = inboxKindToEntityKind(item.kind)
+      const entityKind = actionQueueKindToEntityKind(item.kind)
       const entityId = extractEntityId(item)
       const note = sub === 'ack' ? 'ack' : 'resolved'
       await dismissals.dismissEntity(entityKind, entityId, { note })
@@ -3512,15 +3512,15 @@ const main = async (): Promise<void> => {
     if (sub === 'dismiss' || sub === 'undismiss') {
       const id = subRest[1]
       if (!id) {
-        console.error(`usage: mars inbox ${sub} <id>`)
+        console.error(`usage: mars action-queue ${sub} <id>`)
         process.exit(1)
       }
-      const item = await inbox.getInboxItem(id)
+      const item = await actionQueue.getActionQueueItem(id)
       if (!item) {
-        console.error(`no inbox item matching ${id}`)
+        console.error(`no action queue item matching ${id}`)
         process.exit(1)
       }
-      const entityKind = inboxKindToEntityKind(item.kind)
+      const entityKind = actionQueueKindToEntityKind(item.kind)
       const entityId = extractEntityId(item)
       if (sub === 'dismiss') {
         const { resolveAuthor, formatAuthor } = await import('./mastra/author')
@@ -3543,7 +3543,7 @@ const main = async (): Promise<void> => {
     }
 
     console.error(
-      'usage: mars inbox [list [open|dismissed|all] [--lean] | show <id> | ack <id> | resolve <id> | dismiss <id> [--note <text>] | undismiss <id> | raise --from <-|path> | watch]',
+      'usage: mars action-queue [list [open|dismissed|all] [--lean] | show <id> | ack <id> | resolve <id> | dismiss <id> [--note <text>] | undismiss <id> | raise --from <-|path> | watch]',
     )
     process.exit(1)
   }

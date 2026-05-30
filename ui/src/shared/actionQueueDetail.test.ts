@@ -1,5 +1,5 @@
 /**
- * Unit tests for the inbox detail-panel helpers.
+ * Unit tests for the actionQueue detail-panel helpers.
  *
  * Pure functions — no React render, no React Query. These pin the
  * catalog-lookup fallback, the catalog-action → ActionDescriptor binding
@@ -16,7 +16,7 @@ import {
   substituteTaskId,
   summarizeTraceEvent,
   UNKNOWN_FAILURE_CODE,
-} from './inboxDetail'
+} from './actionQueueDetail'
 import type {
   FailureReasonCatalogEntry,
   TraceEvent,

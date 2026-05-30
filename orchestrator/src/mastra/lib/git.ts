@@ -1080,7 +1080,7 @@ const runVerifyStep = async (
 }
 
 // Best-effort capture of the worktree state at the moment has-diff failed.
-// Surfaced in the failure output so post-mortems and inbox investigators
+// Surfaced in the failure output so post-mortems and actionQueue investigators
 // can tell apart "agent really did nothing" from "agent's commit landed
 // after verify ran" (the runClaudeCode timeout-leak class) without having
 // to re-shell into the worktree manually.

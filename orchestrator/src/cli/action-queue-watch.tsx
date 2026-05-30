@@ -1,5 +1,5 @@
 /**
- * Live Todo TUI — what `mars inbox watch` renders.
+ * Live Todo TUI — what `mars actionQueue watch` renders.
  *
  * Mirrors the web UI's Todo page: a single feed of drafts (proposals
  * waiting to be shaped) and stale worktrees (operational alerts), grouped
@@ -14,15 +14,15 @@
  * and have the web server delegate to it; both surfaces will keep working
  * because the wire shape is unchanged.
  *
- * Keybindings (intentionally trimmed from the old inbox_items TUI):
+ * Keybindings (intentionally trimmed from the old action_queue_items TUI):
  *   - j/k or arrows : move cursor
  *   - enter         : open detail view
  *   - b or escape   : back from detail
  *   - q or ctrl-c   : quit
  *
  * a/r/d (ack/resolve/dismiss) are gone because drafts and stale worktrees
- * have no in-TUI mutating actions in this slice — by design. `mars inbox`
- * (the non-watch verb) keeps managing the orchestrator `inbox_items` table
+ * have no in-TUI mutating actions in this slice — by design. `mars actionQueue`
+ * (the non-watch verb) keeps managing the orchestrator `action_queue_items` table
  * exactly as before.
  */
 
@@ -374,6 +374,6 @@ const TodoWatchApp: React.FC = () => {
   )
 }
 
-export const runInboxWatch = (): void => {
+export const runActionQueueWatch = (): void => {
   render(<TodoWatchApp />)
 }

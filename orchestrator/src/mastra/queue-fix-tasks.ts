@@ -10,7 +10,7 @@ import {
   hasRecipe,
   type FixRecipeContext,
 } from './lib/fix-recipes'
-import { type InboxKind, raiseInboxItem } from './lib/inbox'
+import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
 import { truncateFailure } from './lib/truncate-failure'
 import { internalBus } from '../internal-bus'
 import { buildEventInsert } from './lib/outbox'
@@ -23,7 +23,7 @@ import {
 import {
   getRetryBudget,
   markTaskFailed,
-  raiseRetryBudgetExhaustedInbox,
+  raiseRetryBudgetExhaustedActionQueue,
 } from './queue-retry'
 import { getDefaultTaskStore, type TaskStore } from './lib/task-store'
 
@@ -33,16 +33,16 @@ const truncate = (s: string, max: number): string =>
 const FIX_TASK_AUTHOR_KIND = 'agent'
 const FIX_TASK_AUTHOR_NAME = 'fail-fix-handler'
 
-export const RECOVERY_FAILED_INBOX_KIND: InboxKind = 'failed'
-export const UNKNOWN_FAILURE_INBOX_KIND: InboxKind = 'failed'
-export const FIX_FAIL_LOOP_INBOX_KIND: InboxKind = 'failed'
+export const RECOVERY_FAILED_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
+export const UNKNOWN_FAILURE_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
+export const FIX_FAIL_LOOP_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 
 const DEFAULT_MAX_FIX_ATTEMPTS = 2
 
 /**
  * Cap on the number of fix-task rows we'll ever insert for a single
  * (sourceTaskId, failureSignature) pair. Once the cap is hit, the next
- * dispatch escalates to the inbox instead of looping. The rule is
+ * dispatch escalates to the actionQueue instead of looping. The rule is
  * signature-agnostic — no hardcoded signature strings.
  */
 export const getMaxFixAttempts = (): number => {
@@ -526,7 +526,7 @@ export interface HandleTaskFailureViaTaskResult {
   fixTaskId?: string
   failureSignature?: string
   retryCount?: number
-  inboxItemId?: string
+  actionQueueItemId?: string
   attempts?: number
 }
 
@@ -537,14 +537,14 @@ export interface HandleTaskFailureViaTaskResult {
  *     the registered recipe for the computed signature.
  *  - `escalated`: the failing task is itself a recovery (fix_for_task_id
  *     set). Recovery has a retry budget of 0; we mark it failed and
- *     raise a `recovery-failed` inbox item for human attention.
+ *     raise a `recovery-failed` actionQueue item for human attention.
  *  - `no-recipe`: signature has no recipe registered. Original task →
- *     failed and a trace-only inbox item is raised. The orchestrator does
+ *     failed and a trace-only actionQueue item is raised. The orchestrator does
  *     NOT auto-diagnose; the operator triggers a one-shot diagnostic agent
- *     from the inbox card (the `diagnose-failure` action).
+ *     from the actionQueue card (the `diagnose-failure` action).
  *  - `fix-fail-loop`: (sourceTaskId, failureSignature) pair has already
  *     burned its fix-task attempts cap (`MARS_MAX_FIX_ATTEMPTS`, default
- *     2). No new fix task is inserted; a deduped `fix-fail-loop` inbox
+ *     2). No new fix task is inserted; a deduped `fix-fail-loop` actionQueue
  *     item is raised and the source task stays in `blocked` with its
  *     existing error summary.
  *
@@ -581,7 +581,7 @@ export const handleTaskFailureWithFixTask = async (
   // spawn a fix task or investigator — that would re-introduce the
   // unbounded recursion the Chore was created to break. Mark it failed
   // directly; the daemon's failure callback (slice 6) raises the operator
-  // inbox item for explicit resolution.
+  // actionQueue item for explicit resolution.
   if (task.kind === 'diagnose') {
     const failureSignature = computeFailureSignature(
       input.failingStep,
@@ -612,7 +612,7 @@ export const handleTaskFailureWithFixTask = async (
 
   // Kill-switch: when MARS_RECOVERY_DISABLED=1, never spawn fix-tasks or
   // Investigators. Mark the failing task failed and stop. Recovery (fix-
-  // tasks already in flight) is escalated to inbox as usual so a partial
+  // tasks already in flight) is escalated to actionQueue as usual so a partial
   // disable doesn't leave them silently dangling.
   if (process.env.MARS_RECOVERY_DISABLED === '1' && task.fixForTaskId === null) {
     await markTaskFailed(
@@ -626,7 +626,7 @@ export const handleTaskFailureWithFixTask = async (
     }
   }
 
-  // Recovery (fix-task) failures escalate to inbox; never spawn another
+  // Recovery (fix-task) failures escalate to actionQueue; never spawn another
   // recovery. See ADR 0002 — this is the rule that broke the cascade.
   if (task.fixForTaskId !== null) {
     const recoveryFailureReason = `recovery_failed:${failureSignature}: ${truncatedError.slice(0, 500)}`
@@ -638,9 +638,9 @@ export const handleTaskFailureWithFixTask = async (
     }, s)
 
     const originId = task.originId
-    const inboxSignature = `${originId}:${failureSignature}`
-    const inboxItemId = await raiseInboxItem({
-      kind: RECOVERY_FAILED_INBOX_KIND,
+    const actionQueueSignature = `${originId}:${failureSignature}`
+    const actionQueueItemId = await raiseActionQueueItem({
+      kind: RECOVERY_FAILED_ACTION_QUEUE_KIND,
       category: 'orchestrator',
       priority: 'high',
       title: `Fix and retry ${input.taskId}, or abandon ${originId}: recovery failed at ${input.failingStep}`,
@@ -667,7 +667,7 @@ export const handleTaskFailureWithFixTask = async (
         repoRoot: process.env.MARS_REPO ?? null,
       },
       raisedBy: 'agent:fail-fix-handler',
-      signature: inboxSignature,
+      signature: actionQueueSignature,
       // Collapse all failure-kinds for the same origin into one row.
       originTaskId: originId,
       occurrence: {
@@ -681,7 +681,7 @@ export const handleTaskFailureWithFixTask = async (
       outcome: 'escalated',
       failureSignature,
       retryCount: task.retryCount,
-      inboxItemId,
+      actionQueueItemId,
     }
   }
 
@@ -692,7 +692,7 @@ export const handleTaskFailureWithFixTask = async (
       input.taskId,
       `retry_budget_exhausted:${failureSignature}`,
     )
-    await raiseRetryBudgetExhaustedInbox({
+    await raiseRetryBudgetExhaustedActionQueue({
       taskId: input.taskId,
       lastStep: input.failingStep,
       retryCount: task.retryCount,
@@ -712,7 +712,7 @@ export const handleTaskFailureWithFixTask = async (
   // lookup. When `input.failingStep === 'verify:test-failed'`, compare
   // the failing test file paths against `task.spec?.files`; if there is
   // zero overlap AND the same tests already fail on integrationBranch,
-  // park the source in a new `'flake-blocked'` status, raise an inbox
+  // park the source in a new `'flake-blocked'` status, raise an actionQueue
   // item, and return without enqueueing a fix-task. Dependencies (file
   // separately, then wire here):
   //   - parser for failing test paths (proposal 5710b256)
@@ -724,7 +724,7 @@ export const handleTaskFailureWithFixTask = async (
   //     since classifyError today only sees errorOutput.
   // No recipe for this signature — do NOT fall back to a generic prompt
   // (that's what produced the cascade) and do NOT auto-diagnose. Mark the
-  // source 'failed' and raise a trace-only inbox item. The operator decides
+  // source 'failed' and raise a trace-only actionQueue item. The operator decides
   // whether to diagnose (the card's `diagnose-failure` action spawns a
   // one-shot Sonnet agent), restart, or purge.
   if (!hasRecipe(failureSignature)) {
@@ -746,8 +746,8 @@ export const handleTaskFailureWithFixTask = async (
       s,
     )
 
-    const inboxItemId = await raiseInboxItem({
-      kind: UNKNOWN_FAILURE_INBOX_KIND,
+    const actionQueueItemId = await raiseActionQueueItem({
+      kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
       category: 'orchestrator',
       priority: 'high',
       title: `Task ${task.id} failed: unknown signature ${failureSignature}`,
@@ -782,14 +782,14 @@ export const handleTaskFailureWithFixTask = async (
       outcome: 'no-recipe',
       failureSignature,
       retryCount: task.retryCount + 1,
-      inboxItemId,
+      actionQueueItemId,
     }
   }
 
   // Fix-fail-loop cap. Count every historical fix-task row for this
   // (sourceTaskId, failureSignature) pair regardless of status. When
   // the cap is hit, stop inserting new fix tasks and escalate to the
-  // inbox; repeat escalations dedupe on (kind, signature) fingerprint
+  // actionQueue; repeat escalations dedupe on (kind, signature) fingerprint
   // and bump seenCount on the existing row. Source task stays in
   // 'blocked' with its existing error summary — never silently flipped
   // back to 'queued'.
@@ -819,8 +819,8 @@ export const handleTaskFailureWithFixTask = async (
       args: [now, input.taskId],
     })
 
-    const inboxItemId = await raiseInboxItem({
-      kind: FIX_FAIL_LOOP_INBOX_KIND,
+    const actionQueueItemId = await raiseActionQueueItem({
+      kind: FIX_FAIL_LOOP_ACTION_QUEUE_KIND,
       category: 'orchestrator',
       priority: 'high',
       title: `Diagnose and retry, or abandon ${input.taskId}: fix-fail loop on ${failureSignature}`,
@@ -872,7 +872,7 @@ export const handleTaskFailureWithFixTask = async (
       outcome: 'fix-fail-loop',
       failureSignature,
       retryCount: task.retryCount,
-      inboxItemId,
+      actionQueueItemId,
       attempts: priorAttempts,
     }
   }

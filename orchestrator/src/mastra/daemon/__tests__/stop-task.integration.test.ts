@@ -21,7 +21,7 @@
  *      assert PID disappears from liveChildPids).
  *   3) Stop a queued task that never started; assert killed=false.
  *   4) Stop a blocked task with a queued dependent; assert cascade +
- *      inbox item naming the cancelled blocker.
+ *      actionQueue item naming the cancelled blocker.
  *   5) Stop a task already in terminal `done` state; assert refusal
  *      with a 'terminal state' message and row unchanged.
  *
@@ -36,7 +36,7 @@ describe('mars stop <id> — end-to-end (slice 4/4, blocked on slice 3)', () => 
   it.todo('stops an in-flight task during verify and kills the subprocess')
   it.todo('stops a queued task without attempting SIGKILL (killed=false)')
   it.todo(
-    'cascades cancellation to queued dependents and raises an inbox item',
+    'cascades cancellation to queued dependents and raises an actionQueue item',
   )
   it.todo('refuses to stop a task already in terminal `done` state')
 })

@@ -1,6 +1,6 @@
 /**
  * Failure-reason catalog: typed, operator-facing failure codes plus the
- * terminal actions the inbox UI offers for each.
+ * terminal actions the actionQueue UI offers for each.
  *
  * The catalog is loaded once per daemon process. Resolution rules:
  *
@@ -26,7 +26,7 @@ import {
   UNKNOWN_FAILURE_CODE,
 } from '../failure-reasons/built-in'
 
-/** A button the inbox UI surfaces for a failed task. */
+/** A button the actionQueue UI surfaces for a failed task. */
 export interface FailureAction {
   /** Short verb the UI binds to a button: `restart`, `purge`, `dismiss`, … */
   id: string

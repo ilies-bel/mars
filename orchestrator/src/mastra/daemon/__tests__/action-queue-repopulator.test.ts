@@ -11,14 +11,14 @@ interface QueueModule {
   getClient: typeof import('../../queue').getClient
 }
 
-interface InboxModule {
-  listInboxItems: typeof import('../../lib/inbox').listInboxItems
+interface ActionQueueModule {
+  listActionQueueItems: typeof import('../../lib/action-queue').listActionQueueItems
 }
 
 interface RepopulatorModule {
-  INBOX_REPOPULATOR_SUBSCRIBER: typeof import('../inbox-repopulator').INBOX_REPOPULATOR_SUBSCRIBER
-  ensureInboxRepopulator: typeof import('../inbox-repopulator').ensureInboxRepopulator
-  drainInboxRepopulations: typeof import('../inbox-repopulator').drainInboxRepopulations
+  ACTION_QUEUE_REPOPULATOR_SUBSCRIBER: typeof import('../action-queue-repopulator').ACTION_QUEUE_REPOPULATOR_SUBSCRIBER
+  ensureActionQueueRepopulator: typeof import('../action-queue-repopulator').ensureActionQueueRepopulator
+  drainActionQueueRepopulations: typeof import('../action-queue-repopulator').drainActionQueueRepopulations
 }
 
 interface PublisherModule {
@@ -35,7 +35,7 @@ interface CatalogModule {
 
 interface Loaded {
   q: QueueModule
-  inbox: InboxModule
+  actionQueue: ActionQueueModule
   rep: RepopulatorModule
   pub: PublisherModule
   subs: SubscribersModule
@@ -45,7 +45,7 @@ interface Loaded {
 }
 
 const setupRepo = (): string => {
-  const repo = mkdtempSync(resolve(tmpdir(), 'mars-inbox-repopulator-test-'))
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-action-queue-repopulator-test-'))
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
@@ -53,7 +53,7 @@ const setupRepo = (): string => {
 
 /**
  * Load all modules against the same temp repo. MARS_REPO makes resolveContext()
- * resolve stateDbPath/queueDbPath to one .mars/mars.db so events, inbox_items,
+ * resolve stateDbPath/queueDbPath to one .mars/mars.db so events, action_queue_items,
  * and subscriber tables all share a single db.
  */
 const loadModules = async (repo: string): Promise<Loaded> => {
@@ -61,9 +61,9 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.initQueue()
-  const inbox = (await import('../../lib/inbox')) as unknown as InboxModule
+  const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   const rep = (await import(
-    '../inbox-repopulator'
+    '../action-queue-repopulator'
   )) as unknown as RepopulatorModule
   const pub = (await import(
     '../../../bus/publisher'
@@ -77,7 +77,7 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   const catalog = await catalogMod.loadFailureReasonCatalog(
     resolve(repo, '.mars'),
   )
-  return { q, inbox, rep, pub, subs, catalog }
+  return { q, actionQueue, rep, pub, subs, catalog }
 }
 
 const publish = async <T extends EventName>(
@@ -89,7 +89,7 @@ const publish = async <T extends EventName>(
   await pub.publishWithRetry(client, type, payload)
 }
 
-describe('inbox-repopulator outbox subscriber', () => {
+describe('action-queue-repopulator outbox subscriber', () => {
   let repo: string
 
   beforeEach(() => {
@@ -102,66 +102,66 @@ describe('inbox-repopulator outbox subscriber', () => {
   })
 
   it('raises one open row on task.failed then supersedes it on task.queued (net zero open rows)', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-raise-evict'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
 
     // ── Phase 1: task.failed → one open row
     await publish(pub, client, 'task.failed', { taskId, error: 'boom' })
-    const { processed: p1 } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: p1 } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(p1).toBe(1)
 
-    const openAfterFailed = await inbox.listInboxItems('open')
+    const openAfterFailed = await actionQueue.listActionQueueItems('open')
     expect(openAfterFailed.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(1)
 
     // ── Phase 2: task.queued → supersede, zero open rows for this origin
     await publish(pub, client, 'task.queued', { taskId })
-    const { processed: p2 } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: p2 } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(p2).toBe(1)
 
-    const openAfterQueued = await inbox.listInboxItems('open')
+    const openAfterQueued = await actionQueue.listActionQueueItems('open')
     expect(openAfterQueued.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
   })
 
   it('does not double-apply when drained again over already-processed events (processed-once)', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-idempotent'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     await publish(pub, client, 'task.failed', { taskId, error: 'boom' })
 
     // First drain: raises the row
-    const { processed: first } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: first } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(first).toBe(1)
 
     // Reset cursor to 0 so the subscriber sees the same event again.
     // processedOnce should prevent the sideEffect from running twice.
     await client.execute({
       sql: `UPDATE subscribers SET cursor = 0 WHERE name = ?`,
-      args: [rep.INBOX_REPOPULATOR_SUBSCRIBER],
+      args: [rep.ACTION_QUEUE_REPOPULATOR_SUBSCRIBER],
     })
 
-    const { processed: second } = await rep.drainInboxRepopulations(client, catalog)
-    // processedOnce suppresses the dedup slot — inbox mutation does not re-run
+    const { processed: second } = await rep.drainActionQueueRepopulations(client, catalog)
+    // processedOnce suppresses the dedup slot — actionQueue mutation does not re-run
     expect(second).toBe(0)
 
-    // Exactly one open row and seenCount=1 confirms raiseInboxItem was NOT
+    // Exactly one open row and seenCount=1 confirms raiseActionQueueItem was NOT
     // called a second time (which would have bumped seenCount to 2)
-    const openItems = await inbox.listInboxItems('open')
+    const openItems = await actionQueue.listActionQueueItems('open')
     const taskItems = openItems.filter((i) => i.payload['taskId'] === taskId)
     expect(taskItems).toHaveLength(1)
     expect(taskItems[0].seenCount).toBe(1)
   })
 
-  it('produces zero inbox rows for task.blocked', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+  it('produces zero actionQueue rows for task.blocked', async () => {
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-blocked'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     await publish(pub, client, 'task.blocked', {
       taskId,
       fixTaskId: null,
@@ -169,19 +169,19 @@ describe('inbox-repopulator outbox subscriber', () => {
       failingStep: 'verify',
     })
 
-    const { processed } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(processed).toBe(0)
 
-    const openItems = await inbox.listInboxItems('open')
+    const openItems = await actionQueue.listActionQueueItems('open')
     expect(openItems.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
   })
 
   it('nets zero open draft rows: proposal.added then proposal.promoted', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const proposalId = 'prop-abc123'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
 
     // proposal.added → raises one draft-proposal row
     await publish(pub, client, 'proposal.added', {
@@ -189,26 +189,26 @@ describe('inbox-repopulator outbox subscriber', () => {
       source: 'human',
       title: 'My great idea',
     })
-    const { processed: p1 } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: p1 } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(p1).toBe(1)
 
-    const openDraft = await inbox.listInboxItems('open', { kind: 'draft-proposal' })
+    const openDraft = await actionQueue.listActionQueueItems('open', { kind: 'draft-proposal' })
     expect(openDraft.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(1)
 
     // proposal.promoted → evicts the draft-proposal row
     await publish(pub, client, 'proposal.promoted', { proposalId })
-    const { processed: p2 } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: p2 } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(p2).toBe(1)
 
-    const openDraftAfter = await inbox.listInboxItems('open', { kind: 'draft-proposal' })
+    const openDraftAfter = await actionQueue.listActionQueueItems('open', { kind: 'draft-proposal' })
     expect(openDraftAfter.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(0)
   })
 
-  it('advances cursor for unmapped events without creating inbox rows', async () => {
-    const { q, inbox, rep, pub, subs, catalog } = await loadModules(repo)
+  it('advances cursor for unmapped events without creating actionQueue rows', async () => {
+    const { q, actionQueue, rep, pub, subs, catalog } = await loadModules(repo)
     const client = q.getClient()
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     await publish(pub, client, 'task.priority_changed', {
       taskId: 'T-unmapped',
       priority: 1,
@@ -216,104 +216,104 @@ describe('inbox-repopulator outbox subscriber', () => {
 
     const cursorBefore = await subs.getCursor(
       client,
-      rep.INBOX_REPOPULATOR_SUBSCRIBER,
+      rep.ACTION_QUEUE_REPOPULATOR_SUBSCRIBER,
     )
-    const { processed } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed } = await rep.drainActionQueueRepopulations(client, catalog)
     const cursorAfter = await subs.getCursor(
       client,
-      rep.INBOX_REPOPULATOR_SUBSCRIBER,
+      rep.ACTION_QUEUE_REPOPULATOR_SUBSCRIBER,
     )
 
     expect(processed).toBe(0)
     expect(cursorAfter).toBeGreaterThan(cursorBefore)
 
-    const openItems = await inbox.listInboxItems('open')
+    const openItems = await actionQueue.listActionQueueItems('open')
     expect(openItems.filter((i) => i.payload['taskId'] === 'T-unmapped')).toHaveLength(0)
   })
 
   it('evicts row on task.completed', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-completed'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     await publish(pub, client, 'task.failed', { taskId, error: 'oops' })
-    const { processed: p1 } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: p1 } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(p1).toBe(1)
 
     expect(
-      (await inbox.listInboxItems('open')).filter((i) => i.payload['taskId'] === taskId),
+      (await actionQueue.listActionQueueItems('open')).filter((i) => i.payload['taskId'] === taskId),
     ).toHaveLength(1)
 
     await publish(pub, client, 'task.completed', { taskId, result: { status: 'done' } })
-    const { processed: p2 } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: p2 } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(p2).toBe(1)
 
     expect(
-      (await inbox.listInboxItems('open')).filter((i) => i.payload['taskId'] === taskId),
+      (await actionQueue.listActionQueueItems('open')).filter((i) => i.payload['taskId'] === taskId),
     ).toHaveLength(0)
   })
 
   it('evicts row on task.unblocked', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-unblocked'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     await publish(pub, client, 'task.failed', { taskId, error: 'oops' })
-    const { processed: p1 } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: p1 } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(p1).toBe(1)
 
     await publish(pub, client, 'task.unblocked', { taskId, blockerTaskId: 'B-1' })
-    const { processed: p2 } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: p2 } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(p2).toBe(1)
 
     expect(
-      (await inbox.listInboxItems('open')).filter((i) => i.payload['taskId'] === taskId),
+      (await actionQueue.listActionQueueItems('open')).filter((i) => i.payload['taskId'] === taskId),
     ).toHaveLength(0)
   })
 
   it('nets zero open draft rows: proposal.added then proposal.dismissed', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const proposalId = 'prop-dismissed'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     await publish(pub, client, 'proposal.added', {
       proposalId,
       source: 'reflection',
       title: 'Dismissed idea',
     })
-    const { processed: p1 } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: p1 } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(p1).toBe(1)
 
     await publish(pub, client, 'proposal.dismissed', { proposalId })
-    const { processed: p2 } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: p2 } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(p2).toBe(1)
 
-    const openDraft = await inbox.listInboxItems('open', { kind: 'draft-proposal' })
+    const openDraft = await actionQueue.listActionQueueItems('open', { kind: 'draft-proposal' })
     expect(openDraft.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(0)
   })
 
   it('nets zero open draft rows: proposal.added then proposal.deleted', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const proposalId = 'prop-deleted'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     await publish(pub, client, 'proposal.added', {
       proposalId,
       source: 'planner',
       title: 'Deleted idea',
     })
-    const { processed: p1 } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: p1 } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(p1).toBe(1)
 
     await publish(pub, client, 'proposal.deleted', { proposalId })
-    const { processed: p2 } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed: p2 } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(p2).toBe(1)
 
-    const openDraft = await inbox.listInboxItems('open', { kind: 'draft-proposal' })
+    const openDraft = await actionQueue.listActionQueueItems('open', { kind: 'draft-proposal' })
     expect(openDraft.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(0)
   })
 
@@ -356,11 +356,11 @@ describe('inbox-repopulator outbox subscriber', () => {
   }
 
   it('renders the catalog entry when failure_reason_code is set on the task', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-typecheck-code'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     await insertTaskRow(client, {
       id: taskId,
       failureReasonCode: 'verify:typecheck',
@@ -368,10 +368,10 @@ describe('inbox-repopulator outbox subscriber', () => {
     })
 
     await publish(pub, client, 'task.failed', { taskId, error: 'tsc failed' })
-    const { processed } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(processed).toBe(1)
 
-    const openItems = await inbox.listInboxItems('open')
+    const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
     expect(row!.body).toContain('Type checks failed during verification.')
@@ -388,21 +388,21 @@ describe('inbox-repopulator outbox subscriber', () => {
   })
 
   it('falls back through failureReasonStringToCode when only failure_reason is set', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-typecheck-legacy'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     await insertTaskRow(client, {
       id: taskId,
       failureReason: 'typecheck failed: 3 errors in queue.ts',
     })
 
     await publish(pub, client, 'task.failed', { taskId, error: 'tsc failed' })
-    const { processed } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(processed).toBe(1)
 
-    const openItems = await inbox.listInboxItems('open')
+    const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
     // Mapper resolves the loose string to verify:typecheck.
@@ -411,18 +411,18 @@ describe('inbox-repopulator outbox subscriber', () => {
   })
 
   it('renders the unknown catalog entry when both fields are null', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-unknown'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     await insertTaskRow(client, { id: taskId })
 
     await publish(pub, client, 'task.failed', { taskId, error: 'boom' })
-    const { processed } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(processed).toBe(1)
 
-    const openItems = await inbox.listInboxItems('open')
+    const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
     expect(row!.body).toContain(
@@ -434,11 +434,11 @@ describe('inbox-repopulator outbox subscriber', () => {
   })
 
   it('does not raise the structured row for a failed main-commiter recovery', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-main-commiter-fix'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     await insertTaskRow(client, {
       id: taskId,
       kind: 'fix',
@@ -452,21 +452,21 @@ describe('inbox-repopulator outbox subscriber', () => {
     })
 
     await publish(pub, client, 'task.failed', { taskId, error: 'commit failed' })
-    const { processed } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed } = await rep.drainActionQueueRepopulations(client, catalog)
     // The event was claimed (processedOnce committed) but the structured
-    // writer early-returned, so no inbox row was raised by inbox-repopulator.
+    // writer early-returned, so no actionQueue row was raised by action-queue-repopulator.
     expect(processed).toBe(1)
 
-    const openItems = await inbox.listInboxItems('open')
+    const openItems = await actionQueue.listActionQueueItems('open')
     expect(openItems.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
   })
 
   it('renders the catalog entry on task.dropped too', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-dropped'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     await insertTaskRow(client, {
       id: taskId,
       failureReasonCode: 'code:timeout',
@@ -477,10 +477,10 @@ describe('inbox-repopulator outbox subscriber', () => {
       taskId,
       dropReason: 'user skipped',
     })
-    const { processed } = await rep.drainInboxRepopulations(client, catalog)
+    const { processed } = await rep.drainActionQueueRepopulations(client, catalog)
     expect(processed).toBe(1)
 
-    const openItems = await inbox.listInboxItems('open')
+    const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
     expect(row!.body).toContain(
@@ -490,17 +490,17 @@ describe('inbox-repopulator outbox subscriber', () => {
   })
 
   it('never emits the legacy "without a specific recovery plan" fallback', async () => {
-    const { q, inbox, rep, pub, catalog } = await loadModules(repo)
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-legacy-template-check'
 
-    await rep.ensureInboxRepopulator(client)
+    await rep.ensureActionQueueRepopulator(client)
     // No task row inserted at all; getTask returns null and we still render
     // the `unknown` catalog entry rather than the old hardcoded template.
     await publish(pub, client, 'task.failed', { taskId, error: 'boom' })
-    await rep.drainInboxRepopulations(client, catalog)
+    await rep.drainActionQueueRepopulations(client, catalog)
 
-    const openItems = await inbox.listInboxItems('open')
+    const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
     expect(row!.body).not.toContain('without a specific recovery plan')

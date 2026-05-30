@@ -74,7 +74,7 @@ describe('formatRelativeAge — bucket boundaries', () => {
   })
 
   it('never returns a decimal-hours string like "73.4h"', () => {
-    // Regression: the inbox card used to render "73.4H" via toFixed(1).
+    // Regression: the actionQueue card used to render "73.4H" via toFixed(1).
     expect(formatRelativeAge(73.4 * HOUR)).toBe('3d')
     expect(formatRelativeAge(73.4 * HOUR)).not.toMatch(/\./)
   })

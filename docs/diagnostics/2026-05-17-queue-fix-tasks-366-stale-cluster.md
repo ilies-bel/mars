@@ -18,7 +18,7 @@ dependents"). `blocker-resolution.ts` now uses the shared
 `retryBudgetExhausted(retryCount, budget) = retryCount > 0 &&
 retryCount >= budget` predicate, so a dependent whose retry budget is
 already exhausted at unblock time correctly goes to `failed` with an
-inbox item (matching the CLAUDE.md Blockers contract). The drafts are
+action queue item (matching the CLAUDE.md Blockers contract). The drafts are
 obsolete artifacts of older worktree bases that predated the fix.
 
 ## Verification log (clean main, 2026-05-17)

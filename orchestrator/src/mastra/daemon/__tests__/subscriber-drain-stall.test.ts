@@ -8,13 +8,13 @@ import type { Client } from '@libsql/client'
 /**
  * ADR-0032 stall contract for the shared drainWithStall helper: a handler
  * that throws blocks the subscriber's cursor on the failing event, retries
- * on every wake, raises a subscriber-stalled inbox row after K consecutive
+ * on every wake, raises a subscriber-stalled actionQueue row after K consecutive
  * failures, and supersedes that row once the event finally processes.
  */
 
 interface Loaded {
   q: typeof import('../../queue')
-  inbox: typeof import('../../lib/inbox')
+  actionQueue: typeof import('../../lib/action-queue')
   drain: typeof import('../subscriber-drain')
   subs: typeof import('../../../bus/subscribers')
   pub: typeof import('../../../bus/publisher')
@@ -32,18 +32,18 @@ const load = async (repo: string): Promise<Loaded> => {
   process.env.MARS_REPO = repo
   const q = await import('../../queue')
   await q.initQueue()
-  const inbox = await import('../../lib/inbox')
+  const actionQueue = await import('../../lib/action-queue')
   const drain = await import('../subscriber-drain')
   const subs = await import('../../../bus/subscribers')
   const pub = await import('../../../bus/publisher')
-  return { q, inbox, drain, subs, pub }
+  return { q, actionQueue, drain, subs, pub }
 }
 
 const SUB = 'test-stall-subscriber'
 
 const openStalledCount = async (client: Client): Promise<number> => {
   const r = await client.execute({
-    sql: `SELECT COUNT(*) AS n FROM inbox_items WHERE kind = 'subscriber-stalled' AND state = 'open'`,
+    sql: `SELECT COUNT(*) AS n FROM action_queue_items WHERE kind = 'subscriber-stalled' AND state = 'open'`,
   })
   return Number((r.rows[0] as unknown as { n: number | bigint }).n)
 }
@@ -60,17 +60,17 @@ describe('drainWithStall — ADR-0032', () => {
   })
 
   it('blocks the cursor on a throwing handler and raises a stalled row after K failures, then recovers', async () => {
-    const { q, inbox, drain, subs, pub } = await load(repo)
+    const { q, actionQueue, drain, subs, pub } = await load(repo)
     const client = q.getClient()
 
-    await inbox.initInbox()
+    await actionQueue.initActionQueue()
     await subs.registerSubscriber(client, SUB, { replay: false })
     await pub.publishWithRetry(client, 'task.queued', { taskId: 'X-1' })
     const cursorStart = await subs.getCursor(client, SUB)
 
     // Handler throws for the first 3 drains, then succeeds.
     // Only react to the target event; ignore unrelated events (e.g. the
-    // inbox.raised event our own stall-row raise appends to the outbox),
+    // actionQueue.raised event our own stall-row raise appends to the outbox),
     // exactly as a real subscriber's matcher would.
     let attempts = 0
     const handle = async (event: { type: string }): Promise<boolean> => {
@@ -104,10 +104,10 @@ describe('drainWithStall — ADR-0032', () => {
   })
 
   it('a healthy subscriber advances its cursor and raises nothing', async () => {
-    const { q, inbox, drain, subs, pub } = await load(repo)
+    const { q, actionQueue, drain, subs, pub } = await load(repo)
     const client = q.getClient()
 
-    await inbox.initInbox()
+    await actionQueue.initActionQueue()
     await subs.registerSubscriber(client, SUB, { replay: false })
     await pub.publishWithRetry(client, 'task.queued', { taskId: 'X-2' })
     const before = await subs.getCursor(client, SUB)

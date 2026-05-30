@@ -2,7 +2,7 @@
  * Render an id at display length while preserving any kind-prefix.
  *
  * Task ids minted by the queue come in two shapes:
- *   - bare 8-hex (legacy ideas, drafts, inbox rows): e.g. `79dc0844`
+ *   - bare 8-hex (legacy ideas, drafts, actionQueue rows): e.g. `79dc0844`
  *   - prefixed:   e.g. `mars-2e2bf341`, `reflect-09abf133`
  *
  * A naive `id.slice(0, 8)` clips a `mars-XXXXXXXX` id down to `mars-XXX`,

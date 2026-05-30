@@ -136,7 +136,7 @@ const initTables = async (repo: string): Promise<void> => {
     )
   `)
   await c.execute(`
-    CREATE TABLE IF NOT EXISTS inbox_items (
+    CREATE TABLE IF NOT EXISTS action_queue_items (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
       category TEXT NOT NULL,
@@ -145,7 +145,7 @@ const initTables = async (repo: string): Promise<void> => {
     )
   `)
   await c.execute(`
-    CREATE TABLE IF NOT EXISTS inbox_history (
+    CREATE TABLE IF NOT EXISTS action_queue_history (
       id TEXT PRIMARY KEY,
       item_id TEXT NOT NULL,
       at TEXT NOT NULL,

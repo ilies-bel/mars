@@ -114,7 +114,7 @@ first, then add one per acceptance criterion as you green each:
 - Do not enumerate `git ls-files --others --exclude-standard` separately
   — `git status --porcelain` already merges the unstaged + untracked
   views and honours `.gitignore`.
-- Do not pre-build the slice-2 surfacing-to-inbox path; this slice ends
+- Do not pre-build the slice-2 surfacing-to-action queue path; this slice ends
   at "verify fails with the new signature, merge does not run".
 
 ## Verify command

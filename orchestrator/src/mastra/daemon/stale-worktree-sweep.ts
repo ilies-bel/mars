@@ -1,24 +1,24 @@
 /**
- * Periodic sweep that raises a `stale-worktree` inbox item for every
+ * Periodic sweep that raises a `stale-worktree` actionQueue item for every
  * non-terminal task whose worktree directory has not been updated within
  * the configurable threshold (default: 24 h, `MARS_STALE_WORKTREE_HOURS`).
  *
- * Deduplication is origin-keyed: `raiseInboxItem` with `originTaskId` ensures
+ * Deduplication is origin-keyed: `raiseActionQueueItem` with `originTaskId` ensures
  * that re-detecting the same stale worktree on a subsequent sweep bumps the
  * existing open item (seen_count++) rather than inserting a sibling row.
  *
  * Auto-close is handled by the existing `dismissAlertsOnStatusChange` hook
  * in queue.ts — every real status transition on the task (to done, failed,
- * dropped, or back to queued after reconcile) closes any open inbox item
+ * dropped, or back to queued after reconcile) closes any open actionQueue item
  * keyed to that origin task id.
  */
 
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { listTasks } from '../queue'
-import { type InboxKind, raiseInboxItem } from '../lib/inbox'
+import { type ActionQueueKind, raiseActionQueueItem } from '../lib/action-queue'
 
-export const STALE_WORKTREE_KIND: InboxKind = 'stale-worktree'
+export const STALE_WORKTREE_KIND: ActionQueueKind = 'stale-worktree'
 
 const DEFAULT_THRESHOLD_HOURS = 24
 
@@ -30,7 +30,7 @@ const resolveThresholdHours = (): number => {
 }
 
 /**
- * Build the stale-worktree inbox item body. Describes the stale state only;
+ * Build the stale-worktree actionQueue item body. Describes the stale state only;
  * the recovery verbs (Investigate / Prune) are the card's action buttons.
  * Exported so tests can verify the exact template content without coupling
  * to the surrounding raise logic.
@@ -45,14 +45,14 @@ export const buildNextActionBody = (
 const TERMINAL_STATUSES = new Set(['done', 'failed', 'dropped'])
 
 /**
- * Detect stale worktrees and raise `stale-worktree` inbox items for each one.
+ * Detect stale worktrees and raise `stale-worktree` actionQueue items for each one.
  *
  * A task qualifies as stale when:
  *   - its status is not terminal (done / failed / dropped)
  *   - its `updatedAt` timestamp is older than the threshold
  *   - a worktree directory exists on disk for it
  *
- * Returns the inbox item ids that were raised (or bumped on re-detection).
+ * Returns the actionQueue item ids that were raised (or bumped on re-detection).
  */
 export const detectAndRaiseStaleWorktrees = async (
   repoRoot: string,
@@ -77,7 +77,7 @@ export const detectAndRaiseStaleWorktrees = async (
     if (!exists) continue
 
     const ageHours = Math.round(((now - updatedMs) / 3_600_000) * 10) / 10
-    const id = await raiseInboxItem({
+    const id = await raiseActionQueueItem({
       kind: STALE_WORKTREE_KIND,
       category: 'daemon',
       priority: 'normal',

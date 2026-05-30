@@ -47,7 +47,7 @@ const setupRepo = (): string => {
 
 const dbPath = (repo: string): string => resolve(repo, '.mars/mars.db')
 
-/** Create the inbox_items table (and tasks for DAG enrichment). */
+/** Create the action_queue_items table (and tasks for DAG enrichment). */
 const createSchema = async (path: string): Promise<Client> => {
   const c = createClient({ url: `file:${path}` })
   await c.execute(`CREATE TABLE IF NOT EXISTS tasks (
@@ -73,7 +73,7 @@ const createSchema = async (path: string): Promise<Client> => {
     created_at TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (task_id, blocker_task_id)
   )`)
-  await c.execute(`CREATE TABLE IF NOT EXISTS inbox_items (
+  await c.execute(`CREATE TABLE IF NOT EXISTS action_queue_items (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
     category TEXT NOT NULL DEFAULT 'orchestrator',
@@ -98,7 +98,7 @@ const createSchema = async (path: string): Promise<Client> => {
   return c
 }
 
-const insertInboxItem = async (
+const insertActionQueueItem = async (
   c: Client,
   opts: {
     id: string
@@ -113,13 +113,13 @@ const insertInboxItem = async (
 ): Promise<void> => {
   const now = opts.raisedAt ?? new Date().toISOString()
   await c.execute({
-    sql: `INSERT INTO inbox_items (id, kind, priority, title, body, payload, context, raised_at, last_seen_at)
+    sql: `INSERT INTO action_queue_items (id, kind, priority, title, body, payload, context, raised_at, last_seen_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       opts.id,
       opts.kind,
       opts.priority ?? 'high',
-      opts.title ?? `inbox item ${opts.id}`,
+      opts.title ?? `actionQueue item ${opts.id}`,
       opts.body ?? '',
       JSON.stringify(opts.payload ?? {}),
       JSON.stringify(opts.context ?? {}),
@@ -129,7 +129,7 @@ const insertInboxItem = async (
   })
 }
 
-describe('GET /api/inbox/action-queue (persisted view)', () => {
+describe('GET /api/action-queue/action-queue (persisted view)', () => {
   let repo: string
   let server: ReturnType<typeof Bun.serve> | null = null
   let baseUrl: string
@@ -152,19 +152,19 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
     filter?: string,
   ): Promise<ActionQueueItemBody[]> => {
     const q = filter ? `?filter=${filter}` : ''
-    const res = await fetch(`${baseUrl}/api/inbox/action-queue${q}`)
+    const res = await fetch(`${baseUrl}/api/action-queue/action-queue${q}`)
     expect(res.status).toBe(200)
     return (await res.json()) as ActionQueueItemBody[]
   }
 
-  it('returns an empty array when inbox_items is empty', async () => {
+  it('returns an empty array when action_queue_items is empty', async () => {
     const body = await fetchQueue()
     expect(body).toEqual([])
   })
 
-  it('maps a seeded inbox_items row to a valid ActionQueueItem', async () => {
+  it('maps a seeded action_queue_items row to a valid ActionQueueItem', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'test-row-1',
       kind: 'failed',
       priority: 'high',
@@ -195,7 +195,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('maps daemon-killed kind to errorKind daemon-killed', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'dk-row-1',
       kind: 'daemon-killed',
       priority: 'high',
@@ -215,7 +215,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('maps stale-worktree kind from context.taskId', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'sw-row-1',
       kind: 'stale-worktree',
       priority: 'low',
@@ -235,7 +235,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('stale-worktree row has staleWorktreeDetail populated from payload', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'sw-detail-1',
       kind: 'stale-worktree',
       priority: 'low',
@@ -266,7 +266,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('stale-worktree row: investigation field passes through from payload', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'sw-invest-1',
       kind: 'stale-worktree',
       priority: 'low',
@@ -291,7 +291,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('stale-worktree row: status falls back to absent sentinel when task row is missing', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'sw-absent-1',
       kind: 'stale-worktree',
       priority: 'low',
@@ -309,7 +309,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('non-stale-worktree rows have staleWorktreeDetail: null', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'failed-no-detail',
       kind: 'failed',
       priority: 'high',
@@ -339,7 +339,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
     execFileSync('git', ['checkout', '-b', `task/${taskId}`], { cwd: worktreeDir })
 
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'sw-empty-wt',
       kind: 'stale-worktree',
       priority: 'low',
@@ -369,7 +369,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
     execFileSync('git', ['commit', '-m', 'work done'], { cwd: worktreeDir })
 
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'sw-nonempty-wt',
       kind: 'stale-worktree',
       priority: 'low',
@@ -397,7 +397,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
     Bun.write(resolve(worktreeDir, 'untracked.txt'), 'some work')
 
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'sw-untracked-wt',
       kind: 'stale-worktree',
       priority: 'low',
@@ -414,7 +414,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('maps draft-proposal kind from payload.proposalId', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'dp-row-1',
       kind: 'draft-proposal',
       priority: 'low',
@@ -434,7 +434,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('maps urgent priority to high', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'prio-row-1',
       kind: 'failed',
       priority: 'urgent',
@@ -449,7 +449,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('hides dismissed rows from the open filter and shows them under dismissed filter', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'dis-row-1',
       kind: 'failed',
       priority: 'high',
@@ -458,7 +458,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
     c.close()
 
     // Dismiss via the ack/dismiss API using kind:entityId format
-    const dismissRes = await fetch(`${baseUrl}/api/inbox/dismiss`, {
+    const dismissRes = await fetch(`${baseUrl}/api/action-queue/dismiss`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: 'failed-task:t-to-dismiss' }),
@@ -483,7 +483,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('ack keeps row visible in open filter; resolve hides it — round trip', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'ack-row-1',
       kind: 'failed',
       priority: 'high',
@@ -499,7 +499,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
     expect(row0?.dismissed).toBe(false)
 
     // Ack
-    const ackRes = await fetch(`${baseUrl}/api/inbox/ack`, {
+    const ackRes = await fetch(`${baseUrl}/api/action-queue/ack`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: 'failed-task:t-ack' }),
@@ -514,7 +514,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
     expect(rowAck?.dismissed).toBe(false)
 
     // Resolve
-    const resolveRes = await fetch(`${baseUrl}/api/inbox/resolve`, {
+    const resolveRes = await fetch(`${baseUrl}/api/action-queue/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: 'failed-task:t-ack' }),
@@ -532,9 +532,9 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
     expect(rowResolved?.dismissed).toBe(true)
   })
 
-  it('returns 200 with empty array when inbox_items table does not exist', async () => {
+  it('returns 200 with empty array when action_queue_items table does not exist', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await c.execute(`DROP TABLE IF EXISTS inbox_items`)
+    await c.execute(`DROP TABLE IF EXISTS action_queue_items`)
     c.close()
     const body = await fetchQueue()
     expect(body).toEqual([])
@@ -542,14 +542,14 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('does not include rows where state is not open', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'closed-row',
       kind: 'failed',
       payload: { taskId: 't-closed' },
     })
-    // Mark it as resolved at the inbox_items level
+    // Mark it as resolved at the action_queue_items level
     await c.execute({
-      sql: `UPDATE inbox_items SET state = 'resolved' WHERE id = ?`,
+      sql: `UPDATE action_queue_items SET state = 'resolved' WHERE id = ?`,
       args: ['closed-row'],
     })
     c.close()
@@ -557,20 +557,20 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
     const body = await fetchQueue()
     expect(body.find((r) => r.id === 'closed-row')).toBeUndefined()
 
-    // Also not in dismissed filter (inbox_dismissals is empty)
+    // Also not in dismissed filter (action_queue_dismissals is empty)
     const dismissed = await fetchQueue('dismissed')
     expect(dismissed.find((r) => r.id === 'closed-row')).toBeUndefined()
   })
 
   it('produces a daemon-killed-batch synthetic row when ≥2 daemon-killed rows are open', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'dk-1',
       kind: 'daemon-killed',
       priority: 'high',
       payload: { taskId: 'task-dk-1' },
     })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'dk-2',
       kind: 'daemon-killed',
       priority: 'high',
@@ -586,7 +586,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('failed-task row: diagnosis passes through from payload as { text, diagnosedAt }', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'diag-row-1',
       kind: 'failed',
       priority: 'high',
@@ -611,7 +611,7 @@ describe('GET /api/inbox/action-queue (persisted view)', () => {
 
   it('failed-task row: diagnosis is null when payload has none', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertInboxItem(c, {
+    await insertActionQueueItem(c, {
       id: 'nodiag-row-1',
       kind: 'failed',
       priority: 'high',

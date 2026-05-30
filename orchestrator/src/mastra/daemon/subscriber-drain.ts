@@ -6,9 +6,9 @@ import {
   processedOnce,
 } from '../../bus/processed-once.js'
 import {
-  raiseInboxItem,
-  supersedeInboxItemsBySignature,
-} from '../lib/inbox.js'
+  raiseActionQueueItem,
+  supersedeActionQueueItemsBySignature,
+} from '../lib/action-queue.js'
 
 /**
  * Shared drain loop for durable outbox Subscribers, implementing the
@@ -20,8 +20,8 @@ import {
  *     no dead-letter queue — Mars events are causally dependent, so skipping
  *     a poison terminal would strand every downstream task.
  *   - After K consecutive failures on the SAME event id, a
- *     `subscriber-stalled` inbox row is raised so the otherwise-silent stall
- *     gets an operator surface (the inbox is the single human-facing work
+ *     `subscriber-stalled` actionQueue row is raised so the otherwise-silent stall
+ *     gets an operator surface (the actionQueue is the single human-facing work
  *     surface).
  *   - When a previously-blocked event finally processes, the stalled row is
  *     superseded (the lightweight `subscriber.unstalled` recovery).
@@ -32,13 +32,13 @@ import {
  * crash between the dedup commit and a re-run just replays a no-op.
  */
 
-/** Consecutive-failure threshold before a stalled inbox row is raised. */
+/** Consecutive-failure threshold before a stalled actionQueue row is raised. */
 export const STALL_THRESHOLD = 3
 
 /**
  * In-memory per-(subscriber,event) consecutive-failure counter. The cursor
  * itself is the durable record of progress; this counter only gates WHEN to
- * raise the stalled inbox row, so losing it across a restart simply resets
+ * raise the stalled actionQueue row, so losing it across a restart simply resets
  * the K-count (the row is re-raised after K more failures, and dedup on
  * (kind, signature) collapses repeats). Keyed `subscriberId:eventId`.
  */
@@ -99,7 +99,7 @@ export async function drainWithStall(
       // At-most-once with retry-on-failure. Read the dedup slot first: if the
       // side effect already succeeded for this (subscriber, event), skip it
       // — re-running would double-apply a counting side effect (e.g. bump an
-      // inbox row's seen_count). If not yet processed, run the handler; only
+      // actionQueue row's seen_count). If not yet processed, run the handler; only
       // on success claim the dedup slot. A handler that THROWS leaves the
       // slot unclaimed, so the next drain retries (and the cursor stays put
       // below) — that retry path is what the stall contract depends on.
@@ -118,7 +118,7 @@ export async function drainWithStall(
       // raised for this event (subscriber.unstalled recovery).
       if (failureCounts.has(key)) {
         failureCounts.delete(key)
-        await supersedeInboxItemsBySignature(
+        await supersedeActionQueueItemsBySignature(
           'subscriber-stalled',
           stallSignature(subscriberId, event.id),
           'subscriber-unstalled',
@@ -168,7 +168,7 @@ async function raiseSubscriberStalled(
   input: SubscriberStalledInput,
 ): Promise<void> {
   const signature = stallSignature(input.subscriberId, input.eventId)
-  await raiseInboxItem({
+  await raiseActionQueueItem({
     kind: 'subscriber-stalled',
     category: 'orchestrator',
     priority: 'high',

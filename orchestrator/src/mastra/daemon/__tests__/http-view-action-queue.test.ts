@@ -1,6 +1,6 @@
 /**
- * Tests for the daemon's inbox view builder (`buildInboxView`) and the
- * GET /view/inbox HTTP route wired through `startHttpServer`.
+ * Tests for the daemon's actionQueue view builder (`buildActionQueueView`) and the
+ * GET /view/action-queue HTTP route wired through `startHttpServer`.
  *
  * Every test exercises behaviour through the public API — the shape and
  * content of the returned ActionQueueRow[]. Internal implementation details
@@ -21,20 +21,20 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import {
-  buildInboxView,
+  buildActionQueueView,
   type ActionQueueRow,
-  type BuildInboxViewParams,
-  type InboxStateStore,
-  type InboxTaskStore,
-  type PersistedInboxRow,
-  type TaskForInbox,
-} from '../view/inbox.js'
+  type BuildActionQueueViewParams,
+  type ActionQueueStateStore,
+  type ActionQueueTaskStore,
+  type PersistedActionQueueRow,
+  type TaskForActionQueue,
+} from '../view/action-queue.js'
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
 const makeRow = (
-  overrides: Partial<PersistedInboxRow> = {},
-): PersistedInboxRow => ({
+  overrides: Partial<PersistedActionQueueRow> = {},
+): PersistedActionQueueRow => ({
   id: 'row-1',
   kind: 'failed',
   priority: 'high',
@@ -47,7 +47,7 @@ const makeRow = (
   ...overrides,
 })
 
-const makeTask = (overrides: Partial<TaskForInbox> = {}): TaskForInbox => ({
+const makeTask = (overrides: Partial<TaskForActionQueue> = {}): TaskForActionQueue => ({
   id: 'task-1',
   status: 'failed',
   prompt: 'Do something useful',
@@ -117,24 +117,24 @@ const makeRegistry = () =>
   ])
 
 const makeStateStore = (
-  rows: PersistedInboxRow[] = [],
+  rows: PersistedActionQueueRow[] = [],
   dismissals: Map<string, string | null> = new Map(),
-): InboxStateStore => ({
-  listOpenInboxItems: async () => rows,
-  listInboxDismissals: async () => dismissals,
+): ActionQueueStateStore => ({
+  listOpenActionQueueItems: async () => rows,
+  listActionQueueDismissals: async () => dismissals,
 })
 
-const makeTaskStore = (tasks: TaskForInbox[] = []): InboxTaskStore => ({
+const makeTaskStore = (tasks: TaskForActionQueue[] = []): ActionQueueTaskStore => ({
   listTasks: async () => tasks,
 })
 
-const noRecipes: BuildInboxViewParams['recipeCatalog'] = { has: () => false }
+const noRecipes: BuildActionQueueViewParams['recipeCatalog'] = { has: () => false }
 
-// ── /buildInboxView: failed-task row + DAG ────────────────────────────────
+// ── /buildActionQueueView: failed-task row + DAG ────────────────────────────────
 
-describe('buildInboxView — failed-task row', () => {
+describe('buildActionQueueView — failed-task row', () => {
   it('returns a row with the correct ActionQueueRow shape', async () => {
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([makeTask()]),
       errorKindRegistry: makeRegistry(),
@@ -173,7 +173,7 @@ describe('buildInboxView — failed-task row', () => {
       blockedBy: ['task-1'],
     })
 
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow({ payload: { taskId: 'task-1' } })]),
       taskStore: makeTaskStore([blockerTask, mainTask, dependentTask]),
       errorKindRegistry: makeRegistry(),
@@ -193,7 +193,7 @@ describe('buildInboxView — failed-task row', () => {
   })
 
   it('includes failureReasonCode from payload', async () => {
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({ payload: { taskId: 'task-1', failureReasonCode: 'verify:typecheck' } }),
       ]),
@@ -209,7 +209,7 @@ describe('buildInboxView — failed-task row', () => {
 
   it('surfaces diagnosis from payload', async () => {
     const diagnosis = { text: 'Root cause: missing import', diagnosedAt: '2024-01-02T00:00:00.000Z' }
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({ payload: { taskId: 'task-1', diagnosis } }),
       ]),
@@ -226,9 +226,9 @@ describe('buildInboxView — failed-task row', () => {
 
 // ── Action gating: diagnose-failure removed when hasRecipe(sig) is true ──────
 
-describe('buildInboxView — action gating', () => {
+describe('buildActionQueueView — action gating', () => {
   it('includes diagnose-failure when sig has no recipe', async () => {
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([
         makeTask({ failureSignature: 'some:unknown/signature' }),
@@ -245,7 +245,7 @@ describe('buildInboxView — action gating', () => {
 
   it('removes diagnose-failure when hasRecipe(sig) is true', async () => {
     const recipeCatalog = { has: (sig: string) => sig === 'merge:preflight/uncommitted-changes' }
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([
         makeTask({ failureSignature: 'merge:preflight/uncommitted-changes' }),
@@ -263,7 +263,7 @@ describe('buildInboxView — action gating', () => {
   })
 
   it('removes diagnose-failure for daemon-killed signature regardless of recipe', async () => {
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({ kind: 'daemon-killed', payload: { taskId: 'task-1' } }),
       ]),
@@ -283,9 +283,9 @@ describe('buildInboxView — action gating', () => {
 
 // ── Stale-worktree row ───────────────────────────────────────────────────────
 
-describe('buildInboxView — stale-worktree row', () => {
+describe('buildActionQueueView — stale-worktree row', () => {
   it('returns staleWorktreeDetail with empty=false when path does not exist', async () => {
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({
           id: 'row-sw',
@@ -333,7 +333,7 @@ describe('buildInboxView — stale-worktree row', () => {
     let worktreePath: string
 
     beforeAll(() => {
-      repoRoot = mkdtempSync(resolvePath(tmpdir(), 'mars-inbox-view-test-'))
+      repoRoot = mkdtempSync(resolvePath(tmpdir(), 'mars-actionQueue-view-test-'))
       taskId = 'clean-wt-abc'
       execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repoRoot })
       execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: repoRoot })
@@ -362,7 +362,7 @@ describe('buildInboxView — stale-worktree row', () => {
     })
 
     it('returns empty=true for a clean worktree with no changes vs main', async () => {
-      const rows = await buildInboxView({
+      const rows = await buildActionQueueView({
         stateStore: makeStateStore([
           makeRow({
             id: 'row-clean-wt',
@@ -391,7 +391,7 @@ describe('buildInboxView — stale-worktree row', () => {
       // Add an untracked file to the worktree.
       writeFileSync(join(worktreePath, 'untracked.txt'), 'some work\n')
 
-      const rows = await buildInboxView({
+      const rows = await buildActionQueueView({
         stateStore: makeStateStore([
           makeRow({
             id: 'row-dirty-wt',
@@ -420,9 +420,9 @@ describe('buildInboxView — stale-worktree row', () => {
 
 // ── Draft-proposal row ───────────────────────────────────────────────────────
 
-describe('buildInboxView — draft-proposal row', () => {
+describe('buildActionQueueView — draft-proposal row', () => {
   it('returns a draft-proposal row with the correct kind and entityId', async () => {
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({
           id: 'row-dp',
@@ -453,8 +453,8 @@ describe('buildInboxView — draft-proposal row', () => {
 
 // ── Daemon-killed-batch synthesis ────────────────────────────────────────────
 
-describe('buildInboxView — daemon-killed-batch', () => {
-  const makeDaemonKilledRow = (id: string, taskId: string, at: string): PersistedInboxRow => ({
+describe('buildActionQueueView — daemon-killed-batch', () => {
+  const makeDaemonKilledRow = (id: string, taskId: string, at: string): PersistedActionQueueRow => ({
     id,
     kind: 'daemon-killed',
     priority: 'high',
@@ -467,7 +467,7 @@ describe('buildInboxView — daemon-killed-batch', () => {
   })
 
   it('does NOT prepend a batch row when fewer than 2 daemon-killed rows', async () => {
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeDaemonKilledRow('row-1', 'task-1', '2024-01-01T00:00:00.000Z'),
       ]),
@@ -486,7 +486,7 @@ describe('buildInboxView — daemon-killed-batch', () => {
   })
 
   it('prepends a batch row when ≥2 daemon-killed rows are visible', async () => {
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeDaemonKilledRow('row-1', 'task-1', '2024-01-02T00:00:00.000Z'),
         makeDaemonKilledRow('row-2', 'task-2', '2024-01-01T00:00:00.000Z'),
@@ -517,20 +517,20 @@ describe('buildInboxView — daemon-killed-batch', () => {
 
 // ── filter parameter ─────────────────────────────────────────────────────────
 
-describe('buildInboxView — filter', () => {
+describe('buildActionQueueView — filter', () => {
   const dismissalMap = new Map([['task:task-1', 'resolved'], ['task:task-2', null]])
 
-  const twoRows: PersistedInboxRow[] = [
+  const twoRows: PersistedActionQueueRow[] = [
     makeRow({ id: 'row-1', payload: { taskId: 'task-1' } }),
     makeRow({ id: 'row-2', payload: { taskId: 'task-2' } }),
   ]
-  const twoTasks: TaskForInbox[] = [
+  const twoTasks: TaskForActionQueue[] = [
     makeTask({ id: 'task-1' }),
     makeTask({ id: 'task-2' }),
   ]
 
   it('filter=open returns only non-dismissed rows', async () => {
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore(twoRows, dismissalMap),
       taskStore: makeTaskStore(twoTasks),
       errorKindRegistry: makeRegistry(),
@@ -546,7 +546,7 @@ describe('buildInboxView — filter', () => {
   })
 
   it('filter=dismissed returns only dismissed rows', async () => {
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore(twoRows, dismissalMap),
       taskStore: makeTaskStore(twoTasks),
       errorKindRegistry: makeRegistry(),
@@ -561,7 +561,7 @@ describe('buildInboxView — filter', () => {
   it('filter=all returns all rows regardless of dismissed state', async () => {
     // Use a mix: one open, one dismissed
     const mixedDismissals = new Map([['task:task-1', 'resolved']])
-    const rows = await buildInboxView({
+    const rows = await buildActionQueueView({
       stateStore: makeStateStore(twoRows, mixedDismissals),
       taskStore: makeTaskStore(twoTasks),
       errorKindRegistry: makeRegistry(),
@@ -578,9 +578,9 @@ describe('buildInboxView — filter', () => {
   })
 })
 
-// ── HTTP route: GET /view/inbox ──────────────────────────────────────────────
+// ── HTTP route: GET /view/action-queue ──────────────────────────────────────────────
 
-describe('GET /view/inbox via HTTP server', () => {
+describe('GET /view/action-queue via HTTP server', () => {
   let httpServer: { port: number; close: () => Promise<void> } | null = null
 
   beforeEach(async () => {
@@ -591,7 +591,7 @@ describe('GET /view/inbox via HTTP server', () => {
     const { loadRecipeCatalog } = await import('../../lib/recipes.js')
     const { nullTraceStore } = await import('../../lib/run-tool.js')
 
-    const stateDir = mkdtempSync(resolvePath(tmpdir(), 'mars-http-view-inbox-'))
+    const stateDir = mkdtempSync(resolvePath(tmpdir(), 'mars-http-view-actionQueue-'))
     const failureReasonCatalog = await loadFailureReasonCatalog(stateDir)
     const recipeCatalog = await loadRecipeCatalog(stateDir)
 
@@ -610,13 +610,13 @@ describe('GET /view/inbox via HTTP server', () => {
       traceStore: nullTraceStore,
       viewTasks: async () => ({ tasks: [] }),
       viewProgress: async () => ({ tasks: [], proposals: [] }),
-      inboxAck: async () => {},
-      inboxResolve: async () => {},
-      inboxDismiss: async () => {},
+      actionQueueAck: async () => {},
+      actionQueueResolve: async () => {},
+      actionQueueDismiss: async () => {},
       todoDismiss: async () => {},
       viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
       viewTerminalEvents: async () => ({ events: [] }),
-      viewInbox: async (filter) => {
+      viewActionQueue: async (filter) => {
         // Return a predictable payload based on filter.
         const row: ActionQueueRow = {
           id: 'test-row',
@@ -648,8 +648,8 @@ describe('GET /view/inbox via HTTP server', () => {
     httpServer = null
   })
 
-  it('returns 200 with ActionQueueRow[] for GET /view/inbox', async () => {
-    const url = `http://127.0.0.1:${httpServer!.port}/view/inbox`
+  it('returns 200 with ActionQueueRow[] for GET /view/action-queue', async () => {
+    const url = `http://127.0.0.1:${httpServer!.port}/view/action-queue`
     const res = await fetch(url)
     expect(res.status).toBe(200)
     const body = (await res.json()) as ActionQueueRow[]
@@ -658,8 +658,8 @@ describe('GET /view/inbox via HTTP server', () => {
     expect(body[0]!.title).toContain('filter=open')
   })
 
-  it('passes filter=dismissed param to viewInbox', async () => {
-    const url = `http://127.0.0.1:${httpServer!.port}/view/inbox?filter=dismissed`
+  it('passes filter=dismissed param to viewActionQueue', async () => {
+    const url = `http://127.0.0.1:${httpServer!.port}/view/action-queue?filter=dismissed`
     const res = await fetch(url)
     expect(res.status).toBe(200)
     const body = (await res.json()) as ActionQueueRow[]
@@ -668,8 +668,8 @@ describe('GET /view/inbox via HTTP server', () => {
     expect(body).toHaveLength(0)
   })
 
-  it('passes filter=all param to viewInbox', async () => {
-    const url = `http://127.0.0.1:${httpServer!.port}/view/inbox?filter=all`
+  it('passes filter=all param to viewActionQueue', async () => {
+    const url = `http://127.0.0.1:${httpServer!.port}/view/action-queue?filter=all`
     const res = await fetch(url)
     expect(res.status).toBe(200)
     const body = (await res.json()) as ActionQueueRow[]

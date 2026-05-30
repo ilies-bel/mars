@@ -25,10 +25,10 @@ interface ProposalsMod {
   deleteProposal: typeof import('../proposals').deleteProposal
 }
 
-interface InboxMod {
-  initInbox: typeof import('../lib/inbox').initInbox
-  raiseInboxItem: typeof import('../lib/inbox').raiseInboxItem
-  setInboxState: typeof import('../lib/inbox').setInboxState
+interface ActionQueueMod {
+  initActionQueue: typeof import('../lib/action-queue').initActionQueue
+  raiseActionQueueItem: typeof import('../lib/action-queue').raiseActionQueueItem
+  setActionQueueState: typeof import('../lib/action-queue').setActionQueueState
 }
 
 const setupRepo = (): string => {
@@ -40,16 +40,16 @@ const setupRepo = (): string => {
 
 const loadMods = async (
   repo: string,
-): Promise<{ q: QueueMod; p: ProposalsMod; inbox: InboxMod }> => {
+): Promise<{ q: QueueMod; p: ProposalsMod; actionQueue: ActionQueueMod }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../queue')) as unknown as QueueMod
   const p = (await import('../proposals')) as unknown as ProposalsMod
-  const inbox = (await import('../lib/inbox')) as unknown as InboxMod
+  const actionQueue = (await import('../lib/action-queue')) as unknown as ActionQueueMod
   await q.initQueue()
   await p.initProposals()
-  await inbox.initInbox()
-  return { q, p, inbox }
+  await actionQueue.initActionQueue()
+  return { q, p, actionQueue }
 }
 
 const getEvents = async (
@@ -200,12 +200,12 @@ describe('outbox producers', () => {
     })
   })
 
-  // ─── inbox lifecycle ─────────────────────────────────────────────────────────
+  // ─── actionQueue lifecycle ─────────────────────────────────────────────────────────
 
-  describe('raiseInboxItem emits inbox.raised on new insert', () => {
-    it('emits inbox.raised with correct payload when a new item is inserted', async () => {
-      const { q, inbox } = await loadMods(repo)
-      const id = await inbox.raiseInboxItem({
+  describe('raiseActionQueueItem emits actionQueue.raised on new insert', () => {
+    it('emits actionQueue.raised with correct payload when a new item is inserted', async () => {
+      const { q, actionQueue } = await loadMods(repo)
+      const id = await actionQueue.raiseActionQueueItem({
         kind: 'failed',
         category: 'orchestrator',
         priority: 'high',
@@ -217,9 +217,9 @@ describe('outbox producers', () => {
         signature: 'task-abc123',
       })
 
-      const events = await getEvents(q, 'inbox.raised')
+      const events = await getEvents(q, 'action-queue.raised')
       expect(events).toHaveLength(1)
-      expect(() => parseEvent('inbox.raised', events[0].payload)).not.toThrow()
+      expect(() => parseEvent('action-queue.raised', events[0].payload)).not.toThrow()
       expect(events[0].payload).toMatchObject({
         itemId: id,
         kind: 'failed',
@@ -229,8 +229,8 @@ describe('outbox producers', () => {
       })
     })
 
-    it('does NOT emit inbox.raised on the dedup-bump path (same fingerprint)', async () => {
-      const { q, inbox } = await loadMods(repo)
+    it('does NOT emit actionQueue.raised on the dedup-bump path (same fingerprint)', async () => {
+      const { q, actionQueue } = await loadMods(repo)
       const item = {
         kind: 'failed' as const,
         category: 'orchestrator',
@@ -242,21 +242,21 @@ describe('outbox producers', () => {
         raisedBy: 'orchestrator:verify',
         signature: 'task-abc123',
       }
-      // First raise — inserts a new row, emits inbox.raised
-      await inbox.raiseInboxItem(item)
+      // First raise — inserts a new row, emits actionQueue.raised
+      await actionQueue.raiseActionQueueItem(item)
       // Second raise — bumps seen_count on existing open row, must NOT emit
-      await inbox.raiseInboxItem({ ...item, title: 'Updated title' })
+      await actionQueue.raiseActionQueueItem({ ...item, title: 'Updated title' })
 
-      const events = await getEvents(q, 'inbox.raised')
+      const events = await getEvents(q, 'action-queue.raised')
       // Only one event from the first insert
       expect(events).toHaveLength(1)
     })
   })
 
-  describe('setInboxState emits inbox.resolved on terminal transition', () => {
-    it('emits inbox.resolved when item transitions to resolved', async () => {
-      const { q, inbox } = await loadMods(repo)
-      const id = await inbox.raiseInboxItem({
+  describe('setActionQueueState emits actionQueue.resolved on terminal transition', () => {
+    it('emits actionQueue.resolved when item transitions to resolved', async () => {
+      const { q, actionQueue } = await loadMods(repo)
+      const id = await actionQueue.raiseActionQueueItem({
         kind: 'failed',
         category: 'orchestrator',
         priority: 'normal',
@@ -267,11 +267,11 @@ describe('outbox producers', () => {
         raisedBy: 'test',
         signature: 'sig-resolve-test',
       })
-      await inbox.setInboxState(id, 'resolved', { by: 'operator' })
+      await actionQueue.setActionQueueState(id, 'resolved', { by: 'operator' })
 
-      const events = await getEvents(q, 'inbox.resolved')
+      const events = await getEvents(q, 'action-queue.resolved')
       expect(events).toHaveLength(1)
-      expect(() => parseEvent('inbox.resolved', events[0].payload)).not.toThrow()
+      expect(() => parseEvent('action-queue.resolved', events[0].payload)).not.toThrow()
       expect(events[0].payload).toMatchObject({
         itemId: id,
         fromState: 'open',
@@ -280,9 +280,9 @@ describe('outbox producers', () => {
       })
     })
 
-    it('emits inbox.resolved when item transitions to dismissed', async () => {
-      const { q, inbox } = await loadMods(repo)
-      const id = await inbox.raiseInboxItem({
+    it('emits actionQueue.resolved when item transitions to dismissed', async () => {
+      const { q, actionQueue } = await loadMods(repo)
+      const id = await actionQueue.raiseActionQueueItem({
         kind: 'failed',
         category: 'orchestrator',
         priority: 'normal',
@@ -293,9 +293,9 @@ describe('outbox producers', () => {
         raisedBy: 'test',
         signature: 'sig-dismiss-test',
       })
-      await inbox.setInboxState(id, 'dismissed', { by: 'operator' })
+      await actionQueue.setActionQueueState(id, 'dismissed', { by: 'operator' })
 
-      const events = await getEvents(q, 'inbox.resolved')
+      const events = await getEvents(q, 'action-queue.resolved')
       expect(events).toHaveLength(1)
       expect(events[0].payload).toMatchObject({
         itemId: id,
@@ -304,9 +304,9 @@ describe('outbox producers', () => {
       })
     })
 
-    it('does NOT emit inbox.resolved on a non-terminal transition (acknowledged)', async () => {
-      const { q, inbox } = await loadMods(repo)
-      const id = await inbox.raiseInboxItem({
+    it('does NOT emit actionQueue.resolved on a non-terminal transition (acknowledged)', async () => {
+      const { q, actionQueue } = await loadMods(repo)
+      const id = await actionQueue.raiseActionQueueItem({
         kind: 'failed',
         category: 'orchestrator',
         priority: 'normal',
@@ -317,9 +317,9 @@ describe('outbox producers', () => {
         raisedBy: 'test',
         signature: 'sig-ack-test',
       })
-      await inbox.setInboxState(id, 'acknowledged')
+      await actionQueue.setActionQueueState(id, 'acknowledged')
 
-      const events = await getEvents(q, 'inbox.resolved')
+      const events = await getEvents(q, 'action-queue.resolved')
       expect(events).toHaveLength(0)
     })
   })

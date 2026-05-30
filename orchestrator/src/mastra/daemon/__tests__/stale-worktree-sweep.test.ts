@@ -11,9 +11,9 @@ interface QueueModule {
   updateTask: typeof import('../../queue').updateTask
 }
 
-interface InboxModule {
-  listInboxItems: typeof import('../../lib/inbox').listInboxItems
-  getInboxItem: typeof import('../../lib/inbox').getInboxItem
+interface ActionQueueModule {
+  listActionQueueItems: typeof import('../../lib/action-queue').listActionQueueItems
+  getActionQueueItem: typeof import('../../lib/action-queue').getActionQueueItem
 }
 
 interface SweepModule {
@@ -41,7 +41,7 @@ const loadModules = async (
   repo: string,
 ): Promise<{
   q: QueueModule
-  inbox: InboxModule
+  actionQueue: ActionQueueModule
   sweep: SweepModule
   ad: AlertDismisserModule
 }> => {
@@ -50,10 +50,10 @@ const loadModules = async (
   process.env.MARS_STALE_WORKTREE_HOURS = '24'
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.initQueue()
-  const inbox = (await import('../../lib/inbox')) as unknown as InboxModule
+  const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   const sweep = (await import('../stale-worktree-sweep')) as unknown as SweepModule
   const ad = (await import('../alert-dismisser')) as unknown as AlertDismisserModule
-  return { q, inbox, sweep, ad }
+  return { q, actionQueue, sweep, ad }
 }
 
 describe('detectAndRaiseStaleWorktrees', () => {
@@ -69,8 +69,8 @@ describe('detectAndRaiseStaleWorktrees', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('raises exactly one stale-worktree inbox item keyed by origin task id', async () => {
-    const { q, inbox, sweep } = await loadModules(repo)
+  it('raises exactly one stale-worktree actionQueue item keyed by origin task id', async () => {
+    const { q, actionQueue, sweep } = await loadModules(repo)
     const task = await q.enqueueTask('some stale work', undefined, { skipTriage: true })
 
     // Age the task beyond the threshold
@@ -85,14 +85,14 @@ describe('detectAndRaiseStaleWorktrees', () => {
     const raised = await sweep.detectAndRaiseStaleWorktrees(repo)
 
     expect(raised).toHaveLength(1)
-    const items = await inbox.listInboxItems('open')
+    const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(1)
     expect(items[0].kind).toBe(sweep.STALE_WORKTREE_KIND)
     expect(items[0].context).toEqual(expect.objectContaining({ taskId: task.id }))
   })
 
   it('re-detecting the same stale worktree updates the existing item, not a sibling', async () => {
-    const { q, inbox, sweep } = await loadModules(repo)
+    const { q, actionQueue, sweep } = await loadModules(repo)
     const task = await q.enqueueTask('some stale work', undefined, { skipTriage: true })
 
     await q.getClient().execute({
@@ -110,16 +110,16 @@ describe('detectAndRaiseStaleWorktrees', () => {
     expect(secondRun[0]).toBe(firstRun[0])
 
     // Still only one open item — no sibling was created
-    const items = await inbox.listInboxItems('open')
+    const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(1)
 
     // seen_count was bumped on the second detection
-    const item = await inbox.getInboxItem(firstRun[0])
+    const item = await actionQueue.getActionQueueItem(firstRun[0])
     expect(item!.seenCount).toBe(2)
   })
 
-  it('the inbox item body describes the stale-worktree state (recovery verbs are buttons, not body text)', async () => {
-    const { q, inbox, sweep } = await loadModules(repo)
+  it('the actionQueue item body describes the stale-worktree state (recovery verbs are buttons, not body text)', async () => {
+    const { q, actionQueue, sweep } = await loadModules(repo)
     const task = await q.enqueueTask('work', undefined, { skipTriage: true })
 
     await q.getClient().execute({
@@ -130,7 +130,7 @@ describe('detectAndRaiseStaleWorktrees', () => {
 
     await sweep.detectAndRaiseStaleWorktrees(repo)
 
-    const items = await inbox.listInboxItems('open')
+    const items = await actionQueue.listActionQueueItems('open')
     expect(items[0].body).toContain(`Task ${task.id} has a stale worktree`)
     // The button-duplicating command footer is gone.
     expect(items[0].body).not.toContain(`mars restart ${task.id}`)
@@ -138,7 +138,7 @@ describe('detectAndRaiseStaleWorktrees', () => {
   })
 
   it('does not raise an item for tasks in terminal states (done, failed, dropped)', async () => {
-    const { q, inbox, sweep } = await loadModules(repo)
+    const { q, actionQueue, sweep } = await loadModules(repo)
 
     const taskDone = await q.enqueueTask('done task', undefined, { skipTriage: true })
     const taskFailed = await q.enqueueTask('failed task', undefined, { skipTriage: true })
@@ -159,12 +159,12 @@ describe('detectAndRaiseStaleWorktrees', () => {
     const raised = await sweep.detectAndRaiseStaleWorktrees(repo)
     expect(raised).toHaveLength(0)
 
-    const items = await inbox.listInboxItems('open')
+    const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(0)
   })
 
   it('does not raise an item when no worktree directory exists on disk', async () => {
-    const { q, inbox, sweep } = await loadModules(repo)
+    const { q, actionQueue, sweep } = await loadModules(repo)
     const task = await q.enqueueTask('no worktree', undefined, { skipTriage: true })
 
     await q.getClient().execute({
@@ -176,12 +176,12 @@ describe('detectAndRaiseStaleWorktrees', () => {
     const raised = await sweep.detectAndRaiseStaleWorktrees(repo)
     expect(raised).toHaveLength(0)
 
-    const items = await inbox.listInboxItems('open')
+    const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(0)
   })
 
   it('does not raise an item for a task updated within the threshold', async () => {
-    const { q, inbox, sweep } = await loadModules(repo)
+    const { q, actionQueue, sweep } = await loadModules(repo)
     const task = await q.enqueueTask('fresh task', undefined, { skipTriage: true })
 
     // updatedAt stays at creation time (very recent — well within 24h threshold)
@@ -190,12 +190,12 @@ describe('detectAndRaiseStaleWorktrees', () => {
     const raised = await sweep.detectAndRaiseStaleWorktrees(repo)
     expect(raised).toHaveLength(0)
 
-    const items = await inbox.listInboxItems('open')
+    const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(0)
   })
 
-  it('closes the inbox item via the Invalidator when the origin task reaches a terminal state', async () => {
-    const { q, inbox, sweep, ad } = await loadModules(repo)
+  it('closes the actionQueue item via the Invalidator when the origin task reaches a terminal state', async () => {
+    const { q, actionQueue, sweep, ad } = await loadModules(repo)
     const client = q.getClient()
     const task = await q.enqueueTask('task to complete', undefined, { skipTriage: true })
 
@@ -205,10 +205,10 @@ describe('detectAndRaiseStaleWorktrees', () => {
     })
     mkdirSync(resolve(repo, '.mars', 'worktrees', task.id), { recursive: true })
 
-    // Sweep raises the inbox item
+    // Sweep raises the actionQueue item
     await sweep.detectAndRaiseStaleWorktrees(repo)
 
-    const openBefore = await inbox.listInboxItems('open')
+    const openBefore = await actionQueue.listActionQueueItems('open')
     expect(openBefore).toHaveLength(1)
     const itemId = openBefore[0].id
 
@@ -221,15 +221,15 @@ describe('detectAndRaiseStaleWorktrees', () => {
     await ad.drainAlertDismissals(client)
 
     // Item should now be resolved, not open
-    const openAfter = await inbox.listInboxItems('open')
+    const openAfter = await actionQueue.listActionQueueItems('open')
     expect(openAfter).toHaveLength(0)
 
-    const item = await inbox.getInboxItem(itemId)
+    const item = await actionQueue.getActionQueueItem(itemId)
     expect(item!.state).toBe('resolved')
   })
 
   it('raises distinct items for two different stale worktrees', async () => {
-    const { q, inbox, sweep } = await loadModules(repo)
+    const { q, actionQueue, sweep } = await loadModules(repo)
     const task1 = await q.enqueueTask('stale work 1', undefined, { skipTriage: true })
     const task2 = await q.enqueueTask('stale work 2', undefined, { skipTriage: true })
 
@@ -246,7 +246,7 @@ describe('detectAndRaiseStaleWorktrees', () => {
     expect(raised).toHaveLength(2)
     expect(raised[0]).not.toBe(raised[1])
 
-    const items = await inbox.listInboxItems('open')
+    const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(2)
   })
 })

@@ -1,6 +1,6 @@
 /**
  * Periodically checks the observability store (observability.duckdb) size on
- * disk. When the store exceeds 500 MB, a single open inbox item is raised so
+ * disk. When the store exceeds 500 MB, a single open action-queue item is raised so
  * the operator notices a runaway daemon or telemetry-capture bug.
  *
  * Repeated checks while the store is still oversize bump the existing open
@@ -14,9 +14,9 @@
  */
 
 import { stat } from 'node:fs/promises'
-import { type InboxKind, raiseInboxItem } from '../lib/inbox'
+import { type ActionQueueKind, raiseActionQueueItem } from '../lib/action-queue'
 
-export const OBSERVABILITY_WATCHDOG_KIND: InboxKind = 'observability-store-oversize'
+export const OBSERVABILITY_WATCHDOG_KIND: ActionQueueKind = 'observability-store-oversize'
 
 /** 500 MB in bytes. */
 export const OVERSIZE_THRESHOLD_BYTES = 500 * 1024 * 1024
@@ -41,7 +41,7 @@ const measureStoreSizeBytes = async (observabilityDbPath: string): Promise<numbe
 }
 
 /**
- * Build the human-readable inbox item body for an oversize detection.
+ * Build the human-readable action-queue item body for an oversize detection.
  * Exported so tests can verify the exact wording without coupling to the
  * surrounding raise logic.
  */
@@ -54,12 +54,12 @@ export const buildOversizeBody = (sizeBytes: number): string => {
 }
 
 /**
- * Check the observability store size and raise an inbox item if oversize.
+ * Check the observability store size and raise an action-queue item if oversize.
  *
  * @param observabilityDbPath  Absolute path to the observability.duckdb file.
  * @param getSizeBytes         Size-measurer function. Defaults to the real
  *                             fs-stat implementation; pass a stub in tests.
- * @returns The inbox item id when an item was raised or bumped, or `null` if
+ * @returns The action-queue item id when an item was raised or bumped, or `null` if
  *          the store is within the 500 MB threshold.
  */
 export const checkObservabilityStoreSize = async (
@@ -70,7 +70,7 @@ export const checkObservabilityStoreSize = async (
   if (sizeBytes < OVERSIZE_THRESHOLD_BYTES) return null
 
   const sizeMb = (sizeBytes / (1024 * 1024)).toFixed(1)
-  const id = await raiseInboxItem({
+  const id = await raiseActionQueueItem({
     kind: OBSERVABILITY_WATCHDOG_KIND,
     category: 'daemon',
     priority: 'high',

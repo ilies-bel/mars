@@ -1,15 +1,15 @@
 import { z } from 'zod'
-import { INBOX_KINDS } from '../mastra/lib/inbox'
+import { ACTION_QUEUE_KINDS } from '../mastra/lib/action-queue'
 
-const inboxPriority = z.enum(['urgent', 'high', 'normal', 'low'])
+const actionQueuePriority = z.enum(['urgent', 'high', 'normal', 'low'])
 const knownCategory = z.enum(['orchestrator', 'reflector', 'daemon', 'user'])
 
 const recordOfUnknown = z.record(z.string(), z.unknown())
 
-export const inboxRaiseSchema = z.object({
-  kind: z.enum(INBOX_KINDS),
+export const actionQueueRaiseSchema = z.object({
+  kind: z.enum(ACTION_QUEUE_KINDS),
   category: z.union([knownCategory, z.string().min(1)]),
-  priority: inboxPriority,
+  priority: actionQueuePriority,
   title: z.string().min(1, 'title must be a non-empty string'),
   body: z.string(),
   payload: recordOfUnknown,
@@ -19,4 +19,4 @@ export const inboxRaiseSchema = z.object({
   occurrence: recordOfUnknown.optional(),
 })
 
-export type InboxRaiseInput = z.infer<typeof inboxRaiseSchema>
+export type ActionQueueRaiseInput = z.infer<typeof actionQueueRaiseSchema>

@@ -1,5 +1,5 @@
 /**
- * Tests for GET /origins/:taskId — the per-task ancestry tree the inbox
+ * Tests for GET /origins/:taskId — the per-task ancestry tree the actionQueue
  * detail panel renders under "Origins". Pin the multi-slice PRD shape
  * (root proposal, children = sibling slices) and the lone-task fallback.
  */
@@ -56,11 +56,11 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),
   viewProgress: async () => ({ tasks: [], proposals: [] }),
-  inboxAck: async () => {},
-  inboxResolve: async () => {},
-  inboxDismiss: async () => {},
+  actionQueueAck: async () => {},
+  actionQueueResolve: async () => {},
+  actionQueueDismiss: async () => {},
   todoDismiss: async () => {},
-  viewInbox: async () => [],
+  viewActionQueue: async () => [],
   viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
   ...overrides,

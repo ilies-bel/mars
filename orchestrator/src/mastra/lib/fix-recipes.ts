@@ -6,7 +6,7 @@
  *
  * See docs/adr/0002-recipe-per-failure-signature.md for the contract:
  * a signature without a registered recipe does NOT fall back to a generic
- * prompt — it raises a `no-recipe` inbox item and dispatches the
+ * prompt — it raises a `no-recipe` actionQueue item and dispatches the
  * Investigator agent.
  */
 
@@ -79,13 +79,13 @@ const dirtyMergeTargetRecipe: FixRecipe = {
       '',
       ...renderReproSection(ctx.reproCommand),
       `STEP 1 — re-check first. Run \`git -C ${ctx.targetPath} status --porcelain\` right now.`,
-      ` - If the output is empty, the tree is already clean: do NOT touch any file, do NOT commit, do NOT emit an inbox notification. Exit successfully — the original task can be retried as-is.`,
+      ` - If the output is empty, the tree is already clean: do NOT touch any file, do NOT commit, do NOT emit an actionQueue notification. Exit successfully — the original task can be retried as-is.`,
       ` - If the output is non-empty, proceed to STEP 2 with the CURRENT status, not the snapshot below.`,
       '',
       `STEP 2 — only if STEP 1 still shows a dirty tree. Inspect each modified or untracked file:`,
       ` (a) commit files that represent intentional work with a meaningful commit message that describes the actual changes;`,
       ` (b) discard files that are clearly transient (build artifacts, .DS_Store, editor swap files, anything in .gitignore that slipped in via \`git add -f\` etc.);`,
-      ` (c) for anything ambiguous, do NOT guess — emit a high-priority inbox notification listing the file(s) and what's unclear, and exit.`,
+      ` (c) for anything ambiguous, do NOT guess — emit a high-priority actionQueue notification listing the file(s) and what's unclear, and exit.`,
       '',
       `Do not push. Save your work.`,
       '',
@@ -97,7 +97,7 @@ const dirtyMergeTargetRecipe: FixRecipe = {
       status,
       '```',
       '',
-      `If you need to file an inbox notification, use \`mars inbox raise --from -\` with priority='high' and a clear message describing the ambiguous file(s).`,
+      `If you need to file an actionQueue notification, use \`mars actionQueue raise --from -\` with priority='high' and a clear message describing the ambiguous file(s).`,
     ].join('\n')
   },
 }
@@ -362,7 +362,7 @@ const typecheckPropertyNotExistRecipe: FixRecipe = {
       `## Important constraints`,
       ` - Do NOT add \`// @ts-ignore\` or cast to \`any\` to silence the error — fix the actual code.`,
       ` - Do NOT re-add a field that the original task explicitly removed — complete the deletion instead.`,
-      ` - If fixing the error requires a new DB column, new table, or other schema change, STOP: raise a high-priority inbox item via \`mars inbox raise --from -\` explaining the blocker, then exit. Do not silently expand scope.`,
+      ` - If fixing the error requires a new DB column, new table, or other schema change, STOP: raise a high-priority actionQueue item via \`mars actionQueue raise --from -\` explaining the blocker, then exit. Do not silently expand scope.`,
       '',
       ...sourcePromptSection,
       `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
@@ -423,7 +423,7 @@ const typecheckMissingExportRecipe: FixRecipe = {
       `## Important constraints`,
       ` - Do NOT delete or modify the test file. The tests describe the intended behaviour — the implementation must satisfy them.`,
       ` - Do NOT add an \`export * from\` or \`// @ts-ignore\` to paper over the error — implement the actual function.`,
-      ` - If the missing export requires a new DB column, new table, or other schema change, STOP: raise a high-priority inbox item via \`mars inbox raise --from -\` explaining the blocker, then exit. Do not silently expand scope.`,
+      ` - If the missing export requires a new DB column, new table, or other schema change, STOP: raise a high-priority actionQueue item via \`mars actionQueue raise --from -\` explaining the blocker, then exit. Do not silently expand scope.`,
       '',
       ...sourcePromptSection,
       `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
@@ -501,7 +501,7 @@ const typecheckArgTypeMismatchRecipe: FixRecipe = {
       `## Important constraints`,
       ` - Do NOT add \`// @ts-ignore\` or \`as any\` casts to silence the error — fix the actual type.`,
       ` - Do NOT change the function's parameter type to accept the wrong argument — adapt the argument to match the declared parameter.`,
-      ` - If fixing the argument type requires a schema change (new DB column, new table, etc.), STOP: raise a high-priority inbox item via \`mars inbox raise --from -\` explaining the blocker, then exit.`,
+      ` - If fixing the argument type requires a schema change (new DB column, new table, etc.), STOP: raise a high-priority actionQueue item via \`mars actionQueue raise --from -\` explaining the blocker, then exit.`,
       '',
       ...sourcePromptSection,
       `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
@@ -706,7 +706,7 @@ const typecheckCannotFindNameRecipe: FixRecipe = {
       `## Important constraints`,
       ` - Do NOT add \`// @ts-ignore\` or \`declare const <name>: any\` to silence the error — fix the actual code.`,
       ` - Do NOT re-introduce a name that the original task explicitly removed — complete the deletion instead.`,
-      ` - If fixing the error requires a new DB column, new table, or other schema change, STOP: raise a high-priority inbox item via \`mars inbox raise --from -\` explaining the blocker, then exit.`,
+      ` - If fixing the error requires a new DB column, new table, or other schema change, STOP: raise a high-priority actionQueue item via \`mars actionQueue raise --from -\` explaining the blocker, then exit.`,
       '',
       ...sourcePromptSection,
       `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
@@ -794,7 +794,7 @@ const typecheckTypeMismatchRecipe: FixRecipe = {
       ` - Do NOT add \`// @ts-ignore\` or \`as any\` casts to silence the error — fix the actual type.`,
       ` - Do NOT narrow the assigned value to an existing union member if the new value is intentional — extend the union instead.`,
       ` - When extending a union type, check every \`switch\` or exhaustive handler over that union and add a case for the new member. Missing cases in exhaustive switches cause a separate TS error (TS2366 or similar) and will be surfaced on the next typecheck run.`,
-      ` - If extending the union requires a new HTTP route or DB column, STOP: raise a high-priority inbox item via \`mars inbox raise --from -\` explaining the blocker, then exit.`,
+      ` - If extending the union requires a new HTTP route or DB column, STOP: raise a high-priority actionQueue item via \`mars actionQueue raise --from -\` explaining the blocker, then exit.`,
       '',
       ...sourcePromptSection,
       `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
@@ -900,7 +900,7 @@ const testLibsqlNoSuchTableRecipe: FixRecipe = {
       ` - The in-memory URL (\`:memory:\`) must be replaced with a file URL — do NOT add WAL PRAGMA calls or other workarounds.`,
       ` - Make sure the temp directory is removed in \`afterEach\` / \`after\` to avoid leaving garbage in \`/tmp\`.`,
       ` - Do NOT change production code (e.g. \`publisher.ts\` or any non-test file) — the bug is in the test setup only.`,
-      ` - If the diff is empty or the root cause is not an in-memory libsql client, raise a high-priority inbox item via \`mars inbox raise --from -\` explaining what you found, then exit.`,
+      ` - If the diff is empty or the root cause is not an in-memory libsql client, raise a high-priority actionQueue item via \`mars actionQueue raise --from -\` explaining what you found, then exit.`,
       '',
       ...sourcePromptSection,
       `Failing task branch (for context only — do not check it out): ${ctx.targetBranch}`,
@@ -991,7 +991,7 @@ const testNoSuiteFoundRecipe: FixRecipe = {
       ` - Do NOT delete a test file that contains real tests — only delete a file that is empty or comment-only.`,
       ` - Do NOT modify the module's implementation to make the error go away — fix the test file only.`,
       ` - If the file is a \`__tests__/\` placeholder whose comment says "tests live at <path>", check that exact path first before deciding to delete or populate.`,
-      ` - If you cannot determine the right fix within two attempts, raise a high-priority inbox item via \`mars inbox raise --from -\` explaining what you found, then exit.`,
+      ` - If you cannot determine the right fix within two attempts, raise a high-priority actionQueue item via \`mars actionQueue raise --from -\` explaining what you found, then exit.`,
       '',
       ...sourcePromptSection,
       `Failing task branch (for context only — do not check it out): ${ctx.targetBranch}`,
@@ -1104,7 +1104,7 @@ const testLibsqlNotAnErrorRecipe: FixRecipe = {
       `## Important constraints`,
       ` - Fix \`src/db/migrate.ts\` only — do NOT modify test files or SQL migration files.`,
       ` - Do NOT remove the comment blocks from the SQL files — filter them in the runner instead.`,
-      ` - If the diff from the failing worktree is empty or the root cause appears different from what is described here, raise a high-priority inbox item via \`mars inbox raise --from -\` explaining what you found, then exit.`,
+      ` - If the diff from the failing worktree is empty or the root cause appears different from what is described here, raise a high-priority actionQueue item via \`mars actionQueue raise --from -\` explaining what you found, then exit.`,
       '',
       ...sourcePromptSection,
       `Failing task branch (for context only — do not check it out): ${ctx.targetBranch}`,

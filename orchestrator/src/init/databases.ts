@@ -1,11 +1,11 @@
 import { initQueue } from '../mastra/queue'
 import { initProposals } from '../mastra/proposals'
-import { initInbox } from '../mastra/lib/inbox'
+import { initActionQueue } from '../mastra/lib/action-queue'
 import { mergeLegacyDatabases } from './merge-databases'
 
 /**
  * Eagerly materialise the per-repo SQLite databases that `mars` writes into
- * at runtime — a single `.mars/mars.db` (tasks + proposals + inbox; see
+ * at runtime — a single `.mars/mars.db` (tasks + proposals + actionQueue; see
  * ADR-0034) — so a freshly scaffolded repo is usable without first having
  * to wait for the daemon to lazily create them on the next write.
  *
@@ -23,5 +23,5 @@ export const initDatabases = async (): Promise<void> => {
   // migrations land before any proposals-side `ALTER TABLE` ordering kicks in.
   await initQueue()
   await initProposals()
-  await initInbox()
+  await initActionQueue()
 }

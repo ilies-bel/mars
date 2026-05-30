@@ -274,11 +274,11 @@ describe('scanDirtyTestsForWip (git integration)', () => {
   // Acceptance criterion 3 — on guard trip the merge target stays unchanged
   //
   // "The original task ends up in today's terminal state (blocked + dirty-main
-  // inbox item raised)" is enforced by the implement-workflow caller: when
+  // actionQueue item raised)" is enforced by the implement-workflow caller: when
   // scanDirtyTestsForWip returns { blocked: true }, the setup preflight skips
   // spawning the salvage chore and falls through to the existing
   // handleTaskFailureWithFixTask path, which parks the task as `blocked` and
-  // raises a dirty-main inbox item — identical to today's manual dirty-main
+  // raises a dirty-main actionQueue item — identical to today's manual dirty-main
   // resolution flow.
   //
   // What we can verify here is the guard's side-effect contract: the merge

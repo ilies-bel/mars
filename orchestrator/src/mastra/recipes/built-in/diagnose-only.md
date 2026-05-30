@@ -30,7 +30,7 @@ anything.
 ## Done when
 
 - `mars diagnose set` has written a verdict + note for the parent task.
-- The inbox item that triggered this recipe now carries that diagnosis.
+- The action queue item that triggered this recipe now carries that diagnosis.
 
 ## Save your work
 

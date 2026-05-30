@@ -98,7 +98,7 @@ export const resolveContext = (override?: string): OrchestratorContext => {
   cached = {
     repoRoot,
     stateDir,
-    // Tasks (`queueDbPath`) and proposals/inbox (`stateDbPath`) now share a
+    // Tasks (`queueDbPath`) and proposals/actionQueue (`stateDbPath`) now share a
     // single `.mars/mars.db` file (see ADR-0034). The two names survive
     // temporarily so callers can be consolidated incrementally — both
     // resolve to the same path. A one-shot merge in `initDatabases` lifts

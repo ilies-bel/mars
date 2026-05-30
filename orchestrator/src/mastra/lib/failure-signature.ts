@@ -8,7 +8,7 @@
  * docs/adr/0002-recipe-per-failure-signature.md). Each registered recipe
  * declares the signatures it covers; when a failure produces a signature
  * with no recipe, the orchestrator does NOT enqueue a generic recovery —
- * it raises an inbox item and dispatches an Investigator agent.
+ * it raises an actionQueue item and dispatches an Investigator agent.
  *
  * `error-class` is derived by `classifyError`: for known error patterns it
  * returns a stable slug; for unknown errors it returns `unclassified` so
@@ -64,11 +64,11 @@ export interface ErrorClassRule {
  * ## Intentionally unclassified failure steps
  *
  * `verify:test` failures produce `verify:test/unclassified` and route to
- * the inbox/Investigator pattern **by design** — no rule is registered here
+ * the actionQueue/Investigator pattern **by design** — no rule is registered here
  * for them. Each test failure has a unique root cause (wrong assertion,
  * null deref, API mismatch, logic error, newly introduced test bug, etc.)
  * and a single mechanical recipe cannot give correct guidance across all
- * occurrences. Investigated: 2026-05-18 (inbox item 7eaf941e, task
+ * occurrences. Investigated: 2026-05-18 (actionQueue item 7eaf941e, task
  * mars-eaad74d8); confirmed that the right resolution is a targeted
  * follow-up task rather than a generic recipe entry.
  *

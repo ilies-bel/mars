@@ -1,8 +1,8 @@
 import type { Client } from '@libsql/client'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
-import { dismissAlertsOnStatusChange } from '../lib/inbox'
-import { clearDismissalForEntity } from '../lib/inbox-dismissals'
+import { dismissAlertsOnStatusChange } from '../lib/action-queue'
+import { clearDismissalForEntity } from '../lib/action-queue-dismissals'
 import { drainWithStall } from './subscriber-drain.js'
 
 /**
@@ -71,12 +71,12 @@ export async function ensureAlertDismisser(client: Client): Promise<void> {
  * Each closing event resolves the implicated task's open Action-queue rows
  * and clears its dismissal; ignored events advance the cursor without side
  * effect. Per-event side effects are wrapped in `processedOnce` so a crash
- * between the cursor advance and the inbox write cannot double-apply, and a
+ * between the cursor advance and the actionQueue write cannot double-apply, and a
  * handler that throws blocks the cursor on the failing event and raises a
- * subscriber-stalled inbox item after K consecutive failures (ADR-0032) —
+ * subscriber-stalled actionQueue item after K consecutive failures (ADR-0032) —
  * all handled by the shared {@link drainWithStall} helper.
  *
- * @param client The libsql client carrying the outbox + inbox tables.
+ * @param client The libsql client carrying the outbox + actionQueue tables.
  * @param log    Optional logger callback for per-event failures.
  * @returns      The count of events whose side effect ran (closed rows).
  */

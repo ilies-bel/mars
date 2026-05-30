@@ -313,7 +313,7 @@ The handler then takes one of three paths (see ADR
    the normal blocker-resolution path.
 2. **Recovery itself fails** — the orchestrator does NOT enqueue
    another recovery (recovery has retry budget 0). The recovery is
-   marked `failed`, the original stays `blocked`, and an inbox item of
+   marked `failed`, the original stays `blocked`, and an action queue item of
    `kind='recovery-failed'` is raised. The human resolves via
    `mars retry <recovery-id>`, `mars unblock <origin-id>`, or fixing
    the upstream cause.
@@ -322,47 +322,47 @@ The handler then takes one of three paths (see ADR
    **Investigator** task is queued (`author='agent:investigator'`)
    whose sole job is to propose a draft recipe in
    `fix-recipes.ts` (and a classifier rule in `failure-signature.ts`
-   if the signature ends in `/unclassified`), and an inbox item of
+   if the signature ends in `/unclassified`), and an action queue item of
    `kind='no-recipe'` is raised.
 
 To browse outstanding escalations:
 
 ```bash
-mars inbox list --kind recovery-failed
-mars inbox list --kind no-recipe
+mars action-queue list --kind recovery-failed
+mars action-queue list --kind no-recipe
 ```
 
-## Inbox
+## Action queue
 
 Cross-cutting findings that don't belong to a single task — daemon
 desyncs, self-heal investigations, anything raised by a dispatched
-agent — land in the inbox at `.mars/state.db`.
+agent — land in the action queue at `.mars/state.db`.
 
 CLI surface:
 
 | Command                                  | Purpose                                                  |
 | ---------------------------------------- | -------------------------------------------------------- |
-| `mars inbox` / `mars inbox list [state]` | List items by state (default `open`).                    |
-| `mars inbox show <id>`                   | Full detail for one item.                                |
-| `mars inbox ack <id>`                    | Mark an item acknowledged.                               |
-| `mars inbox resolve <id>`                | Mark an item resolved (`--note`, `--root-cause`).        |
-| `mars inbox dismiss <id>`                | Mark an item dismissed (`--note`).                       |
-| `mars inbox raise --from <-\|path>`      | File a new item from a JSON document.                    |
-| `mars inbox watch`                       | Live ink TUI.                                            |
+| `mars action-queue` / `mars action-queue list [state]` | List items by state (default `open`).                    |
+| `mars action-queue show <id>`                   | Full detail for one item.                                |
+| `mars action-queue ack <id>`                    | Mark an item acknowledged.                               |
+| `mars action-queue resolve <id>`                | Mark an item resolved (`--note`, `--root-cause`).        |
+| `mars action-queue dismiss <id>`                | Mark an item dismissed (`--note`).                       |
+| `mars action-queue raise --from <-\|path>`      | File a new item from a JSON document.                    |
+| `mars action-queue watch`                       | Live ink TUI.                                            |
 
-`mars inbox raise --from -` is the **correct** entry point for
+`mars action-queue raise --from -` is the **correct** entry point for
 dispatched agents (self-heal investigations, anything running inside a
-`task/<id>` worktree) to file inbox items. It replaces
+`task/<id>` worktree) to file action queue items. It replaces
 the deprecated pattern of writing one-shot `.ts` scripts under
 `orchestrator/scripts/raise-*.ts`, which pollute the codebase, tie
 agents to the orchestrator's source tree, and have caused merge-target
 dirty failures when an uncommitted script was left in the worktree.
 
 The verb reads a JSON document from stdin (or from `--from <path>`),
-validates it against the same shape `raiseInboxItem` expects, dedupes
+validates it against the same shape `raiseActionQueueItem` expects, dedupes
 server-side by `(kind, signature)` — re-piping the same payload bumps
 `seen_count` instead of creating a duplicate row — and prints the
-inbox id on stdout (one line, no decoration). Exit codes: `0` ok, `1`
+action queue id on stdout (one line, no decoration). Exit codes: `0` ok, `1`
 library error, `2` parse/validation error.
 
 ```bash
@@ -370,13 +370,13 @@ echo '{
   "kind": "manual.smoketest",
   "category": "orchestrator",
   "priority": "low",
-  "title": "smoke test of mars inbox raise",
+  "title": "smoke test of mars action-queue raise",
   "body": "...",
   "payload": {},
   "context": {},
   "raisedBy": "smoketest:agent",
   "signature": "manual.smoketest:1"
-}' | mars inbox raise --from -
+}' | mars action-queue raise --from -
 ```
 
 Required fields: `kind`, `category`, `priority` (`urgent|high|normal|low`),

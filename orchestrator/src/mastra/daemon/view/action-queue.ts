@@ -1,9 +1,9 @@
 /**
- * Inbox view builder — derives the ActionQueueRow[] the UI renders from raw
- * persisted inbox rows, task data, the error-kind registry, and the recipe
+ * ActionQueue view builder — derives the ActionQueueRow[] the UI renders from raw
+ * persisted actionQueue rows, task data, the error-kind registry, and the recipe
  * catalog. Moved here from ui/server/index.ts so the daemon is the sole reader
  * of its own database and the single authoritative source for every derived
- * inbox view.
+ * actionQueue view.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -11,8 +11,8 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget'
 
-export type DerivedInboxKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
-export type DerivedInboxFilter = 'open' | 'dismissed' | 'all'
+export type DerivedActionQueueKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
+export type DerivedActionQueueFilter = 'open' | 'dismissed' | 'all'
 
 export interface StaleWorktreeDetail {
   prompt: string | null
@@ -27,7 +27,7 @@ export interface StaleWorktreeDetail {
 
 export interface ActionQueueRow {
   id: string
-  kind: DerivedInboxKind
+  kind: DerivedActionQueueKind
   entityId: string
   priority: 'high' | 'normal' | 'low'
   title: string
@@ -46,15 +46,15 @@ export interface ActionQueueRow {
   staleWorktreeDetail: StaleWorktreeDetail | null
   diagnosis: { text: string; diagnosedAt: string } | null
   /**
-   * Failure-reason catalog code (`tasks.failure_reason_code` / inbox-row
+   * Failure-reason catalog code (`tasks.failure_reason_code` / actionQueue-row
    * payload). Null on non-failed rows and on legacy rows landed before the
    * typed code was introduced.
    */
   failureReasonCode: string | null
 }
 
-/** Raw inbox row shape as persisted in `inbox_items`. */
-export interface PersistedInboxRow {
+/** Raw actionQueue row shape as persisted in `action_queue_items`. */
+export interface PersistedActionQueueRow {
   id: string
   kind: string
   priority: string
@@ -66,8 +66,8 @@ export interface PersistedInboxRow {
   lastSeenAt: string
 }
 
-/** Narrow task shape `buildInboxView` needs — a subset of the queue Task. */
-export interface TaskForInbox {
+/** Narrow task shape `buildActionQueueView` needs — a subset of the queue Task. */
+export interface TaskForActionQueue {
   id: string
   status: string
   prompt: string
@@ -81,28 +81,28 @@ export interface TaskForInbox {
 }
 
 /** Narrow error-kind entry shape needed for action-menu assembly. */
-interface InboxErrorKind {
+interface ActionQueueErrorKind {
   kind: string
   recoveryActions: { id: string; label: string; op: string }[]
 }
 
 /**
- * State-store dependency: reads open inbox items and operator dismissals.
- * In the daemon this is backed by the in-process inbox / inbox-dismissals
+ * State-store dependency: reads open actionQueue items and operator dismissals.
+ * In the daemon this is backed by the in-process actionQueue / action-queue-dismissals
  * modules; in tests it can be stubbed.
  */
-export interface InboxStateStore {
-  listOpenInboxItems(): Promise<PersistedInboxRow[]>
+export interface ActionQueueStateStore {
+  listOpenActionQueueItems(): Promise<PersistedActionQueueRow[]>
   /** Map key: `"<entityKind>:<entityId>"`. Value: note ('ack'|'resolved'|'dismissed'|null). */
-  listInboxDismissals(): Promise<Map<string, string | null>>
+  listActionQueueDismissals(): Promise<Map<string, string | null>>
 }
 
 /**
  * Task-store dependency: returns tasks with blocker and proposal info.
  * The daemon builds this from queue.ts + a task_blockers query.
  */
-export interface InboxTaskStore {
-  listTasks(): Promise<TaskForInbox[]>
+export interface ActionQueueTaskStore {
+  listTasks(): Promise<TaskForActionQueue[]>
 }
 
 /**
@@ -110,41 +110,41 @@ export interface InboxTaskStore {
  * A signature that has a registered recovery recipe auto-recovers and does
  * not need a manual root-cause diagnosis.
  */
-export interface InboxRecipeCatalog {
+export interface ActionQueueRecipeCatalog {
   has(sig: string): boolean
 }
 
-export interface BuildInboxViewParams {
-  stateStore: InboxStateStore
-  taskStore: InboxTaskStore
+export interface BuildActionQueueViewParams {
+  stateStore: ActionQueueStateStore
+  taskStore: ActionQueueTaskStore
   /**
    * Error-kind registry map (key = error kind id). In the daemon this is
    * built from `listErrorKinds()` at request time.
    */
-  errorKindRegistry: Map<string, InboxErrorKind>
-  recipeCatalog: InboxRecipeCatalog
+  errorKindRegistry: Map<string, ActionQueueErrorKind>
+  recipeCatalog: ActionQueueRecipeCatalog
   /** Absolute path to the repo root — used for the stale-worktree git probe. */
   repoRoot: string
-  filter: DerivedInboxFilter
+  filter: DerivedActionQueueFilter
 }
 
 /**
  * Derive the full ActionQueueRow[] view from injected stores.
  *
- * Behaviour mirrors ui/server/index.ts's `/api/inbox/action-queue` handler
+ * Behaviour mirrors ui/server/index.ts's `/api/action-queue/action-queue` handler
  * (lines 177–531 before this slice) exactly: same sort, same daemon-killed-
  * batch synthesis, same diagnose-failure gate, same stale-worktree git probe.
  */
-export const buildInboxView = async ({
+export const buildActionQueueView = async ({
   stateStore,
   taskStore,
   errorKindRegistry,
   recipeCatalog,
   repoRoot,
   filter,
-}: BuildInboxViewParams): Promise<ActionQueueRow[]> => {
-  const persistedRows = await stateStore.listOpenInboxItems()
-  const dismissalMap = await stateStore.listInboxDismissals()
+}: BuildActionQueueViewParams): Promise<ActionQueueRow[]> => {
+  const persistedRows = await stateStore.listOpenActionQueueItems()
+  const dismissalMap = await stateStore.listActionQueueDismissals()
 
   const allTasks = await taskStore.listTasks()
   const taskById = new Map(allTasks.map((t) => [t.id, t]))
@@ -157,8 +157,8 @@ export const buildInboxView = async ({
     }
   }
 
-  // Map a persisted InboxKind to the ActionQueueRow `kind` vocabulary.
-  const toUiKind = (k: string): DerivedInboxKind => {
+  // Map a persisted ActionQueueKind to the ActionQueueRow `kind` vocabulary.
+  const toUiKind = (k: string): DerivedActionQueueKind => {
     if (k === 'stale-worktree') return 'stale-worktree'
     if (k === 'draft-proposal') return 'draft-proposal'
     return 'failed-task'
@@ -166,7 +166,7 @@ export const buildInboxView = async ({
 
   // Map a UI kind to the dismissal entity kind.
   const toEntityKind = (
-    uiKind: DerivedInboxKind,
+    uiKind: DerivedActionQueueKind,
   ): 'task' | 'worktree' | 'proposal' =>
     uiKind === 'stale-worktree'
       ? 'worktree'
@@ -175,7 +175,7 @@ export const buildInboxView = async ({
         : 'task'
 
   // Extract the entity id (task id, worktree id, or proposal id) from a row.
-  const extractEntityId = (row: PersistedInboxRow): string => {
+  const extractEntityId = (row: PersistedActionQueueRow): string => {
     if (row.kind === 'stale-worktree') {
       if (typeof row.context.taskId === 'string') return row.context.taskId
     }
@@ -335,7 +335,7 @@ export const buildInboxView = async ({
       }
     }
 
-    // Diagnosis persisted by the diagnose-failure agent onto the inbox payload.
+    // Diagnosis persisted by the diagnose-failure agent onto the actionQueue payload.
     let diagnosis: { text: string; diagnosedAt: string } | null = null
     const rawDiagnosis = row.payload.diagnosis
     if (

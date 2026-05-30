@@ -1,9 +1,9 @@
 /**
- * Daemon-killed alert: on daemon start, raise one inbox item per task that was
+ * Daemon-killed alert: on daemon start, raise one actionQueue item per task that was
  * SIGKILL'd along with a previous daemon (`mars daemon kill` or an external
  * kill). Such tasks are stamped `failureSignature: 'daemon-killed'` and left in
  * `failed` by the kill path; the daemon does NOT auto-requeue them — it surfaces
- * an alert-only inbox item so the operator decides whether to requeue.
+ * an alert-only actionQueue item so the operator decides whether to requeue.
  *
  * Deduplication is origin-keyed (`originTaskId`), so re-running reconcile after
  * a crash bumps the existing open item rather than inserting a sibling. The
@@ -12,16 +12,16 @@
  * it flips back to `queued`).
  *
  * The body lists the recovery actions from the `daemon-killed` entry of the
- * error-kind registry, so the CLI inbox reads the same menu the UI renders as
+ * error-kind registry, so the CLI actionQueue reads the same menu the UI renders as
  * buttons — one source of truth for "what can I do about this?".
  */
 
 import { listTasks } from '../queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { getErrorKind } from '../lib/error-kinds'
-import { type InboxKind, raiseInboxItem } from '../lib/inbox'
+import { type ActionQueueKind, raiseActionQueueItem } from '../lib/action-queue'
 
-export const DAEMON_KILLED_INBOX_KIND: InboxKind = 'daemon-killed'
+export const DAEMON_KILLED_ACTION_QUEUE_KIND: ActionQueueKind = 'daemon-killed'
 
 /**
  * Render the alert body from the registry's daemon-killed entry. Exported so a
@@ -42,7 +42,7 @@ export const buildDaemonKilledBody = (taskId: string): string => {
 
 /**
  * Scan for `failed` tasks carrying the daemon-killed signature and raise one
- * alert-only inbox item per task. Returns the inbox item ids raised (or bumped
+ * alert-only actionQueue item per task. Returns the actionQueue item ids raised (or bumped
  * on re-detection). Does NOT change any task status — alert only.
  */
 export const detectAndRaiseDaemonKilled = async (): Promise<string[]> => {
@@ -52,8 +52,8 @@ export const detectAndRaiseDaemonKilled = async (): Promise<string[]> => {
   for (const task of failed) {
     if (task.failureSignature !== DAEMON_KILLED_SIGNATURE) continue
 
-    const id = await raiseInboxItem({
-      kind: DAEMON_KILLED_INBOX_KIND,
+    const id = await raiseActionQueueItem({
+      kind: DAEMON_KILLED_ACTION_QUEUE_KIND,
       category: 'daemon',
       priority: 'high',
       title: `Daemon-killed: task ${task.id}`,

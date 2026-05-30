@@ -9,38 +9,38 @@ import {
   renderAvailableActionsMarkdown,
 } from '../lib/failure-reasons'
 import {
-  raiseInboxItem,
-  supersedeInboxItemsForOrigin,
+  raiseActionQueueItem,
+  supersedeActionQueueItemsForOrigin,
   type SupersedeReason,
-} from '../lib/inbox'
+} from '../lib/action-queue'
 import { getTask } from '../queue'
 
 /**
- * Durable outbox subscriber that keeps inbox_items current from outbox
+ * Durable outbox subscriber that keeps action_queue_items current from outbox
  * events — the evict-on-mutation / repopulate-on-event rule.
  *
  * Handles:
  * - task.failed / task.dropped → ensure one open origin row (fallback if
- *   no richer row already exists — raiseInboxItem's origin-keyed dedup
+ *   no richer row already exists — raiseActionQueueItem's origin-keyed dedup
  *   makes this naturally idempotent).
  * - task.queued / task.completed / task.unblocked → evict open origin rows
  *   so they disappear once the task leaves the stuck state.
- * - proposal.added → insert a draft-proposal inbox row keyed on proposal id.
+ * - proposal.added → insert a draft-proposal actionQueue row keyed on proposal id.
  * - proposal.promoted / proposal.dismissed / proposal.deleted → evict the
  *   proposal's draft-proposal row.
- * - task.blocked → NO action (blocked tasks do not create inbox rows).
+ * - task.blocked → NO action (blocked tasks do not create actionQueue rows).
  * - Stale-worktree rows are produced by the existing daemon sweep and
  *   evicted by dismissAlertsOnStatusChange in queue.ts; this consumer
  *   does not create them and does not fight them.
  *
  * Each side effect is guarded by processedOnce for at-most-once application:
  * processedOnce atomically commits a dedup row in queue.db, then the actual
- * inbox mutations run on state.db AFTER that transaction commits. The two
- * writes are not cross-DB atomic, but inbox operations are idempotent, so
- * the rare crash between dedup-commit and inbox-write is benign (at-most-once
- * is preserved; the inbox write is simply skipped on restart).
+ * actionQueue mutations run on state.db AFTER that transaction commits. The two
+ * writes are not cross-DB atomic, but actionQueue operations are idempotent, so
+ * the rare crash between dedup-commit and actionQueue-write is benign (at-most-once
+ * is preserved; the actionQueue write is simply skipped on restart).
  */
-export const INBOX_REPOPULATOR_SUBSCRIBER = 'inbox-repopulator'
+export const ACTION_QUEUE_REPOPULATOR_SUBSCRIBER = 'action-queue-repopulator'
 
 /** Events that ensure exactly one open origin row exists for the task. */
 const TASK_RAISE_EVENTS = new Set<EventName>(['task.failed', 'task.dropped'])
@@ -66,16 +66,16 @@ const PROPOSAL_EVICT_REASONS: Partial<Record<EventName, SupersedeReason>> = {
 }
 
 /**
- * Register the inbox-repopulator subscriber. `replay: false` so it starts
+ * Register the action-queue-repopulator subscriber. `replay: false` so it starts
  * at the current outbox head and only reacts to future events — historical
- * inbox state is already reconciled by existing chokepoints. Idempotent.
+ * actionQueue state is already reconciled by existing chokepoints. Idempotent.
  *
  * Also ensures the processedOnce dedup schema exists so that
- * {@link drainInboxRepopulations} can safely call processedOnce.
+ * {@link drainActionQueueRepopulations} can safely call processedOnce.
  */
-export async function ensureInboxRepopulator(client: Client): Promise<void> {
+export async function ensureActionQueueRepopulator(client: Client): Promise<void> {
   await ensureProcessedOnceSchema(client)
-  await registerSubscriber(client, INBOX_REPOPULATOR_SUBSCRIBER, {
+  await registerSubscriber(client, ACTION_QUEUE_REPOPULATOR_SUBSCRIBER, {
     replay: false,
   })
 }
@@ -83,7 +83,7 @@ export async function ensureInboxRepopulator(client: Client): Promise<void> {
 /**
  * Parse a `recovery_payload` JSON blob and check whether it represents a
  * `main-commiter` recovery. F.2's `raiseAggregatedMainCommiterFailureRow`
- * already owns the inbox row for those failures; the structured writer
+ * already owns the actionQueue row for those failures; the structured writer
  * must not compete.
  */
 const isMainCommiterRecovery = (
@@ -101,14 +101,14 @@ const isMainCommiterRecovery = (
 }
 
 /**
- * Apply the inbox mutation for a single mapped event.
+ * Apply the actionQueue mutation for a single mapped event.
  *
  * Separated from the drain loop so the caller can invoke it AFTER the
  * processedOnce transaction commits — this avoids holding a write
  * transaction on queue.db while also writing to state.db (which may be
  * the same file in some configurations, causing SQLITE_BUSY).
  */
-async function applyInboxMutation(
+async function applyActionQueueMutation(
   event: BusEvent,
   catalog: FailureReasonCatalog,
 ): Promise<void> {
@@ -149,10 +149,10 @@ async function applyInboxMutation(
       actionsMarkdown,
     ].join('\n')
 
-    // raiseInboxItem is idempotent: if an open origin row already exists
+    // raiseActionQueueItem is idempotent: if an open origin row already exists
     // (raised by a richer writer such as queue-fix-tasks), it bumps
     // seen_count rather than inserting a duplicate row.
-    await raiseInboxItem({
+    await raiseActionQueueItem({
       kind: 'failed',
       category: 'orchestrator',
       priority: 'high',
@@ -170,17 +170,17 @@ async function applyInboxMutation(
         })),
       },
       context: {},
-      raisedBy: `inbox-repopulator:${event.type}`,
+      raisedBy: `action-queue-repopulator:${event.type}`,
       signature: taskId,
       originTaskId: taskId,
     })
   } else if (event.type in TASK_EVICT_REASONS) {
     const reason = TASK_EVICT_REASONS[event.type]!
     const { taskId } = event.payload as { taskId: string }
-    await supersedeInboxItemsForOrigin(
+    await supersedeActionQueueItemsForOrigin(
       taskId,
       reason,
-      `inbox-repopulator:${event.type}`,
+      `action-queue-repopulator:${event.type}`,
     )
   } else if (event.type === 'proposal.added') {
     const payload = event.payload as {
@@ -188,7 +188,7 @@ async function applyInboxMutation(
       source: string
       title: string
     }
-    await raiseInboxItem({
+    await raiseActionQueueItem({
       kind: 'draft-proposal',
       category: 'user',
       priority: 'normal',
@@ -203,7 +203,7 @@ async function applyInboxMutation(
         source: payload.source,
       },
       context: {},
-      raisedBy: 'inbox-repopulator:proposal.added',
+      raisedBy: 'action-queue-repopulator:proposal.added',
       signature: payload.proposalId,
       originTaskId: payload.proposalId,
     })
@@ -211,10 +211,10 @@ async function applyInboxMutation(
     // PROPOSAL_EVICT_REASONS: proposal.promoted / proposal.dismissed / proposal.deleted
     const reason = PROPOSAL_EVICT_REASONS[event.type]!
     const { proposalId } = event.payload as { proposalId: string }
-    await supersedeInboxItemsForOrigin(
+    await supersedeActionQueueItemsForOrigin(
       proposalId,
       reason,
-      `inbox-repopulator:${event.type}`,
+      `action-queue-repopulator:${event.type}`,
     )
   }
 }
@@ -223,11 +223,11 @@ async function applyInboxMutation(
  * Process every event the subscriber has not yet acknowledged, in order.
  *
  * For each handled event type, processedOnce atomically commits a dedup
- * row in queue.db; then the inbox mutation runs on state.db after that
+ * row in queue.db; then the actionQueue mutation runs on state.db after that
  * transaction commits. This two-phase approach avoids holding a write lock
- * on the shared DB file while also mutating the inbox tables.
+ * on the shared DB file while also mutating the actionQueue tables.
  *
- * Unmapped events (including task.blocked) are skipped (no inbox work) but
+ * Unmapped events (including task.blocked) are skipped (no actionQueue work) but
  * still advance the cursor so the subscriber never stalls.
  *
  * On a processing error the cursor is NOT advanced and the drain breaks, so
@@ -236,21 +236,21 @@ async function applyInboxMutation(
  *
  * @param client The libsql client carrying the outbox tables (queue.db).
  * @param log    Optional logger callback for per-event failures.
- * @returns      The count of events for which inbox work was applied.
+ * @returns      The count of events for which actionQueue work was applied.
  */
-export async function drainInboxRepopulations(
+export async function drainActionQueueRepopulations(
   client: Client,
   catalog: FailureReasonCatalog,
   log?: (msg: string) => void,
 ): Promise<{ processed: number }> {
   // Stall contract (ADR-0032) is shared with the Invalidator via
   // drainWithStall: a thrown handler blocks this subscriber's cursor and
-  // raises a subscriber-stalled inbox row after K failures. The inbox
+  // raises a subscriber-stalled actionQueue row after K failures. The actionQueue
   // mutation is idempotent and runs after the dedup commit (Phase 2), so the
   // cross-DB crash window stays benign.
   return drainWithStall({
     client,
-    subscriberId: INBOX_REPOPULATOR_SUBSCRIBER,
+    subscriberId: ACTION_QUEUE_REPOPULATOR_SUBSCRIBER,
     log,
     handle: async (event) => {
       const isMapped =
@@ -259,7 +259,7 @@ export async function drainInboxRepopulations(
         event.type === 'proposal.added' ||
         event.type in PROPOSAL_EVICT_REASONS
       if (!isMapped) return false
-      await applyInboxMutation(event, catalog)
+      await applyActionQueueMutation(event, catalog)
       return true
     },
   })

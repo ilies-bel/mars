@@ -9,7 +9,7 @@
  *    files, and fix direction verbatim.
  *  - The original task is re-parked blocked behind the fix attempt.
  *  - Non-root-cause verdicts (inconclusive / no-verdict) produce no fix
- *    attempt and park the parent failed with one actionable inbox item.
+ *    attempt and park the parent failed with one actionable actionQueue item.
  *  - onBlockerTaskCompleted delegates to verdict-driven dispatch for any
  *    task with kind='diagnose', never running the generic re-queue path.
  *  - A failing diagnose Chore never spawns a fix task or investigator
@@ -50,8 +50,8 @@ interface DiagnoseModule {
   setDiagnosis: typeof import('../diagnose').setDiagnosis
 }
 
-interface InboxModule {
-  initInbox: typeof import('../inbox').initInbox
+interface ActionQueueModule {
+  initActionQueue: typeof import('../action-queue').initActionQueue
 }
 
 interface FollowupModule {
@@ -112,8 +112,8 @@ describe('diagnose root-cause dispatch', () => {
     process.env.MARS_REPO = templateRepo
     const q = (await import('../../queue')) as unknown as QueueModule
     await q.initQueue()
-    const inbox = (await import('../inbox')) as unknown as InboxModule
-    await inbox.initInbox()
+    const actionQueue = (await import('../action-queue')) as unknown as ActionQueueModule
+    await actionQueue.initActionQueue()
     // Seed the diagnoses table into the template so clones already have it.
     const { getDiagnosis } = (await import('../diagnose')) as unknown as {
       getDiagnosis: (id: string) => Promise<unknown>
@@ -291,7 +291,7 @@ describe('diagnose root-cause dispatch', () => {
   })
 
   // ── Inconclusive verdict: parent fails, no fix ────────────────────────
-  it('inconclusive verdict raises inbox item and parks parent failed with no fix task', async () => {
+  it('inconclusive verdict raises actionQueue item and parks parent failed with no fix task', async () => {
     const { q, diagn, followup } = await loadModules(repo)
 
     const parent = await q.enqueueTask('parent task', undefined, {
@@ -314,8 +314,8 @@ describe('diagnose root-cause dispatch', () => {
 
     const result = await followup.runDiagnoseFollowup(chore.id)
 
-    expect(result.action).toBe('inbox-raised')
-    expect(result.inboxItemId).toBeTruthy()
+    expect(result.action).toBe('action-queue-raised')
+    expect(result.actionQueueItemId).toBeTruthy()
     expect(result.verdictKind).toBe('inconclusive')
     expect(result.parentTaskId).toBe(parent.id)
 
@@ -343,7 +343,7 @@ describe('diagnose root-cause dispatch', () => {
 
     const result = await followup.runDiagnoseFollowup(chore.id)
 
-    expect(result.action).toBe('inbox-raised')
+    expect(result.action).toBe('action-queue-raised')
     expect(result.verdictKind).toBe('no-verdict')
 
     const updatedParent = await q.getTask(parent.id)

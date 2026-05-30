@@ -153,16 +153,16 @@ No prose preamble in the question body.
 Then act on the answer:
 
 - **Yes, promote** → `mars proposal promote <id>`. Print the CLI output
-  verbatim. End with one line: `Promoted <id>.` The inbox needs no
+  verbatim. End with one line: `Promoted <id>.` The action queue needs no
   separate cleanup — the `draft-proposal:<id>` row is derived from the
   proposal's `draft` status, so promoting it (status leaves `draft`)
-  removes the row on the next `mars inbox` read.
+  removes the row on the next `mars action-queue` read.
 - **No, keep shaping** → tell the user to run `/mars:grill <id>` again
-  to revisit specific branches. Do not re-interview here. The inbox row
+  to revisit specific branches. Do not re-interview here. The action queue row
   correctly stays — the proposal is still a draft. End your turn.
 - **No, abandon** → `mars proposal reject <id>` and end with one line:
   `Rejected <id>.` Rejecting also moves the proposal out of `draft`, so
-  the inbox row clears on the next read.
+  the action queue row clears on the next read.
 
 If the promote (or reject) command fails, surface the error verbatim in
 one sentence and stop — do not retry silently.
@@ -174,7 +174,7 @@ one sentence and stop — do not retry silently.
   grilling is not.
 - Do not edit `features/<id>.md`, `proposals/<id>.md`, or any markdown
   scaffold. PRD lives in the DB.
-- Do not append to `.mars/inbox.jsonl`.
+- Do not append to `.mars/action queue.jsonl`.
 - Do not edit `CONTEXT.md` or `docs/adr/*.md` directly. If grilling
   surfaced a missing term or ADR you forgot to capture, route through
   `mars glossary set` / `mars adr add` — but prefer to do this during

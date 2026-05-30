@@ -20,9 +20,9 @@ interface BlockerModule {
   markOriginDoneFromRecovery: typeof import('../../blocker-resolution').markOriginDoneFromRecovery
 }
 
-interface InboxModule {
-  raiseInboxItem: typeof import('../inbox').raiseInboxItem
-  listInboxItems: typeof import('../inbox').listInboxItems
+interface ActionQueueModule {
+  raiseActionQueueItem: typeof import('../action-queue').raiseActionQueueItem
+  listActionQueueItems: typeof import('../action-queue').listActionQueueItems
 }
 
 const setupRepo = (): string => {
@@ -76,7 +76,7 @@ const headSha = (cwd: string): string =>
 
 const loadModules = async (
   repo: string,
-): Promise<{ q: QueueModule; br: BlockerModule; inbox: InboxModule }> => {
+): Promise<{ q: QueueModule; br: BlockerModule; actionQueue: ActionQueueModule }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
@@ -84,8 +84,8 @@ const loadModules = async (
   const br = (await import(
     '../../blocker-resolution'
   )) as unknown as BlockerModule
-  const inbox = (await import('../inbox')) as unknown as InboxModule
-  return { q, br, inbox }
+  const actionQueue = (await import('../action-queue')) as unknown as ActionQueueModule
+  return { q, br, actionQueue }
 }
 
 const blockTask = async (
@@ -155,10 +155,10 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(reloaded?.status).toBe('failed')
     expect(reloaded?.failureReason).toBe('retry_budget_exhausted_at_unblock')
 
-    const inbox = (await import('../inbox')) as unknown as {
-      listInboxItems: typeof import('../inbox').listInboxItems
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
     }
-    const open = await inbox.listInboxItems('open')
+    const open = await actionQueue.listActionQueueItems('open')
     const taskBlocked = open.filter((i) => i.kind === 'failed' && i.payload.taskId === dep.id)
     expect(taskBlocked).toHaveLength(1)
     expect(taskBlocked[0].kind).toBe('failed')
@@ -184,10 +184,10 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(reloaded?.status).toBe('failed')
     expect(reloaded?.failureReason).toBe('retry_budget_exhausted_at_unblock')
 
-    const inbox = (await import('../inbox')) as unknown as {
-      listInboxItems: typeof import('../inbox').listInboxItems
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
     }
-    const open = await inbox.listInboxItems('open')
+    const open = await actionQueue.listActionQueueItems('open')
     const taskBlocked = open.filter((i) => i.kind === 'failed' && i.payload.taskId === dep.id)
     expect(taskBlocked).toHaveLength(1)
     expect(taskBlocked[0].kind).toBe('failed')
@@ -216,10 +216,10 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(reloaded?.status).toBe('queued')
     expect(reloaded?.failureReason).toBeFalsy()
 
-    const inbox = (await import('../inbox')) as unknown as {
-      listInboxItems: typeof import('../inbox').listInboxItems
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
     }
-    const open = await inbox.listInboxItems('open')
+    const open = await actionQueue.listActionQueueItems('open')
     const taskBlocked = open.filter((i) => i.kind === 'failed')
     expect(taskBlocked).toHaveLength(0)
   })
@@ -244,10 +244,10 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(reloaded?.status).toBe('queued')
     expect(reloaded?.failureReason).toBeFalsy()
 
-    const inbox = (await import('../inbox')) as unknown as {
-      listInboxItems: typeof import('../inbox').listInboxItems
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
     }
-    const open = await inbox.listInboxItems('open')
+    const open = await actionQueue.listActionQueueItems('open')
     const taskBlocked = open.filter((i) => i.kind === 'failed')
     expect(taskBlocked).toHaveLength(0)
   })
@@ -308,10 +308,10 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(reloaded?.status).toBe('blocked')
   })
 
-  it('never-run dependent (no error field) produces inbox lastStep of "blocked-dependent", not "unblock"', async () => {
+  it('never-run dependent (no error field) produces actionQueue lastStep of "blocked-dependent", not "unblock"', async () => {
     // A task that sat in blocked without ever running has no error field.
-    // The inbox item must NOT use the bogus 'unblock' sentinel — it must
-    // use 'blocked-dependent' so a human reading mars inbox can tell this
+    // The actionQueue item must NOT use the bogus 'unblock' sentinel — it must
+    // use 'blocked-dependent' so a human reading mars actionQueue can tell this
     // task never executed vs failing at a real workflow step.
     const { q, br } = await loadModules(repo)
     const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
@@ -325,10 +325,10 @@ describe('blocker-resolution (task_blockers)', () => {
 
     await br.onBlockerTaskCompleted(fix.id)
 
-    const inbox = (await import('../inbox')) as unknown as {
-      listInboxItems: typeof import('../inbox').listInboxItems
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
     }
-    const open = await inbox.listInboxItems('open')
+    const open = await actionQueue.listActionQueueItems('open')
     const item = open.find((i) => i.kind === 'failed' && i.payload.taskId === dep.id)
     expect(item).toBeDefined()
     expect(item!.payload.lastStep).toBe('blocked-dependent')
@@ -337,7 +337,7 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(item!.body).toMatch(/never ran|blocked dependent/i)
   })
 
-  it('task that failed at a real step produces inbox lastStep matching the step name', async () => {
+  it('task that failed at a real step produces actionQueue lastStep matching the step name', async () => {
     // A task with error='verify:test: npm test failed' should surface
     // lastStep='verify:test' — the real step — not 'blocked-dependent'.
     const { q, br } = await loadModules(repo)
@@ -356,10 +356,10 @@ describe('blocker-resolution (task_blockers)', () => {
 
     await br.onBlockerTaskCompleted(fix.id)
 
-    const inbox = (await import('../inbox')) as unknown as {
-      listInboxItems: typeof import('../inbox').listInboxItems
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
     }
-    const open = await inbox.listInboxItems('open')
+    const open = await actionQueue.listActionQueueItems('open')
     const item = open.find((i) => i.kind === 'failed' && i.payload.taskId === dep.id)
     expect(item).toBeDefined()
     expect(item!.payload.lastStep).toBe('verify:test')
@@ -448,10 +448,10 @@ describe('blocker-resolution (task_blockers)', () => {
   })
 
   describe('onBlockerTaskFailed — block downstream queued dependents', () => {
-    it('flips a queued downstream task to blocked and raises an inbox item when its sole blocker fails', async () => {
+    it('flips a queued downstream task to blocked and raises an actionQueue item when its sole blocker fails', async () => {
       // A is the prerequisite (queued, then fails). B is queued with
       // --blocked-by A. A's failure must move B to blocked and raise one
-      // inbox item naming the failed prerequisite.
+      // actionQueue item naming the failed prerequisite.
       const { q, br } = await loadModules(repo)
       const a = await q.enqueueTask('prerequisite-a', undefined, { skipTriage: true })
       const b = await q.enqueueTask('downstream-b', undefined, { skipTriage: true })
@@ -473,11 +473,11 @@ describe('blocker-resolution (task_blockers)', () => {
       const reloaded = await q.getTask(b.id)
       expect(reloaded?.status).toBe('blocked')
 
-      // Per AC: exactly one inbox item naming the failed prerequisite.
-      const inbox = (await import('../inbox')) as unknown as {
-        listInboxItems: typeof import('../inbox').listInboxItems
+      // Per AC: exactly one actionQueue item naming the failed prerequisite.
+      const actionQueue = (await import('../action-queue')) as unknown as {
+        listActionQueueItems: typeof import('../action-queue').listActionQueueItems
       }
-      const open = await inbox.listInboxItems('open')
+      const open = await actionQueue.listActionQueueItems('open')
       const prereqItems = open.filter((i) => i.kind === 'prerequisite-failed')
       expect(prereqItems).toHaveLength(1)
       expect(prereqItems[0].kind).toBe('prerequisite-failed')
@@ -610,24 +610,24 @@ describe('blocker-resolution (task_blockers)', () => {
 
       expect(result.originFlipped).toBe(false)
       expect(result.unblock).toBeNull()
-      expect(result.inboxItemsClosed).toBe(0)
+      expect(result.actionQueueItemsClosed).toBe(0)
       expect((await q.getTask(origin.id))?.status).toBe('failed')
     })
 
-    // Bug guard: a recovery-failed inbox row keyed to an origin that is
+    // Bug guard: a recovery-failed actionQueue row keyed to an origin that is
     // already terminal (origin parked in `failed` by the retry-budget
     // guard before recovery finished) must still be closed when the
     // recovery itself reaches done. Previously the early-return on
-    // terminal-origin skipped supersedeInboxItemsForOrigin entirely and
+    // terminal-origin skipped supersedeActionQueueItemsForOrigin entirely and
     // stranded the row.
-    it('closes inbox rows keyed to a terminal origin even though it cannot flip status', async () => {
-      const { q, br, inbox } = await loadModules(repo)
+    it('closes actionQueue rows keyed to a terminal origin even though it cannot flip status', async () => {
+      const { q, br, actionQueue } = await loadModules(repo)
       const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
       await q.getClient().execute({
         sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
         args: [origin.id],
       })
-      await inbox.raiseInboxItem({
+      await actionQueue.raiseActionQueueItem({
         kind: 'failed',
         category: 'orchestrator',
         priority: 'high',
@@ -643,8 +643,8 @@ describe('blocker-resolution (task_blockers)', () => {
       const result = await br.markOriginDoneFromRecovery(origin.id)
 
       expect(result.originFlipped).toBe(false)
-      expect(result.inboxItemsClosed).toBe(1)
-      const open = await inbox.listInboxItems('open')
+      expect(result.actionQueueItemsClosed).toBe(1)
+      const open = await actionQueue.listActionQueueItems('open')
       expect(open.find((r) => r.kind === 'failed')).toBeUndefined()
     })
 
@@ -658,11 +658,11 @@ describe('blocker-resolution (task_blockers)', () => {
     // Bug guard companion: when the recovery's fixForTaskId is a PRD
     // slug rather than a real task row (real failure mode seen in the
     // 2026-05-25 dirty-main cluster), the origin lookup returns null but
-    // any inbox rows keyed to that origin string must still close.
-    it('closes inbox rows keyed to a missing origin id', async () => {
-      const { br, inbox } = await loadModules(repo)
-      const orphanOriginId = '1d4d2e62-add-an-events-view-and-an-inbox-view-to'
-      await inbox.raiseInboxItem({
+    // any actionQueue rows keyed to that origin string must still close.
+    it('closes actionQueue rows keyed to a missing origin id', async () => {
+      const { br, actionQueue } = await loadModules(repo)
+      const orphanOriginId = '1d4d2e62-add-an-events-view-and-an-actionQueue-view-to'
+      await actionQueue.raiseActionQueueItem({
         kind: 'failed',
         category: 'orchestrator',
         priority: 'high',
@@ -678,7 +678,7 @@ describe('blocker-resolution (task_blockers)', () => {
       const result = await br.markOriginDoneFromRecovery(orphanOriginId)
 
       expect(result.originFlipped).toBe(false)
-      expect(result.inboxItemsClosed).toBe(1)
+      expect(result.actionQueueItemsClosed).toBe(1)
     })
   })
 
@@ -686,8 +686,8 @@ describe('blocker-resolution (task_blockers)', () => {
     interface DiagnoseModule {
       setDiagnosis: typeof import('../diagnose').setDiagnosis
     }
-    interface InboxListModule {
-      listInboxItems: typeof import('../inbox').listInboxItems
+    interface ActionQueueListModule {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
     }
 
     const loadModulesWithDiagnose = async (
@@ -696,7 +696,7 @@ describe('blocker-resolution (task_blockers)', () => {
       q: QueueModule
       br: BlockerModule
       d: DiagnoseModule
-      inbox: InboxListModule
+      actionQueue: ActionQueueListModule
     }> => {
       vi.resetModules()
       process.env.MARS_REPO = repoPath
@@ -706,8 +706,8 @@ describe('blocker-resolution (task_blockers)', () => {
         '../../blocker-resolution'
       )) as unknown as BlockerModule
       const d = (await import('../diagnose')) as unknown as DiagnoseModule
-      const inbox = (await import('../inbox')) as unknown as InboxListModule
-      return { q, br, d, inbox }
+      const actionQueue = (await import('../action-queue')) as unknown as ActionQueueListModule
+      return { q, br, d, actionQueue }
     }
 
     const seedParkedParent = async (
@@ -760,8 +760,8 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(allKinds.filter((k) => k === 'diagnose')).toHaveLength(1)
     })
 
-    it('inconclusive verdict: parks the parent failed and raises exactly one actionable inbox item, no fix dispatched', async () => {
-      const { q, br, d, inbox } = await loadModulesWithDiagnose(repo)
+    it('inconclusive verdict: parks the parent failed and raises exactly one actionable actionQueue item, no fix dispatched', async () => {
+      const { q, br, d, actionQueue } = await loadModulesWithDiagnose(repo)
       const { parentId, choreId } = await seedParkedParent(q)
       await d.setDiagnosis(choreId, {
         kind: 'inconclusive',
@@ -774,8 +774,8 @@ describe('blocker-resolution (task_blockers)', () => {
       // Parent must be failed, not queued.
       expect((await q.getTask(parentId))?.status).toBe('failed')
 
-      // Exactly one inbox item of kind 'diagnose-inconclusive' was raised.
-      const open = await inbox.listInboxItems('open')
+      // Exactly one actionQueue item of kind 'diagnose-inconclusive' was raised.
+      const open = await actionQueue.listActionQueueItems('open')
       const diagnoseItems = open.filter((i) => i.kind === 'diagnose-inconclusive')
       expect(diagnoseItems).toHaveLength(1)
       expect(diagnoseItems[0].body).toContain('walked src/foo')
@@ -787,8 +787,8 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(kinds.filter((k) => k === 'task')).toHaveLength(1) // only the original parent
     })
 
-    it('no-verdict: treated as inconclusive — parent failed, one inbox item, no fix dispatched', async () => {
-      const { q, br, inbox } = await loadModulesWithDiagnose(repo)
+    it('no-verdict: treated as inconclusive — parent failed, one actionQueue item, no fix dispatched', async () => {
+      const { q, br, actionQueue } = await loadModulesWithDiagnose(repo)
       const { parentId, choreId } = await seedParkedParent(q)
       // Deliberately omit setDiagnosis — emulate a Chore that exited cleanly
       // without recording a verdict.
@@ -797,7 +797,7 @@ describe('blocker-resolution (task_blockers)', () => {
 
       expect((await q.getTask(parentId))?.status).toBe('failed')
 
-      const open = await inbox.listInboxItems('open')
+      const open = await actionQueue.listActionQueueItems('open')
       const diagnoseItems = open.filter((i) => i.kind === 'diagnose-inconclusive')
       expect(diagnoseItems).toHaveLength(1)
       expect(diagnoseItems[0].title).toMatch(/no verdict/i)
@@ -914,10 +914,10 @@ describe('blocker-resolution (task_blockers)', () => {
       // The worktree must be left untouched — no auto-rebase.
       expect(headSha(worktreePath)).toBe(depHeadBefore)
 
-      const inbox = (await import('../inbox')) as unknown as {
-        listInboxItems: typeof import('../inbox').listInboxItems
+      const actionQueue = (await import('../action-queue')) as unknown as {
+        listActionQueueItems: typeof import('../action-queue').listActionQueueItems
       }
-      const open = await inbox.listInboxItems('open')
+      const open = await actionQueue.listActionQueueItems('open')
       const ahead = open.find(
         (i) => i.kind === 'worktree-ahead',
       )

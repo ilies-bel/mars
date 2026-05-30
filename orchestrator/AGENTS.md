@@ -64,7 +64,7 @@ npm run typecheck
 - Gate any new per-task signal-capture call site through
   `isReflectDisabled()` (or `recordSignals`, which already gates itself)
   so `MARS_REFLECT_DISABLED=1` stays a single, comprehensive disable
-- File inbox items via `mars inbox raise --from -` (JSON on stdin) instead
+- File action queue items via `mars action-queue raise --from -` (JSON on stdin) instead
   of writing one-shot `.ts` scripts under `orchestrator/scripts/`. The CLI
   verb is the supported entry point for dispatched agents and self-heal
   investigations. Leaving an uncommitted `raise-*.ts` in a worktree
