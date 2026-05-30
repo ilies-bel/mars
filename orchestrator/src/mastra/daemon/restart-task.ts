@@ -1,4 +1,4 @@
-import { getTask, updateTask } from '../queue'
+import { getTask, hasIncompleteBlockers, updateTask } from '../queue'
 
 export type RestartErrorCode = 'NOT_FOUND' | 'WRONG_STATUS'
 
@@ -59,8 +59,13 @@ export const coreRestartTask = async (
   }
   await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
 
+  // Guard: if the task still has incomplete blockers, restore it to blocked
+  // rather than queued. An operator may restart a failed task whose blockers
+  // are themselves not yet done; queuing it would violate the blocker
+  // invariant (status='queued' requires ALL blockers to be 'done').
+  const hasBlockers = await hasIncompleteBlockers(id)
   await updateTask(id, {
-    status: 'queued',
+    status: hasBlockers ? 'blocked' : 'queued',
     branch: null,
     worktreePath: null,
     claudeSessionId: null,

@@ -9,6 +9,8 @@ interface QueueModule {
   getTask: typeof import('../../queue').getTask
   getClient: typeof import('../../queue').getClient
   initQueue: typeof import('../../queue').initQueue
+  addBlockers: typeof import('../../queue').addBlockers
+  updateTask: typeof import('../../queue').updateTask
 }
 
 interface ReconcileRunningModule {
@@ -148,6 +150,58 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     expect(reloaded?.status).toBe('queued')
     expect(reloaded?.worktreePath).toBeNull()
     expect(reloaded?.branch).toBeNull()
+  })
+
+  it('restores a running task to blocked (not queued) when it still has incomplete blockers', async () => {
+    const { q, rr } = await loadModules(repo)
+    const blocker = await q.enqueueTask('blocker work', undefined, { skipTriage: true })
+    const dependent = await q.enqueueTask('dependent work', undefined, { skipTriage: true })
+
+    // Wire blocker edge (blocker is 'queued', not 'done')
+    await q.addBlockers(dependent.id, [blocker.id])
+
+    // Simulate: dependent was running when daemon died
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = 'running' WHERE id = ?`,
+      args: [dependent.id],
+    })
+
+    const requeued = await rr.requeueRunningTasksFromPriorDaemon(repo)
+
+    // Must NOT be in the requeued list (it went back to blocked, not queued)
+    expect(requeued).not.toContain(dependent.id)
+
+    // Must be 'blocked', not 'queued'
+    const reloaded = await q.getTask(dependent.id)
+    expect(reloaded?.status).toBe('blocked')
+
+    // Blocker task is unchanged
+    const blockerReloaded = await q.getTask(blocker.id)
+    expect(blockerReloaded?.status).toBe('queued')
+  })
+
+  it('requeues a running task with all blockers done (done blockers do not gate requeue)', async () => {
+    const { q, rr } = await loadModules(repo)
+    const blocker = await q.enqueueTask('done blocker', undefined, { skipTriage: true })
+    const dependent = await q.enqueueTask('dependent work', undefined, { skipTriage: true })
+
+    await q.addBlockers(dependent.id, [blocker.id])
+
+    // Mark the blocker as done — all blockers satisfied
+    await q.updateTask(blocker.id, { status: 'done' })
+
+    // Simulate: dependent was running when daemon died
+    await q.getClient().execute({
+      sql: `UPDATE tasks SET status = 'running' WHERE id = ?`,
+      args: [dependent.id],
+    })
+
+    const requeued = await rr.requeueRunningTasksFromPriorDaemon(repo)
+
+    expect(requeued).toContain(dependent.id)
+
+    const reloaded = await q.getTask(dependent.id)
+    expect(reloaded?.status).toBe('queued')
   })
 
   it('returns an empty array when no tasks are running', async () => {
