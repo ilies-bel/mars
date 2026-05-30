@@ -27,5 +27,11 @@
     "CLAUDE.md",
     ".claude/settings.json"
   ],
+  "hookRegistrations": [
+    { "matcher": "Edit", "command": ".claude/hooks/block-tracked-writes.sh" },
+    { "matcher": "Write", "command": ".claude/hooks/block-tracked-writes.sh" },
+    { "matcher": "NotebookEdit", "command": ".claude/hooks/block-tracked-writes.sh" },
+    { "matcher": "Bash", "command": ".claude/hooks/warn-raw-queue-sql.sh" }
+  ],
   "scopes": []
 }

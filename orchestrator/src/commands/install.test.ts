@@ -351,6 +351,203 @@ describe('runInstall — mars.lock', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Settings.json hook merge (acceptance criteria a–d)
+// ---------------------------------------------------------------------------
+
+describe('runInstall — settings.json hook merge', () => {
+  /**
+   * A manifest that owns both hook scripts and declares the registrations that
+   * map each script to its PreToolUse matcher(s).
+   */
+  const HOOK_MANIFEST: Manifest = {
+    schemaVersion: 1,
+    owned: [
+      '.claude/hooks/block-tracked-writes.sh',
+      '.claude/hooks/warn-raw-queue-sql.sh',
+    ],
+    hybrid: ['.claude/settings.json'],
+    hookRegistrations: [
+      { matcher: 'Edit', command: '.claude/hooks/block-tracked-writes.sh' },
+      { matcher: 'Write', command: '.claude/hooks/block-tracked-writes.sh' },
+      { matcher: 'NotebookEdit', command: '.claude/hooks/block-tracked-writes.sh' },
+      { matcher: 'Bash', command: '.claude/hooks/warn-raw-queue-sql.sh' },
+    ],
+    scopes: [],
+  }
+
+  const SETTINGS_DST = join(CONSUMER_ROOT, '.claude/settings.json')
+  const SETTINGS_SRC = join(FRAMEWORK_ROOT, '.claude/settings.json')
+
+  /**
+   * Framework-side source files for the owned hook scripts and the settings.json
+   * template. Every test in this describe block needs these so runInstall can
+   * copy the owned files before it reaches the hybrid merge step.
+   */
+  const HOOK_SOURCES = new Map<string, Buffer>([
+    [join(FRAMEWORK_ROOT, '.claude/hooks/block-tracked-writes.sh'), Buffer.from('#!/bin/bash\n')],
+    [join(FRAMEWORK_ROOT, '.claude/hooks/warn-raw-queue-sql.sh'), Buffer.from('#!/bin/bash\n')],
+    [SETTINGS_SRC, Buffer.from('{}')], // framework template used when settings.json is absent
+  ])
+
+  // ── (a) existing settings.json gains the PreToolUse hook entries ──────────
+
+  it('(a) merges PreToolUse hook entries into an existing settings.json that has only enabledPlugins', async () => {
+    const existingSettings = JSON.stringify({ enabledPlugins: ['@my-plugin'] })
+    const deps = makeDeps({
+      existingPaths: new Set([SETTINGS_DST]),
+      sourceFiles: new Map([...HOOK_SOURCES, [SETTINGS_DST, Buffer.from(existingSettings)]]),
+    })
+    await runInstall(HOOK_MANIFEST, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps)
+
+    const written = deps.written.get(SETTINGS_DST)
+    expect(written).toBeDefined()
+    const result = JSON.parse(written!.content.toString('utf8')) as {
+      enabledPlugins: string[]
+      hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }> }
+    }
+
+    // existing key is preserved
+    expect(result.enabledPlugins).toEqual(['@my-plugin'])
+
+    // Edit → block-tracked-writes.sh is registered
+    const editEntry = result.hooks.PreToolUse.find((e) => e.matcher === 'Edit')
+    expect(editEntry).toBeDefined()
+    expect(editEntry!.hooks.some((h) => h.command.includes('block-tracked-writes.sh'))).toBe(true)
+
+    // Write → block-tracked-writes.sh is registered
+    const writeEntry = result.hooks.PreToolUse.find((e) => e.matcher === 'Write')
+    expect(writeEntry).toBeDefined()
+    expect(writeEntry!.hooks.some((h) => h.command.includes('block-tracked-writes.sh'))).toBe(true)
+
+    // NotebookEdit → block-tracked-writes.sh is registered
+    const notebookEntry = result.hooks.PreToolUse.find((e) => e.matcher === 'NotebookEdit')
+    expect(notebookEntry).toBeDefined()
+    expect(notebookEntry!.hooks.some((h) => h.command.includes('block-tracked-writes.sh'))).toBe(true)
+
+    // Bash → warn-raw-queue-sql.sh is registered
+    const bashEntry = result.hooks.PreToolUse.find((e) => e.matcher === 'Bash')
+    expect(bashEntry).toBeDefined()
+    expect(bashEntry!.hooks.some((h) => h.command.includes('warn-raw-queue-sql.sh'))).toBe(true)
+  })
+
+  it('(a) hook commands use the $CLAUDE_PROJECT_DIR/<path> format', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([SETTINGS_DST]),
+      sourceFiles: new Map([...HOOK_SOURCES, [SETTINGS_DST, Buffer.from('{}')]]),
+    })
+    await runInstall(HOOK_MANIFEST, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps)
+
+    const result = JSON.parse(deps.written.get(SETTINGS_DST)!.content.toString('utf8')) as {
+      hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }> }
+    }
+    const editEntry = result.hooks.PreToolUse.find((e) => e.matcher === 'Edit')
+    expect(editEntry!.hooks[0].command).toBe(
+      '$CLAUDE_PROJECT_DIR/.claude/hooks/block-tracked-writes.sh',
+    )
+  })
+
+  // ── (b) idempotent — no duplicate entries ─────────────────────────────────
+
+  it('(b) running install twice does not duplicate hook entries', async () => {
+    const existingSettings = JSON.stringify({ enabledPlugins: [] })
+
+    // First run
+    const deps1 = makeDeps({
+      existingPaths: new Set([SETTINGS_DST]),
+      sourceFiles: new Map([...HOOK_SOURCES, [SETTINGS_DST, Buffer.from(existingSettings)]]),
+    })
+    await runInstall(HOOK_MANIFEST, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps1)
+    const afterFirstRun = deps1.written.get(SETTINGS_DST)!.content
+
+    // Second run — feed first run's output as the existing file
+    const deps2 = makeDeps({
+      existingPaths: new Set([SETTINGS_DST]),
+      sourceFiles: new Map([...HOOK_SOURCES, [SETTINGS_DST, afterFirstRun]]),
+    })
+    await runInstall(HOOK_MANIFEST, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps2)
+    const afterSecondRun = deps2.written.get(SETTINGS_DST)!.content
+
+    const settings = JSON.parse(afterSecondRun.toString('utf8')) as {
+      hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }> }
+    }
+
+    // Each matcher must have exactly one hook entry, never two
+    for (const matcher of ['Edit', 'Write', 'NotebookEdit'] as const) {
+      const entry = settings.hooks.PreToolUse.find((e) => e.matcher === matcher)
+      expect(entry, `matcher ${matcher} should exist after 2 runs`).toBeDefined()
+      expect(
+        entry!.hooks,
+        `matcher ${matcher} should have exactly 1 hook after 2 installs`,
+      ).toHaveLength(1)
+    }
+    const bashEntry = settings.hooks.PreToolUse.find((e) => e.matcher === 'Bash')
+    expect(bashEntry!.hooks).toHaveLength(1)
+  })
+
+  // ── (c) a hook not in owned manifest is never registered ──────────────────
+
+  it('(c) does not register a hook whose script is not in manifest.owned', async () => {
+    // warn-raw-queue-sql.sh is deliberately absent from owned
+    const manifest: Manifest = {
+      schemaVersion: 1,
+      owned: ['.claude/hooks/block-tracked-writes.sh'],
+      hybrid: ['.claude/settings.json'],
+      hookRegistrations: [
+        { matcher: 'Edit', command: '.claude/hooks/block-tracked-writes.sh' },
+        { matcher: 'Bash', command: '.claude/hooks/warn-raw-queue-sql.sh' }, // not in owned!
+      ],
+      scopes: [],
+    }
+    const deps = makeDeps({
+      existingPaths: new Set([SETTINGS_DST]),
+      sourceFiles: new Map([
+        [join(FRAMEWORK_ROOT, '.claude/hooks/block-tracked-writes.sh'), Buffer.from('#!/bin/bash\n')],
+        [SETTINGS_DST, Buffer.from('{}')],
+      ]),
+    })
+    await runInstall(manifest, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps)
+
+    const written = deps.written.get(SETTINGS_DST)!
+    const settings = JSON.parse(written.content.toString('utf8')) as {
+      hooks?: { PreToolUse?: Array<{ matcher: string }> }
+    }
+    const preToolUse = settings.hooks?.PreToolUse ?? []
+
+    // Bash hook should NOT be registered (script not in owned)
+    expect(preToolUse.find((e) => e.matcher === 'Bash')).toBeUndefined()
+
+    // Edit hook SHOULD be registered (script is in owned)
+    expect(preToolUse.find((e) => e.matcher === 'Edit')).toBeDefined()
+  })
+
+  // ── (d) absent settings.json is still written from framework source ────────
+
+  it('(d) writes settings.json from the framework source when it does not yet exist', async () => {
+    const frameworkSettings = JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: 'Edit',
+            hooks: [{ type: 'command', command: '$CLAUDE_PROJECT_DIR/.claude/hooks/block-tracked-writes.sh' }],
+          },
+        ],
+      },
+    })
+    // No existingPaths — settings.json is absent on the consumer
+    const deps = makeDeps({
+      sourceFiles: new Map([
+        ...HOOK_SOURCES,
+        [SETTINGS_SRC, Buffer.from(frameworkSettings)], // override the template source
+      ]),
+    })
+    await runInstall(HOOK_MANIFEST, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps)
+
+    expect(deps.written.has(SETTINGS_DST)).toBe(true)
+    expect(deps.written.get(SETTINGS_DST)!.content.toString('utf8')).toBe(frameworkSettings)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Integration test — real filesystem (temp dirs)
 // ---------------------------------------------------------------------------
 

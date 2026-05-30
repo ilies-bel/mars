@@ -18,10 +18,27 @@ import { join } from 'node:path'
 // Types
 // ---------------------------------------------------------------------------
 
+export interface HookRegistration {
+  /** The PreToolUse matcher (e.g. 'Edit', 'Write', 'Bash'). */
+  matcher: string
+  /**
+   * Repo-relative path to the hook script that must also appear in
+   * `manifest.owned` for the registration to be applied.
+   * (e.g. '.claude/hooks/block-tracked-writes.sh')
+   */
+  command: string
+}
+
 export interface Manifest {
   schemaVersion: number
   owned: string[]
   hybrid: string[]
+  /**
+   * PreToolUse hook entries to merge into .claude/settings.json.
+   * Only registrations whose `command` is listed in `owned` are applied —
+   * registering a hook that isn't deployed is never correct.
+   */
+  hookRegistrations?: HookRegistration[]
   scopes: unknown[]
 }
 
@@ -66,6 +83,65 @@ function isExecutable(relPath: string): boolean {
   return relPath.endsWith('.sh')
 }
 
+/**
+ * Merge Mars-owned PreToolUse hook entries into the content of an existing
+ * .claude/settings.json. All other keys are preserved. Hook entries are
+ * deduplicated by command string so the operation is idempotent.
+ *
+ * Only registrations whose `command` path is present in `owned` are applied —
+ * this prevents registering a hook script that was never deployed.
+ *
+ * The hook command is expanded from a repo-relative path to
+ * `$CLAUDE_PROJECT_DIR/<relPath>` to match Claude Code's expected format.
+ *
+ * Exported for use by other install/init paths that need the same merge.
+ */
+export function mergeSettingsHooks(
+  existingContent: Buffer,
+  opts: {
+    owned: string[]
+    hookRegistrations?: HookRegistration[]
+  },
+): Buffer {
+  const registrations = opts.hookRegistrations ?? []
+  const ownedSet = new Set(opts.owned)
+  const applicable = registrations.filter((r) => ownedSet.has(r.command))
+
+  if (applicable.length === 0) return existingContent
+
+  const settings = JSON.parse(existingContent.toString('utf8')) as Record<string, unknown>
+
+  // Ensure hooks.PreToolUse is a writeable array
+  if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
+    settings.hooks = {}
+  }
+  const hooks = settings.hooks as Record<string, unknown>
+  if (!Array.isArray(hooks.PreToolUse)) {
+    hooks.PreToolUse = []
+  }
+  const preToolUse = hooks.PreToolUse as Array<{
+    matcher: string
+    hooks: Array<{ type: string; command: string }>
+  }>
+
+  for (const reg of applicable) {
+    const fullCommand = `$CLAUDE_PROJECT_DIR/${reg.command}`
+
+    let matcherEntry = preToolUse.find((e) => e.matcher === reg.matcher)
+    if (!matcherEntry) {
+      matcherEntry = { matcher: reg.matcher, hooks: [] }
+      preToolUse.push(matcherEntry)
+    }
+
+    // Deduplicate by command string — idempotent across multiple installs
+    if (!matcherEntry.hooks.some((h) => h.command === fullCommand)) {
+      matcherEntry.hooks.push({ type: 'command', command: fullCommand })
+    }
+  }
+
+  return Buffer.from(JSON.stringify(settings, null, 2) + '\n')
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -99,13 +175,27 @@ export async function runInstall(
     files.push({ path: relPath, kind: 'owned' })
   }
 
-  // --- hybrid files (write only if absent) ---
+  // --- hybrid files (write if absent; merge settings.json hooks if present) ---
   for (const relPath of manifest.hybrid) {
     const dstPath = join(consumerRoot, relPath)
+
+    if (relPath === '.claude/settings.json' && deps.exists(dstPath)) {
+      // settings.json already exists: merge Mars PreToolUse hook registrations
+      // into it rather than skipping the file entirely (ADR-0007 blanket-skip
+      // leaves hooks inert on repos that already have a settings.json).
+      const existingContent = deps.readBytes(dstPath)
+      const mergedContent = mergeSettingsHooks(existingContent, manifest)
+      deps.writeFile(dstPath, mergedContent)
+      deps.log(`merged hooks: ${relPath}`)
+      files.push({ path: relPath, kind: 'hybrid' })
+      continue
+    }
+
     if (deps.exists(dstPath)) {
       deps.log(`skip (exists): ${relPath}`)
       continue
     }
+
     const srcPath = join(frameworkRoot, relPath)
     const content = deps.readBytes(srcPath)
     const mode = isExecutable(relPath) ? 0o755 : undefined
