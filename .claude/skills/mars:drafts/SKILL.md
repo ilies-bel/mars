@@ -1,6 +1,6 @@
 ---
 name: mars:drafts
-description: Show Mars draft proposals and act on a single one — grill (shape into PRD), promote, reject, or delete. Lists drafts only; the inbox lives in `/mars:inbox`. Use when the user says "mars drafts", "show drafts", "refine a draft", "what drafts do I have", or invokes `/mars:drafts`.
+description: Show Mars draft proposals and act on a single one — grill (shape into PRD), promote, reject, or delete. Lists drafts only; the action queue lives in `/mars:action-queue`. Use when the user says "mars drafts", "show drafts", "refine a draft", "what drafts do I have", or invokes `/mars:drafts`.
 ---
 
 # Mars: drafts router
@@ -10,9 +10,9 @@ listing them, letting the user pick one, and dispatching the chosen
 draft-side action (`grill` / `promote` / `reject` / `delete`).
 
 Drafts are proposal rows in `.mars/state.db` with `status='draft'`. The
-inbox is a separate surface and lives in `/mars:inbox`. If the user
-hands you an id that turns out to be an inbox item (not a draft), point
-them at `/mars:inbox` and stop.
+action queue is a separate surface and lives in `/mars:action-queue`. If the user
+hands you an id that turns out to be an action queue item (not a draft), point
+them at `/mars:action-queue` and stop.
 
 # Step 1 — Resolve the target
 
@@ -27,10 +27,10 @@ Run `mars proposal show <argument>`:
   collapsing the `problem`, `solution`, `user stories`, `notes`, or
   any other section. The user needs the raw content to decide what to
   do. Then go to Step 3 (skip listing).
-- **No hit / not a draft** → the id may be an inbox item. Tell the
+- **No hit / not a draft** → the id may be an action queue item. Tell the
   user in one line:
 
-  > `<id> is not a draft proposal. If it's an inbox item, use /mars:inbox <id>.`
+  > `<id> is not a draft proposal. If it's an action queue item, use /mars:action-queue <id>.`
 
   Then stop. Do not fall through to listing — the user named
   something specific.
@@ -113,8 +113,8 @@ whatever the CLI reports verbatim. Stop after the dispatch.
 
 # What you do NOT do
 
-- Do not show, list, or act on inbox items. The inbox lives in
-  `/mars:inbox`.
+- Do not show, list, or act on action queue items. The action queue lives in
+  `/mars:action-queue`.
 - Do not synthesise a PRD inline. Shaping happens in `/mars:grill`
   (which itself ends by invoking `/mars:to-prd`).
 - Do not slice. Slicing is a separate verb (`mars proposal slice`) that

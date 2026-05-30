@@ -22,9 +22,9 @@ interface FollowupModule {
   runDiagnoseFollowup: typeof import('../diagnose-followup').runDiagnoseFollowup
 }
 
-interface InboxModule {
-  getInboxItem: typeof import('../inbox').getInboxItem
-  listInboxItems: typeof import('../inbox').listInboxItems
+interface ActionQueueModule {
+  getActionQueueItem: typeof import('../action-queue').getActionQueueItem
+  listActionQueueItems: typeof import('../action-queue').listActionQueueItems
 }
 
 const setupRepo = (): string => {
@@ -40,7 +40,7 @@ const loadModules = async (
   q: QueueModule
   d: DiagnoseModule
   f: FollowupModule
-  inbox: InboxModule
+  actionQueue: ActionQueueModule
 }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
@@ -48,8 +48,8 @@ const loadModules = async (
   await q.initQueue()
   const d = (await import('../diagnose')) as unknown as DiagnoseModule
   const f = (await import('../diagnose-followup')) as unknown as FollowupModule
-  const inbox = (await import('../inbox')) as unknown as InboxModule
-  return { q, d, f, inbox }
+  const actionQueue = (await import('../action-queue')) as unknown as ActionQueueModule
+  return { q, d, f, actionQueue }
 }
 
 const seedParkedParent = async (
@@ -119,8 +119,8 @@ describe('runDiagnoseFollowup', () => {
     expect(blockers).toEqual([outcome.fixTaskId])
   })
 
-  it('on inconclusive: parks the parent failed, raises one inbox item carrying what-was-checked and why-unscoped, dispatches no fix', async () => {
-    const { q, d, f, inbox } = await loadModules(repo)
+  it('on inconclusive: parks the parent failed, raises one actionQueue item carrying what-was-checked and why-unscoped, dispatches no fix', async () => {
+    const { q, d, f, actionQueue } = await loadModules(repo)
     const { parentId, choreId } = await seedParkedParent(q)
     await d.setDiagnosis(choreId, {
       kind: 'inconclusive',
@@ -129,40 +129,40 @@ describe('runDiagnoseFollowup', () => {
     })
 
     const outcome = await f.runDiagnoseFollowup(choreId)
-    expect(outcome.action).toBe('inbox-raised')
-    expect(outcome.inboxItemId).toBeDefined()
+    expect(outcome.action).toBe('action-queue-raised')
+    expect(outcome.actionQueueItemId).toBeDefined()
 
     const parent = await q.getTask(parentId)
     expect(parent?.status).toBe('failed')
     expect(parent?.failedPhase).toBe('code')
 
     // No fix attempt was created.
-    const item = await inbox.getInboxItem(outcome.inboxItemId!)
+    const item = await actionQueue.getActionQueueItem(outcome.actionQueueItemId!)
     expect(item?.kind).toBe('diagnose-inconclusive')
     expect(item?.body).toContain('walked src/foo')
     expect(item?.body).toContain('does not exist in the repo')
   })
 
-  it('on no-verdict (Chore exited without recording): treats as inconclusive — parent failed, one inbox item, no fix', async () => {
-    const { q, f, inbox } = await loadModules(repo)
+  it('on no-verdict (Chore exited without recording): treats as inconclusive — parent failed, one actionQueue item, no fix', async () => {
+    const { q, f, actionQueue } = await loadModules(repo)
     const { parentId, choreId } = await seedParkedParent(q)
     // Deliberately skip setDiagnosis — emulate a Chore that exited cleanly
     // but forgot to record a verdict.
 
     const outcome = await f.runDiagnoseFollowup(choreId)
-    expect(outcome.action).toBe('inbox-raised')
+    expect(outcome.action).toBe('action-queue-raised')
     expect(outcome.verdictKind).toBe('no-verdict')
 
     const parent = await q.getTask(parentId)
     expect(parent?.status).toBe('failed')
 
-    const item = await inbox.getInboxItem(outcome.inboxItemId!)
+    const item = await actionQueue.getActionQueueItem(outcome.actionQueueItemId!)
     expect(item?.title).toMatch(/no verdict/i)
     expect(item?.body).toMatch(/treated as inconclusive/i)
   })
 
-  it('dedups the inbox item under re-processing of the same dead end (one item, not a pile)', async () => {
-    const { q, d, f, inbox } = await loadModules(repo)
+  it('dedups the actionQueue item under re-processing of the same dead end (one item, not a pile)', async () => {
+    const { q, d, f, actionQueue } = await loadModules(repo)
     const { parentId, choreId } = await seedParkedParent(q)
     await d.setDiagnosis(choreId, {
       kind: 'inconclusive',
@@ -181,11 +181,11 @@ describe('runDiagnoseFollowup', () => {
     })
     const second = await f.runDiagnoseFollowup(choreId)
 
-    expect(first.action).toBe('inbox-raised')
-    expect(second.action).toBe('inbox-raised')
-    expect(second.inboxItemId).toBe(first.inboxItemId)
+    expect(first.action).toBe('action-queue-raised')
+    expect(second.action).toBe('action-queue-raised')
+    expect(second.actionQueueItemId).toBe(first.actionQueueItemId)
 
-    const allItems = await inbox.listInboxItems('open')
+    const allItems = await actionQueue.listActionQueueItems('open')
     const diagnoseItems = allItems.filter(
       (i) => i.kind === 'diagnose-inconclusive',
     )

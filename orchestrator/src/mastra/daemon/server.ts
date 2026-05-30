@@ -35,9 +35,9 @@ import {
   ensureAlertDismisser,
 } from './alert-dismisser'
 import {
-  drainInboxRepopulations,
-  ensureInboxRepopulator,
-} from './inbox-repopulator'
+  drainActionQueueRepopulations,
+  ensureActionQueueRepopulator,
+} from './action-queue-repopulator'
 import type { Logger, WorkflowEvent } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
 import { resolveGitBin } from '../lib/git'
@@ -55,13 +55,13 @@ import {
   recoverBlockedTasks,
 } from '../blocker-resolution'
 import {
-  supersedeInboxItemsForOrigin,
+  supersedeActionQueueItemsForOrigin,
   supersedeObsoletePreflightDirtyMainRows,
-} from '../lib/inbox'
+} from '../lib/action-queue'
 import {
   raiseAggregatedMainCommiterFailureRow,
-  sweepStaleFailedMainCommiterInbox,
-} from './main-dirty-inbox'
+  sweepStaleFailedMainCommiterActionQueue,
+} from './main-dirty-action-queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { failureReasonStringToCode } from '../lib/failure-reasons'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore } from '../lib/trace-events-store'
@@ -362,7 +362,7 @@ export const startDaemon = async (
     )
   }
 
-  // Slice K one-shot cleanup: supersede any open inbox rows that still
+  // Slice K one-shot cleanup: supersede any open actionQueue rows that still
   // describe the retired `setup:preflight/dirty-main` failure mode. The
   // codepath no longer exists, so these rows can never reach a true
   // resolution from the operator side. Idempotent: silent when no rows
@@ -371,12 +371,12 @@ export const startDaemon = async (
     const closed = await supersedeObsoletePreflightDirtyMainRows()
     if (closed.length > 0) {
       log(
-        `[slice K] resolved ${closed.length} obsolete preflight-dirty-main inbox rows`,
+        `[slice K] resolved ${closed.length} obsolete preflight-dirty-main actionQueue rows`,
       )
     }
   } catch (err) {
     log(
-      `[slice K] preflight-dirty-main inbox cleanup failed: ${(err as Error).message}`,
+      `[slice K] preflight-dirty-main actionQueue cleanup failed: ${(err as Error).message}`,
     )
   }
 
@@ -1160,9 +1160,9 @@ export const startDaemon = async (
           )
         }
         // Slice F.2: when a `main-commiter` recovery itself fails, raise a
-        // single aggregated inbox row listing every blocked dependent so
+        // single aggregated actionQueue row listing every blocked dependent so
         // the operator can see the cohort at a glance. Overrides the
-        // generic recovery-failed row that `inbox-repopulator` would
+        // generic recovery-failed row that `action-queue-repopulator` would
         // raise for this task. Idempotent on the committer task id —
         // a repeat failure transition bumps seenCount only.
         if (after.kind === 'fix') {
@@ -1175,7 +1175,7 @@ export const startDaemon = async (
             }
           } catch (err) {
             log(
-              `[main-dirty] error raising aggregated inbox row for failed committer ${id}: ${(err as Error).message}`,
+              `[main-dirty] error raising aggregated actionQueue row for failed committer ${id}: ${(err as Error).message}`,
             )
           }
         }
@@ -1188,7 +1188,7 @@ export const startDaemon = async (
         // blocker is cancelled by the user (stop-task RPC marks the row
         // failed with failure_reason='cancelled'), every dependent
         // waiting on it must also fail rather than be recovered. The
-        // helper raises one inbox item per cascaded dependent so the
+        // helper raises one actionQueue item per cascaded dependent so the
         // operator can see why the chain died.
         try {
           const cascade = await onBlockerTaskCancelled(id)
@@ -1206,7 +1206,7 @@ export const startDaemon = async (
         }
       }
       if (after.status === 'done') {
-        // Auto-supersede the inbox row keyed to this origin task, if any.
+        // Auto-supersede the actionQueue row keyed to this origin task, if any.
         // The operator no longer needs to ack/dismiss: the underlying
         // stuck task has reached a terminal state on its own.
         //
@@ -1219,22 +1219,22 @@ export const startDaemon = async (
         // Invalidator is deferred follow-up, not required for the
         // staleness guarantee (ADR-0027/0030).
         try {
-          const closed = await supersedeInboxItemsForOrigin(id, 'origin-done')
+          const closed = await supersedeActionQueueItemsForOrigin(id, 'origin-done')
           if (closed.length > 0) {
             log(
-              `[inbox] superseded ${closed.length} item(s) for origin ${id} on done`,
+              `[actionQueue] superseded ${closed.length} item(s) for origin ${id} on done`,
             )
           }
         } catch (err) {
           log(
-            `[inbox] error superseding items for origin ${id}: ${(err as Error).message}`,
+            `[actionQueue] error superseding items for origin ${id}: ${(err as Error).message}`,
           )
         }
         // Slice F.2: when a `main-commiter` succeeds, any open `failed`
-        // inbox rows raised by PREVIOUS committer attempts (for stale
+        // actionQueue rows raised by PREVIOUS committer attempts (for stale
         // hashes — i.e. a different broken state of main that has since
         // been resolved) are no longer actionable. Sweep them to
-        // `resolved/superseded` so the operator's inbox doesn't keep
+        // `resolved/superseded` so the operator's actionQueue doesn't keep
         // stale "main-committer failed" rows for a state that's gone.
         if (after.kind === 'fix') {
           try {
@@ -1242,7 +1242,7 @@ export const startDaemon = async (
               await import('../lib/main-dirty')
             const payload = parseMainCommiterPayload(after.recoveryPayload)
             if (payload && payload.recipe === MAIN_COMMITER_RECIPE) {
-              await sweepStaleFailedMainCommiterInbox(
+              await sweepStaleFailedMainCommiterActionQueue(
                 payload.dirtyMainHash,
                 after.id,
                 log,
@@ -1250,7 +1250,7 @@ export const startDaemon = async (
             }
           } catch (err) {
             log(
-              `[main-dirty] error sweeping stale committer inbox rows after ${id} done: ${(err as Error).message}`,
+              `[main-dirty] error sweeping stale committer actionQueue rows after ${id} done: ${(err as Error).message}`,
             )
           }
         }
@@ -1258,7 +1258,7 @@ export const startDaemon = async (
         // successful recovery counts as its origin reaching done, so
         // a recovered blocker unblocks the whole chain." When a fix
         // task (kind='fix', non-null fixForTaskId) reaches done, flip
-        // the origin row to done, close any inbox items keyed on the
+        // the origin row to done, close any actionQueue items keyed on the
         // origin, and propagate the unblock to its dependents.
         if (after.kind === 'fix' && after.fixForTaskId !== null) {
           try {
@@ -1267,7 +1267,7 @@ export const startDaemon = async (
             )
             if (propagation.originFlipped) {
               log(
-                `[propagate] recovery ${id} flipped origin ${propagation.originTaskId} to done; closed ${propagation.inboxItemsClosed} inbox item(s)`,
+                `[propagate] recovery ${id} flipped origin ${propagation.originTaskId} to done; closed ${propagation.actionQueueItemsClosed} actionQueue item(s)`,
               )
               if (propagation.unblock) {
                 for (const o of propagation.unblock.outcomes) {
@@ -1292,7 +1292,7 @@ export const startDaemon = async (
         }
         // Diagnose Chore completion takes the PRD 06e677fb verdict-driven
         // branch — read the structured verdict, dispatch exactly one fix
-        // attempt OR raise exactly one inbox item, and re-park the parent
+        // attempt OR raise exactly one actionQueue item, and re-park the parent
         // accordingly. The generic on-blocker-completed path is skipped
         // for diagnose Chores: their job is to redirect the parent's
         // blocker chain, not to unblock it directly.
@@ -1307,9 +1307,9 @@ export const startDaemon = async (
                 `[diagnose] chore ${id}: root-cause verdict; dispatched fix ${outcome.fixTaskId}; parent ${outcome.parentTaskId} parked behind it`,
               )
               bus.emit('task.queued', { taskId: outcome.fixTaskId })
-            } else if (outcome.action === 'inbox-raised') {
+            } else if (outcome.action === 'action-queue-raised') {
               log(
-                `[diagnose] chore ${id}: ${outcome.verdictKind} verdict; parent ${outcome.parentTaskId} parked failed, inbox item ${outcome.inboxItemId} raised`,
+                `[diagnose] chore ${id}: ${outcome.verdictKind} verdict; parent ${outcome.parentTaskId} parked failed, actionQueue item ${outcome.actionQueueItemId} raised`,
               )
             } else {
               log(`[diagnose] chore ${id}: no-op (parent ${outcome.parentTaskId})`)
@@ -1559,7 +1559,7 @@ export const startDaemon = async (
 
     // Daemon-killed tasks: tasks SIGKILL'd with a prior daemon are stamped
     // `failureSignature: 'daemon-killed'` and left in `failed`. We do NOT
-    // auto-requeue them — raise one alert-only inbox item per task so the
+    // auto-requeue them — raise one alert-only actionQueue item per task so the
     // operator decides (Requeue now / Restart daemon).
     try {
       const { detectAndRaiseDaemonKilled } = await import('./daemon-killed-sweep')
@@ -2096,7 +2096,7 @@ export const startDaemon = async (
   // Same lifecycle as the failure-reason catalog: built-in seed under
   // `src/mastra/recipes/built-in/*.md` merged with `.mars/recipes/*.md`
   // overrides, loaded once. No recipe is dispatched in this slice — the
-  // catalog is exposed so the inbox UI can name which recipe a recovery
+  // catalog is exposed so the actionQueue UI can name which recipe a recovery
   // task ran under (wiring lands in slice F).
   const { loadRecipeCatalog } = await import('../lib/recipes')
   const recipeCatalog = await loadRecipeCatalog(resolveContext().stateDir, {
@@ -2155,7 +2155,7 @@ export const startDaemon = async (
           const { getRepoRoot } = await import('../context')
           const { runClaudeCode } = await import('../lib/git')
           const { getTask } = await import('../queue')
-          const { patchOpenInboxPayload } = await import('../lib/inbox')
+          const { patchOpenActionQueuePayload } = await import('../lib/action-queue')
 
           const repoRoot = getRepoRoot()
           const worktreePath = join(repoRoot, '.mars', 'worktrees', id)
@@ -2248,8 +2248,8 @@ export const startDaemon = async (
             }
           }
 
-          // Persist onto the inbox item so the UI can render it.
-          await patchOpenInboxPayload(id, {
+          // Persist onto the actionQueue item so the UI can render it.
+          await patchOpenActionQueuePayload(id, {
             investigation: {
               text: explanation,
               investigatedAt: new Date().toISOString(),
@@ -2282,7 +2282,7 @@ export const startDaemon = async (
           const { getRepoRoot } = await import('../context')
           const { runClaudeCode } = await import('../lib/git')
           const { getTask } = await import('../queue')
-          const { patchOpenInboxPayload } = await import('../lib/inbox')
+          const { patchOpenActionQueuePayload } = await import('../lib/action-queue')
 
           const repoRoot = getRepoRoot()
           const worktreePath = join(repoRoot, '.mars', 'worktrees', id)
@@ -2377,7 +2377,7 @@ export const startDaemon = async (
             }
           }
 
-          await patchOpenInboxPayload(id, {
+          await patchOpenActionQueuePayload(id, {
             diagnosis: {
               text: diagnosis,
               diagnosedAt: new Date().toISOString(),
@@ -2449,16 +2449,16 @@ export const startDaemon = async (
         { now: Date.now(), failedWindowMs },
       )
     },
-    inboxAck: async (kind, id) => {
-      const { dismissEntity } = await import('../lib/inbox-dismissals')
+    actionQueueAck: async (kind, id) => {
+      const { dismissEntity } = await import('../lib/action-queue-dismissals')
       await dismissEntity(kind, id, { by: 'daemon', note: 'ack' })
     },
-    inboxResolve: async (kind, id) => {
-      const { dismissEntity } = await import('../lib/inbox-dismissals')
+    actionQueueResolve: async (kind, id) => {
+      const { dismissEntity } = await import('../lib/action-queue-dismissals')
       await dismissEntity(kind, id, { by: 'daemon', note: 'resolved' })
     },
-    inboxDismiss: async (kind, id) => {
-      const { dismissEntity } = await import('../lib/inbox-dismissals')
+    actionQueueDismiss: async (kind, id) => {
+      const { dismissEntity } = await import('../lib/action-queue-dismissals')
       await dismissEntity(kind, id, { by: 'daemon' })
     },
     todoDismiss: async (kind, id) => {
@@ -2466,15 +2466,15 @@ export const startDaemon = async (
         const { rejectProposal } = await import('../proposals')
         await rejectProposal(id)
       } else {
-        const { dismissStaleWorktree } = await import('../lib/inbox')
+        const { dismissStaleWorktree } = await import('../lib/action-queue')
         await dismissStaleWorktree(id)
       }
     },
     viewStreamHub,
-    viewInbox: async (filter) => {
-      const { buildInboxView } = await import('./view/inbox')
-      const { listInboxItems } = await import('../lib/inbox')
-      const { listDismissals } = await import('../lib/inbox-dismissals')
+    viewActionQueue: async (filter) => {
+      const { buildActionQueueView } = await import('./view/action-queue')
+      const { listActionQueueItems } = await import('../lib/action-queue')
+      const { listDismissals } = await import('../lib/action-queue-dismissals')
       const { listTasks: qListTasks, initQueue, getClient: getQueueClient } = await import('../queue')
       const { listErrorKinds: listErrKinds } = await import('../lib/error-kinds')
       const { hasRecipe } = await import('../lib/fix-recipes')
@@ -2484,8 +2484,8 @@ export const startDaemon = async (
 
       // Build the state store adapter.
       const stateStore = {
-        listOpenInboxItems: async () => {
-          const items = await listInboxItems('open')
+        listOpenActionQueueItems: async () => {
+          const items = await listActionQueueItems('open')
           return items.map((item) => ({
             id: item.id,
             kind: item.kind as string,
@@ -2498,7 +2498,7 @@ export const startDaemon = async (
             lastSeenAt: item.lastSeenAt,
           }))
         },
-        listInboxDismissals: async () => {
+        listActionQueueDismissals: async () => {
           const dismissals = await listDismissals()
           const map = new Map<string, string | null>()
           for (const d of dismissals) {
@@ -2558,7 +2558,7 @@ export const startDaemon = async (
         errorKinds.map((ek) => [ek.kind, ek]),
       )
 
-      return buildInboxView({
+      return buildActionQueueView({
         stateStore,
         taskStore,
         errorKindRegistry,
@@ -2607,7 +2607,7 @@ export const startDaemon = async (
       try {
         const r = await client.execute(
           `SELECT context, payload, last_seen_at, raised_at
-             FROM inbox_items
+             FROM action_queue_items
             WHERE kind = 'stale-worktree' AND state = 'open'
             ORDER BY raised_at DESC`,
         )
@@ -2641,7 +2641,7 @@ export const startDaemon = async (
             blockerTaskId: null,
           })
         }
-      } catch { /* inbox_items table may not exist on a fresh repo */ }
+      } catch { /* action_queue_items table may not exist on a fresh repo */ }
 
       return { drafts, staleWorktrees }
     },
@@ -2671,22 +2671,22 @@ export const startDaemon = async (
     }
   })()
 
-  // Boot drain for the inbox-repopulator outbox subscriber: register it and
-  // apply any inbox mutations for events published while the daemon was down.
+  // Boot drain for the action-queue-repopulator outbox subscriber: register it and
+  // apply any actionQueue mutations for events published while the daemon was down.
   void (async () => {
     try {
-      await ensureInboxRepopulator(getClient())
-      const { processed } = await drainInboxRepopulations(
+      await ensureActionQueueRepopulator(getClient())
+      const { processed } = await drainActionQueueRepopulations(
         getClient(),
         failureReasonCatalog,
         log,
       )
       if (processed > 0) {
-        log(`[inbox-repopulator] applied ${processed} inbox mutation(s) on boot`)
-        viewStreamHub.broadcast('inbox')
+        log(`[action-queue-repopulator] applied ${processed} actionQueue mutation(s) on boot`)
+        viewStreamHub.broadcast('action-queue')
       }
     } catch (err) {
-      log(`[inbox-repopulator] boot drain failed: ${(err as Error).message}`)
+      log(`[action-queue-repopulator] boot drain failed: ${(err as Error).message}`)
     }
   })()
 
@@ -2728,9 +2728,9 @@ export const startDaemon = async (
   pollFallback.unref()
 
   // ── Stale-worktree sweep ──────────────────────────────────────────────────
-  // Periodically raises `stale-worktree` inbox items for tasks whose worktree
+  // Periodically raises `stale-worktree` actionQueue items for tasks whose worktree
   // has not been updated within MARS_STALE_WORKTREE_HOURS (default 24h). The
-  // inbox dedup logic ensures re-detecting the same stale worktree bumps the
+  // actionQueue dedup logic ensures re-detecting the same stale worktree bumps the
   // existing open item rather than creating a sibling. Auto-close is handled
   // by dismissAlertsOnStatusChange (wired in queue.ts updateTask). .unref()
   // so the interval never prevents a clean shutdown.
@@ -2741,9 +2741,9 @@ export const startDaemon = async (
       try {
         const raised = await detectAndRaiseStaleWorktrees(resolveContext().repoRoot)
         if (raised.length > 0) {
-          log(`[stale-sweep] raised/bumped ${raised.length} stale-worktree inbox item(s)`)
+          log(`[stale-sweep] raised/bumped ${raised.length} stale-worktree actionQueue item(s)`)
           viewStreamHub.broadcast('todo')
-          viewStreamHub.broadcast('inbox')
+          viewStreamHub.broadcast('action-queue')
         }
       } catch (err) {
         log(`[stale-sweep] errored: ${(err as Error).message}`)
@@ -2754,7 +2754,7 @@ export const startDaemon = async (
 
   // ── Observability store size watchdog ─────────────────────────────────────
   // Periodically checks the observability store (observability.duckdb) file
-  // size. When the store exceeds 500 MB a single open inbox item is raised so
+  // size. When the store exceeds 500 MB a single open action-queue item is raised so
   // the operator notices a runaway daemon or telemetry-capture bug.
   // Re-detecting the oversize condition bumps the existing item rather than
   // spawning a sibling. NEVER prunes the store or alters retention.
@@ -2771,9 +2771,9 @@ export const startDaemon = async (
         )
         if (itemId) {
           log(
-            `[observability-watchdog] store oversize — raised/bumped inbox item ${itemId}`,
+            `[observability-watchdog] store oversize — raised/bumped action-queue item ${itemId}`,
           )
-          viewStreamHub.broadcast('inbox')
+          viewStreamHub.broadcast('action-queue')
         }
       } catch (err) {
         log(`[observability-watchdog] errored: ${(err as Error).message}`)
@@ -2799,24 +2799,24 @@ export const startDaemon = async (
   }, ALERT_DRAIN_MS)
   alertDrain.unref()
 
-  // ── Inbox-repopulator drain ───────────────────────────────────────────────
+  // ── Action queue repopulator drain ───────────────────────────────────────────────
   // Polls the outbox for task/proposal lifecycle events and applies the
-  // corresponding inbox_items mutations. .unref() so it never holds the
+  // corresponding action_queue_items mutations. .unref() so it never holds the
   // process open.
-  const INBOX_REPOPULATOR_DRAIN_MS = Number(
-    process.env.MARS_INBOX_REPOPULATOR_DRAIN_MS ?? 30_000,
+  const ACTION_QUEUE_REPOPULATOR_DRAIN_MS = Number(
+    process.env.MARS_ACTION_QUEUE_REPOPULATOR_DRAIN_MS ?? 30_000,
   )
-  const inboxRepopulatorDrain = setInterval(() => {
+  const actionQueueRepopulatorDrain = setInterval(() => {
     void (async () => {
       try {
-        const { processed } = await drainInboxRepopulations(getClient(), failureReasonCatalog, log)
-        if (processed > 0) viewStreamHub.broadcast('inbox')
+        const { processed } = await drainActionQueueRepopulations(getClient(), failureReasonCatalog, log)
+        if (processed > 0) viewStreamHub.broadcast('action-queue')
       } catch (err) {
-        log(`[inbox-repopulator] drain errored: ${(err as Error).message}`)
+        log(`[action-queue-repopulator] drain errored: ${(err as Error).message}`)
       }
     })()
-  }, INBOX_REPOPULATOR_DRAIN_MS)
-  inboxRepopulatorDrain.unref()
+  }, ACTION_QUEUE_REPOPULATOR_DRAIN_MS)
+  actionQueueRepopulatorDrain.unref()
 
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
@@ -2827,7 +2827,7 @@ export const startDaemon = async (
     clearInterval(staleSweep)
     clearInterval(observabilityWatchdog)
     clearInterval(alertDrain)
-    clearInterval(inboxRepopulatorDrain)
+    clearInterval(actionQueueRepopulatorDrain)
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.

@@ -78,15 +78,15 @@ per-change and must be re-confirmed, even within the same session.
 - **Merge target** — `main`. Override per-invocation with
   `INTEGRATION_BRANCH=<branch>`.
 
-## The inbox
+## The action queue
 
-The Mars inbox is the single human-facing work surface. Everything that
+The Mars action queue is the single human-facing work surface. Everything that
 needs the user — operational alerts from self-heal, tasks the orchestrator
 stopped on after exhausting retries (kind `task-blocked`), and draft proposals
-waiting to be shaped (kind `draft-proposal`) — appears as an inbox
-message. Pick one via `mars inbox list` or `/mars:inbox`; the inbox
+waiting to be shaped (kind `draft-proposal`) — appears as an action queue
+message. Pick one via `mars action-queue list` or `/mars:action-queue`; the action queue
 dispatches to the right resolver (`/mars:unblock`, `/mars:grill`, or
-ack/resolve/dismiss). To see pending work, run `/mars:chat` or `/mars:inbox`.
+ack/resolve/dismiss). To see pending work, run `/mars:chat` or `/mars:action-queue`.
 
 ## Glossary and ADRs
 
@@ -100,7 +100,7 @@ Never edit `CONTEXT.md` or `docs/adr/**` directly. Reads are fine.
 
 The `/mars:chat` slash command is the conversational entry point.
 It classifies the user's input (an id, free text, or empty) and
-dispatches to the right sub-skill: `/mars:inbox` for triage,
+dispatches to the right sub-skill: `/mars:action-queue` for triage,
 `/mars:task` for quick enqueues, `/mars:grill` for ideas that need
 PRD-shaping, `/mars:unblock` for stuck tasks. Sub-skills update the
 glossary and ADRs inline as decisions crystallise — `/mars:chat`
@@ -133,7 +133,7 @@ When a task fails, the orchestrator spawns exactly **one** recovery task
 per origin failure to finish or fix the work. A recovery task is itself
 non-recoverable: if it fails for any reason — the same failure, a
 different one, or a watchdog kill — the origin goes to `failed` with one
-actionable inbox item and the operator resolves it explicitly (e.g.
+actionable action queue item and the operator resolves it explicitly (e.g.
 `mars restart`). There is no retry budget, retry count, or tunable knob —
 exactly one recovery attempt per origin failure, full stop.
 
@@ -152,7 +152,7 @@ recovery-spawn path itself.
   it clears all edges and flips the task to `failed` so it can be
   `mars purge`d or `mars restart`ed.
 - A blocker that ends in `failed` leaves its dependents waiting in
-  `blocked`; resolve the chain via the inbox item on the failed blocker
+  `blocked`; resolve the chain via the action queue item on the failed blocker
   (the failure does not cascade down the chain — behaviour unchanged).
 - Coders that can't make progress should emit a `--blocked-by $TASK_ID`
   follow-up instead of bailing; the deviation-rules brief in the

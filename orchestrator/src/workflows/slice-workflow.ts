@@ -12,7 +12,7 @@ import { buildEventInsert } from '../mastra/lib/outbox'
 import { Workers } from '../mastra/workers'
 import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
 import { getRepoRoot, resolveContext } from '../mastra/context'
-import { listInboxItems, raiseInboxItem } from '../mastra/lib/inbox'
+import { listActionQueueItems, raiseActionQueueItem } from '../mastra/lib/action-queue'
 import { openTraceEventStore } from '../mastra/lib/trace-events-store'
 import { runWorkerWithSpan } from '../mastra/lib/run-worker-with-span'
 
@@ -837,7 +837,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     // dispatching. Created before Phase 1 so the operator can intercept
     // before any tasks are queued.
     if (droppedCount > 0) {
-      await raiseInboxItem({
+      await raiseActionQueueItem({
         kind: 'slices-dropped',
         category: 'orchestrator',
         priority: 'normal',
@@ -905,7 +905,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
 
         // HITL routing: for hitl slices, enqueue a Coder sub-task built
         // from the slice's subDeliverable spec, then raise an operator
-        // inbox item so the human knows what to act on. The hitl slice
+        // actionQueue item so the human knows what to act on. The hitl slice
         // task itself is never dispatched to a Coder (Phase 3 always
         // marks it 'blocked'; Phase 2b wires it to wait on the sub-task).
         if (slice.kind === 'hitl' && slice.subDeliverable !== undefined) {
@@ -938,7 +938,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
           hitlSliceIndices.push(i)
 
           const checklist = slice.acceptanceCriteria.map((c) => `- [ ] ${c}`).join('\n')
-          await raiseInboxItem({
+          await raiseActionQueueItem({
             kind: 'hitl-slice-needs-operator',
             category: 'orchestrator',
             priority: 'normal',
@@ -1113,7 +1113,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
  * A HITL slice reaches 'done' exactly when BOTH of the following hold:
  *   1. Every blocking sub-task has status 'done' (the Coder sub-task that
  *      delivers the operator artifact has landed).
- *   2. The operator-facing inbox item (kind='hitl-slice-needs-operator') for
+ *   2. The operator-facing actionQueue item (kind='hitl-slice-needs-operator') for
  *      this slice is 'resolved' or 'dismissed' — the operator has confirmed
  *      the manual step is complete.
  *
@@ -1122,7 +1122,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
  * and returns true.
  *
  * Exported so it can be called from daemon event hooks (task.completed,
- * inbox.resolved) and from tests exercising the three ordering variants.
+ * actionQueue.resolved) and from tests exercising the three ordering variants.
  */
 export const tryCompleteHitlSlice = async (
   hitlSliceTaskId: string,
@@ -1157,14 +1157,14 @@ export const tryCompleteHitlSlice = async (
   )
   if (!allDone) return false
 
-  // 3. The operator inbox item must be resolved or dismissed.
+  // 3. The operator actionQueue item must be resolved or dismissed.
   //    The item's signature encodes the proposal id and 1-based slice index,
-  //    matching exactly what raiseInboxItem sets when slicing.
+  //    matching exactly what raiseActionQueueItem sets when slicing.
   const signature = `${taskRow.origin_id}:hitl:${taskRow.slice_index}`
-  const hitlItems = await listInboxItems('all', { kind: 'hitl-slice-needs-operator' })
-  const inboxItem = hitlItems.find((item) => item.signature === signature)
-  if (!inboxItem) return false
-  if (inboxItem.state !== 'resolved' && inboxItem.state !== 'dismissed') return false
+  const hitlItems = await listActionQueueItems('all', { kind: 'hitl-slice-needs-operator' })
+  const actionQueueItem = hitlItems.find((item) => item.signature === signature)
+  if (!actionQueueItem) return false
+  if (actionQueueItem.state !== 'resolved' && actionQueueItem.state !== 'dismissed') return false
 
   // 4. Both conditions met — flip the HITL slice from 'blocked' to 'done'.
   // Status write + lifecycle emit share one atomic batch (ADR-0030). The

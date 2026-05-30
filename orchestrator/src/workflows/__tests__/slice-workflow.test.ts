@@ -864,7 +864,7 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
   // slice was emitted with ZERO blocker edges even though three sibling
   // slices removed the read-side of the same column. The drop dispatched
   // first and burned its full retry budget on
-  // `SQLITE_ERROR: no such column: s.total_cost_usd`. Six inbox items
+  // `SQLITE_ERROR: no such column: s.total_cost_usd`. Six actionQueue items
   // later (final one 496b528e), the operator manually wired the edges.
   // This test pins the injection so the regression cannot recur silently.
   it('blocks a schema-drop slice on every consumer slice that mentions the dropped column (1b7498f6 shape)', () => {
@@ -2330,9 +2330,9 @@ describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Tas
   })
 })
 
-describe('runSlice: inbox summary for pre-flight dropped slices', () => {
+describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
   // When the slicer pre-flight drops one or more already-satisfied slices,
-  // exactly one inbox item must be created (before tasks are queued) so the
+  // exactly one actionQueue item must be created (before tasks are queued) so the
   // operator can verify the drop before survivors begin dispatch. When zero
   // slices are dropped, no item is created from this code path.
   let repo: string
@@ -2362,7 +2362,7 @@ describe('runSlice: inbox summary for pre-flight dropped slices', () => {
   const seedPrdReadyIdea = async (): Promise<string> => {
     const proposals = await import('../../mastra/proposals')
     await proposals.initProposals()
-    const idea = await proposals.createProposal('Inbox drop test PRD', {
+    const idea = await proposals.createProposal('Action queue drop test PRD', {
       problem: 'p',
       solution: 's',
     })
@@ -2372,7 +2372,7 @@ describe('runSlice: inbox summary for pre-flight dropped slices', () => {
     return idea.id
   }
 
-  it('creates exactly one inbox item naming the PRD id and dropped count when drops > 0', async () => {
+  it('creates exactly one actionQueue item naming the PRD id and dropped count when drops > 0', async () => {
     // Slice 1 declares creates: ['src/alreadyShipped.ts'] with symbol
     // `alreadyShipped`; that file and export already exist on disk, so the
     // pre-flight drops it. Slice 2 survives and dispatches normally.
@@ -2436,10 +2436,10 @@ describe('runSlice: inbox summary for pre-flight dropped slices', () => {
     // Slice 2 is the only survivor — one task queued.
     expect(result.taskIds).toHaveLength(1)
 
-    // One inbox item must have been created for the dropped slice.
-    const inbox = await import('../../mastra/lib/inbox')
-    await inbox.initInbox()
-    const items = await inbox.listInboxItems('open', { kind: 'slices-dropped' })
+    // One actionQueue item must have been created for the dropped slice.
+    const actionQueue = await import('../../mastra/lib/action-queue')
+    await actionQueue.initActionQueue()
+    const items = await actionQueue.listActionQueueItems('open', { kind: 'slices-dropped' })
 
     expect(items).toHaveLength(1)
     // Body must identify the PRD id and the count of dropped slices.
@@ -2447,10 +2447,10 @@ describe('runSlice: inbox summary for pre-flight dropped slices', () => {
     expect(items[0].body).toContain('1')
   })
 
-  it('creates no inbox item when the slicer run drops zero slices', async () => {
+  it('creates no actionQueue item when the slicer run drops zero slices', async () => {
     // No files pre-created → nothing satisfies the pre-flight check.
     // The slicer emits one slice that creates a file that does not yet
-    // exist on disk — it must be dispatched normally with no inbox item.
+    // exist on disk — it must be dispatched normally with no actionQueue item.
     vi.doMock('../../mastra/lib/git', async () => {
       const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
         '../../mastra/lib/git',
@@ -2488,24 +2488,24 @@ describe('runSlice: inbox summary for pre-flight dropped slices', () => {
     const sliceModule = await import('../slice-workflow')
     await sliceModule.runSlice(ideaId)
 
-    const inbox = await import('../../mastra/lib/inbox')
-    await inbox.initInbox()
-    const items = await inbox.listInboxItems('open', { kind: 'slices-dropped' })
+    const actionQueue = await import('../../mastra/lib/action-queue')
+    await actionQueue.initActionQueue()
+    const items = await actionQueue.listActionQueueItems('open', { kind: 'slices-dropped' })
 
     expect(items).toHaveLength(0)
   })
 })
 
-describe('runSlice: hitl slice routing → inbox item + Coder sub-task + blocked parent', () => {
+describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + blocked parent', () => {
   // Acceptance criteria for this slice:
-  // - Slicing a PRD with one hitl slice creates exactly one inbox item of kind
+  // - Slicing a PRD with one hitl slice creates exactly one actionQueue item of kind
   //   'hitl-slice-needs-operator'
-  // - The inbox item body contains the slice title and acceptance criteria
+  // - The actionQueue item body contains the slice title and acceptance criteria
   //   rendered as a manual checklist
   // - Exactly one Coder sub-task is enqueued from the subDeliverable spec
   // - The sub-task is dispatchable (status='queued')
   // - The hitl slice task row is in status='blocked'
-  // - All-coder PRDs produce no hitl inbox items and no sub-tasks
+  // - All-coder PRDs produce no hitl actionQueue items and no sub-tasks
 
   let repo: string
 
@@ -2536,7 +2536,7 @@ describe('runSlice: hitl slice routing → inbox item + Coder sub-task + blocked
     await proposals.initProposals()
     const idea = await proposals.createProposal('HITL routing test PRD', {
       problem: 'operator must release manually',
-      solution: 'route hitl slices to operator inbox',
+      solution: 'route hitl slices to operator actionQueue',
     })
     await proposals.addProposalUserStory(idea.id, 'as an operator, I see what to do')
     const promoted = await proposals.promoteProposal(idea.id)
@@ -2578,7 +2578,7 @@ describe('runSlice: hitl slice routing → inbox item + Coder sub-task + blocked
     ],
   }
 
-  it('creates exactly one inbox item of kind hitl-slice-needs-operator when an hitl slice is present', async () => {
+  it('creates exactly one actionQueue item of kind hitl-slice-needs-operator when an hitl slice is present', async () => {
     vi.doMock('../../mastra/lib/git', async () => {
       const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
         '../../mastra/lib/git',
@@ -2600,16 +2600,16 @@ describe('runSlice: hitl slice routing → inbox item + Coder sub-task + blocked
     const sliceModule = await import('../slice-workflow')
     await sliceModule.runSlice(ideaId)
 
-    const inbox = await import('../../mastra/lib/inbox')
-    await inbox.initInbox()
-    const items = await inbox.listInboxItems('open', {
+    const actionQueue = await import('../../mastra/lib/action-queue')
+    await actionQueue.initActionQueue()
+    const items = await actionQueue.listActionQueueItems('open', {
       kind: 'hitl-slice-needs-operator',
     })
 
     expect(items).toHaveLength(1)
   })
 
-  it('inbox item body contains the hitl slice title and acceptance criteria as a manual checklist', async () => {
+  it('actionQueue item body contains the hitl slice title and acceptance criteria as a manual checklist', async () => {
     vi.doMock('../../mastra/lib/git', async () => {
       const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
         '../../mastra/lib/git',
@@ -2631,9 +2631,9 @@ describe('runSlice: hitl slice routing → inbox item + Coder sub-task + blocked
     const sliceModule = await import('../slice-workflow')
     await sliceModule.runSlice(ideaId)
 
-    const inbox = await import('../../mastra/lib/inbox')
-    await inbox.initInbox()
-    const items = await inbox.listInboxItems('open', {
+    const actionQueue = await import('../../mastra/lib/action-queue')
+    await actionQueue.initActionQueue()
+    const items = await actionQueue.listActionQueueItems('open', {
       kind: 'hitl-slice-needs-operator',
     })
 
@@ -2733,7 +2733,7 @@ describe('runSlice: hitl slice routing → inbox item + Coder sub-task + blocked
     ).toBe('blocked')
   })
 
-  it('all-coder PRDs produce no hitl-slice-needs-operator inbox items and no Coder sub-tasks', async () => {
+  it('all-coder PRDs produce no hitl-slice-needs-operator actionQueue items and no Coder sub-tasks', async () => {
     const coderOnlyOutput = {
       slices: [
         {
@@ -2789,27 +2789,27 @@ describe('runSlice: hitl slice routing → inbox item + Coder sub-task + blocked
       ),
     ).toBe(1)
 
-    // No hitl-slice-needs-operator inbox items
-    const inbox = await import('../../mastra/lib/inbox')
-    await inbox.initInbox()
-    const items = await inbox.listInboxItems('open', {
+    // No hitl-slice-needs-operator actionQueue items
+    const actionQueue = await import('../../mastra/lib/action-queue')
+    await actionQueue.initActionQueue()
+    const items = await actionQueue.listActionQueueItems('open', {
       kind: 'hitl-slice-needs-operator',
     })
     expect(items).toHaveLength(0)
   })
 })
 
-describe('hitl slice completion: both inbox resolved and sub-task done required', () => {
+describe('hitl slice completion: both actionQueue resolved and sub-task done required', () => {
   // Acceptance criteria:
-  // - Resolving the inbox item while the sub-task is still in-flight leaves the
+  // - Resolving the actionQueue item while the sub-task is still in-flight leaves the
   //   hitl slice's task in 'blocked'.
-  // - The sub-task reaching 'done' while the inbox item is still open leaves the
+  // - The sub-task reaching 'done' while the actionQueue item is still open leaves the
   //   hitl slice's task in 'blocked'.
-  // - Once both the inbox item is resolved (or dismissed) AND the sub-task is
+  // - Once both the actionQueue item is resolved (or dismissed) AND the sub-task is
   //   'done', the hitl slice's task row flips to 'done'.
   // - Coder-only PRDs continue to reach full completion exactly as today.
   //
-  // All three orderings are exercised: inbox first, sub-task first, simultaneous.
+  // All three orderings are exercised: actionQueue first, sub-task first, simultaneous.
 
   let repo: string
 
@@ -2896,11 +2896,11 @@ describe('hitl slice completion: both inbox resolved and sub-task done required'
     return (r.rows[0] as unknown as { blocker_task_id: string }).blocker_task_id
   }
 
-  // Helper: find and return the inbox item id for the hitl slice.
-  const findHitlInboxItemId = async (): Promise<string> => {
-    const inbox = await import('../../mastra/lib/inbox')
-    await inbox.initInbox()
-    const items = await inbox.listInboxItems('all', {
+  // Helper: find and return the actionQueue item id for the hitl slice.
+  const findHitlActionQueueItemId = async (): Promise<string> => {
+    const actionQueue = await import('../../mastra/lib/action-queue')
+    await actionQueue.initActionQueue()
+    const items = await actionQueue.listActionQueueItems('all', {
       kind: 'hitl-slice-needs-operator',
     })
     expect(items).toHaveLength(1)
@@ -2918,7 +2918,7 @@ describe('hitl slice completion: both inbox resolved and sub-task done required'
     })
   }
 
-  it('resolving the inbox item while the sub-task is still in-flight leaves the hitl slice blocked', async () => {
+  it('resolving the actionQueue item while the sub-task is still in-flight leaves the hitl slice blocked', async () => {
     vi.doMock('../../mastra/lib/git', async () => {
       const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
         '../../mastra/lib/git',
@@ -2944,11 +2944,11 @@ describe('hitl slice completion: both inbox resolved and sub-task done required'
 
     const queue = await import('../../mastra/queue')
     await queue.initQueue()
-    const inbox = await import('../../mastra/lib/inbox')
+    const actionQueue = await import('../../mastra/lib/action-queue')
 
-    // Resolve the inbox item — but sub-task is still 'queued' (in-flight).
-    const inboxItemId = await findHitlInboxItemId()
-    await inbox.setInboxState(inboxItemId, 'resolved')
+    // Resolve the actionQueue item — but sub-task is still 'queued' (in-flight).
+    const actionQueueItemId = await findHitlActionQueueItemId()
+    await actionQueue.setActionQueueState(actionQueueItemId, 'resolved')
 
     // Sub-task is still in-flight: tryCompleteHitlSlice must return false.
     const completed = await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)
@@ -2964,7 +2964,7 @@ describe('hitl slice completion: both inbox resolved and sub-task done required'
     ).toBe('blocked')
   })
 
-  it('the sub-task reaching done while the inbox item is still open leaves the hitl slice blocked', async () => {
+  it('the sub-task reaching done while the actionQueue item is still open leaves the hitl slice blocked', async () => {
     vi.doMock('../../mastra/lib/git', async () => {
       const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
         '../../mastra/lib/git',
@@ -2991,11 +2991,11 @@ describe('hitl slice completion: both inbox resolved and sub-task done required'
     const queue = await import('../../mastra/queue')
     await queue.initQueue()
 
-    // Mark the Coder sub-task as 'done' — inbox item is still open.
+    // Mark the Coder sub-task as 'done' — actionQueue item is still open.
     const subTaskId = await findSubTaskId(hitlSliceTaskId)
     await markTaskDone(subTaskId)
 
-    // Inbox item is still open: tryCompleteHitlSlice must return false.
+    // Action queue item is still open: tryCompleteHitlSlice must return false.
     const completed = await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)
     expect(completed).toBe(false)
 
@@ -3009,7 +3009,7 @@ describe('hitl slice completion: both inbox resolved and sub-task done required'
     ).toBe('blocked')
   })
 
-  it('inbox-first ordering: hitl slice flips to done once both conditions are met', async () => {
+  it('action-queue-first ordering: hitl slice flips to done once both conditions are met', async () => {
     vi.doMock('../../mastra/lib/git', async () => {
       const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
         '../../mastra/lib/git',
@@ -3034,11 +3034,11 @@ describe('hitl slice completion: both inbox resolved and sub-task done required'
 
     const queue = await import('../../mastra/queue')
     await queue.initQueue()
-    const inbox = await import('../../mastra/lib/inbox')
+    const actionQueue = await import('../../mastra/lib/action-queue')
 
-    // Step 1: operator resolves inbox item first.
-    const inboxItemId = await findHitlInboxItemId()
-    await inbox.setInboxState(inboxItemId, 'resolved')
+    // Step 1: operator resolves actionQueue item first.
+    const actionQueueItemId = await findHitlActionQueueItemId()
+    await actionQueue.setActionQueueState(actionQueueItemId, 'resolved')
 
     // Sub-task not yet done → still blocked.
     expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(false)
@@ -3086,13 +3086,13 @@ describe('hitl slice completion: both inbox resolved and sub-task done required'
 
     const queue = await import('../../mastra/queue')
     await queue.initQueue()
-    const inbox = await import('../../mastra/lib/inbox')
+    const actionQueue = await import('../../mastra/lib/action-queue')
 
     // Step 1: sub-task reaches done first.
     const subTaskId = await findSubTaskId(hitlSliceTaskId)
     await markTaskDone(subTaskId)
 
-    // Inbox item not yet resolved → still blocked.
+    // Action queue item not yet resolved → still blocked.
     expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(false)
     const afterStep1 = await queue.getClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
@@ -3100,9 +3100,9 @@ describe('hitl slice completion: both inbox resolved and sub-task done required'
     })
     expect((afterStep1.rows[0] as unknown as { status: string }).status).toBe('blocked')
 
-    // Step 2: operator resolves inbox item.
-    const inboxItemId = await findHitlInboxItemId()
-    await inbox.setInboxState(inboxItemId, 'resolved')
+    // Step 2: operator resolves actionQueue item.
+    const actionQueueItemId = await findHitlActionQueueItemId()
+    await actionQueue.setActionQueueState(actionQueueItemId, 'resolved')
 
     // Both conditions now met → hitl slice must flip to done.
     expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(true)
@@ -3138,14 +3138,14 @@ describe('hitl slice completion: both inbox resolved and sub-task done required'
 
     const queue = await import('../../mastra/queue')
     await queue.initQueue()
-    const inbox = await import('../../mastra/lib/inbox')
+    const actionQueue = await import('../../mastra/lib/action-queue')
 
     // Both conditions fulfilled back-to-back (simultaneous from the function's
     // perspective — no intermediate tryCompleteHitlSlice call).
     const subTaskId = await findSubTaskId(hitlSliceTaskId)
     await markTaskDone(subTaskId)
-    const inboxItemId = await findHitlInboxItemId()
-    await inbox.setInboxState(inboxItemId, 'dismissed') // dismissed counts too
+    const actionQueueItemId = await findHitlActionQueueItemId()
+    await actionQueue.setActionQueueState(actionQueueItemId, 'dismissed') // dismissed counts too
 
     // Single call completes the slice.
     expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(true)

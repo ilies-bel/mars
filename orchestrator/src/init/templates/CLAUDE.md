@@ -3,7 +3,7 @@
 This repo is managed by **Mars** — a CLI (`mars`) and orchestrator that
 runs Claude Code in parallel git worktrees, verifies the result, and
 fast-forwards into the integration branch. The orchestrator surfaces
-work that needs a human via a single inbox.
+work that needs a human via a single action queue.
 
 This file tells Claude Code sessions running in this repo how to route
 work through Mars instead of editing the integration branch directly.
@@ -63,14 +63,14 @@ re-confirmed, even within the same session.
 - Per-repo state lives under `.mars/` (gitignored): `state.db`,
   `queue.db`, `mastra.db`, `worktrees/<task-id>/`, `.merge.lock`.
 
-## The inbox
+## The action queue
 
-The Mars inbox is the single human-facing work surface. Everything
+The Mars action queue is the single human-facing work surface. Everything
 that needs the user — operational alerts from self-heal, tasks the
 orchestrator stopped on after exhausting retries (kind
 `task-blocked`), and draft proposals waiting to be shaped (kind
-`draft-proposal`) — appears as an inbox message. Pick one via
-`mars inbox list` or `/mars:inbox`; the inbox dispatches to the right
+`draft-proposal`) — appears as an action queue message. Pick one via
+`mars action-queue list` or `/mars:action-queue`; the action queue dispatches to the right
 resolver (`/mars:unblock`, `/mars:grill`, or ack/resolve/dismiss).
 
 ## Glossary and ADRs
@@ -85,7 +85,7 @@ Never edit `CONTEXT.md` or `docs/adr/**` directly. Reads are fine.
 
 The `/mars:chat` slash command is the conversational entry point. It
 classifies the user's input (an id, free text, or empty) and
-dispatches to the right sub-skill: `/mars:inbox` for triage,
+dispatches to the right sub-skill: `/mars:action-queue` for triage,
 `/mars:task` for quick enqueues, `/mars:grill` for ideas that need
 PRD-shaping, `/mars:unblock` for stuck tasks. Sub-skills update the
 glossary and ADRs inline as decisions crystallise — `/mars:chat`
@@ -110,7 +110,7 @@ recovered blocker unblocks the whole chain.
 When a task fails, the orchestrator spawns exactly **one** recovery
 task per origin failure. A recovery task is itself non-recoverable: if
 it fails for any reason, the origin goes to `failed` with one
-actionable inbox item and the operator resolves it explicitly (e.g.
+actionable action queue item and the operator resolves it explicitly (e.g.
 `mars restart`).
 
 - Create edges at enqueue with `mars task add ... --blocked-by <id>`
@@ -121,7 +121,7 @@ actionable inbox item and the operator resolves it explicitly (e.g.
   phantom-recovery: it clears all edges and flips the task to `failed`
   so it can be `mars purge`d or `mars restart`ed.
 - A blocker that ends in `failed` leaves its dependents waiting in
-  `blocked`; resolve the chain via the inbox item on the failed
+  `blocked`; resolve the chain via the action queue item on the failed
   blocker.
 
 ## Loose ends

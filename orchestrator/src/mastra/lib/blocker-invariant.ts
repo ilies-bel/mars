@@ -8,7 +8,7 @@ import { getDefaultQueueClient } from './task-store'
  *     a task should only be `status='blocked'` when there is at least one row
  *     in `task_blockers` whose `task_id` is the parked task. If a code path
  *     needs to park a task but cannot point at a concrete blocker to wait on,
- *     the correct terminal is `'failed'` + an inbox item, NOT `'blocked'` with
+ *     the correct terminal is `'failed'` + an actionQueue item, NOT `'blocked'` with
  *     zero edges. See ADR-0002 + the orchestrator audit (task mars-88a4e657)
  *     for the call-site inventory.
  *
@@ -105,7 +105,7 @@ export class BlockerInvariantViolation extends Error {
   constructor(taskId: string) {
     super(
       `task ${taskId} cannot transition to status='blocked': zero rows in task_blockers — ` +
-        `a blocked task must point at a concrete blocker to wait on. Route to 'failed' + inbox item instead.`,
+        `a blocked task must point at a concrete blocker to wait on. Route to 'failed' + actionQueue item instead.`,
     )
     this.name = 'BlockerInvariantViolation'
     this.taskId = taskId

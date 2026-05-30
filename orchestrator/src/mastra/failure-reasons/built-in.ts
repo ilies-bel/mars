@@ -15,7 +15,7 @@
 import type { FailureReason } from '../lib/failure-reasons'
 
 /**
- * Action menu shared by every catalog entry. Order matters: the inbox UI
+ * Action menu shared by every catalog entry. Order matters: the actionQueue UI
  * renders buttons in this order, and `restart` is the conventional default.
  */
 const COMMON_ACTIONS: FailureReason['availableActions'] = [

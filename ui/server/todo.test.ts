@@ -1,6 +1,6 @@
 /**
  * Tests for the /api/todo endpoint, specifically the stale-worktree
- * inbox items slice: items raised by the daemon's stale-worktree sweep
+ * actionQueue items slice: items raised by the daemon's stale-worktree sweep
  * are readable from state.db via StateDb and returned to the web UI's
  * Alerts section, satisfying "visible identically across CLI, skill,
  * and web UI".
@@ -34,11 +34,11 @@ const setupRepo = (): string => {
   return repo
 }
 
-const seedInboxItems = async (stateDbPath: string): Promise<void> => {
+const seedActionQueueItems = async (stateDbPath: string): Promise<void> => {
   const c = createClient({ url: `file:${stateDbPath}` })
   await c.execute(`PRAGMA journal_mode = WAL`)
   await c.execute(`
-    CREATE TABLE IF NOT EXISTS inbox_items (
+    CREATE TABLE IF NOT EXISTS action_queue_items (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
       category TEXT NOT NULL,
@@ -93,7 +93,7 @@ const insertStaleWorktreeItem = async (
   const context = JSON.stringify({ taskId })
   const c = createClient({ url: `file:${stateDbPath}` })
   await c.execute({
-    sql: `INSERT INTO inbox_items (
+    sql: `INSERT INTO action_queue_items (
       id, kind, category, priority, state, title, body, payload, context,
       raised_by, raised_at, last_seen_at, seen_count, fingerprint, signature
     ) VALUES (?, 'stale-worktree', 'daemon', 'normal', ?, ?, '', ?, ?, ?,  ?, ?, 1, ?, ?)`,
@@ -113,7 +113,7 @@ const insertStaleWorktreeItem = async (
   c.close()
 }
 
-describe('GET /api/todo — stale-worktree inbox items', () => {
+describe('GET /api/todo — stale-worktree actionQueue items', () => {
   let repo: string
   let server: ReturnType<typeof Bun.serve> | null = null
   let baseUrl: string
@@ -122,7 +122,7 @@ describe('GET /api/todo — stale-worktree inbox items', () => {
   beforeEach(async () => {
     repo = setupRepo()
     stateDbPath = resolve(repo, '.mars/mars.db')
-    await seedInboxItems(stateDbPath)
+    await seedActionQueueItems(stateDbPath)
 
     server = await startServer({
       repo,
@@ -138,7 +138,7 @@ describe('GET /api/todo — stale-worktree inbox items', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('returns an open stale-worktree inbox item in staleWorktrees', async () => {
+  it('returns an open stale-worktree actionQueue item in staleWorktrees', async () => {
     await insertStaleWorktreeItem(stateDbPath, {
       id: 'itest-1',
       taskId: 'task-abc',
@@ -184,7 +184,7 @@ describe('GET /api/todo — stale-worktree inbox items', () => {
     expect(body.staleWorktrees[0].taskId).toBe('task-open')
   })
 
-  it('returns an empty staleWorktrees array when no inbox items exist', async () => {
+  it('returns an empty staleWorktrees array when no actionQueue items exist', async () => {
     const res = await fetch(`${baseUrl}/api/todo`)
     expect(res.status).toBe(200)
     const body = (await res.json()) as TodoBody

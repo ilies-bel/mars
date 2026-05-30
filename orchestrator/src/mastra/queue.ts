@@ -1740,7 +1740,7 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
     // transaction. A deleted task can never emit afterwards, so without this
     // the Invalidator never learns the task is gone and its Action-queue
     // rows + dismissal go stale — the measured purge-staleness class. The
-    // discrete `task.dropped` keeps the inbox-repopulator path consistent;
+    // discrete `task.dropped` keeps the action-queue-repopulator path consistent;
     // `task.terminal{purged}` is what the Invalidator closes on. (ADR-0030)
     await tx.execute(
       buildEventInsert('task.dropped', { taskId: id, dropReason: 'purged' }),

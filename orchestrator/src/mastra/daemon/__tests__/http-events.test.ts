@@ -1,7 +1,7 @@
 /**
  * Tests for GET /events — the unified trace-event surface. Pin the
  * per-task filter (the slice-H caller) and the cursor-paginated
- * load-more contract that the inbox detail panel uses.
+ * load-more contract that the actionQueue detail panel uses.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
@@ -47,11 +47,11 @@ const makeDeps = (
   traceStore: store,
   viewTasks: async () => ({ tasks: [] }),
   viewProgress: async () => ({ tasks: [], proposals: [] }),
-  inboxAck: async () => {},
-  inboxResolve: async () => {},
-  inboxDismiss: async () => {},
+  actionQueueAck: async () => {},
+  actionQueueResolve: async () => {},
+  actionQueueDismiss: async () => {},
   todoDismiss: async () => {},
-  viewInbox: async () => [],
+  viewActionQueue: async () => [],
   viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
   ...overrides,

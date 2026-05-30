@@ -1,11 +1,11 @@
 import { failureReasonStringToCode } from './lib/failure-reasons'
-import { type InboxKind, raiseInboxItem } from './lib/inbox'
+import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
 import { publish } from './lib/outbox'
 import { getDefaultQueueClient } from './lib/task-store'
 
 export const DEFAULT_RETRY_BUDGET = 0
 
-export const TASK_BLOCKED_INBOX_KIND: InboxKind = 'failed'
+export const TASK_BLOCKED_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 
 export const getRetryBudget = (): number => {
   const raw = process.env.MARS_FIX_RETRY_BUDGET
@@ -20,7 +20,7 @@ export const markTaskDropped = async (
   reason: string,
   /**
    * Optional catalog code recorded on `failure_reason_code`. Defaults to
-   * mapping `reason` through {@link failureReasonStringToCode} so the inbox
+   * mapping `reason` through {@link failureReasonStringToCode} so the actionQueue
    * row renders against the structured catalog even for callers that don't
    * yet thread an explicit code.
    */
@@ -60,7 +60,7 @@ export const markTaskFailed = async (
   reason: string,
   /**
    * Optional catalog code recorded on `failure_reason_code`. Defaults to
-   * mapping `reason` through {@link failureReasonStringToCode} so the inbox
+   * mapping `reason` through {@link failureReasonStringToCode} so the actionQueue
    * row renders against the structured catalog. Callers that already know
    * the code (e.g. dispatch-time `verify:main-dirty` parking) pass it
    * explicitly to skip the string-matching shim.
@@ -99,7 +99,7 @@ export const markTaskFailed = async (
   }
 }
 
-export interface RetryBudgetExhaustedInboxInput {
+export interface RetryBudgetExhaustedActionQueueInput {
   taskId: string
   lastStep: string
   retryCount: number
@@ -110,14 +110,14 @@ export interface RetryBudgetExhaustedInboxInput {
 }
 
 const buildTaskBlockedBody = (
-  input: RetryBudgetExhaustedInboxInput,
+  input: RetryBudgetExhaustedActionQueueInput,
 ): string => {
   const isNeverRun = input.lastStep === 'blocked-dependent'
   const whyLine = isNeverRun
     ? `Why you're seeing this: task ${input.taskId} never ran — it was a blocked dependent whose retry budget (${input.retryCount}) has been reached. The orchestrator will not retry it again. It stays blocked until you act.`
     : `Why you're seeing this: task ${input.taskId} failed at step \`${input.lastStep}\` and the retry budget (${input.retryCount}) has been reached — the orchestrator will not retry it again. It stays blocked until you act.`
   const lines: Array<string | null> = [
-    `Unblock task ${input.taskId} now: run /mars:unblock ${input.taskId}, or resolve it from the mars inbox.`,
+    `Unblock task ${input.taskId} now: run /mars:unblock ${input.taskId}, or resolve it from the mars actionQueue.`,
     '',
     whyLine,
     '',
@@ -136,19 +136,19 @@ const buildTaskBlockedBody = (
 }
 
 /**
- * Raise (or bump) the inbox item that flags a task as having exhausted its
+ * Raise (or bump) the actionQueue item that flags a task as having exhausted its
  * retry budget. Dedup is server-side on (kind, signature); we key both to
  * the task id so re-flips bump `seen_count` instead of duplicating rows.
  */
-export const raiseRetryBudgetExhaustedInbox = async (
-  input: RetryBudgetExhaustedInboxInput,
+export const raiseRetryBudgetExhaustedActionQueue = async (
+  input: RetryBudgetExhaustedActionQueueInput,
 ): Promise<string> => {
   const title =
     input.lastStep === 'blocked-dependent'
       ? `Unblock ${input.taskId}: never ran — blocked dependent exhausted retry budget`
       : `Unblock ${input.taskId}: retry budget exhausted at ${input.lastStep}`
-  return raiseInboxItem({
-    kind: TASK_BLOCKED_INBOX_KIND,
+  return raiseActionQueueItem({
+    kind: TASK_BLOCKED_ACTION_QUEUE_KIND,
     category: 'orchestrator',
     priority: 'high',
     title,

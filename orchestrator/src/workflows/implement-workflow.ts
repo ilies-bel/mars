@@ -1072,7 +1072,7 @@ export const implementWorkflow = defineWorkflow<
       // produces a verifiable artefact. Its deliverable is the structured
       // verdict in the diagnoses table; the merge step then cleans up the
       // empty worktree and the post-completion branch in the daemon reads
-      // the verdict and either dispatches one fix or raises an inbox item.
+      // the verdict and either dispatches one fix or raises an actionQueue item.
       if (input.kind === 'diagnose') {
         return { verified: true }
       }
@@ -1283,7 +1283,7 @@ export const implementWorkflow = defineWorkflow<
       // has nothing to merge. Its deliverable is the structured verdict in
       // the diagnoses table, which the daemon reads via the post-completion
       // branch (see PRD 06e677fb). Clean up the worktree and mark done; the
-      // verdict-driven follow-up (one fix, or one inbox item) runs from the
+      // verdict-driven follow-up (one fix, or one actionQueue item) runs from the
       // task.completed event in daemon/server.ts.
       if (input.kind === 'diagnose') {
         await removeWorktree({ path: worktreePath, branch }, true, false, buildCtx('merge'))

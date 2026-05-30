@@ -1,11 +1,11 @@
 /**
- * Slice F.2 inbox-side tests:
- *  - aggregated inbox row on committer failure lists every blocked dependent.
- *  - on committer success, stale failed-committer inbox rows (at a DIFFERENT
+ * Slice F.2 actionQueue-side tests:
+ *  - aggregated actionQueue row on committer failure lists every blocked dependent.
+ *  - on committer success, stale failed-committer actionQueue rows (at a DIFFERENT
  *    hash) get superseded.
  *
  * Pattern follows the existing F.1 blocker-invariant tests: a temp repo and
- * a per-test reset of the queue/inbox singletons via `vi.resetModules()`.
+ * a per-test reset of the queue/actionQueue singletons via `vi.resetModules()`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 const setupRepo = (): string => {
-  const repo = mkdtempSync(resolve(tmpdir(), 'mars-main-dirty-inbox-test-'))
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-main-dirty-action-queue-test-'))
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
@@ -73,16 +73,16 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
     })
 
     const { raiseAggregatedMainCommiterFailureRow } = await import(
-      '../main-dirty-inbox'
+      '../main-dirty-action-queue'
     )
-    const inboxItemId = await raiseAggregatedMainCommiterFailureRow(
+    const actionQueueItemId = await raiseAggregatedMainCommiterFailureRow(
       resolution.fixTaskId,
       noopLog,
     )
-    expect(inboxItemId).toBeTruthy()
+    expect(actionQueueItemId).toBeTruthy()
 
-    const inbox = await import('../../lib/inbox')
-    const item = await inbox.getInboxItem(inboxItemId!)
+    const actionQueue = await import('../../lib/action-queue')
+    const item = await actionQueue.getActionQueueItem(actionQueueItemId!)
     expect(item).not.toBeNull()
     expect(item!.kind).toBe('failed')
     expect(item!.priority).toBe('high')
@@ -119,20 +119,20 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
     })
 
     const { raiseAggregatedMainCommiterFailureRow } = await import(
-      '../main-dirty-inbox'
+      '../main-dirty-action-queue'
     )
     const id = await raiseAggregatedMainCommiterFailureRow(
       resolution.fixTaskId,
       noopLog,
     )
     expect(id).toBeTruthy()
-    const inbox = await import('../../lib/inbox')
-    const item = await inbox.getInboxItem(id!)
+    const actionQueue = await import('../../lib/action-queue')
+    const item = await actionQueue.getActionQueueItem(id!)
     expect(item!.title).toMatch(/no tasks currently blocked/i)
   })
 })
 
-describe('sweepStaleFailedMainCommiterInbox', () => {
+describe('sweepStaleFailedMainCommiterActionQueue', () => {
   let repo: string
 
   beforeEach(() => {
@@ -146,7 +146,7 @@ describe('sweepStaleFailedMainCommiterInbox', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('supersedes inbox rows for previously-failed committers at DIFFERENT hashes', async () => {
+  it('supersedes actionQueue rows for previously-failed committers at DIFFERENT hashes', async () => {
     const queue = await import('../../queue')
     await queue.initQueue()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
@@ -172,13 +172,13 @@ describe('sweepStaleFailedMainCommiterInbox', () => {
       error: 'old committer failed',
     })
     const { raiseAggregatedMainCommiterFailureRow } = await import(
-      '../main-dirty-inbox'
+      '../main-dirty-action-queue'
     )
-    const oldInboxId = await raiseAggregatedMainCommiterFailureRow(
+    const oldActionQueueId = await raiseAggregatedMainCommiterFailureRow(
       old.fixTaskId,
       noopLog,
     )
-    expect(oldInboxId).toBeTruthy()
+    expect(oldActionQueueId).toBeTruthy()
 
     // Fresh committer succeeds at hash B.
     const newSrc = await queue.enqueueTask('new', undefined, {
@@ -194,21 +194,21 @@ describe('sweepStaleFailedMainCommiterInbox', () => {
       traceStore: nullTraceStore,
     })
 
-    const { sweepStaleFailedMainCommiterInbox } = await import(
-      '../main-dirty-inbox'
+    const { sweepStaleFailedMainCommiterActionQueue } = await import(
+      '../main-dirty-action-queue'
     )
-    await sweepStaleFailedMainCommiterInbox(
+    await sweepStaleFailedMainCommiterActionQueue(
       'b'.repeat(64),
       fresh.fixTaskId,
       noopLog,
     )
 
-    const inbox = await import('../../lib/inbox')
-    const item = await inbox.getInboxItem(oldInboxId!)
+    const actionQueue = await import('../../lib/action-queue')
+    const item = await actionQueue.getActionQueueItem(oldActionQueueId!)
     expect(item!.state).toBe('resolved')
   })
 
-  it('leaves an inbox row alone when its hash matches the fresh hash', async () => {
+  it('leaves an actionQueue row alone when its hash matches the fresh hash', async () => {
     const queue = await import('../../queue')
     await queue.initQueue()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
@@ -233,26 +233,26 @@ describe('sweepStaleFailedMainCommiterInbox', () => {
       error: 'committer failed',
     })
     const { raiseAggregatedMainCommiterFailureRow } = await import(
-      '../main-dirty-inbox'
+      '../main-dirty-action-queue'
     )
-    const inboxId = await raiseAggregatedMainCommiterFailureRow(
+    const actionQueueId = await raiseAggregatedMainCommiterFailureRow(
       c.fixTaskId,
       noopLog,
     )
-    expect(inboxId).toBeTruthy()
+    expect(actionQueueId).toBeTruthy()
 
-    const { sweepStaleFailedMainCommiterInbox } = await import(
-      '../main-dirty-inbox'
+    const { sweepStaleFailedMainCommiterActionQueue } = await import(
+      '../main-dirty-action-queue'
     )
     // Sweep with the SAME hash — must NOT resolve the row.
-    await sweepStaleFailedMainCommiterInbox(
+    await sweepStaleFailedMainCommiterActionQueue(
       'c'.repeat(64),
       'unrelated-fresh',
       noopLog,
     )
 
-    const inbox = await import('../../lib/inbox')
-    const item = await inbox.getInboxItem(inboxId!)
+    const actionQueue = await import('../../lib/action-queue')
+    const item = await actionQueue.getActionQueueItem(actionQueueId!)
     expect(item!.state).toBe('open')
   })
 })

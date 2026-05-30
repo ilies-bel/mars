@@ -60,7 +60,7 @@ export type RecipeSource = 'built-in' | 'override'
 export interface Recipe {
   /** Stable identifier — must match the filename (without `.md`). */
   name: string
-  /** One-liner description; surfaces in inbox/UI listings. */
+  /** One-liner description; surfaces in actionQueue/UI listings. */
   description: string
   /** Claude Code tool allowlist enforced via `--allowed-tools`. */
   tools: readonly RecipeToolName[]

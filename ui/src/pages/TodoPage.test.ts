@@ -1,5 +1,5 @@
 /**
- * Unit tests for the ActionQueuePage inbox sidebar search / filter behaviour.
+ * Unit tests for the ActionQueuePage actionQueue sidebar search / filter behaviour.
  *
  * All tests operate through the public, pure API of TodoPageFilters — no React
  * rendering needed.  This file is excluded from the main tsc project (see

@@ -28,13 +28,13 @@ describe('fix-recipes', () => {
         "The merge target at /tmp/main-checkout appeared dirty when merge pre-flight ran, blocking a fast-forward merge into main. By the time you read this another task may already have cleaned it up.
 
         STEP 1 — re-check first. Run \`git -C /tmp/main-checkout status --porcelain\` right now.
-         - If the output is empty, the tree is already clean: do NOT touch any file, do NOT commit, do NOT emit an inbox notification. Exit successfully — the original task can be retried as-is.
+         - If the output is empty, the tree is already clean: do NOT touch any file, do NOT commit, do NOT emit an actionQueue notification. Exit successfully — the original task can be retried as-is.
          - If the output is non-empty, proceed to STEP 2 with the CURRENT status, not the snapshot below.
 
         STEP 2 — only if STEP 1 still shows a dirty tree. Inspect each modified or untracked file:
          (a) commit files that represent intentional work with a meaningful commit message that describes the actual changes;
          (b) discard files that are clearly transient (build artifacts, .DS_Store, editor swap files, anything in .gitignore that slipped in via \`git add -f\` etc.);
-         (c) for anything ambiguous, do NOT guess — emit a high-priority inbox notification listing the file(s) and what's unclear, and exit.
+         (c) for anything ambiguous, do NOT guess — emit a high-priority actionQueue notification listing the file(s) and what's unclear, and exit.
 
         Do not push. Save your work.
 
@@ -48,7 +48,7 @@ describe('fix-recipes', () => {
 
         \`\`\`
 
-        If you need to file an inbox notification, use \`mars inbox raise --from -\` with priority='high' and a clear message describing the ambiguous file(s)."
+        If you need to file an actionQueue notification, use \`mars actionQueue raise --from -\` with priority='high' and a clear message describing the ambiguous file(s)."
       `)
     })
 
@@ -63,7 +63,7 @@ describe('fix-recipes', () => {
       )
       expect(prompt).toContain('discard files that are clearly transient')
       expect(prompt).toContain('do NOT guess')
-      expect(prompt).toContain('high-priority inbox notification')
+      expect(prompt).toContain('high-priority actionQueue notification')
       expect(prompt).toContain('Do not push. Save your work.')
     })
 
@@ -941,7 +941,7 @@ describe('fix-recipes', () => {
     const ctx = {
       targetPath: '/tmp/worktrees/task-abc',
       statusOutput:
-        "src/mastra/queue-fix-tasks.ts(605,11): error TS2304: Cannot find name 'NO_RECIPE_INBOX_KIND'.\nCommand failed: npx tsc --noEmit\n",
+        "src/mastra/queue-fix-tasks.ts(605,11): error TS2304: Cannot find name 'NO_RECIPE_ACTION_QUEUE_KIND'.\nCommand failed: npx tsc --noEmit\n",
       targetBranch: 'task/abc',
       integrationBranch: 'main',
       originalPrompt: '',
@@ -995,15 +995,15 @@ describe('fix-recipes', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
       const promptWithSource = recipe.buildPrompt({
         ...ctx,
-        originalPrompt: 'delete NO_RECIPE_INBOX_KIND and all its usages from queue-fix-tasks.ts',
+        originalPrompt: 'delete NO_RECIPE_ACTION_QUEUE_KIND and all its usages from queue-fix-tasks.ts',
       })
       expect(promptWithSource).toContain(
-        'delete NO_RECIPE_INBOX_KIND and all its usages from queue-fix-tasks.ts',
+        'delete NO_RECIPE_ACTION_QUEUE_KIND and all its usages from queue-fix-tasks.ts',
       )
       expect(promptWithSource).toMatch(/inlined/i)
       const promptWithout = recipe.buildPrompt(ctx)
       expect(promptWithout).not.toContain(
-        'delete NO_RECIPE_INBOX_KIND and all its usages from queue-fix-tasks.ts',
+        'delete NO_RECIPE_ACTION_QUEUE_KIND and all its usages from queue-fix-tasks.ts',
       )
       expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
     })
@@ -1271,7 +1271,7 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
     const failingBranch = 'task/mars-fda4da8b'
     const failingWorktree = resolve(repo, '.mars/worktrees/mars-fda4da8b')
     const t = await q.enqueueTask(
-      'Raise an inbox message on draft-idea creation',
+      'Raise an actionQueue message on draft-idea creation',
       undefined,
       { skipTriage: true },
     )
@@ -1343,7 +1343,7 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
     })
     const row = r.rows[0] as unknown as { prompt: string }
     expect(row.prompt).toContain('leftover.tmp')
-    expect(row.prompt).toContain('high-priority inbox notification')
+    expect(row.prompt).toContain('high-priority actionQueue notification')
   })
 })
 
@@ -1359,7 +1359,7 @@ describe('handleTaskFailureWithFixTask unknown-signature path', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('marks the source failed and raises an inbox item WITHOUT spawning an investigator task', async () => {
+  it('marks the source failed and raises an actionQueue item WITHOUT spawning an investigator task', async () => {
     const { q, ft } = await loadModules(repo)
     const originalPrompt =
       'add the nudge link in src/components/NudgePanel.tsx with a specific href'
@@ -1380,7 +1380,7 @@ describe('handleTaskFailureWithFixTask unknown-signature path', () => {
     expect(
       (result as { investigatorTaskId?: string }).investigatorTaskId,
     ).toBeUndefined()
-    expect(result.inboxItemId).toBeTruthy()
+    expect(result.actionQueueItemId).toBeTruthy()
 
     // Source task is marked failed.
     const source = await q.getTask(t.id)

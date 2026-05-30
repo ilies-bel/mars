@@ -15,7 +15,7 @@ import {
   severityColor,
   summarizeTraceEvent,
   type CatalogActionDescriptor,
-} from '@/shared/inboxDetail'
+} from '@/shared/actionQueueDetail'
 import type {
   ActionDescriptor,
   ActionQueueItem,
@@ -710,7 +710,7 @@ export const ActionQueuePage = () => {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search…"
             aria-label="Search action queue"
-            data-testid="inbox-search"
+            data-testid="action-queue-search"
             className="mt-2 w-full border border-iron/30 bg-bg px-2 py-1 font-mono text-[12px] text-fg placeholder:text-iron/40 focus:outline-none focus:ring-1 focus:ring-iron/50"
           />
         </header>
@@ -782,7 +782,7 @@ export const ActionQueuePage = () => {
         ) : empty ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div className="font-mono text-[12px] text-iron">
-              No items. Inbox alerts appear here when tasks need operator attention.
+              No items. Action queue alerts appear here when tasks need operator attention.
             </div>
           </div>
         ) : noMatches ? (

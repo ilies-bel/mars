@@ -10,7 +10,7 @@
  * original dirty-main condition.
  *
  * On a guard trip the caller skips spawning the chore and falls through to the
- * existing blocked-plus-inbox behaviour so an operator can resolve the WIP
+ * existing blocked-plus-actionQueue behaviour so an operator can resolve the WIP
  * manually.
  */
 
@@ -180,7 +180,7 @@ export async function scanDirtyFilesForGuards(
  *
  * Returns `{ blocked: false }` when no WIP is detected (salvage may proceed).
  * Returns `{ blocked: true, hit }` on the first WIP marker found (salvage must
- * be skipped; the caller falls through to blocked-plus-inbox behaviour).
+ * be skipped; the caller falls through to blocked-plus-actionQueue behaviour).
  *
  * Git/IO failures propagate to the caller; the setup pre-flight wraps this
  * call in a best-effort try/catch so transient git errors do not permanently

@@ -11,14 +11,14 @@ interface QueueModule {
   getClient: typeof import('../../queue').getClient
 }
 
-interface InboxModule {
-  raiseInboxItem: typeof import('../../lib/inbox').raiseInboxItem
-  getInboxItem: typeof import('../../lib/inbox').getInboxItem
+interface ActionQueueModule {
+  raiseActionQueueItem: typeof import('../../lib/action-queue').raiseActionQueueItem
+  getActionQueueItem: typeof import('../../lib/action-queue').getActionQueueItem
 }
 
 interface DismissalsModule {
-  dismissEntity: typeof import('../../lib/inbox-dismissals').dismissEntity
-  isEntityDismissed: typeof import('../../lib/inbox-dismissals').isEntityDismissed
+  dismissEntity: typeof import('../../lib/action-queue-dismissals').dismissEntity
+  isEntityDismissed: typeof import('../../lib/action-queue-dismissals').isEntityDismissed
 }
 
 interface AlertDismisserModule {
@@ -37,7 +37,7 @@ interface SubscribersModule {
 
 interface Loaded {
   q: QueueModule
-  inbox: InboxModule
+  actionQueue: ActionQueueModule
   dismissals: DismissalsModule
   ad: AlertDismisserModule
   pub: PublisherModule
@@ -54,32 +54,32 @@ const setupRepo = (): string => {
 /**
  * Load every module against the same temp repo. `MARS_REPO` makes
  * `resolveContext()` resolve `stateDbPath`/`queueDbPath` to one
- * `.mars/mars.db`, so the events table (initQueue), inbox_items, and
- * inbox_dismissals all share a single libsql client.
+ * `.mars/mars.db`, so the events table (initQueue), action_queue_items, and
+ * action_queue_dismissals all share a single libsql client.
  */
 const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.initQueue()
-  const inbox = (await import('../../lib/inbox')) as unknown as InboxModule
+  const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   const dismissals = (await import(
-    '../../lib/inbox-dismissals'
+    '../../lib/action-queue-dismissals'
   )) as unknown as DismissalsModule
   const ad = (await import('../alert-dismisser')) as unknown as AlertDismisserModule
   const pub = (await import('../../../bus/publisher')) as unknown as PublisherModule
   const subs = (await import(
     '../../../bus/subscribers'
   )) as unknown as SubscribersModule
-  return { q, inbox, dismissals, ad, pub, subs }
+  return { q, actionQueue, dismissals, ad, pub, subs }
 }
 
-/** Raise a single open, origin-keyed inbox item for `taskId`. */
+/** Raise a single open, origin-keyed actionQueue item for `taskId`. */
 const raiseOpenItemFor = async (
-  inbox: InboxModule,
+  actionQueue: ActionQueueModule,
   taskId: string,
 ): Promise<string> =>
-  inbox.raiseInboxItem({
+  actionQueue.raiseActionQueueItem({
     kind: 'failed',
     category: 'orchestrator',
     priority: 'normal',
@@ -106,7 +106,7 @@ const dismissalExists = async (
   entityId: string,
 ): Promise<boolean> => {
   const r = await client.execute({
-    sql: `SELECT 1 FROM inbox_dismissals WHERE entity_kind = 'task' AND entity_id = ? LIMIT 1`,
+    sql: `SELECT 1 FROM action_queue_dismissals WHERE entity_kind = 'task' AND entity_id = ? LIMIT 1`,
     args: [entityId],
   })
   return r.rows.length > 0
@@ -125,11 +125,11 @@ describe('alert-dismisser outbox subscriber', () => {
   })
 
   it('clears an open alert and the dismissal row on a task.terminal{done} event', async () => {
-    const { q, inbox, dismissals, ad, pub } = await loadModules(repo)
+    const { q, actionQueue, dismissals, ad, pub } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-done'
 
-    const itemId = await raiseOpenItemFor(inbox, taskId)
+    const itemId = await raiseOpenItemFor(actionQueue, taskId)
     await dismissals.dismissEntity('task', taskId, { by: 'op' })
     expect(await dismissalExists(client, taskId)).toBe(true)
 
@@ -142,7 +142,7 @@ describe('alert-dismisser outbox subscriber', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(1)
-    const item = await inbox.getInboxItem(itemId)
+    const item = await actionQueue.getActionQueueItem(itemId)
     expect(item).not.toBeNull()
     expect(item!.state).toBe('resolved')
     expect(await dismissalExists(client, taskId)).toBe(false)
@@ -150,11 +150,11 @@ describe('alert-dismisser outbox subscriber', () => {
   })
 
   it('KEEPS an open alert on task.terminal{failed} (ADR-0028: failed needs a human)', async () => {
-    const { q, inbox, dismissals, ad, pub } = await loadModules(repo)
+    const { q, actionQueue, dismissals, ad, pub } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-failed'
 
-    const itemId = await raiseOpenItemFor(inbox, taskId)
+    const itemId = await raiseOpenItemFor(actionQueue, taskId)
     await dismissals.dismissEntity('task', taskId, { by: 'op' })
 
     await ad.ensureAlertDismisser(client)
@@ -168,17 +168,17 @@ describe('alert-dismisser outbox subscriber', () => {
     // Neither event is a closing trigger, so nothing is processed and the
     // operator's row + dismissal survive.
     expect(processed).toBe(0)
-    expect((await inbox.getInboxItem(itemId))!.state).toBe('open')
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
     expect(await dismissalExists(client, taskId)).toBe(true)
   })
 
   it('clears open alerts on task.terminal{done}, task.terminal{purged}, and task.unblocked', async () => {
-    const { q, inbox, ad, pub } = await loadModules(repo)
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
     const client = q.getClient()
 
-    const completedId = await raiseOpenItemFor(inbox, 'T-completed')
-    const purgedId = await raiseOpenItemFor(inbox, 'T-purged')
-    const unblockedId = await raiseOpenItemFor(inbox, 'T-unblocked')
+    const completedId = await raiseOpenItemFor(actionQueue, 'T-completed')
+    const purgedId = await raiseOpenItemFor(actionQueue, 'T-purged')
+    const unblockedId = await raiseOpenItemFor(actionQueue, 'T-unblocked')
 
     await ad.ensureAlertDismisser(client)
     await publish(pub, client, 'task.terminal', {
@@ -197,16 +197,16 @@ describe('alert-dismisser outbox subscriber', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(3)
-    expect((await inbox.getInboxItem(completedId))!.state).toBe('resolved')
-    expect((await inbox.getInboxItem(purgedId))!.state).toBe('resolved')
-    expect((await inbox.getInboxItem(unblockedId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(completedId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(purgedId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(unblockedId))!.state).toBe('resolved')
   })
 
   it('treats an unmapped event as a no-op but still advances the cursor', async () => {
-    const { q, inbox, ad, pub, subs } = await loadModules(repo)
+    const { q, actionQueue, ad, pub, subs } = await loadModules(repo)
     const client = q.getClient()
 
-    const itemId = await raiseOpenItemFor(inbox, 'T-prio')
+    const itemId = await raiseOpenItemFor(actionQueue, 'T-prio')
 
     await ad.ensureAlertDismisser(client)
     await publish(pub, client, 'task.priority_changed', {
@@ -226,16 +226,16 @@ describe('alert-dismisser outbox subscriber', () => {
 
     // No-op processing: the alert stays open, processed excludes it...
     expect(processed).toBe(0)
-    expect((await inbox.getInboxItem(itemId))!.state).toBe('open')
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
     // ...but the cursor moved past the unmapped event so it never stalls.
     expect(cursorAfter).toBeGreaterThan(cursorBefore)
   })
 
   it('is idempotent: a second drain processes nothing (cursor already past)', async () => {
-    const { q, inbox, ad, pub } = await loadModules(repo)
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
     const client = q.getClient()
 
-    await raiseOpenItemFor(inbox, 'T-once')
+    await raiseOpenItemFor(actionQueue, 'T-once')
     await ad.ensureAlertDismisser(client)
     await publish(pub, client, 'task.terminal', {
       taskId: 'T-once',

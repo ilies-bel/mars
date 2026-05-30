@@ -72,7 +72,7 @@ designed for:
   palette (succeeded / needs-attention / in-flight / not-started). One
   color per granular task status is explicitly rejected for v1.
 - **No in-view writes.** The graph and side-panel are read-only.
-  Resolving inbox items, retrying tasks, unblocking, and any other state
+  Resolving action queue items, retrying tasks, unblocking, and any other state
   mutation continue to flow through the CLI. The view never mutates
   state.
 
@@ -91,16 +91,16 @@ The badge surfaced on fix-task nodes — `recovery-failed` or `no-recipe`
 — is defined by **ADR-0002**: each failure signature has at most one
 recipe, a fix-task is spawned when a recipe matches, and the absence of
 a recipe (or a recovery-failed outcome from one) escalates the failure
-to an inbox item. The graph reads those inbox items to decide which
+to an action queue item. The graph reads those action queue items to decide which
 nodes get a badge; it does not define when they exist.
 
 ## Write affordance
 
 The view itself never writes. The **only** write affordance reachable
-from the graph is the **inbox deep-link** rendered on a node's badge or
-in the side-panel when the corresponding inbox item exists. The
-deep-link points at **`/mars:inbox`**, where the operator resolves the
-item using the existing inbox flow.
+from the graph is the **action queue deep-link** rendered on a node's badge or
+in the side-panel when the corresponding action queue item exists. The
+deep-link points at **`/mars:action-queue`**, where the operator resolves the
+item using the existing action queue flow.
 
 Retrying tasks, unblocking, editing blockers, and resolving the
 underlying recovery state all remain CLI operations. The graph is a
@@ -119,4 +119,4 @@ audit the decision without re-reading the whole document.
 | Defines 'dependency closure' and contrasts it with 'Arc' and 'recovery chain' | "Vocabulary boundary" — table comparing all three terms plus the "no siblings / includes blockers" follow-ups. |
 | Lists v1 scope exclusions: siblings, time-as-axis, per-status color, in-view writes | "v1 scope exclusions" — one bullet per excluded concern. |
 | References ADR-0002 and ADR-0008 as storage/escalation context | "Storage and escalation context" — ADR-0008 for the two-junction storage shape, ADR-0002 for the badge / escalation semantics. |
-| Names the inbox deep-link as the sole write affordance and points it at /mars:inbox | "Write affordance" — single deep-link to `/mars:inbox`; all other state changes remain CLI. |
+| Names the action queue deep-link as the sole write affordance and points it at /mars:action-queue | "Write affordance" — single deep-link to `/mars:action-queue`; all other state changes remain CLI. |

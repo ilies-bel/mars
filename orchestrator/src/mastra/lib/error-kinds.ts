@@ -1,7 +1,7 @@
 /**
  * Error-kind registry — one entity per known recoverable error.
  *
- * Every kind of thing that can land in the inbox needing a human decision is
+ * Every kind of thing that can land in the actionQueue needing a human decision is
  * described here as a single self-contained entity bundling four facets:
  *
  *   - `kind`            — stable identifier, the address the rest of the system
@@ -14,7 +14,7 @@
  * The registry is the single source of truth for "what can I do about this?".
  * It is deliberately pure, serialisable data with no runtime dependencies, so
  * the daemon can hand it to the read-only UI over the wire (`GET /error-kinds`)
- * and the UI can compose an action menu per inbox row without importing any
+ * and the UI can compose an action menu per actionQueue row without importing any
  * orchestrator code.
  *
  * Recovery actions are *descriptors*, not functions: `{ id, label, op }`. The
@@ -27,10 +27,10 @@
 import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
 
 /**
- * The inbox row kind a matching row surfaces as. Mirrors the three persisted
- * inbox row kinds raised by the orchestrator into `inbox_items`.
+ * The actionQueue row kind a matching row surfaces as. Mirrors the three persisted
+ * actionQueue row kinds raised by the orchestrator into `action_queue_items`.
  */
-type DerivedInboxKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
+type DerivedActionQueueKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
 
 /**
  * The verbs an action can ask the daemon to perform. Each maps to a route on
@@ -47,11 +47,11 @@ type DerivedInboxKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
  *                                terminal/absent.
  * - `investigate`              — run a cheap Haiku read-only investigation over
  *                                a stale worktree's diff; persists an
- *                                explanation onto the inbox item.
+ *                                explanation onto the actionQueue item.
  * - `diagnose-failure`         — run a one-shot Sonnet root-cause diagnosis on a
  *                                failed task whose failure signature has no
  *                                registered recipe; persists a diagnosis onto
- *                                the inbox item. Operator-triggered.
+ *                                the actionQueue item. Operator-triggered.
  * - `restart-daemon`           — process-level: re-exec the daemon itself.
  * - `restart-all-daemon-killed`— batch: re-queue every failed task that carries
  *                                the daemon-killed signature in one request.
@@ -100,8 +100,8 @@ export interface ActionDescriptor {
 export interface ErrorKind {
   /** Stable identifier this kind dispatches on. */
   kind: ErrorKindId
-  /** The inbox row kind a matching row surfaces as. */
-  rowKind: DerivedInboxKind
+  /** The actionQueue row kind a matching row surfaces as. */
+  rowKind: DerivedActionQueueKind
   /** How this error is detected / raised. */
   trigger: string
   /** What it means and how to reason about it before acting. */
@@ -116,7 +116,7 @@ export interface ErrorKind {
  * so no consumer can invent an off-list key. Each entry is a stable,
  * machine-readable identifier safe to persist, log, and put on the wire.
  *
- * These are a refinement of `DerivedInboxKind`: most map 1:1, but a single row
+ * These are a refinement of `DerivedActionQueueKind`: most map 1:1, but a single row
  * kind can fan out into several error kinds when the right recovery depends on
  * *why* the row appeared. `daemon-killed` is the motivating case — it is a
  * `failed-task` row, but a task SIGKILL'd with the daemon is far more likely to
@@ -247,13 +247,13 @@ export const listErrorKinds = (): ErrorKind[] => Object.values(ERROR_KINDS)
 export const getErrorKind = (kind: ErrorKindId): ErrorKind => ERROR_KINDS[kind]
 
 /**
- * Resolve the error kind for an inbox row. A row's kind is not always
+ * Resolve the error kind for an actionQueue row. A row's kind is not always
  * enough: a `failed-task` row whose task carries the daemon-killed signature
  * resolves to `daemon-killed` (a requeue-framed menu), not the generic
  * `failed-task` menu. Everything else maps straight from its row kind.
  */
 export const errorKindForRow = (
-  rowKind: DerivedInboxKind,
+  rowKind: DerivedActionQueueKind,
   failureSignature: string | null,
 ): ErrorKind => {
   if (rowKind === 'failed-task' && failureSignature === DAEMON_KILLED_SIGNATURE) {

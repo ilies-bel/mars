@@ -8,9 +8,9 @@ interface QueueModule {
   initQueue: typeof import('../../queue').initQueue
 }
 
-interface InboxModule {
-  listInboxItems: typeof import('../../lib/inbox').listInboxItems
-  getInboxItem: typeof import('../../lib/inbox').getInboxItem
+interface ActionQueueModule {
+  listActionQueueItems: typeof import('../../lib/action-queue').listActionQueueItems
+  getActionQueueItem: typeof import('../../lib/action-queue').getActionQueueItem
 }
 
 interface WatchdogModule {
@@ -29,14 +29,14 @@ const setupRepo = (): string => {
 
 const loadModules = async (
   repo: string,
-): Promise<{ q: QueueModule; inbox: InboxModule; watchdog: WatchdogModule }> => {
+): Promise<{ q: QueueModule; actionQueue: ActionQueueModule; watchdog: WatchdogModule }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.initQueue()
-  const inbox = (await import('../../lib/inbox')) as unknown as InboxModule
+  const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   const watchdog = (await import('../observability-watchdog')) as unknown as WatchdogModule
-  return { q, inbox, watchdog }
+  return { q, actionQueue, watchdog }
 }
 
 describe('checkObservabilityStoreSize', () => {
@@ -51,8 +51,8 @@ describe('checkObservabilityStoreSize', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('raises an inbox item when the store exceeds 500 MB', async () => {
-    const { inbox, watchdog } = await loadModules(repo)
+  it('raises an action-queue item when the store exceeds 500 MB', async () => {
+    const { actionQueue, watchdog } = await loadModules(repo)
     const OVERSIZE = watchdog.OVERSIZE_THRESHOLD_BYTES + 1
 
     const itemId = await watchdog.checkObservabilityStoreSize(
@@ -61,13 +61,13 @@ describe('checkObservabilityStoreSize', () => {
     )
 
     expect(itemId).toBeTruthy()
-    const items = await inbox.listInboxItems('open')
+    const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(1)
     expect(items[0].kind).toBe(watchdog.OBSERVABILITY_WATCHDOG_KIND)
   })
 
-  it('raises no inbox item when the store is under the 500 MB threshold', async () => {
-    const { inbox, watchdog } = await loadModules(repo)
+  it('raises no action-queue item when the store is under the 500 MB threshold', async () => {
+    const { actionQueue, watchdog } = await loadModules(repo)
 
     const itemId = await watchdog.checkObservabilityStoreSize(
       '/fake/observability.duckdb',
@@ -75,12 +75,12 @@ describe('checkObservabilityStoreSize', () => {
     )
 
     expect(itemId).toBeNull()
-    const items = await inbox.listInboxItems('open')
+    const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(0)
   })
 
   it('repeated oversize checks update the existing item rather than creating duplicates', async () => {
-    const { inbox, watchdog } = await loadModules(repo)
+    const { actionQueue, watchdog } = await loadModules(repo)
     const OVERSIZE = watchdog.OVERSIZE_THRESHOLD_BYTES + 1
     const measure = async (): Promise<number> => OVERSIZE
 
@@ -97,16 +97,16 @@ describe('checkObservabilityStoreSize', () => {
     expect(firstId).toBe(secondId)
 
     // Still exactly one open item — no sibling was created
-    const items = await inbox.listInboxItems('open')
+    const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(1)
 
     // seen_count was bumped on the second detection
-    const item = await inbox.getInboxItem(firstId!)
+    const item = await actionQueue.getActionQueueItem(firstId!)
     expect(item!.seenCount).toBe(2)
   })
 
-  it('the raised inbox item describes the oversize condition and current size', async () => {
-    const { inbox, watchdog } = await loadModules(repo)
+  it('the raised action-queue item describes the oversize condition and current size', async () => {
+    const { actionQueue, watchdog } = await loadModules(repo)
     const SIZE_BYTES = 600 * 1024 * 1024 // 600 MB
 
     await watchdog.checkObservabilityStoreSize(
@@ -114,7 +114,7 @@ describe('checkObservabilityStoreSize', () => {
       async () => SIZE_BYTES,
     )
 
-    const items = await inbox.listInboxItems('open')
+    const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(1)
     expect(items[0].body).toContain('600.0 MB')
     expect(items[0].body).toContain('500 MB')
@@ -122,7 +122,7 @@ describe('checkObservabilityStoreSize', () => {
   })
 
   it('the watchdog never prunes the store or alters retention when oversize', async () => {
-    const { inbox, watchdog } = await loadModules(repo)
+    const { actionQueue, watchdog } = await loadModules(repo)
     // 550 MB oversize
     const SIZE_BYTES = 550 * 1024 * 1024
 
@@ -131,11 +131,11 @@ describe('checkObservabilityStoreSize', () => {
       async () => SIZE_BYTES,
     )
 
-    // An inbox item was raised — the oversize condition is visible to the operator
+    // An action-queue item was raised — the oversize condition is visible to the operator
     expect(itemId).toBeTruthy()
 
     // The payload records the size but contains no pruning or retention metadata
-    const item = await inbox.getInboxItem(itemId!)
+    const item = await actionQueue.getActionQueueItem(itemId!)
     expect(item!.payload).not.toHaveProperty('pruned')
     expect(item!.payload).not.toHaveProperty('retentionChangedTo')
     expect(item!.payload).not.toHaveProperty('prunedBytes')

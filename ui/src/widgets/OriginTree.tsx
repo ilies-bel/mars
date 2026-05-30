@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchOrigins } from '@/shared/api'
-import { originKindLabel } from '@/shared/inboxDetail'
+import { originKindLabel } from '@/shared/actionQueueDetail'
 import type { OriginNode } from '@/shared/schemas'
 
 interface OriginTreeProps {

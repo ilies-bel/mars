@@ -293,7 +293,7 @@ const runScaffoldClaude = async (written: string[]): Promise<string[]> => {
 }
 
 /**
- * Materialise `.mars/queue.db` + `.mars/state.db` (tasks, ideas, inbox) so a
+ * Materialise `.mars/queue.db` + `.mars/state.db` (tasks, ideas, actionQueue) so a
  * freshly scaffolded repo is usable without waiting for the first daemon
  * write to lazily create them. All three init paths are idempotent via
  * `CREATE TABLE IF NOT EXISTS`.

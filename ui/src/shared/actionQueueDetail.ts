@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the inbox detail panel.
+ * Pure helpers for the actionQueue detail panel.
  *
  * Keeps the catalog lookup, action-op binding table, trace-event payload
  * summary, and origin-node styling decisions out of the React component so
@@ -67,7 +67,7 @@ export const substituteTaskId = (hint: string, taskId: string): string =>
   hint.replace(/<id>/g, taskId)
 
 /**
- * Render a catalog action as the ActionDescriptor shape the rest of the inbox
+ * Render a catalog action as the ActionDescriptor shape the rest of the actionQueue
  * UI already speaks. Bound actions keep their op + label as-is; unbound
  * actions are flagged via `op: ''` (the renderer disables the button and
  * shows the CLI hint instead).

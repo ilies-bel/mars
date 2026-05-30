@@ -74,8 +74,8 @@ const ENTITY_TABLES: ReadonlyArray<string> = [
   'self_heal_attempts',
   'events',
   'kpi_snapshots',
-  'inbox_items',
-  'inbox_history',
+  'action_queue_items',
+  'action_queue_history',
   'proposal_user_stories',
   'proposal_dependencies',
   'trace_events',
@@ -90,8 +90,8 @@ const ID_COLUMNS: ReadonlyArray<{ readonly table: string; readonly col: string }
   { table: 'proposals', col: 'id' },
   { table: 'task_acceptance', col: 'id' },
   { table: 'kpi_snapshots', col: 'id' },
-  { table: 'inbox_items', col: 'id' },
-  { table: 'inbox_history', col: 'id' },
+  { table: 'action_queue_items', col: 'id' },
+  { table: 'action_queue_history', col: 'id' },
 ]
 
 export type CutPhase = 'drain' | 'reset' | 'recreate'

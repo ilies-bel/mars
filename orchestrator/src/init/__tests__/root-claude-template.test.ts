@@ -5,7 +5,7 @@
  * - The root `CLAUDE.md` `mars init` writes into a target repo is the
  *   bundled Mars-meta template, NOT a copy of the framework's own
  *   `CLAUDE.md`.
- * - The template mentions the routing rules and the orchestrator / inbox /
+ * - The template mentions the routing rules and the orchestrator / actionQueue /
  *   glossary / ADR commands an operator of a Mars-managed repo needs.
  * - The template carries no references to framework-internal directories
  *   that only exist inside the mars-framework repo itself.
@@ -76,7 +76,7 @@ describe('mars init: root CLAUDE.md template', () => {
     expect(written).not.toBe(framework)
   })
 
-  it('contains the routing rules and mentions the orchestrator, inbox, glossary, and ADR commands', () => {
+  it('contains the routing rules and mentions the orchestrator, actionQueue, glossary, and ADR commands', () => {
     scaffoldClaudeConfig({ repoRoot: root })
     const written = readFileSync(resolve(root, 'CLAUDE.md'), 'utf8')
 
@@ -89,8 +89,8 @@ describe('mars init: root CLAUDE.md template', () => {
     // The orchestrator
     expect(written.toLowerCase()).toContain('orchestrator')
 
-    // Inbox commands
-    expect(written).toContain('mars inbox')
+    // Action queue commands
+    expect(written).toContain('mars action-queue')
 
     // Glossary commands
     expect(written).toMatch(/mars glossary\s+(set|list|show|remove)/)

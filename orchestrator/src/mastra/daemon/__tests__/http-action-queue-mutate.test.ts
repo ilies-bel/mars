@@ -9,7 +9,7 @@ import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
 const setupRepo = (): string => {
-  const repo = mkdtempSync(resolve(tmpdir(), 'mars-http-inbox-mutate-'))
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-http-actionQueue-mutate-'))
   execFileSync('git', ['init', '-q'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
@@ -30,7 +30,7 @@ let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = 
 const getBuiltInFailureReasonCatalog = async () => {
   if (!cachedFailureReasonCatalog) {
     cachedFailureReasonCatalog = await loadFailureReasonCatalog(
-      mkdtempSync(resolve(tmpdir(), 'mars-http-inbox-cat-')),
+      mkdtempSync(resolve(tmpdir(), 'mars-http-actionQueue-cat-')),
     )
   }
   return cachedFailureReasonCatalog
@@ -39,7 +39,7 @@ const getBuiltInFailureReasonCatalog = async () => {
 const getBuiltInRecipeCatalog = async () => {
   if (!cachedRecipeCatalog) {
     cachedRecipeCatalog = await loadRecipeCatalog(
-      mkdtempSync(resolve(tmpdir(), 'mars-http-inbox-rec-')),
+      mkdtempSync(resolve(tmpdir(), 'mars-http-actionQueue-rec-')),
     )
   }
   return cachedRecipeCatalog
@@ -60,11 +60,11 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),
   viewProgress: async () => ({ tasks: [], proposals: [] }),
-  inboxAck: async () => {},
-  inboxResolve: async () => {},
-  inboxDismiss: async () => {},
+  actionQueueAck: async () => {},
+  actionQueueResolve: async () => {},
+  actionQueueDismiss: async () => {},
   todoDismiss: async () => {},
-  viewInbox: async () => [],
+  viewActionQueue: async () => [],
   viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
   ...overrides,
@@ -75,7 +75,7 @@ beforeAll(async () => {
   await getBuiltInRecipeCatalog()
 })
 
-describe('POST /view/inbox/{ack,resolve,dismiss}', () => {
+describe('POST /view/action-queue/{ack,resolve,dismiss}', () => {
   let repo: string
 
   beforeEach(() => {
@@ -88,20 +88,20 @@ describe('POST /view/inbox/{ack,resolve,dismiss}', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('POST /view/inbox/ack dispatches to inboxAck with kind and entityId', async () => {
+  it('POST /view/action-queue/ack dispatches to actionQueueAck with kind and entityId', async () => {
     const { httpServer } = await loadModules(repo)
     const calls: Array<{ kind: string; id: string }> = []
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        inboxAck: async (kind, id) => {
+        actionQueueAck: async (kind, id) => {
           calls.push({ kind, id })
         },
       }),
     )
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/inbox/ack`, {
+      const res = await fetch(`http://127.0.0.1:${port}/view/action-queue/ack`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind: 'task', entityId: 'mars-abc123' }),
@@ -116,20 +116,20 @@ describe('POST /view/inbox/{ack,resolve,dismiss}', () => {
     }
   })
 
-  it('POST /view/inbox/resolve dispatches to inboxResolve with kind and entityId', async () => {
+  it('POST /view/action-queue/resolve dispatches to actionQueueResolve with kind and entityId', async () => {
     const { httpServer } = await loadModules(repo)
     const calls: Array<{ kind: string; id: string }> = []
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        inboxResolve: async (kind, id) => {
+        actionQueueResolve: async (kind, id) => {
           calls.push({ kind, id })
         },
       }),
     )
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/inbox/resolve`, {
+      const res = await fetch(`http://127.0.0.1:${port}/view/action-queue/resolve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind: 'worktree', entityId: 'wt-id-42' }),
@@ -144,20 +144,20 @@ describe('POST /view/inbox/{ack,resolve,dismiss}', () => {
     }
   })
 
-  it('POST /view/inbox/dismiss dispatches to inboxDismiss with kind and entityId', async () => {
+  it('POST /view/action-queue/dismiss dispatches to actionQueueDismiss with kind and entityId', async () => {
     const { httpServer } = await loadModules(repo)
     const calls: Array<{ kind: string; id: string }> = []
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        inboxDismiss: async (kind, id) => {
+        actionQueueDismiss: async (kind, id) => {
           calls.push({ kind, id })
         },
       }),
     )
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/inbox/dismiss`, {
+      const res = await fetch(`http://127.0.0.1:${port}/view/action-queue/dismiss`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind: 'proposal', entityId: 'prop-xyz' }),
@@ -178,7 +178,7 @@ describe('POST /view/inbox/{ack,resolve,dismiss}', () => {
     const { port, close } = await httpServer.startHttpServer(makeDeps())
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/inbox/ack`, {
+      const res = await fetch(`http://127.0.0.1:${port}/view/action-queue/ack`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind: 'unknown-entity', entityId: 'mars-abc' }),
@@ -199,7 +199,7 @@ describe('POST /view/inbox/{ack,resolve,dismiss}', () => {
     const { port, close } = await httpServer.startHttpServer(makeDeps())
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/inbox/dismiss`, {
+      const res = await fetch(`http://127.0.0.1:${port}/view/action-queue/dismiss`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entityId: 'some-id' }),
@@ -217,7 +217,7 @@ describe('POST /view/inbox/{ack,resolve,dismiss}', () => {
     const { port, close } = await httpServer.startHttpServer(makeDeps())
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/inbox/resolve`, {
+      const res = await fetch(`http://127.0.0.1:${port}/view/action-queue/resolve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind: 'task' }),

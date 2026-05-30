@@ -3,7 +3,7 @@ import { listErrorKinds } from '../lib/error-kinds'
 import type { FailureReasonCatalog } from '../lib/failure-reasons'
 import type { RecipeCatalog } from '../lib/recipes'
 import { buildOriginTree } from '../lib/origin-tree'
-import type { ActionQueueRow, DerivedInboxFilter } from './view/inbox'
+import type { ActionQueueRow, DerivedActionQueueFilter } from './view/action-queue'
 import type { TerminalEvent } from './view/terminal-events'
 import {
   cursorAfter,
@@ -65,7 +65,7 @@ export interface HttpServerDeps {
   pruneWorktree: (id: string) => Promise<void>
   /**
    * Run a cheap Haiku investigation over the worktree diff, persist the result
-   * onto the inbox item payload, and return the explanation text. Read-only:
+   * onto the actionQueue item payload, and return the explanation text. Read-only:
    * never mutates the worktree. Concurrent calls for the same id must be
    * guarded by the implementation (skip if already running).
    */
@@ -73,7 +73,7 @@ export interface HttpServerDeps {
   /**
    * Run a one-shot Sonnet root-cause diagnosis on a failed task whose failure
    * signature has no registered recipe. Reads the worktree (if it still exists)
-   * and the session trace as needed, persists the diagnosis onto the inbox item
+   * and the session trace as needed, persists the diagnosis onto the actionQueue item
    * payload, and returns the diagnosis text. Read-only: never mutates the
    * worktree. Concurrent calls for the same id must be guarded by the
    * implementation (skip if already running).
@@ -92,19 +92,19 @@ export interface HttpServerDeps {
   /**
    * Resolved failure-reason catalog (built-in seed + `.mars/failure-reasons/`
    * overrides), loaded once at daemon start. Served verbatim by
-   * `GET /failure-reasons` for the inbox UI.
+   * `GET /failure-reasons` for the actionQueue UI.
    */
   failureReasonCatalog: FailureReasonCatalog
   /**
    * Resolved recovery-recipe catalog (built-in seed + `.mars/recipes/`
    * overrides), loaded once at daemon start. Served verbatim by
-   * `GET /recipes` so the inbox UI can name which recipe a recovery task
+   * `GET /recipes` so the actionQueue UI can name which recipe a recovery task
    * was dispatched under.
    */
   recipeCatalog: RecipeCatalog
   /**
    * The unified trace-event store, used by `GET /events` to back the
-   * per-task lifecycle view in the inbox detail panel (and broader filters
+   * per-task lifecycle view in the actionQueue detail panel (and broader filters
    * in the dedicated Events tab).
    */
   traceStore: TraceEventStore
@@ -133,20 +133,20 @@ export interface HttpServerDeps {
     failedWindowMs: number | null
   }) => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[] }>
   /**
-   * Acknowledge an inbox row for the given entity: marks it as seen without
-   * hiding it from the open filter. Backed by `POST /view/inbox/ack`.
+   * Acknowledge an actionQueue row for the given entity: marks it as seen without
+   * hiding it from the open filter. Backed by `POST /view/action-queue/ack`.
    */
-  inboxAck: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
+  actionQueueAck: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
   /**
-   * Resolve an inbox row for the given entity: hides it from the open filter
-   * and marks it as operator-resolved. Backed by `POST /view/inbox/resolve`.
+   * Resolve an actionQueue row for the given entity: hides it from the open filter
+   * and marks it as operator-resolved. Backed by `POST /view/action-queue/resolve`.
    */
-  inboxResolve: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
+  actionQueueResolve: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
   /**
-   * Dismiss an inbox row for the given entity: hides it until the entity's
-   * state changes. Backed by `POST /view/inbox/dismiss`.
+   * Dismiss an actionQueue row for the given entity: hides it until the entity's
+   * state changes. Backed by `POST /view/action-queue/dismiss`.
    */
-  inboxDismiss: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
+  actionQueueDismiss: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
   /**
    * Dismiss a Todo-tab item: mark a draft proposal as dismissed, or record a
    * stale-worktree dismissal so the sweep skips it on subsequent passes.
@@ -161,10 +161,10 @@ export interface HttpServerDeps {
    */
   viewStreamHub?: ViewStreamHub
   /**
-   * Derive the full inbox action-queue view. Served by `GET /view/inbox`.
+   * Derive the full actionQueue action-queue view. Served by `GET /view/action-queue`.
    * The daemon builds this from its own database; the read-only UI proxies it.
    */
-  viewInbox: (filter: DerivedInboxFilter) => Promise<ActionQueueRow[]>
+  viewActionQueue: (filter: DerivedActionQueueFilter) => Promise<ActionQueueRow[]>
   /**
    * Return the combined payload for GET /view/todo: draft proposals + open
    * stale-worktree alerts. The daemon is the sole reader of its own DB; the
@@ -368,7 +368,7 @@ export const startHttpServer = async (
     // `src/mastra/recipes/built-in/*.md` plus `.mars/recipes/*.md`
     // overrides; consumers re-`mars daemon reload` to pick up edits. Pure
     // read; no draining gate. No recipes are dispatched in slice E — this
-    // endpoint exists for symmetry and so the inbox UI can name them.
+    // endpoint exists for symmetry and so the actionQueue UI can name them.
     if (req.method === 'GET' && req.url === '/recipes') {
       sendJson(res, 200, deps.recipeCatalog.list())
       return
@@ -376,7 +376,7 @@ export const startHttpServer = async (
 
     // GET /events — unified trace events. Supports multi-filter querying
     // (taskId, originId, kind[], severity[], phase[], since, until, q) plus
-    // cursor pagination. Newest-first ordering. The per-task inbox panel
+    // cursor pagination. Newest-first ordering. The per-task actionQueue panel
     // always passes `?taskId=...&limit=50`; the dedicated Events tab uses
     // the broader filter surface. Pure read; no draining gate.
     if (req.method === 'GET' && req.url && req.url.startsWith('/events')) {
@@ -427,7 +427,7 @@ export const startHttpServer = async (
     }
 
     // GET /view/stream — long-lived Server-Sent Events channel. Emits one
-    // named event per channel ('tasks'|'progress'|'inbox'|'todo'|'kpis')
+    // named event per channel ('tasks'|'progress'|'action-queue'|'todo'|'kpis')
     // whenever the daemon mutates the corresponding store. The UI subscribes
     // to avoid polling and to get the same liveness it previously had from
     // watching the DB file. Pure read; no draining gate.
@@ -503,33 +503,33 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /view/inbox?filter=open|dismissed|all — the full derived inbox view.
+    // GET /view/action-queue?filter=open|dismissed|all — the full derived actionQueue view.
     // The daemon builds this from its own database and is the sole source of
     // truth; the read-only UI proxies this endpoint instead of re-deriving it.
     // Pure read; no draining gate.
-    if (req.method === 'GET' && req.url && req.url.startsWith('/view/inbox')) {
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/action-queue')) {
       const parsed = new URL(req.url, 'http://localhost')
       const filterRaw = parsed.searchParams.get('filter')
-      const filter: DerivedInboxFilter =
+      const filter: DerivedActionQueueFilter =
         filterRaw === 'dismissed' || filterRaw === 'all' ? filterRaw : 'open'
       deps
-        .viewInbox(filter)
+        .viewActionQueue(filter)
         .then((rows) => sendJson(res, 200, rows))
         .catch((err: unknown) => sendError(res, err))
       return
     }
 
-    // POST /view/inbox/{ack,resolve,dismiss} — inbox mutation verbs. These
+    // POST /view/action-queue/{ack,resolve,dismiss} — actionQueue mutation verbs. These
     // are UI-state writes (operator opinion), not work-dispatch actions, so
     // they are NOT gated by isAcceptingWork(). Accepted body:
     //   { kind: 'task' | 'worktree' | 'proposal', entityId: string }
     {
-      const inboxVerbMatch =
+      const actionQueueVerbMatch =
         req.method === 'POST' && req.url
-          ? req.url.match(/^\/view\/inbox\/(ack|resolve|dismiss)$/)
+          ? req.url.match(/^\/view\/action-queue\/(ack|resolve|dismiss)$/)
           : null
-      if (inboxVerbMatch && inboxVerbMatch[1]) {
-        const verb = inboxVerbMatch[1] as 'ack' | 'resolve' | 'dismiss'
+      if (actionQueueVerbMatch && actionQueueVerbMatch[1]) {
+        const verb = actionQueueVerbMatch[1] as 'ack' | 'resolve' | 'dismiss'
         let rawBody: string = ''
         req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
         req.on('end', () => {
@@ -555,9 +555,9 @@ export const startHttpServer = async (
             return
           }
           const handler =
-            verb === 'ack' ? deps.inboxAck
-            : verb === 'resolve' ? deps.inboxResolve
-            : deps.inboxDismiss
+            verb === 'ack' ? deps.actionQueueAck
+            : verb === 'resolve' ? deps.actionQueueResolve
+            : deps.actionQueueDismiss
           handler(kind, entityId)
             .then(() => sendJson(res, 200, { ok: true }))
             .catch((err: unknown) => sendError(res, err))

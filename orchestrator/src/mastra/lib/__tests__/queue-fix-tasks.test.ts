@@ -52,7 +52,7 @@ const setupRepo = (): string => {
 /**
  * Pre-migrated database snapshots, captured once in `beforeAll` and
  * cloned into each test's repo via `copyFileSync`. Running the full
- * `initQueue` (and inbox) migration set from scratch on every `it`
+ * `initQueue` (and actionQueue) migration set from scratch on every `it`
  * (24+ tests) used to push individual tests close to or past vitest's
  * default 5s `testTimeout` — observed as `'upsertFixTask creates a
  * queued task' timed out at 5000ms` in isolation. Hoisting the
@@ -60,7 +60,7 @@ const setupRepo = (): string => {
  *   - copy two small SQLite files,
  *   - vi.resetModules() (still required: the queue module holds a
  *     singleton DB client we want a fresh handle for each test),
- *   - re-enter initQueue/initInbox, which now short-circuits every
+ *   - re-enter initQueue/initActionQueue, which now short-circuits every
  *     ALTER guard and only runs idempotent CREATE INDEX IF NOT EXISTS
  *     against pre-migrated tables.
  */
@@ -124,18 +124,18 @@ describe('queue-fix-tasks', () => {
   beforeAll(async () => {
     // Build a fully-migrated template repo once. Every per-test repo
     // copies these files instead of re-running `initQueue` and
-    // `initInbox` from a blank DB.
+    // `initActionQueue` from a blank DB.
     templateRepo = setupRepo()
     vi.resetModules()
     process.env.MARS_REPO = templateRepo
     const q = (await import('../../queue')) as unknown as QueueModule
     await q.initQueue()
-    // initInbox lazily seeds state.db; touch it now so the template
-    // also carries the inbox schema for tests that exercise it.
-    const inbox = (await import('../inbox')) as unknown as {
-      initInbox: typeof import('../inbox').initInbox
+    // initActionQueue lazily seeds state.db; touch it now so the template
+    // also carries the actionQueue schema for tests that exercise it.
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      initActionQueue: typeof import('../action-queue').initActionQueue
     }
-    await inbox.initInbox()
+    await actionQueue.initActionQueue()
     delete process.env.MARS_REPO
     vi.resetModules()
   })
@@ -532,11 +532,11 @@ describe('queue-fix-tasks', () => {
     ).toBe(0)
   })
 
-  it('raises a task-blocked(<id>) inbox row when retry budget is exhausted, deduped by task id', async () => {
+  it('raises a task-blocked(<id>) actionQueue row when retry budget is exhausted, deduped by task id', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '0'
     const { q, ft } = await loadModules(repo)
-    const inbox = (await import('../inbox')) as unknown as {
-      listInboxItems: typeof import('../inbox').listInboxItems
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
     }
     const t = await q.enqueueTask('merge into dirty target', undefined, {
       skipTriage: true,
@@ -545,7 +545,7 @@ describe('queue-fix-tasks', () => {
     const errorLine =
       'merge target /repo has uncommitted changes blocking fast-forward'
 
-    // First failure: blocked + recovery enqueued. No inbox row yet.
+    // First failure: blocked + recovery enqueued. No actionQueue row yet.
     const first = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'merge:preflight',
@@ -559,12 +559,12 @@ describe('queue-fix-tasks', () => {
       },
     })
     expect(first.outcome).toBe('blocked')
-    let openItems = await inbox.listInboxItems('open')
+    let openItems = await actionQueue.listActionQueueItems('open')
     expect(
       openItems.filter((i) => i.kind === 'failed'),
     ).toHaveLength(0)
 
-    // Second failure: retry budget exhausted -> dropped + inbox raised.
+    // Second failure: retry budget exhausted -> dropped + actionQueue raised.
     const second = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'merge:preflight',
@@ -579,7 +579,7 @@ describe('queue-fix-tasks', () => {
     })
     expect(second.outcome).toBe('failed')
 
-    openItems = await inbox.listInboxItems('open')
+    openItems = await actionQueue.listActionQueueItems('open')
     const taskBlocked = openItems.filter((i) =>
       i.kind === 'failed' && i.payload.taskId === t.id,
     )
@@ -600,9 +600,9 @@ describe('queue-fix-tasks', () => {
     // markTaskFailed already removed the task_blockers; re-call the
     // helper directly to simulate the same exhaustion firing again.
     const retry = (await import('../../queue-retry')) as unknown as {
-      raiseRetryBudgetExhaustedInbox: typeof import('../../queue-retry').raiseRetryBudgetExhaustedInbox
+      raiseRetryBudgetExhaustedActionQueue: typeof import('../../queue-retry').raiseRetryBudgetExhaustedActionQueue
     }
-    await retry.raiseRetryBudgetExhaustedInbox({
+    await retry.raiseRetryBudgetExhaustedActionQueue({
       taskId: t.id,
       lastStep: 'merge:preflight',
       retryCount: 1,
@@ -612,7 +612,7 @@ describe('queue-fix-tasks', () => {
       worktreePath: null,
     })
 
-    const openAfter = await inbox.listInboxItems('open')
+    const openAfter = await actionQueue.listActionQueueItems('open')
     const taskBlockedAfter = openAfter.filter((i) =>
       i.kind === 'failed' && i.payload.taskId === t.id,
     )
@@ -674,7 +674,7 @@ describe('queue-fix-tasks', () => {
     expect(reloaded?.status).toBe('done')
   })
 
-  it('escalates to inbox when a recovery (fix-task) itself fails — does NOT enqueue another recovery', async () => {
+  it('escalates to actionQueue when a recovery (fix-task) itself fails — does NOT enqueue another recovery', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft, rc } = await loadModules(repo)
     // Register a recipe so the FIRST failure produces a recovery row.
@@ -699,7 +699,7 @@ describe('queue-fix-tasks', () => {
     })
     expect(second.outcome).toBe('escalated')
     expect(second.fixTaskId).toBeUndefined()
-    expect(second.inboxItemId).toBeTruthy()
+    expect(second.actionQueueItemId).toBeTruthy()
 
     const recoveryRow = await q.getTask(recoveryId)
     expect(recoveryRow?.status).toBe('failed')
@@ -720,7 +720,7 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
-  it('no-recipe path: marks the source failed and raises an inbox item, WITHOUT spawning an investigator task', async () => {
+  it('no-recipe path: marks the source failed and raises an actionQueue item, WITHOUT spawning an investigator task', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
@@ -738,7 +738,7 @@ describe('queue-fix-tasks', () => {
     expect(
       (r as { investigatorTaskId?: string }).investigatorTaskId,
     ).toBeUndefined()
-    expect(r.inboxItemId).toBeTruthy()
+    expect(r.actionQueueItemId).toBeTruthy()
     expect(r.fixTaskId).toBeUndefined()
 
     // Original task is marked failed with no task_blockers edge.
@@ -758,15 +758,15 @@ describe('queue-fix-tasks', () => {
     expect(all.rows.length).toBe(1)
   })
 
-  it('fix-fail loop: caps fix-task inserts per (sourceTaskId, failureSignature) at MARS_MAX_FIX_ATTEMPTS (default 2) and escalates to a fix-fail-loop inbox item', async () => {
+  it('fix-fail loop: caps fix-task inserts per (sourceTaskId, failureSignature) at MARS_MAX_FIX_ATTEMPTS (default 2) and escalates to a fix-fail-loop actionQueue item', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '10'
     delete process.env.MARS_MAX_FIX_ATTEMPTS
     const { q, ft, rc } = await loadModules(repo)
     const sig = 'verify:typecheck/typecheck-cannot-find-name'
     const cleanup = registerTestRecipe(rc, sig)
-    const inbox = (await import('../inbox')) as unknown as {
-      listInboxItems: typeof import('../inbox').listInboxItems
-      getInboxItem: typeof import('../inbox').getInboxItem
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
+      getActionQueueItem: typeof import('../action-queue').getActionQueueItem
     }
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
 
@@ -802,7 +802,7 @@ describe('queue-fix-tasks', () => {
     ).toBe(2)
 
     // 3rd dispatch hits the cap: no new task row, raises a fix-fail-loop
-    // inbox item with the failure signature as its dedupe signature.
+    // actionQueue item with the failure signature as its dedupe signature.
     const r3 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
@@ -811,7 +811,7 @@ describe('queue-fix-tasks', () => {
     expect(r3.outcome).toBe('fix-fail-loop')
     expect(r3.fixTaskId).toBeUndefined()
     expect(r3.failureSignature).toBe(sig)
-    expect(r3.inboxItemId).toBeTruthy()
+    expect(r3.actionQueueItemId).toBeTruthy()
 
     const fixCountAfter = await q.getClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
@@ -821,7 +821,7 @@ describe('queue-fix-tasks', () => {
       Number((fixCountAfter.rows[0] as unknown as { n: number }).n),
     ).toBe(2)
 
-    const item3 = await inbox.getInboxItem(r3.inboxItemId!)
+    const item3 = await actionQueue.getActionQueueItem(r3.actionQueueItemId!)
     expect(item3?.kind).toBe('failed')
     expect(item3?.category).toBe('orchestrator')
     expect(item3?.priority).toBe('high')
@@ -876,15 +876,15 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
-  it('fix-fail loop: 4th and subsequent dispatches dedupe onto the same inbox row and bump seenCount, no new task or inbox row', async () => {
+  it('fix-fail loop: 4th and subsequent dispatches dedupe onto the same actionQueue row and bump seenCount, no new task or actionQueue row', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '10'
     delete process.env.MARS_MAX_FIX_ATTEMPTS
     const { q, ft, rc } = await loadModules(repo)
     const sig = 'verify:typecheck/typecheck-cannot-find-name'
     const cleanup = registerTestRecipe(rc, sig)
-    const inbox = (await import('../inbox')) as unknown as {
-      listInboxItems: typeof import('../inbox').listInboxItems
-      getInboxItem: typeof import('../inbox').getInboxItem
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
+      getActionQueueItem: typeof import('../action-queue').getActionQueueItem
     }
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
 
@@ -913,8 +913,8 @@ describe('queue-fix-tasks', () => {
       errorOutput: 'TS2304: cannot find name foo',
     })
     expect(r4.outcome).toBe('fix-fail-loop')
-    // Same inbox row, no new fix-task row.
-    expect(r4.inboxItemId).toBe(r3.inboxItemId)
+    // Same actionQueue row, no new fix-task row.
+    expect(r4.actionQueueItemId).toBe(r3.actionQueueItemId)
     expect(r4.fixTaskId).toBeUndefined()
 
     const r5 = await ft.handleTaskFailureWithFixTask({
@@ -923,7 +923,7 @@ describe('queue-fix-tasks', () => {
       errorOutput: 'TS2304: cannot find name foo',
     })
     expect(r5.outcome).toBe('fix-fail-loop')
-    expect(r5.inboxItemId).toBe(r3.inboxItemId)
+    expect(r5.actionQueueItemId).toBe(r3.actionQueueItemId)
 
     // No new task rows beyond the original two fix-tasks.
     const fixCount = await q.getClient().execute({
@@ -932,13 +932,13 @@ describe('queue-fix-tasks', () => {
     })
     expect(Number((fixCount.rows[0] as unknown as { n: number }).n)).toBe(2)
 
-    // Exactly one fix-fail-loop inbox row exists; seenCount tracks
+    // Exactly one fix-fail-loop actionQueue row exists; seenCount tracks
     // every escalation after the first (3 escalations -> seenCount 3).
-    const loopItems = (await inbox.listInboxItems('open')).filter(
+    const loopItems = (await actionQueue.listActionQueueItems('open')).filter(
       (i) => i.kind === 'failed',
     )
     expect(loopItems).toHaveLength(1)
-    expect(loopItems[0].id).toBe(r3.inboxItemId)
+    expect(loopItems[0].id).toBe(r3.actionQueueItemId)
     expect(loopItems[0].seenCount).toBe(3)
     cleanup()
   })
@@ -982,7 +982,7 @@ describe('queue-fix-tasks', () => {
     })
     expect(r2.outcome).toBe('fix-fail-loop')
     expect(r2.fixTaskId).toBeUndefined()
-    expect(r2.inboxItemId).toBeTruthy()
+    expect(r2.actionQueueItemId).toBeTruthy()
 
     // The override took effect: cap=1 means the 2nd dispatch already
     // escalates, even though only one fix-task was ever inserted.

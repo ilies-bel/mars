@@ -40,7 +40,7 @@ export interface IntegrationBranchDirtyResult {
   hash: string | null
   /**
    * Raw `git status --porcelain` output (untracked included). Empty string
-   * when clean. Surfaced for log lines and the aggregated inbox row.
+   * when clean. Surfaced for log lines and the aggregated actionQueue row.
    */
   statusOutput: string
 }
@@ -135,7 +135,7 @@ export const VERIFY_MAIN_DIRTY_CODE = 'verify:main-dirty'
 /**
  * Recipe name that resolves the committer agent (see
  * `recipes/built-in/main-commiter.md`). Stored on the recovery task's
- * `recovery_payload` so future inbox / UI code can render which recipe a
+ * `recovery_payload` so future actionQueue / UI code can render which recipe a
  * given recovery is running.
  */
 export const MAIN_COMMITER_RECIPE = 'main-commiter'
@@ -156,7 +156,7 @@ export interface MainCommiterPayload {
 /**
  * Parse a recovery_payload string into a typed MainCommiterPayload, returning
  * null when the payload is missing, malformed, or for a different recipe.
- * Used by the catalog auto-resolve and aggregated-inbox-row paths.
+ * Used by the catalog auto-resolve and aggregated-actionQueue-row paths.
  */
 export const parseMainCommiterPayload = (
   raw: string | null,
@@ -269,7 +269,7 @@ export interface SpawnOrAttachInput {
  * task and parks the source behind it, or — when an active committer at the
  * same hash already exists — attaches the source to the existing recovery
  * via `attachToExistingFixTask`. The `failed` case at the same hash still
- * attaches (so the failed committer's inbox row aggregates the new
+ * attaches (so the failed committer's actionQueue row aggregates the new
  * dependent); only a `done` committer or a different-hash failed committer
  * triggers a fresh spawn.
  *

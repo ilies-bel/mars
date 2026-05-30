@@ -17,7 +17,7 @@ shape, so each child reads ~5 files orienting, never produces a
 structured artifact, trips the watcher, and spawns another child. The
 loop has run ≥3 levels deep. Implementing `mars-7dbd72db` terminates the
 class of bug. The recursion has self-collapsed one level (parent
-`mars-eab84df7` is `done`, `mars-5ceaeb55` is back to `queued`); an inbox
+`mars-eab84df7` is `done`, `mars-5ceaeb55` is back to `queued`); an action queue
 item has been raised so a human can collapse the rest if it re-spawns.
 
 ## Exact code locations (verified, file = orchestrator/src/mastra/...)
@@ -106,7 +106,7 @@ child's verdict (final message / note file) and:
   (not the diagnose child) is the parent's blocker. Diagnose child just
   completes normally.
 - **`## INVESTIGATION INCONCLUSIVE`** (or NEITHER heading present — fail
-  safe) → NO fix worker. Raise an inbox item (see §4) summarizing the
+  safe) → NO fix worker. Raise an action queue item (see §4) summarizing the
   inconclusive result + parent task id + read trail, leave the parent
   parked. Match the existing exhausted-retry shape for consistency.
 
@@ -134,8 +134,8 @@ addBlockers(taskId: string, blockerIds: readonly string[]): Promise<void>
 
 // queue.ts — updateTask(taskId, { status, error, failedPhase, ... })
 
-// lib/inbox.ts L289 — raiseInboxItem(item: RaiseInboxItem): Promise<string>
-interface RaiseInboxItem {
+// lib/action queue.ts L289 — raiseActionQueueItem(item: RaiseActionQueueItem): Promise<string>
+interface RaiseActionQueueItem {
   kind: string                       // dedup key part; e.g. `too-hard-inconclusive(${parentId})`
   category: 'orchestrator'|'reflector'|'daemon'|'user' | string  // use 'orchestrator'
   priority: 'urgent'|'high'|'normal'|'low'                       // 'high'
@@ -148,15 +148,15 @@ interface RaiseInboxItem {
   occurrence?: Record<string, unknown>
 }
 ```
-Reference impl to copy the inbox shape from: `queue-retry.ts`
-`raiseRetryBudgetExhaustedInbox` (L92–119) and
-`TASK_BLOCKED_INBOX_KIND_PREFIX` (L6). For the CLI path that dispatched
-agents must use, see AGENTS.md: `mars inbox raise --from -` (JSON on
+Reference impl to copy the action queue shape from: `queue-retry.ts`
+`raiseRetryBudgetExhaustedActionQueue` (L92–119) and
+`TASK_BLOCKED_ACTION_QUEUE_KIND_PREFIX` (L6). For the CLI path that dispatched
+agents must use, see AGENTS.md: `mars action-queue raise --from -` (JSON on
 stdin) — do NOT write one-shot `.ts` scripts under `orchestrator/scripts/`.
 
-## §4 — inbox shape for INVESTIGATION INCONCLUSIVE
+## §4 — action queue shape for INVESTIGATION INCONCLUSIVE
 
-Mirror `raiseRetryBudgetExhaustedInbox`:
+Mirror `raiseRetryBudgetExhaustedActionQueue`:
 `kind: 'too-hard-inconclusive(<parentId>)'`, `category:'orchestrator'`,
 `priority:'high'`, `signature:'<parentId>'`, payload includes parentId +
 read trail + the child's `## INVESTIGATION INCONCLUSIVE` block,
@@ -178,7 +178,7 @@ parent prompt's Verify section):
    blocker (assert `addBlockers(parentId, [fixWorkerId])`, fix-worker
    prompt contains the `## Diagnosis from context-gathering` section).
 3. A `## INVESTIGATION INCONCLUSIVE` child (and a no-heading child) → an
-   inbox item raised, NO fix worker spawned.
+   action queue item raised, NO fix worker spawned.
 Test runner: vitest. Build first.
 
 ## Verify (run from `orchestrator/`)

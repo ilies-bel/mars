@@ -22,7 +22,7 @@ export const SseInvalidator = () => {
         tasksDebounce = null
         void qc.invalidateQueries({ queryKey: ['tasks'] })
         void qc.invalidateQueries({ queryKey: ['progress'] })
-        void qc.invalidateQueries({ queryKey: ['inbox'] })
+        void qc.invalidateQueries({ queryKey: ['action-queue'] })
         void qc.invalidateQueries({ queryKey: ['action-queue'] })
         // Refetch the open drawer's task alongside Progress so the status
         // chip and section data update in place. Switching the drawer to a
@@ -35,7 +35,7 @@ export const SseInvalidator = () => {
       }, 150)
     })
 
-    // 'todo' events only touch the todo/inbox/action-queue surfaces — they do
+    // 'todo' events only touch the todo/actionQueue/action-queue surfaces — they do
     // not require a full progress refetch.
     let todoDebounce: ReturnType<typeof setTimeout> | null = null
     es.addEventListener('todo', () => {
@@ -43,7 +43,7 @@ export const SseInvalidator = () => {
       todoDebounce = setTimeout(() => {
         todoDebounce = null
         void qc.invalidateQueries({ queryKey: ['todo'] })
-        void qc.invalidateQueries({ queryKey: ['inbox'] })
+        void qc.invalidateQueries({ queryKey: ['action-queue'] })
         void qc.invalidateQueries({ queryKey: ['action-queue'] })
       }, 150)
     })

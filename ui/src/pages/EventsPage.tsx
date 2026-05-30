@@ -3,7 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
-import { severityColor, summarizeTraceEvent } from '@/shared/inboxDetail'
+import { severityColor, summarizeTraceEvent } from '@/shared/actionQueueDetail'
 import type { TraceEvent } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
 
@@ -14,7 +14,7 @@ import { relativeTime } from '@/shared/time'
  * now real trace events from the daemon's `/events` endpoint (proxied as
  * `/api/trace-events`), not task records pretending to be events. Filters
  * mirror the endpoint's filter surface. Newest-first, cursor-paginated
- * `Load more`. Rows reuse the same summary helpers as the inbox detail
+ * `Load more`. Rows reuse the same summary helpers as the actionQueue detail
  * panel's Traces section so the two surfaces stay visually consistent.
  *
  * Manual refresh only — no SSE, no polling in this slice. The Refresh

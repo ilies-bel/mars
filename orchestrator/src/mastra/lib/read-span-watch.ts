@@ -96,7 +96,7 @@ const ACTION_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit'])
  * {@link stripLeadingPrefixes} is applied before matching.
  */
 export const BASH_READ_PATTERN =
-  /^git\s+(?:status|log|diff|branch|show|rev-parse|rev-list|ls-files|remote|config\s+--get)|^(?:ls|cat|head|tail|wc|pwd|env|tree|find|stat|file|grep|fd|jq|awk)\b|^sed\s+-n\b|^rg\b|^sqlite3\s+\S+\s+'?(?:SELECT|\.tables|\.schema)|^mars\s+(?:list|show|where|inbox|idea\s+(?:list|show))/
+  /^git\s+(?:status|log|diff|branch|show|rev-parse|rev-list|ls-files|remote|config\s+--get)|^(?:ls|cat|head|tail|wc|pwd|env|tree|find|stat|file|grep|fd|jq|awk)\b|^sed\s+-n\b|^rg\b|^sqlite3\s+\S+\s+'?(?:SELECT|\.tables|\.schema)|^mars\s+(?:list|show|where|actionQueue|idea\s+(?:list|show))/
 
 /** Output-redirect pattern — any command with this is write-class regardless of the leading command. */
 const BASH_WRITE_REDIRECT = /\s>/
