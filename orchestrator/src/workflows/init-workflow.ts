@@ -27,6 +27,7 @@ import { readInitManifest, writeInitManifest } from '../init/init-manifest'
 import { writeFailureReasonsSeed } from '../init/failure-reasons-seed'
 import { writeRecipesSeed } from '../init/recipes-seed'
 import { activatePlugin, realDeps, type ClaudePluginDeps } from '../commands/claude-plugin.js'
+import { ensureProjectRegistered } from '../registry/projects.js'
 
 const verifyStepSchema = z.object({
   name: z.string(),
@@ -503,6 +504,17 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
     const cause = result.error instanceof Error ? `: ${result.error.message}` : ''
     throw new Error(`init workflow ${result.status}${cause}`)
   }
+  // Auto-register this repo in the global project registry so the UI can
+  // show tasks without requiring a manual 'mars project add'. Idempotent:
+  // safe to call on re-init.
+  try {
+    ensureProjectRegistered({ repoRoot: ctx.repoRoot })
+  } catch (err) {
+    process.stderr.write(
+      `[mars init] warning: failed to register project in registry: ${(err as Error).message}\n`,
+    )
+  }
+
   return {
     status: 'ok',
     message: 'verify config generated',
