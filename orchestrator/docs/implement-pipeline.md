@@ -89,7 +89,10 @@ the engine's recorded step output — not a re-read of the DB row.
 
 1. `cleanWorktreeIfNoCommitsAhead` (best-effort; never fails dispatch).
 2. `composePrompt(...)`; pick the Worker (`kind === 'fix' ? Fixer :
-   getWorkerForTag(tag)`).
+   pickWorkerForTags(tags, Workers)`). `pickWorkerForTags` intersects the
+   task's tag list against each registered Worker's `config.tags` set; when
+   no Worker claims a tag the **default headless Worker** (Coder,
+   `bypassPermissions`, full tool surface) is used as the fallback.
 3. Wire the read-span watcher when `shouldWireReadSpanWatcher(kind)`
    (every kind except `diagnose`). Stream events via
    `ctx.emit('claude-event', event)`; the watcher observes each.

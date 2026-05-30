@@ -18,7 +18,6 @@ import {
   type RunClaudeResult,
 } from '../lib/git'
 import type { ClaudeEvent } from '../lib/claude-stream'
-import type { TaskTag } from '../queue'
 
 // Mutation tools denied for read-only Workers (Planner, Slicer, Triager).
 // A confused agent dispatched into one of those stages cannot silently mutate
@@ -108,6 +107,10 @@ export interface WorkerConfig {
   // dispatched via `claude -p` in a non-interactive subprocess. Reserved for
   // future runtimes (e.g. 'tmux'); no dispatch logic branches on this field yet.
   readonly runtime: WorkerRuntime
+  // Tags this Worker handles. pickWorkerForTags returns this Worker when the
+  // task's tag list intersects this set. Workers with no tags entry are never
+  // selected by tag (they are dispatched by kind or as the fallback).
+  readonly tags?: readonly string[]
 }
 
 // Public default for the message-cap cascade. Matches the wrapper's
@@ -207,6 +210,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     maxMessages: resolveWorkerMaxMessages(),
     maxContextTokens: CODER_CONTEXT_TOKENS,
     runtime: 'headless',
+    tags: ['coder'],
   },
   Planner: {
     name: 'Planner',
@@ -319,12 +323,30 @@ export const Workers: Readonly<Record<WorkerName, Worker>> = {
 
 export const getWorker = (name: WorkerName): Worker => Workers[name]
 
-// Single, audited mapping from a Task's tag to the Worker that implements it.
-// TaskTag is a free-form string; unknown tags fall back to the Coder Worker.
-// Extend this map to route new tags to a different Worker.
-const TAG_TO_WORKER: Readonly<Record<string, WorkerName | undefined>> = {
-  coder: 'Coder',
-} as const
-
-export const getWorkerForTag = (tag: TaskTag): Worker =>
-  Workers[TAG_TO_WORKER[tag] ?? 'Coder']
+/**
+ * Select a Worker for a task based on tag intersection.
+ *
+ * Iterates through the registered Workers and returns the first one whose
+ * `config.tags` set intersects with the task's tag list. When no Worker
+ * claims any of the task's tags, the function falls through to the
+ * **default headless Worker** — the Coder, running via `claude -p` with
+ * full tool surface and bypassPermissions. This fallback guarantees every
+ * task gets a runner even when no tag-specific Worker is registered.
+ *
+ * To route a new tag to a Worker, add that tag to the Worker's `config.tags`
+ * array in WORKER_CONFIGS. The first matching Worker in registry order wins.
+ */
+export const pickWorkerForTags = (
+  tags: readonly string[],
+  workers: Readonly<Record<WorkerName, Worker>>,
+): Worker => {
+  for (const worker of Object.values(workers)) {
+    if (worker.config.tags?.some((t) => tags.includes(t))) {
+      return worker
+    }
+  }
+  // Default headless Worker: the Coder, with full tool surface and
+  // bypassPermissions. Every task that carries no tag matching a registered
+  // Worker falls back here — no task is left without a runner.
+  return workers.Coder
+}
