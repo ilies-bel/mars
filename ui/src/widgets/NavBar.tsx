@@ -2,6 +2,7 @@ import { useAgents } from '@/hooks/useAgents'
 import { useProgress } from '@/hooks/useProgress'
 import { useTodo } from '@/entities/todo/useTodo'
 import { detectRoute, actionQueueCount } from '@/shared/routing'
+import { ProjectSelector } from './ProjectSelector'
 
 interface NavBarProps {
   hash: string
@@ -37,6 +38,8 @@ export const NavBar = ({ hash }: NavBarProps) => {
 
   return (
     <nav className="flex items-center gap-2 border-b border-iron/30 bg-bg px-4 py-1.5">
+      <ProjectSelector />
+      <span className="mx-1 h-3 w-px bg-iron/30" aria-hidden="true" />
       <span className="relative">
         <CountBadge count={actionCount} />
         <a className={linkClass(route === 'action-queue')} href="#/action-queue">

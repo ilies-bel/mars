@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchProgress } from '@/shared/api'
 import { useSseConnected } from '@/shared/sseStatus'
+import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { Cluster, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 
 interface State {
@@ -30,10 +31,12 @@ const emptyByCluster = (): Record<Cluster, ProgressTask[]> => ({
 
 export const useProgress = (options: UseProgressOptions = {}): State => {
   const { failedWindowMs } = options
+  const projectId = useFocusedProjectId()
   const connected = useSseConnected()
   const query = useQuery({
-    queryKey: ['progress', failedWindowMs ?? 'default'],
-    queryFn: () => fetchProgress(failedWindowMs),
+    queryKey: ['progress', projectId, failedWindowMs ?? 'default'],
+    queryFn: () => fetchProgress(failedWindowMs, projectId ?? undefined),
+    enabled: projectId !== null,
   })
 
   const tasks = query.data?.tasks ?? null

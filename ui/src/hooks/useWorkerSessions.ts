@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchWorkerSessions } from '@/shared/api'
+import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { WorkerSession } from '@/shared/schemas'
 
 interface State {
@@ -11,11 +12,14 @@ interface State {
 const LIVE_POLL_MS = 5_000
 
 export const useWorkerSessions = (agentName: string | null): State => {
+  const projectId = useFocusedProjectId()
   const query = useQuery({
-    queryKey: ['sessions', agentName],
+    queryKey: ['sessions', projectId, agentName],
     queryFn: () =>
-      agentName ? fetchWorkerSessions(agentName) : Promise.resolve([]),
-    enabled: agentName !== null,
+      agentName
+        ? fetchWorkerSessions(agentName, projectId ?? undefined)
+        : Promise.resolve([]),
+    enabled: agentName !== null && projectId !== null,
     refetchInterval: LIVE_POLL_MS,
   })
 

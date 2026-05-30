@@ -11,6 +11,7 @@ import {
 import type { RouteName } from '@/shared/routing'
 import { useTodo } from '@/entities/todo/useTodo'
 import { useProgress } from '@/hooks/useProgress'
+import { FocusedProjectProvider } from '@/shared/useFocusedProject'
 import { AgentsPage } from '@/pages/AgentsPage'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/TodoPage'
@@ -35,7 +36,7 @@ const clearTaskHash = (closeHash: string): void => {
   window.location.hash = origin ? ROUTE_BASE[origin] : '#/progress'
 }
 
-const App = () => {
+const AppInner = () => {
   const hash = useHashRoute()
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
@@ -83,5 +84,11 @@ const App = () => {
     </div>
   )
 }
+
+const App = () => (
+  <FocusedProjectProvider>
+    <AppInner />
+  </FocusedProjectProvider>
+)
 
 export default App

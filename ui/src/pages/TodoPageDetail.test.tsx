@@ -123,10 +123,12 @@ const makeClient = (opts: {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Infinity } },
   })
-  qc.setQueryData(['failure-reasons'], opts.catalog ?? CATALOG)
-  qc.setQueryData(['events', opts.taskId], opts.events ?? EMPTY_EVENTS)
+  // The null slot is the projectId from FocusedProjectContext, which defaults
+  // to null when rendered outside FocusedProjectProvider (as in these tests).
+  qc.setQueryData(['failure-reasons', null], opts.catalog ?? CATALOG)
+  qc.setQueryData(['events', null, opts.taskId], opts.events ?? EMPTY_EVENTS)
   qc.setQueryData(
-    ['origins', opts.taskId],
+    ['origins', null, opts.taskId],
     opts.origins ?? SINGLE_NODE_ORIGINS(opts.taskId),
   )
   return qc
@@ -149,7 +151,7 @@ const makeClient = (opts: {
 // useActionQueue, which we stub via a pre-warmed QueryClient too.
 
 const renderDetail = (item: ActionQueueItem, qc: QueryClient): string => {
-  qc.setQueryData(['action-queue'], [item])
+  qc.setQueryData(['action-queue', null], [item])
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <_Page />
