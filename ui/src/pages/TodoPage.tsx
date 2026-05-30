@@ -112,7 +112,7 @@ export const ActionQueueRow = memo(({
               e.stopPropagation()
               onRestart(item.entityId)
             }}
-            className="shrink-0 border border-fg/60 px-2 py-0.5 font-mono text-[10px] uppercase text-fg transition-colors hover:bg-iron/20 disabled:opacity-50"
+            className="shrink-0 border border-fg/60 px-2 py-0.5 font-mono text-[10px] uppercase text-fg transition hover:bg-iron/20 active:scale-[0.97] disabled:opacity-50"
           >
             {restartPending ? 'Restarting…' : 'Restart'}
           </button>
@@ -241,7 +241,7 @@ const ActionBar = ({ item }: ActionBarProps) => {
               disabled={mutation.isPending}
               onClick={() => run(action)}
               className={[
-                'border px-3 py-1.5 font-mono text-[11px] uppercase transition-colors disabled:opacity-50',
+                'border px-3 py-1.5 font-mono text-[11px] uppercase transition active:scale-[0.97] disabled:opacity-50',
                 action.needsConfirm
                   ? 'border-error/50 text-error hover:bg-error/10'
                   : 'border-iron/40 text-fg hover:bg-iron/20',
@@ -354,7 +354,7 @@ const CatalogReasonAndActions = ({ item }: CatalogPanelProps) => {
               disabled={mutation.isPending || action.disabled}
               onClick={() => run(action)}
               className={[
-                'border px-3 py-1.5 font-mono text-[11px] uppercase transition-colors disabled:opacity-50',
+                'border px-3 py-1.5 font-mono text-[11px] uppercase transition active:scale-[0.97] disabled:opacity-50',
                 action.id === 'purge'
                   ? 'border-error/50 text-error hover:bg-error/10'
                   : 'border-iron/40 text-fg hover:bg-iron/20',
