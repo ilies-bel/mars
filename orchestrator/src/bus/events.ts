@@ -141,6 +141,16 @@ export const EventMap = {
     subscriberId: z.string(),
     eventId: z.number().int(),
   }),
+  /**
+   * Emitted when a coder surfaces a question to the operator during task
+   * execution. The question-raise Outbox Subscriber converts this event into
+   * a durable action-queue inbox row so a daemon restart between the event
+   * write and the inbox raise cannot lose the question.
+   */
+  'task.question': z.object({
+    taskId: z.string(),
+    question: z.string(),
+  }),
 } as const;
 
 /** Union of every registered event type name. */
