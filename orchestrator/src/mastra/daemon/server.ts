@@ -2770,7 +2770,8 @@ export const startDaemon = async (
   void (async () => {
     try {
       await ensureAlertDismisser(getClient())
-      await reconcileTerminalTasks(getClient())
+      const { rowsResolved, dismissalsCleared } = await reconcileTerminalTasks(getClient())
+      log(`[lifecycle-reconcile] resolved=${rowsResolved} dismissalsCleared=${dismissalsCleared}`)
       const { processed } = await drainAlertDismissals(getClient(), log)
       if (processed > 0)
         log(`[alert-dismisser] cleared alerts for ${processed} status change(s) on boot`)
