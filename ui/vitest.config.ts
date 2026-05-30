@@ -22,6 +22,6 @@ export default defineConfig({
     // Include all src/ tests plus server tests that use Node.js HTTP and mocks.
     // All other server/*.test.ts files start a Bun.serve() HTTP server and can
     // only run under `bun test`.
-    include: ['src/**/*.test.{ts,tsx}', 'server/kpis.test.ts', 'server/projectHealth.test.ts', 'server/projectsStart.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'server/kpis.test.ts', 'server/projectHealth.test.ts', 'server/projectsStart.test.ts', 'server/projects.test.ts'],
   },
 })
