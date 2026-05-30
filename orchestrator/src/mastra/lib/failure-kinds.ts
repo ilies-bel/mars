@@ -230,6 +230,21 @@ export const lookupFailureKind = (signature: string): FailureKind | null =>
   _INDEX.get(signature) ?? null
 
 /**
+ * Extract the failing step from a `<failingStep>/<error-class>` signature.
+ * Returns `'unknown'` when `sig` is null.
+ *
+ * Examples:
+ *   `'verify:test/unclassified'` → `'verify:test'`
+ *   `'daemon-killed'` → `'daemon-killed'`
+ *   `null` → `'unknown'`
+ */
+export const failingStepFromSignature = (sig: string | null): string => {
+  if (sig === null) return 'unknown'
+  const idx = sig.indexOf('/')
+  return idx === -1 ? sig : sig.slice(0, idx)
+}
+
+/**
  * Synthesise a FailureKind for a signature that is not in the registry.
  *
  * `warmTitle` names the failing step so the operator knows where to look.

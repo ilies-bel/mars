@@ -10,6 +10,11 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget'
+import {
+  lookupFailureKind,
+  unknownFailureKind,
+  failingStepFromSignature,
+} from '../../lib/failure-kinds'
 
 export type DerivedActionQueueKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
 export type DerivedActionQueueFilter = 'open' | 'dismissed' | 'all'
@@ -76,6 +81,12 @@ export interface TaskForActionQueue {
   /** The proposal this task was sliced from, or null. */
   parentProposalId: string | null
   failureSignature: string | null
+  /**
+   * First line of captured stderr/stdout from the failing step, used as the
+   * `verboseReason` hint in `unknownFailureKind` when the signature is not
+   * registered. Null on legacy tasks or when no output was captured.
+   */
+  lastErrorOutput?: string | null
   branch: string | null
   updatedAt: string
 }
@@ -361,13 +372,33 @@ export const buildActionQueueView = async ({
         ? row.payload.failureReasonCode
         : null
 
+    // For failed-task rows, derive title and body from the Failure kind registry
+    // rather than from the persisted row strings — the registry provides warm,
+    // human-readable copy keyed to the failure's actual cause.
+    let title = row.title
+    let body = row.body
+    if (uiKind === 'failed-task') {
+      const failedTask = taskById.get(entityId)
+      const sig = failedTask?.failureSignature ?? null
+      const fk =
+        sig !== null
+          ? (lookupFailureKind(sig) ??
+              unknownFailureKind(
+                failingStepFromSignature(sig),
+                failedTask?.lastErrorOutput ?? '',
+              ))
+          : unknownFailureKind('unknown', failedTask?.lastErrorOutput ?? '')
+      title = fk.warmTitle
+      body = fk.verboseReason
+    }
+
     rows.push({
       id: row.id,
       kind: uiKind,
       entityId,
       priority: toUiPriority(row.priority),
-      title: row.title,
-      body: row.body,
+      title,
+      body,
       at: row.lastSeenAt,
       dag,
       dismissed,
@@ -406,15 +437,24 @@ export const buildActionQueueView = async ({
       errorKindRegistry.get('daemon-killed-batch')?.recoveryActions ?? []
     ) as { id: string; label: string; op: string }[]
     const newest = daemonKilledVisible[0]!
+    // Derive the batch row's title and body from the daemon-killed Failure kind
+    // entry so the copy stays consistent with the registry rather than being
+    // hardcoded here. The count is appended to the title for context.
+    const daemonKilledKind = lookupFailureKind(DAEMON_KILLED_SIGNATURE)
+    const batchTitle = daemonKilledKind
+      ? `${daemonKilledKind.warmTitle} (${daemonKilledVisible.length})`
+      : `Restart all daemon-killed tasks (${daemonKilledVisible.length})`
+    const batchBody = daemonKilledKind
+      ? daemonKilledKind.verboseReason
+      : `${daemonKilledVisible.length} tasks were in flight when the daemon was killed.\n` +
+        `None of these failures are task faults — a fresh dispatch is very likely to succeed.`
     filtered.unshift({
       id: 'failed-task:__daemon-killed-batch__',
       kind: 'failed-task',
       entityId: '__daemon-killed-batch__',
       priority: 'high',
-      title: `Restart all daemon-killed tasks (${daemonKilledVisible.length})`,
-      body:
-        `${daemonKilledVisible.length} tasks were in flight when the daemon was killed.\n` +
-        `None of these failures are task faults — a fresh dispatch is very likely to succeed.`,
+      title: batchTitle,
+      body: batchBody,
       at: newest.at,
       dag: null,
       dismissed: false,
