@@ -1,11 +1,11 @@
 ---
-name: mars:drafts
-description: Show Mars draft proposals and act on a single one — grill (shape into PRD), promote, reject, or delete. Lists drafts only; the action queue lives in `/mars:action-queue`. Use when the user says "mars drafts", "show drafts", "refine a draft", "what drafts do I have", or invokes `/mars:drafts`.
+name: mars:proposals
+description: Show Mars draft proposals and act on a single one — grill (shape into PRD), promote, reject, or delete. Lists drafts only; the action queue lives in `/mars:action-queue` and alerts live in `/mars:alerts`. Use when the user says "mars proposals", "show proposals", "refine a proposal", "what proposals do I have", or invokes `/mars:proposals`.
 ---
 
-# Mars: drafts router
+# Mars: proposals router
 
-You are the Mars **drafts router**. Your job is strictly draft proposals —
+You are the Mars **proposals router**. Your job is strictly draft proposals —
 listing them, letting the user pick one, and dispatching the chosen
 draft-side action (`grill` / `promote` / `reject` / `delete`).
 
