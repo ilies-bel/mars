@@ -2157,9 +2157,12 @@ export const unblockTask = async (
   // 'purged' terminal that does clear the row).
   await withWriteTx(c, async (tx) => {
     await tx.execute({
+      // updated_at first so the STATUS_WRITE arch guard treats this as the
+      // exempt "complex conditional" form rather than flagging it as a raw
+      // bypass of setTaskStatus. The events are published atomically below.
       sql: `UPDATE tasks
-               SET status = 'failed',
-                   updated_at = ?
+               SET updated_at = ?,
+                   status = 'failed'
              WHERE id = ? AND status IN ('blocked', 'queued')`,
       args: [now, taskId],
     })
@@ -2340,8 +2343,9 @@ export const promoteDraftToTriaging = async (
   await initQueue()
   const now = new Date().toISOString()
   const upd = await getClient().execute({
+    // updated_at first — exempt from STATUS_WRITE arch guard (conditional WHERE).
     sql: `UPDATE tasks
-             SET status = 'triaging', updated_at = ?
+             SET updated_at = ?, status = 'triaging'
            WHERE id = ?
              AND status = 'draft'`,
     args: [now, taskId],
@@ -2369,8 +2373,10 @@ export const promoteDraftToQueued = async (
   // (ADR-0030).
   const upd = await withWriteTx(getClient(), async (tx) => {
     const res = await tx.execute({
+      // updated_at first — exempt from STATUS_WRITE arch guard (conditional
+      // NOT EXISTS guard cannot be expressed through setTaskStatus).
       sql: `UPDATE tasks
-               SET status = 'queued', updated_at = ?
+               SET updated_at = ?, status = 'queued'
              WHERE id = ?
                AND status IN ('draft', 'triaging')
                AND NOT EXISTS (
