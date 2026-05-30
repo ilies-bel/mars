@@ -40,7 +40,8 @@ const SINGLE_LINE_STATUS = /UPDATE\s+tasks\s+SET\b[^;]*\bstatus\s*=/
 const ALLOWLIST = [
   'mastra/queue.ts',
   'mastra/queue-fix-tasks.ts',
-  'mastra/queue-retry.ts',
+  // queue-retry.ts: status writes routed through setTaskStatus (queue.ts);
+  // only extra-column updates and terminal-event publishes remain there.
   'mastra/blocker-resolution.ts',
   'mastra/lib/main-dirty.ts',
   'workflows/slice-workflow.ts',
