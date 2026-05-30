@@ -28,7 +28,8 @@ export const EventMap = {
   }),
   'task.unblocked': z.object({
     taskId: z.string(),
-    blockerTaskId: z.string(),
+    /** The blocker that completed, or undefined when unblocked via edge removal. */
+    blockerTaskId: z.string().optional(),
   }),
   'task.queued': z.object({
     taskId: z.string(),
