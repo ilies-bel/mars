@@ -67,7 +67,7 @@ export const EventMap = {
     blockerTaskId: z.string(),
   }),
   // --- Phase 3 outbox events ---
-  // Schemas land ahead of writer conversion. Writers in queue.ts / inbox.ts /
+  // Schemas land ahead of writer conversion. Writers in queue.ts / actionQueue.ts /
   // ideas.ts / reflect-signals.ts must be wrapped in tx + publish() before
   // these become observable; tracked in a follow-up task.
   'transcript.appended': z.object({
@@ -75,14 +75,14 @@ export const EventMap = {
     role: z.string(),
     contentLength: z.number().int().nonnegative(),
   }),
-  'inbox.raised': z.object({
+  'action-queue.raised': z.object({
     itemId: z.string(),
     kind: z.string(),
     category: z.string(),
     priority: z.string(),
     signature: z.string().nullable(),
   }),
-  'inbox.resolved': z.object({
+  'action-queue.resolved': z.object({
     itemId: z.string(),
     fromState: z.string(),
     toState: z.string(),

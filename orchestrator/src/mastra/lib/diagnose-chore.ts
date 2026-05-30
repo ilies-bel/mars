@@ -59,7 +59,7 @@ export const buildDiagnoseChorePrompt = (
     'JSON',
     '```',
     '',
-    'Exiting WITHOUT recording a verdict is treated the same as `inconclusive`: the operator gets one inbox item and the original task is parked failed. There is no second attempt — this Chore is terminal.',
+    'Exiting WITHOUT recording a verdict is treated the same as `inconclusive`: the operator gets one actionQueue item and the original task is parked failed. There is no second attempt — this Chore is terminal.',
     '',
     `Read freely. You are exempt from the read-span guard; only a hard time/turn cap applies. Do not stage or commit anything (the parent task's branch is for the eventual fix, not for you).`,
     '',

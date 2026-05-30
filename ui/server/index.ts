@@ -74,7 +74,7 @@ export const startServer = async (
   const hub = new SseHub()
   // queueDbPath and stateDbPath now resolve to the same `.mars/mars.db`
   // file (see resolveRepo), so a single watcher covers both task and
-  // proposal/inbox mutations — broadcast every affected channel from it.
+  // proposal/actionQueue mutations — broadcast every affected channel from it.
   watchQueue(ctx.queueDbPath, () => {
     hub.broadcast('tasks')
     hub.broadcast('todo')
@@ -141,15 +141,15 @@ export const startServer = async (
         }
       }
 
-      if (path === '/api/inbox/action-queue') {
-        const r = await proxyGet(ctx.stateDir, `/view/inbox${url.search}`)
+      if (path === '/api/action-queue/action-queue') {
+        const r = await proxyGet(ctx.stateDir, `/view/action-queue${url.search}`)
         return jsonResponse(r.status, r.body)
       }
 
       if (
-        (path === '/api/inbox/dismiss' ||
-          path === '/api/inbox/ack' ||
-          path === '/api/inbox/resolve') &&
+        (path === '/api/action-queue/dismiss' ||
+          path === '/api/action-queue/ack' ||
+          path === '/api/action-queue/resolve') &&
         req.method === 'POST'
       ) {
         try {
@@ -168,13 +168,13 @@ export const startServer = async (
             : kind === 'draft-proposal' ? 'proposal'
             : null
           if (entityKind === null) {
-            return jsonResponse(400, { error: `unknown inbox kind: ${kind}` })
+            return jsonResponse(400, { error: `unknown actionQueue kind: ${kind}` })
           }
           const verb =
-            path === '/api/inbox/ack' ? 'ack'
-            : path === '/api/inbox/resolve' ? 'resolve'
+            path === '/api/action-queue/ack' ? 'ack'
+            : path === '/api/action-queue/resolve' ? 'resolve'
             : 'dismiss'
-          const result = await proxyPost(ctx.stateDir, `/view/inbox/${verb}`, {
+          const result = await proxyPost(ctx.stateDir, `/view/action-queue/${verb}`, {
             kind: entityKind,
             entityId,
           })
@@ -213,7 +213,7 @@ export const startServer = async (
       }
 
       // GET /api/failure-reasons — proxy the daemon's resolved failure-reason
-      // catalog so the inbox detail panel can render `Reason: <userMessage>`.
+      // catalog so the actionQueue detail panel can render `Reason: <userMessage>`.
       if (path === '/api/failure-reasons' && req.method === 'GET') {
         const result = await proxyGet(ctx.stateDir, '/failure-reasons')
         return jsonResponse(result.status, result.body)

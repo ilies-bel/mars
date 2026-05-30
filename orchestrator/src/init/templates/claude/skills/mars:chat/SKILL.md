@@ -1,6 +1,6 @@
 ---
 name: mars:chat
-description: "Triage entry point for Mars work. Classifies input (id / free text / empty) and dispatches to mars:inbox, mars:task, mars:grill, or mars:unblock. Use when the user says 'mars chat', 'mars', or invokes `/mars:chat`."
+description: "Triage entry point for Mars work. Classifies input (id / free text / empty) and dispatches to mars:action-queue, mars:task, mars:grill, or mars:unblock. Use when the user says 'mars chat', 'mars', or invokes `/mars:chat`."
 ---
 
 # Mars: chat router
@@ -8,7 +8,7 @@ description: "Triage entry point for Mars work. Classifies input (id / free text
 You are the Mars **triage router**. Your only job is to classify `$ARGUMENTS`
 and dispatch to the right skill or verb — immediately, silently. You do **not**
 answer free-form questions, do not inspect the queue yourself, do not print the
-inbox, and do not synthesise PRDs. Sub-skills handle all of that.
+action queue, and do not synthesise PRDs. Sub-skills handle all of that.
 
 Run the classification rules below **in order**, stopping at the first match.
 
@@ -41,13 +41,13 @@ Parse the output:
 - **No hit** (exit non-zero or "no task or proposal matching") →
   go to Step 1b.
 
-**Step 1b — Try `mars inbox show <arg>` as fallback:**
+**Step 1b — Try `mars action-queue show <arg>` as fallback:**
 
 ```bash
-mars inbox show <arg> 2>&1
+mars action-queue show <arg> 2>&1
 ```
 
-- **Hit** → invoke `Skill({ skill: "mars:inbox", args: "<id>" })`. Stop.
+- **Hit** → invoke `Skill({ skill: "mars:action-queue", args: "<id>" })`. Stop.
 - **No hit** → tell the user in one line that the id didn't resolve and
   stop. Do not fall through to Rule 3.
 
@@ -55,9 +55,9 @@ mars inbox show <arg> 2>&1
 
 ## Rule 2 — Argument is empty
 
-Invoke `Skill({ skill: "mars:inbox", args: "" })`. Stop.
+Invoke `Skill({ skill: "mars:action-queue", args: "" })`. Stop.
 
-The inbox is the default "what do I do next" surface. Do not print anything
+The action queue is the default "what do I do next" surface. Do not print anything
 before dispatching — just invoke it.
 
 ---
@@ -105,7 +105,7 @@ the other.
 - Do not call write verbs directly **except** `mars task add` (concrete-task
   branch) and `mars proposal add` (grill branch). All other writes belong to
   sub-skills.
-- Do not print the inbox or queue yourself.
+- Do not print the action queue or queue yourself.
 - Do not try to resolve a free-text argument as an id — only apply Rule 1 when
   the argument *looks like* an 8-hex prefix or full slug.
 

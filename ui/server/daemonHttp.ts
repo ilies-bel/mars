@@ -59,7 +59,7 @@ export const readDaemonHttpPort = async (
 /**
  * Fetch the error-kind registry from the daemon. Returns an empty list when the
  * daemon is unreachable — the UI then renders rows without action buttons
- * rather than failing the whole inbox.
+ * rather than failing the whole actionQueue.
  */
 export const fetchErrorKinds = async (
   stateDir: string,
@@ -106,7 +106,7 @@ export const fetchKpis = async (stateDir: string): Promise<KpiRecord[]> => {
 
 /**
  * Forward an arbitrary GET to the daemon, relaying its status + parsed JSON
- * body verbatim. Used by the inbox detail panel to surface the failure-reason
+ * body verbatim. Used by the actionQueue detail panel to surface the failure-reason
  * catalog, per-task trace events, and the origin tree. A missing daemon
  * yields a synthetic 503; a transport error yields a 502.
  */
@@ -135,7 +135,7 @@ export const proxyGet = async (
 
 /**
  * Forward a POST with a JSON body to the daemon, relaying its status + parsed
- * JSON body verbatim. Used to forward inbox mutation verbs (ack/resolve/dismiss)
+ * JSON body verbatim. Used to forward actionQueue mutation verbs (ack/resolve/dismiss)
  * to the daemon — the single writer — so the UI no longer calls the state DB
  * directly. A missing daemon yields a synthetic 503; a transport error yields a
  * 502.

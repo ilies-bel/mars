@@ -45,7 +45,7 @@ Scan the prompt for terminology mismatches. A mismatch is:
 
 - A term the prompt uses that **conflicts with a glossary definition** —
   e.g. the user says "blocker" when the glossary defines "blocker" as a
-  task-edge, but context suggests they mean an inbox message.
+  task-edge, but context suggests they mean an action queue message.
 - A **fuzzy or overloaded term** for which the glossary already has a
   canonical alternative — e.g. the user says "feature" when the
   glossary distinguishes "proposal" from "task".
@@ -64,7 +64,7 @@ understands why you're asking. For example:
 
 > "The glossary defines 'blocker' as a task-edge dependency (one task
 > waiting on another). Did you mean to add a task-blocking edge, or
-> something else — like an inbox item or a work-blocking concern?"
+> something else — like an action queue item or a work-blocking concern?"
 
 Wait for the user's reply before continuing.
 

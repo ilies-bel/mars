@@ -6,15 +6,15 @@ import { publishWithRetry } from './outbox'
 import type { EventName, EventPayload } from './outbox'
 
 /**
- * Emit an inbox lifecycle event to the queue.db events outbox.
+ * Emit an actionQueue lifecycle event to the queue.db events outbox.
  *
- * inbox_items live in state.db; the events outbox lives in queue.db.
+ * action_queue_items live in state.db; the events outbox lives in queue.db.
  * Cross-DB atomicity is not available via libsql transactions, so this
  * emits in a separate write transaction on queue.db after the state.db
- * write has committed. Emission failures are non-fatal: the inbox
+ * write has committed. Emission failures are non-fatal: the actionQueue
  * operation succeeds regardless.
  */
-async function emitInboxBusEvent<T extends EventName>(
+async function emitActionQueueBusEvent<T extends EventName>(
   type: T,
   payload: EventPayload<T>,
 ): Promise<void> {
@@ -23,15 +23,15 @@ async function emitInboxBusEvent<T extends EventName>(
     await initQueue()
     await publishWithRetry(getQueueClient(), type, payload)
   } catch {
-    // Non-fatal: inbox state change already committed in state.db.
+    // Non-fatal: actionQueue state change already committed in state.db.
   }
 }
 
-export type InboxCategory = 'orchestrator' | 'reflector' | 'daemon' | 'user'
-export type InboxPriority = 'urgent' | 'high' | 'normal' | 'low'
-export type InboxState = 'open' | 'acknowledged' | 'resolved' | 'dismissed'
+export type ActionQueueCategory = 'orchestrator' | 'reflector' | 'daemon' | 'user'
+export type ActionQueuePriority = 'urgent' | 'high' | 'normal' | 'low'
+export type ActionQueueState = 'open' | 'acknowledged' | 'resolved' | 'dismissed'
 
-export const INBOX_KINDS = [
+export const ACTION_QUEUE_KINDS = [
   'failed',
   'cancelled-blocker-cascade',
   'diagnose-inconclusive',
@@ -51,14 +51,14 @@ export const INBOX_KINDS = [
   'observability-store-oversize',
 ] as const
 
-export type InboxKind = (typeof INBOX_KINDS)[number]
+export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
 
-export const isInboxKind = (s: unknown): s is InboxKind =>
-  INBOX_KINDS.includes(s as InboxKind)
+export const isActionQueueKind = (s: unknown): s is ActionQueueKind =>
+  ACTION_QUEUE_KINDS.includes(s as ActionQueueKind)
 
 /**
- * Callback used by `getInboxItem` to fetch the current state of the origin
- * task at the moment the inbox item is opened. Returning `null` means the
+ * Callback used by `getActionQueueItem` to fetch the current state of the origin
+ * task at the moment the actionQueue item is opened. Returning `null` means the
  * task was not found (deleted or DB unavailable); `liveTaskStatus` will be
  * `null` in that case.
  *
@@ -69,10 +69,10 @@ export type LiveTaskLookup = (
   taskId: string,
 ) => Promise<{ status: string } | null>
 
-export interface RaiseInboxItem {
-  kind: InboxKind
-  category: InboxCategory | string
-  priority: InboxPriority
+export interface RaiseActionQueueItem {
+  kind: ActionQueueKind
+  category: ActionQueueCategory | string
+  priority: ActionQueuePriority
   title: string
   body: string
   payload: Record<string, unknown>
@@ -81,16 +81,16 @@ export interface RaiseInboxItem {
   signature: string
   occurrence?: Record<string, unknown>
   /**
-   * When set, the inbox row is deduped on this origin task id alone —
+   * When set, the actionQueue row is deduped on this origin task id alone —
    * kind- and signature-agnostic. Any failure on a recovery descendant
    * (or repeated failures on the origin) collapses into the SAME row.
-   * Yields exactly one inbox_items row per stuck origin task regardless
+   * Yields exactly one action_queue_items row per stuck origin task regardless
    * of how many recovery attempts have failed against it.
    */
   originTaskId?: string
 }
 
-export interface InboxResolution {
+export interface ActionQueueResolution {
   state: 'resolved' | 'dismissed'
   note: string | null
   rootCause: string | null
@@ -98,20 +98,20 @@ export interface InboxResolution {
   resolvedAt: string
 }
 
-export interface InboxHistoryEntry {
+export interface ActionQueueHistoryEntry {
   at: string
-  fromState: InboxState | null
-  toState: InboxState
+  fromState: ActionQueueState | null
+  toState: ActionQueueState
   by: string | null
   note: string | null
 }
 
-export interface InboxItem {
+export interface ActionQueueItem {
   id: string
-  kind: InboxKind
+  kind: ActionQueueKind
   category: string
-  priority: InboxPriority
-  state: InboxState
+  priority: ActionQueuePriority
+  state: ActionQueueState
   title: string
   body: string
   payload: Record<string, unknown>
@@ -124,25 +124,25 @@ export interface InboxItem {
   signature: string | null
   resolvedAt: string | null
   resolution: string | null
-  resolutionDetails: InboxResolution | null
+  resolutionDetails: ActionQueueResolution | null
   resolutionNote: string | null
   rootCause: string | null
-  history: InboxHistoryEntry[]
+  history: ActionQueueHistoryEntry[]
   /**
-   * The task id this inbox item was raised for (origin-keyed items only).
+   * The task id this actionQueue item was raised for (origin-keyed items only).
    * Stored in the DB at raise time; `null` for signature-keyed items.
    */
   originTaskId: string | null
   /**
    * Live status of the origin task, fetched from the queue at the moment
-   * `getInboxItem` is called. Always reflects current state — never a
+   * `getActionQueueItem` is called. Always reflects current state — never a
    * snapshot from raise time. `null` when `originTaskId` is absent, the
    * task was not found, or the queue DB is unavailable.
    */
   liveTaskStatus: string | null
 }
 
-export interface SetInboxStateOptions {
+export interface SetActionQueueStateOptions {
   resolution?: string
   note?: string
   rootCause?: string
@@ -165,13 +165,13 @@ const sha1Hex = (input: string): string =>
 const computeFingerprint = (kind: string, signature: string): string =>
   sha1Hex(`${kind}:${signature}`)
 
-const generateInboxId = (): string => randomUUID().slice(0, 8)
+const generateActionQueueId = (): string => randomUUID().slice(0, 8)
 
-export const initInbox = async (): Promise<void> => {
+export const initActionQueue = async (): Promise<void> => {
   if (initialised) return
   const c = getClient()
   await c.execute(`
-    CREATE TABLE IF NOT EXISTS inbox_items (
+    CREATE TABLE IF NOT EXISTS action_queue_items (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
       category TEXT NOT NULL,
@@ -190,7 +190,7 @@ export const initInbox = async (): Promise<void> => {
     )
   `)
   await c.execute(`
-    CREATE TABLE IF NOT EXISTS inbox_history (
+    CREATE TABLE IF NOT EXISTS action_queue_history (
       id TEXT PRIMARY KEY,
       item_id TEXT NOT NULL,
       at TEXT NOT NULL,
@@ -198,42 +198,42 @@ export const initInbox = async (): Promise<void> => {
       to_state TEXT NOT NULL,
       by TEXT,
       note TEXT,
-      FOREIGN KEY (item_id) REFERENCES inbox_items(id)
+      FOREIGN KEY (item_id) REFERENCES action_queue_items(id)
     )
   `)
-  const cols = await c.execute(`PRAGMA table_info(inbox_items)`)
+  const cols = await c.execute(`PRAGMA table_info(action_queue_items)`)
   const colNames = new Set(
     cols.rows.map((r) => (r as unknown as { name: string }).name),
   )
   if (!colNames.has('fingerprint')) {
-    await c.execute(`ALTER TABLE inbox_items ADD COLUMN fingerprint TEXT`)
+    await c.execute(`ALTER TABLE action_queue_items ADD COLUMN fingerprint TEXT`)
   }
   if (!colNames.has('signature')) {
-    await c.execute(`ALTER TABLE inbox_items ADD COLUMN signature TEXT`)
+    await c.execute(`ALTER TABLE action_queue_items ADD COLUMN signature TEXT`)
   }
   if (!colNames.has('seen_count')) {
     await c.execute(
-      `ALTER TABLE inbox_items ADD COLUMN seen_count INTEGER NOT NULL DEFAULT 1`,
+      `ALTER TABLE action_queue_items ADD COLUMN seen_count INTEGER NOT NULL DEFAULT 1`,
     )
   }
   if (!colNames.has('last_seen_at')) {
-    await c.execute(`ALTER TABLE inbox_items ADD COLUMN last_seen_at TEXT`)
+    await c.execute(`ALTER TABLE action_queue_items ADD COLUMN last_seen_at TEXT`)
   }
   if (!colNames.has('resolved_by')) {
-    await c.execute(`ALTER TABLE inbox_items ADD COLUMN resolved_by TEXT`)
+    await c.execute(`ALTER TABLE action_queue_items ADD COLUMN resolved_by TEXT`)
   }
   if (!colNames.has('origin_task_id')) {
-    await c.execute(`ALTER TABLE inbox_items ADD COLUMN origin_task_id TEXT`)
+    await c.execute(`ALTER TABLE action_queue_items ADD COLUMN origin_task_id TEXT`)
   }
   await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_inbox_fingerprint_state
-       ON inbox_items(fingerprint, state)`,
+    `CREATE INDEX IF NOT EXISTS idx_action_queue_fingerprint_state
+       ON action_queue_items(fingerprint, state)`,
   )
   await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_inbox_state ON inbox_items(state)`,
+    `CREATE INDEX IF NOT EXISTS idx_action_queue_state ON action_queue_items(state)`,
   )
   await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_inbox_history_item ON inbox_history(item_id, at)`,
+    `CREATE INDEX IF NOT EXISTS idx_action_queue_history_item ON action_queue_history(item_id, at)`,
   )
   initialised = true
 }
@@ -253,17 +253,17 @@ const parseJsonObject = (
   }
 }
 
-const toKind = (raw: unknown): InboxKind =>
-  isInboxKind(raw) ? raw : 'failed'
+const toKind = (raw: unknown): ActionQueueKind =>
+  isActionQueueKind(raw) ? raw : 'failed'
 
-const toPriority = (raw: unknown): InboxPriority => {
+const toPriority = (raw: unknown): ActionQueuePriority => {
   if (raw === 'urgent' || raw === 'high' || raw === 'normal' || raw === 'low') {
     return raw
   }
   return 'normal'
 }
 
-const toState = (raw: unknown): InboxState => {
+const toState = (raw: unknown): ActionQueueState => {
   if (
     raw === 'open' ||
     raw === 'acknowledged' ||
@@ -278,10 +278,10 @@ const toState = (raw: unknown): InboxState => {
 const loadHistory = async (
   c: Client,
   itemId: string,
-): Promise<InboxHistoryEntry[]> => {
+): Promise<ActionQueueHistoryEntry[]> => {
   const r = await c.execute({
     sql: `SELECT at, from_state, to_state, by, note
-            FROM inbox_history
+            FROM action_queue_history
            WHERE item_id = ?
            ORDER BY at ASC`,
     args: [itemId],
@@ -294,7 +294,7 @@ const loadHistory = async (
       fromRaw === 'acknowledged' ||
       fromRaw === 'resolved' ||
       fromRaw === 'dismissed'
-        ? (fromRaw as InboxState)
+        ? (fromRaw as ActionQueueState)
         : null
     return {
       at: (r2.at as string | null) ?? '',
@@ -309,13 +309,13 @@ const loadHistory = async (
 const insertHistory = async (
   c: Client,
   itemId: string,
-  fromState: InboxState | null,
-  toStateValue: InboxState,
+  fromState: ActionQueueState | null,
+  toStateValue: ActionQueueState,
   by: string | null,
   note: string | null,
 ): Promise<void> => {
   await c.execute({
-    sql: `INSERT INTO inbox_history (id, item_id, at, from_state, to_state, by, note)
+    sql: `INSERT INTO action_queue_history (id, item_id, at, from_state, to_state, by, note)
           VALUES (?, ?, ?, ?, ?, ?, ?)`,
     args: [
       randomUUID(),
@@ -329,17 +329,17 @@ const insertHistory = async (
   })
 }
 
-const rowToInboxItem = (
+const rowToActionQueueItem = (
   row: Record<string, unknown>,
-  history: InboxHistoryEntry[],
-): InboxItem => {
+  history: ActionQueueHistoryEntry[],
+): ActionQueueItem => {
   const state = toState(row.state)
   const resolvedAt = (row.resolved_at as string | null) ?? null
   const resolution = (row.resolution as string | null) ?? null
   const resolutionNote = (row.resolution_note as string | null) ?? null
   const rootCause = (row.root_cause as string | null) ?? null
   const resolvedBy = (row.resolved_by as string | null) ?? null
-  const resolutionDetails: InboxResolution | null =
+  const resolutionDetails: ActionQueueResolution | null =
     state === 'resolved' || state === 'dismissed'
       ? {
           state,
@@ -384,10 +384,10 @@ const rowToInboxItem = (
 const computeOriginFingerprint = (originTaskId: string): string =>
   sha1Hex(`origin:${originTaskId}`)
 
-export const raiseInboxItem = async (
-  item: RaiseInboxItem,
+export const raiseActionQueueItem = async (
+  item: RaiseActionQueueItem,
 ): Promise<string> => {
-  await initInbox()
+  await initActionQueue()
   const c = getClient()
   const fingerprint = item.originTaskId
     ? computeOriginFingerprint(item.originTaskId)
@@ -395,7 +395,7 @@ export const raiseInboxItem = async (
   const now = new Date().toISOString()
 
   const existing = await c.execute({
-    sql: `SELECT id, payload FROM inbox_items
+    sql: `SELECT id, payload FROM action_queue_items
            WHERE fingerprint = ? AND state = 'open'
            ORDER BY raised_at ASC
            LIMIT 1`,
@@ -415,7 +415,7 @@ export const raiseInboxItem = async (
       payload.occurrences = [...prior, item.occurrence]
     }
     await c.execute({
-      sql: `UPDATE inbox_items
+      sql: `UPDATE action_queue_items
                SET seen_count = seen_count + 1,
                    last_seen_at = ?,
                    payload = ?
@@ -425,7 +425,7 @@ export const raiseInboxItem = async (
     return row.id
   }
 
-  const id = generateInboxId()
+  const id = generateActionQueueId()
   const payload: Record<string, unknown> = { ...item.payload }
   if (item.occurrence) {
     const prior = Array.isArray(payload.occurrences)
@@ -434,7 +434,7 @@ export const raiseInboxItem = async (
     payload.occurrences = [...prior, item.occurrence]
   }
   await c.execute({
-    sql: `INSERT INTO inbox_items (
+    sql: `INSERT INTO action_queue_items (
              id, kind, category, priority, state, title, body,
              payload, context, raised_by, raised_at, last_seen_at,
              seen_count, fingerprint, signature, origin_task_id
@@ -457,7 +457,7 @@ export const raiseInboxItem = async (
     ],
   })
   await insertHistory(c, id, null, 'open', item.raisedBy, null)
-  await emitInboxBusEvent('inbox.raised', {
+  await emitActionQueueBusEvent('action-queue.raised', {
     itemId: id,
     kind: item.kind,
     category: item.category,
@@ -468,7 +468,7 @@ export const raiseInboxItem = async (
 }
 
 /**
- * Overwrite the "suggested next action" body on the existing open inbox
+ * Overwrite the "suggested next action" body on the existing open actionQueue
  * item keyed by `originTaskId`. Used when a recovery agent produces
  * task-specific findings that are more actionable than the generic
  * kind-template. NEVER inserts a new row — if no open row exists for
@@ -480,11 +480,11 @@ export const setRecoveryFindings = async (
   originTaskId: string,
   findings: string,
 ): Promise<string | null> => {
-  await initInbox()
+  await initActionQueue()
   const c = getClient()
   const fingerprint = computeOriginFingerprint(originTaskId)
   const existing = await c.execute({
-    sql: `SELECT id FROM inbox_items
+    sql: `SELECT id FROM action_queue_items
            WHERE fingerprint = ? AND state = 'open'
            ORDER BY raised_at ASC
            LIMIT 1`,
@@ -493,28 +493,28 @@ export const setRecoveryFindings = async (
   if (existing.rows.length === 0) return null
   const id = (existing.rows[0] as unknown as { id: string }).id
   await c.execute({
-    sql: `UPDATE inbox_items SET body = ? WHERE id = ?`,
+    sql: `UPDATE action_queue_items SET body = ? WHERE id = ?`,
     args: [findings, id],
   })
   return id
 }
 
 /**
- * Merge `patch` into the payload JSON of the open inbox item keyed by
+ * Merge `patch` into the payload JSON of the open actionQueue item keyed by
  * `originTaskId`. Existing payload fields not present in `patch` are
  * preserved. No-op (returns `null`) if no open item exists for that origin —
- * the caller must raise the item first via `raiseInboxItem`. Returns the item
+ * the caller must raise the item first via `raiseActionQueueItem`. Returns the item
  * id when the patch was applied.
  */
-export const patchOpenInboxPayload = async (
+export const patchOpenActionQueuePayload = async (
   originTaskId: string,
   patch: Record<string, unknown>,
 ): Promise<string | null> => {
-  await initInbox()
+  await initActionQueue()
   const c = getClient()
   const fingerprint = computeOriginFingerprint(originTaskId)
   const existing = await c.execute({
-    sql: `SELECT id, payload FROM inbox_items
+    sql: `SELECT id, payload FROM action_queue_items
            WHERE fingerprint = ? AND state = 'open'
            ORDER BY raised_at ASC
            LIMIT 1`,
@@ -524,7 +524,7 @@ export const patchOpenInboxPayload = async (
   const row = existing.rows[0] as unknown as { id: string; payload: string | null }
   const merged = { ...parseJsonObject(row.payload), ...patch }
   await c.execute({
-    sql: `UPDATE inbox_items SET payload = ? WHERE id = ?`,
+    sql: `UPDATE action_queue_items SET payload = ? WHERE id = ?`,
     args: [JSON.stringify(merged), row.id],
   })
   return row.id
@@ -547,9 +547,9 @@ const defaultLiveTaskLookup: LiveTaskLookup = async (taskId) => {
 }
 
 const enrichWithLiveStatus = async (
-  item: InboxItem,
+  item: ActionQueueItem,
   liveTaskLookup: LiveTaskLookup,
-): Promise<InboxItem> => {
+): Promise<ActionQueueItem> => {
   if (item.originTaskId === null) return item
   const result = await liveTaskLookup(item.originTaskId)
   return { ...item, liveTaskStatus: result?.status ?? null }
@@ -558,46 +558,46 @@ const enrichWithLiveStatus = async (
 const fetchById = async (
   c: Client,
   id: string,
-): Promise<InboxItem | null> => {
+): Promise<ActionQueueItem | null> => {
   const r = await c.execute({
-    sql: `SELECT * FROM inbox_items WHERE id = ?`,
+    sql: `SELECT * FROM action_queue_items WHERE id = ?`,
     args: [id],
   })
   if (r.rows.length === 0) return null
   const row = r.rows[0] as unknown as Record<string, unknown>
   const history = await loadHistory(c, row.id as string)
-  return rowToInboxItem(row, history)
+  return rowToActionQueueItem(row, history)
 }
 
-export const getInboxItem = async (
+export const getActionQueueItem = async (
   idOrPrefix: string,
   liveTaskLookup: LiveTaskLookup = defaultLiveTaskLookup,
-): Promise<InboxItem | null> => {
-  await initInbox()
+): Promise<ActionQueueItem | null> => {
+  await initActionQueue()
   const c = getClient()
   const exact = await fetchById(c, idOrPrefix)
   if (exact) return enrichWithLiveStatus(exact, liveTaskLookup)
   if (idOrPrefix.length < 4) return null
   const prefixMatch = await c.execute({
-    sql: `SELECT * FROM inbox_items WHERE id LIKE ? || '%' LIMIT 2`,
+    sql: `SELECT * FROM action_queue_items WHERE id LIKE ? || '%' LIMIT 2`,
     args: [idOrPrefix],
   })
   if (prefixMatch.rows.length !== 1) return null
   const row = prefixMatch.rows[0] as unknown as Record<string, unknown>
   const history = await loadHistory(c, row.id as string)
-  return enrichWithLiveStatus(rowToInboxItem(row, history), liveTaskLookup)
+  return enrichWithLiveStatus(rowToActionQueueItem(row, history), liveTaskLookup)
 }
 
-export interface ListInboxOptions {
+export interface ListActionQueueOptions {
   /** Filter by item kind (exact match). */
-  kind?: InboxKind
+  kind?: ActionQueueKind
 }
 
-export const listInboxItems = async (
-  state: InboxState | 'all' = 'open',
-  opts: ListInboxOptions = {},
-): Promise<InboxItem[]> => {
-  await initInbox()
+export const listActionQueueItems = async (
+  state: ActionQueueState | 'all' = 'open',
+  opts: ListActionQueueOptions = {},
+): Promise<ActionQueueItem[]> => {
+  await initActionQueue()
   const c = getClient()
   const wheres: string[] = []
   const args: Array<string> = []
@@ -609,41 +609,41 @@ export const listInboxItems = async (
     wheres.push('kind = ?')
     args.push(opts.kind)
   }
-  const sql = `SELECT * FROM inbox_items${
+  const sql = `SELECT * FROM action_queue_items${
     wheres.length > 0 ? ` WHERE ${wheres.join(' AND ')}` : ''
   } ORDER BY raised_at DESC`
   const r =
     args.length === 0 ? await c.execute(sql) : await c.execute({ sql, args })
-  const items: InboxItem[] = []
+  const items: ActionQueueItem[] = []
   for (const row of r.rows) {
     const r2 = row as unknown as Record<string, unknown>
     const history = await loadHistory(c, r2.id as string)
-    items.push(rowToInboxItem(r2, history))
+    items.push(rowToActionQueueItem(r2, history))
   }
   return items
 }
 
-const isTerminal = (state: InboxState): boolean =>
+const isTerminal = (state: ActionQueueState): boolean =>
   state === 'resolved' || state === 'dismissed'
 
-export const setInboxState = async (
+export const setActionQueueState = async (
   idOrPrefix: string,
-  state: InboxState,
-  opts?: SetInboxStateOptions,
+  state: ActionQueueState,
+  opts?: SetActionQueueStateOptions,
 ): Promise<void> => {
-  await initInbox()
+  await initActionQueue()
   const c = getClient()
 
   let resolvedId: string | null = null
   const exact = await c.execute({
-    sql: `SELECT id FROM inbox_items WHERE id = ?`,
+    sql: `SELECT id FROM action_queue_items WHERE id = ?`,
     args: [idOrPrefix],
   })
   if (exact.rows.length === 1) {
     resolvedId = (exact.rows[0] as unknown as { id: string }).id
   } else if (idOrPrefix.length >= 4) {
     const pref = await c.execute({
-      sql: `SELECT id FROM inbox_items WHERE id LIKE ? || '%' LIMIT 2`,
+      sql: `SELECT id FROM action_queue_items WHERE id LIKE ? || '%' LIMIT 2`,
       args: [idOrPrefix],
     })
     if (pref.rows.length === 1) {
@@ -653,11 +653,11 @@ export const setInboxState = async (
   if (!resolvedId) return
 
   const cur = await c.execute({
-    sql: `SELECT state FROM inbox_items WHERE id = ?`,
+    sql: `SELECT state FROM action_queue_items WHERE id = ?`,
     args: [resolvedId],
   })
   const currentState = (
-    cur.rows[0] as unknown as { state: InboxState }
+    cur.rows[0] as unknown as { state: ActionQueueState }
   ).state
   const now = new Date().toISOString()
 
@@ -683,7 +683,7 @@ export const setInboxState = async (
     args.push(opts.resolution)
   } else if (isTerminal(state)) {
     const cur2 = await c.execute({
-      sql: `SELECT resolution FROM inbox_items WHERE id = ?`,
+      sql: `SELECT resolution FROM action_queue_items WHERE id = ?`,
       args: [resolvedId],
     })
     const existingResolution = (
@@ -705,7 +705,7 @@ export const setInboxState = async (
 
   args.push(resolvedId)
   await c.execute({
-    sql: `UPDATE inbox_items SET ${sets.join(', ')} WHERE id = ?`,
+    sql: `UPDATE action_queue_items SET ${sets.join(', ')} WHERE id = ?`,
     args,
   })
 
@@ -719,7 +719,7 @@ export const setInboxState = async (
   )
 
   if (isTerminal(state)) {
-    await emitInboxBusEvent('inbox.resolved', {
+    await emitActionQueueBusEvent('action-queue.resolved', {
       itemId: resolvedId,
       fromState: currentState,
       toState: state,
@@ -729,9 +729,9 @@ export const setInboxState = async (
 }
 
 /**
- * Reason an inbox item was auto-closed because its origin task reached a
+ * Reason an actionQueue item was auto-closed because its origin task reached a
  * terminal state (or any status transition). Surfaced in the resolution note
- * so an operator reading inbox history can tell why the row vanished.
+ * so an operator reading actionQueue history can tell why the row vanished.
  */
 export type SupersedeReason =
   | 'origin-done'
@@ -741,7 +741,7 @@ export type SupersedeReason =
   | 'subscriber-unstalled'
 
 /**
- * Auto-close every open inbox item keyed to the given origin task. Called
+ * Auto-close every open actionQueue item keyed to the given origin task. Called
  * by the daemon when an origin task reaches done / dropped / purged so
  * the operator does not need to ack or dismiss a row whose underlying
  * stuck task is no longer stuck. Returns the ids of the rows that were
@@ -750,22 +750,22 @@ export type SupersedeReason =
  * Idempotent: rerunning against an origin whose rows are already closed
  * is a silent no-op.
  */
-export const supersedeInboxItemsForOrigin = async (
+export const supersedeActionQueueItemsForOrigin = async (
   originTaskId: string,
   reason: SupersedeReason,
   by = 'daemon:auto-supersede',
 ): Promise<string[]> => {
-  await initInbox()
+  await initActionQueue()
   const c = getClient()
   const fingerprint = computeOriginFingerprint(originTaskId)
   const rows = await c.execute({
-    sql: `SELECT id FROM inbox_items WHERE fingerprint = ? AND state = 'open'`,
+    sql: `SELECT id FROM action_queue_items WHERE fingerprint = ? AND state = 'open'`,
     args: [fingerprint],
   })
   const ids: string[] = []
   for (const row of rows.rows) {
     const id = (row as unknown as { id: string }).id
-    await setInboxState(id, 'resolved', {
+    await setActionQueueState(id, 'resolved', {
       resolution: 'superseded',
       note: `superseded: ${reason}`,
       by,
@@ -776,28 +776,28 @@ export const supersedeInboxItemsForOrigin = async (
 }
 
 /**
- * Close every open inbox row matching a (kind, signature) pair. Used by the
+ * Close every open actionQueue row matching a (kind, signature) pair. Used by the
  * Subscriber stall machinery (ADR-0032): when a previously-blocked event
  * finally processes, the `subscriber-stalled` row keyed on
  * `${subscriberId}:${eventId}` is superseded. Idempotent — no open match is
  * a silent no-op.
  */
-export const supersedeInboxItemsBySignature = async (
-  kind: InboxKind,
+export const supersedeActionQueueItemsBySignature = async (
+  kind: ActionQueueKind,
   signature: string,
   reason: SupersedeReason,
   by = 'daemon:auto-supersede',
 ): Promise<string[]> => {
-  await initInbox()
+  await initActionQueue()
   const c = getClient()
   const rows = await c.execute({
-    sql: `SELECT id FROM inbox_items WHERE kind = ? AND signature = ? AND state = 'open'`,
+    sql: `SELECT id FROM action_queue_items WHERE kind = ? AND signature = ? AND state = 'open'`,
     args: [kind, signature],
   })
   const ids: string[] = []
   for (const row of rows.rows) {
     const id = (row as unknown as { id: string }).id
-    await setInboxState(id, 'resolved', {
+    await setActionQueueState(id, 'resolved', {
       resolution: 'superseded',
       note: `superseded: ${reason}`,
       by,
@@ -808,26 +808,26 @@ export const supersedeInboxItemsBySignature = async (
 }
 
 /**
- * One-time reconciliation pass: closes every open inbox item whose origin
+ * One-time reconciliation pass: closes every open actionQueue item whose origin
  * task is already in a successful terminal state (done or dropped). Items
  * about tasks in `failed` or any live state are NOT included in the input,
  * so they remain open after the call.
  *
  * Idempotent — re-running when items are already closed is a silent no-op
- * because `supersedeInboxItemsForOrigin` only touches open rows.
+ * because `supersedeActionQueueItemsForOrigin` only touches open rows.
  *
  * @param terminatedTasks  Tasks that have reached done or dropped. The
  *   caller is responsible for fetching these from the task queue.
- * @returns The number of inbox items closed by this pass.
+ * @returns The number of actionQueue items closed by this pass.
  */
-export const reconcileStaleInboxItems = async (
+export const reconcileStaleActionQueueItems = async (
   terminatedTasks: ReadonlyArray<{ id: string; status: 'done' | 'dropped' }>,
 ): Promise<{ closed: number }> => {
   let closed = 0
   for (const task of terminatedTasks) {
     const reason: SupersedeReason =
       task.status === 'done' ? 'origin-done' : 'origin-dropped'
-    const ids = await supersedeInboxItemsForOrigin(
+    const ids = await supersedeActionQueueItemsForOrigin(
       task.id,
       reason,
       'reconcile:one-time',
@@ -838,17 +838,17 @@ export const reconcileStaleInboxItems = async (
 }
 
 /**
- * Slice K one-shot cleanup: supersede every open inbox row whose payload or
+ * Slice K one-shot cleanup: supersede every open actionQueue row whose payload or
  * body still references the retired `setup:preflight/dirty-main` failure
  * mode. F.2's `verify:main-dirty` + `main-commiter` path replaced that code
  * path entirely; rows from a pre-F.2 daemon describe a system that no longer
  * exists and can never reach a true resolution from the operator side.
  *
- * Each matching row is closed via `setInboxState` with
+ * Each matching row is closed via `setActionQueueState` with
  * `resolution: 'superseded'`, `note: 'superseded by slice K: preflight code
- * path retired'`, and a matching `inbox_history` entry. The supersede goes
+ * path retired'`, and a matching `action_queue_history` entry. The supersede goes
  * through the standard lifecycle (NOT a raw DELETE) so the trail is visible
- * to anyone reading `inbox_history`.
+ * to anyone reading `action_queue_history`.
  *
  * Idempotent — rerunning matches no open rows (closed rows are excluded by
  * the WHERE clause) and produces no further writes.
@@ -858,17 +858,17 @@ export const reconcileStaleInboxItems = async (
 export const supersedeObsoletePreflightDirtyMainRows = async (
   by = 'daemon:slice-k-cleanup',
 ): Promise<string[]> => {
-  await initInbox()
+  await initActionQueue()
   const c = getClient()
   // The legacy strings can appear in any of three places:
   //  - `payload` (JSON blob) → matches the failure-signature or wrapped
   //    `retry_budget_exhausted:setup:preflight/...` form;
-  //  - `body` (rendered markdown) → matches the inbox row's own description
+  //  - `body` (rendered markdown) → matches the actionQueue row's own description
   //    of the failure mode.
   // SQL LIKE substring match is enough here because the legacy strings are
   // distinctive enough not to collide with live wording.
   const rows = await c.execute({
-    sql: `SELECT id FROM inbox_items
+    sql: `SELECT id FROM action_queue_items
            WHERE state = 'open'
              AND (
                payload LIKE '%setup:preflight/dirty-main%'
@@ -880,7 +880,7 @@ export const supersedeObsoletePreflightDirtyMainRows = async (
   const ids: string[] = []
   for (const row of rows.rows) {
     const id = (row as unknown as { id: string }).id
-    await setInboxState(id, 'resolved', {
+    await setActionQueueState(id, 'resolved', {
       resolution: 'superseded',
       note: 'superseded by slice K: preflight code path retired',
       by,
@@ -896,7 +896,7 @@ export const supersedeObsoletePreflightDirtyMainRows = async (
  * skips the worktree on subsequent passes. No-op when the row already exists.
  */
 export const dismissStaleWorktree = async (taskId: string): Promise<void> => {
-  await initInbox()
+  await initActionQueue()
   const c = getClient()
   await c.execute(`
     CREATE TABLE IF NOT EXISTS stale_worktree_dismissals (
@@ -918,7 +918,7 @@ export const dismissStaleWorktree = async (taskId: string): Promise<void> => {
 export const clearStaleWorktreeDismissal = async (
   taskId: string,
 ): Promise<void> => {
-  await initInbox()
+  await initActionQueue()
   const c = getClient()
   // The table may not exist yet (first run before any dismissal).
   try {
@@ -932,35 +932,35 @@ export const clearStaleWorktreeDismissal = async (
 }
 
 /**
- * Auto-clear all open inbox alerts for a task and remove its
+ * Auto-clear all open actionQueue alerts for a task and remove its
  * stale-worktree dismissal row whenever the task's status changes.
  * Called by `updateTask` in queue.ts on every real status transition.
  *
- * Each closed inbox item gets `resolution_note` = `"status-changed → <newStatus>"`
- * and a matching `inbox_history` row so operators can see which transition
+ * Each closed actionQueue item gets `resolution_note` = `"status-changed → <newStatus>"`
+ * and a matching `action_queue_history` row so operators can see which transition
  * triggered the dismissal.
  *
  * @param taskId    The task whose alerts should be cleared.
  * @param newStatus The status the task just transitioned to. Recorded in
- *                  `inbox_history.note` and `inbox_items.resolution_note`.
- * @returns         The ids of the inbox items that were closed.
+ *                  `action_queue_history.note` and `action_queue_items.resolution_note`.
+ * @returns         The ids of the actionQueue items that were closed.
  */
 export const dismissAlertsOnStatusChange = async (
   taskId: string,
   newStatus: string,
 ): Promise<string[]> => {
-  await initInbox()
+  await initActionQueue()
   const c = getClient()
   const fingerprint = computeOriginFingerprint(taskId)
   const rows = await c.execute({
-    sql: `SELECT id FROM inbox_items WHERE fingerprint = ? AND state = 'open'`,
+    sql: `SELECT id FROM action_queue_items WHERE fingerprint = ? AND state = 'open'`,
     args: [fingerprint],
   })
   const ids: string[] = []
   const note = `status-changed → ${newStatus}`
   for (const row of rows.rows) {
     const id = (row as unknown as { id: string }).id
-    await setInboxState(id, 'resolved', {
+    await setActionQueueState(id, 'resolved', {
       resolution: 'superseded',
       note,
       by: `daemon:status-changed:${newStatus}`,

@@ -1,18 +1,18 @@
 /**
- * Inbox dismissals — the only persistent operator opinion the inbox honours.
+ * ActionQueue dismissals — the only persistent operator opinion the actionQueue honours.
  *
- * The inbox is a per-slice state view: a row exists iff its entity is
- * currently stuck (raised into `inbox_items`). A *dismissal* lets the operator
+ * The actionQueue is a per-slice state view: a row exists iff its entity is
+ * currently stuck (raised into `action_queue_items`). A *dismissal* lets the operator
  * say "I have seen this one, hide it for now" without changing the entity's
  * state. The dismissal is keyed on `(entityKind, entityId)` and is wiped the
  * moment the entity's state changes — see `clearDismissalForEntity`, called
  * from `updateTask` on every real task status transition. So a dismissed
  * failed task that gets `mars restart`ed (status → queued) reappears in the
- * inbox if it fails again, rather than staying silently hidden.
+ * actionQueue if it fails again, rather than staying silently hidden.
  *
  * This is deliberately NOT the event log. Events (every self-heal raise,
- * recovery finding, auto-close) still go to `inbox_items` / `inbox_history`
- * via {@link ./inbox}. Dismissals are a tiny side table.
+ * recovery finding, auto-close) still go to `action_queue_items` / `action_queue_history`
+ * via {@link ./actionQueue}. Dismissals are a tiny side table.
  */
 
 import { type Client } from '@libsql/client'
@@ -21,7 +21,7 @@ import { openLibsql } from './libsql'
 
 export type DismissalEntityKind = 'task' | 'worktree' | 'proposal'
 
-export interface InboxDismissal {
+export interface ActionQueueDismissal {
   entityKind: DismissalEntityKind
   entityId: string
   dismissedAt: string
@@ -39,11 +39,11 @@ const getClient = (): Client => {
   return clientSingleton
 }
 
-export const initInboxDismissals = async (): Promise<void> => {
+export const initActionQueueDismissals = async (): Promise<void> => {
   if (initialised) return
   const c = getClient()
   await c.execute(`
-    CREATE TABLE IF NOT EXISTS inbox_dismissals (
+    CREATE TABLE IF NOT EXISTS action_queue_dismissals (
       entity_kind  TEXT NOT NULL,
       entity_id    TEXT NOT NULL,
       dismissed_at TEXT NOT NULL,
@@ -63,10 +63,10 @@ export const dismissEntity = async (
   entityId: string,
   opts: { by?: string; note?: string } = {},
 ): Promise<void> => {
-  await initInboxDismissals()
+  await initActionQueueDismissals()
   const c = getClient()
   await c.execute({
-    sql: `INSERT INTO inbox_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by, note)
+    sql: `INSERT INTO action_queue_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by, note)
           VALUES (?, ?, ?, ?, ?)
           ON CONFLICT(entity_kind, entity_id) DO UPDATE SET
             dismissed_at = excluded.dismissed_at,
@@ -86,10 +86,10 @@ export const undismissEntity = async (
   entityKind: DismissalEntityKind,
   entityId: string,
 ): Promise<boolean> => {
-  await initInboxDismissals()
+  await initActionQueueDismissals()
   const c = getClient()
   const r = await c.execute({
-    sql: `DELETE FROM inbox_dismissals WHERE entity_kind = ? AND entity_id = ?`,
+    sql: `DELETE FROM action_queue_dismissals WHERE entity_kind = ? AND entity_id = ?`,
     args: [entityKind, entityId],
   })
   return r.rowsAffected > 0
@@ -99,12 +99,12 @@ export const isEntityDismissed = async (
   entityKind: DismissalEntityKind,
   entityId: string,
 ): Promise<boolean> => {
-  await initInboxDismissals()
+  await initActionQueueDismissals()
   const c = getClient()
   // Rows with note = 'ack' are acknowledged but not hidden from the open filter.
   // Only note = null (classic dismiss), 'dismissed', or 'resolved' count as dismissed.
   const r = await c.execute({
-    sql: `SELECT 1 FROM inbox_dismissals
+    sql: `SELECT 1 FROM action_queue_dismissals
           WHERE entity_kind = ? AND entity_id = ? AND (note IS NULL OR note != 'ack')
           LIMIT 1`,
     args: [entityKind, entityId],
@@ -112,12 +112,12 @@ export const isEntityDismissed = async (
   return r.rows.length > 0
 }
 
-export const listDismissals = async (): Promise<InboxDismissal[]> => {
-  await initInboxDismissals()
+export const listDismissals = async (): Promise<ActionQueueDismissal[]> => {
+  await initActionQueueDismissals()
   const c = getClient()
   const r = await c.execute(
     `SELECT entity_kind, entity_id, dismissed_at, dismissed_by, note
-       FROM inbox_dismissals`,
+       FROM action_queue_dismissals`,
   )
   return r.rows.flatMap((row) => {
     const r0 = row as unknown as Record<string, unknown>

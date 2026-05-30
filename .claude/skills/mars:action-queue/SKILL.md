@@ -1,11 +1,11 @@
 ---
-name: mars:inbox
-description: Show the Mars inbox — the per-slice state view of everything that needs a human — and act on one row at the user's direction. Use when the user says "mars inbox", "show my inbox", "what's in the inbox", or invokes `/mars:inbox`.
+name: mars:action-queue
+description: Show the Mars action queue — the per-slice state view of everything that needs a human — and act on one row at the user's direction. Use when the user says "mars action-queue", "show my action queue", "what's in the action queue", or invokes `/mars:action-queue`.
 ---
 
-# Mars: inbox router
+# Mars: action queue router
 
-You are the Mars **inbox router**. The inbox is a **per-slice state
+You are the Mars **action queue router**. The action queue is a **per-slice state
 view**, not an event log: one row per real thing that currently needs a
 human, computed on demand from the live `tasks` / `proposals` tables and
 the worktrees on disk. A row appears the moment its entity enters a stuck
@@ -25,7 +25,7 @@ Each row's `id` is a stable composite `kind:entityId` (e.g.
 `failed-task:mars-abc12345`, `stale-worktree:mars-abc12345`,
 `draft-proposal:p-xyz`). The row has no identity of its own — it *is* the
 entity's current state. The only persistent operator opinion is a
-**dismissal** (`mars inbox dismiss <id>`), which hides a row until the
+**dismissal** (`mars action-queue dismiss <id>`), which hides a row until the
 entity's state changes, at which point it auto-clears.
 
 # Step 1 — Resolve the target
@@ -34,7 +34,7 @@ Three resolution modes, driven by the argument shape.
 
 ## 1a — Argument looks like a row id or entity id
 
-Run `mars inbox show <argument>` (accepts a full `kind:entityId`, a bare
+Run `mars action-queue show <argument>` (accepts a full `kind:entityId`, a bare
 entity id, or an entity-id prefix):
 
 - **Hit** → target is this row. **Print the full CLI output verbatim**
@@ -46,12 +46,12 @@ entity id, or an entity-id prefix):
 
 ## 1b — Argument is a filter (`open`, `dismissed`, `all`)
 
-Run `mars inbox list <filter>` and present the result per Step 2.
+Run `mars action-queue list <filter>` and present the result per Step 2.
 Default when no argument is given is `open`.
 
 ## 1c — No argument: show open rows
 
-Run `mars inbox list open` and present the result per Step 2.
+Run `mars action-queue list open` and present the result per Step 2.
 
 # Step 2 — Present the list
 
@@ -61,7 +61,7 @@ Run the listing command from 1b/1c. Each line is tab-separated:
 
 If there are **no rows**, print exactly one line and stop:
 
-> `Inbox is empty.`
+> `Action queue is empty.`
 
 Otherwise, print the rows directly to the user — **no `AskUserQuestion`
 menu**. Group and order them for skim-ability:
@@ -70,11 +70,11 @@ menu**. Group and order them for skim-ability:
    `blocked-task` is normal, `stale-worktree` and `draft-proposal` are low.
 2. Within a priority, most-recent first (the CLI already sorts this way).
 
-**Default row cap — render at most 30 rows.** Inbox volume routinely
+**Default row cap — render at most 30 rows.** Action queue volume routinely
 runs into the hundreds, so the cap is enforced *here*, not by the
 command. Take the top 30; collapse the remainder into a single overflow
 line below the table (see below). If the user wants the full list they
-can run `mars inbox list <filter>` themselves.
+can run `mars action-queue list <filter>` themselves.
 
 Render the rows as a **GitHub-flavored markdown table using exactly this
 template every time** — same columns, same order, same headers:
@@ -97,11 +97,11 @@ Whenever rows are withheld — either the 30-row cap fired or rows cluster
 heavily by `kind` — collapse the remainder into **one** summary line
 **below the table** (not a table row), with the exact withheld count:
 
-> `… plus 82 more open rows not shown (cap 30; run \`mars inbox list open\` for the full list)`
+> `… plus 82 more open rows not shown (cap 30; run \`mars action-queue list open\` for the full list)`
 
 When the overflow is one dominant `kind`, name it:
 
-> `… plus 119 more blocked-task rows (run \`mars inbox list\` to expand)`
+> `… plus 119 more blocked-task rows (run \`mars action-queue list\` to expand)`
 
 After printing, **stop and wait**. The user's next message is expected to
 be one of:
@@ -114,7 +114,7 @@ be one of:
 # Step 3 — Act on a single row
 
 When the user has resolved a specific row (Step 1a hit, or by replying
-with an id after Step 2), you've already printed `mars inbox show <id>`.
+with an id after Step 2), you've already printed `mars action-queue show <id>`.
 
 **Inspect the row's `kind` and dispatch:**
 
@@ -128,8 +128,8 @@ Skill({ skill: "mars:unblock", args: "<entityId>" })
 ```
 
 The unblock skill owns the interaction; stop here once you've invoked it.
-The inbox row clears itself when the task leaves `blocked` — no separate
-inbox call is needed.
+The action queue row clears itself when the task leaves `blocked` — no separate
+action queue call is needed.
 
 ## 3b — kind `draft-proposal`
 
@@ -152,10 +152,10 @@ action. Offer the terminal actions via **one** `AskUserQuestion`, with
 
 - **Restart** — `mars restart <entityId>`. Wipes the worktree+branch and
   re-queues from setup (full pipeline re-run). The task transitions out
-  of `failed`, which clears the inbox row automatically. **Always invoke
+  of `failed`, which clears the action queue row automatically. **Always invoke
   `mars restart`** rather than reimplementing the restart inline.
 - **Purge** — `mars purge <entityId>`. Drop the task permanently.
-- **Dismiss** — `mars inbox dismiss <id>`. Hide the row until the task's
+- **Dismiss** — `mars action-queue dismiss <id>`. Hide the row until the task's
   status changes again (e.g. you've handled it out of band).
 - **Skip** — do nothing and stop.
 
@@ -172,7 +172,7 @@ The row wraps a leftover worktree dir whose task is terminal/absent. The
   Delete the leftover worktree. The row clears once the dir is gone.
 - **Inspect** — `git -C .mars/worktrees/<entityId> status`. Look before
   removing.
-- **Dismiss** — `mars inbox dismiss <id>`. Hide the row for now.
+- **Dismiss** — `mars action-queue dismiss <id>`. Hide the row for now.
 - **Skip** — do nothing and stop.
 
 Run the chosen verb via Bash; print whatever the CLI reports verbatim.
@@ -182,13 +182,13 @@ Stop after the dispatch.
 
 - Do not investigate the underlying issue yourself. The row's body and
   `dag:` section already carry the context; the user reads it and decides.
-- Do not call `mars inbox raise`. That writes the event-history log and is
+- Do not call `mars action-queue raise`. That writes the event-history log and is
   for self-heal and dispatched agents, not the human-facing router.
 - Do not bulk-act on multiple rows in one turn. One id per dispatch. If
   the user wants to clear a cluster, they ask explicitly; treat each id as
   a separate Step 3.
 - Do not load `mars list` or other queue surfaces — this skill is
-  inbox-only.
+  action queue-only.
 
 # Argument
 

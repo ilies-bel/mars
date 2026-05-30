@@ -4,8 +4,8 @@
  *
  *   - the web UI's Todo page (`ui/src/pages/TodoPage.tsx`)
  *   - the web UI server's `/api/todo` handler (`ui/server/index.ts`)
- *   - the CLI's live Todo TUI (`mars inbox watch`, see
- *     `orchestrator/src/cli/inbox-watch.tsx`)
+ *   - the CLI's live Todo TUI (`mars actionQueue watch`, see
+ *     `orchestrator/src/cli/action-queue-watch.tsx`)
  *
  * The feed is a flat list of `TodoItem`s — currently a discriminated union
  * of two kinds, drafts (proposals waiting to be shaped) and stale worktrees

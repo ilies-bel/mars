@@ -6,22 +6,22 @@ import { internalBus } from '../internal-bus'
 import {
   getRetryBudget,
   markTaskFailed,
-  raiseRetryBudgetExhaustedInbox,
+  raiseRetryBudgetExhaustedActionQueue,
 } from './queue-retry'
 import { failureReasonStringToCode } from './lib/failure-reasons'
 import { getTask, updateTask } from './queue'
 import { getDefaultQueueClient } from './lib/task-store'
-import { type InboxKind, raiseInboxItem, supersedeInboxItemsForOrigin } from './lib/inbox'
+import { type ActionQueueKind, raiseActionQueueItem, supersedeActionQueueItemsForOrigin } from './lib/action-queue'
 import { publish } from './lib/outbox'
 
 const execFileP = promisify(execFile)
 
-export const CANCELLED_CASCADE_INBOX_KIND: InboxKind = 'cancelled-blocker-cascade'
+export const CANCELLED_CASCADE_ACTION_QUEUE_KIND: ActionQueueKind = 'cancelled-blocker-cascade'
 export const CANCELLED_FAILURE_REASON = 'cancelled'
 const CANCELLED_CASCADE_FAILURE_REASON = 'cancelled-blocker-cascade'
 export const WORKTREE_AHEAD_FAILURE_REASON =
   'worktree_ahead_of_integration_at_unblock'
-export const WORKTREE_AHEAD_INBOX_KIND: InboxKind = 'worktree-ahead'
+export const WORKTREE_AHEAD_ACTION_QUEUE_KIND: ActionQueueKind = 'worktree-ahead'
 
 const integrationBranchName = (): string =>
   process.env.INTEGRATION_BRANCH ?? 'main'
@@ -115,15 +115,15 @@ export const resetDependentWorktreeToIntegration = async (
   return { reset: true, reason: 'reset' }
 }
 
-const raiseWorktreeAheadInbox = async (
+const raiseWorktreeAheadActionQueue = async (
   taskId: string,
   worktreePath: string,
   aheadCount: number,
   integrationBranch: string,
 ): Promise<void> => {
   try {
-    await raiseInboxItem({
-      kind: WORKTREE_AHEAD_INBOX_KIND,
+    await raiseActionQueueItem({
+      kind: WORKTREE_AHEAD_ACTION_QUEUE_KIND,
       category: 'orchestrator',
       priority: 'normal',
       title: `Task ${taskId} worktree is ahead of ${integrationBranch} at unblock`,
@@ -151,11 +151,11 @@ const raiseWorktreeAheadInbox = async (
       },
     })
   } catch {
-    /* best-effort: inbox failure must not block the cascade */
+    /* best-effort: actionQueue failure must not block the cascade */
   }
 }
 
-export const PREREQUISITE_FAILED_INBOX_KIND: InboxKind = 'prerequisite-failed'
+export const PREREQUISITE_FAILED_ACTION_QUEUE_KIND: ActionQueueKind = 'prerequisite-failed'
 
 export interface BlockByFailureOutcome {
   taskId: string
@@ -205,7 +205,7 @@ const RETRY_BUDGET_FAILURE_REASON = 'retry_budget_exhausted_at_unblock'
 const retryBudgetExhausted = (retryCount: number, budget: number): boolean =>
   retryCount > 0 && retryCount >= budget
 
-const raiseInboxForBlockedTask = async (taskId: string): Promise<void> => {
+const raiseActionQueueForBlockedTask = async (taskId: string): Promise<void> => {
   const task = await getTask(taskId)
   if (!task) return
   const error = task.error ?? ''
@@ -216,7 +216,7 @@ const raiseInboxForBlockedTask = async (taskId: string): Promise<void> => {
     colonSpace > 0 ? error.slice(0, colonSpace).trim() : 'blocked-dependent'
   const lastErrorSummary =
     colonSpace > 0 ? error.slice(colonSpace + 2).trim() : error
-  await raiseRetryBudgetExhaustedInbox({
+  await raiseRetryBudgetExhaustedActionQueue({
     taskId,
     lastStep,
     retryCount: task.retryCount,
@@ -237,7 +237,7 @@ const raiseInboxForBlockedTask = async (taskId: string): Promise<void> => {
  * diagnose Chore (kind='diagnose'), the generic unblock path is bypassed
  * entirely. Instead the verdict-driven branch fires via `runDiagnoseFollowup`,
  * which reads the structured verdict and either dispatches a fix (root-cause)
- * or escalates to the inbox (inconclusive / no-verdict). A diagnose Chore's
+ * or escalates to the actionQueue (inconclusive / no-verdict). A diagnose Chore's
  * parent is NEVER re-queued blindly — the verdict owns that decision.
  */
 export const onBlockerTaskCompleted = async (
@@ -277,7 +277,7 @@ export const onBlockerTaskCompleted = async (
   for (const row of r.rows as unknown as BlockedDependentRow[]) {
     const retryCount = Number(row.retry_count ?? 0)
     if (retryBudgetExhausted(retryCount, budget)) {
-      await raiseInboxForBlockedTask(row.id)
+      await raiseActionQueueForBlockedTask(row.id)
       await markTaskFailed(row.id, RETRY_BUDGET_FAILURE_REASON)
       outcomes.push({
         taskId: row.id,
@@ -312,7 +312,7 @@ export const onBlockerTaskCompleted = async (
       )
     } catch (err: unknown) {
       if (err instanceof WorktreeAheadOfIntegrationError) {
-        await raiseWorktreeAheadInbox(
+        await raiseWorktreeAheadActionQueue(
           err.taskId,
           err.worktreePath,
           err.aheadCount,
@@ -368,7 +368,7 @@ export const onBlockerTaskCompleted = async (
  * When a task lands `failed` (any failure mode), look up every QUEUED
  * task that has a confirmed/pending-review task_blockers edge pointing
  * at the failed task and flip each from `queued` -> `blocked`. Raise a
- * single inbox item per affected downstream naming the failed
+ * single actionQueue item per affected downstream naming the failed
  * prerequisite so the operator can act.
  *
  * Tasks already in non-queued states (running, blocked, done, failed,
@@ -380,7 +380,7 @@ export const onBlockerTaskCompleted = async (
  * `queued` -> `blocked` when a blocker reaches `failed`.
  *
  * Idempotent: a second invocation finds no `queued` dependents (they
- * are already `blocked`) and is a no-op. The inbox call dedupes on
+ * are already `blocked`) and is a no-op. The actionQueue call dedupes on
  * `(originTaskId)` fingerprint, so re-raise bumps `seen_count`.
  */
 export const onBlockerTaskFailed = async (
@@ -428,8 +428,8 @@ export const onBlockerTaskFailed = async (
     }
     if (flipped) {
       try {
-        await raiseInboxItem({
-          kind: PREREQUISITE_FAILED_INBOX_KIND,
+        await raiseActionQueueItem({
+          kind: PREREQUISITE_FAILED_ACTION_QUEUE_KIND,
           category: 'orchestrator',
           priority: 'high',
           title: `Task ${row.id} blocked: prerequisite ${failedBlockerTaskId} failed`,
@@ -438,7 +438,7 @@ export const onBlockerTaskFailed = async (
             `The prerequisite failed, so this task has been moved from 'queued' to 'blocked' ` +
             `and will not dispatch into a broken tree.\n\n` +
             `Resolve the failed prerequisite (e.g. \`mars restart ${failedBlockerTaskId}\` or ` +
-            `via the inbox item raised for it), or drop the blocker edge with ` +
+            `via the actionQueue item raised for it), or drop the blocker edge with ` +
             `\`mars unblock ${row.id} ${failedBlockerTaskId}\`.`,
           payload: {
             dependentTaskId: row.id,
@@ -454,7 +454,7 @@ export const onBlockerTaskFailed = async (
           },
         })
       } catch {
-        // best-effort: inbox failure must not block the cascade
+        // best-effort: actionQueue failure must not block the cascade
       }
       outcomes.push({ taskId: row.id, outcome: 'blocked' })
     } else {
@@ -471,7 +471,7 @@ export const onBlockerTaskFailed = async (
  * (i.e. the user explicitly stopped it via the slice-1 stop-task RPC),
  * dependents waiting on it must NOT be recovered — they must fail too,
  * with their own `failure_reason = 'cancelled-blocker-cascade'`, and
- * an inbox item naming the cancelled blocker so the operator can see
+ * an actionQueue item naming the cancelled blocker so the operator can see
  * why the dependent died.
  *
  * Symmetric with {@link onBlockerTaskCompleted}: that path fires when a
@@ -510,8 +510,8 @@ export const onBlockerTaskCancelled = async (
       ),
     })
     try {
-      await raiseInboxItem({
-        kind: CANCELLED_CASCADE_INBOX_KIND,
+      await raiseActionQueueItem({
+        kind: CANCELLED_CASCADE_ACTION_QUEUE_KIND,
         category: 'orchestrator',
         priority: 'normal',
         title: `Dependent ${row.id} cancelled because blocker ${blockerTaskId} was cancelled`,
@@ -535,7 +535,7 @@ export const onBlockerTaskCancelled = async (
         },
       })
     } catch {
-      // best-effort: inbox failure must not block the cascade
+      // best-effort: actionQueue failure must not block the cascade
     }
     outcomes.push({
       taskId: row.id,
@@ -575,7 +575,7 @@ export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
     const retryCount = Number(row.retry_count ?? 0)
     const outcomes: UnblockOutcome[] = []
     if (retryBudgetExhausted(retryCount, budget)) {
-      await raiseInboxForBlockedTask(row.id)
+      await raiseActionQueueForBlockedTask(row.id)
       await markTaskFailed(row.id, RETRY_BUDGET_FAILURE_REASON)
       outcomes.push({
         taskId: row.id,
@@ -596,7 +596,7 @@ export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
         )
       } catch (err: unknown) {
         if (err instanceof WorktreeAheadOfIntegrationError) {
-          await raiseWorktreeAheadInbox(
+          await raiseWorktreeAheadActionQueue(
             err.taskId,
             err.worktreePath,
             err.aheadCount,
@@ -680,13 +680,13 @@ export interface PropagateRecoveryDoneResult {
   originTaskId: string
   originFlipped: boolean
   unblock: UnblockByTaskResult | null
-  inboxItemsClosed: number
+  actionQueueItemsClosed: number
 }
 
 /**
  * When a recovery task (kind='fix', non-null fixForTaskId) reaches
  * `done`, the work the operator was waiting on has shipped. Flip the
- * origin row to `done`, close inbox items keyed on the origin, and
+ * origin row to `done`, close actionQueue items keyed on the origin, and
  * propagate the unblock signal so dependents waiting on the origin
  * leave `blocked`.
  *
@@ -701,19 +701,19 @@ export const markOriginDoneFromRecovery = async (
 ): Promise<PropagateRecoveryDoneResult> => {
   const origin = await getTask(originTaskId)
 
-  // Close any inbox row keyed to the origin regardless of whether we
+  // Close any actionQueue row keyed to the origin regardless of whether we
   // flip its status. The origin may be missing (purged, or the
   // recovery's fixForTaskId was a PRD slug rather than a task row),
   // or already terminal (the retry-budget guard parked it in
   // `failed` before the recovery finished). In either case the
   // operator no longer needs to see a stale "recovery-failed" row:
   // the recovery just succeeded, the underlying work shipped.
-  let inboxItemsClosed = 0
+  let actionQueueItemsClosed = 0
   try {
-    const closed = await supersedeInboxItemsForOrigin(originTaskId, 'origin-done')
-    inboxItemsClosed = closed.length
+    const closed = await supersedeActionQueueItemsForOrigin(originTaskId, 'origin-done')
+    actionQueueItemsClosed = closed.length
   } catch {
-    // best-effort: inbox closing must not block dependent unblock
+    // best-effort: actionQueue closing must not block dependent unblock
   }
 
   if (!origin) {
@@ -721,7 +721,7 @@ export const markOriginDoneFromRecovery = async (
       originTaskId,
       originFlipped: false,
       unblock: null,
-      inboxItemsClosed,
+      actionQueueItemsClosed,
     }
   }
   if (origin.status === 'done' || origin.status === 'failed' || origin.status === 'dropped') {
@@ -729,7 +729,7 @@ export const markOriginDoneFromRecovery = async (
       originTaskId,
       originFlipped: false,
       unblock: null,
-      inboxItemsClosed,
+      actionQueueItemsClosed,
     }
   }
   const c = await getDefaultQueueClient()
@@ -764,7 +764,7 @@ export const markOriginDoneFromRecovery = async (
       originTaskId,
       originFlipped: false,
       unblock: null,
-      inboxItemsClosed,
+      actionQueueItemsClosed,
     }
   }
   const unblock = await onBlockerTaskCompleted(originTaskId)
@@ -772,6 +772,6 @@ export const markOriginDoneFromRecovery = async (
     originTaskId,
     originFlipped: true,
     unblock,
-    inboxItemsClosed,
+    actionQueueItemsClosed,
   }
 }

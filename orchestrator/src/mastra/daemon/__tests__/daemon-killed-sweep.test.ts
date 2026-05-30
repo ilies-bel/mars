@@ -11,14 +11,14 @@ interface QueueModule {
   getTask: typeof import('../../queue').getTask
 }
 
-interface InboxModule {
-  listInboxItems: typeof import('../../lib/inbox').listInboxItems
+interface ActionQueueModule {
+  listActionQueueItems: typeof import('../../lib/action-queue').listActionQueueItems
 }
 
 interface SweepModule {
   detectAndRaiseDaemonKilled: typeof import('../daemon-killed-sweep').detectAndRaiseDaemonKilled
   buildDaemonKilledBody: typeof import('../daemon-killed-sweep').buildDaemonKilledBody
-  DAEMON_KILLED_INBOX_KIND: typeof import('../daemon-killed-sweep').DAEMON_KILLED_INBOX_KIND
+  DAEMON_KILLED_ACTION_QUEUE_KIND: typeof import('../daemon-killed-sweep').DAEMON_KILLED_ACTION_QUEUE_KIND
 }
 
 const setupRepo = (): string => {
@@ -30,14 +30,14 @@ const setupRepo = (): string => {
 
 const loadModules = async (
   repo: string,
-): Promise<{ q: QueueModule; inbox: InboxModule; sweep: SweepModule }> => {
+): Promise<{ q: QueueModule; actionQueue: ActionQueueModule; sweep: SweepModule }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.initQueue()
-  const inbox = (await import('../../lib/inbox')) as unknown as InboxModule
+  const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   const sweep = (await import('../daemon-killed-sweep')) as unknown as SweepModule
-  return { q, inbox, sweep }
+  return { q, actionQueue, sweep }
 }
 
 describe('detectAndRaiseDaemonKilled', () => {
@@ -53,7 +53,7 @@ describe('detectAndRaiseDaemonKilled', () => {
   })
 
   it('raises exactly one alert per daemon-killed task and does NOT requeue it', async () => {
-    const { q, inbox, sweep } = await loadModules(repo)
+    const { q, actionQueue, sweep } = await loadModules(repo)
 
     const task = await q.enqueueTask('killed work', undefined, { skipTriage: true })
     await q.updateTask(task.id, {
@@ -69,8 +69,8 @@ describe('detectAndRaiseDaemonKilled', () => {
     const after = await q.getTask(task.id)
     expect(after?.status).toBe('failed')
 
-    const items = await inbox.listInboxItems()
-    const ours = items.filter((i) => i.kind === sweep.DAEMON_KILLED_INBOX_KIND)
+    const items = await actionQueue.listActionQueueItems()
+    const ours = items.filter((i) => i.kind === sweep.DAEMON_KILLED_ACTION_QUEUE_KIND)
     expect(ours).toHaveLength(1)
     expect(ours[0]?.title).toContain(task.id)
   })
@@ -88,7 +88,7 @@ describe('detectAndRaiseDaemonKilled', () => {
   })
 
   it('dedupes on re-detection (one row, bumped) rather than inserting siblings', async () => {
-    const { q, inbox, sweep } = await loadModules(repo)
+    const { q, actionQueue, sweep } = await loadModules(repo)
 
     const task = await q.enqueueTask('killed work', undefined, { skipTriage: true })
     await q.updateTask(task.id, {
@@ -99,8 +99,8 @@ describe('detectAndRaiseDaemonKilled', () => {
     await sweep.detectAndRaiseDaemonKilled()
     await sweep.detectAndRaiseDaemonKilled()
 
-    const items = await inbox.listInboxItems()
-    const ours = items.filter((i) => i.kind === sweep.DAEMON_KILLED_INBOX_KIND)
+    const items = await actionQueue.listActionQueueItems()
+    const ours = items.filter((i) => i.kind === sweep.DAEMON_KILLED_ACTION_QUEUE_KIND)
     expect(ours).toHaveLength(1)
     expect(ours[0]?.seenCount).toBeGreaterThanOrEqual(2)
   })

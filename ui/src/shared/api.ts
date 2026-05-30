@@ -77,11 +77,11 @@ export const fetchTodo = async (): Promise<TodoPayload> => {
 }
 
 export const fetchActionQueue = async (): Promise<ActionQueueItem[]> => {
-  return fetchJson('/api/inbox/action-queue', actionQueueResponseSchema)
+  return fetchJson('/api/action-queue/action-queue', actionQueueResponseSchema)
 }
 
-export const dismissInboxItem = async (id: string): Promise<void> => {
-  const r = await fetch(`${BASE}/api/inbox/dismiss`, {
+export const dismissActionQueueItem = async (id: string): Promise<void> => {
+  const r = await fetch(`${BASE}/api/action-queue/dismiss`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
@@ -89,13 +89,13 @@ export const dismissInboxItem = async (id: string): Promise<void> => {
   if (!r.ok) {
     const text = await r.text().catch(() => '')
     throw new Error(
-      `POST /api/inbox/dismiss → ${r.status}${text ? `: ${text}` : ''}`,
+      `POST /api/action-queue/dismiss → ${r.status}${text ? `: ${text}` : ''}`,
     )
   }
 }
 
-export const ackInboxItem = async (id: string): Promise<void> => {
-  const r = await fetch(`${BASE}/api/inbox/ack`, {
+export const ackActionQueueItem = async (id: string): Promise<void> => {
+  const r = await fetch(`${BASE}/api/action-queue/ack`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
@@ -103,13 +103,13 @@ export const ackInboxItem = async (id: string): Promise<void> => {
   if (!r.ok) {
     const text = await r.text().catch(() => '')
     throw new Error(
-      `POST /api/inbox/ack → ${r.status}${text ? `: ${text}` : ''}`,
+      `POST /api/action-queue/ack → ${r.status}${text ? `: ${text}` : ''}`,
     )
   }
 }
 
-export const resolveInboxItem = async (id: string): Promise<void> => {
-  const r = await fetch(`${BASE}/api/inbox/resolve`, {
+export const resolveActionQueueItem = async (id: string): Promise<void> => {
+  const r = await fetch(`${BASE}/api/action-queue/resolve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
@@ -117,7 +117,7 @@ export const resolveInboxItem = async (id: string): Promise<void> => {
   if (!r.ok) {
     const text = await r.text().catch(() => '')
     throw new Error(
-      `POST /api/inbox/resolve → ${r.status}${text ? `: ${text}` : ''}`,
+      `POST /api/action-queue/resolve → ${r.status}${text ? `: ${text}` : ''}`,
     )
   }
 }
@@ -175,7 +175,7 @@ export const eventsUrl = (): string => `${BASE}/events`
 
 /**
  * Fetch the resolved failure-reason catalog from the daemon (proxied through
- * the UI server). The catalog is keyed by `code`. The inbox detail panel
+ * the UI server). The catalog is keyed by `code`. The actionQueue detail panel
  * looks up `failureReasonCode` to render `Reason: <userMessage>` plus the
  * `availableActions` button list. Falls back to the catalog's `unknown`
  * entry when the code is absent or not in the catalog.
@@ -209,7 +209,7 @@ export interface EventsFilter {
  * Fetch a page of trace events from the daemon (via the UI server proxy).
  *
  * Two consumers:
- *   - Inbox detail panel's Traces section — passes `{ taskId, limit }` and
+ *   - Action queue detail panel's Traces section — passes `{ taskId, limit }` and
  *     paginates with `cursor`.
  *   - The Events tab — passes the full multi-filter surface.
  *

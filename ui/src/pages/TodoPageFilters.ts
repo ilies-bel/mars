@@ -1,5 +1,5 @@
 /**
- * Pure filtering and selection helpers for the ActionQueuePage inbox sidebar.
+ * Pure filtering and selection helpers for the ActionQueuePage actionQueue sidebar.
  *
  * Extracted here so they can be unit-tested without loading React or any
  * Vite-specific module (e.g. import.meta.env).

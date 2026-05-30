@@ -23,7 +23,7 @@ export const resolveRepo = (override?: string): RepoContext => {
     : detectRepoRoot(process.cwd())
   const stateDir = resolve(repoRoot, '.mars')
   if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
-  // Tasks (`queueDbPath`) and proposals/inbox (`stateDbPath`) now share a
+  // Tasks (`queueDbPath`) and proposals/actionQueue (`stateDbPath`) now share a
   // single `.mars/mars.db` file (see ADR-0034), matching the orchestrator's
   // `context.ts`. Both names resolve to the same path so the UI's TaskDb /
   // StateDb seams stay distinct while reading one file.

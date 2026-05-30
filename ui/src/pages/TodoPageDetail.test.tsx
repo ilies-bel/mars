@@ -1,5 +1,5 @@
 /**
- * Tests for the inbox detail-panel render — the slice-H rewire.
+ * Tests for the actionQueue detail-panel render — the slice-H rewire.
  *
  * Uses a pre-populated QueryClient so the catalog / events / origins
  * useQuery calls resolve synchronously inside renderToStaticMarkup. Pure
@@ -174,7 +174,7 @@ describe('TodoPage exports', () => {
 // AC1: A failed-task row with a known code renders the catalog's userMessage.
 // ---------------------------------------------------------------------------
 
-describe('inbox detail – Reason section', () => {
+describe('actionQueue detail – Reason section', () => {
   it('renders the catalog userMessage for a known code', () => {
     const qc = makeClient({ taskId: 't-1' })
     const html = renderDetail(BASE_ITEM, qc)
@@ -220,7 +220,7 @@ describe('inbox detail – Reason section', () => {
 // AC2: Available actions render as buttons from the catalog.
 // ---------------------------------------------------------------------------
 
-describe('inbox detail – Available actions', () => {
+describe('actionQueue detail – Available actions', () => {
   it('renders a Restart action button for a verify:typecheck row', () => {
     const qc = makeClient({ taskId: 't-1' })
     const html = renderDetail(BASE_ITEM, qc)
@@ -235,7 +235,7 @@ describe('inbox detail – Available actions', () => {
 // AC3: Traces section.
 // ---------------------------------------------------------------------------
 
-describe('inbox detail – Traces section', () => {
+describe('actionQueue detail – Traces section', () => {
   it('renders trace events with a severity badge', () => {
     const qc = makeClient({
       taskId: 't-1',
@@ -260,7 +260,7 @@ describe('inbox detail – Traces section', () => {
 // AC4: Origins section.
 // ---------------------------------------------------------------------------
 
-describe('inbox detail – Origins section', () => {
+describe('actionQueue detail – Origins section', () => {
   it('renders the proposal-rooted tree and highlights the current task', () => {
     const qc = makeClient({
       taskId: 't-1',

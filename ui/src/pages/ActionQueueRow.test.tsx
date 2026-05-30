@@ -1,5 +1,5 @@
 /**
- * Unit tests for ActionQueueRow — the inbox sidebar row component.
+ * Unit tests for ActionQueueRow — the actionQueue sidebar row component.
  *
  * Tests verify which rows render a Restart button based on their actions array.
  * A row renders Restart only when its actions include op:'restart'.
@@ -63,7 +63,7 @@ const renderRow = (
   )
 
 // ---------------------------------------------------------------------------
-// AC1: A failed inbox row renders a Restart button as its primary action.
+// AC1: A failed actionQueue row renders a Restart button as its primary action.
 // ---------------------------------------------------------------------------
 
 describe('ActionQueueRow – Restart button visibility', () => {

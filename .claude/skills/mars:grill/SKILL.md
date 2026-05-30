@@ -222,9 +222,9 @@ proposal id as `args`:
 Skill({ skill: "mars:to-prd", args: "<id>" })
 ```
 
-The inbox needs no separate cleanup — once the proposal is promoted out
-of `draft`, its derived `draft-proposal:<id>` inbox row disappears on the
-next `mars inbox` read.
+The action queue needs no separate cleanup — once the proposal is promoted out
+of `draft`, its derived `draft-proposal:<id>` action queue row disappears on the
+next `mars action-queue` read.
 
 Do not ask the user to type `/mars:to-prd` — invoke it for them. The
 user's next interaction should be confirming the synthesised PRD inside

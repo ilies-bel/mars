@@ -95,7 +95,7 @@ export interface Task {
   error: string | null
   /**
    * Machine-readable failure signature stamped at failure time (e.g.
-   * `'daemon-killed'`). Drives the error-kind an inbox row resolves to — a
+   * `'daemon-killed'`). Drives the error-kind an actionQueue row resolves to — a
    * `daemon-killed` signature surfaces the requeue-framed action menu rather
    * than the generic failed-task menu. Null for non-failed or legacy rows.
    */
@@ -431,20 +431,20 @@ export class StateDb {
   }
 
   /**
-   * Read operator inbox dismissals as a map of `"<entityKind>:<entityId>"` →
+   * Read operator actionQueue dismissals as a map of `"<entityKind>:<entityId>"` →
    * note. The note encodes the operator action:
    *   - `null`        — dismissed (classic, no note)
    *   - `'dismissed'` — dismissed explicitly
    *   - `'ack'`       — acknowledged; still visible in the open filter
    *   - `'resolved'`  — resolved; hidden from the open filter
    *
-   * The derived inbox uses this map to compute `dismissed` and `ackState` for
+   * The derived actionQueue uses this map to compute `dismissed` and `ackState` for
    * each row. Tolerates a missing table (fresh repo) by returning empty.
    */
-  async listInboxDismissals(): Promise<Map<string, string | null>> {
+  async listActionQueueDismissals(): Promise<Map<string, string | null>> {
     try {
       const r = await this.client.execute(
-        `SELECT entity_kind, entity_id, note FROM inbox_dismissals`,
+        `SELECT entity_kind, entity_id, note FROM action_queue_dismissals`,
       )
       const out = new Map<string, string | null>()
       for (const row of r.rows) {
@@ -470,9 +470,9 @@ export class StateDb {
     })
   }
 
-  private async ensureInboxDismissalsTable(): Promise<void> {
+  private async ensureActionQueueDismissalsTable(): Promise<void> {
     await this.client.execute(`
-      CREATE TABLE IF NOT EXISTS inbox_dismissals (
+      CREATE TABLE IF NOT EXISTS action_queue_dismissals (
         entity_kind  TEXT NOT NULL,
         entity_id    TEXT NOT NULL,
         dismissed_at TEXT NOT NULL,
@@ -484,17 +484,17 @@ export class StateDb {
   }
 
   /**
-   * Dismiss an inbox row: persist a `(entityKind, entityId)` row so the inbox
+   * Dismiss an actionQueue row: persist a `(entityKind, entityId)` row so the actionQueue
    * view hides it until the entity's state changes (which clears the dismissal
    * via the orchestrator's `updateTask` hook).
    */
-  async dismissInboxEntity(
+  async dismissActionQueueEntity(
     entityKind: 'task' | 'worktree' | 'proposal',
     entityId: string,
   ): Promise<void> {
-    await this.ensureInboxDismissalsTable()
+    await this.ensureActionQueueDismissalsTable()
     await this.client.execute({
-      sql: `INSERT INTO inbox_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by, note)
+      sql: `INSERT INTO action_queue_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by, note)
             VALUES (?, ?, ?, 'ui', NULL)
             ON CONFLICT(entity_kind, entity_id) DO UPDATE SET
               dismissed_at = excluded.dismissed_at,
@@ -504,17 +504,17 @@ export class StateDb {
   }
 
   /**
-   * Acknowledge an inbox row: marks it as seen without hiding it from the open
+   * Acknowledge an actionQueue row: marks it as seen without hiding it from the open
    * filter. Sets `note = 'ack'` so the row remains visible in the default open
    * view but carries an acknowledgement stamp.
    */
-  async ackInboxEntity(
+  async ackActionQueueEntity(
     entityKind: 'task' | 'worktree' | 'proposal',
     entityId: string,
   ): Promise<void> {
-    await this.ensureInboxDismissalsTable()
+    await this.ensureActionQueueDismissalsTable()
     await this.client.execute({
-      sql: `INSERT INTO inbox_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by, note)
+      sql: `INSERT INTO action_queue_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by, note)
             VALUES (?, ?, ?, 'ui', 'ack')
             ON CONFLICT(entity_kind, entity_id) DO UPDATE SET
               dismissed_at = excluded.dismissed_at,
@@ -524,16 +524,16 @@ export class StateDb {
   }
 
   /**
-   * Resolve an inbox row: hides it from the open filter and marks it as
+   * Resolve an actionQueue row: hides it from the open filter and marks it as
    * operator-resolved. Sets `note = 'resolved'`.
    */
-  async resolveInboxEntity(
+  async resolveActionQueueEntity(
     entityKind: 'task' | 'worktree' | 'proposal',
     entityId: string,
   ): Promise<void> {
-    await this.ensureInboxDismissalsTable()
+    await this.ensureActionQueueDismissalsTable()
     await this.client.execute({
-      sql: `INSERT INTO inbox_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by, note)
+      sql: `INSERT INTO action_queue_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by, note)
             VALUES (?, ?, ?, 'ui', 'resolved')
             ON CONFLICT(entity_kind, entity_id) DO UPDATE SET
               dismissed_at = excluded.dismissed_at,
@@ -542,19 +542,19 @@ export class StateDb {
     })
   }
 
-  async undismissInboxEntity(
+  async undismissActionQueueEntity(
     entityKind: 'task' | 'worktree' | 'proposal',
     entityId: string,
   ): Promise<void> {
-    await this.ensureInboxDismissalsTable()
+    await this.ensureActionQueueDismissalsTable()
     await this.client.execute({
-      sql: `DELETE FROM inbox_dismissals WHERE entity_kind = ? AND entity_id = ?`,
+      sql: `DELETE FROM action_queue_dismissals WHERE entity_kind = ? AND entity_id = ?`,
       args: [entityKind, entityId],
     })
   }
 
   /**
-   * Read open `stale-worktree` inbox items from `inbox_items` and return them
+   * Read open `stale-worktree` actionQueue items from `action_queue_items` and return them
    * as the same `StaleWorktree` shape the TodoPage already consumes, so the
    * unified model is the single source of truth for the web UI's Alerts section.
    *
@@ -576,7 +576,7 @@ export class StateDb {
     try {
       const r = await this.client.execute(
         `SELECT context, payload, last_seen_at, raised_at
-           FROM inbox_items
+           FROM action_queue_items
           WHERE kind = 'stale-worktree' AND state = 'open'
           ORDER BY raised_at DESC`,
       )
@@ -608,20 +608,20 @@ export class StateDb {
         }]
       })
     } catch {
-      // inbox_items table may not exist yet on a fresh repo.
+      // action_queue_items table may not exist yet on a fresh repo.
       return []
     }
   }
 
   /**
-   * Read ALL open inbox items from `inbox_items` and return raw rows for the
+   * Read ALL open actionQueue items from `action_queue_items` and return raw rows for the
    * UI action-queue handler. Cheaper than a derived scan: one bounded SELECT
    * instead of an N-task SQL scan + a .mars/worktrees readdir/stat fan-out.
    *
    * Falls back to an empty array when the table does not yet exist (fresh repo
    * before any daemon has ever run), matching listOpenStaleWorktreeAlerts().
    */
-  async listOpenInboxItems(): Promise<
+  async listOpenActionQueueItems(): Promise<
     Array<{
       id: string
       kind: string
@@ -637,7 +637,7 @@ export class StateDb {
     try {
       const r = await this.client.execute(
         `SELECT id, kind, priority, title, body, payload, context, raised_at, last_seen_at
-           FROM inbox_items
+           FROM action_queue_items
           WHERE state = 'open'
           ORDER BY raised_at DESC`,
       )
@@ -668,7 +668,7 @@ export class StateDb {
         }
       })
     } catch {
-      // inbox_items table may not exist yet on a fresh repo.
+      // action_queue_items table may not exist yet on a fresh repo.
       return []
     }
   }

@@ -14,20 +14,20 @@ execute their decision through the right `mars` verb.
 You do **not** shape proposals, curate the glossary, or offer ADRs. If the
 unblock decision turns out to need a new task, enqueue it and stop.
 
-# Step 0 — No argument? Point to the inbox and stop.
+# Step 0 — No argument? Point to the action queue and stop.
 
 If `$ARGUMENTS` is empty, the user doesn't yet know which task they want
 to unblock. Do **not** run `mars list blocked`. Instead, tell the user:
 
-> "Run `/mars:inbox` and pick a `blocked-task` row to continue here."
+> "Run `/mars:action-queue` and pick a `blocked-task` row to continue here."
 
 Stop here. Do not guess and do not pick one yourself.
 
 # Step 1 — Confirm the id is a blocked task
 
-The argument is a task id. (The inbox dispatches here with the bare task
-id — the derived inbox row `blocked-task:<task-id>` carries no separate
-id of its own, so there is no inbox-item id to disambiguate.) Confirm it
+The argument is a task id. (The action queue dispatches here with the bare task
+id — the derived action queue row `blocked-task:<task-id>` carries no separate
+id of its own, so there is no action queue-item id to disambiguate.) Confirm it
 resolves before doing anything else:
 
 ```bash
@@ -36,7 +36,7 @@ mars show <id> 2>&1 | head -1
 
 - If it prints `kind: task` → continue to Step 2.
 - If it prints `no task or proposal matching <id>` → tell the user the id
-  doesn't resolve and ask them to recheck the inbox; do not guess.
+  doesn't resolve and ask them to recheck the action queue; do not guess.
 
 # Step 2 — Load the task and its blockers
 
@@ -149,9 +149,9 @@ After the verb runs, print one short confirmation line — what changed,
 and (if relevant) what the user should expect next ("orchestrator will
 pick up <new-id> automatically" or "<id> is back on the queue").
 
-The inbox row needs no separate cleanup: it is a derived view, so once
+The action queue row needs no separate cleanup: it is a derived view, so once
 the task leaves `blocked` (re-queued, restarted, continued, or dropped)
-the `blocked-task:<id>` row disappears on the next `mars inbox` read. If
+the `blocked-task:<id>` row disappears on the next `mars action-queue` read. If
 the user split off a new prerequisite and the task is still `blocked`,
 the row correctly stays — it reflects live state.
 
@@ -176,4 +176,4 @@ the row correctly stays — it reflects live state.
 The user passed: `$ARGUMENTS`
 
 Treat the trimmed `$ARGUMENTS` as `<task-id>`. If it is empty, go to
-**Step 0** (point to the inbox). Otherwise start at **Step 1**.
+**Step 0** (point to the action queue). Otherwise start at **Step 1**.

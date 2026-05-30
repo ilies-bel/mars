@@ -35,7 +35,7 @@ judgement) or transient (a race, stale ref, or retryable hiccup).
 ## Done when
 
 - A new merge attempt is queued (transient case); OR
-- An inbox item describes the structural conflict in one paragraph and the
+- An action queue item describes the structural conflict in one paragraph and the
   operator can act on it.
 
 ## Save your work

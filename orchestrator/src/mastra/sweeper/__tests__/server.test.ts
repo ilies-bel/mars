@@ -104,10 +104,10 @@ describe('sweeper/server', () => {
     process.env.MARS_REPO = templateRepo
     const q = (await import('../../queue')) as unknown as QueueModule
     await q.initQueue()
-    const inbox = (await import('../../lib/inbox')) as unknown as {
-      initInbox: typeof import('../../lib/inbox').initInbox
+    const actionQueue = (await import('../../lib/action-queue')) as unknown as {
+      initActionQueue: typeof import('../../lib/action-queue').initActionQueue
     }
-    await inbox.initInbox()
+    await actionQueue.initActionQueue()
     delete process.env.MARS_REPO
     vi.resetModules()
   })

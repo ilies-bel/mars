@@ -170,18 +170,18 @@ or touches multiple modules). Conversation only until a PRD exists.
 Blocker edges (`mars block <task> <blocker>`) hold a task in
 `status=blocked` until every listed blocker reaches `done`.
 
-### Triage and the inbox
+### Triage and the action queue
 
 Drafts created with the deprecated `mars add` verb land in
 `status=draft`. `mars triage` (Haiku-backed) assesses actionability and
-blockers, then either promotes to `queued` or surfaces an inbox item.
+blockers, then either promotes to `queued` or surfaces an action queue item.
 
-The inbox is the single backlog of human attention:
+The action queue is the single backlog of human attention:
 
-- **`mars inbox`** — open items, grouped by priority.
-- **`mars inbox raise --from -`** — file an item from JSON on stdin
+- **`mars action-queue`** — open items, grouped by priority.
+- **`mars action-queue raise --from -`** — file an item from JSON on stdin
   (preferred over one-shot scripts).
-- **SessionStart hook** — `mars inbox --lean` injects a compact snapshot
+- **SessionStart hook** — `mars action-queue --lean` injects a compact snapshot
   (top blockers + drafts) at the start of every Claude Code session;
   Claude proposes one specific next action per session.
 
@@ -309,12 +309,12 @@ machine, not just the current repo.
 | --- | --- |
 | `/mars:grill <id>` | Challenges a draft idea against `CONTEXT.md`, curates glossary + ADRs inline. Conversation only. |
 | `/mars:to-prd <id>` | Synthesises the current grill conversation into a PRD and writes it to `state.db`. |
-| `/mars:inbox [<id>]` | Show the inbox grouped by priority and resolve one item. |
+| `/mars:action-queue [<id>]` | Show the action queue grouped by priority and resolve one item. |
 | `/mars:unblock <task-id>` | Loads a stopped task + its blockers, proposes 2–3 concrete unblock options. |
 | `/mars:reflect` | Synthesise reflection-source draft ideas from recent completed tasks. |
 | `/mars:deep-reflect [<id>]` | Single-session post-mortem on one task arc; persists a JSON report under `.mars/deep-reflections/`. |
 
-A `SessionStart` hook also runs `mars inbox --lean` and injects a
+A `SessionStart` hook also runs `mars action-queue --lean` and injects a
 compact snapshot at the top of every Claude Code session.
 
 ## Bundled agent
@@ -394,7 +394,7 @@ Everything Mars touches in a target repo lives under `.mars/`:
 
 | Path | Purpose |
 | --- | --- |
-| `queue.db` | LibSQL: `tasks`, `task_blockers`, `task_suggestions`, `inbox_items` |
+| `queue.db` | LibSQL: `tasks`, `task_blockers`, `task_suggestions`, `action_queue_items` |
 | `state.db` | LibSQL: `ideas`, `idea_user_stories` (PRD-shaped drafts) |
 | `mastra.db` | Mastra observability (workflow runs, spans, transcripts) |
 | `supervisors/*.md` | Generated supervisor system prompts |

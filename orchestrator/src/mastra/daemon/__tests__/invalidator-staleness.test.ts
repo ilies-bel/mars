@@ -15,8 +15,8 @@ import type { Client } from '@libsql/client'
 
 interface Loaded {
   q: typeof import('../../queue')
-  inbox: typeof import('../../lib/inbox')
-  dismissals: typeof import('../../lib/inbox-dismissals')
+  actionQueue: typeof import('../../lib/action-queue')
+  dismissals: typeof import('../../lib/action-queue-dismissals')
   ad: typeof import('../alert-dismisser')
 }
 
@@ -32,17 +32,17 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   process.env.MARS_REPO = repo
   const q = await import('../../queue')
   await q.initQueue()
-  const inbox = await import('../../lib/inbox')
-  const dismissals = await import('../../lib/inbox-dismissals')
+  const actionQueue = await import('../../lib/action-queue')
+  const dismissals = await import('../../lib/action-queue-dismissals')
   const ad = await import('../alert-dismisser')
-  return { q, inbox, dismissals, ad }
+  return { q, actionQueue, dismissals, ad }
 }
 
 const raiseOpenItemFor = async (
-  inbox: Loaded['inbox'],
+  actionQueue: Loaded['actionQueue'],
   taskId: string,
 ): Promise<string> =>
-  inbox.raiseInboxItem({
+  actionQueue.raiseActionQueueItem({
     kind: 'failed',
     category: 'orchestrator',
     priority: 'high',
@@ -79,12 +79,12 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
   })
 
   it('purge emits the terminal event BEFORE deleting the task, and the Invalidator clears the row + dismissal', async () => {
-    const { q, inbox, dismissals, ad } = await loadModules(repo)
+    const { q, actionQueue, dismissals, ad } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'P-1'
 
     await insertTask(client, taskId, 'failed')
-    const itemId = await raiseOpenItemFor(inbox, taskId)
+    const itemId = await raiseOpenItemFor(actionQueue, taskId)
     await dismissals.dismissEntity('task', taskId, { by: 'op' })
 
     await ad.ensureAlertDismisser(client)
@@ -107,17 +107,17 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
 
     const { processed } = await ad.drainAlertDismissals(client)
     expect(processed).toBeGreaterThan(0)
-    expect((await inbox.getInboxItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
     expect(await dismissals.isEntityDismissed('task', taskId)).toBe(false)
   })
 
   it('clears rows for a task that ended while the daemon was DOWN (events replayed on first drain)', async () => {
-    const { q, inbox, ad } = await loadModules(repo)
+    const { q, actionQueue, ad } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'D-1'
 
     await insertTask(client, taskId, 'failed')
-    const itemId = await raiseOpenItemFor(inbox, taskId)
+    const itemId = await raiseOpenItemFor(actionQueue, taskId)
 
     // Register the subscriber (daemon boot), THEN the task ends. We never
     // drain between — modelling the daemon being down across the purge.
@@ -127,16 +127,16 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
     // First drain after "restart" replays the buffered terminal event.
     const { processed } = await ad.drainAlertDismissals(client)
     expect(processed).toBeGreaterThan(0)
-    expect((await inbox.getInboxItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
   })
 
   it('a re-queued task (task.queued) evicts its stale failure row', async () => {
-    const { q, inbox, ad } = await loadModules(repo)
+    const { q, actionQueue, ad } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'Q-1'
 
     await insertTask(client, taskId, 'failed')
-    const itemId = await raiseOpenItemFor(inbox, taskId)
+    const itemId = await raiseOpenItemFor(actionQueue, taskId)
 
     await ad.ensureAlertDismisser(client)
     // updateTask through the seam emits task.queued in-tx.
@@ -144,16 +144,16 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
 
     const { processed } = await ad.drainAlertDismissals(client)
     expect(processed).toBeGreaterThan(0)
-    expect((await inbox.getInboxItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
   })
 
   it('a failed task KEEPS its row even after unblock flips it to failed', async () => {
-    const { q, inbox, ad } = await loadModules(repo)
+    const { q, actionQueue, ad } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'F-1'
 
     await insertTask(client, taskId, 'blocked')
-    const itemId = await raiseOpenItemFor(inbox, taskId)
+    const itemId = await raiseOpenItemFor(actionQueue, taskId)
 
     await ad.ensureAlertDismisser(client)
     // unblockTask flips blocked → failed and emits task.terminal{failed}.
@@ -161,6 +161,6 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
 
     const { processed } = await ad.drainAlertDismissals(client)
     expect(processed).toBe(0)
-    expect((await inbox.getInboxItem(itemId))!.state).toBe('open')
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
   })
 })

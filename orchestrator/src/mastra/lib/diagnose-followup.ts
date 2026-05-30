@@ -7,7 +7,7 @@ import {
   updateTask,
 } from '../queue'
 import { getDiagnosis, type StoredDiagnosis } from './diagnose'
-import { raiseInboxItem } from './inbox'
+import { raiseActionQueueItem } from './action-queue'
 
 /**
  * Verdict-driven branch invoked exactly once when a diagnose Chore reaches
@@ -20,22 +20,22 @@ import { raiseInboxItem } from './inbox'
  *     parent's blocker set is replaced, not appended to.
  *   - Inconclusive (or no recorded verdict, treated identically per the
  *     PRD's "exit without verdict = inconclusive" rule) → parent goes to
- *     `failed`, exactly one actionable inbox item is raised with the
+ *     `failed`, exactly one actionable actionQueue item is raised with the
  *     verdict body, dedup'd on the parent task id.
  *   - The function never spawns another diagnose Chore.
  *
  * The function is idempotent under double-invocation: a second call for
  * the same chore is a no-op if the parent is no longer parked behind a
- * diagnose Chore. Dedup of the inbox item is provided by the existing
- * fingerprint(kind, signature) machinery in raiseInboxItem.
+ * diagnose Chore. Dedup of the actionQueue item is provided by the existing
+ * fingerprint(kind, signature) machinery in raiseActionQueueItem.
  */
 export interface DiagnoseFollowupOutcome {
   /** What the verdict-driven branch decided to do. */
-  action: 'fix-dispatched' | 'inbox-raised' | 'noop'
+  action: 'fix-dispatched' | 'action-queue-raised' | 'noop'
   /** When action='fix-dispatched', the id of the new fix attempt. */
   fixTaskId?: string
-  /** When action='inbox-raised', the id of the raised/dedup'd inbox item. */
-  inboxItemId?: string
+  /** When action='action-queue-raised', the id of the raised/dedup'd actionQueue item. */
+  actionQueueItemId?: string
   /** The parent task id the Chore was diagnosing. */
   parentTaskId: string | null
   /** Verdict kind as read from the store. */
@@ -102,7 +102,7 @@ const buildFixPrompt = (
   ].join('\n')
 }
 
-const buildInconclusiveInboxBody = (
+const buildInconclusiveActionQueueBody = (
   parentTaskId: string,
   verdict: StoredDiagnosis,
 ): string => {
@@ -189,12 +189,12 @@ export const runDiagnoseFollowup = async (
     failureReason: `diagnose chore ${verdict.kind}`,
     failureReasonCode: 'unknown',
   })
-  const inboxItemId = await raiseInboxItem({
+  const actionQueueItemId = await raiseActionQueueItem({
     kind: 'diagnose-inconclusive',
     category: 'orchestrator',
     priority: 'high',
     title: `Diagnose Chore for ${parentTaskId} returned ${verdict.kind === 'inconclusive' ? 'inconclusive' : 'no verdict'}`,
-    body: buildInconclusiveInboxBody(parentTaskId, verdict),
+    body: buildInconclusiveActionQueueBody(parentTaskId, verdict),
     payload: {
       parentTaskId,
       choreId,
@@ -207,8 +207,8 @@ export const runDiagnoseFollowup = async (
     signature: parentTaskId,
   })
   return {
-    action: 'inbox-raised',
-    inboxItemId,
+    action: 'action-queue-raised',
+    actionQueueItemId,
     parentTaskId,
     verdictKind: verdict.kind,
   }

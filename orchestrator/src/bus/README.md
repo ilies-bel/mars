@@ -7,7 +7,7 @@ One daemon tails an `events` outbox table and fans events out over WebSocket.
 ## Architecture
 
 ```
-Writers (queue.ts, inbox.ts, …)
+Writers (queue.ts, action queue.ts, …)
        │ libsql write transaction
        ▼
 queue.db → events table  ──►  Bus Daemon (single poller)  ──►  WebSocket clients
