@@ -257,7 +257,8 @@ dispatches into the workflows above. `reload` re-reads
 | `mars block <task> <blocker>...` | Add blocker edges; task waits until each blocker reaches `done`. |
 | `mars unblock <id>` | Phantom-recovery: flip `blocked → failed` and clear every edge for `<id>`. |
 | `mars unblock <id> <blocker>...` | Edge-removal: drop the named edges only; status untouched. |
-| `mars worktree clean [--dry-run] [--force] [--force-orphans]` | Classify directories under `.mars/worktrees/` against `queue.db` and remove the safe ones (done+merged, failed/dropped+zero-commit, orphan zero-commit). Refuses if the daemon is running unless `--force`. |
+| `mars worktree clean [--dry-run] [--force-orphans]` | Conservative sweep: removes done+merged, failed/dropped+zero-commit, and orphan zero-commit worktrees. Keeps desynced (done but branch not yet merged), orphan directories whose branches carry commits (override with `--force-orphans`), failed, in-flight, draft, and blocked worktrees. |
+| `mars worktree prune [--dry-run]` | Bigger hammer for terminal, orphan, and stale directories: removes all done (regardless of merge status), all dropped, and all orphan worktrees. Excludes failed and in-flight worktrees so work-in-progress is never destroyed. Use when `clean` leaves stale prior-day directories behind. |
 | `mars where` | Print resolved repo + state directory. |
 | `mars list [status]` | List tasks (optionally filtered by status). |
 | `mars show <id>` | Print full detail for a task or idea (tries `queue.db`, then `state.db`). |
