@@ -199,8 +199,7 @@ const RETRY_BUDGET_FAILURE_REASON = 'retry_budget_exhausted_at_unblock'
  * (retryCount=1, budget=0) and one that exhausted an explicit budget
  * (retryCount=1, budget=1 — the old `>` let this slip to `queued`).
  *
- * Shared by both onBlockerTaskCompleted and recoverBlockedTasks so the
- * two paths stay in lock-step.
+ * Used by onBlockerTaskCompleted (the live path driven by the outbox subscriber).
  */
 const retryBudgetExhausted = (retryCount: number, budget: number): boolean =>
   retryCount > 0 && retryCount >= budget
@@ -548,133 +547,6 @@ export const onBlockerTaskCancelled = async (
   return { blockerTaskId, outcomes }
 }
 
-/**
- * Daemon-startup recovery: any task left `blocked` whose every blocker is
- * already `done` should be unblocked. Catches the case where the daemon
- * died between a blocker task completing and the unblock running.
- */
-export const recoverBlockedTasks = async (): Promise<UnblockByTaskResult[]> => {
-  const c = await getDefaultQueueClient()
-  const r = await c.execute(`
-    SELECT t.id AS id, t.retry_count AS retry_count
-      FROM tasks t
-     WHERE t.status = 'blocked'
-       AND EXISTS (SELECT 1 FROM task_blockers b WHERE b.task_id = t.id)
-       AND NOT EXISTS (
-         SELECT 1 FROM task_blockers b
-         JOIN tasks bt ON bt.id = b.blocker_task_id
-         WHERE b.task_id = t.id AND bt.status != 'done'
-           AND b.state IN ('confirmed', 'pending-review')
-       )
-  `)
-  const results: UnblockByTaskResult[] = []
-  const budget = getRetryBudget()
-  const now = new Date().toISOString()
-  const integrationBranch = integrationBranchName()
-  for (const row of r.rows as unknown as BlockedDependentRow[]) {
-    const retryCount = Number(row.retry_count ?? 0)
-    const outcomes: UnblockOutcome[] = []
-    if (retryBudgetExhausted(retryCount, budget)) {
-      await raiseActionQueueForBlockedTask(row.id)
-      await markTaskFailed(row.id, RETRY_BUDGET_FAILURE_REASON)
-      outcomes.push({
-        taskId: row.id,
-        outcome: 'failed',
-        retryCount,
-        failureReason: RETRY_BUDGET_FAILURE_REASON,
-      })
-    } else {
-      // Same reset-before-flip discipline as onBlockerTaskCompleted, so the
-      // startup reconciler path stays in lock-step with the live path.
-      const dep = await getTask(row.id)
-      let refused = false
-      try {
-        await resetDependentWorktreeToIntegration(
-          row.id,
-          dep?.worktreePath ?? null,
-          integrationBranch,
-        )
-      } catch (err: unknown) {
-        if (err instanceof WorktreeAheadOfIntegrationError) {
-          await raiseWorktreeAheadActionQueue(
-            err.taskId,
-            err.worktreePath,
-            err.aheadCount,
-            err.integrationBranch,
-          )
-          await markTaskFailed(row.id, WORKTREE_AHEAD_FAILURE_REASON)
-          outcomes.push({
-            taskId: row.id,
-            outcome: 'failed',
-            retryCount,
-            failureReason: WORKTREE_AHEAD_FAILURE_REASON,
-          })
-          refused = true
-        } else {
-          throw err
-        }
-      }
-      if (refused) {
-        results.push({ blockerTaskId: '(recovered)', outcomes })
-        continue
-      }
-      const tx = await c.transaction('write')
-      let flipped = false
-      try {
-        const upd = await tx.execute({
-          sql: `UPDATE tasks
-                   SET status = 'queued', updated_at = ?
-                 WHERE id = ? AND status = 'blocked'`,
-          args: [now, row.id],
-        })
-        flipped = upd.rowsAffected > 0
-        if (flipped) {
-          await publish(tx, 'task.unblocked', {
-            taskId: row.id,
-            blockerTaskId: '(recovered)',
-          })
-        }
-        await tx.commit()
-      } catch (error: unknown) {
-        tx.close()
-        throw error
-      }
-      outcomes.push({
-        taskId: row.id,
-        outcome: flipped ? 'queued' : 'noop',
-        retryCount,
-      })
-    }
-    results.push({ blockerTaskId: '(recovered)', outcomes })
-  }
-
-  // Catch the crash-recovery scenario: a fix-task reached 'done' (its branch
-  // merged into the integration branch) while the daemon was offline, but
-  // markOriginDoneFromRecovery never fired because the daemon went down between
-  // the fix-task's merge landing and the live completion handler running.
-  //
-  // Only 'done' fix-tasks qualify — a fix-task still in 'merging' (or any
-  // earlier phase) has not yet landed and will be handled by the merge
-  // reconciler that runs after this function during the startup sequence.
-  //
-  // Origins already in a terminal state ('done', 'failed', 'dropped') are
-  // excluded by the JOIN filter; markOriginDoneFromRecovery is also idempotent
-  // for terminal origins, so the guards compose safely.
-  const fixDone = await c.execute(`
-    SELECT DISTINCT f.fix_for_task_id AS origin_id
-      FROM tasks f
-      JOIN tasks o ON o.id = f.fix_for_task_id
-     WHERE f.kind = 'fix'
-       AND f.status = 'done'
-       AND f.fix_for_task_id IS NOT NULL
-       AND o.status NOT IN ('done', 'failed', 'dropped')
-  `)
-  for (const fixRow of fixDone.rows as unknown as Array<{ origin_id: string }>) {
-    await markOriginDoneFromRecovery(fixRow.origin_id)
-  }
-
-  return results
-}
 
 export interface PropagateRecoveryDoneResult {
   originTaskId: string

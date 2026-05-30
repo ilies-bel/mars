@@ -38,6 +38,10 @@ import {
   drainActionQueueRepopulations,
   ensureActionQueueRepopulator,
 } from './action-queue-repopulator'
+import {
+  drainBlockerResolution,
+  ensureBlockerResolutionSubscriber,
+} from '../../outbox/subscribers/blocker-resolution'
 import type { Logger, WorkflowEvent } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
 import { resolveGitBin } from '../lib/git'
@@ -52,7 +56,6 @@ import {
   onBlockerTaskCancelled,
   onBlockerTaskCompleted,
   onBlockerTaskFailed,
-  recoverBlockedTasks,
 } from '../blocker-resolution'
 import {
   supersedeActionQueueItemsForOrigin,
@@ -487,10 +490,10 @@ export const startDaemon = async (
         if (t?.status === 'queued') {
           if (await hasIncompleteBlockers(taskId)) {
             // Park it 'blocked', not 'queued'. The unblock machinery
-            // (onBlockerTaskCompleted / recoverBlockedTasks) only re-evaluates
-            // tasks WHERE status='blocked', so a dependent left 'queued' here is
-            // invisible to it and would strand until a daemon restart. Flipping
-            // to 'blocked' wires it into the normal blocked→queued flow.
+            // (onBlockerTaskCompleted, driven by the outbox subscriber) only
+            // re-evaluates tasks WHERE status='blocked', so a dependent left
+            // 'queued' here is invisible to it and would strand. Flipping to
+            // 'blocked' wires it into the normal blocked→queued flow.
             await updateTask(taskId, { status: 'blocked' })
             log(`[triage] ${taskId} actionable but has incomplete blockers; parked blocked`)
           } else {
@@ -1553,25 +1556,6 @@ export const startDaemon = async (
   // ── Reconcile on startup ──────────────────────────────────────────────────
 
   const reconcile = async (): Promise<void> => {
-    try {
-      const recovered = await recoverBlockedTasks()
-      for (const r of recovered) {
-        for (const o of r.outcomes) {
-          if (o.outcome === 'queued') {
-            log(
-              `[reconcile-unblock] task ${o.taskId} re-queued (blocker task already done while daemon was down)`,
-            )
-          } else if (o.outcome === 'failed') {
-            log(
-              `[reconcile-unblock] task ${o.taskId} failed (retry budget exhausted)`,
-            )
-          }
-        }
-      }
-    } catch (err) {
-      log(`[reconcile-unblock] failed: ${(err as Error).message}`)
-    }
-
     // Daemon-killed tasks: tasks SIGKILL'd with a prior daemon are stamped
     // `failureSignature: 'daemon-killed'` and left in `failed`. We do NOT
     // auto-requeue them — raise one alert-only actionQueue item per task so the
@@ -2705,6 +2689,27 @@ export const startDaemon = async (
     }
   })()
 
+  // Boot drain for the blocker-resolution outbox subscriber: register it and
+  // unblock any dependents whose blocker reached done while the daemon was down.
+  // This replaces the former boot-time recoverBlockedTasks scan — the subscriber
+  // cursor replays any task.terminal events published since the last drain.
+  void (async () => {
+    try {
+      await ensureBlockerResolutionSubscriber(getClient())
+      const { processed } = await drainBlockerResolution(getClient(), log)
+      if (processed > 0) {
+        log(`[blocker-resolution] unblocked ${processed} dependent(s) on boot`)
+        // Surface newly queued tasks to the dispatch loop.
+        const queued = await listTasks('queued')
+        for (const t of queued) {
+          if (!inFlight.has(t.id)) bus.emit('task.queued', { taskId: t.id })
+        }
+      }
+    } catch (err) {
+      log(`[blocker-resolution] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // ── Poll-fallback tick ────────────────────────────────────────────────────
   // drain() is otherwise purely event-driven (bus 'task.added'/'task.queued'
   // and dispatcher finally-blocks). If a drain pass throws and exits, or a
@@ -2833,6 +2838,30 @@ export const startDaemon = async (
   }, ACTION_QUEUE_REPOPULATOR_DRAIN_MS)
   actionQueueRepopulatorDrain.unref()
 
+  // ── Blocker-resolution drain ──────────────────────────────────────────────
+  // Polls the outbox for task.terminal { reason: 'done' } events and unblocks
+  // any dependents whose every blocker is now done. .unref() so it never holds
+  // the process open.
+  const BLOCKER_RESOLUTION_DRAIN_MS = Number(
+    process.env.MARS_BLOCKER_RESOLUTION_DRAIN_MS ?? 30_000,
+  )
+  const blockerResolutionDrain = setInterval(() => {
+    void (async () => {
+      try {
+        const { processed } = await drainBlockerResolution(getClient(), log)
+        if (processed > 0) {
+          const queued = await listTasks('queued')
+          for (const t of queued) {
+            if (!inFlight.has(t.id)) bus.emit('task.queued', { taskId: t.id })
+          }
+        }
+      } catch (err) {
+        log(`[blocker-resolution] drain errored: ${(err as Error).message}`)
+      }
+    })()
+  }, BLOCKER_RESOLUTION_DRAIN_MS)
+  blockerResolutionDrain.unref()
+
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
@@ -2843,6 +2872,7 @@ export const startDaemon = async (
     clearInterval(observabilityWatchdog)
     clearInterval(alertDrain)
     clearInterval(actionQueueRepopulatorDrain)
+    clearInterval(blockerResolutionDrain)
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.

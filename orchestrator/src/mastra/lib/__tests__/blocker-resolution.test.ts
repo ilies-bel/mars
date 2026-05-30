@@ -16,7 +16,6 @@ interface QueueModule {
 interface BlockerModule {
   onBlockerTaskCompleted: typeof import('../../blocker-resolution').onBlockerTaskCompleted
   onBlockerTaskFailed: typeof import('../../blocker-resolution').onBlockerTaskFailed
-  recoverBlockedTasks: typeof import('../../blocker-resolution').recoverBlockedTasks
   markOriginDoneFromRecovery: typeof import('../../blocker-resolution').markOriginDoneFromRecovery
 }
 
@@ -166,33 +165,6 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(taskBlocked[0].payload.taskId).toBe(dep.id)
   })
 
-  it('recoverBlockedTasks fails a dependent that already burned a retry (retry_count=1, default budget=0)', async () => {
-    // Negative path for the daemon-startup recovery entry point.
-    const { q, br } = await loadModules(repo)
-    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
-    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
-    await blockTask(q, dep.id, fix.id, 1)
-    await q.getClient().execute({
-      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
-      args: [fix.id],
-    })
-
-    const recovered = await br.recoverBlockedTasks()
-    expect(recovered).toHaveLength(1)
-    expect(recovered[0].outcomes[0].outcome).toBe('failed')
-    const reloaded = await q.getTask(dep.id)
-    expect(reloaded?.status).toBe('failed')
-    expect(reloaded?.failureReason).toBe('retry_budget_exhausted_at_unblock')
-
-    const actionQueue = (await import('../action-queue')) as unknown as {
-      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
-    }
-    const open = await actionQueue.listActionQueueItems('open')
-    const taskBlocked = open.filter((i) => i.kind === 'failed' && i.payload.taskId === dep.id)
-    expect(taskBlocked).toHaveLength(1)
-    expect(taskBlocked[0].kind).toBe('failed')
-  })
-
   it('onBlockerTaskCompleted queues a never-run dependent (retry_count=0, default budget=0) instead of failing it', async () => {
     // Regression: off-by-one in the retry-budget guard. With the default
     // budget of 0 and the old `retryCount >= budget`, 0 >= 0 was true and
@@ -212,34 +184,6 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(r.outcomes).toHaveLength(1)
     expect(r.outcomes[0].outcome).toBe('queued')
     expect(r.outcomes[0].retryCount).toBe(0)
-    const reloaded = await q.getTask(dep.id)
-    expect(reloaded?.status).toBe('queued')
-    expect(reloaded?.failureReason).toBeFalsy()
-
-    const actionQueue = (await import('../action-queue')) as unknown as {
-      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
-    }
-    const open = await actionQueue.listActionQueueItems('open')
-    const taskBlocked = open.filter((i) => i.kind === 'failed')
-    expect(taskBlocked).toHaveLength(0)
-  })
-
-  it('recoverBlockedTasks queues a never-run dependent (retry_count=0, default budget=0) instead of failing it', async () => {
-    // Same regression as above, exercised via the daemon-startup recovery
-    // entry point (a blocker completed while the daemon was down).
-    const { q, br } = await loadModules(repo)
-    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
-    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
-    await blockTask(q, dep.id, fix.id, 0)
-    await q.getClient().execute({
-      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
-      args: [fix.id],
-    })
-
-    const recovered = await br.recoverBlockedTasks()
-    expect(recovered).toHaveLength(1)
-    expect(recovered[0].outcomes[0].outcome).toBe('queued')
-    expect(recovered[0].outcomes[0].retryCount).toBe(0)
     const reloaded = await q.getTask(dep.id)
     expect(reloaded?.status).toBe('queued')
     expect(reloaded?.failureReason).toBeFalsy()
@@ -272,38 +216,6 @@ describe('blocker-resolution (task_blockers)', () => {
     const r = await br.onBlockerTaskCompleted(a.id)
     expect(r.outcomes).toHaveLength(1)
     expect(r.outcomes[0].outcome).toBe('noop')
-    const reloaded = await q.getTask(dep.id)
-    expect(reloaded?.status).toBe('blocked')
-  })
-
-  it('recoverBlockedTasks queues a task whose blocker landed while daemon was down', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, br } = await loadModules(repo)
-    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
-    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
-    await blockTask(q, dep.id, fix.id)
-    // Bypass updateTask to simulate the daemon dying mid-handoff.
-    await q.getClient().execute({
-      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
-      args: [fix.id],
-    })
-
-    const recovered = await br.recoverBlockedTasks()
-    expect(recovered).toHaveLength(1)
-    expect(recovered[0].outcomes[0].outcome).toBe('queued')
-    const reloaded = await q.getTask(dep.id)
-    expect(reloaded?.status).toBe('queued')
-  })
-
-  it('recoverBlockedTasks is a no-op when blocker is still pending', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, br } = await loadModules(repo)
-    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
-    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
-    await blockTask(q, dep.id, fix.id)
-
-    const recovered = await br.recoverBlockedTasks()
-    expect(recovered).toHaveLength(0)
     const reloaded = await q.getTask(dep.id)
     expect(reloaded?.status).toBe('blocked')
   })
@@ -365,86 +277,6 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(item!.payload.lastStep).toBe('verify:test')
     expect(item!.body).toContain('at step `verify:test`')
     expect(item!.body).not.toContain('never ran')
-  })
-
-  describe('recoverBlockedTasks — startup origin-flip reconciler', () => {
-    it('flips origin to done and unblocks siblings when fix-task is already done (crash-recovery scenario)', async () => {
-      // Simulates: daemon crashed after the fix-task merged but before
-      // markOriginDoneFromRecovery fired. On restart, recoverBlockedTasks
-      // must detect the done fix-task and flip the origin + unblock siblings.
-      const { q, br } = await loadModules(repo)
-      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      const sibling = await q.enqueueTask('sibling', undefined, { skipTriage: true })
-      // sibling is blocked waiting on origin
-      await q.addBlockers(sibling.id, [origin.id])
-      await q.getClient().execute({
-        sql: `UPDATE tasks SET status = 'blocked', retry_count = 0 WHERE id = ?`,
-        args: [sibling.id],
-      })
-      // origin is in a non-terminal state (blocked — waiting for fix)
-      await q.getClient().execute({
-        sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
-        args: [origin.id],
-      })
-      // fix-task is done+merged but markOriginDoneFromRecovery never fired
-      const fix = await q.enqueueTask('fix-task', undefined, { skipTriage: true })
-      await q.getClient().execute({
-        sql: `UPDATE tasks SET kind = 'fix', fix_for_task_id = ?, status = 'done' WHERE id = ?`,
-        args: [origin.id, fix.id],
-      })
-
-      // Invoke the startup reconciler — no live completion event fires
-      await br.recoverBlockedTasks()
-
-      // Origin must be flipped to done by the reconciler alone
-      expect((await q.getTask(origin.id))?.status).toBe('done')
-      // Sibling waiting only on that origin must leave blocked
-      expect((await q.getTask(sibling.id))?.status).toBe('queued')
-    })
-
-    it('leaves origin unchanged when fix-task is not yet done (merge not yet landed)', async () => {
-      // A fix-task in 'merging' (or any non-done phase) has not landed its
-      // branch yet. The origin must remain in its prior state; the merge
-      // reconciler that runs after recoverBlockedTasks will handle this.
-      const { q, br } = await loadModules(repo)
-      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      await q.getClient().execute({
-        sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
-        args: [origin.id],
-      })
-      const fix = await q.enqueueTask('fix-task', undefined, { skipTriage: true })
-      await q.getClient().execute({
-        sql: `UPDATE tasks SET kind = 'fix', fix_for_task_id = ?, status = 'merging' WHERE id = ?`,
-        args: [origin.id, fix.id],
-      })
-
-      await br.recoverBlockedTasks()
-
-      // Origin must stay in its prior non-terminal state
-      expect((await q.getTask(origin.id))?.status).toBe('blocked')
-    })
-
-    it('leaves an origin already in a terminal state untouched even when its fix-task is done', async () => {
-      // AC4: if the origin is already terminal (done, failed, dropped) the
-      // reconciler must not touch it. The SQL filter excludes such rows, and
-      // markOriginDoneFromRecovery is also idempotent for terminal origins.
-      const { q, br } = await loadModules(repo)
-      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      await q.getClient().execute({
-        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
-        args: [origin.id],
-      })
-      const fix = await q.enqueueTask('fix-task', undefined, { skipTriage: true })
-      await q.getClient().execute({
-        sql: `UPDATE tasks SET kind = 'fix', fix_for_task_id = ?, status = 'done' WHERE id = ?`,
-        args: [origin.id, fix.id],
-      })
-
-      await br.recoverBlockedTasks()
-
-      // Origin must remain done — no status change
-      expect((await q.getTask(origin.id))?.status).toBe('done')
-    })
   })
 
   describe('onBlockerTaskFailed — block downstream queued dependents', () => {
@@ -859,27 +691,6 @@ describe('blocker-resolution (task_blockers)', () => {
       // The observable behaviour: the dependent's worktree HEAD now matches
       // the integration tip, so a dispatched implementor sees the blocker's
       // landed commits before it starts.
-      expect(headSha(worktreePath)).toBe(advancedMainSha)
-    })
-
-    it('recoverBlockedTasks hard-resets the dependent worktree on the startup reconciler path', async () => {
-      const { q, br } = await loadModules(repo)
-      const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
-      const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
-      const { worktreePath, initialMainSha } = setupTaskWorktree(repo, dep.id)
-      await q.updateTask(dep.id, { worktreePath, branch: `task/${dep.id}` })
-      await blockTask(q, dep.id, fix.id, 0)
-      const advancedMainSha = advanceMain(repo, 'advanced\n')
-      expect(advancedMainSha).not.toBe(initialMainSha)
-      await q.getClient().execute({
-        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
-        args: [fix.id],
-      })
-
-      const recovered = await br.recoverBlockedTasks()
-
-      expect(recovered).toHaveLength(1)
-      expect(recovered[0].outcomes[0].outcome).toBe('queued')
       expect(headSha(worktreePath)).toBe(advancedMainSha)
     })
 
