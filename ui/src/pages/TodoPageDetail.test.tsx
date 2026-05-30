@@ -6,7 +6,7 @@
  * render-snapshot assertions; the action-button click handlers are not
  * exercised here (they rely on real React event dispatch).
  */
-import { describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it, vi } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ActionQueuePage as _Page, ActionQueueRow } from './TodoPage'
@@ -354,5 +354,86 @@ describe('ActionQueuePage – responsive layout', () => {
     const html = renderDetail(BASE_ITEM, qc)
     // sm:w-80 (320 px) is the desktop list-pane width; w-full is the mobile override.
     expect(html).toContain('sm:w-80')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Slice-2: Section-level failure fallbacks (catalog / traces / origins)
+// Each test stubs DEV=false (prod mode) and seeds the failing query with null
+// to trigger the `isError || !data` branch in the relevant component.
+// ---------------------------------------------------------------------------
+
+describe('actionQueue detail – failure-reason catalog fallback (prod)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('shows warm headline and omits "Failed to load" in prod mode', () => {
+    vi.stubEnv('DEV', false)
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    // null triggers the `!data` branch without a real fetch error
+    qc.setQueryData(['failure-reasons', null], null)
+    qc.setQueryData(['events', null, 't-1'], EMPTY_EVENTS)
+    qc.setQueryData(['origins', null, 't-1'], SINGLE_NODE_ORIGINS('t-1'))
+    qc.setQueryData(['action-queue', null], [BASE_ITEM])
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <_Page />
+      </QueryClientProvider>,
+    )
+    expect(html).toContain("Couldn&#x27;t load the failure-reason catalog.")
+    expect(html).not.toContain('Failed to load')
+  })
+})
+
+describe('actionQueue detail – trace events fallback (prod)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('shows warm headline and omits "Failed to load" in prod mode', () => {
+    vi.stubEnv('DEV', false)
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['failure-reasons', null], CATALOG)
+    // null triggers the `!data` branch for the events query
+    qc.setQueryData(['events', null, 't-1'], null)
+    qc.setQueryData(['origins', null, 't-1'], SINGLE_NODE_ORIGINS('t-1'))
+    qc.setQueryData(['action-queue', null], [BASE_ITEM])
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <_Page />
+      </QueryClientProvider>,
+    )
+    expect(html).toContain("Couldn&#x27;t load the trace events.")
+    expect(html).not.toContain('Failed to load')
+  })
+})
+
+describe('actionQueue detail – origin tasks fallback (prod)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('shows warm headline and omits "Failed to load" in prod mode', () => {
+    vi.stubEnv('DEV', false)
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['failure-reasons', null], CATALOG)
+    qc.setQueryData(['events', null, 't-1'], EMPTY_EVENTS)
+    // null triggers the `!data` branch for the origins query
+    qc.setQueryData(['origins', null, 't-1'], null)
+    qc.setQueryData(['action-queue', null], [BASE_ITEM])
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <_Page />
+      </QueryClientProvider>,
+    )
+    expect(html).toContain("Couldn&#x27;t load the origin tasks.")
+    expect(html).not.toContain('Failed to load')
   })
 })
