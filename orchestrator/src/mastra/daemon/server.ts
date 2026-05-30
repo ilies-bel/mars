@@ -34,6 +34,7 @@ import {
   drainAlertDismissals,
   ensureAlertDismisser,
 } from './alert-dismisser'
+import { reconcileTerminalTasks } from './lifecycle-reconcile'
 import {
   drainActionQueueRepopulations,
   ensureActionQueueRepopulator,
@@ -2769,6 +2770,7 @@ export const startDaemon = async (
   void (async () => {
     try {
       await ensureAlertDismisser(getClient())
+      await reconcileTerminalTasks(getClient())
       const { processed } = await drainAlertDismissals(getClient(), log)
       if (processed > 0)
         log(`[alert-dismisser] cleared alerts for ${processed} status change(s) on boot`)
