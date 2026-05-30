@@ -355,10 +355,11 @@ describe('action-queue-repopulator outbox subscriber', () => {
   })
 
   /**
-   * Insert a tasks row directly via the client. Slice G's structured-row
-   * branch reads `failure_reason_code`, `failure_reason`, `kind` and
-   * `recovery_payload` off the row to decide which catalog entry to render
-   * and whether to defer to F.2's aggregated writer.
+   * Insert a tasks row directly via the client. The repopulator reads
+   * `failure_signature`, `failure_reason_code`, `failure_reason`, `kind`,
+   * `recovery_payload`, and `error` off the row to decide which Failure kind
+   * entry and catalog entry to use, and whether to defer to F.2's aggregated
+   * writer.
    */
   const insertTaskRow = async (
     client: Client,
@@ -368,6 +369,10 @@ describe('action-queue-repopulator outbox subscriber', () => {
       failureReason?: string | null
       kind?: 'task' | 'fix' | 'diagnose'
       recoveryPayload?: string | null
+      /** The `<failingStep>/<error-class>` signature from the Failure kind registry. */
+      failureSignature?: string | null
+      /** Captured error output used as the verboseReason hint for unknown kinds. */
+      error?: string | null
     },
   ): Promise<void> => {
     const now = new Date().toISOString()
@@ -376,8 +381,9 @@ describe('action-queue-repopulator outbox subscriber', () => {
               id, prompt, status, origin_id, retry_count,
               failure_reason, failure_reason_code,
               kind, recovery_payload,
+              failure_signature, error,
               created_at, updated_at
-            ) VALUES (?, ?, 'failed', ?, 0, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, 'failed', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         row.id,
         '(test prompt)',
@@ -386,13 +392,15 @@ describe('action-queue-repopulator outbox subscriber', () => {
         row.failureReasonCode ?? null,
         row.kind ?? 'task',
         row.recoveryPayload ?? null,
+        row.failureSignature ?? null,
+        row.error ?? null,
         now,
         now,
       ],
     })
   }
 
-  it('renders the catalog entry when failure_reason_code is set on the task', async () => {
+  it('derives title and body from the Failure kind registry when failureSignature is set', async () => {
     const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-typecheck-code'
@@ -400,6 +408,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     await rep.ensureActionQueueRepopulator(client)
     await insertTaskRow(client, {
       id: taskId,
+      failureSignature: 'verify:typecheck/typecheck-cannot-find-name',
       failureReasonCode: 'verify:typecheck',
       failureReason: 'verify:typecheck',
     })
@@ -411,12 +420,12 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    expect(row!.body).toContain('Type checks failed during verification.')
-    expect(row!.body).toContain('**Available actions:**')
-    // task-id substitution must run
-    expect(row!.body).toContain(`mars restart ${taskId}`)
-    expect(row!.body).toContain(`mars purge ${taskId}`)
-    // payload carries the structured catalog entry
+    // title and body come from the Failure kind registry, not the catalog userMessage
+    expect(row!.title).toBe('The changes did not pass type-checking')
+    expect(row!.body).toBe(
+      'The verify step failed because the code references a name that is not in scope (TS2304).',
+    )
+    // payload still carries the catalog entry for backwards compat
     expect(row!.payload['failureReasonCode']).toBe('verify:typecheck')
     expect(row!.payload['userMessage']).toBe(
       'Type checks failed during verification.',
@@ -424,7 +433,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     expect(row!.payload['availableActions']).toBeDefined()
   })
 
-  it('falls back through failureReasonStringToCode when only failure_reason is set', async () => {
+  it('falls back through failureReasonStringToCode in payload when only failure_reason is set (no failureSignature)', async () => {
     const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-typecheck-legacy'
@@ -433,6 +442,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     await insertTaskRow(client, {
       id: taskId,
       failureReason: 'typecheck failed: 3 errors in queue.ts',
+      // No failureSignature — title/body come from unknownFailureKind
     })
 
     await publish(pub, client, 'task.failed', { taskId, error: 'tsc failed' })
@@ -442,12 +452,14 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    // Mapper resolves the loose string to verify:typecheck.
-    expect(row!.body).toContain('Type checks failed during verification.')
+    // Without failureSignature the Failure kind registry falls through to unknownFailureKind.
+    // The payload still resolves the legacy string to verify:typecheck via the catalog.
     expect(row!.payload['failureReasonCode']).toBe('verify:typecheck')
+    // Title comes from unknownFailureKind since no signature is present.
+    expect(row!.title).toContain('The unknown step failed')
   })
 
-  it('renders the unknown catalog entry when both fields are null', async () => {
+  it('uses unknownFailureKind title/body when failureSignature and reason code are both absent', async () => {
     const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-unknown'
@@ -462,11 +474,11 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    expect(row!.body).toContain(
-      'An unrecognised failure was recorded. Inspect the task transcript for details.',
-    )
-    // The `unknown` entry has the `investigate` action.
-    expect(row!.body).toContain('Investigate')
+    // No failureSignature → unknownFailureKind('unknown', ...) provides title.
+    expect(row!.title).toBe('The unknown step failed — see the transcript')
+    // Body is the verboseReason from unknownFailureKind; no catalog userMessage.
+    expect(row!.body).toContain('The unknown step failed')
+    // Payload still carries the catalog code for backwards compat.
     expect(row!.payload['failureReasonCode']).toBe('unknown')
   })
 
@@ -498,7 +510,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     expect(openItems.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
   })
 
-  it('renders the catalog entry on task.dropped too', async () => {
+  it('derives Failure kind title/body on task.dropped too', async () => {
     const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
     const client = q.getClient()
     const taskId = 'T-dropped'
@@ -506,6 +518,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     await rep.ensureActionQueueRepopulator(client)
     await insertTaskRow(client, {
       id: taskId,
+      failureSignature: 'code:timeout/install-timeout',
       failureReasonCode: 'code:timeout',
       failureReason: 'code:timeout',
     })
@@ -520,9 +533,10 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    expect(row!.body).toContain(
-      'The coder did not finish within its time budget.',
-    )
+    // title and body from Failure kind registry
+    expect(row!.title).toBe('The coder took too long')
+    expect(row!.body).toContain('SIGKILL / exit 137')
+    // payload still carries the catalog entry
     expect(row!.payload['failureReasonCode']).toBe('code:timeout')
   })
 
@@ -606,5 +620,47 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
     const openAfter = await actionQueue.listActionQueueItems('open', { kind: 'slices-dropped' })
     expect(openAfter.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(0)
+  })
+
+  // ── Failure kind registry acceptance criteria ─────────────────────────────
+
+  it("task with signature 'setup:install/install-frozen-lockfile' produces title 'The coding environment could not be set up'", async () => {
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
+    const client = q.getClient()
+    const taskId = 'T-setup-lockfile'
+
+    await rep.ensureActionQueueRepopulator(client)
+    await insertTaskRow(client, {
+      id: taskId,
+      failureSignature: 'setup:install/install-frozen-lockfile',
+    })
+
+    await publish(pub, client, 'task.failed', { taskId, error: 'install failed' })
+    await rep.drainActionQueueRepopulations(client, catalog)
+
+    const openItems = await actionQueue.listActionQueueItems('open')
+    const row = openItems.find((i) => i.payload['taskId'] === taskId)
+    expect(row).toBeDefined()
+    expect(row!.title).toBe('The coding environment could not be set up')
+  })
+
+  it("task with unregistered signature 'verify:test/unclassified' produces title 'The verify:test step failed — see the transcript'", async () => {
+    const { q, actionQueue, rep, pub, catalog } = await loadModules(repo)
+    const client = q.getClient()
+    const taskId = 'T-verify-test-unclassified'
+
+    await rep.ensureActionQueueRepopulator(client)
+    await insertTaskRow(client, {
+      id: taskId,
+      failureSignature: 'verify:test/unclassified',
+    })
+
+    await publish(pub, client, 'task.failed', { taskId, error: 'test suite failed' })
+    await rep.drainActionQueueRepopulations(client, catalog)
+
+    const openItems = await actionQueue.listActionQueueItems('open')
+    const row = openItems.find((i) => i.payload['taskId'] === taskId)
+    expect(row).toBeDefined()
+    expect(row!.title).toBe('The verify:test step failed — see the transcript')
   })
 })

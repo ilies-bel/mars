@@ -6,8 +6,12 @@ import { drainWithStall } from './subscriber-drain.js'
 import {
   type FailureReasonCatalog,
   failureReasonStringToCode,
-  renderAvailableActionsMarkdown,
 } from '../lib/failure-reasons'
+import {
+  lookupFailureKind,
+  unknownFailureKind,
+  failingStepFromSignature,
+} from '../lib/failure-kinds'
 import {
   raiseActionQueueItem,
   supersedeActionQueueItemsForOrigin,
@@ -145,16 +149,17 @@ async function applyActionQueueMutation(
         ? failureReasonStringToCode(task.failureReason)
         : 'unknown')
     const entry = catalog.get(code)
-    const actionsMarkdown = renderAvailableActionsMarkdown(
-      entry.availableActions,
-      taskId,
-    )
-    const body = [
-      entry.userMessage,
-      '',
-      '**Available actions:**',
-      actionsMarkdown,
-    ].join('\n')
+
+    // Derive the human-readable title and body from the Failure kind registry,
+    // keyed on the task's failure signature (the `<failingStep>/<error-class>`
+    // string written by the implement workflow). Falls through to
+    // unknownFailureKind when the signature is null or unregistered.
+    const sig = task?.failureSignature ?? null
+    const fk =
+      sig !== null
+        ? (lookupFailureKind(sig) ??
+            unknownFailureKind(failingStepFromSignature(sig), task?.error ?? ''))
+        : unknownFailureKind('unknown', task?.error ?? '')
 
     // raiseActionQueueItem is idempotent: if an open origin row already exists
     // (raised by a richer writer such as queue-fix-tasks), it bumps
@@ -163,8 +168,8 @@ async function applyActionQueueMutation(
       kind: 'failed',
       category: 'orchestrator',
       priority: 'high',
-      title: `Task ${taskId} needs attention`,
-      body,
+      title: fk.warmTitle,
+      body: fk.verboseReason,
       payload: {
         taskId,
         eventType: event.type,
