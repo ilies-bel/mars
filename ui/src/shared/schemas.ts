@@ -315,21 +315,6 @@ export const workerSessionsResponseSchema = z.object({
 export type SessionOutcome = z.infer<typeof sessionOutcomeSchema>
 export type WorkerSession = z.infer<typeof workerSessionSchema>
 
-export const agentSchema = z.object({
-  name: z.string(),
-  model: z.string(),
-  effort: z.string().nullable(),
-  permissionMode: z.string().nullable(),
-  allowedTools: z.array(z.string()),
-  deniedTools: z.array(z.string()),
-  messageCap: z.number().nullable(),
-  role: z.string(),
-})
-
-export const agentsResponseSchema = z.object({
-  agents: z.array(agentSchema),
-})
-
 // ----------------------------------------------------------------------------
 // Failure-reason catalog (daemon `/failure-reasons` → proxied as
 // `/api/failure-reasons`). Mirror of the FailureReason shape declared on the
@@ -479,4 +464,3 @@ export type ProgressTask = z.infer<typeof progressTaskSchema>
 export type ProgressProposalNode = z.infer<typeof progressProposalNodeSchema>
 export type StaleWorktree = z.infer<typeof staleWorktreeSchema>
 export type TodoPayload = z.infer<typeof todoResponseSchema>
-export type Agent = z.infer<typeof agentSchema>

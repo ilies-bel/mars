@@ -10,7 +10,6 @@ import type { Mock } from 'bun:test'
 import {
   ApiError,
   fetchActionQueue,
-  fetchAgents,
   fetchEvents,
   fetchFailureReasons,
   fetchOrigins,
@@ -50,18 +49,6 @@ const minTask = (overrides: Record<string, unknown> = {}) => ({
   blockerTaskId: null,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
-  ...overrides,
-})
-
-const minAgent = (overrides: Record<string, unknown> = {}) => ({
-  name: 'Coder',
-  model: 'claude-sonnet-4-6',
-  effort: null,
-  permissionMode: null,
-  allowedTools: [],
-  deniedTools: [],
-  messageCap: null,
-  role: 'worker',
   ...overrides,
 })
 
@@ -138,47 +125,6 @@ describe('fetchTasks', () => {
     const cause = new Error('unexpected network error')
     fetchSpy.mockRejectedValue(cause)
     await expect(fetchTasks()).rejects.toThrow('unexpected network error')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// fetchAgents
-// ---------------------------------------------------------------------------
-
-describe('fetchAgents', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let fetchSpy: Mock<any>
-
-  beforeEach(() => {
-    fetchSpy = spyOn(globalThis, 'fetch')
-  })
-
-  afterEach(() => {
-    fetchSpy.mockRestore()
-  })
-
-  it('returns a typed Agent array on a valid response', async () => {
-    fetchSpy.mockResolvedValue(json({ agents: [minAgent()] }))
-    const result = await fetchAgents()
-    expect(result).toHaveLength(1)
-    expect(result[0].name).toBe('Coder')
-    expect(result[0].model).toBe('claude-sonnet-4-6')
-  })
-
-  it('returns an empty array when no agents are configured', async () => {
-    fetchSpy.mockResolvedValue(json({ agents: [] }))
-    const result = await fetchAgents()
-    expect(result).toEqual([])
-  })
-
-  it('throws on HTTP error', async () => {
-    fetchSpy.mockResolvedValue(json({ error: 'not found' }, 404))
-    await expect(fetchAgents()).rejects.toThrow('404')
-  })
-
-  it('throws when agent entry is missing required fields', async () => {
-    fetchSpy.mockResolvedValue(json({ agents: [{ name: 'Coder' }] }))
-    await expect(fetchAgents()).rejects.toThrow('schema validation')
   })
 })
 

@@ -72,11 +72,6 @@ describe('detectRoute', () => {
     expect(detectRoute('#/kanban')).toBe('action-queue')
   })
 
-  it('returns agents for the #/agents hash', () => {
-    expect(detectRoute('#/agents')).toBe('agents')
-    expect(detectRoute('#/agents/coder')).toBe('agents')
-  })
-
   it('returns events for the #/events hash', () => {
     expect(detectRoute('#/events')).toBe('events')
     expect(detectRoute('#/events/anything')).toBe('events')
@@ -143,7 +138,6 @@ describe('parseTaskOrigin', () => {
   it('returns the route from ?from=<route>', () => {
     expect(parseTaskOrigin('#/task/x?from=action-queue')).toBe('action-queue')
     expect(parseTaskOrigin('#/task/x?from=progress')).toBe('progress')
-    expect(parseTaskOrigin('#/task/x?from=agents')).toBe('agents')
     expect(parseTaskOrigin('#/task/x?from=events')).toBe('events')
   })
 
@@ -248,10 +242,6 @@ describe('resolvePageRoute', () => {
 
   it('returns progress when a proposal overlay hash is present', () => {
     expect(resolvePageRoute('#/proposal/prop-abc')).toBe('progress')
-  })
-
-  it('returns agents for #/agents (no overlay)', () => {
-    expect(resolvePageRoute('#/agents')).toBe('agents')
   })
 
   it('returns progress when a proposal-node overlay hash is present', () => {
