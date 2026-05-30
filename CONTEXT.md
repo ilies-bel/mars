@@ -129,8 +129,8 @@ _Avoid_: shared file, merged file, conflicted file
 A semver git tag (vMAJOR.MINOR.PATCH) on the mars-framework repository; the canonical identifier of a framework release and the source of truth consulted by 'mars update'. The version lives only as a git tag — there is no package.json version field and no VERSION file. The tag is autobumped on every release-worthy push to main, so 'mars update' always finds a fresh tag to pull.
 
 **Focus subgraph**:
-The slice of the Graph view's blocker DAG anchored at a selected node — by default the upstream blocker chain to its roots plus one downstream hop, with the selected node's originating Proposal attached as a fixed provenance hop.
-_Avoid_: focus query, focus mode
+The slice of the Graph view's blocker DAG anchored at a hovered or selected node: its full upstream blocker chain to the roots, its full downstream dependents to the deepest still-pending leaf (all paths through diamonds, following blocker edges across Proposal-cluster boundaries), and the originating Proposal attached as a fixed provenance hop; anchoring on a Proposal instead yields the whole forest that Proposal sliced.
+_Avoid_: focus query, focus mode, chain
 
 **Bundle**:
 A tarball asset (mars-bundle-vX.Y.Z.tar.gz) containing manifest.json plus exactly the union of its owned and hybrid paths at a specific framework version. Published on the matching GitHub Release alongside a .sha256 sidecar; consumed by mars install and mars update.
