@@ -7,6 +7,7 @@ import { openLibsql } from '../libsql.js'
 import { createLibsqlTaskStore, type TaskStore } from '../task-store.js'
 import {
   cacheWeightedTokens,
+  computeAutonomousCompletionRate,
   computeCostPerArcDistribution,
   computeFailureRate,
 } from '../kpi-compute.js'
@@ -20,6 +21,7 @@ const TASKS_DDL = `
     id TEXT PRIMARY KEY,
     status TEXT NOT NULL,
     origin_id TEXT,
+    fix_for_task_id TEXT,
     updated_at TEXT NOT NULL
   )
 `
@@ -37,11 +39,20 @@ const TRACE_EVENTS_DDL = `
   )
 `
 
+const ACTION_QUEUE_ITEMS_DDL = `
+  CREATE TABLE IF NOT EXISTS action_queue_items (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    origin_task_id TEXT
+  )
+`
+
 const makeStore = async (): Promise<TaskStore> => {
   const dir = mkdtempSync(join(tmpdir(), 'mars-kpi-compute-'))
   const client = openLibsql({ url: `file:${join(dir, 'queue.db')}` })
   await client.execute(TASKS_DDL)
   await client.execute(TRACE_EVENTS_DDL)
+  await client.execute(ACTION_QUEUE_ITEMS_DDL)
   return createLibsqlTaskStore(client)
 }
 
@@ -51,15 +62,17 @@ const insertTask = async (
     id: string
     status: string
     origin_id?: string | null
+    fix_for_task_id?: string | null
     updated_at?: string
   },
 ): Promise<void> => {
   await store.execute({
-    sql: 'INSERT INTO tasks (id, status, origin_id, updated_at) VALUES (?, ?, ?, ?)',
+    sql: 'INSERT INTO tasks (id, status, origin_id, fix_for_task_id, updated_at) VALUES (?, ?, ?, ?, ?)',
     args: [
       opts.id,
       opts.status,
       opts.origin_id ?? null,
+      opts.fix_for_task_id ?? null,
       opts.updated_at ?? '2026-01-04T12:00:00Z',
     ],
   })
@@ -312,7 +325,33 @@ describe('computeCostPerArcDistribution — empty window', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 6. computeCostPerArcDistribution — single-Arc window: p50 === p90
+// 6. computeAutonomousCompletionRate
+// ---------------------------------------------------------------------------
+
+describe('computeAutonomousCompletionRate — empty window', () => {
+  it('returns value=null and sampleCount=0 when no done arcs in window', async () => {
+    const store = await makeStore()
+
+    const result = await computeAutonomousCompletionRate(store, WINDOW)
+
+    expect(result.value).toBeNull()
+    expect(result.sampleCount).toBe(0)
+  })
+
+  it('ignores failed-only arcs (no done tasks in window)', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'f1', status: 'failed' })
+    await insertTask(store, { id: 'f2', status: 'failed' })
+
+    const result = await computeAutonomousCompletionRate(store, WINDOW)
+
+    expect(result.value).toBeNull()
+    expect(result.sampleCount).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 7. computeCostPerArcDistribution — single-Arc window: p50 === p90
 // ---------------------------------------------------------------------------
 
 describe('computeCostPerArcDistribution — single Arc', () => {
@@ -332,7 +371,7 @@ describe('computeCostPerArcDistribution — single Arc', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 7. computeCostPerArcDistribution — percentile math on a skewed distribution
+// 8. computeCostPerArcDistribution — percentile math on a skewed distribution
 // ---------------------------------------------------------------------------
 
 describe('computeCostPerArcDistribution — percentile math', () => {
@@ -392,5 +431,95 @@ describe('computeCostPerArcDistribution — percentile math', () => {
     expect(result.sampleCount).toBe(1)
     // Total cost = 300 + 700 = 1000
     expect(result.p50).toBeCloseTo(1000, 10)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. computeAutonomousCompletionRate — fixture cases
+// ---------------------------------------------------------------------------
+
+describe('computeAutonomousCompletionRate — fixture cases', () => {
+  it('clean done-Arc IS counted as autonomous', async () => {
+    const store = await makeStore()
+    // Single task: done, no recovery edge, no inbox item
+    await insertTask(store, { id: 'clean-arc', status: 'done' })
+
+    const result = await computeAutonomousCompletionRate(store, WINDOW)
+
+    expect(result.sampleCount).toBe(1)
+    expect(result.value).toBe(1)
+  })
+
+  it('Arc with a fix_for_task_id task in its tree is NOT counted as autonomous', async () => {
+    const store = await makeStore()
+    // Origin task reached done via a recovery task
+    await insertTask(store, {
+      id: 'origin-task',
+      status: 'failed',
+      origin_id: null,
+    })
+    await insertTask(store, {
+      id: 'fix-task',
+      status: 'done',
+      origin_id: 'origin-task',
+      fix_for_task_id: 'origin-task',
+    })
+
+    const result = await computeAutonomousCompletionRate(store, WINDOW)
+
+    // 1 done arc, 0 autonomous → value = 0
+    expect(result.sampleCount).toBe(1)
+    expect(result.value).toBe(0)
+  })
+
+  it('Arc with a task-blocked inbox item is NOT counted as autonomous', async () => {
+    const store = await makeStore()
+    // Task reached done but had a task-blocked action-queue item raised against it
+    await insertTask(store, {
+      id: 'blocked-arc',
+      status: 'done',
+    })
+    await store.execute({
+      sql: `INSERT INTO action_queue_items (id, kind, origin_task_id)
+            VALUES (?, 'task-blocked', ?)`,
+      args: ['aq-item-1', 'blocked-arc'],
+    })
+
+    const result = await computeAutonomousCompletionRate(store, WINDOW)
+
+    // 1 done arc, 0 autonomous (had a task-blocked item) → value = 0
+    expect(result.sampleCount).toBe(1)
+    expect(result.value).toBe(0)
+  })
+
+  it('only non-disqualified done arcs count toward autonomous rate', async () => {
+    const store = await makeStore()
+    // Arc A: clean done → autonomous
+    await insertTask(store, { id: 'arc-a', status: 'done' })
+
+    // Arc B: done but has recovery task → NOT autonomous
+    await insertTask(store, { id: 'arc-b-origin', status: 'failed' })
+    await insertTask(store, {
+      id: 'arc-b-fix',
+      status: 'done',
+      origin_id: 'arc-b-origin',
+      fix_for_task_id: 'arc-b-origin',
+    })
+
+    // Arc C: done but has task-blocked item → NOT autonomous
+    await insertTask(store, { id: 'arc-c', status: 'done' })
+    await store.execute({
+      sql: `INSERT INTO action_queue_items (id, kind, origin_task_id)
+            VALUES (?, 'task-blocked', ?)`,
+      args: ['aq-item-2', 'arc-c'],
+    })
+
+    // sampleCount = 3 (arc-a, arc-b-origin, arc-c all have done tasks in window)
+    // autonomous = 1 (arc-a only)
+    // value = 1/3
+    const result = await computeAutonomousCompletionRate(store, WINDOW)
+
+    expect(result.sampleCount).toBe(3)
+    expect(result.value).toBeCloseTo(1 / 3, 5)
   })
 })

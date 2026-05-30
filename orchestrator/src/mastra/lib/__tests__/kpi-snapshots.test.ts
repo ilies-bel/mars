@@ -16,7 +16,16 @@ const TASKS_DDL = `
     id TEXT PRIMARY KEY,
     status TEXT NOT NULL,
     origin_id TEXT,
+    fix_for_task_id TEXT,
     updated_at TEXT NOT NULL
+  )
+`
+
+const ACTION_QUEUE_ITEMS_DDL = `
+  CREATE TABLE IF NOT EXISTS action_queue_items (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    origin_task_id TEXT
   )
 `
 
@@ -53,6 +62,7 @@ const makeStore = async (): Promise<TaskStore> => {
   const dir = mkdtempSync(join(tmpdir(), 'mars-kpi-snapshots-'))
   const client = openLibsql({ url: `file:${join(dir, 'queue.db')}` })
   await client.execute(TASKS_DDL)
+  await client.execute(ACTION_QUEUE_ITEMS_DDL)
   await client.execute(KPI_SNAPSHOTS_DDL)
   await client.execute(TRACE_EVENTS_DDL)
   return createLibsqlTaskStore(client)
@@ -87,11 +97,11 @@ const insertSignal = async (
 
 const insertTask = async (
   store: TaskStore,
-  opts: { id: string; status: string; updated_at?: string },
+  opts: { id: string; status: string; fix_for_task_id?: string | null; updated_at?: string },
 ): Promise<void> => {
   await store.execute({
-    sql: 'INSERT INTO tasks (id, status, origin_id, updated_at) VALUES (?, ?, NULL, ?)',
-    args: [opts.id, opts.status, opts.updated_at ?? '2026-01-04T12:00:00Z'],
+    sql: 'INSERT INTO tasks (id, status, origin_id, fix_for_task_id, updated_at) VALUES (?, ?, NULL, ?, ?)',
+    args: [opts.id, opts.status, opts.fix_for_task_id ?? null, opts.updated_at ?? '2026-01-04T12:00:00Z'],
   })
 }
 
@@ -291,7 +301,7 @@ describe('takeKpiSnapshot — NULL preservation for unimplemented KPIs', () => {
     expect(snapshot.cost_per_arc_p90).toBeNull()
   })
 
-  it('leaves autonomous_completion_rate as null', async () => {
+  it('sets autonomous_completion_rate to null when no done arcs are in the window', async () => {
     const store = await makeStore()
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
     expect(snapshot.autonomous_completion_rate).toBeNull()
@@ -303,7 +313,7 @@ describe('takeKpiSnapshot — NULL preservation for unimplemented KPIs', () => {
     expect(snapshot.recovery_success_rate).toBeNull()
   })
 
-  it('readLatestKpiSnapshot returns all null columns intact', async () => {
+  it('readLatestKpiSnapshot returns unimplemented columns as null', async () => {
     const store = await makeStore()
     await takeKpiSnapshot({ surface: store, now: NOW })
 
@@ -311,6 +321,7 @@ describe('takeKpiSnapshot — NULL preservation for unimplemented KPIs', () => {
     expect(snap).not.toBeNull()
     expect(snap!.cost_per_arc_p50).toBeNull()
     expect(snap!.cost_per_arc_p90).toBeNull()
+    // autonomous_completion_rate is null here because no done arcs are in the window
     expect(snap!.autonomous_completion_rate).toBeNull()
     expect(snap!.recovery_success_rate).toBeNull()
   })
@@ -544,5 +555,66 @@ describe('readKpiWindowComparison', () => {
     for (const key of kpiKeys) {
       expect(result.deltas[key]).toEqual({ value: null, lowConfidenceSuppressed: false })
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 8. autonomous_completion_rate is computed and persisted
+// ---------------------------------------------------------------------------
+
+describe('takeKpiSnapshot — autonomous_completion_rate column', () => {
+  it('clean done-Arc IS counted as autonomous (value=1)', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'clean-arc', status: 'done' })
+
+    const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
+
+    expect(snapshot.autonomous_completion_rate).not.toBeNull()
+    expect(snapshot.autonomous_completion_rate).toBe(1)
+  })
+
+  it('Arc with a fix_for_task_id task in its tree is NOT counted as autonomous', async () => {
+    const store = await makeStore()
+    // Origin failed; recovery task reached done
+    await insertTask(store, { id: 'origin', status: 'failed' })
+    await insertTask(store, {
+      id: 'fix',
+      status: 'done',
+      fix_for_task_id: 'origin',
+    })
+
+    const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
+
+    // 1 done arc (origin), 0 autonomous → value = 0
+    expect(snapshot.autonomous_completion_rate).not.toBeNull()
+    expect(snapshot.autonomous_completion_rate).toBe(0)
+  })
+
+  it('Arc with a task-blocked inbox item is NOT counted as autonomous', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'blocked-task', status: 'done' })
+    await store.execute({
+      sql: `INSERT INTO action_queue_items (id, kind, origin_task_id)
+            VALUES (?, 'task-blocked', ?)`,
+      args: ['aq-1', 'blocked-task'],
+    })
+
+    const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
+
+    // 1 done arc with task-blocked item → 0 autonomous → value = 0
+    expect(snapshot.autonomous_completion_rate).not.toBeNull()
+    expect(snapshot.autonomous_completion_rate).toBe(0)
+  })
+
+  it('persists autonomous_completion_rate so readLatestKpiSnapshot returns it', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 't1', status: 'done' })
+    await insertTask(store, { id: 't2', status: 'done' })
+
+    await takeKpiSnapshot({ surface: store, now: NOW })
+    const snap = await readLatestKpiSnapshot(store)
+
+    expect(snap).not.toBeNull()
+    expect(snap!.autonomous_completion_rate).toBe(1)
   })
 })

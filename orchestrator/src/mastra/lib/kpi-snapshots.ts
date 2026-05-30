@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { computeFailureRate, computeCostPerArcDistribution, type KpiWindow } from './kpi-compute.js'
+import {
+  computeAutonomousCompletionRate,
+  computeCostPerArcDistribution,
+  computeFailureRate,
+  type KpiWindow,
+} from './kpi-compute.js'
 import { getDefaultTaskStore, type TaskStore } from './task-store.js'
 
 /**
@@ -59,7 +64,8 @@ interface TakeKpiSnapshotOpts {
  * Compute a KPI window snapshot, persist exactly one row to kpi_snapshots,
  * and return the persisted row.
  *
- * Only failure_rate is populated in this slice; all other KPI columns are NULL.
+ * Populates failure_rate and autonomous_completion_rate; cost_per_arc_* and
+ * recovery_success_rate are NULL and will be filled by later slices.
  */
 export async function takeKpiSnapshot(
   opts: TakeKpiSnapshotOpts,
@@ -80,6 +86,10 @@ export async function takeKpiSnapshot(
     surface,
     window,
   )
+  const { value: autonomousCompletionRate } = await computeAutonomousCompletionRate(
+    surface,
+    window,
+  )
 
   const snapshot: KpiSnapshot = {
     id: randomUUID(),
@@ -91,7 +101,7 @@ export async function takeKpiSnapshot(
     cost_per_arc_p50: costP50,
     cost_per_arc_p90: costP90,
     failure_rate: failureRate,
-    autonomous_completion_rate: null,
+    autonomous_completion_rate: autonomousCompletionRate,
     recovery_success_rate: null,
   }
 
