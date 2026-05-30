@@ -249,6 +249,11 @@ export const startServer = async (
         return jsonResponse(r.status, r.body)
       }
 
+      if (path === '/api/framework-update') {
+        const r = await proxyGet(ctx.stateDir, '/view/framework-update')
+        return jsonResponse(r.status, r.body)
+      }
+
       if (path === '/api/kpis') {
         try {
           const kpis = await fetchKpis(ctx.stateDir)

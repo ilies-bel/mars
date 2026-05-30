@@ -17,6 +17,7 @@ import { FocusedProjectProvider } from '@/shared/useFocusedProject'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/TodoPage'
 import { EventsPage } from '@/pages/EventsPage'
+import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 
 /** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
 const ROUTE_BASE: Record<RouteName, string> = {
@@ -53,6 +54,7 @@ const AppInner = () => {
   const route = resolvePageRoute(hash)
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
+      <FrameworkUpdateBanner />
       <NavBar hash={hash} />
       <div className="min-h-0 flex-1">
         {route === 'progress' ? (
