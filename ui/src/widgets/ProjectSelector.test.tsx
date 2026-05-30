@@ -1,15 +1,17 @@
 /**
  * Tests for the ProjectSelector widget.
  *
- * Verifies observable behaviour:
- *   - renders project names
- *   - renders health badges (live / degraded / down)
- *   - shows a Start button only for 'down' projects
- *   - marks the focused project with aria-current
+ * Verifies observable behaviour through the public interface:
+ *   - trigger shows the currently focused project (name + health badge)
+ *   - the open dropdown lists all registered projects
+ *   - the focused project carries aria-current="true" in the open dropdown
+ *   - Start button appears only for 'down' projects in the open dropdown
  *   - renders nothing when the project list is empty
  *
- * The useFocusedProject hook and startProject / useRefreshProjects are mocked
- * at the module boundary so no QueryClient or server is required.
+ * Strategy: ProjectSelectorInner accepts all state as props so it can be
+ * rendered in open=false (trigger tests) or open=true (dropdown list tests)
+ * without a DOM, using renderToStaticMarkup. ProjectSelector itself is tested
+ * for the empty-state case via the mocked useFocusedProject hook.
  */
 
 import { describe, expect, it, mock } from 'bun:test'
@@ -41,15 +43,18 @@ const downProject: Project = {
   health: 'down',
 }
 
+const allProjects = [liveProject, degradedProject, downProject]
+
+const noop = () => {}
 const setFocusedProjectId = mock(() => {})
 
 // ---------------------------------------------------------------------------
-// Module mocks — vi.mock calls are hoisted; use a mock fn so per-test
-// overrides work via mockReturnValueOnce / mockImplementation.
+// Module mocks — needed for the ProjectSelector (stateful wrapper) tests.
+// ProjectSelectorInner tests use props directly and don't require these.
 // ---------------------------------------------------------------------------
 
 const mockUseFocusedProject = mock(() => ({
-  projects: [liveProject, degradedProject, downProject],
+  projects: allProjects,
   focusedProjectId: 'proj-live',
   setFocusedProjectId,
 }))
@@ -63,79 +68,219 @@ mock.module('@/shared/api', () => ({
   startProject: mock(async (_id: string) => {}),
 }))
 
-const { ProjectSelector } = await import('./ProjectSelector')
+const { ProjectSelector, ProjectSelectorInner } = await import('./ProjectSelector')
 
 // ---------------------------------------------------------------------------
-// Tests
+// Helper: render Inner in closed state (trigger visible, list hidden)
+// ---------------------------------------------------------------------------
+const renderClosed = (focusedProjectId = 'proj-live') =>
+  renderToStaticMarkup(
+    <ProjectSelectorInner
+      projects={allProjects}
+      focusedProjectId={focusedProjectId}
+      open={false}
+      starting={null}
+      onToggle={noop}
+      onSelect={noop}
+      onStart={noop}
+    />,
+  )
+
+// ---------------------------------------------------------------------------
+// Helper: render Inner in open state (trigger + list both visible)
+// ---------------------------------------------------------------------------
+const renderOpen = (focusedProjectId = 'proj-live', starting: string | null = null) =>
+  renderToStaticMarkup(
+    <ProjectSelectorInner
+      projects={allProjects}
+      focusedProjectId={focusedProjectId}
+      open={true}
+      starting={starting}
+      onToggle={noop}
+      onSelect={noop}
+      onStart={noop}
+    />,
+  )
+
+// ---------------------------------------------------------------------------
+// Trigger — closed state
 // ---------------------------------------------------------------------------
 
-describe('ProjectSelector – project list rendering', () => {
-  it('renders a button for each project', () => {
-    const html = renderToStaticMarkup(<ProjectSelector />)
+describe('ProjectSelector – trigger shows focused project', () => {
+  it('renders the trigger button', () => {
+    const html = renderClosed()
+    expect(html).toContain('data-testid="project-selector-trigger"')
+  })
+
+  it('trigger displays the focused project name', () => {
+    const html = renderClosed('proj-live')
+    expect(html).toContain('Live Project')
+  })
+
+  it('trigger displays a different focused project when focusedProjectId changes', () => {
+    const html = renderClosed('proj-degraded')
+    expect(html).toContain('Degraded Project')
+  })
+
+  it('trigger carries aria-haspopup="listbox"', () => {
+    const html = renderClosed()
+    expect(html).toContain('aria-haspopup="listbox"')
+  })
+
+  it('trigger has aria-expanded="false" when closed', () => {
+    const html = renderClosed()
+    expect(html).toContain('aria-expanded="false"')
+  })
+
+  it('trigger has aria-expanded="true" when open', () => {
+    const html = renderOpen()
+    expect(html).toContain('aria-expanded="true"')
+  })
+
+  it('trigger shows a health badge for the focused project', () => {
+    const html = renderClosed('proj-live')
+    expect(html).toContain('data-testid="health-badge-trigger"')
+  })
+
+  it('trigger badge shows "live" for a live focused project', () => {
+    const html = renderClosed('proj-live')
+    expect(html).toMatch(/data-testid="health-badge-trigger"[^>]*>live</)
+  })
+
+  it('trigger badge shows "down" when the focused project is down', () => {
+    const html = renderClosed('proj-down')
+    expect(html).toMatch(/data-testid="health-badge-trigger"[^>]*>down</)
+  })
+
+  it('the dropdown list is NOT present in the closed state', () => {
+    const html = renderClosed()
+    expect(html).not.toContain('data-testid="project-dropdown"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Open dropdown — listing all projects
+// ---------------------------------------------------------------------------
+
+describe('ProjectSelector – opening reveals all projects', () => {
+  it('renders the dropdown panel when open', () => {
+    const html = renderOpen()
+    expect(html).toContain('data-testid="project-dropdown"')
+  })
+
+  it('shows all project names in the open dropdown', () => {
+    const html = renderOpen()
     expect(html).toContain('Live Project')
     expect(html).toContain('Degraded Project')
     expect(html).toContain('Down Project')
   })
 
-  it('renders a health badge for each project', () => {
-    const html = renderToStaticMarkup(<ProjectSelector />)
+  it('renders a listbox role on the dropdown', () => {
+    const html = renderOpen()
+    expect(html).toContain('role="listbox"')
+  })
+
+  it('renders an item for each project', () => {
+    const html = renderOpen()
+    expect(html).toContain('data-testid="project-item-proj-live"')
+    expect(html).toContain('data-testid="project-item-proj-degraded"')
+    expect(html).toContain('data-testid="project-item-proj-down"')
+  })
+
+  it('renders a health badge for each project in the dropdown', () => {
+    const html = renderOpen()
     expect(html).toContain('data-testid="health-badge-proj-live"')
     expect(html).toContain('data-testid="health-badge-proj-degraded"')
     expect(html).toContain('data-testid="health-badge-proj-down"')
   })
 
   it('shows "live" badge text for a live project', () => {
-    const html = renderToStaticMarkup(<ProjectSelector />)
-    const liveMatch = html.match(/data-testid="health-badge-proj-live"[^>]*>([^<]+)</)
-    expect(liveMatch?.[1]).toBe('live')
+    const html = renderOpen()
+    const match = html.match(/data-testid="health-badge-proj-live"[^>]*>([^<]+)</)
+    expect(match?.[1]).toBe('live')
   })
 
   it('shows "degraded" badge text for a degraded project', () => {
-    const html = renderToStaticMarkup(<ProjectSelector />)
-    const degradedMatch = html.match(/data-testid="health-badge-proj-degraded"[^>]*>([^<]+)</)
-    expect(degradedMatch?.[1]).toBe('degraded')
+    const html = renderOpen()
+    const match = html.match(/data-testid="health-badge-proj-degraded"[^>]*>([^<]+)</)
+    expect(match?.[1]).toBe('degraded')
   })
 
   it('shows "down" badge text for a down project', () => {
-    const html = renderToStaticMarkup(<ProjectSelector />)
-    const downMatch = html.match(/data-testid="health-badge-proj-down"[^>]*>([^<]+)</)
-    expect(downMatch?.[1]).toBe('down')
+    const html = renderOpen()
+    const match = html.match(/data-testid="health-badge-proj-down"[^>]*>([^<]+)</)
+    expect(match?.[1]).toBe('down')
   })
 })
 
-describe('ProjectSelector – Start control', () => {
+// ---------------------------------------------------------------------------
+// Focused project — aria-current in the open dropdown
+// ---------------------------------------------------------------------------
+
+describe('ProjectSelector – focused project in dropdown', () => {
+  it('marks the focused project item with aria-current="true"', () => {
+    const html = renderOpen('proj-live')
+    // aria-current="true" is on the focused item element
+    expect(html).toContain('data-testid="project-item-proj-live"')
+    expect(html).toContain('aria-current="true"')
+  })
+
+  it('only one item carries aria-current="true"', () => {
+    const html = renderOpen('proj-live')
+    const matches = html.match(/aria-current="true"/g)
+    expect(matches).toHaveLength(1)
+  })
+
+  it('non-focused items do not carry aria-current', () => {
+    const html = renderOpen('proj-live')
+    // The degraded and down items must not have aria-current
+    expect(html).not.toMatch(/data-testid="project-item-proj-degraded"[^/]*aria-current/)
+    expect(html).not.toMatch(/aria-current[^/]*data-testid="project-item-proj-degraded"/)
+  })
+
+  it('aria-current moves to a different item when focusedProjectId changes', () => {
+    const html = renderOpen('proj-degraded')
+    expect(html).toContain('aria-current="true"')
+    // The degraded item element should contain aria-current
+    // Check: aria-current appears and the degraded item appears in the HTML
+    expect(html).toContain('data-testid="project-item-proj-degraded"')
+    // The live item must NOT have aria-current
+    expect(html).not.toMatch(/data-testid="project-item-proj-live"[^/]*aria-current/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Start button — only for 'down' projects
+// ---------------------------------------------------------------------------
+
+describe('ProjectSelector – Start control in dropdown', () => {
   it('renders a Start button only for the down project', () => {
-    const html = renderToStaticMarkup(<ProjectSelector />)
+    const html = renderOpen()
     expect(html).toContain('data-testid="start-btn-proj-down"')
     expect(html).not.toContain('data-testid="start-btn-proj-live"')
     expect(html).not.toContain('data-testid="start-btn-proj-degraded"')
   })
 
-  it('Start button text is "Start"', () => {
-    const html = renderToStaticMarkup(<ProjectSelector />)
+  it('Start button text is "Start" when not starting', () => {
+    const html = renderOpen()
     expect(html).toMatch(/data-testid="start-btn-proj-down"[^>]*>Start</)
   })
-})
 
-describe('ProjectSelector – focused project', () => {
-  it('marks the focused project button with aria-current', () => {
-    const html = renderToStaticMarkup(<ProjectSelector />)
-    // aria-current="true" appears somewhere on the focused project item element.
-    // Check data-testid and aria-current are both present (order is implementation detail).
-    expect(html).toContain('data-testid="project-item-proj-live"')
-    expect(html).toContain('aria-current="true"')
-    // The non-focused items must NOT carry aria-current.
-    expect(html).not.toMatch(/data-testid="project-item-proj-degraded"[^/]*aria-current/)
-    expect(html).not.toMatch(/aria-current[^/]*data-testid="project-item-proj-degraded"/)
+  it('Start button shows spinner text when that project is starting', () => {
+    const html = renderOpen('proj-live', 'proj-down')
+    expect(html).toMatch(/data-testid="start-btn-proj-down"[^>]*>…</)
   })
 
-  it('does not mark non-focused projects with aria-current', () => {
-    const html = renderToStaticMarkup(<ProjectSelector />)
-    // One occurrence of aria-current="true" total (the focused one only).
-    const matches = html.match(/aria-current="true"/g)
-    expect(matches).toHaveLength(1)
+  it('Start button is disabled while starting', () => {
+    const html = renderOpen('proj-live', 'proj-down')
+    // The disabled attribute should appear near the start-btn
+    expect(html).toContain('disabled')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Empty state — ProjectSelector renders nothing when no projects
+// ---------------------------------------------------------------------------
 
 describe('ProjectSelector – empty state', () => {
   it('renders nothing when the project list is empty', () => {
