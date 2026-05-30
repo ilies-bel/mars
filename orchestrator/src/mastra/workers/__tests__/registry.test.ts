@@ -12,6 +12,7 @@ import {
   pickWorkerForTags,
   resolveWorkerMaxMessages,
   resolveWorkerMaxContextTokens,
+  type Worker,
   type WorkerConfig,
   type WorkerName,
   type WorkerRuntime,
@@ -79,6 +80,25 @@ describe('Worker runtime field', () => {
       runtime: 'headless',
     }
     expect(createWorker(cfg).runtime).toBe('headless')
+  })
+})
+
+describe('built-in Worker tag sets', () => {
+  it('every built-in Worker carries a non-empty tags array reflecting its role', () => {
+    // Each built-in Worker must declare at least one tag so pickWorkerForTags
+    // can route tasks to it. The tag must match the Worker's role name.
+    const expectedTags: Record<WorkerName, string> = {
+      Coder: 'coder',
+      Planner: 'planner',
+      Slicer: 'slicer',
+      Triager: 'triager',
+      Fixer: 'fixer',
+    }
+    for (const [name, expectedTag] of Object.entries(expectedTags) as [WorkerName, string][]) {
+      expect(WORKER_CONFIGS[name].tags, `${name} must have a tags array`).toBeDefined()
+      expect(WORKER_CONFIGS[name].tags, `${name}.tags must be non-empty`).not.toHaveLength(0)
+      expect(WORKER_CONFIGS[name].tags, `${name}.tags must include '${expectedTag}'`).toContain(expectedTag)
+    }
   })
 })
 
@@ -231,6 +251,60 @@ describe('pickWorkerForTags', () => {
     expect(pickWorkerForTags(['something-else', 'coder'], Workers)).toBe(
       Workers.Coder,
     )
+  })
+
+  it('routes tasks tagged "planner" to the Planner Worker', () => {
+    expect(pickWorkerForTags(['planner'], Workers)).toBe(Workers.Planner)
+  })
+
+  it('routes tasks tagged "slicer" to the Slicer Worker', () => {
+    expect(pickWorkerForTags(['slicer'], Workers)).toBe(Workers.Slicer)
+  })
+
+  it('routes tasks tagged "triager" to the Triager Worker', () => {
+    expect(pickWorkerForTags(['triager'], Workers)).toBe(Workers.Triager)
+  })
+
+  it('routes tasks tagged "fixer" to the Fixer Worker', () => {
+    expect(pickWorkerForTags(['fixer'], Workers)).toBe(Workers.Fixer)
+  })
+
+  it('routes to an operator-declared custom Worker when its tag matches', () => {
+    // Simulate an operator-declared Worker added to the registry with a custom tag.
+    const customWorker = createWorker({
+      name: 'ScaffoldWorker',
+      model: 'claude-sonnet-4-6',
+      effort: 'high',
+      permissionMode: 'default',
+      bare: false,
+      disallowedTools: [],
+      outputFormat: 'stream-json',
+      maxMessages: 0,
+      maxContextTokens: 0,
+      runtime: 'headless',
+      tags: ['scaffold'],
+    })
+    const allWorkers: Record<string, Worker> = { ...Workers, ScaffoldWorker: customWorker }
+    // A task with tag 'scaffold' must route to the custom Worker, not Coder.
+    expect(pickWorkerForTags(['scaffold'], allWorkers)).toBe(customWorker)
+  })
+
+  it('falls back to Coder when a custom worker map lacks a matching tag', () => {
+    const customWorker = createWorker({
+      name: 'ScaffoldWorker',
+      model: 'claude-sonnet-4-6',
+      effort: 'high',
+      permissionMode: 'default',
+      bare: false,
+      disallowedTools: [],
+      outputFormat: 'stream-json',
+      maxMessages: 0,
+      maxContextTokens: 0,
+      runtime: 'headless',
+      tags: ['scaffold'],
+    })
+    const allWorkers: Record<string, Worker> = { ...Workers, ScaffoldWorker: customWorker }
+    expect(pickWorkerForTags(['unknown'], allWorkers)).toBe(Workers.Coder)
   })
 })
 

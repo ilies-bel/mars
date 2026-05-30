@@ -413,7 +413,8 @@ Commands:
                                 the file from hard-coded defaults on first
                                 write. Flags: --effort (default: high),
                                 --permission-mode (default: default),
-                                --max-messages (default: 0 = unbounded).
+                                --max-messages (default: 0 = unbounded),
+                                --tag (repeatable, routing tags).
   where                         print resolved repo + state directory
   help                          show this message
   --version, -v                 print mars version and exit
@@ -956,7 +957,13 @@ Subcommands:
       Optional:
         --effort <level>          one of low|medium|high|xhigh|max (default: high)
         --permission-mode <mode>  one of default|bypassPermissions|... (default: default)
-        --max-messages <n>        non-negative integer; 0 = unbounded (default: 0)`,
+        --max-messages <n>        non-negative integer; 0 = unbounded (default: 0)
+        --tag <tag>               routing tag; repeatable. Tasks whose tag list
+                                  intersects this set are routed to this Worker.
+                                  Any string is valid; use domain-specific tags
+                                  (e.g. 'scaffold', 'docs') that do not collide
+                                  with built-in tags (coder, planner, slicer,
+                                  triager, fixer) unless overriding is intended.`,
   help: `mars help [command]
 
 Show top-level help, or detailed help for a single command. Equivalent
@@ -1062,7 +1069,7 @@ const main = async (): Promise<void> => {
       const model = flags['--model']
       if (!name || !model) {
         console.error(
-          'usage: mars worker add <name> --model <model> [--effort high|medium|...] [--permission-mode default|bypassPermissions] [--max-messages <n>]',
+          'usage: mars worker add <name> --model <model> [--effort high|medium|...] [--permission-mode default|bypassPermissions] [--max-messages <n>] [--tag <tag> ...]',
         )
         process.exit(1)
       }
@@ -1105,6 +1112,8 @@ const main = async (): Promise<void> => {
         maxMessages = n
       }
 
+      const tags = multiFlags['--tag']
+
       const { addWorkerToRegistry } = await import(
         './mastra/workers/persisted-registry'
       )
@@ -1124,6 +1133,7 @@ const main = async (): Promise<void> => {
         outputFormat: 'stream-json',
         maxMessages,
         runtime: 'headless',
+        ...(tags !== undefined && tags.length > 0 ? { tags } : {}),
       })
       console.log(`added worker ${name}`)
       return

@@ -180,6 +180,68 @@ describe('mars worker add', () => {
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('effort')
   })
+
+  it('stores a single --tag in the registry', () => {
+    runCli(
+      ['worker', 'add', 'TaggedWorker', '--model', 'claude-sonnet-4-6', '--tag', 'scaffold'],
+      ENV(),
+    )
+    const content = readFileSync(
+      resolve(tmpRepo, '.mars', 'worker-registry.json'),
+      'utf8',
+    )
+    const registry = JSON.parse(content) as Record<string, { tags?: string[] }>
+    expect(registry['TaggedWorker']?.tags).toEqual(['scaffold'])
+  })
+
+  it('stores multiple --tag flags as an array in the registry', () => {
+    runCli(
+      [
+        'worker', 'add', 'MultiTagWorker',
+        '--model', 'claude-sonnet-4-6',
+        '--tag', 'scaffold',
+        '--tag', 'docs',
+      ],
+      ENV(),
+    )
+    const content = readFileSync(
+      resolve(tmpRepo, '.mars', 'worker-registry.json'),
+      'utf8',
+    )
+    const registry = JSON.parse(content) as Record<string, { tags?: string[] }>
+    expect(registry['MultiTagWorker']?.tags).toEqual(['scaffold', 'docs'])
+  })
+
+  it('omits the tags field when no --tag is supplied', () => {
+    runCli(
+      ['worker', 'add', 'NoTagWorker', '--model', 'claude-sonnet-4-6'],
+      ENV(),
+    )
+    const content = readFileSync(
+      resolve(tmpRepo, '.mars', 'worker-registry.json'),
+      'utf8',
+    )
+    const registry = JSON.parse(content) as Record<string, { tags?: unknown }>
+    // tags key should be absent (or undefined) when no --tag was passed.
+    expect('tags' in (registry['NoTagWorker'] ?? {})).toBe(false)
+  })
+
+  it('seeded built-in Workers carry tag sets matching their role names', () => {
+    runCli(
+      ['worker', 'add', 'TriggerSeed', '--model', 'claude-sonnet-4-6'],
+      ENV(),
+    )
+    const content = readFileSync(
+      resolve(tmpRepo, '.mars', 'worker-registry.json'),
+      'utf8',
+    )
+    const registry = JSON.parse(content) as Record<string, { tags?: string[] }>
+    expect(registry['Coder']?.tags).toContain('coder')
+    expect(registry['Planner']?.tags).toContain('planner')
+    expect(registry['Slicer']?.tags).toContain('slicer')
+    expect(registry['Triager']?.tags).toContain('triager')
+    expect(registry['Fixer']?.tags).toContain('fixer')
+  })
 })
 
 // ---------------------------------------------------------------------------
