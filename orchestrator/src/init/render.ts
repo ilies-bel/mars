@@ -32,15 +32,9 @@ const roleFromKind: Record<SupervisorSpec['kind'], string> = {
   specialized: 'Specialist Supervisor',
 }
 
-export interface SpecialistSource {
-  slug: string
-  path: string
-}
-
 export interface RenderInput {
   spec: SupervisorSpec
   specialistBody: string | null
-  source?: SpecialistSource | null
 }
 
 const fallbackSpecialistBody = (spec: SupervisorSpec): string => {
@@ -57,18 +51,14 @@ This supervisor handles work in the **${spec.kind}** domain, detected via ${dete
 }
 
 export const renderSupervisor = (input: RenderInput): string => {
-  const { spec, specialistBody, source } = input
+  const { spec, specialistBody } = input
   const description = `${roleFromKind[spec.kind]} (${spec.kind}) for this project.`
   const body = (specialistBody ?? '').trim() || fallbackSpecialistBody(spec)
-  const sourceFm = source
-    ? `source: ayush-that/sub-agents.directory:${source.path}\n`
-    : ''
   return getSupervisorSkeleton()
     .replaceAll('{{NAME}}', spec.name)
     .replaceAll('{{DESCRIPTION}}', description)
     .replaceAll('{{ROLE}}', roleFromKind[spec.kind])
     .replaceAll('{{PERSONA}}', spec.persona)
-    .replaceAll('{{SOURCE_FRONTMATTER}}', sourceFm)
     .replaceAll('{{WORKFLOW_CONTRACT}}', getWorkflowContract().trim())
     .replaceAll('{{SPECIALIST_BODY}}', body)
 }
@@ -76,7 +66,6 @@ export const renderSupervisor = (input: RenderInput): string => {
 export const minimalRenderInput = (spec: SupervisorSpec): RenderInput => ({
   spec,
   specialistBody: null,
-  source: null,
 })
 
 /**
