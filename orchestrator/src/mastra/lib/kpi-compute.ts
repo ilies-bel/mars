@@ -16,6 +16,13 @@ export interface FailureRateResult {
   sampleCount: number
 }
 
+export interface AutonomousCompletionRateResult {
+  /** null when sampleCount === 0 (no done arcs in the window) */
+  value: number | null
+  /** Count of Arcs reaching done in the window (the denominator) */
+  sampleCount: number
+}
+
 /**
  * The four token-usage fields used in the cache-weighted cost formula.
  * Matches the shape of signal rows and task totals throughout the codebase.
@@ -175,4 +182,77 @@ export async function computeCostPerArcDistribution(
     p90: interpolatePercentile(costs, 0.9),
     sampleCount: costs.length,
   }
+}
+
+/**
+ * Compute the autonomous completion rate over the given time window from the
+ * queryable workflow surface (TaskStore).
+ *
+ * An Arc is "autonomous" iff ALL of the following hold:
+ *   1. It reached done (has a task with status='done' in the window).
+ *   2. No Task in its tree has a recovery edge (fix_for_task_id IS NOT NULL).
+ *   3. No 'task-blocked' action-queue item was ever raised against any of its Tasks.
+ *
+ * autonomous_completion_rate = autonomous_done_arcs / total_done_arcs
+ *
+ * sampleCount = count of Arcs reaching done in the window (the denominator).
+ * value is null when sampleCount === 0.
+ *
+ * NOTE: Condition 3 requires action_queue_items to be queryable via the same
+ * TaskStore surface. In production, action_queue_items lives in state.db (a
+ * separate database from queue.db). When the table is not found the inbox check
+ * is silently skipped — condition 2 (recovery edge) remains fully enforced.
+ */
+export async function computeAutonomousCompletionRate(
+  surface: TaskStore,
+  window: KpiWindow,
+): Promise<AutonomousCompletionRateResult> {
+  // All arc IDs that reached 'done' within the window
+  const doneArcsResult = await surface.query({
+    sql: `SELECT COALESCE(origin_id, id) AS arc_id
+          FROM tasks
+          WHERE status = 'done'
+            AND updated_at >= ?
+            AND updated_at <= ?
+          GROUP BY COALESCE(origin_id, id)`,
+    args: [window.windowStart, window.windowEnd],
+  })
+
+  const sampleCount = doneArcsResult.rows.length
+  if (sampleCount === 0) return { value: null, sampleCount: 0 }
+
+  // Arc IDs disqualified by a recovery task (fix_for_task_id IS NOT NULL)
+  const recoveryResult = await surface.query({
+    sql: `SELECT DISTINCT COALESCE(origin_id, id) AS arc_id
+          FROM tasks
+          WHERE fix_for_task_id IS NOT NULL`,
+    args: [],
+  })
+  const nonAutonomousByRecovery = new Set(
+    recoveryResult.rows.map(r => (r as unknown as { arc_id: string }).arc_id),
+  )
+
+  // Arc IDs disqualified by a 'task-blocked' action-queue item
+  let nonAutonomousByInbox = new Set<string>()
+  try {
+    const inboxResult = await surface.query({
+      sql: `SELECT DISTINCT COALESCE(t.origin_id, t.id) AS arc_id
+            FROM tasks t
+            INNER JOIN action_queue_items a ON a.origin_task_id = t.id
+            WHERE a.kind = 'task-blocked'`,
+      args: [],
+    })
+    nonAutonomousByInbox = new Set(
+      inboxResult.rows.map(r => (r as unknown as { arc_id: string }).arc_id),
+    )
+  } catch {
+    // action_queue_items not in this store's database — inbox check skipped
+  }
+
+  const autonomousCount = doneArcsResult.rows.filter(r => {
+    const arcId = (r as unknown as { arc_id: string }).arc_id
+    return !nonAutonomousByRecovery.has(arcId) && !nonAutonomousByInbox.has(arcId)
+  }).length
+
+  return { value: autonomousCount / sampleCount, sampleCount }
 }
