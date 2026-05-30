@@ -17,6 +17,8 @@ interface BlockerModule {
   onBlockerTaskCompleted: typeof import('../../blocker-resolution').onBlockerTaskCompleted
   onBlockerTaskFailed: typeof import('../../blocker-resolution').onBlockerTaskFailed
   markOriginDoneFromRecovery: typeof import('../../blocker-resolution').markOriginDoneFromRecovery
+  recoverBlockedTask: typeof import('../../blocker-resolution').recoverBlockedTask
+  recoverAllBlockedTasks: typeof import('../../blocker-resolution').recoverAllBlockedTasks
 }
 
 interface ActionQueueModule {
@@ -755,6 +757,147 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(r.outcomes).toHaveLength(1)
       expect(r.outcomes[0].outcome).toBe('queued')
       expect((await q.getTask(dep.id))?.status).toBe('queued')
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // recoverBlockedTask / recoverAllBlockedTasks
+  // -----------------------------------------------------------------------
+  describe('recoverBlockedTask', () => {
+    it('queues a blocked task whose sole blocker is already done', async () => {
+      process.env.MARS_FIX_RETRY_BUDGET = '5'
+      const { q, br } = await loadModules(repo)
+      const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
+      const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+      await blockTask(q, dep.id, fix.id, 0)
+      // Mark the blocker done without going through onBlockerTaskCompleted —
+      // simulates a daemon that missed the terminal event (crash, restart, etc.)
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [fix.id],
+      })
+
+      const result = await br.recoverBlockedTask(dep.id)
+
+      expect(result.outcome).toBe('queued')
+      expect(result.taskId).toBe(dep.id)
+      expect((await q.getTask(dep.id))?.status).toBe('queued')
+    })
+
+    it('queues a blocked task after its sole blocker edge is removed (edge-removal path)', async () => {
+      const { q, br } = await loadModules(repo)
+      const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
+      const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
+      await blockTask(q, dep.id, blocker.id, 0)
+      // Simulate the mars unblock dep.id blocker.id edge removal
+      await q.getClient().execute({
+        sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+        args: [dep.id, blocker.id],
+      })
+
+      const result = await br.recoverBlockedTask(dep.id)
+
+      expect(result.outcome).toBe('queued')
+      expect((await q.getTask(dep.id))?.status).toBe('queued')
+    })
+
+    it('is noop when the task still has unmet blockers', async () => {
+      const { q, br } = await loadModules(repo)
+      const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
+      const fix1 = await q.enqueueTask('fix1', undefined, { skipTriage: true })
+      const fix2 = await q.enqueueTask('fix2', undefined, { skipTriage: true })
+      await blockTask(q, dep.id, fix1.id, 0)
+      await q.addBlockers(dep.id, [fix2.id])
+      // Only fix1 is done; fix2 is still queued
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [fix1.id],
+      })
+
+      const result = await br.recoverBlockedTask(dep.id)
+
+      expect(result.outcome).toBe('noop')
+      expect((await q.getTask(dep.id))?.status).toBe('blocked')
+    })
+
+    it('returns not-blocked for a task that is not blocked', async () => {
+      const { q, br } = await loadModules(repo)
+      const task = await q.enqueueTask('task', undefined, { skipTriage: true })
+      // task is 'queued' by default
+
+      const result = await br.recoverBlockedTask(task.id)
+
+      expect(result.outcome).toBe('not-blocked')
+      expect((await q.getTask(task.id))?.status).toBe('queued')
+    })
+
+    it('writes a task.unblocked event to the outbox atomically with the queued flip', async () => {
+      const { q, br } = await loadModules(repo)
+      const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+      const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
+      await blockTask(q, dep.id, fix.id, 0)
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [fix.id],
+      })
+
+      await br.recoverBlockedTask(dep.id)
+
+      const events = await q.getClient().execute({
+        sql: `SELECT type, payload FROM events WHERE type = 'task.unblocked' ORDER BY id DESC LIMIT 1`,
+        args: [],
+      })
+      expect(events.rows).toHaveLength(1)
+      const payload = JSON.parse(events.rows[0].payload as string) as { taskId: string }
+      expect(payload.taskId).toBe(dep.id)
+      // Outbox event and status flip must be in the same transaction
+      expect((await q.getTask(dep.id))?.status).toBe('queued')
+    })
+  })
+
+  describe('recoverAllBlockedTasks', () => {
+    it('queues all blocked tasks whose blockers are all done and leaves still-blocked tasks alone', async () => {
+      const { q, br } = await loadModules(repo)
+      const dep1 = await q.enqueueTask('dep1', undefined, { skipTriage: true })
+      const dep2 = await q.enqueueTask('dep2', undefined, { skipTriage: true })
+      const dep3 = await q.enqueueTask('dep3-still-blocked', undefined, { skipTriage: true })
+      const fix1 = await q.enqueueTask('fix1', undefined, { skipTriage: true })
+      const fix2 = await q.enqueueTask('fix2', undefined, { skipTriage: true })
+      const unmet = await q.enqueueTask('unmet', undefined, { skipTriage: true })
+      await blockTask(q, dep1.id, fix1.id, 0)
+      await blockTask(q, dep2.id, fix2.id, 0)
+      await blockTask(q, dep3.id, unmet.id, 0)
+      // fix1 and fix2 done; unmet still queued
+      await q.getClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id IN (?, ?)`,
+        args: [fix1.id, fix2.id],
+      })
+
+      const result = await br.recoverAllBlockedTasks()
+
+      const queuedIds = result.outcomes
+        .filter((o) => o.outcome === 'queued')
+        .map((o) => o.taskId)
+        .sort()
+      expect(queuedIds).toEqual([dep1.id, dep2.id].sort())
+
+      const noopIds = result.outcomes
+        .filter((o) => o.outcome === 'noop')
+        .map((o) => o.taskId)
+      expect(noopIds).toEqual([dep3.id])
+
+      expect((await q.getTask(dep1.id))?.status).toBe('queued')
+      expect((await q.getTask(dep2.id))?.status).toBe('queued')
+      expect((await q.getTask(dep3.id))?.status).toBe('blocked')
+    })
+
+    it('returns empty outcomes when no tasks are blocked', async () => {
+      const { q, br } = await loadModules(repo)
+      await q.enqueueTask('task', undefined, { skipTriage: true })
+
+      const result = await br.recoverAllBlockedTasks()
+
+      expect(result.outcomes).toHaveLength(0)
     })
   })
 
