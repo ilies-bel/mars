@@ -520,7 +520,7 @@ export const EventsPage = () => {
             data-testid="events-empty"
             className="font-mono text-[11px] text-iron"
           >
-            No events match the current filters.
+            No events match these filters.
           </div>
         ) : (
           <div
