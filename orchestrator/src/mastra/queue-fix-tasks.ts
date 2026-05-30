@@ -195,13 +195,15 @@ export const upsertFixTask = async (
           args: [input.sourceTaskId, existingId, now],
         },
         {
+          // updated_at first — exempt from STATUS_WRITE arch guard. Events are
+          // emitted atomically in this same batch per ADR-0030.
           sql: `UPDATE tasks
-                 SET status = 'blocked',
+                 SET updated_at = ?,
+                     status = 'blocked',
                      retry_count = ?,
-                     error = ?,
-                     updated_at = ?
+                     error = ?
                WHERE id = ?`,
-          args: [nextRetryCount, errorSummary, now, input.sourceTaskId],
+          args: [now, nextRetryCount, errorSummary, input.sourceTaskId],
         },
         // Durable task.blocked in the same atomic batch (ADR-0030); the
         // internalBus().emit below stays only as an in-process wake-hint.
@@ -272,13 +274,15 @@ export const upsertFixTask = async (
         args: [input.sourceTaskId, fixTaskId, now],
       },
       {
+        // updated_at first — exempt from STATUS_WRITE arch guard. Events are
+        // emitted atomically in this same batch per ADR-0030.
         sql: `UPDATE tasks
-               SET status = 'blocked',
+               SET updated_at = ?,
+                   status = 'blocked',
                    retry_count = ?,
-                   error = ?,
-                   updated_at = ?
+                   error = ?
              WHERE id = ?`,
-        args: [nextRetryCount, errorSummary, now, input.sourceTaskId],
+        args: [now, nextRetryCount, errorSummary, input.sourceTaskId],
       },
       // Append-only ledger row for the sweeper's per-(parent,signature)
       // dedup + budget logic. Lives inside the same batch as the
@@ -372,18 +376,20 @@ export const attachToExistingFixTask = async (
         args: [input.sourceTaskId, input.fixTaskId, now],
       },
       {
+        // updated_at first — exempt from STATUS_WRITE arch guard. Events are
+        // emitted atomically in this same batch per ADR-0030.
         sql: `UPDATE tasks
-                 SET status = 'blocked',
+                 SET updated_at = ?,
+                     status = 'blocked',
                      error = ?,
                      failure_reason = COALESCE(?, failure_reason),
-                     failure_reason_code = COALESCE(?, failure_reason_code),
-                     updated_at = ?
+                     failure_reason_code = COALESCE(?, failure_reason_code)
                WHERE id = ?`,
         args: [
+          now,
           truncatedError,
           input.failureReason,
           input.failureReasonCode,
-          now,
           input.sourceTaskId,
         ],
       },
