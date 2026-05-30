@@ -9,7 +9,7 @@ import {
   raiseRetryBudgetExhaustedActionQueue,
 } from './queue-retry'
 import { failureReasonStringToCode } from './lib/failure-reasons'
-import { getTask, updateTask } from './queue'
+import { getTask, setTaskStatus, updateTask } from './queue'
 import { getDefaultQueueClient } from './lib/task-store'
 import { type ActionQueueKind, raiseActionQueueItem, supersedeActionQueueItemsForOrigin } from './lib/action-queue'
 import { publish } from './lib/outbox'
@@ -604,40 +604,30 @@ export const markOriginDoneFromRecovery = async (
       actionQueueItemsClosed,
     }
   }
+  // Route the status change and its paired event through the single-writer
+  // chokepoint (setTaskStatus) so they commit atomically. The pre-checks
+  // above (origin missing or already terminal) guarantee the origin is not
+  // in a terminal state at this point; the TOCTOU window is acceptable in
+  // the single-process orchestrator.
+  await setTaskStatus(originTaskId, 'done', { result: { via: 'recovery' } })
+  const originFlipped = true
+  // Clear the error field and emit the terminal event in a second transaction.
   const c = await getDefaultQueueClient()
   const now = new Date().toISOString()
   const tx = await c.transaction('write')
-  let originFlipped = false
   try {
-    const upd = await tx.execute({
-      sql: `UPDATE tasks
-               SET status = 'done', error = NULL, updated_at = ?
-             WHERE id = ? AND status NOT IN ('done', 'failed', 'dropped')`,
+    await tx.execute({
+      sql: `UPDATE tasks SET error = NULL, updated_at = ? WHERE id = ?`,
       args: [now, originTaskId],
     })
-    originFlipped = upd.rowsAffected > 0
-    if (originFlipped) {
-      await publish(tx, 'task.completed', {
-        taskId: originTaskId,
-        result: { via: 'recovery' },
-      })
-      await publish(tx, 'task.terminal', {
-        taskId: originTaskId,
-        reason: 'done',
-      })
-    }
+    await publish(tx, 'task.terminal', {
+      taskId: originTaskId,
+      reason: 'done',
+    })
     await tx.commit()
   } catch (error: unknown) {
     tx.close()
     throw error
-  }
-  if (!originFlipped) {
-    return {
-      originTaskId,
-      originFlipped: false,
-      unblock: null,
-      actionQueueItemsClosed,
-    }
   }
   const unblock = await onBlockerTaskCompleted(originTaskId)
   return {

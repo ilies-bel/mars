@@ -5,7 +5,7 @@ import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
 import { openLibsql } from './lib/libsql'
-import { buildEventInsert, withWriteTx } from './lib/outbox'
+import { buildEventInsert, publish, withWriteTx } from './lib/outbox'
 import type { TaskStore } from './lib/task-store'
 
 export type TaskStatus =
@@ -1347,6 +1347,58 @@ export const enqueueTask = async (
     args: [id],
   })
   return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+}
+
+/**
+ * Map a task status to its primary lifecycle event name. Returns `null` for
+ * statuses that do not have a single matching outbox event (e.g. `'blocked'`,
+ * `'running'`). Used by {@link setTaskStatus} to decide whether to publish.
+ */
+const mapStatusToEvent = (
+  status: TaskStatus,
+): 'task.completed' | 'task.dropped' | 'task.failed' | 'task.queued' | null => {
+  if (status === 'done') return 'task.completed'
+  if (status === 'dropped') return 'task.dropped'
+  if (status === 'failed') return 'task.failed'
+  if (status === 'queued') return 'task.queued'
+  return null
+}
+
+/**
+ * Atomic single-writer chokepoint for task status changes.
+ *
+ * Wraps `UPDATE tasks SET status` and the matching outbox event publish in one
+ * `withWriteTx` so the event id is allocated in the same SQLite commit as the
+ * row change. Callers that need additional column updates (e.g. `drop_reason`,
+ * `failure_reason`) or additional events (e.g. `task.terminal`) must issue
+ * those in a separate transaction **after** calling this function.
+ *
+ * Statuses without a registered event mapping (`'blocked'`, `'running'`, etc.)
+ * are still written to the row — the function just skips the publish step.
+ */
+export async function setTaskStatus(
+  taskId: string,
+  newStatus: TaskStatus,
+  extras?: { error?: string; result?: unknown; dropReason?: string },
+): Promise<void> {
+  const now = new Date().toISOString()
+  await withWriteTx(getClient(), async (tx) => {
+    await tx.execute({
+      sql: 'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
+      args: [newStatus, now, taskId],
+    })
+    const eventType = mapStatusToEvent(newStatus)
+    if (eventType === null) return
+    if (newStatus === 'done') {
+      await publish(tx, 'task.completed', { taskId, result: extras?.result ?? null })
+    } else if (newStatus === 'dropped') {
+      await publish(tx, 'task.dropped', { taskId, dropReason: extras?.dropReason ?? '' })
+    } else if (newStatus === 'failed') {
+      await publish(tx, 'task.failed', { taskId, error: extras?.error ?? '' })
+    } else if (newStatus === 'queued') {
+      await publish(tx, 'task.queued', { taskId })
+    }
+  })
 }
 
 export const updateTask = async (

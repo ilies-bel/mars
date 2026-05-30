@@ -2,6 +2,7 @@ import { failureReasonStringToCode } from './lib/failure-reasons'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
 import { publish } from './lib/outbox'
 import { getDefaultQueueClient } from './lib/task-store'
+import { setTaskStatus } from './queue'
 
 export const DEFAULT_RETRY_BUDGET = 0
 
@@ -29,17 +30,20 @@ export const markTaskDropped = async (
   const now = new Date().toISOString()
   const c = await getDefaultQueueClient()
   const code = failureReasonCode ?? failureReasonStringToCode(reason)
+  // Route the status change and its paired event through the single-writer
+  // chokepoint so the UPDATE and `task.dropped` publish share one write tx.
+  await setTaskStatus(taskId, 'dropped', { dropReason: reason })
+  // Extra column updates, blocker-edge cleanup, and terminal event in one tx.
   const tx = await c.transaction('write')
   try {
     await tx.execute({
-      sql: `UPDATE tasks SET status = 'dropped', drop_reason = ?, failure_reason_code = ?, updated_at = ? WHERE id = ?`,
+      sql: `UPDATE tasks SET drop_reason = ?, failure_reason_code = ?, updated_at = ? WHERE id = ?`,
       args: [reason, code, now, taskId],
     })
     await tx.execute({
       sql: `DELETE FROM task_blockers WHERE task_id = ?`,
       args: [taskId],
     })
-    await publish(tx, 'task.dropped', { taskId, dropReason: reason })
     await publish(tx, 'task.terminal', { taskId, reason: 'dropped' })
     await tx.commit()
   } catch (error: unknown) {
@@ -70,17 +74,20 @@ export const markTaskFailed = async (
   const now = new Date().toISOString()
   const c = await getDefaultQueueClient()
   const code = failureReasonCode ?? failureReasonStringToCode(reason)
+  // Route the status change and its paired event through the single-writer
+  // chokepoint so the UPDATE and `task.failed` publish share one write tx.
+  await setTaskStatus(taskId, 'failed', { error: reason })
+  // Extra column updates, blocker-edge cleanup, and terminal event in one tx.
   const tx = await c.transaction('write')
   try {
     await tx.execute({
-      sql: `UPDATE tasks SET status = 'failed', failure_reason = ?, failure_reason_code = ?, updated_at = ? WHERE id = ?`,
+      sql: `UPDATE tasks SET failure_reason = ?, failure_reason_code = ?, updated_at = ? WHERE id = ?`,
       args: [reason, code, now, taskId],
     })
     await tx.execute({
       sql: `DELETE FROM task_blockers WHERE task_id = ?`,
       args: [taskId],
     })
-    await publish(tx, 'task.failed', { taskId, error: reason })
     await publish(tx, 'task.terminal', { taskId, reason: 'failed' })
     await tx.commit()
   } catch (error: unknown) {
