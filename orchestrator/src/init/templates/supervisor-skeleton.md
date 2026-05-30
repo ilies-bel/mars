@@ -3,7 +3,7 @@ name: {{NAME}}
 description: {{DESCRIPTION}}
 model: sonnet
 tools: *
-{{SOURCE_FRONTMATTER}}---
+---
 
 # {{ROLE}}: "{{PERSONA}}"
 

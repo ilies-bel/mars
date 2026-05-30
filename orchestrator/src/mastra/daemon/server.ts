@@ -1584,7 +1584,7 @@ export const startDaemon = async (
     opts: import('../../workflows/init-workflow').RunInitOptions,
   ): Promise<import('../../workflows/init-workflow').RunInitResult> => {
     const { runInit } = await import('../../workflows/init-workflow')
-    log(`[init] dispatching (force=${opts.force} fetch=${opts.fetch} dryRun=${opts.dryRun} refresh=${opts.refresh})`)
+    log(`[init] dispatching (force=${opts.force} dryRun=${opts.dryRun})`)
     const result = await runInit(opts)
     log(`[init] -> ${result.status}`)
     return result

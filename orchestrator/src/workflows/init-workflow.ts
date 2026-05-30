@@ -13,11 +13,6 @@ import {
   type SupervisorSpec,
 } from '../init/detect-stack'
 import {
-  fetchTreesIndex,
-  resolveSpecialist,
-  type ResolvedSpecialist,
-} from '../init/fetch-specialist'
-import {
   renderSupervisor,
   minimalRenderInput,
   validateSupervisor,
@@ -159,45 +154,10 @@ const runDetectStack = async (): Promise<DetectedStack> => {
 }
 
 const runRenderSupervisors = async (
-  doFetch: boolean,
-  refresh: boolean,
   stack: DetectedStack,
 ): Promise<RenderedSupervisor[]> => {
-    const ctx = resolveContext()
-
-    const fetchOpts = { refresh, cacheDir: ctx.cacheDir }
-    const index = doFetch
-      ? await fetchTreesIndex(fetchOpts).catch(
-          (): Map<string, string> => new Map(),
-        )
-      : new Map<string, string>()
-
-    const renderOne = async (
-      spec: SupervisorSpec,
-    ): Promise<RenderedSupervisor> => {
-      let resolved: ResolvedSpecialist | null = null
-      let tried: string[] = Array.from(spec.externalSlugs)
-      let outcome: 'hit' | 'miss' | 'error' = 'miss'
-
-      if (doFetch) {
-        try {
-          const result = await resolveSpecialist(spec.externalSlugs, index, fetchOpts)
-          resolved = result.resolved
-          tried = result.tried
-          outcome = resolved ? 'hit' : 'miss'
-        } catch {
-          outcome = 'error'
-        }
-      }
-
-      const renderInput = resolved
-        ? {
-            spec,
-            specialistBody: resolved.body,
-            source: { slug: resolved.slug, path: resolved.path },
-          }
-        : minimalRenderInput(spec)
-
+    const renderOne = (spec: SupervisorSpec): RenderedSupervisor => {
+      const renderInput = minimalRenderInput(spec)
       const content = renderSupervisor(renderInput)
       const issue = validateSupervisor(content, spec)
       const verify = verifyDefaultsFor(spec.name)
@@ -213,7 +173,7 @@ const runRenderSupervisors = async (
           spec,
           content: fallback,
           outcome: 'error',
-          triedSlugs: tried,
+          triedSlugs: Array.from(spec.externalSlugs),
           externalSource: null,
           ...(verify ? { verify } : {}),
         }
@@ -222,14 +182,14 @@ const runRenderSupervisors = async (
       return {
         spec,
         content,
-        outcome,
-        triedSlugs: tried,
-        externalSource: resolved ? { slug: resolved.slug, path: resolved.path } : null,
+        outcome: 'miss',
+        triedSlugs: Array.from(spec.externalSlugs),
+        externalSource: null,
         ...(verify ? { verify } : {}),
       }
     }
 
-    return Promise.all(stack.supervisors.map(renderOne))
+    return stack.supervisors.map(renderOne)
 }
 
 const scopeDepth = (scope: string | undefined): number => {
@@ -414,10 +374,7 @@ const runActivatePlugin = (): void => {
   tryActivatePlugin(frameworkClaudeDir, userSettingsPath, realDeps)
 }
 
-const initInputSchema = z.object({
-  fetch: z.boolean().default(true),
-  refresh: z.boolean().default(false),
-})
+const initInputSchema = z.object({})
 
 type InitInput = z.infer<typeof initInputSchema>
 
@@ -439,7 +396,7 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
   fn: async (ctx: WorkflowCtx, input: InitInput): Promise<InitWorkflowOutput> => {
     const stack = await ctx.step('detect-stack', runDetectStack)
     const rendered = await ctx.step('render-supervisors', () =>
-      runRenderSupervisors(input.fetch, input.refresh, stack),
+      runRenderSupervisors(stack),
     )
     const w1 = await ctx.step('write-slim-init', () => runWriteSlimInit(rendered))
     const w2 = await ctx.step('scaffold-claude', () => runScaffoldClaude(w1))
@@ -455,9 +412,7 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
 
 export interface RunInitOptions {
   force: boolean
-  fetch: boolean
   dryRun: boolean
-  refresh: boolean
   verbose?: boolean
 }
 
@@ -540,7 +495,7 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
 
   const result = await runWorkflow(
     initWorkflow,
-    { fetch: opts.fetch, refresh: opts.refresh },
+    {},
     { store: createQueueWorkflowStore() },
   )
 
