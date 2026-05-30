@@ -2921,6 +2921,33 @@ export const startDaemon = async (
   }, OBSERVABILITY_WATCHDOG_MS)
   observabilityWatchdog.unref()
 
+  // ── Observability telemetry sweeper ───────────────────────────────────────
+  // Periodically deletes trace_events rows older than three days so the
+  // SQLite state DB stays bounded across multi-day sessions. The sweep reuses
+  // the same pruneObservability routine that `mars observability prune` calls —
+  // the retention window is always 3 days and is never shortened by the sweeper.
+  // Logs the row count when any rows are removed. .unref() so the timer never
+  // keeps the daemon process alive after shutdown.
+  const OBSERVABILITY_SWEEP_MS = Number(
+    process.env.MARS_OBSERVABILITY_SWEEP_MS ?? 60 * 60_000,
+  )
+  const { sweepObservability } = await import('./observability-sweeper')
+  const observabilitySweep = setInterval(() => {
+    void (async () => {
+      try {
+        const deleted = await sweepObservability(resolveContext().stateDbPath)
+        if (deleted > 0) {
+          log(
+            `[observability-sweep] pruned ${deleted} telemetry row(s) older than 3 days`,
+          )
+        }
+      } catch (err) {
+        log(`[observability-sweep] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, OBSERVABILITY_SWEEP_MS)
+  observabilitySweep.unref()
+
   // ── Alert-dismisser drain ─────────────────────────────────────────────────
   // Polls the outbox for status-transition events and clears the implicated
   // task's action-queue alert(s). This keeps the "status change clears
@@ -2989,6 +3016,7 @@ export const startDaemon = async (
     clearInterval(pollFallback)
     clearInterval(staleSweep)
     clearInterval(observabilityWatchdog)
+    clearInterval(observabilitySweep)
     clearInterval(alertDrain)
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)
