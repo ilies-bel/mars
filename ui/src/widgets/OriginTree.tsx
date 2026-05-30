@@ -1,7 +1,9 @@
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchOrigins } from '@/shared/api'
 import { originKindLabel } from '@/shared/actionQueueDetail'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
+import { getFallbackCopy, logFallbackError } from '@/shared/uiFallback'
 import type { OriginNode } from '@/shared/schemas'
 
 interface OriginTreeProps {
@@ -92,6 +94,12 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
     enabled: projectId !== null,
   })
 
+  useEffect(() => {
+    if (query.isError) {
+      logFallbackError(query.error)
+    }
+  }, [query.isError, query.error])
+
   if (query.isPending) {
     return (
       <div>
@@ -103,14 +111,14 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
     )
   }
   if (query.isError || !query.data) {
+    const { headline, detail } = getFallbackCopy('origin tasks', query.error)
     return (
       <div>
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Origins
         </dt>
         <dd className="text-error">
-          Failed to load origins
-          {query.error ? `: ${(query.error as Error).message}` : ''}
+          {headline}{detail !== null ? ` ${detail}` : null}
         </dd>
       </div>
     )
