@@ -5,6 +5,7 @@ import { statSync, constants as fsConstants, accessSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { getRepoRoot, getStateDir } from '../context'
 import { parseClaudeStreamLine, type ClaudeEvent } from './claude-stream'
+import { getLatestContextSize } from './claude-usage'
 import {
   runTool,
   nullTraceStore,
@@ -564,6 +565,11 @@ export interface RunClaudeArgs {
   // Per-invocation override for the message cap enforced inside runClaudeCode.
   // When omitted, defaults to DEFAULT_CLAUDE_MAX_MESSAGES (0 = unbounded).
   maxMessages?: number
+  // Per-invocation context token budget. When the LATEST assistant event's
+  // input-side token count (input + cache_read + cache_creation) crosses this
+  // value, runClaudeCode warns once at 80% and aborts (exit 138, distinct
+  // stderr) at 100%. 0 = disabled, same convention as DEFAULT_CLAUDE_MAX_MESSAGES.
+  maxContextTokens?: number
   /**
    * Optional caller-supplied abort signal. When fired, runClaudeCode
    * SIGKILLs the child and returns a `exitCode: 137` result. Used by the
@@ -847,6 +853,17 @@ const resolveClaudeMessageCap = (override?: number): number => {
   return DEFAULT_CLAUDE_MAX_MESSAGES
 }
 
+// Resolve the effective context token budget for runClaudeCode. A positive
+// override enables the guard; 0 or absent disables it (same convention as
+// DEFAULT_CLAUDE_MAX_MESSAGES). Workers supply their per-worker default via
+// WorkerConfig.maxContextTokens, which is threaded in by buildWorker.
+const resolveContextTokenBudget = (override?: number): number => {
+  if (override !== undefined && Number.isInteger(override) && override > 0) {
+    return override
+  }
+  return 0
+}
+
 export const runClaudeCode = async ({
   cwd,
   prompt,
@@ -861,6 +878,7 @@ export const runClaudeCode = async ({
   agent,
   disallowedTools,
   maxMessages,
+  maxContextTokens,
   externalAbort,
 }: RunClaudeArgs): Promise<RunClaudeResult> => {
   const conversation: ClaudeEvent[] = []
@@ -869,6 +887,11 @@ export const runClaudeCode = async ({
   const warnAt = capEnabled ? Math.floor(cap * 0.6) : Number.POSITIVE_INFINITY
   let warned = false
   let capHit = false
+  const budget = resolveContextTokenBudget(maxContextTokens)
+  const budgetEnabled = budget > 0
+  const ctxWarnAt = budgetEnabled ? Math.floor(budget * 0.8) : Number.POSITIVE_INFINITY
+  let ctxWarned = false
+  let ctxExhausted = false
   let externalAborted = false
   const abort = new AbortController()
   // Bridge a caller-supplied AbortSignal onto the internal controller so a
@@ -930,24 +953,41 @@ export const runClaudeCode = async ({
       if (stream !== 'stdout') return
       const event = parseClaudeStreamLine(line)
       if (!event) return
-      // Once the cap has fired, drop any late-arriving events still buffered
-      // from the child between abort() and process death. The conversation
-      // length must equal exactly `cap` for cap-hit runs.
-      if (capHit) return
+      // Once the cap or context budget has fired, drop any late-arriving events
+      // still buffered from the child between abort() and process death. The
+      // conversation length must equal exactly `cap` for cap-hit runs.
+      if (capHit || ctxExhausted) return
       conversation.push(event)
       if (onEvent) await onEvent(event)
-      if (!capEnabled) return
-      if (!warned && conversation.length === warnAt) {
-        warned = true
-        const sid =
-          extractSessionIdFromConversation(conversation) ?? sessionId ?? '?'
-        console.warn(
-          `[mars] claude session ${sid} crossed ${warnAt} messages (cap ${cap})`,
-        )
+      if (capEnabled) {
+        if (!warned && conversation.length === warnAt) {
+          warned = true
+          const sid =
+            extractSessionIdFromConversation(conversation) ?? sessionId ?? '?'
+          console.warn(
+            `[mars] claude session ${sid} crossed ${warnAt} messages (cap ${cap})`,
+          )
+        }
+        if (conversation.length >= cap) {
+          capHit = true
+          abort.abort()
+          return
+        }
       }
-      if (conversation.length >= cap) {
-        capHit = true
-        abort.abort()
+      if (budgetEnabled) {
+        const contextSize = getLatestContextSize(conversation)
+        if (!ctxWarned && contextSize >= ctxWarnAt) {
+          ctxWarned = true
+          const sid =
+            extractSessionIdFromConversation(conversation) ?? sessionId ?? '?'
+          console.warn(
+            `[mars] claude session ${sid} context at ${contextSize} tokens crossed 80% warn (${ctxWarnAt}/${budget})`,
+          )
+        }
+        if (contextSize >= budget) {
+          ctxExhausted = true
+          abort.abort()
+        }
       }
     },
     abort.signal,
@@ -973,6 +1013,15 @@ export const runClaudeCode = async ({
       exitCode: 124,
       stdout: result.stdout,
       stderr: `claude -p timed out after ${timeoutMs}ms`,
+      sessionId: detectedSessionId,
+      conversation,
+    }
+  }
+  if (ctxExhausted) {
+    return {
+      exitCode: 138,
+      stdout: result.stdout,
+      stderr: `claude -p aborted: context budget exhausted (${getLatestContextSize(conversation)}/${budget} tokens)`,
       sessionId: detectedSessionId,
       conversation,
     }

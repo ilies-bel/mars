@@ -106,6 +106,17 @@ export const EXPLORATION_LOOP_ABORT_MESSAGE = (taskId: string): string =>
 export const isExplorationLoopAbortError = (err: unknown): boolean =>
   errorHaystack(err).includes('aborted by exploration-loop ceiling')
 
+// Thrown by the code step when the context token budget fires (the worker's
+// maxContextTokens was reached). The worker exits with exitCode 138 and a
+// distinct stderr containing "context budget exhausted". The task is marked
+// failed with 'context-exhausted' before this sentinel is thrown. The daemon
+// uses `isContextExhaustedAbortError` to suppress re-updating the task.
+export const CONTEXT_EXHAUSTED_ABORT_MESSAGE = (taskId: string): string =>
+  `task ${taskId} aborted by context-budget ceiling: coder hit the context token limit`
+
+export const isContextExhaustedAbortError = (err: unknown): boolean =>
+  errorHaystack(err).includes('aborted by context-budget ceiling')
+
 import { summarizeUsage } from '../mastra/lib/claude-usage'
 import { recordSignals } from '../mastra/lib/reflect-signals'
 import { openTraceEventStore, type TraceEventStore } from '../mastra/lib/trace-events-store'
@@ -906,6 +917,67 @@ export const implementWorkflow = defineWorkflow<
           `[span-summary] task ${input.taskId}: maxStreak=${watcher.maxStreak} totalReads=${watcher.totalReads} totalActions=${watcher.totalActions} tripped=${watcher.thresholdEverReached}`,
         )
       }
+      // Context-budget hard abort: the worker was killed because its context
+      // token budget (maxContextTokens) was exhausted. The worker exits with
+      // exitCode 138 and stderr containing "context budget exhausted".
+      // Treat this as a failure with reason 'context-exhausted', enqueue
+      // exactly one follow-up task blocked by this task, and exit WITHOUT
+      // triggering the Fixer pipeline (same shape as exploration-loop).
+      // This check runs BEFORE the exploration-loop check because both use
+      // exitCode 138; the two are disambiguated by the stderr string.
+      if (r.exitCode === 138 && r.stderr.includes('context budget exhausted')) {
+        const followUpPrompt = [
+          `## context-exhausted follow-up for task ${input.taskId}`,
+          '',
+          `Task \`${input.taskId}\` was killed because the coder's context token`,
+          `budget was exhausted (maxContextTokens limit). The run was stopped`,
+          `before Claude Code could auto-compact the context window.`,
+          '',
+          `Inspect the coder transcript for task \`${input.taskId}\` to understand`,
+          `what the coder was doing when it ran out of context. Once the original`,
+          `task is restarted or resolved, this follow-up will unblock automatically.`,
+        ].join('\n')
+        try {
+          const followUp = await enqueueTask(followUpPrompt, undefined, {
+            skipTriage: true,
+          })
+          await addBlockers(followUp.id, [input.taskId])
+          await updateTask(
+            input.taskId,
+            {
+              status: 'failed',
+              error: `context-exhausted: coder hit the context token budget limit`,
+              failedPhase: 'code',
+              failureReason: 'context-exhausted',
+              failureReasonCode: 'context-exhausted',
+            },
+            store,
+          )
+          console.log(
+            `[ctx] task ${input.taskId}: context-exhausted abort; follow-up ${followUp.id} enqueued and blocked by this task`,
+          )
+          throw new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE(input.taskId))
+        } catch (err) {
+          if (err instanceof Error && isContextExhaustedAbortError(err)) throw err
+          console.error(
+            `[ctx] task ${input.taskId}: failed to handle context-exhausted abort:`,
+            err,
+          )
+          await updateTask(
+            input.taskId,
+            {
+              status: 'failed',
+              error: `context-exhausted abort (follow-up failed: ${String(err).slice(0, 400)})`,
+              failedPhase: 'code',
+              failureReasonCode: 'context-exhausted',
+              failureReason: 'context-exhausted',
+            },
+            store,
+          ).catch(() => {})
+          throw err instanceof Error ? err : new Error(String(err))
+        }
+      }
+
       // Exploration-loop hard abort: the worker was killed by the read-span
       // abort ceiling (MARS_READ_SPAN_ABORT_LIMIT). The worker exits with
       // exitCode 138. Record 'exploration-loop' as the abort cause, enqueue

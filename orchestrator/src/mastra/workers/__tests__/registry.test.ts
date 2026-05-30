@@ -11,6 +11,7 @@ import {
   getWorker,
   getWorkerForTag,
   resolveWorkerMaxMessages,
+  resolveWorkerMaxContextTokens,
   type WorkerConfig,
   type WorkerName,
   type WorkerRuntime,
@@ -74,6 +75,7 @@ describe('Worker runtime field', () => {
       disallowedTools: [],
       outputFormat: 'stream-json',
       maxMessages: 0,
+      maxContextTokens: 0,
       runtime: 'headless',
     }
     expect(createWorker(cfg).runtime).toBe('headless')
@@ -292,6 +294,7 @@ describe('systemPrompt / appendSystemPrompt mutual exclusion', () => {
     disallowedTools: [],
     outputFormat: 'stream-json',
     maxMessages: 100,
+    maxContextTokens: 0,
     runtime: 'headless',
   }
 
@@ -339,6 +342,73 @@ describe('resolveWorkerMaxMessages — explicit override → DEFAULT_MAX_MESSAGE
   it('falls back to DEFAULT_MAX_MESSAGES (0 = unbounded) when no override is given', () => {
     expect(resolveWorkerMaxMessages()).toBe(DEFAULT_MAX_MESSAGES)
     expect(DEFAULT_MAX_MESSAGES).toBe(0)
+  })
+})
+
+describe('resolveWorkerMaxContextTokens — env override > per-worker default > 0 (disabled)', () => {
+  const origEnv = process.env.MARS_CONTEXT_TOKEN_BUDGET
+
+  afterEach(() => {
+    if (origEnv === undefined) {
+      delete process.env.MARS_CONTEXT_TOKEN_BUDGET
+    } else {
+      process.env.MARS_CONTEXT_TOKEN_BUDGET = origEnv
+    }
+  })
+
+  it('returns the per-worker default when no env override is set', () => {
+    delete process.env.MARS_CONTEXT_TOKEN_BUDGET
+    expect(resolveWorkerMaxContextTokens(150_000)).toBe(150_000)
+  })
+
+  it('returns 0 (disabled) when neither env var nor override is provided', () => {
+    delete process.env.MARS_CONTEXT_TOKEN_BUDGET
+    expect(resolveWorkerMaxContextTokens()).toBe(0)
+  })
+
+  it('returns 0 (disabled) when override is 0', () => {
+    delete process.env.MARS_CONTEXT_TOKEN_BUDGET
+    expect(resolveWorkerMaxContextTokens(0)).toBe(0)
+  })
+
+  it('env override MARS_CONTEXT_TOKEN_BUDGET supersedes the per-worker default', () => {
+    process.env.MARS_CONTEXT_TOKEN_BUDGET = '99999'
+    expect(resolveWorkerMaxContextTokens(150_000)).toBe(99_999)
+  })
+
+  it('env override of 0 is treated as disabled (falls through to per-worker default)', () => {
+    // "0" in the env means "no override" — the per-worker default takes effect.
+    process.env.MARS_CONTEXT_TOKEN_BUDGET = '0'
+    expect(resolveWorkerMaxContextTokens(150_000)).toBe(150_000)
+  })
+
+  it('a non-numeric env value falls through to the per-worker default', () => {
+    process.env.MARS_CONTEXT_TOKEN_BUDGET = 'not-a-number'
+    expect(resolveWorkerMaxContextTokens(150_000)).toBe(150_000)
+  })
+})
+
+describe('WORKER_CONFIGS context token budgets', () => {
+  it('every Worker in WORKER_CONFIGS carries a non-negative maxContextTokens', () => {
+    for (const name of Object.keys(WORKER_CONFIGS) as WorkerName[]) {
+      expect(WORKER_CONFIGS[name].maxContextTokens, `${name}.maxContextTokens`).toBeGreaterThanOrEqual(0)
+    }
+  })
+
+  it('Coder, Fixer, Planner, and Slicer carry a generous context budget (> 0)', () => {
+    for (const name of ['Coder', 'Fixer', 'Planner', 'Slicer'] as WorkerName[]) {
+      expect(WORKER_CONFIGS[name].maxContextTokens, `${name} must have a positive context budget`).toBeGreaterThan(0)
+    }
+  })
+
+  it('all context budgets are below the model context window (200k) to pre-empt compaction', () => {
+    const MODEL_CONTEXT_WINDOW = 200_000
+    for (const name of Object.keys(WORKER_CONFIGS) as WorkerName[]) {
+      const budget = WORKER_CONFIGS[name].maxContextTokens
+      if (budget > 0) {
+        expect(budget, `${name} budget must be < 200k`).toBeLessThan(MODEL_CONTEXT_WINDOW)
+      }
+    }
   })
 })
 
