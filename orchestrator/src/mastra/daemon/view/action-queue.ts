@@ -116,24 +116,16 @@ export interface ActionQueueTaskStore {
   listTasks(): Promise<TaskForActionQueue[]>
 }
 
-/**
- * Recipe-catalog dependency used to gate the `diagnose-failure` action.
- * A signature that has a registered recovery recipe auto-recovers and does
- * not need a manual root-cause diagnosis.
- */
-export interface ActionQueueRecipeCatalog {
-  has(sig: string): boolean
-}
-
 export interface BuildActionQueueViewParams {
   stateStore: ActionQueueStateStore
   taskStore: ActionQueueTaskStore
   /**
    * Error-kind registry map (key = error kind id). In the daemon this is
-   * built from `listErrorKinds()` at request time.
+   * built from `listErrorKinds()` at request time. Used for stale-worktree
+   * and draft-proposal row action assembly; failed-task rows derive actions
+   * from the FailureKind registry instead.
    */
   errorKindRegistry: Map<string, ActionQueueErrorKind>
-  recipeCatalog: ActionQueueRecipeCatalog
   /** Absolute path to the repo root — used for the stale-worktree git probe. */
   repoRoot: string
   filter: DerivedActionQueueFilter
@@ -150,7 +142,6 @@ export const buildActionQueueView = async ({
   stateStore,
   taskStore,
   errorKindRegistry,
-  recipeCatalog,
   repoRoot,
   filter,
 }: BuildActionQueueViewParams): Promise<ActionQueueRow[]> => {
@@ -247,24 +238,27 @@ export const buildActionQueueView = async ({
         : null
     const dismissed = ackState === 'resolved' || ackState === 'dismissed'
     const errorKind = toErrorKind(row.kind)
-    const allActions = (
-      errorKindRegistry.get(errorKind)?.recoveryActions ?? []
-    ) as { id: string; label: string; op: string }[]
 
-    // Gate the Investigate (diagnose-failure) action to unknown-signature
-    // failures only. A signature with a registered recipe auto-recovers, and
-    // a daemon-killed task just needs a requeue — neither warrants a one-shot
-    // root-cause diagnosis.
-    const gatedTask = taskById.get(entityId)
-    const sig = gatedTask?.failureSignature ?? null
-    const diagnosable =
-      uiKind === 'failed-task' &&
-      sig !== null &&
-      sig !== DAEMON_KILLED_SIGNATURE &&
-      !recipeCatalog.has(sig)
-    const actions = diagnosable
-      ? allActions
-      : allActions.filter((a) => a.op !== 'diagnose-failure')
+    // For failed-task rows, actions come from the FailureKind registry so
+    // the title, reason, and action menu are always from the same record.
+    // For stale-worktree and draft-proposal rows, the errorKindRegistry is
+    // the authority (unchanged behaviour).
+    let actions: { id: string; label: string; op: string }[]
+    if (uiKind === 'failed-task') {
+      const sig = taskById.get(entityId)?.failureSignature ?? null
+      const fk =
+        sig !== null
+          ? (lookupFailureKind(sig) ??
+            unknownFailureKind(sig.split('/')[0] ?? 'unknown', ''))
+          : unknownFailureKind('unknown', '')
+      actions = fk.actions as { id: string; label: string; op: string }[]
+    } else {
+      actions = (errorKindRegistry.get(errorKind)?.recoveryActions ?? []) as {
+        id: string
+        label: string
+        op: string
+      }[]
+    }
 
     // DAG enrichment for task-backed rows.
     let dag: ActionQueueRow['dag'] = null
@@ -434,7 +428,7 @@ export const buildActionQueueView = async ({
   )
   if (daemonKilledVisible.length >= 2) {
     const batchActions = (
-      errorKindRegistry.get('daemon-killed-batch')?.recoveryActions ?? []
+      lookupFailureKind(DAEMON_KILLED_SIGNATURE)?.actions ?? []
     ) as { id: string; label: string; op: string }[]
     const newest = daemonKilledVisible[0]!
     // Derive the batch row's title and body from the daemon-killed Failure kind

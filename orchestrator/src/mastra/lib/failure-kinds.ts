@@ -262,6 +262,9 @@ export const unknownFailureKind = (
     verboseReason: errorHead.length > 0
       ? errorHead
       : `The ${failingStep} step failed with an unrecognised error.`,
-    actions: DEFAULT_ACTIONS,
+    actions: [
+      ...DEFAULT_ACTIONS,
+      { id: 'investigate', label: 'Investigate', op: 'investigate' },
+    ],
   }
 }

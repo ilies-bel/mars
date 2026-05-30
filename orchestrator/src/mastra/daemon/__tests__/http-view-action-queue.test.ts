@@ -23,7 +23,6 @@ import { join, resolve as resolvePath } from 'node:path'
 import {
   buildActionQueueView,
   type ActionQueueRow,
-  type BuildActionQueueViewParams,
   type ActionQueueStateStore,
   type ActionQueueTaskStore,
   type PersistedActionQueueRow,
@@ -128,8 +127,6 @@ const makeTaskStore = (tasks: TaskForActionQueue[] = []): ActionQueueTaskStore =
   listTasks: async () => tasks,
 })
 
-const noRecipes: BuildActionQueueViewParams['recipeCatalog'] = { has: () => false }
-
 // ── /buildActionQueueView: failed-task row + DAG ────────────────────────────────
 
 describe('buildActionQueueView — failed-task row', () => {
@@ -138,7 +135,6 @@ describe('buildActionQueueView — failed-task row', () => {
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([makeTask()]),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -179,7 +175,6 @@ describe('buildActionQueueView — failed-task row', () => {
       stateStore: makeStateStore([makeRow({ payload: { taskId: 'task-1' } })]),
       taskStore: makeTaskStore([blockerTask, mainTask, dependentTask]),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -201,7 +196,6 @@ describe('buildActionQueueView — failed-task row', () => {
       ]),
       taskStore: makeTaskStore([makeTask()]),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -217,7 +211,6 @@ describe('buildActionQueueView — failed-task row', () => {
       ]),
       taskStore: makeTaskStore([makeTask()]),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -226,45 +219,44 @@ describe('buildActionQueueView — failed-task row', () => {
   })
 })
 
-// ── Action gating: diagnose-failure removed when hasRecipe(sig) is true ──────
+// ── Action assembly: actions sourced from FailureKind registry ────────────────
 
-describe('buildActionQueueView — action gating', () => {
-  it('includes diagnose-failure when sig has no recipe', async () => {
+describe('buildActionQueueView — action assembly', () => {
+  it('includes investigate for an unregistered signature', async () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([
         makeTask({ failureSignature: 'some:unknown/signature' }),
       ]),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
 
     const actions = rows[0]!.actions
-    expect(actions.some((a) => a.op === 'diagnose-failure')).toBe(true)
+    expect(actions.some((a) => a.op === 'investigate')).toBe(true)
+    // diagnose-failure is no longer surfaced — investigate replaces it.
+    expect(actions.some((a) => a.op === 'diagnose-failure')).toBe(false)
   })
 
-  it('removes diagnose-failure when hasRecipe(sig) is true', async () => {
-    const recipeCatalog = { has: (sig: string) => sig === 'merge:preflight/uncommitted-changes' }
+  it('does not include diagnose-failure for a registered signature', async () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([
-        makeTask({ failureSignature: 'merge:preflight/uncommitted-changes' }),
+        makeTask({ failureSignature: 'setup:install/install-frozen-lockfile' }),
       ]),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
 
     const actions = rows[0]!.actions
     expect(actions.some((a) => a.op === 'diagnose-failure')).toBe(false)
-    // Other actions are still present.
+    // Registered actions (restart + purge) are present.
     expect(actions.some((a) => a.op === 'restart')).toBe(true)
   })
 
-  it('removes diagnose-failure for daemon-killed signature regardless of recipe', async () => {
+  it('does not include diagnose-failure for daemon-killed signature', async () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({ kind: 'daemon-killed', payload: { taskId: 'task-1' } }),
@@ -273,7 +265,6 @@ describe('buildActionQueueView — action gating', () => {
         makeTask({ failureSignature: 'daemon-killed' }),
       ]),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -312,7 +303,6 @@ describe('buildActionQueueView — stale-worktree row', () => {
         }),
       ]),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent/repo',
       filter: 'open',
     })
@@ -380,8 +370,7 @@ describe('buildActionQueueView — stale-worktree row', () => {
           makeTask({ id: taskId, status: 'done', prompt: 'Build something' }),
         ]),
         errorKindRegistry: makeRegistry(),
-        recipeCatalog: noRecipes,
-        repoRoot,
+          repoRoot,
         filter: 'open',
       })
 
@@ -409,8 +398,7 @@ describe('buildActionQueueView — stale-worktree row', () => {
           makeTask({ id: taskId, status: 'done', prompt: 'Build something' }),
         ]),
         errorKindRegistry: makeRegistry(),
-        recipeCatalog: noRecipes,
-        repoRoot,
+          repoRoot,
         filter: 'open',
       })
 
@@ -438,7 +426,6 @@ describe('buildActionQueueView — draft-proposal row', () => {
       ]),
       taskStore: makeTaskStore([]),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -477,7 +464,6 @@ describe('buildActionQueueView — daemon-killed-batch', () => {
         makeTask({ id: 'task-1', failureSignature: 'daemon-killed' }),
       ]),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -498,7 +484,6 @@ describe('buildActionQueueView — daemon-killed-batch', () => {
         makeTask({ id: 'task-2', failureSignature: 'daemon-killed' }),
       ]),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -536,7 +521,6 @@ describe('buildActionQueueView — filter', () => {
       stateStore: makeStateStore(twoRows, dismissalMap),
       taskStore: makeTaskStore(twoTasks),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -552,7 +536,6 @@ describe('buildActionQueueView — filter', () => {
       stateStore: makeStateStore(twoRows, dismissalMap),
       taskStore: makeTaskStore(twoTasks),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent',
       filter: 'dismissed',
     })
@@ -567,7 +550,6 @@ describe('buildActionQueueView — filter', () => {
       stateStore: makeStateStore(twoRows, mixedDismissals),
       taskStore: makeTaskStore(twoTasks),
       errorKindRegistry: makeRegistry(),
-      recipeCatalog: noRecipes,
       repoRoot: '/nonexistent',
       filter: 'all',
     })
