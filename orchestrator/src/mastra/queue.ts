@@ -1728,44 +1728,55 @@ export interface DropTaskResult {
  * `fix_for_task_id` pointer that referred to <id>, and deletes the
  * task row. Caller is responsible for cancelling any in-flight workflow
  * and removing the worktree+branch on disk before invoking this.
+ *
+ * Emits `task.dropped` (then `task.terminal{purged}`) BEFORE `DELETE FROM
+ * tasks`, all within a single `withWriteTx` call. The event and the deletion
+ * share one atomic commit so the Invalidator (ADR-0030) can still resolve the
+ * taskId — a post-delete emit would race the subscriber cursor read and leave
+ * Action-queue rows + dismissal permanently stale.
  */
 export const dropTask = async (id: string): Promise<DropTaskResult> => {
   await initQueue()
   const c = getClient()
-  const before = await c.execute({
-    sql: `SELECT status FROM tasks WHERE id = ?`,
-    args: [id],
-  })
-  if (before.rows.length === 0) {
-    throw new Error(`task ${id} not found`)
-  }
-  const previousStatus = (before.rows[0] as unknown as { status: TaskStatus }).status
 
-  const incoming = await c.execute({
-    sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
-    args: [id],
-  })
-  const outgoing = await c.execute({
-    sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
-    args: [id],
-  })
-  const incomingCount = Number(
-    (incoming.rows[0] as unknown as { n: number | bigint }).n,
-  )
-  const outgoingCount = Number(
-    (outgoing.rows[0] as unknown as { n: number | bigint }).n,
-  )
+  return withWriteTx(c, async (tx) => {
+    const before = await tx.execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [id],
+    })
+    if (before.rows.length === 0) {
+      throw new Error(`task ${id} not found`)
+    }
+    const previousStatus = (before.rows[0] as unknown as { status: TaskStatus }).status
 
-  const refRows = await c.execute({
-    sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
-    args: [id],
-  })
-  const fixForRefsCleared = refRows.rows.map(
-    (row) => (row as unknown as { id: string }).id,
-  )
+    const incoming = await tx.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
+      args: [id],
+    })
+    const outgoing = await tx.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
+      args: [id],
+    })
+    const incomingCount = Number(
+      (incoming.rows[0] as unknown as { n: number | bigint }).n,
+    )
+    const outgoingCount = Number(
+      (outgoing.rows[0] as unknown as { n: number | bigint }).n,
+    )
 
-  const tx = await c.transaction('write')
-  try {
+    const refRows = await tx.execute({
+      sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+      args: [id],
+    })
+    const fixForRefsCleared = refRows.rows.map(
+      (row) => (row as unknown as { id: string }).id,
+    )
+
+    // Emit task.dropped BEFORE the DELETE so the event survives the row removal
+    // and the Invalidator's cursor can still resolve the taskId (ADR-0030).
+    await publish(tx, 'task.dropped', { taskId: id, dropReason: 'purged' })
+    await publish(tx, 'task.terminal', { taskId: id, reason: 'purged' })
+
     await tx.execute({
       sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
       args: [id, id],
@@ -1788,34 +1799,18 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
         args: [new Date().toISOString(), id],
       })
     }
-    // Emit the terminal event BEFORE deleting the task row, in the same
-    // transaction. A deleted task can never emit afterwards, so without this
-    // the Invalidator never learns the task is gone and its Action-queue
-    // rows + dismissal go stale — the measured purge-staleness class. The
-    // discrete `task.dropped` keeps the action-queue-repopulator path consistent;
-    // `task.terminal{purged}` is what the Invalidator closes on. (ADR-0030)
-    await tx.execute(
-      buildEventInsert('task.dropped', { taskId: id, dropReason: 'purged' }),
-    )
-    await tx.execute(
-      buildEventInsert('task.terminal', { taskId: id, reason: 'purged' }),
-    )
     await tx.execute({
       sql: `DELETE FROM tasks WHERE id = ?`,
       args: [id],
     })
-    await tx.commit()
-  } catch (error: unknown) {
-    tx.close()
-    throw error
-  }
 
-  return {
-    taskId: id,
-    previousStatus,
-    edgesRemoved: { incoming: incomingCount, outgoing: outgoingCount },
-    fixForRefsCleared,
-  }
+    return {
+      taskId: id,
+      previousStatus,
+      edgesRemoved: { incoming: incomingCount, outgoing: outgoingCount },
+      fixForRefsCleared,
+    }
+  })
 }
 
 export const insertReflectionTask = async (corpusSize: number): Promise<string> => {
