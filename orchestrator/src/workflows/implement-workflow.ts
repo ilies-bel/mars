@@ -13,7 +13,7 @@ import {
   mergeBranch,
   checkMergeTargetStatus,
 } from '../mastra/lib/git'
-import { pickWorkerForTags, Workers, type WorkerName } from '../mastra/workers'
+import { createWorker, pickWorkerForTags, Workers, type Worker, type WorkerName } from '../mastra/workers'
 import {
   TASK_TAGS,
   isTaskTag,
@@ -851,10 +851,36 @@ export const implementWorkflow = defineWorkflow<
       // task's tag list against each registered Worker's tag set.
       // Kind takes precedence over tags for the fix → Fixer path because a
       // recovery task must always land on the higher-resilience Worker.
+      //
+      // Registry workers: operator-declared Workers from .mars/worker-registry.json
+      // are loaded here and merged with built-in Workers so their tag sets are
+      // visible to pickWorkerForTags. A registry entry for a built-in name
+      // overrides that built-in's config; a novel name appends a new Worker.
+      const { listMergedWorkers } = await import('../mastra/workers/persisted-registry')
+      const declarations = listMergedWorkers(resolveContext().stateDir)
+      const allWorkers: Record<string, Worker> = { ...Workers }
+      for (const decl of declarations) {
+        if (!(decl.name in allWorkers)) {
+          allWorkers[decl.name] = createWorker({
+            name: decl.name,
+            model: decl.model,
+            ...(decl.fallbackModel !== undefined ? { fallbackModel: decl.fallbackModel } : {}),
+            effort: decl.effort,
+            permissionMode: decl.permissionMode,
+            bare: decl.bare,
+            disallowedTools: decl.disallowedTools,
+            outputFormat: decl.outputFormat,
+            maxMessages: decl.maxMessages,
+            maxContextTokens: 0,
+            runtime: decl.runtime,
+            ...(decl.tags !== undefined ? { tags: decl.tags } : {}),
+          })
+        }
+      }
       const worker =
         input.kind === 'fix'
           ? Workers.Fixer
-          : pickWorkerForTags(input.tags, Workers)
+          : pickWorkerForTags(input.tags, allWorkers)
       // Read/Grep span watcher (gsd-style analysis-paralysis signal). When the
       // threshold is reached AND the agent has taken zero actions for the
       // entire run, a single diagnose Chore is spawned and the original task

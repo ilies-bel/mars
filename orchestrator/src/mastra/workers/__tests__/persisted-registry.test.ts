@@ -131,6 +131,42 @@ describe('addWorkerToRegistry', () => {
 // listMergedWorkers
 // ---------------------------------------------------------------------------
 
+describe('WorkerDeclaration tags', () => {
+  it('round-trips a tags field through addWorkerToRegistry / loadWorkerRegistry', () => {
+    addWorkerToRegistry(stateDir, {
+      ...MINIMUM_DECL,
+      name: 'TaggedWorker',
+      tags: ['scaffold', 'docs'],
+    })
+    const loaded = loadWorkerRegistry(stateDir)
+    const found = loaded.find((d) => d.name === 'TaggedWorker')
+    expect(found?.tags).toEqual(['scaffold', 'docs'])
+  })
+
+  it('preserves an undefined tags field (absent from JSON) when no tags are supplied', () => {
+    addWorkerToRegistry(stateDir, MINIMUM_DECL)
+    const loaded = loadWorkerRegistry(stateDir)
+    const found = loaded.find((d) => d.name === 'TestWorker')
+    // tags may be absent from JSON or undefined — either is acceptable.
+    expect(found?.tags == null || Array.isArray(found.tags)).toBe(true)
+  })
+
+  it('seeded default Workers carry their tag sets when the registry is initialised', () => {
+    addWorkerToRegistry(stateDir, MINIMUM_DECL) // triggers seed
+    const workers = listMergedWorkers(stateDir)
+    const coder = workers.find((w) => w.name === 'Coder')
+    const planner = workers.find((w) => w.name === 'Planner')
+    const slicer = workers.find((w) => w.name === 'Slicer')
+    const triager = workers.find((w) => w.name === 'Triager')
+    const fixer = workers.find((w) => w.name === 'Fixer')
+    expect(coder?.tags).toContain('coder')
+    expect(planner?.tags).toContain('planner')
+    expect(slicer?.tags).toContain('slicer')
+    expect(triager?.tags).toContain('triager')
+    expect(fixer?.tags).toContain('fixer')
+  })
+})
+
 describe('listMergedWorkers', () => {
   it('returns exactly the five default workers when no registry file exists', () => {
     const workers = listMergedWorkers(stateDir)

@@ -64,7 +64,7 @@ export type ClaudeOutputFormat = 'stream-json' | 'json' | 'text'
 // underlying `claude -p` flags `--system-prompt` and
 // `--append-system-prompt` cannot both be set on one invocation.
 export interface WorkerConfig {
-  readonly name: WorkerName
+  readonly name: string
   readonly model: string
   // Optional fallback model. Reserved for the dispatch wrapper to use when
   // the primary model is unavailable / overloaded. Pinned per Worker so the
@@ -223,6 +223,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     maxMessages: resolveWorkerMaxMessages(),
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
+    tags: ['planner'],
   },
   Slicer: {
     name: 'Slicer',
@@ -240,6 +241,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     maxMessages: resolveWorkerMaxMessages(250),
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
+    tags: ['slicer'],
   },
   Triager: {
     name: 'Triager',
@@ -252,6 +254,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     maxMessages: resolveWorkerMaxMessages(40),
     maxContextTokens: TRIAGER_CONTEXT_TOKENS,
     runtime: 'headless',
+    tags: ['triager'],
   },
   Fixer: {
     name: 'Fixer',
@@ -264,6 +267,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     maxMessages: resolveWorkerMaxMessages(),
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
+    tags: ['fixer'],
   },
 } as const
 
@@ -333,12 +337,14 @@ export const getWorker = (name: WorkerName): Worker => Workers[name]
  * full tool surface and bypassPermissions. This fallback guarantees every
  * task gets a runner even when no tag-specific Worker is registered.
  *
- * To route a new tag to a Worker, add that tag to the Worker's `config.tags`
- * array in WORKER_CONFIGS. The first matching Worker in registry order wins.
+ * Accepts a `Record<string, Worker>` so operator-declared Workers from the
+ * persisted registry can be included alongside the built-in Workers. The
+ * caller merges `Workers` (built-in) with any registry-declared instances
+ * before calling; the first matching Worker in iteration order wins.
  */
 export const pickWorkerForTags = (
   tags: readonly string[],
-  workers: Readonly<Record<WorkerName, Worker>>,
+  workers: Readonly<Record<string, Worker>>,
 ): Worker => {
   for (const worker of Object.values(workers)) {
     if (worker.config.tags?.some((t) => tags.includes(t))) {
@@ -348,5 +354,5 @@ export const pickWorkerForTags = (
   // Default headless Worker: the Coder, with full tool surface and
   // bypassPermissions. Every task that carries no tag matching a registered
   // Worker falls back here — no task is left without a runner.
-  return workers.Coder
+  return workers['Coder'] ?? Workers.Coder
 }
