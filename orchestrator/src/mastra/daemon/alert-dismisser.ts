@@ -1,7 +1,7 @@
 import type { Client } from '@libsql/client'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
-import { dismissAlertsOnStatusChange } from '../lib/action-queue'
+import { dismissAlertsOnStatusChange, resolveAllRowsForTask } from '../lib/action-queue'
 import { clearDismissalForEntity } from '../lib/action-queue-dismissals'
 import { drainWithStall } from './subscriber-drain.js'
 
@@ -16,16 +16,21 @@ import { drainWithStall } from './subscriber-drain.js'
  * that never went through updateTask — the staleness class this design
  * removes.
  *
- * Closing policy:
- *   - `task.terminal` with reason ∈ {done, dropped, purged} → close the
- *     task's open Action-queue rows AND clear its dismissal. `purged` is
- *     emitted by dropTask before the row is deleted, so a removed task still
- *     closes its rows + dismissal (no orphaned dismissal — ADR-0028/0030).
- *   - `task.terminal` with reason 'failed' → NO-OP. A failed task keeps its
- *     single actionable row; the operator resolves it explicitly (ADR-0028).
+ * Closing policy (ADR-0028):
+ *   - `task.completed` / `task.dropped` → resolve ALL open rows for the task
+ *     via `resolveAllRowsForTask` AND clear its dismissal entity row. An
+ *     operator never sees a stale failure alert for work that finished cleanly.
+ *   - `task.failed` → NO-OP. A failed task keeps its single actionable row;
+ *     the operator resolves it explicitly (ADR-0028). The dismissal row is
+ *     preserved so the operator's prior ack survives the failure.
+ *   - `task.terminal` with reason ∈ {done, dropped, purged} → legacy path:
+ *     close open rows via `dismissAlertsOnStatusChange` AND clear the
+ *     dismissal. `purged` is emitted by dropTask before the row is deleted, so
+ *     a removed task still closes its rows + dismissal (ADR-0030).
+ *   - `task.terminal` with reason 'failed' → NO-OP (same as the discrete event).
  *   - `task.queued` / `task.unblocked` → evict any stale failure row for a
- *     task that is live again (operator should not see a failure alert for
- *     work that is running once more).
+ *     task that is live again; the dismissal is NOT cleared (the operator
+ *     ack applies to the failure, not to the re-run).
  */
 export const ALERT_DISMISSER_SUBSCRIBER = 'alert-dismisser'
 
@@ -89,10 +94,24 @@ export async function drainAlertDismissals(
     subscriberId: ALERT_DISMISSER_SUBSCRIBER,
     log,
     handle: async (event) => {
+      // Discrete done/dropped: resolve ALL open rows + clear dismissal.
+      // An operator must never see a stale failure alert for finished work.
+      if (event.type === 'task.completed' || event.type === 'task.dropped') {
+        const { taskId } = event.payload as { taskId: string }
+        await resolveAllRowsForTask(taskId)
+        await clearDismissalForEntity('task', taskId)
+        return true
+      }
+
+      // Legacy terminal / queued / unblocked path.
       const eviction = evictionFor(event)
       if (!eviction) return false // ignored event — advance cursor, no work
       await dismissAlertsOnStatusChange(eviction.taskId, eviction.status)
-      await clearDismissalForEntity('task', eviction.taskId)
+      // Clear dismissal only for genuine terminal closes, not for re-queued tasks
+      // whose dismissal still reflects the operator's prior failure ack.
+      if (event.type === 'task.terminal') {
+        await clearDismissalForEntity('task', eviction.taskId)
+      }
       return true
     },
   })
