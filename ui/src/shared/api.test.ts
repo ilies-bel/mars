@@ -14,8 +14,10 @@ import {
   fetchFailureReasons,
   fetchOrigins,
   fetchProgress,
+  fetchProjects,
   fetchTasks,
   fetchTodo,
+  startProject,
 } from './api'
 
 // ---------------------------------------------------------------------------
@@ -479,5 +481,194 @@ describe('fetchOrigins', () => {
     expect(r.node.kind).toBe('prd')
     expect(r.node.children).toHaveLength(1)
     expect(r.node.children[0].id).toBe('task-1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// fetchProjects (GET /api/projects)
+// ---------------------------------------------------------------------------
+
+const minProject = (overrides: Record<string, unknown> = {}) => ({
+  projectId: 'proj-1',
+  repoRoot: '/repos/my-project',
+  name: 'My Project',
+  health: 'live',
+  ...overrides,
+})
+
+describe('fetchProjects', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('returns a typed Project array on a valid response', async () => {
+    fetchSpy.mockResolvedValue(json({ projects: [minProject()] }))
+    const result = await fetchProjects()
+    expect(result).toHaveLength(1)
+    expect(result[0].projectId).toBe('proj-1')
+    expect(result[0].health).toBe('live')
+  })
+
+  it('returns an empty array when no projects are registered', async () => {
+    fetchSpy.mockResolvedValue(json({ projects: [] }))
+    const result = await fetchProjects()
+    expect(result).toEqual([])
+  })
+
+  it('accepts all three health values', async () => {
+    fetchSpy.mockResolvedValue(
+      json({
+        projects: [
+          minProject({ projectId: 'a', health: 'live' }),
+          minProject({ projectId: 'b', health: 'degraded' }),
+          minProject({ projectId: 'c', health: 'down' }),
+        ],
+      }),
+    )
+    const result = await fetchProjects()
+    expect(result.map((p) => p.health)).toEqual(['live', 'degraded', 'down'])
+  })
+
+  it('throws when health has an unrecognised value', async () => {
+    fetchSpy.mockResolvedValue(
+      json({ projects: [minProject({ health: 'unknown-status' })] }),
+    )
+    await expect(fetchProjects()).rejects.toThrow('schema validation')
+  })
+
+  it('throws on HTTP error', async () => {
+    fetchSpy.mockResolvedValue(json({ error: 'not found' }, 404))
+    await expect(fetchProjects()).rejects.toThrow('404')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// startProject (POST /api/projects/:id/start)
+// ---------------------------------------------------------------------------
+
+describe('startProject', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('POSTs to /api/projects/:id/start', async () => {
+    fetchSpy.mockResolvedValue(new Response(null, { status: 200 }))
+    await startProject('proj-abc')
+    const calledUrl: string = (fetchSpy.mock.calls[0] as unknown[])[0] as string
+    expect(calledUrl).toContain('/api/projects/proj-abc/start')
+    const options = (fetchSpy.mock.calls[0] as unknown[])[1] as RequestInit
+    expect(options.method).toBe('POST')
+  })
+
+  it('URL-encodes the projectId', async () => {
+    fetchSpy.mockResolvedValue(new Response(null, { status: 200 }))
+    await startProject('proj with spaces')
+    const calledUrl: string = (fetchSpy.mock.calls[0] as unknown[])[0] as string
+    expect(calledUrl).toContain('proj%20with%20spaces')
+  })
+
+  it('throws a descriptive error on a non-2xx response', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ error: 'daemon not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    await expect(startProject('proj-abc')).rejects.toThrow('404')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ?project= query param threading
+//
+// Every read fetcher must append ?project=<id> when a projectId is supplied.
+// React Query keys are project-scoped in the hook layer (which passes the
+// focusedProjectId straight through), so switching focus always triggers a
+// new fetch for the correct project.
+// ---------------------------------------------------------------------------
+
+describe('fetchTasks – ?project= appended', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('appends ?project=<id> when a projectId is provided', async () => {
+    fetchSpy.mockResolvedValue(json({ tasks: [] }))
+    await fetchTasks('proj-123')
+    const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).toContain('project=proj-123')
+  })
+
+  it('does not append a project param when projectId is undefined', async () => {
+    fetchSpy.mockResolvedValue(json({ tasks: [] }))
+    await fetchTasks()
+    const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).not.toContain('project=')
+  })
+})
+
+describe('fetchProgress – ?project= appended alongside failedWindow', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('appends &project=<id> after existing ?failedWindow param', async () => {
+    fetchSpy.mockResolvedValue(json({ tasks: [], proposals: [] }))
+    await fetchProgress(3_600_000, 'proj-abc')
+    const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).toContain('failedWindow=3600000')
+    expect(calledUrl).toContain('project=proj-abc')
+    // project must come after the ? separator (i.e. as &project)
+    const questionMark = calledUrl.indexOf('?')
+    const projectIdx = calledUrl.indexOf('project=')
+    expect(projectIdx).toBeGreaterThan(questionMark)
+  })
+
+  it('uses ?project= when there is no failedWindow param', async () => {
+    fetchSpy.mockResolvedValue(json({ tasks: [], proposals: [] }))
+    await fetchProgress(undefined, 'proj-xyz')
+    const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).toContain('?project=proj-xyz')
+  })
+})
+
+describe('fetchEvents – ?project= param added via URLSearchParams', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('includes project= in the query string when projectId is provided', async () => {
+    fetchSpy.mockResolvedValue(
+      json({ events: [], nextCursor: null }),
+    )
+    await fetchEvents({ limit: 10 }, 'proj-events')
+    const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).toContain('project=proj-events')
+    expect(calledUrl).toContain('limit=10')
   })
 })

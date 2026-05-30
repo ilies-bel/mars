@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchOrigins } from '@/shared/api'
 import { originKindLabel } from '@/shared/actionQueueDetail'
+import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { OriginNode } from '@/shared/schemas'
 
 interface OriginTreeProps {
@@ -84,9 +85,11 @@ const OriginNodeRow = ({
  * node row a focusable button that reports its id on click.
  */
 export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) => {
+  const projectId = useFocusedProjectId()
   const query = useQuery({
-    queryKey: ['origins', taskId],
-    queryFn: () => fetchOrigins(taskId),
+    queryKey: ['origins', projectId, taskId],
+    queryFn: () => fetchOrigins(taskId, projectId ?? undefined),
+    enabled: projectId !== null,
   })
 
   if (query.isPending) {

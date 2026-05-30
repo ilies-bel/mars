@@ -444,6 +444,28 @@ export type KpiKey = z.infer<typeof kpiKeySchema>
 export type Kpi = z.infer<typeof kpiSchema>
 export type KpisPayload = z.infer<typeof kpisResponseSchema>
 
+// ----------------------------------------------------------------------------
+// Projects (GET /api/projects). Multi-project dashboard — each entry is one
+// mars repo managed by a separate daemon. health reflects the current daemon
+// liveness: live (responsive), degraded (slow / partial), down (unreachable).
+// ----------------------------------------------------------------------------
+
+export const daemonHealthSchema = z.enum(['live', 'degraded', 'down'])
+
+export const projectSchema = z.object({
+  projectId: z.string(),
+  repoRoot: z.string(),
+  name: z.string(),
+  health: daemonHealthSchema,
+})
+
+export const projectsResponseSchema = z.object({
+  projects: z.array(projectSchema),
+})
+
+export type DaemonHealth = z.infer<typeof daemonHealthSchema>
+export type Project = z.infer<typeof projectSchema>
+
 export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
 export type ActionDescriptor = z.infer<typeof actionDescriptorSchema>
 export type DagNode = z.infer<typeof dagNodeSchema>

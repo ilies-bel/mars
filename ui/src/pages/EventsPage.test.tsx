@@ -62,8 +62,12 @@ const makeResponse = (
  * EventsPage query to resolve to. The query key must match the one
  * EventsPage computes — replicate its shape here.
  */
+// The null is the projectId slot — the EventsPage reads the focused project
+// from FocusedProjectContext, which defaults to null when there is no provider
+// (as in these tests). The key must mirror the shape the component produces.
 const QUERY_KEY_FOR = (state = initialFilterState()): unknown[] => [
   'events-page',
+  null, // projectId — null when rendered outside FocusedProjectProvider
   state.range,
   [...state.severities].sort(),
   [...state.kinds].sort(),
