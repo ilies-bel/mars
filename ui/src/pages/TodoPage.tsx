@@ -783,7 +783,7 @@ export const ActionQueuePage = () => {
 
       <section className="flex min-w-0 flex-1 flex-col">
         {empty && error ? (
-          <ApiErrorPanel error={error} />
+          <ApiErrorPanel error={error.message} />
         ) : empty ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div className="font-mono text-[12px] text-iron">

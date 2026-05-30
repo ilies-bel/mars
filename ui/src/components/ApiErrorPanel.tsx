@@ -1,23 +1,23 @@
-import { ApiError } from '@/shared/api'
+import { useEffect } from 'react'
+import { logFallbackError } from '@/shared/uiFallback'
 
 interface ApiErrorPanelProps {
-  error: ApiError | Error | string
+  error: string
 }
 
 /**
  * Prominent full-pane error banner shown when an API fetch fails and there is
- * no stale data to display. Shows different remedies depending on the error
- * kind:
+ * no stale data to display.
  *
- * - `stale-daemon` (HTTP 404/405 with JSON body): the daemon predates the
- *   route — restart with `mars daemon restart`.
- * - Everything else: the API server is not running — start it with
- *   `npm run dev:server` / `npm run dev:all`.
+ * In production, only a calm one-line message is shown — no diagnostics, no
+ * shell hints, nothing logged.  In dev mode, the raw error text and a
+ * remediation hint are shown and the error is written to the console so the
+ * operator can diagnose the problem immediately.
  */
 export const ApiErrorPanel = ({ error }: ApiErrorPanelProps) => {
-  const message = typeof error === 'string' ? error : error.message
-  const isStaleDaemon =
-    error instanceof ApiError && error.kind === 'stale-daemon'
+  useEffect(() => {
+    logFallbackError(error)
+  }, [error])
 
   return (
     <div
@@ -27,25 +27,23 @@ export const ApiErrorPanel = ({ error }: ApiErrorPanelProps) => {
     >
       <div className="max-w-lg border border-iron/40 bg-iron/10 p-6 font-mono text-left">
         <p className="text-[13px] uppercase tracking-wide text-fg">
-          API server not reachable
+          Can&apos;t reach the dashboard server right now.
         </p>
-        <p className="mt-3 whitespace-pre-wrap break-all text-[11px] text-iron">
-          {message}
-        </p>
-        {isStaleDaemon ? (
-          <p className="mt-4 text-[11px] text-iron/70">
-            How to fix: the daemon is likely stale — restart it with:{' '}
-            <code className="rounded bg-iron/20 px-1">mars daemon restart</code>
-          </p>
-        ) : (
-          <p className="mt-4 text-[11px] text-iron/70">
-            How to fix: run{' '}
-            <code className="rounded bg-iron/20 px-1">npm run dev:server</code>{' '}
-            in the <code className="rounded bg-iron/20 px-1">ui/</code>{' '}
-            directory, or{' '}
-            <code className="rounded bg-iron/20 px-1">npm run dev:all</code> to
-            start both the UI and API server together.
-          </p>
+        {import.meta.env.DEV && (
+          <>
+            <p className="mt-3 whitespace-pre-wrap break-all text-[11px] text-iron">
+              {error}
+            </p>
+            <p className="mt-4 text-[11px] text-iron/70">
+              How to fix: run{' '}
+              <code className="rounded bg-iron/20 px-1">npm run dev:server</code>{' '}
+              in the{' '}
+              <code className="rounded bg-iron/20 px-1">ui/</code>{' '}
+              directory, or{' '}
+              <code className="rounded bg-iron/20 px-1">npm run dev:all</code> to
+              start both the UI and API server together.
+            </p>
+          </>
         )}
       </div>
     </div>
