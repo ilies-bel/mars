@@ -1,5 +1,6 @@
 import { getDefaultTaskStore, type TaskStore } from './task-store'
 import type { TaskSignalRow } from './reflect-signals'
+import { cacheWeightedTokens } from './kpi-compute.js'
 
 export interface ReflectCorpusEntry {
   taskId: string
@@ -125,13 +126,7 @@ const buildCostSummary = (entries: readonly ReflectCorpusEntry[]): ReflectCostSu
     }
   }
 
-  const entryWeights = entries.map(
-    (e) =>
-      e.totals.inputTokens +
-      e.totals.outputTokens +
-      e.totals.cacheCreateTokens +
-      e.totals.cacheReadTokens * 0.1,
-  )
+  const entryWeights = entries.map((e) => cacheWeightedTokens(e.totals))
   const totalWeightedTokens = entryWeights.reduce((a, b) => a + b, 0)
   const med = median(entryWeights)
   const successes = entries.filter((e) => e.status === 'done')
@@ -163,8 +158,7 @@ const buildCostSummary = (entries: readonly ReflectCorpusEntry[]): ReflectCostSu
   }> = []
   for (const entry of entries) {
     for (const s of entry.signals) {
-      const sw =
-        s.inputTokens + s.outputTokens + s.cacheCreateTokens + s.cacheReadTokens * 0.1
+      const sw = cacheWeightedTokens(s)
       const bucket = stepBuckets.get(s.stepId) ?? { totalWeightedTokens: 0, invocations: 0 }
       bucket.totalWeightedTokens += sw
       bucket.invocations += 1

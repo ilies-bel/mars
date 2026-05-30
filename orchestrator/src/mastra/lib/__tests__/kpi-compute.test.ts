@@ -1,10 +1,15 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { openLibsql } from '../libsql.js'
 import { createLibsqlTaskStore, type TaskStore } from '../task-store.js'
-import { computeFailureRate } from '../kpi-compute.js'
+import {
+  cacheWeightedTokens,
+  computeCostPerArcDistribution,
+  computeFailureRate,
+} from '../kpi-compute.js'
 
 // ---------------------------------------------------------------------------
 // Test DB helpers
@@ -19,10 +24,24 @@ const TASKS_DDL = `
   )
 `
 
+const TRACE_EVENTS_DDL = `
+  CREATE TABLE IF NOT EXISTS trace_events (
+    id        TEXT PRIMARY KEY,
+    timestamp TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    severity  TEXT NOT NULL DEFAULT 'info',
+    task_id   TEXT,
+    origin_id TEXT,
+    phase     TEXT,
+    payload   TEXT NOT NULL DEFAULT '{}'
+  )
+`
+
 const makeStore = async (): Promise<TaskStore> => {
   const dir = mkdtempSync(join(tmpdir(), 'mars-kpi-compute-'))
   const client = openLibsql({ url: `file:${join(dir, 'queue.db')}` })
   await client.execute(TASKS_DDL)
+  await client.execute(TRACE_EVENTS_DDL)
   return createLibsqlTaskStore(client)
 }
 
@@ -43,6 +62,33 @@ const insertTask = async (
       opts.origin_id ?? null,
       opts.updated_at ?? '2026-01-04T12:00:00Z',
     ],
+  })
+}
+
+const insertSignal = async (
+  store: TaskStore,
+  opts: {
+    taskId: string
+    inputTokens?: number
+    outputTokens?: number
+    cacheCreateTokens?: number
+    cacheReadTokens?: number
+  },
+): Promise<void> => {
+  const payload = JSON.stringify({
+    stepName: 'code',
+    usageSignals: {
+      inputTokens: opts.inputTokens ?? 0,
+      outputTokens: opts.outputTokens ?? 0,
+      cacheCreateTokens: opts.cacheCreateTokens ?? 0,
+      cacheReadTokens: opts.cacheReadTokens ?? 0,
+      messageCount: 1,
+    },
+  })
+  await store.execute({
+    sql: `INSERT INTO trace_events (id, timestamp, kind, task_id, payload)
+          VALUES (?, ?, 'step_ended', ?, ?)`,
+    args: [randomUUID(), '2026-01-04T12:00:01Z', opts.taskId, payload],
   })
 }
 
@@ -205,5 +251,146 @@ describe('computeFailureRate — arc-level grouping', () => {
 
     expect(result.sampleCount).toBe(3)
     expect(result.value).toBeCloseTo(1 / 3, 5)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 4. cacheWeightedTokens — formula is: input + output + cache_create + cache_read * 0.1
+// ---------------------------------------------------------------------------
+
+describe('cacheWeightedTokens', () => {
+  it('weights cache reads at 0.1x and all other tokens at 1x', () => {
+    expect(
+      cacheWeightedTokens({
+        inputTokens: 1000,
+        outputTokens: 500,
+        cacheCreateTokens: 200,
+        cacheReadTokens: 10000,
+      }),
+    ).toBeCloseTo(1000 + 500 + 200 + 10000 * 0.1, 10)
+  })
+
+  it('returns 0 for all-zero usage', () => {
+    expect(
+      cacheWeightedTokens({
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreateTokens: 0,
+        cacheReadTokens: 0,
+      }),
+    ).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5. computeCostPerArcDistribution — empty window
+// ---------------------------------------------------------------------------
+
+describe('computeCostPerArcDistribution — empty window', () => {
+  it('returns p50=null, p90=null, sampleCount=0 when no done arcs', async () => {
+    const store = await makeStore()
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.p50).toBeNull()
+    expect(result.p90).toBeNull()
+    expect(result.sampleCount).toBe(0)
+  })
+
+  it('excludes failed arcs from the distribution', async () => {
+    const store = await makeStore()
+    // Arc that is entirely failed — must NOT contribute to cost distribution
+    await insertTask(store, { id: 'failed-arc', status: 'failed' })
+    await insertSignal(store, { taskId: 'failed-arc', inputTokens: 5000 })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.p50).toBeNull()
+    expect(result.p90).toBeNull()
+    expect(result.sampleCount).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. computeCostPerArcDistribution — single-Arc window: p50 === p90
+// ---------------------------------------------------------------------------
+
+describe('computeCostPerArcDistribution — single Arc', () => {
+  it('yields p50 === p90 when there is exactly one done Arc', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'arc-solo', status: 'done' })
+    await insertSignal(store, { taskId: 'arc-solo', inputTokens: 1000 })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.sampleCount).toBe(1)
+    expect(result.p50).not.toBeNull()
+    expect(result.p90).not.toBeNull()
+    expect(result.p50).toBe(result.p90)
+    expect(result.p50).toBeCloseTo(1000, 10)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 7. computeCostPerArcDistribution — percentile math on a skewed distribution
+// ---------------------------------------------------------------------------
+
+describe('computeCostPerArcDistribution — percentile math', () => {
+  it('p50 < p90 on a skewed cost distribution', async () => {
+    const store = await makeStore()
+    // 4 cheap arcs + 1 very expensive arc → highly right-skewed
+    for (let i = 1; i <= 4; i++) {
+      await insertTask(store, { id: `cheap-${i}`, status: 'done' })
+      await insertSignal(store, { taskId: `cheap-${i}`, inputTokens: 100 })
+    }
+    await insertTask(store, { id: 'expensive', status: 'done' })
+    await insertSignal(store, { taskId: 'expensive', inputTokens: 10000 })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.sampleCount).toBe(5)
+    expect(result.p50).not.toBeNull()
+    expect(result.p90).not.toBeNull()
+    expect(result.p50!).toBeLessThan(result.p90!)
+  })
+
+  it('computes correct interpolated percentiles', async () => {
+    const store = await makeStore()
+    // Costs: [100, 200, 400] — sorted, n=3
+    // p50 index = 0.5 * 2 = 1.0 → sorted[1] = 200
+    // p90 index = 0.9 * 2 = 1.8 → sorted[1] + 0.8*(sorted[2]-sorted[1]) = 200 + 0.8*200 = 360
+    await insertTask(store, { id: 'arc-a', status: 'done' })
+    await insertSignal(store, { taskId: 'arc-a', inputTokens: 100 })
+
+    await insertTask(store, { id: 'arc-b', status: 'done' })
+    await insertSignal(store, { taskId: 'arc-b', inputTokens: 200 })
+
+    await insertTask(store, { id: 'arc-c', status: 'done' })
+    await insertSignal(store, { taskId: 'arc-c', inputTokens: 400 })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.sampleCount).toBe(3)
+    expect(result.p50).toBeCloseTo(200, 10)
+    expect(result.p90).toBeCloseTo(360, 10)
+  })
+
+  it('sums costs across all tasks in a multi-task Arc', async () => {
+    const store = await makeStore()
+    // Arc with origin + recovery: costs should be summed
+    await insertTask(store, { id: 'multi-origin', status: 'failed', origin_id: null })
+    await insertSignal(store, { taskId: 'multi-origin', inputTokens: 300 })
+    await insertTask(store, {
+      id: 'multi-recovery',
+      status: 'done',
+      origin_id: 'multi-origin',
+    })
+    await insertSignal(store, { taskId: 'multi-recovery', inputTokens: 700 })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.sampleCount).toBe(1)
+    // Total cost = 300 + 700 = 1000
+    expect(result.p50).toBeCloseTo(1000, 10)
   })
 })

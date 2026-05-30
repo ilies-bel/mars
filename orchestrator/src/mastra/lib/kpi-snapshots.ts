@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { computeFailureRate, type KpiWindow } from './kpi-compute.js'
+import { computeFailureRate, computeCostPerArcDistribution, type KpiWindow } from './kpi-compute.js'
 import { getDefaultTaskStore, type TaskStore } from './task-store.js'
 
 /**
@@ -58,6 +58,10 @@ export async function takeKpiSnapshot(
     surface,
     window,
   )
+  const { p50: costP50, p90: costP90 } = await computeCostPerArcDistribution(
+    surface,
+    window,
+  )
 
   const snapshot: KpiSnapshot = {
     id: randomUUID(),
@@ -66,8 +70,8 @@ export async function takeKpiSnapshot(
     window_end: windowEnd,
     sample_count: sampleCount,
     low_confidence: sampleCount < sampleFloor ? 1 : 0,
-    cost_per_arc_p50: null,
-    cost_per_arc_p90: null,
+    cost_per_arc_p50: costP50,
+    cost_per_arc_p90: costP90,
     failure_rate: failureRate,
     autonomous_completion_rate: null,
     recovery_success_rate: null,
