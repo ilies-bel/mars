@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchTodo } from '@/shared/api'
 import { useSseConnected } from '@/shared/sseStatus'
+import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { DraftFeature, StaleWorktree } from './types'
 
 interface State {
@@ -11,10 +12,12 @@ interface State {
 }
 
 export const useTodo = (): State => {
+  const projectId = useFocusedProjectId()
   const connected = useSseConnected()
   const query = useQuery({
-    queryKey: ['todo'],
-    queryFn: fetchTodo,
+    queryKey: ['todo', projectId],
+    queryFn: () => fetchTodo(projectId ?? undefined),
+    enabled: projectId !== null,
   })
 
   const drafts = query.data?.drafts ?? []

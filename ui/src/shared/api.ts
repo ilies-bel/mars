@@ -7,6 +7,7 @@ import {
   kpisResponseSchema,
   originsResponseSchema,
   progressResponseSchema,
+  projectsResponseSchema,
   tasksResponseSchema,
   todoResponseSchema,
   workerSessionsResponseSchema,
@@ -18,12 +19,24 @@ import {
   type OriginsResponse,
   type ProgressProposalNode,
   type ProgressTask,
+  type Project,
   type Task,
   type TodoPayload,
   type WorkerSession,
 } from './schemas'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
+
+/**
+ * Append `?project=<id>` (or `&project=<id>`) to a path. Used by every read
+ * fetcher to scope the response to the focused project. No-op when projectId
+ * is undefined.
+ */
+const appendProject = (path: string, projectId: string | undefined): string => {
+  if (!projectId) return path
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}project=${encodeURIComponent(projectId)}`
+}
 
 const fetchJson = async <T>(path: string, schema: ZodType<T>): Promise<T> => {
   let r: Response
@@ -54,13 +67,14 @@ const fetchJson = async <T>(path: string, schema: ZodType<T>): Promise<T> => {
   return result.data
 }
 
-export const fetchTasks = async (): Promise<Task[]> => {
-  const json = await fetchJson('/api/tasks', tasksResponseSchema)
+export const fetchTasks = async (projectId?: string): Promise<Task[]> => {
+  const json = await fetchJson(appendProject('/api/tasks', projectId), tasksResponseSchema)
   return json.tasks
 }
 
 export const fetchProgress = async (
   failedWindowMs?: number | null,
+  projectId?: string,
 ): Promise<{ tasks: ProgressTask[]; proposals: ProgressProposalNode[] }> => {
   let path = '/api/progress'
   if (failedWindowMs === null) {
@@ -68,16 +82,17 @@ export const fetchProgress = async (
   } else if (failedWindowMs !== undefined) {
     path += `?failedWindow=${failedWindowMs}`
   }
+  path = appendProject(path, projectId)
   const data = await fetchJson(path, progressResponseSchema)
   return { tasks: data.tasks, proposals: data.proposals }
 }
 
-export const fetchTodo = async (): Promise<TodoPayload> => {
-  return fetchJson('/api/todo', todoResponseSchema)
+export const fetchTodo = async (projectId?: string): Promise<TodoPayload> => {
+  return fetchJson(appendProject('/api/todo', projectId), todoResponseSchema)
 }
 
-export const fetchActionQueue = async (): Promise<ActionQueueItem[]> => {
-  return fetchJson('/api/action-queue/action-queue', actionQueueResponseSchema)
+export const fetchActionQueue = async (projectId?: string): Promise<ActionQueueItem[]> => {
+  return fetchJson(appendProject('/api/action-queue/action-queue', projectId), actionQueueResponseSchema)
 }
 
 export const dismissActionQueueItem = async (id: string): Promise<void> => {
@@ -122,8 +137,8 @@ export const resolveActionQueueItem = async (id: string): Promise<void> => {
   }
 }
 
-export const fetchAgents = async (): Promise<Agent[]> => {
-  const json = await fetchJson('/api/agents', agentsResponseSchema)
+export const fetchAgents = async (projectId?: string): Promise<Agent[]> => {
+  const json = await fetchJson(appendProject('/api/agents', projectId), agentsResponseSchema)
   return json.agents
 }
 
@@ -135,16 +150,18 @@ export const fetchAgents = async (): Promise<Agent[]> => {
  */
 export const fetchWorkerSessions = async (
   agentName: string,
+  projectId?: string,
 ): Promise<WorkerSession[]> => {
-  const json = await fetchJson(
+  const path = appendProject(
     `/api/sessions?agentName=${encodeURIComponent(agentName)}`,
-    workerSessionsResponseSchema,
+    projectId,
   )
+  const json = await fetchJson(path, workerSessionsResponseSchema)
   return json.sessions
 }
 
-export const fetchKpis = async (): Promise<Kpi[]> => {
-  const json = await fetchJson('/api/kpis', kpisResponseSchema)
+export const fetchKpis = async (projectId?: string): Promise<Kpi[]> => {
+  const json = await fetchJson(appendProject('/api/kpis', projectId), kpisResponseSchema)
   return json.kpis
 }
 
@@ -180,10 +197,10 @@ export const eventsUrl = (): string => `${BASE}/events`
  * `availableActions` button list. Falls back to the catalog's `unknown`
  * entry when the code is absent or not in the catalog.
  */
-export const fetchFailureReasons = async (): Promise<
-  FailureReasonCatalogEntry[]
-> => {
-  return fetchJson('/api/failure-reasons', failureReasonsResponseSchema)
+export const fetchFailureReasons = async (
+  projectId?: string,
+): Promise<FailureReasonCatalogEntry[]> => {
+  return fetchJson(appendProject('/api/failure-reasons', projectId), failureReasonsResponseSchema)
 }
 
 export interface EventsFilter {
@@ -219,6 +236,7 @@ export interface EventsFilter {
  */
 export const fetchEvents = async (
   filter: EventsFilter,
+  projectId?: string,
 ): Promise<EventsResponse> => {
   const params = new URLSearchParams()
   if (filter.taskId !== undefined) params.set('taskId', filter.taskId)
@@ -237,6 +255,7 @@ export const fetchEvents = async (
   if (filter.q !== undefined) params.set('q', filter.q)
   if (filter.cursor !== undefined) params.set('cursor', filter.cursor)
   if (filter.limit !== undefined) params.set('limit', String(filter.limit))
+  if (projectId !== undefined) params.set('project', projectId)
   const qs = params.toString()
   const path = qs ? `/api/trace-events?${qs}` : '/api/trace-events'
   return fetchJson(path, eventsResponseSchema)
@@ -249,11 +268,43 @@ export const fetchEvents = async (
  */
 export const fetchOrigins = async (
   taskId: string,
+  projectId?: string,
 ): Promise<OriginsResponse> => {
   return fetchJson(
-    `/api/origins/${encodeURIComponent(taskId)}`,
+    appendProject(`/api/origins/${encodeURIComponent(taskId)}`, projectId),
     originsResponseSchema,
   )
+}
+
+/**
+ * Fetch the list of registered projects. Each entry carries daemon health so
+ * the ProjectSelector can render live / degraded / down badges and a Start
+ * control for down projects.
+ */
+export const fetchProjects = async (): Promise<Project[]> => {
+  const json = await fetchJson('/api/projects', projectsResponseSchema)
+  return json.projects
+}
+
+/**
+ * Start the daemon for a project whose health is 'down'. Operator-gated: the
+ * dashboard never starts a daemon except via an explicit Start click in the
+ * ProjectSelector.
+ */
+export const startProject = async (projectId: string): Promise<void> => {
+  const r = await fetch(
+    `${BASE}/api/projects/${encodeURIComponent(projectId)}/start`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    },
+  )
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { error?: string }
+    throw new Error(
+      `startProject(${projectId}) failed (${r.status})${body.error ? `: ${body.error}` : ''}`,
+    )
+  }
 }
 
 export const dismissTodoItem = async (
@@ -276,11 +327,13 @@ export const dismissTodoItem = async (
 export type {
   ActionQueueItem,
   Agent,
+  DaemonHealth,
   EventsResponse,
   FailureReasonCatalogEntry,
   Kpi,
   OriginsResponse,
   ProgressProposalNode,
+  Project,
   SessionOutcome,
   StaleWorktree,
   TodoPayload,

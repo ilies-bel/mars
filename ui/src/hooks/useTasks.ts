@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchTasks } from '@/shared/api'
 import { groupTasks } from '@/shared/group'
 import { useSseConnected } from '@/shared/sseStatus'
+import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { Snapshot } from '@/shared/types'
 
 interface State {
@@ -11,10 +12,12 @@ interface State {
 }
 
 export const useTasks = (): State => {
+  const projectId = useFocusedProjectId()
   const connected = useSseConnected()
   const query = useQuery({
-    queryKey: ['tasks'],
-    queryFn: fetchTasks,
+    queryKey: ['tasks', projectId],
+    queryFn: () => fetchTasks(projectId ?? undefined),
+    enabled: projectId !== null,
   })
 
   const snapshot = query.data ? groupTasks(query.data) : null

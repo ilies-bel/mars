@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchKpis } from '@/shared/api'
+import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { Kpi } from './types'
 
 interface KpisState {
@@ -9,9 +10,11 @@ interface KpisState {
 }
 
 export const useKpis = (): KpisState => {
+  const projectId = useFocusedProjectId()
   const query = useQuery({
-    queryKey: ['kpis'],
-    queryFn: fetchKpis,
+    queryKey: ['kpis', projectId],
+    queryFn: () => fetchKpis(projectId ?? undefined),
+    enabled: projectId !== null,
   })
 
   return {

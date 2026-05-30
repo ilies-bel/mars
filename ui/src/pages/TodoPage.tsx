@@ -9,6 +9,7 @@ import {
   fetchFailureReasons,
   invokeAction,
 } from '@/shared/api'
+import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import {
   catalogActionsForDetail,
   resolveFailureReason,
@@ -270,14 +271,16 @@ interface CatalogPanelProps {
 
 const CatalogReasonAndActions = ({ item }: CatalogPanelProps) => {
   const qc = useQueryClient()
+  const projectId = useFocusedProjectId()
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   // The catalog is small (a few dozen entries) and rarely changes. One
   // fetch on panel open is plenty; React Query's default staleTime keeps
   // it cached across detail-panel re-mounts.
   const catalogQuery = useQuery({
-    queryKey: ['failure-reasons'],
-    queryFn: fetchFailureReasons,
+    queryKey: ['failure-reasons', projectId],
+    queryFn: () => fetchFailureReasons(projectId ?? undefined),
+    enabled: projectId !== null,
   })
 
   const mutation = useMutation({
@@ -382,15 +385,17 @@ const TracesSection = ({ taskId }: TracesProps) => {
   const [overrideCursor, setOverrideCursor] = useState<string | null | undefined>(
     undefined,
   )
+  const projectId = useFocusedProjectId()
 
   const initial = useQuery({
-    queryKey: ['events', taskId],
-    queryFn: () => fetchEvents({ taskId, limit: 50 }),
+    queryKey: ['events', projectId, taskId],
+    queryFn: () => fetchEvents({ taskId, limit: 50 }, projectId ?? undefined),
+    enabled: projectId !== null,
   })
 
   const more = useMutation({
     mutationFn: async (cursor: string) =>
-      fetchEvents({ taskId, cursor, limit: 50 }),
+      fetchEvents({ taskId, cursor, limit: 50 }, projectId ?? undefined),
     onSuccess: (res) => {
       setExtraPages((p) => [...p, res.events])
       setOverrideCursor(res.nextCursor)

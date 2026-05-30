@@ -568,7 +568,8 @@ const renderBody = (t: Task, origins?: OriginsResponse): string => {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Infinity } },
   })
-  qc.setQueryData(['origins', t.id], origins ?? SINGLE_NODE_ORIGINS(t.id))
+  // null is the projectId slot — defaults to null outside FocusedProjectProvider
+  qc.setQueryData(['origins', null, t.id], origins ?? SINGLE_NODE_ORIGINS(t.id))
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <TaskDetailBody task={t} />
@@ -828,7 +829,8 @@ describe('TaskDetailBody – OriginTree drill-in wiring', () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity } },
     })
-    qc.setQueryData(['origins', 'focus'], TREE_ORIGINS('focus'))
+    // null is the projectId slot — defaults to null outside FocusedProjectProvider
+    qc.setQueryData(['origins', null, 'focus'], TREE_ORIGINS('focus'))
     const html = renderToStaticMarkup(
       <QueryClientProvider client={qc}>
         <TaskDetailBody task={t} onNavigate={() => {}} currentId="focus" />
@@ -843,7 +845,8 @@ describe('TaskDetailBody – OriginTree drill-in wiring', () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity } },
     })
-    qc.setQueryData(['origins', 'focus'], TREE_ORIGINS('focus'))
+    // null is the projectId slot — defaults to null outside FocusedProjectProvider
+    qc.setQueryData(['origins', null, 'focus'], TREE_ORIGINS('focus'))
     const html = renderToStaticMarkup(
       <QueryClientProvider client={qc}>
         <TaskDetailBody task={t} />

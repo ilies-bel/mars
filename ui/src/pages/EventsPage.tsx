@@ -4,6 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
 import { severityColor, summarizeTraceEvent } from '@/shared/actionQueueDetail'
+import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { TraceEvent } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
 
@@ -279,12 +280,14 @@ export const EventsPage = () => {
   const [overrideCursor, setOverrideCursor] = useState<
     string | null | undefined
   >(undefined)
+  const projectId = useFocusedProjectId()
 
   // The query key folds in every filter so a filter change forces a
   // refetch (and resets pagination via the `useMemo` reset below).
   const queryKey = useMemo(
     () => [
       'events-page',
+      projectId,
       state.range,
       [...state.severities].sort(),
       [...state.kinds].sort(),
@@ -293,12 +296,13 @@ export const EventsPage = () => {
       state.originId.trim(),
       state.q.trim(),
     ],
-    [state],
+    [state, projectId],
   )
 
   const initial = useQuery({
     queryKey,
-    queryFn: () => fetchEvents(toWireFilter(state, null, PAGE_LIMIT)),
+    queryFn: () => fetchEvents(toWireFilter(state, null, PAGE_LIMIT), projectId ?? undefined),
+    enabled: projectId !== null,
   })
 
   // Reset the paginated tail whenever the underlying filter set changes.
@@ -316,7 +320,7 @@ export const EventsPage = () => {
 
   const more = useMutation({
     mutationFn: async (cursor: string) =>
-      fetchEvents(toWireFilter(state, cursor, PAGE_LIMIT)),
+      fetchEvents(toWireFilter(state, cursor, PAGE_LIMIT), projectId ?? undefined),
     onSuccess: (res) => {
       setExtraPages((p) => [...p, res.events])
       setOverrideCursor(res.nextCursor)
