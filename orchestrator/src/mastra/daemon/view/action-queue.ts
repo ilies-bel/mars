@@ -182,6 +182,11 @@ export const buildActionQueueView = async ({
     if (row.kind === 'draft-proposal') {
       if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
     }
+    // slices-dropped is keyed to a proposal, not a task — surface the proposal id
+    // rather than falling back to the opaque row id.
+    if (row.kind === 'slices-dropped') {
+      if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+    }
     if (typeof row.payload.taskId === 'string') return row.payload.taskId
     if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
     return row.id
