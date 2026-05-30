@@ -988,7 +988,23 @@ export const startDaemon = async (
               continue
             }
             if (await hasIncompleteBlockers(id)) {
-              log(`[dispatch] ${id} blocked; deferring until blockers complete`)
+              // Distinguish terminal (failed) blockers so operators know when
+              // manual intervention is required vs. waiting for in-progress work.
+              const { rows: failedBlockerRows } = await getClient().execute({
+                sql: `SELECT b.blocker_task_id
+                        FROM task_blockers b
+                        JOIN tasks t ON t.id = b.blocker_task_id
+                       WHERE b.task_id = ? AND t.status = 'failed'
+                         AND b.state IN ('confirmed', 'pending-review')
+                       LIMIT 1`,
+                args: [id],
+              })
+              if (failedBlockerRows.length > 0) {
+                const failedId = (failedBlockerRows[0] as unknown as { blocker_task_id: string }).blocker_task_id
+                log(`[dispatch] ${id} blocked; blocker ${failedId} is failed and will never complete — needs operator`)
+              } else {
+                log(`[dispatch] ${id} blocked; deferring until blockers complete`)
+              }
               claimedImplement.delete(id)
               continue
             }
@@ -1593,6 +1609,22 @@ export const startDaemon = async (
       log(`[reconcile] daemon-killed sweep failed: ${(err as Error).message}`)
     }
 
+    // Blocker drift repair: any task in status='queued' with incomplete
+    // blockers violates the invariant and must be demoted back to 'blocked'
+    // BEFORE we re-seed the dispatch queue. This is a catch-all for bugs in
+    // any promotion path.
+    try {
+      const { repairQueuedWithIncompleteBlockers } = await import('./reconcile-blocker-drift')
+      const demoted = await repairQueuedWithIncompleteBlockers()
+      for (const taskId of demoted) {
+        log(
+          `[reconcile] BUG: task ${taskId} was queued with incomplete blockers — demoted to blocked`,
+        )
+      }
+    } catch (err) {
+      log(`[reconcile] blocker-drift repair failed: ${(err as Error).message}`)
+    }
+
     const drafts = await listTasks('draft')
     for (const t of drafts) bus.emit('task.added', { taskId: t.id })
 
@@ -1645,23 +1677,41 @@ export const startDaemon = async (
         // merging not-landed path. Engine-resume (runId=task.id) is the only
         // resume mechanism now; there is no `resumeFrom` hint to skip into
         // verify.
-        log(
-          `[reconcile] task ${t.id} was verifying; clearing worktree and re-queuing from setup`,
-        )
         const branch = t.branch
         if (exists(t.worktreePath)) {
           await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
         }
         await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
-        await updateTask(t.id, {
-          status: 'queued',
-          branch: null,
-          worktreePath: null,
-          claudeSessionId: null,
-          error: null,
-          failedPhase: null,
-        }).catch(() => {})
-        bus.emit('task.queued', { taskId: t.id })
+        // Guard: check blockers before promoting back to queued. A verifying
+        // task should have had all blockers done at dispatch time, but defensive
+        // checking prevents re-introducing the invariant violation on restart.
+        const verifyingHasBlockers = await hasIncompleteBlockers(t.id).catch(() => false)
+        if (verifyingHasBlockers) {
+          log(
+            `[reconcile] task ${t.id} was verifying; has incomplete blockers, restored to blocked`,
+          )
+          await updateTask(t.id, {
+            status: 'blocked',
+            branch: null,
+            worktreePath: null,
+            claudeSessionId: null,
+            error: null,
+            failedPhase: null,
+          }).catch(() => {})
+        } else {
+          log(
+            `[reconcile] task ${t.id} was verifying; clearing worktree and re-queuing from setup`,
+          )
+          await updateTask(t.id, {
+            status: 'queued',
+            branch: null,
+            worktreePath: null,
+            claudeSessionId: null,
+            error: null,
+            failedPhase: null,
+          }).catch(() => {})
+          bus.emit('task.queued', { taskId: t.id })
+        }
       } else {
         log(
           `[reconcile] task ${t.id} was verifying; worktree missing, marking failed`,
@@ -1706,22 +1756,40 @@ export const startDaemon = async (
           error: null,
         }).catch(() => {})
       } else {
-        log(
-          `[reconcile] task ${t.id} was merging; FF not landed, requeued from setup`,
-        )
         if (t.worktreePath && exists(t.worktreePath)) {
           await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
         }
         await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
-        await updateTask(t.id, {
-          status: 'queued',
-          branch: null,
-          worktreePath: null,
-          claudeSessionId: null,
-          error: null,
-          failedPhase: null,
-        }).catch(() => {})
-        bus.emit('task.queued', { taskId: t.id })
+        // Guard: check blockers before promoting back to queued. A merging
+        // task should have had all blockers done at dispatch time, but defensive
+        // checking prevents re-introducing the invariant violation on restart.
+        const mergingHasBlockers = await hasIncompleteBlockers(t.id).catch(() => false)
+        if (mergingHasBlockers) {
+          log(
+            `[reconcile] task ${t.id} was merging; FF not landed, has incomplete blockers, restored to blocked`,
+          )
+          await updateTask(t.id, {
+            status: 'blocked',
+            branch: null,
+            worktreePath: null,
+            claudeSessionId: null,
+            error: null,
+            failedPhase: null,
+          }).catch(() => {})
+        } else {
+          log(
+            `[reconcile] task ${t.id} was merging; FF not landed, requeued from setup`,
+          )
+          await updateTask(t.id, {
+            status: 'queued',
+            branch: null,
+            worktreePath: null,
+            claudeSessionId: null,
+            error: null,
+            failedPhase: null,
+          }).catch(() => {})
+          bus.emit('task.queued', { taskId: t.id })
+        }
       }
     }
 

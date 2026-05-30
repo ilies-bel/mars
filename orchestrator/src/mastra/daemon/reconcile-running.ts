@@ -14,7 +14,7 @@
 import { existsSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { listTasks, updateTask } from '../queue'
+import { hasIncompleteBlockers, listTasks, updateTask } from '../queue'
 import { removeWorktree } from '../lib/git'
 
 const exec = promisify(execFile)
@@ -52,6 +52,25 @@ export const requeueRunningTasksFromPriorDaemon = async (
     await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(
       () => {},
     )
+
+    // Guard: if the task still has incomplete blockers, restore it to blocked
+    // rather than queued. A running task should never have incomplete blockers
+    // (the dispatcher gate prevents it), but a prior bug could leave the DB in
+    // this state. Promoting such a task to 'queued' would re-introduce the
+    // same invariant violation.
+    const hasBlockers = await hasIncompleteBlockers(t.id).catch(() => false)
+    if (hasBlockers) {
+      await updateTask(t.id, {
+        status: 'blocked',
+        branch: null,
+        worktreePath: null,
+        claudeSessionId: null,
+        error: null,
+        failedPhase: null,
+      }).catch(() => {})
+      // Do NOT push to requeued — the task goes back to blocked, not queued.
+      continue
+    }
 
     // Requeue from setup — do NOT increment retryCount.
     await updateTask(t.id, {
