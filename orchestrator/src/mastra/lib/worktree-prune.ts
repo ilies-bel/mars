@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs'
 import { resolveContext } from '../context'
 import { getTask, type Task, type TaskStatus } from '../queue'
 import { type TraceCtx } from './run-tool'
@@ -12,6 +13,7 @@ export type PruneVerdict =
   | 'remove-done'
   | 'remove-dropped'
   | 'remove-orphan'
+  | 'remove-stale'
   | 'skip-in-flight'
   | 'skip-failed'
   | 'skip-other'
@@ -24,6 +26,13 @@ export interface PruneClassifiedWorktree {
 
 interface PruneClassifyDeps {
   getTask: (id: string) => Promise<Task | null>
+  /** Unix timestamp (ms) of today's local midnight. When provided alongside
+   *  getDirMtimeMs, a non-in-flight, non-failed worktree whose directory was
+   *  last modified before this timestamp gets verdict 'remove-stale'. */
+  todayMidnightMs?: number
+  /** Returns the mtime of the given directory path in milliseconds. Only
+   *  called when todayMidnightMs is also provided. */
+  getDirMtimeMs?: (path: string) => number
 }
 
 const IN_FLIGHT_STATUSES: ReadonlySet<TaskStatus> = new Set([
@@ -38,6 +47,7 @@ const PRUNE_REMOVE_VERDICTS: ReadonlySet<PruneVerdict> = new Set([
   'remove-done',
   'remove-dropped',
   'remove-orphan',
+  'remove-stale',
 ])
 
 export const classifyWorktreeForPrune = async (
@@ -66,7 +76,12 @@ export const classifyWorktreeForPrune = async (
     return { worktree: wt, task, verdict: 'remove-dropped' }
   }
 
-  // draft, blocked, or any other status: keep
+  // draft, blocked, or any other status: keep unless the directory is stale
+  if (deps.todayMidnightMs !== undefined && deps.getDirMtimeMs !== undefined) {
+    if (deps.getDirMtimeMs(wt.path) < deps.todayMidnightMs) {
+      return { worktree: wt, task, verdict: 'remove-stale' }
+    }
+  }
   return { worktree: wt, task, verdict: 'skip-other' }
 }
 
@@ -99,6 +114,11 @@ export const runWorktreePrune = async (
     errors: 0,
   }
 
+  // Compute today's local midnight once for the whole prune run.
+  const midnightDate = new Date()
+  midnightDate.setHours(0, 0, 0, 0)
+  const todayMidnightMs = midnightDate.getTime()
+
   const discovered = discoverAllWorktrees(ctx.repoRoot)
   if (discovered.length === 0) {
     log('no worktrees found under .mars/worktrees/ or .worktrees/')
@@ -108,7 +128,11 @@ export const runWorktreePrune = async (
   for (const wt of discovered) {
     let classified: PruneClassifiedWorktree
     try {
-      classified = await classifyWorktreeForPrune(wt, { getTask })
+      classified = await classifyWorktreeForPrune(wt, {
+        getTask,
+        todayMidnightMs,
+        getDirMtimeMs: (path) => statSync(path).mtimeMs,
+      })
     } catch (err) {
       summary.errors += 1
       log(`[error] classify ${wt.path}: ${(err as Error).message}`)
@@ -140,7 +164,9 @@ export const runWorktreePrune = async (
           ? 'done'
           : verdict === 'remove-dropped'
             ? 'dropped'
-            : 'orphan'
+            : verdict === 'remove-stale'
+              ? 'stale'
+              : 'orphan'
 
       if (opts.dryRun) {
         log(`[would-remove] ${wt.branch} (${reason})`)
