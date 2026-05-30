@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import type { Mock } from 'bun:test'
 import {
+  ApiError,
   fetchActionQueue,
   fetchAgents,
   fetchEvents,
@@ -670,5 +671,103 @@ describe('fetchEvents – ?project= param added via URLSearchParams', () => {
     const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
     expect(calledUrl).toContain('project=proj-events')
     expect(calledUrl).toContain('limit=10')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ApiError kind classification
+// ---------------------------------------------------------------------------
+
+describe('ApiError kind — fetchTasks classifies errors correctly', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('throws ApiError kind:stale-daemon on 404 with JSON body', async () => {
+    fetchSpy.mockResolvedValue(json({ error: 'not found' }, 404))
+    try {
+      await fetchTasks()
+      throw new Error('expected fetchTasks to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('stale-daemon')
+      expect((err as ApiError).status).toBe(404)
+    }
+  })
+
+  it('throws ApiError kind:stale-daemon on 405 with JSON body', async () => {
+    fetchSpy.mockResolvedValue(json({ error: 'method not allowed' }, 405))
+    try {
+      await fetchTasks()
+      throw new Error('expected fetchTasks to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('stale-daemon')
+      expect((err as ApiError).status).toBe(405)
+    }
+  })
+
+  it('throws ApiError kind:other on 500 with JSON body', async () => {
+    fetchSpy.mockResolvedValue(json({ error: 'server error' }, 500))
+    try {
+      await fetchTasks()
+      throw new Error('expected fetchTasks to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('other')
+      expect((err as ApiError).status).toBe(500)
+    }
+  })
+
+  it('throws ApiError kind:other on 404 without JSON body (non-JSON 404)', async () => {
+    fetchSpy.mockResolvedValue(plainText('Not Found', 404))
+    try {
+      await fetchTasks()
+      throw new Error('expected fetchTasks to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      // Non-JSON 404 is treated as 'other' — not a daemon response
+      expect((err as ApiError).kind).toBe('other')
+    }
+  })
+
+  it('throws ApiError kind:unreachable on connection refused (TypeError)', async () => {
+    fetchSpy.mockRejectedValue(new TypeError('Failed to fetch'))
+    try {
+      await fetchTasks()
+      throw new Error('expected fetchTasks to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('unreachable')
+      expect((err as ApiError).status).toBeUndefined()
+    }
+  })
+
+  it('throws ApiError kind:unreachable on 200 response with non-JSON content-type', async () => {
+    fetchSpy.mockResolvedValue(plainText('<!doctype html>'))
+    try {
+      await fetchTasks()
+      throw new Error('expected fetchTasks to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('unreachable')
+      expect((err as ApiError).status).toBeUndefined()
+    }
+  })
+
+  it('ApiError carries a human-readable message in all cases', async () => {
+    fetchSpy.mockResolvedValue(json({ error: 'method not allowed' }, 405))
+    try {
+      await fetchTasks()
+      throw new Error('expected fetchTasks to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).message).toContain('405')
+    }
   })
 })

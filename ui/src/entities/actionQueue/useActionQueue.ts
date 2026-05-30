@@ -5,7 +5,7 @@ import type { ActionQueueItem } from '@/shared/schemas'
 
 interface State {
   items: ActionQueueItem[]
-  error: string | null
+  error: Error | null
 }
 
 export const useActionQueue = (): State => {
@@ -18,6 +18,6 @@ export const useActionQueue = (): State => {
 
   return {
     items: query.data ?? [],
-    error: query.error ? (query.error as Error).message : null,
+    error: query.error ?? null,
   }
 }
