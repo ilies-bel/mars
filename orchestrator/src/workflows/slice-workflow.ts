@@ -847,6 +847,11 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
         context: {},
         raisedBy: 'slicer',
         signature: proposal.id,
+        // Keyed to proposal.id so the existing proposal-evict path in
+        // action-queue-repopulator (proposal.promoted/dismissed/deleted →
+        // supersedeActionQueueItemsForOrigin) closes this row automatically
+        // when the PRD reaches a terminal state.
+        originTaskId: proposal.id,
       }).catch(() => {})
     }
 
