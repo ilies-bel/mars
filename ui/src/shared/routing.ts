@@ -95,6 +95,20 @@ export const parseProposalRoute = (hash: string): string | null => {
 }
 
 /**
+ * Parses an optional `#/proposal-node/<id>` overlay route.  Proposal nodes on
+ * the DAG canvas navigate here so the ProposalNodeDrawer opens instead of the
+ * generic ProposalDetailDrawer (which is used for action-queue proposals).
+ *
+ * Mirrors `parseTaskRoute`: trailing slashes and empty ids normalise to `null`.
+ */
+export const parseProposalNodeRoute = (hash: string): string | null => {
+  const m = /^#\/proposal-node\/([^/?#]+)/.exec(hash)
+  if (!m) return null
+  const id = decodeURIComponent(m[1])
+  return id.length > 0 ? id : null
+}
+
+/**
  * Badge count for the Action queue nav entry — stale worktrees only.
  * Drafts are surfaced inline in the Action queue and must not appear here.
  */
@@ -125,6 +139,10 @@ export const resolvePageRoute = (hash: string): RouteName => {
   }
   const proposalId = parseProposalRoute(hash)
   if (proposalId !== null && hash.startsWith('#/proposal/')) {
+    return 'progress'
+  }
+  const proposalNodeId = parseProposalNodeRoute(hash)
+  if (proposalNodeId !== null) {
     return 'progress'
   }
   return detectRoute(hash)
