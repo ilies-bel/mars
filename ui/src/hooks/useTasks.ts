@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchTasks } from '@/shared/api'
 import { groupTasks } from '@/shared/group'
 import { useSseConnected } from '@/shared/sseStatus'
-import { useFocusedProjectId } from '@/shared/useFocusedProject'
+import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { Snapshot } from '@/shared/types'
 
 interface State {
@@ -12,12 +12,15 @@ interface State {
 }
 
 export const useTasks = (): State => {
-  const projectId = useFocusedProjectId()
+  const { focusedProjectId: projectId, projectsSettled, projectsError, projects } = useFocusedProject()
   const connected = useSseConnected()
+  // Option (a) fallback: fire without ?project= when registry is empty so the
+  // server's --repo default can answer.
+  const projectsEmpty = projectsSettled && projectsError === null && projects.length === 0
   const query = useQuery({
     queryKey: ['tasks', projectId],
     queryFn: () => fetchTasks(projectId ?? undefined),
-    enabled: projectId !== null,
+    enabled: projectId !== null || projectsEmpty,
   })
 
   const snapshot = query.data ? groupTasks(query.data) : null
