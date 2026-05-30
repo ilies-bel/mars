@@ -30,12 +30,25 @@ interface FocusedProjectContextValue {
   focusedProjectId: string | null
   /** Switch focus to a different project and persist the choice. */
   setFocusedProjectId: (id: string) => void
+  /**
+   * True once GET /api/projects has resolved (either success or error).
+   * False while the initial fetch is in flight.
+   */
+  projectsSettled: boolean
+  /**
+   * The error thrown by GET /api/projects, if it failed.
+   * null while loading or on success. When this is an ApiError with
+   * kind='stale-daemon', the UI server predates the /api/projects route.
+   */
+  projectsError: Error | null
 }
 
 const FocusedProjectContext = createContext<FocusedProjectContextValue>({
   projects: [],
   focusedProjectId: null,
   setFocusedProjectId: () => {},
+  projectsSettled: false,
+  projectsError: null,
 })
 
 /** Mount this provider inside QueryClientProvider (e.g. in App). */
@@ -51,6 +64,8 @@ export const FocusedProjectProvider = ({
   })
 
   const projects = query.data ?? []
+  const projectsSettled = query.isSuccess || query.isError
+  const projectsError = (query.error as Error | null) ?? null
 
   // Seed from localStorage so the resolved ID is available synchronously on
   // the first render after projects have loaded.
@@ -83,7 +98,7 @@ export const FocusedProjectProvider = ({
 
   return (
     <FocusedProjectContext.Provider
-      value={{ projects, focusedProjectId, setFocusedProjectId }}
+      value={{ projects, focusedProjectId, setFocusedProjectId, projectsSettled, projectsError }}
     >
       {children}
     </FocusedProjectContext.Provider>
