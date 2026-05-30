@@ -4,7 +4,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { buildStatusLine } from '../statusline.js'
+import { buildStatusLine, buildContextSegment } from '../statusline.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 // src/cli/__tests__ -> src/cli -> src -> orchestrator
@@ -56,6 +56,62 @@ describe('buildStatusLine', () => {
   it('nudge appears at the end of the line', () => {
     const line = buildStatusLine('main', { available: true, latest: '2.0.0' })
     expect(line).toBe('mars · main  ⚡ v2.0.0 available')
+  })
+})
+
+// ── Unit tests for the pure buildContextSegment function ─────────────────────
+
+describe('buildContextSegment', () => {
+  it('returns empty string for null', () => {
+    expect(buildContextSegment(null)).toBe('')
+  })
+
+  it('returns empty string for undefined', () => {
+    expect(buildContextSegment(undefined)).toBe('')
+  })
+
+  it('returns empty string for NaN', () => {
+    expect(buildContextSegment(NaN)).toBe('')
+  })
+
+  it('high remaining (95) yields a green segment with bar and % left label', () => {
+    const seg = buildContextSegment(95)
+    // Should contain the green ANSI code
+    expect(seg).toContain('\x1b[32m')
+    // Should contain at least one bar character
+    expect(seg.includes('█') || seg.includes('░')).toBe(true)
+    // Should contain "% left"
+    expect(seg).toContain('% left')
+    // Should end with ANSI reset
+    expect(seg).toContain('\x1b[0m')
+    // Should start with a space
+    expect(seg.startsWith(' ')).toBe(true)
+  })
+
+  it('low remaining (20) yields a red segment', () => {
+    const seg = buildContextSegment(20)
+    expect(seg).toContain('\x1b[31m')
+    expect(seg).toContain('% left')
+  })
+
+  it('boundary: remaining 16.5 => used is 100 (fully into buffer, 0% left)', () => {
+    const seg = buildContextSegment(16.5)
+    // used = 100, remainingToCompact = 0
+    expect(seg).toContain('0% left')
+    // used >= 80 => red
+    expect(seg).toContain('\x1b[31m')
+    // All 10 segments filled
+    expect(seg).toContain('██████████')
+  })
+
+  it('boundary: remaining 100 => used is 0 (100% left)', () => {
+    const seg = buildContextSegment(100)
+    // used = 0, remainingToCompact = 100
+    expect(seg).toContain('100% left')
+    // used < 50 => green
+    expect(seg).toContain('\x1b[32m')
+    // All 10 segments empty
+    expect(seg).toContain('░░░░░░░░░░')
   })
 })
 
@@ -167,6 +223,45 @@ describe('mars statusline CLI', () => {
       })
       expect(result.status).toBe(0)
       expect(result.stdout).toContain('⚡ v9.9.9 available')
+    } finally {
+      rmSync(tmpRepo, { recursive: true, force: true })
+    }
+  })
+
+  it('appends context bar when context_window.remaining_percentage is in stdin', () => {
+    const tmpRepo = makeRepo()
+    try {
+      const result = runCli(['statusline'], {
+        input: JSON.stringify({
+          workspace: { current_dir: '.' },
+          context_window: { remaining_percentage: 42 },
+        }),
+        env: { MARS_REPO: tmpRepo },
+      })
+      expect(result.status).toBe(0)
+      // Output is a single line containing "mars"
+      const line = result.stdout.trimEnd()
+      expect(line).toContain('mars')
+      // Context bar characters must appear
+      expect(line.includes('█') || line.includes('░')).toBe(true)
+      // Single line only (trimEnd removes the trailing newline; no internal newlines)
+      expect(line.includes('\n')).toBe(false)
+    } finally {
+      rmSync(tmpRepo, { recursive: true, force: true })
+    }
+  })
+
+  it('does not append context bar when context_window is absent from stdin', () => {
+    const tmpRepo = makeRepo()
+    try {
+      const result = runCli(['statusline'], {
+        input: JSON.stringify({ workspace: { current_dir: '.' } }),
+        env: { MARS_REPO: tmpRepo },
+      })
+      expect(result.status).toBe(0)
+      // No bar characters in output
+      const line = result.stdout.trimEnd()
+      expect(line.includes('█') || line.includes('░')).toBe(false)
     } finally {
       rmSync(tmpRepo, { recursive: true, force: true })
     }
