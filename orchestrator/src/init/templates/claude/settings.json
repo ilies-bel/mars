@@ -1,4 +1,9 @@
 {
+  "statusLine": {
+    "type": "command",
+    "command": "mars statusline",
+    "refreshIntervalMs": 5000
+  },
   "hooks": {
     "PreToolUse": [
       {
