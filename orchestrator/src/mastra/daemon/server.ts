@@ -71,7 +71,6 @@ import {
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { failureReasonStringToCode } from '../lib/failure-reasons'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore } from '../lib/trace-events-store'
-import { internalBus } from '../../internal-bus'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
 import { loadDaemonConfig } from './config'
 import { probeDuckDBLock } from './duckdb-lock'
@@ -1051,36 +1050,6 @@ export const startDaemon = async (
     void drain()
   })
 
-  // Mirror internal-bus signals onto the daemon's local bus so existing
-  // subscribers (logs, future UI/CLI bridges) see a unified stream.
-  //
-  // 'task.blocked' is purely observational. 'task.unblocked' is NOT: it is
-  // the dispatch trigger for unblocks that arrive via updateTask() from
-  // outside handleUpdate. The implement workflow marks a task done with a
-  // direct updateTask(id, { status: 'done' }) (implement-workflow.ts:970,
-  // 1102), which auto-promotes its dependents in the DB and emits
-  // 'task.unblocked' on the internal bus (blocker-resolution.ts), but never
-  // routes through handleUpdate — so without this handler the freshly
-  // queued dependent never enters pendingImplement and only gets picked up
-  // on the next daemon restart's reconcile(). This path and handleUpdate's
-  // own task.queued emit are complementary: handleUpdate covers ops the
-  // daemon routes through itself; this mirror covers ops that go straight
-  // through updateTask.
-  internalBus().on('task.blocked', (e) => {
-    log(
-      `[blocked] ${e.taskId} signature=${e.failureSignature} step=${e.failingStep} fix=${e.fixTaskId ?? '(none)'}`,
-    )
-    bus.emit('task.blocked', e)
-  })
-  internalBus().on('task.unblocked', (e) => {
-    log(`[unblocked] ${e.taskId} via blocker ${e.blockerTaskId ?? '(edge-removed)'}`)
-    bus.emit('task.unblocked', e)
-    if (!acceptingWork) return
-    if (inFlight.has(e.taskId)) return
-    pendingImplement.add(e.taskId)
-    void drain()
-  })
-
   // Broadcast invalidations to connected SSE clients on every task lifecycle
   // event so the UI re-fetches the tasks/progress views without polling.
   bus.on('task.added', () => { viewStreamHub.broadcast('tasks') })
@@ -1192,6 +1161,14 @@ export const startDaemon = async (
         log(
           `[blocker-recovery] ${id} queued after blocker edge removal (removed: ${removed.join(', ')})`,
         )
+        // Surface the newly queued task to the dispatch loop directly.
+        // Previously this happened via the internal-bus wake-hint; now
+        // the caller is responsible because the bus no longer delivers
+        // payloads to handlers.
+        if (acceptingWork && !inFlight.has(id)) {
+          pendingImplement.add(id)
+          void drain()
+        }
       }
     } catch (err) {
       log(
@@ -1204,9 +1181,20 @@ export const startDaemon = async (
   const handleRecover = async (id?: string): Promise<RecoverAllBlockedTasksResult> => {
     if (id) {
       const outcome = await recoverBlockedTask(id)
+      if (outcome.outcome === 'queued' && acceptingWork && !inFlight.has(id)) {
+        pendingImplement.add(id)
+        void drain()
+      }
       return { outcomes: [outcome] }
     }
-    return recoverAllBlockedTasks()
+    const result = await recoverAllBlockedTasks()
+    for (const o of result.outcomes) {
+      if (o.outcome === 'queued' && acceptingWork && !inFlight.has(o.taskId)) {
+        pendingImplement.add(o.taskId)
+      }
+    }
+    if (result.outcomes.some(o => o.outcome === 'queued')) void drain()
+    return result
   }
 
   const handleUpdate = async (
