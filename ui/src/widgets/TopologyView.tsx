@@ -323,8 +323,7 @@ export const TopologyView = ({
             </g>
           )
 
-          // A task node is wrapped in a link that opens the Task drawer.
-          // Proposal node click behaviour is handled in a later slice.
+          // Task nodes open the Task drawer; proposal nodes open the proposal-node drawer.
           if (node.kind === 'task') {
             return (
               <a
@@ -337,7 +336,15 @@ export const TopologyView = ({
             )
           }
 
-          return g
+          return (
+            <a
+              key={node.id}
+              href={`#/proposal-node/${encodeURIComponent(node.id)}`}
+              style={{ cursor: 'pointer' }}
+            >
+              {g}
+            </a>
+          )
         })}
       </svg>
     </main>

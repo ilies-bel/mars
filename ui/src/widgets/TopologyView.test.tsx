@@ -338,3 +338,35 @@ describe('TopologyView – task node drawer link', () => {
     expect(html).not.toContain('href="#/task/p1"')
   })
 })
+
+describe('TopologyView – proposal node drawer link', () => {
+  it('each proposal node is wrapped in a link to the proposal-node drawer', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'In progress', parentProposalId: 'p1' })]}
+        proposals={[proposal('p1', 'My feature goal')]}
+      />,
+    )
+    expect(html).toContain('href="#/proposal-node/p1"')
+  })
+
+  it('URL-encodes special characters in the proposal id within the drawer link', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'Queued', parentProposalId: 'p/foo bar' })]}
+        proposals={[proposal('p/foo bar', 'Special chars')]}
+      />,
+    )
+    expect(html).toContain('href="#/proposal-node/p%2Ffoo%20bar"')
+  })
+
+  it('does not create a proposal-node link for task nodes', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 'mars-abc123', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).not.toContain('href="#/proposal-node/mars-abc123"')
+  })
+})
