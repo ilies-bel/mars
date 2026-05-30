@@ -122,6 +122,16 @@ export const EventMap = {
     taskId: z.string(),
     kind: z.string(),
   }),
+  /**
+   * Emitted once when a durable Subscriber's handler has failed
+   * STALL_THRESHOLD consecutive times on the same event id and its cursor
+   * is blocked (ADR-0032). Written to the Outbox alongside the inbox row.
+   */
+  'subscriber.stalled': z.object({
+    subscriberId: z.string(),
+    eventId: z.number().int(),
+    lastError: z.string(),
+  }),
 } as const;
 
 /** Union of every registered event type name. */
