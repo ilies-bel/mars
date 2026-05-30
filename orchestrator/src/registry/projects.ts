@@ -69,3 +69,21 @@ export function removeProject(projectId: string): boolean {
 export function findProject(projectId: string): RegistryEntry | null {
   return loadProjectRegistry().find((e) => e.projectId === projectId) ?? null
 }
+
+/**
+ * Idempotently ensures the given repo root is registered. If an entry with
+ * the same absolute repoRoot already exists, returns it unchanged (no write).
+ * Otherwise registers via addProject and returns the new entry.
+ */
+export function ensureProjectRegistered({
+  repoRoot,
+  name,
+}: {
+  repoRoot: string
+  name?: string
+}): RegistryEntry {
+  const abs = path.resolve(repoRoot)
+  const existing = loadProjectRegistry().find((e) => e.repoRoot === abs)
+  if (existing) return existing
+  return addProject({ repoRoot: abs, name })
+}

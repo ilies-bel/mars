@@ -341,6 +341,16 @@ export const startDaemon = async (
     process.exit(1)
   }
 
+  // Auto-register this repo in the global project registry so a fresh
+  // single-repo setup is never stranded with an empty ~/.mars/projects.json.
+  // Idempotent: no-op when the repo is already registered.
+  try {
+    const { ensureProjectRegistered } = await import('../../registry/projects.js')
+    ensureProjectRegistered({ repoRoot: resolveContext().repoRoot })
+  } catch (err) {
+    log(`[registry] warning: failed to auto-register project: ${(err as Error).message}`)
+  }
+
   // One-shot cleanup of pre-@mars/workflow `.mars/mastra.db*` files.
   // Idempotent: silent if nothing exists, single info line if anything
   // was removed. Runs every startup; deleting absent files is cheap.

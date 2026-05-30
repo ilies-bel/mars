@@ -7,6 +7,7 @@ import {
   addProject,
   removeProject,
   findProject,
+  ensureProjectRegistered,
 } from './projects.js'
 
 const tmpDir = join(tmpdir(), `mars-registry-test-${process.pid}`)
@@ -93,5 +94,45 @@ describe('findProject', () => {
 
   it('returns null for an unknown projectId', () => {
     expect(findProject('p_doesnotexist')).toBeNull()
+  })
+})
+
+describe('ensureProjectRegistered', () => {
+  it('registers a repo when the registry is empty and returns the new entry', () => {
+    const entry = ensureProjectRegistered({ repoRoot: '/tmp/my-project' })
+
+    expect(entry.projectId).toMatch(/^p_[a-f0-9]{12}$/)
+    expect(entry.repoRoot).toBe('/tmp/my-project')
+    expect(loadProjectRegistry()).toEqual([entry])
+  })
+
+  it('calling twice does not duplicate the entry', () => {
+    ensureProjectRegistered({ repoRoot: '/tmp/my-project' })
+    ensureProjectRegistered({ repoRoot: '/tmp/my-project' })
+
+    expect(loadProjectRegistry()).toHaveLength(1)
+  })
+
+  it('returns the existing entry unchanged when already registered', () => {
+    const first = ensureProjectRegistered({ repoRoot: '/tmp/my-project', name: 'original' })
+    const second = ensureProjectRegistered({ repoRoot: '/tmp/my-project', name: 'ignored' })
+
+    expect(second).toEqual(first)
+    expect(loadProjectRegistry()).toHaveLength(1)
+  })
+
+  it('does not throw when the repo is already registered', () => {
+    addProject({ repoRoot: '/tmp/my-project' })
+    expect(() => ensureProjectRegistered({ repoRoot: '/tmp/my-project' })).not.toThrow()
+  })
+
+  it('registers two different repos without conflict', () => {
+    ensureProjectRegistered({ repoRoot: '/tmp/project-a' })
+    ensureProjectRegistered({ repoRoot: '/tmp/project-b' })
+
+    const entries = loadProjectRegistry()
+    expect(entries).toHaveLength(2)
+    expect(entries.map((e) => e.repoRoot)).toContain('/tmp/project-a')
+    expect(entries.map((e) => e.repoRoot)).toContain('/tmp/project-b')
   })
 })
