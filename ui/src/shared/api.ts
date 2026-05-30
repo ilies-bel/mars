@@ -25,6 +25,30 @@ import {
   type WorkerSession,
 } from './schemas'
 
+/** Discriminant for `ApiError` — lets the UI render the right remedy. */
+export type ApiErrorKind = 'unreachable' | 'stale-daemon' | 'other'
+
+/**
+ * Typed fetch error thrown by `fetchJson`.
+ *
+ * - `unreachable` — connection refused (TypeError) or non-JSON response
+ *   (hitting Vite catch-all). Remedy: start the API server.
+ * - `stale-daemon` — HTTP 404 or 405 with a JSON body. The server is up but
+ *   predates the route. Remedy: `mars daemon restart`.
+ * - `other` — any other HTTP error (e.g. 500).
+ */
+export class ApiError extends Error {
+  readonly kind: ApiErrorKind
+  readonly status: number | undefined
+
+  constructor(message: string, kind: ApiErrorKind, status?: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.kind = kind
+    this.status = status
+  }
+}
+
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
 /**
@@ -44,17 +68,25 @@ const fetchJson = async <T>(path: string, schema: ZodType<T>): Promise<T> => {
     r = await fetch(`${BASE}${path}`)
   } catch (err) {
     if (err instanceof TypeError) {
-      throw new Error(
+      throw new ApiError(
         `GET ${path} → cannot reach the mars-ui API server. Start it with \`cd ui && npm run dev:server\` (or \`npm run dev:all\` to run UI + API together).`,
+        'unreachable',
       )
     }
     throw err
   }
-  if (!r.ok) throw new Error(`GET ${path} → ${r.status}`)
+  if (!r.ok) {
+    const ct = r.headers.get('content-type') ?? ''
+    const isJson = ct.includes('application/json')
+    const kind: ApiErrorKind =
+      (r.status === 404 || r.status === 405) && isJson ? 'stale-daemon' : 'other'
+    throw new ApiError(`GET ${path} → ${r.status}`, kind, r.status)
+  }
   const ct = r.headers.get('content-type') ?? ''
   if (!ct.includes('application/json')) {
-    throw new Error(
+    throw new ApiError(
       `GET ${path} → expected JSON but got ${ct || 'unknown'} (is the mars-ui API server running on :7777?)`,
+      'unreachable',
     )
   }
   const raw = await r.json()
