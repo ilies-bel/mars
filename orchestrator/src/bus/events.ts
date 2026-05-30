@@ -132,6 +132,15 @@ export const EventMap = {
     eventId: z.number().int(),
     lastError: z.string(),
   }),
+  /**
+   * Emitted when a previously-stalled Subscriber successfully processes the
+   * event it was blocked on. The Invalidator subscriber reacts to this event
+   * to close the corresponding `subscriber_stalls` inbox row.
+   */
+  'subscriber.unstalled': z.object({
+    subscriberId: z.string(),
+    eventId: z.number().int(),
+  }),
 } as const;
 
 /** Union of every registered event type name. */

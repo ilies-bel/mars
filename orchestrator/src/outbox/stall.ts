@@ -75,6 +75,28 @@ export function startStallAwareDispatcher(
       const key = `${sub.name}:${event.id}`;
       try {
         await sub.handler(event);
+        // If a stall row exists in the DB for this (subscriber, event), emit
+        // subscriber.unstalled so the Invalidator can close it durably. We
+        // check the DB rather than the in-memory `declared` set so a daemon
+        // restart between the stall insert and this success path still emits
+        // the closing event.
+        const hadStall = await client
+          .execute({
+            sql: 'SELECT 1 FROM subscriber_stalls WHERE subscriber_id = ? AND event_id = ? LIMIT 1',
+            args: [sub.name, event.id],
+          })
+          .then(r => r.rows.length > 0)
+          .catch(() => false);
+        if (hadStall) {
+          await publishWithRetry(client, 'subscriber.unstalled', {
+            subscriberId: sub.name,
+            eventId: event.id,
+          }).catch(() => {
+            // Best-effort: Outbox emission failure must not mask the handler
+            // success. The inbox row will remain open until the next successful
+            // attempt re-emits the event.
+          });
+        }
         // Success — reset stall tracking for this (subscriber, event).
         failureCounts.delete(key);
         declared.delete(key);
