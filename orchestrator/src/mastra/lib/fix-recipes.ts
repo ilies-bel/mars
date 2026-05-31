@@ -1224,6 +1224,44 @@ const testLibsqlNotAnErrorRecipe: FixRecipe = {
 //     merge step will retry; any fresh failure will now classify as
 //     `not-fast-forward` and route to the existing recipe.
 
+// • verify:test/unclassified (task mars-d4f3ea6d, origin 436f14c7)
+//     Test `worker-stage-bindings.test.ts` line 45 expected `Workers.Triager.run(`
+//     in triage-workflow.ts but the implementation used `runWorkerWithSpan({
+//     worker: Workers.Triager, ... })` — the agent migrated the dispatch pattern but
+//     forgot to update the structural test that checked for the older form.
+//
+//     Repro: worktree and branch were gone at investigation time; failure could not
+//     be reproduced directly. The current main branch has the correct state: the test
+//     now checks for `Workers.Triager` + `runWorkerWithSpan` and all 5 tests in
+//     worker-stage-bindings.test.ts pass.
+//
+//     Ranked hypotheses considered:
+//       (1) [WINNER] Incomplete migration: triage-workflow.ts was correctly updated to
+//           use runWorkerWithSpan but the structural test from PRD 948691d0 slice 4
+//           (which checked for Workers.Triager.run() — the OLD dispatch form) was not
+//           updated. Test and implementation fell out of sync. Evidence: current main
+//           has the fix in place; test description was renamed from "dispatches through
+//           Workers.Triager.run" to "dispatches Workers.Triager through runWorkerWithSpan".
+//       (2) [Falsified] Workflow not migrated at all: current main shows triage-workflow.ts
+//           uses runWorkerWithSpan, ruling this out.
+//       (3) [Timing, irrelevant now] test-assertion-error classifier not yet added: if
+//           this task had failed after the classifier was added it would have been
+//           classified as verify:test/test-assertion-error. But even so, the
+//           test-assertion-error recipe says "do NOT modify test files" — wrong guidance
+//           here since the TEST was the stale artifact, not the implementation.
+//       (4) [Falsified] Environmental/flaky: the failing test is a pure structural check
+//           (readFileSync + toMatch); fully deterministic.
+//
+//     Why no recipe: (a) worktree gone, cannot reproduce; (b) the fix is already on main;
+//     (c) the test-assertion-error recipe would give wrong guidance (tells recovery agent
+//     not to modify tests, but the test was the stale artifact — the correct fix requires
+//     updating the test to check for Workers.Triager + runWorkerWithSpan rather than
+//     Workers.Triager.run()); (d) this was a multi-slice PRD coordination gap specific to
+//     the 436f14c7 migration, unlikely to recur in the same form.
+//     Operator fix: `mars restart mars-d4f3ea6d` — the retry creates a fresh worktree
+//     from current main where both the test and implementation are already correct.
+//     Investigated 2026-05-31 (task 09758531, origin mars-d4f3ea6d).
+//
 const recipeList: readonly FixRecipe[] = [
   dirtyMergeTargetRecipe,
   worktreeInstallFrozenLockfileRecipe,
