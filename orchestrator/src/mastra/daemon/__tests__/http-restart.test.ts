@@ -7,6 +7,7 @@ import type { HttpServerDeps } from '../http-server'
 import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
+import { InMemoryStore } from '@mars/workflow'
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-http-restart-'))
@@ -111,6 +112,57 @@ describe('HTTP action endpoint', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
+  // ── Workflow store cleanup on restart ─────────────────────────────────────
+
+  it('coreRestartTask clears the workflow run journal so a subsequent run starts fresh', async () => {
+    const { queue, restartTask } = await loadModules(repo)
+    const { InMemoryStore } = await import('@mars/workflow')
+
+    const task = await queue.enqueueTask('journal test', undefined, { skipTriage: true })
+    await queue.updateTask(task.id, { status: 'failed', error: 'boom' })
+
+    // Seed the in-memory store with a prior completed run (mimicking the
+    // stale checkpoint the engine would have written after a real first run).
+    const store = new InMemoryStore()
+    await store.createRun({
+      id: task.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'running',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    await store.putStep({
+      runId: task.id,
+      name: 'setup-worktree',
+      status: 'completed',
+      sha: null,
+      startedAt: Date.now(),
+      finishedAt: Date.now() + 100,
+      attempt: 1,
+      summary: 'ok',
+      errorSummary: null,
+      transcriptKey: null,
+      resultJson: '"done"',
+    })
+    await store.setRunStatus(task.id, 'completed', Date.now() + 200)
+
+    // Sanity: the run exists before restart.
+    expect(await store.getRun(task.id)).toBeDefined()
+    expect(await store.listSteps(task.id)).toHaveLength(1)
+
+    // Call coreRestartTask — passes the in-memory store so we can inspect it.
+    await restartTask.coreRestartTask(task.id, new Set(['failed']), store)
+
+    // After restart the journal must be gone so the next dispatch starts fresh.
+    expect(await store.getRun(task.id)).toBeUndefined()
+    expect(await store.listSteps(task.id)).toEqual([])
+
+    // The task itself must be re-queued.
+    const updated = await queue.getTask(task.id)
+    expect(updated?.status).toBe('queued')
+  })
+
   // ── Tracer bullet: the happy path ─────────────────────────────────────────
 
   it('transitions a failed task to queued on POST /actions/restart/:id', async () => {
@@ -123,7 +175,7 @@ describe('HTTP action endpoint', () => {
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        restartTask: (id) => restartTask.coreRestartTask(id, new Set(['failed'])),
+        restartTask: (id) => restartTask.coreRestartTask(id, new Set(['failed']), new InMemoryStore()),
       }),
     )
 
@@ -227,7 +279,7 @@ describe('HTTP action endpoint', () => {
           const killed = all.filter((t) => t.failureSignature === 'daemon-killed')
           const restarted: string[] = []
           for (const task of killed) {
-            await restartTask.coreRestartTask(task.id, new Set(['failed']))
+            await restartTask.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore())
             restarted.push(task.id)
           }
           return restarted
@@ -287,7 +339,7 @@ describe('HTTP action endpoint', () => {
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        restartTask: (id) => restartTask.coreRestartTask(id, new Set(['failed'])),
+        restartTask: (id) => restartTask.coreRestartTask(id, new Set(['failed']), new InMemoryStore()),
       }),
     )
 
@@ -316,7 +368,7 @@ describe('HTTP action endpoint', () => {
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        restartTask: (id) => restartTask.coreRestartTask(id, new Set(['failed'])),
+        restartTask: (id) => restartTask.coreRestartTask(id, new Set(['failed']), new InMemoryStore()),
       }),
     )
 

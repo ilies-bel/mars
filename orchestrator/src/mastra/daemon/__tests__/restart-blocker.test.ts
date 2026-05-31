@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { InMemoryStore } from '@mars/workflow'
 
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
@@ -68,7 +69,7 @@ describe('coreRestartTask blocker invariant', () => {
       args: [dependent.id],
     })
 
-    await restart.coreRestartTask(dependent.id, new Set(['failed']))
+    await restart.coreRestartTask(dependent.id, new Set(['failed']), new InMemoryStore())
 
     const reloaded = await q.getTask(dependent.id)
     expect(reloaded?.status).toBe('blocked')
@@ -86,7 +87,7 @@ describe('coreRestartTask blocker invariant', () => {
       args: [dependent.id],
     })
 
-    await restart.coreRestartTask(dependent.id, new Set(['failed']))
+    await restart.coreRestartTask(dependent.id, new Set(['failed']), new InMemoryStore())
 
     const reloaded = await q.getTask(dependent.id)
     expect(reloaded?.status).toBe('queued')
@@ -100,7 +101,7 @@ describe('coreRestartTask blocker invariant', () => {
       args: [t.id],
     })
 
-    await restart.coreRestartTask(t.id, new Set(['failed']))
+    await restart.coreRestartTask(t.id, new Set(['failed']), new InMemoryStore())
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
