@@ -1437,7 +1437,8 @@ export const startDaemon = async (
   // same code path — see daemon/restart-task.ts.
   const handleRestart = async (id: string): Promise<void> => {
     const { coreRestartTask } = await import('./restart-task')
-    await coreRestartTask(id, new Set(['failed', 'done']))
+    const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
+    await coreRestartTask(id, new Set(['failed', 'done']), createQueueWorkflowStore())
     bus.emit('task.queued', { taskId: id })
   }
 
@@ -2204,6 +2205,7 @@ export const startDaemon = async (
   // daemon restart. GET /error-kinds serves the action-menu registry.
   const { startHttpServer } = await import('./http-server')
   const { coreRestartTask: coreRestart } = await import('./restart-task')
+  const { createQueueWorkflowStore: makeWorkflowStore } = await import('../../workflows/queue-workflow-store')
   // Load the failure-reason catalog once at boot — built-in seed merged
   // with `.mars/failure-reasons/*.yaml` overrides. Consumers re-`mars
   // daemon reload` (or restart) to pick up file edits; no hot-reload.
@@ -2223,7 +2225,7 @@ export const startDaemon = async (
   })
   const httpHandle = await startHttpServer({
     restartTask: async (id) => {
-      await coreRestart(id, new Set(['failed']))
+      await coreRestart(id, new Set(['failed']), makeWorkflowStore())
       bus.emit('task.queued', { taskId: id })
     },
     unblockTask: async (id) => {
@@ -2536,7 +2538,7 @@ export const startDaemon = async (
       const restarted: string[] = []
       for (const task of killed) {
         try {
-          await coreRestart(task.id, new Set(['failed']))
+          await coreRestart(task.id, new Set(['failed']), makeWorkflowStore())
           bus.emit('task.queued', { taskId: task.id })
           restarted.push(task.id)
         } catch {

@@ -102,4 +102,10 @@ export interface WorkflowStore {
    * full record each time; the store overwrites the existing row.
    */
   putStep(record: StepRecord): Promise<void>;
+  /**
+   * Remove a run and all its step records so a fresh run with the same id
+   * starts from step 0. Used by `mars restart` to discard a prior run
+   * journal before re-dispatching the task.
+   */
+  deleteRun(runId: string): Promise<void>;
 }

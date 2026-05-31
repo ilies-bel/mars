@@ -1,3 +1,4 @@
+import type { WorkflowStore } from '@mars/workflow'
 import { getTask, hasIncompleteBlockers, updateTask } from '../queue'
 
 export type RestartErrorCode = 'NOT_FOUND' | 'WRONG_STATUS'
@@ -20,7 +21,11 @@ export class RestartTaskError extends Error {
 /**
  * Core restart mechanics shared by both the UDS RPC handler (`mars restart`)
  * and the HTTP endpoint. Validates the task exists and is in an allowed
- * status, then wipes the worktree/branch and re-queues the DB row.
+ * status, then wipes the worktree/branch, clears the workflow run journal,
+ * and re-queues the DB row.
+ *
+ * The `workflowStore` is used to delete the prior run's checkpoint records
+ * so the next dispatch starts from step 0 rather than resuming a stale run.
  *
  * Intentionally has no dependency on the daemon's event bus — the caller
  * is responsible for emitting `task.queued` after this resolves so either
@@ -33,6 +38,7 @@ export class RestartTaskError extends Error {
 export const coreRestartTask = async (
   id: string,
   allowedStatuses: ReadonlySet<string>,
+  workflowStore: WorkflowStore,
 ): Promise<void> => {
   const task = await getTask(id)
   if (!task) {
@@ -58,6 +64,12 @@ export const coreRestartTask = async (
     await removeWorktree({ path: task.worktreePath, branch }, true).catch(() => {})
   }
   await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
+
+  // Discard the prior workflow run journal so the next dispatch starts from
+  // step 0 instead of resuming stale 'completed' step records. Without this,
+  // the engine skips setup-worktree and run-claude-code, then fails verify
+  // because the worktree no longer exists.
+  await workflowStore.deleteRun(id)
 
   // Guard: if the task still has incomplete blockers, restore it to blocked
   // rather than queued. An operator may restart a failed task whose blockers

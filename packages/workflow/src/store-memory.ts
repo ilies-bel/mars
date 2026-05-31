@@ -58,4 +58,9 @@ export class InMemoryStore implements WorkflowStore {
     }
     byName.set(record.name, { ...record });
   }
+
+  async deleteRun(runId: string): Promise<void> {
+    this.runs.delete(runId);
+    this.steps.delete(runId);
+  }
 }
