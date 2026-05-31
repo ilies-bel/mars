@@ -189,6 +189,23 @@ export const createQueueWorkflowStore = (
       return (r.rows as unknown as StepRow[]).map(rowToStep)
     },
 
+    async deleteRun(runId: string): Promise<void> {
+      await ensureSchema()
+      await client.batch(
+        [
+          {
+            sql: 'DELETE FROM workflow_step_runs WHERE run_id = ?',
+            args: [runId],
+          },
+          {
+            sql: 'DELETE FROM workflow_runs WHERE id = ?',
+            args: [runId],
+          },
+        ],
+        'write',
+      )
+    },
+
     async putStep(record: StepRecord): Promise<void> {
       await ensureSchema()
       // Preserve first-seen ordering: keep the existing seq on update,

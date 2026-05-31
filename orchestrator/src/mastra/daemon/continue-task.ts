@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { getTask, updateTask } from '../queue'
 import { getDefaultTaskStore } from '../lib/task-store'
 import { coreRestartTask } from './restart-task'
+import { createQueueWorkflowStore } from '../../workflows/queue-workflow-store'
 
 export interface ContinueResult {
   /**
@@ -86,7 +87,7 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
     worktreeMissingOnDisk
 
   if (isPreSetup) {
-    await coreRestartTask(id, new Set(['failed']))
+    await coreRestartTask(id, new Set(['failed']), createQueueWorkflowStore())
     const note = worktreeMissingOnDisk
       ? `worktree at ${task.worktreePath} is missing from disk; cannot re-enter ${task.failedPhase} phase — restarting from setup`
       : `failure was pre-setup (no worktree to preserve); continue is equivalent to restart here`

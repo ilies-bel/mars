@@ -124,6 +124,18 @@ export class SqliteStore implements WorkflowStore {
     return rows.map(rowToStep);
   }
 
+  async deleteRun(runId: string): Promise<void> {
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare('DELETE FROM workflow_step_runs WHERE run_id = ?').run(runId);
+      this.db.prepare('DELETE FROM workflow_runs WHERE id = ?').run(runId);
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
   async putStep(record: StepRecord): Promise<void> {
     // Preserve first-seen ordering: keep the existing seq on update,
     // otherwise append after the current max for this run.
