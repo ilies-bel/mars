@@ -62,6 +62,11 @@ export interface BoardViewProps {
    * per-cluster toggle chips). 'Queued' has no toggle and is never hidden.
    */
   ghostedClusters?: Set<string>
+  /**
+   * When set, only tasks whose ID is in this set are rendered in each column.
+   * null = no active text search (show all tasks).
+   */
+  searchMatchIds?: Set<string> | null
 }
 
 export const BoardView = ({
@@ -70,6 +75,7 @@ export const BoardView = ({
   error,
   selectedProposalId,
   ghostedClusters,
+  searchMatchIds,
 }: BoardViewProps) => {
   let cursor = 0
 
@@ -89,7 +95,11 @@ export const BoardView = ({
             selectedProposalId !== null
               ? clusterTasks.filter((t) => t.parentProposalId === selectedProposalId)
               : clusterTasks
-          const tasksForCluster = filtered.map(toUI)
+          const searched =
+            searchMatchIds != null
+              ? filtered.filter((t) => searchMatchIds.has(t.id))
+              : filtered
+          const tasksForCluster = searched.map(toUI)
           const startIndex = cursor
           cursor += tasksForCluster.length
           const accent: 'flame' | 'muted' =
