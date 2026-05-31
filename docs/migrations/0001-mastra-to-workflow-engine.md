@@ -21,8 +21,10 @@ wraps each durable unit. Durability is checkpoint-resume keyed on
 `runId`, not deterministic replay. See `orchestrator/docs/implement-pipeline.md`
 for the canonical pattern.
 
-This supersedes the authoring model of **ADR 0012** (declarative DAG of
-`defineStep({deps})`) and **ADR 0014** (linear `.then` composition).
+The imperative authoring model was adopted: native TypeScript control flow
+with `ctx.step(name, fn)` wrapping each durable unit. Two draft ADRs that
+proposed rejected alternatives — a declarative DAG step model and linear
+`.then` composition — were never built and have been removed.
 
 ## What was migrated, in order
 
