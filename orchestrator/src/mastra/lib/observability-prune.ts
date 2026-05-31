@@ -14,6 +14,12 @@ import { openLibsql } from './libsql'
  * Safe to run while the Mars daemon is running — libsql opens the file in
  * WAL mode which permits concurrent readers and writers on the same path
  * without coordination from the caller.
+ *
+ * After deleting rows, runs VACUUM to return freed pages to the OS so the
+ * on-disk file actually shrinks. SQLite does not reclaim space from DELETE
+ * alone (auto_vacuum is off). VACUUM briefly holds a write lock but is safe
+ * in WAL mode. A VACUUM failure (e.g. transient lock contention) is logged
+ * and swallowed — the row count is still returned.
  */
 export const pruneObservability = async (
   dbPath: string,
@@ -44,6 +50,16 @@ export const pruneObservability = async (
         sql: 'DELETE FROM trace_events WHERE timestamp < ?',
         args: [cutoff],
       })
+    }
+    if (result.rowsAffected > 0) {
+      try {
+        await client.execute('VACUUM')
+      } catch (err) {
+        console.warn(
+          '[observability-prune] VACUUM failed — freed pages not reclaimed:',
+          err,
+        )
+      }
     }
     return result.rowsAffected
   } finally {

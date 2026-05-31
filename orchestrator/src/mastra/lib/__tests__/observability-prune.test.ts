@@ -146,6 +146,57 @@ describe('pruneObservability — wipe all (maxAgeDays = 0)', () => {
   })
 })
 
+describe('pruneObservability — VACUUM reclaims disk space', () => {
+  it('page_count shrinks after prune (VACUUM ran and freed pages were returned to OS)', async () => {
+    const dbPath = tmpDbPath()
+    const oldTs = isoOffset(-4 * 24 * 60 * 60 * 1000)
+
+    // Seed enough rows with bulk payloads to grow the file across many pages.
+    // 500 rows × ~500 bytes each ≈ 250 KB; at SQLite's default 4 096 B/page
+    // this forces ~60 extra data pages whose reclamation is measurable.
+    const seeder = openLibsql({ url: `file:${dbPath}` })
+    await seeder.execute(TRACE_DDL)
+    for (let i = 0; i < 500; i++) {
+      await seeder.execute({
+        sql: INSERT_ROW,
+        args: [
+          `vac-${i}`,
+          oldTs,
+          'task_failed',
+          'error',
+          null,
+          null,
+          null,
+          JSON.stringify({ bulk: 'x'.repeat(400) }),
+        ],
+      })
+    }
+    seeder.close()
+
+    // Snapshot page_count before pruning (rows are still present)
+    const before = openLibsql({ url: `file:${dbPath}` })
+    const pagesBefore = Number(
+      (await before.execute('PRAGMA page_count')).rows[0][0],
+    )
+    before.close()
+
+    // prune deletes all 500 old rows then VACUUMs
+    const deleted = await pruneObservability(dbPath, 3)
+    expect(deleted).toBe(500)
+
+    // After VACUUM the file is rewritten compactly — page_count must drop
+    const after = openLibsql({ url: `file:${dbPath}` })
+    try {
+      const pagesAfter = Number(
+        (await after.execute('PRAGMA page_count')).rows[0][0],
+      )
+      expect(pagesAfter).toBeLessThan(pagesBefore)
+    } finally {
+      after.close()
+    }
+  })
+})
+
 describe('pruneObservability — edge cases', () => {
   it('returns 0 and does not error when the store is empty', async () => {
     const dbPath = tmpDbPath()
