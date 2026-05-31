@@ -129,6 +129,69 @@ describe('BoardView – proposal filter on cluster columns', () => {
   })
 })
 
+describe('BoardView – search filter on cluster columns', () => {
+  it('shows only cards whose id is in searchMatchIds when filter is active', () => {
+    const t1 = task({ id: 'task-a', cluster: 'Queued' })
+    const t2 = task({ id: 'task-b', cluster: 'Queued' })
+    const byCluster = { ...emptyByCluster(), Queued: [t1, t2] }
+
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={byCluster}
+        drafts={[]}
+        error={null}
+        selectedProposalId={null}
+        searchMatchIds={new Set(['task-a'])}
+      />,
+    )
+
+    expect(html).toContain('task-a')
+    expect(html).not.toContain('task-b')
+  })
+
+  it('removes non-matching cards across multiple cluster columns', () => {
+    const t1 = task({ id: 'match-q', cluster: 'Queued' })
+    const t2 = task({ id: 'no-q', cluster: 'Queued' })
+    const t3 = task({ id: 'match-ip', cluster: 'In progress', status: 'running' })
+    const t4 = task({ id: 'no-ip', cluster: 'In progress', status: 'running' })
+    const byCluster = { ...emptyByCluster(), Queued: [t1, t2], 'In progress': [t3, t4] }
+
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={byCluster}
+        drafts={[]}
+        error={null}
+        selectedProposalId={null}
+        searchMatchIds={new Set(['match-q', 'match-ip'])}
+      />,
+    )
+
+    expect(html).toContain('match-q')
+    expect(html).not.toContain('no-q')
+    expect(html).toContain('match-ip')
+    expect(html).not.toContain('no-ip')
+  })
+
+  it('restores all cards when searchMatchIds is null', () => {
+    const t1 = task({ id: 'task-a', cluster: 'Queued' })
+    const t2 = task({ id: 'task-b', cluster: 'Queued' })
+    const byCluster = { ...emptyByCluster(), Queued: [t1, t2] }
+
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={byCluster}
+        drafts={[]}
+        error={null}
+        selectedProposalId={null}
+        searchMatchIds={null}
+      />,
+    )
+
+    expect(html).toContain('task-a')
+    expect(html).toContain('task-b')
+  })
+})
+
 describe('BoardView – proposal filter on Proposals column', () => {
   it('shows only the selected proposal draft when a filter is active', () => {
     const d1 = draft('p1', 'Feature Alpha')
