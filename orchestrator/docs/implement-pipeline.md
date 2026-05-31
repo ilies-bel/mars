@@ -211,11 +211,12 @@ in `.mars/queue.db`. The per-step record is lean — status, SHA,
 timestamps, attempt count, a compact summary, and the transcript key —
 and is the single row that serves both resume and the trace view.
 
-## Relationship to ADRs
+## Authoring model
 
-This port supersedes the authoring model of **ADR 0012** (the engine is
-imperative `ctx.step`, not a declarative DAG of `defineStep({ deps })`)
-and **ADR 0014** (the v1 composition surface is a TS function with native
-control flow, not linear `.then` chaining). Those ADRs should be amended
-to record the change once this lands; this document describes the code as
-built in the interim.
+The engine is **imperative**: a workflow is a plain async TypeScript function
+and `ctx.step(name, fn)` wraps each durable unit. There is no declarative
+DAG, no `defineStep({ deps })`, and no linear `.then` composition surface.
+Two draft ADRs that proposed those discarded designs (DAG step model and
+linear `.then` v1 composition) were never built and have been removed.
+This document is the authoritative description of the `implement` pipeline
+as built.

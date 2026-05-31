@@ -4,13 +4,16 @@ A small, **domain-agnostic** workflow engine for local TypeScript CLIs that
 drive coding agents (Claude, others). Built for the Mars orchestrator;
 designed to be useful outside it.
 
-> **This supersedes the declarative DAG model.** Earlier drafts specced
-> `defineStep({ id, deps, … })` + `defineWorkflow({ steps, output })` with a
-> topological sort. That model is gone. A workflow is now a plain
-> **imperative TypeScript function**; native control flow is the source of
-> truth. ADR 0012 (DAG step model) and ADR 0014 (linear `.then` v1
-> composition) describe the old design and will need amendment — this README
-> is the current contract.
+> **The declarative DAG and linear `.then` designs were never built and have
+> been removed.** Earlier drafts specced `defineStep({ id, deps, … })` +
+> `defineWorkflow({ steps, output })` with a topological sort, and a separate
+> draft proposed linear `.then` v1 composition. Neither was implemented. A
+> workflow is a plain **imperative TypeScript function**; native control flow
+> is the source of truth. This README is the authoritative contract. See
+> [orchestrator/docs/implement-pipeline.md](../../orchestrator/docs/implement-pipeline.md)
+> for the canonical pipeline and
+> [docs/migrations/0001-mastra-to-workflow-engine.md](../../docs/migrations/0001-mastra-to-workflow-engine.md)
+> for the migration record.
 
 ## Why this exists
 
@@ -304,6 +307,9 @@ pin a version.
 
 ## See also
 
-- ADR 0012 — Workflow engine domain model (the declarative DAG variant this
-  README supersedes; pending amendment).
-- ADR 0014 — Linear `.then` v1 composition (likewise pending amendment).
+- [orchestrator/docs/implement-pipeline.md](../../orchestrator/docs/implement-pipeline.md) —
+  the imperative `ctx.step` authoring model as built: four steps, resume
+  semantics, failure model, and the daemon wiring.
+- [docs/migrations/0001-mastra-to-workflow-engine.md](../../docs/migrations/0001-mastra-to-workflow-engine.md) —
+  the Mastra → `@mars/workflow` migration record: what was cut, what
+  survived, and the verification bar.
