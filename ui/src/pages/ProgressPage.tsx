@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useTodo } from '@/entities/todo/useTodo'
 import { useProgress } from '@/hooks/useProgress'
@@ -32,6 +32,34 @@ export const ProgressPage = () => {
     new Set(ALL_CLUSTER_TOGGLES),
   )
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState<string>('')
+
+  // Compute the set of IDs that match the search query (null = no active filter).
+  const searchMatchIds = useMemo((): Set<string> | null => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return null
+    const matchingTaskIds = new Set<string>(
+      (tasks ?? [])
+        .filter(
+          (t) =>
+            t.id.toLowerCase().includes(q) ||
+            t.prompt.toLowerCase().includes(q) ||
+            (t.branch?.toLowerCase() ?? '').includes(q),
+        )
+        .map((t) => t.id),
+    )
+    // Include proposals that have at least one matching child task.
+    const matchingProposalIds = new Set<string>(
+      proposals
+        .filter((p) =>
+          (tasks ?? []).some(
+            (t) => t.parentProposalId === p.id && matchingTaskIds.has(t.id),
+          ),
+        )
+        .map((p) => p.id),
+    )
+    return new Set([...matchingTaskIds, ...matchingProposalIds])
+  }, [searchQuery, tasks, proposals])
 
   const handleToggle = (cluster: ClusterToggle): void =>
     setActiveToggles((prev) => {
@@ -71,6 +99,17 @@ export const ProgressPage = () => {
         <div className="flex items-center border-b border-iron/20 bg-bg px-4 py-1">
           <RecencySlider value={recencyStop} onChange={setRecencyStop} />
         </div>
+        {/* Text search — always visible */}
+        <div className="flex items-center gap-2 border-b border-iron/20 bg-bg px-4 py-1.5">
+          <input
+            type="text"
+            data-testid="search-tasks"
+            placeholder="Search id, prompt, branch…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-fg placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-border"
+          />
+        </div>
         {/* Proposal filter — shown only when there are in-scope proposals */}
         {proposals.length > 0 ? (
           <div
@@ -108,6 +147,7 @@ export const ProgressPage = () => {
             proposals={proposals}
             ghostedClusters={ghostedClusters}
             selectedProposalId={selectedProposalId}
+            searchMatchIds={searchMatchIds}
           />
         ) : (
           <BoardView
@@ -116,6 +156,7 @@ export const ProgressPage = () => {
             error={error}
             selectedProposalId={selectedProposalId}
             ghostedClusters={ghostedClusters}
+            searchMatchIds={searchMatchIds}
           />
         )}
         <Footer />

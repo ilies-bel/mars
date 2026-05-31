@@ -225,6 +225,12 @@ export interface TopologyViewProps {
    * every other node ghosts.
    */
   selectedProposalId?: string | null
+  /**
+   * When set, only nodes whose ID is in this set stay at full opacity;
+   * every other node ghosts. null = no active text search (show all).
+   * Layout coordinates are unchanged regardless of this filter.
+   */
+  searchMatchIds?: Set<string> | null
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +254,7 @@ export const TopologyView = ({
   proposals,
   ghostedClusters,
   selectedProposalId,
+  searchMatchIds,
 }: TopologyViewProps) => {
   const { nodes, edges } = useMemo(() => buildGraph(tasks, proposals), [tasks, proposals])
   const positioned = useMemo(() => layoutNodes(nodes, edges), [nodes, edges])
@@ -334,7 +341,8 @@ export const TopologyView = ({
               ? ghostedClusters.has('Proposal')
               : ghostedClusters.has(node.cluster))
           const proposalGhosted = matchingIds !== null && !matchingIds.has(node.id)
-          const ghosted = clusterGhosted || proposalGhosted
+          const searchGhosted = searchMatchIds != null && !searchMatchIds.has(node.id)
+          const ghosted = clusterGhosted || proposalGhosted || searchGhosted
 
           const inner = (
             <g

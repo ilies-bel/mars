@@ -433,6 +433,83 @@ describe('TopologyView – blocker edge arrowhead', () => {
   })
 })
 
+describe('TopologyView – search filter (ghost non-matching nodes)', () => {
+  it('ghosts task nodes not in searchMatchIds', () => {
+    const t1 = task({ id: 'match', cluster: 'Queued' })
+    const t2 = task({ id: 'no-match', cluster: 'Queued' })
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[t1, t2]}
+        proposals={[]}
+        searchMatchIds={new Set(['match'])}
+      />,
+    )
+    // The non-matching node should be ghosted
+    expect(html).toContain('data-ghosted="true"')
+  })
+
+  it('does not ghost task nodes that are in searchMatchIds', () => {
+    const t1 = task({ id: 'match', cluster: 'Queued' })
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[t1]}
+        proposals={[]}
+        searchMatchIds={new Set(['match'])}
+      />,
+    )
+    expect(html).not.toContain('data-ghosted="true"')
+  })
+
+  it('ghosts proposal nodes not in searchMatchIds', () => {
+    const t1 = task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' })
+    const p1 = proposal('p1', 'Feature A')
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[t1]}
+        proposals={[p1]}
+        searchMatchIds={new Set(['t1'])}  // t1 matches but p1 does not
+      />,
+    )
+    expect(html).toContain('data-ghosted="true"')
+  })
+
+  it('does not reflow the layout when searchMatchIds is active (positions are unchanged)', () => {
+    const t1 = task({ id: 't1', cluster: 'Queued' })
+    const t2 = task({ id: 't2', cluster: 'Queued' })
+    const htmlFiltered = renderToStaticMarkup(
+      <TopologyView tasks={[t1, t2]} proposals={[]} searchMatchIds={new Set(['t1'])} />,
+    )
+    const htmlUnfiltered = renderToStaticMarkup(
+      <TopologyView tasks={[t1, t2]} proposals={[]} searchMatchIds={null} />,
+    )
+    const translates = (h: string) => h.match(/translate\([^)]+\)/g) ?? []
+    expect(translates(htmlFiltered)).toEqual(translates(htmlUnfiltered))
+  })
+
+  it('all edges remain drawn even when nodes are ghosted by search', () => {
+    const blocker = task({ id: 'blocker', cluster: 'In progress' })
+    const dependent = task({ id: 'dependent', cluster: 'Blocked', blockedBy: ['blocker'] })
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[blocker, dependent]}
+        proposals={[]}
+        searchMatchIds={new Set(['dependent'])}  // only dependent matches
+      />,
+    )
+    // The blocker edge must still be rendered even though 'blocker' node is ghosted
+    expect(html).toMatch(/data-edge-kind="blocker"/)
+  })
+
+  it('restores all nodes when searchMatchIds is null', () => {
+    const t1 = task({ id: 't1', cluster: 'Queued' })
+    const t2 = task({ id: 't2', cluster: 'Queued' })
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[t1, t2]} proposals={[]} searchMatchIds={null} />,
+    )
+    expect(html).not.toContain('data-ghosted="true"')
+  })
+})
+
 describe('TopologyView – fan-out layout', () => {
   it('places proposal nodes to the left of their associated task nodes', () => {
     const html = renderToStaticMarkup(

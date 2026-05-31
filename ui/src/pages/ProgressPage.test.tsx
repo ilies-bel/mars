@@ -102,3 +102,21 @@ describe('ProgressPage – responsive layout', () => {
     expect(html).toContain('hidden sm:flex')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Search input: always visible on the Progress tab.
+// ---------------------------------------------------------------------------
+
+describe('ProgressPage – search input', () => {
+  it('renders a text search input on the Progress tab', () => {
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).toContain('data-testid="search-tasks"')
+  })
+
+  it('search input is a text input element', () => {
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).toMatch(/data-testid="search-tasks"/)
+    // The element carrying data-testid must be or contain an input
+    expect(html).toMatch(/type="(?:text|search)"[^>]*data-testid="search-tasks"|data-testid="search-tasks"[^>]*type="(?:text|search)"/)
+  })
+})
