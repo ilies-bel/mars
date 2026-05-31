@@ -1,8 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useTodo } from '@/entities/todo/useTodo'
 import { useProgress } from '@/hooks/useProgress'
-import { DEFAULT_TAB, type Tab } from '@/shared/tabs'
+import {
+  readProgressStateFromUrl,
+  writeProgressStateToUrl,
+} from '@/shared/progressUrlState'
+import type { Tab } from '@/shared/tabs'
 import { BoardView } from '@/widgets/BoardView'
 import {
   ALL_CLUSTER_TOGGLES,
@@ -12,7 +16,6 @@ import {
 import { Footer } from '@/widgets/Footer'
 import {
   RecencySlider,
-  RECENCY_STOP_DEFAULT,
   recencyStopToMs,
   type RecencyStop,
 } from '@/widgets/RecencySlider'
@@ -23,16 +26,22 @@ import { KpiVector } from '@/widgets/KpiVector'
 import { TopStripe } from '@/widgets/TopStripe'
 
 export const ProgressPage = () => {
-  const [recencyStop, setRecencyStop] = useState<RecencyStop>(RECENCY_STOP_DEFAULT)
+  // Initialise every filter dimension from the URL on first render.
+  // readProgressStateFromUrl() returns defaults in non-browser environments.
+  const [initialUrlState] = useState(() => readProgressStateFromUrl())
+
+  const [recencyStop, setRecencyStop] = useState<RecencyStop>(initialUrlState.recency)
   const failedWindowMs = recencyStopToMs(recencyStop)
   const { byCluster, tasks, proposals, error, connected } = useProgress({ failedWindowMs })
   const { drafts } = useTodo()
-  const [activeTab, setActiveTab] = useState<Tab>(DEFAULT_TAB)
+  const [activeTab, setActiveTab] = useState<Tab>(initialUrlState.view)
   const [activeToggles, setActiveToggles] = useState<Set<ClusterToggle>>(
-    new Set(ALL_CLUSTER_TOGGLES),
+    initialUrlState.clusters,
   )
-  const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState<string>('')
+  const [selectedProposalId, setSelectedProposalId] = useState<string | null>(
+    initialUrlState.proposal,
+  )
+  const [searchQuery, setSearchQuery] = useState<string>(initialUrlState.query)
 
   // Compute the set of IDs that match the search query (null = no active filter).
   const searchMatchIds = useMemo((): Set<string> | null => {
@@ -68,6 +77,23 @@ export const ProgressPage = () => {
       else next.add(cluster)
       return next
     })
+
+  // Sync filter state to the URL after every change (debounced at 300 ms so
+  // rapid search keystrokes don't produce a history entry per character).
+  // history.replaceState is used — no hashchange event fires, so the app-level
+  // hash router is not disturbed.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      writeProgressStateToUrl({
+        view: activeTab,
+        query: searchQuery,
+        proposal: selectedProposalId,
+        clusters: activeToggles,
+        recency: recencyStop,
+      })
+    }, 300)
+    return () => clearTimeout(id)
+  }, [activeTab, searchQuery, selectedProposalId, activeToggles, recencyStop])
 
   // Clusters whose nodes/cards should be suppressed.
   const ghostedClusters = new Set<string>(
