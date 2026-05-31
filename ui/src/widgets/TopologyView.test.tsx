@@ -370,3 +370,101 @@ describe('TopologyView – proposal node drawer link', () => {
     expect(html).not.toContain('href="#/proposal-node/mars-abc123"')
   })
 })
+
+describe('TopologyView – legend', () => {
+  it('renders a legend element when there are nodes to display', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'In progress' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('data-legend="true"')
+  })
+
+  it('legend includes all five status labels', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('Proposal')
+    expect(html).toContain('Queued')
+    expect(html).toContain('In progress')
+    expect(html).toContain('Blocked')
+    expect(html).toContain('Failed')
+  })
+
+  it('legend describes both edge types', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    // Blocker edge
+    expect(html).toMatch(/[Bb]lock/i)
+    // Provenance edge
+    expect(html).toMatch(/[Oo]riginate/i)
+  })
+})
+
+describe('TopologyView – blocker edge arrowhead', () => {
+  it('blocker edges carry a marker-end attribute for the directional arrowhead', () => {
+    const blocker = task({ id: 'blocker', cluster: 'In progress' })
+    const dependent = task({ id: 'dependent', cluster: 'Blocked', blockedBy: ['blocker'] })
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[blocker, dependent]} proposals={[]} />,
+    )
+    // The blocker edge path must reference the arrow marker
+    expect(html).toMatch(/data-edge-kind="blocker"[^>]*marker-end="url\(#arrow-blocker\)"/)
+  })
+
+  it('provenance edges do NOT have an arrowhead (direction is obvious from fan-out layout)', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'In progress', parentProposalId: 'p1' })]}
+        proposals={[proposal('p1')]}
+      />,
+    )
+    // Provenance edge should not carry the blocker marker
+    expect(html).not.toMatch(/data-edge-kind="provenance"[^>]*marker-end/)
+  })
+})
+
+describe('TopologyView – fan-out layout', () => {
+  it('places proposal nodes to the left of their associated task nodes', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[task({ id: 't1', cluster: 'In progress', parentProposalId: 'p1' })]}
+        proposals={[proposal('p1', 'Feature A')]}
+      />,
+    )
+    // Extract the translate x for the proposal node and the task node
+    const proposalMatch = html.match(/data-node-kind="proposal"[^>]*transform="translate\((\d+)/)
+    const taskMatch = html.match(/data-node-kind="task"[^>]*transform="translate\((\d+)/)
+    expect(proposalMatch).not.toBeNull()
+    expect(taskMatch).not.toBeNull()
+    const proposalX = parseInt(proposalMatch![1]!)
+    const taskX = parseInt(taskMatch![1]!)
+    expect(proposalX).toBeLessThan(taskX)
+  })
+
+  it('groups all proposal tasks together: tasks from the same proposal share the same x column', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[
+          task({ id: 't1', cluster: 'In progress', parentProposalId: 'p1' }),
+          task({ id: 't2', cluster: 'Queued', parentProposalId: 'p1' }),
+        ]}
+        proposals={[proposal('p1', 'Feature A')]}
+      />,
+    )
+    // Both tasks should have the same translate-x
+    const taskTranslates = [...html.matchAll(/data-node-kind="task"[^>]*transform="translate\((\d+)/g)]
+    expect(taskTranslates.length).toBe(2)
+    const xValues = taskTranslates.map((m) => m[1])
+    expect(xValues[0]).toBe(xValues[1])
+  })
+})
