@@ -4,9 +4,23 @@
   "description": "A small, domain-agnostic, imperative workflow engine for local TypeScript CLIs that drive coding agents.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
   },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "prepare": "tsup",
+    "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -15,6 +29,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
+    "tsup": "^8.5.0",
     "typescript": "^6.0.3",
     "vitest": "^2.1.9"
   }
