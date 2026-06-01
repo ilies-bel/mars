@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import { focusSubgraph, type Graph } from './focusSubgraph.ts'
 
 const task = (id: string): { id: string; kind: 'task' } => ({ id, kind: 'task' })
-const idea = (id: string): { id: string; kind: 'idea' } => ({ id, kind: 'idea' })
+const proposal = (id: string): { id: string; kind: 'proposal' } => ({ id, kind: 'proposal' })
 const blocker = (from: string, to: string) => ({ from, to, kind: 'blocker' as const })
 const provenance = (from: string, to: string) => ({ from, to, kind: 'provenance' as const })
 
@@ -62,9 +62,9 @@ describe('focusSubgraph', () => {
     expect(sub.edges).toEqual([blocker('focus', 'child')])
   })
 
-  it('attaches the originating Idea as a fixed provenance hop', () => {
+  it('attaches the originating Proposal as a fixed provenance hop', () => {
     const g: Graph = {
-      nodes: [idea('i1'), idea('i2'), task('focus')],
+      nodes: [proposal('i1'), proposal('i2'), task('focus')],
       edges: [provenance('i1', 'focus'), provenance('i2', 'other-task')],
     }
     const sub = focusSubgraph(g, 'focus')
@@ -73,10 +73,10 @@ describe('focusSubgraph', () => {
     expect(sub.edges).toEqual([provenance('i1', 'focus')])
   })
 
-  it('does not pull in idea-side neighbours beyond the originating Idea', () => {
+  it('does not pull in proposal-side neighbours beyond the originating Proposal', () => {
     // i1 spawns focus AND other; the slice should NOT include `other`
     const g: Graph = {
-      nodes: [idea('i1'), task('focus'), task('other')],
+      nodes: [proposal('i1'), task('focus'), task('other')],
       edges: [provenance('i1', 'focus'), provenance('i1', 'other')],
     }
     const sub = focusSubgraph(g, 'focus')
@@ -85,10 +85,10 @@ describe('focusSubgraph', () => {
     expect(sub.edges).toEqual([provenance('i1', 'focus')])
   })
 
-  it('does not walk further upstream through the Idea provenance hop', () => {
-    // upstreamBlocker -> idea -> focus would be wrong; idea is a fixed hop only
+  it('does not walk further upstream through the Proposal provenance hop', () => {
+    // upstreamBlocker -> proposal -> focus would be wrong; proposal is a fixed hop only
     const g: Graph = {
-      nodes: [task('upstream'), idea('i1'), task('focus')],
+      nodes: [task('upstream'), proposal('i1'), task('focus')],
       edges: [blocker('upstream', 'i1' as string), provenance('i1', 'focus')],
     }
     const sub = focusSubgraph(g, 'focus')
@@ -99,7 +99,7 @@ describe('focusSubgraph', () => {
   it('combines upstream chain, one downstream hop, and provenance in one slice', () => {
     const g: Graph = {
       nodes: [
-        idea('i1'),
+        proposal('i1'),
         task('root'),
         task('mid'),
         task('focus'),

@@ -491,7 +491,7 @@ describe('TaskDetailDrawer – subgraph node click affordance', () => {
     expect(html).toContain('href="#/task/blocker"')
   })
 
-  it('proposal/idea nodes in the subgraph also carry a click affordance', () => {
+  it('proposal nodes in the subgraph also carry a click affordance', () => {
     const html = renderToStaticMarkup(
       <TaskDetailDrawer
         taskId="t1"

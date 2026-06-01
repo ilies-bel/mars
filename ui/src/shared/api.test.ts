@@ -53,7 +53,7 @@ const minTask = (overrides: Record<string, unknown> = {}) => ({
 })
 
 const minDraft = (overrides: Record<string, unknown> = {}) => ({
-  id: 'idea-1',
+  id: 'proposal-1',
   title: 'ship it',
   problem: '',
   solution: '',

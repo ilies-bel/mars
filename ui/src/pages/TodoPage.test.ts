@@ -10,10 +10,10 @@ import { describe, expect, it } from 'bun:test'
 import {
   deriveSelectedKey,
   filterAlertItems,
-  filterIdeaItems,
+  filterProposalItems,
   itemKey,
   type AlertItem,
-  type IdeaItem,
+  type ProposalItem,
 } from './TodoPageFilters'
 
 // ---------------------------------------------------------------------------
@@ -39,10 +39,10 @@ const makeAlert = (
   },
 })
 
-const makeIdea = (
+const makeProposal = (
   id: string,
-  overrides: Partial<IdeaItem['draft']> = {},
-): IdeaItem => ({
+  overrides: Partial<ProposalItem['draft']> = {},
+): ProposalItem => ({
   kind: 'draft',
   id,
   draft: {
@@ -120,55 +120,55 @@ describe('filterAlertItems', () => {
 })
 
 // ---------------------------------------------------------------------------
-// filterIdeaItems
+// filterProposalItems
 // ---------------------------------------------------------------------------
 
-describe('filterIdeaItems', () => {
+describe('filterProposalItems', () => {
   it('filters Proposals by title substring', () => {
-    const ideas = [
-      makeIdea('d1', { title: 'add search feature' }),
-      makeIdea('d2', { title: 'fix bug' }),
+    const proposals = [
+      makeProposal('d1', { title: 'add search feature' }),
+      makeProposal('d2', { title: 'fix bug' }),
     ]
-    const result = filterIdeaItems(ideas, 'search')
+    const result = filterProposalItems(proposals, 'search')
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('d1')
   })
 
   it('filters Proposals by problem substring', () => {
-    const ideas = [
-      makeIdea('d1', { problem: 'as a power user I want search' }),
-      makeIdea('d2', { problem: 'basic requirement' }),
+    const proposals = [
+      makeProposal('d1', { problem: 'as a power user I want search' }),
+      makeProposal('d2', { problem: 'basic requirement' }),
     ]
-    expect(filterIdeaItems(ideas, 'power user')).toHaveLength(1)
+    expect(filterProposalItems(proposals, 'power user')).toHaveLength(1)
   })
 
   it('filters by solution substring', () => {
-    const ideas = [
-      makeIdea('d1', { solution: 'use websockets' }),
-      makeIdea('d2', { solution: 'use polling' }),
+    const proposals = [
+      makeProposal('d1', { solution: 'use websockets' }),
+      makeProposal('d2', { solution: 'use polling' }),
     ]
-    expect(filterIdeaItems(ideas, 'websocket')).toHaveLength(1)
+    expect(filterProposalItems(proposals, 'websocket')).toHaveLength(1)
   })
 
   it('filters by id substring', () => {
-    const ideas = [makeIdea('idea-alpha-1'), makeIdea('idea-beta-2')]
-    expect(filterIdeaItems(ideas, 'alpha')).toHaveLength(1)
+    const proposals = [makeProposal('proposal-alpha-1'), makeProposal('proposal-beta-2')]
+    expect(filterProposalItems(proposals, 'alpha')).toHaveLength(1)
   })
 
   it('empty query returns all items unchanged', () => {
-    const ideas = [makeIdea('d1'), makeIdea('d2')]
-    expect(filterIdeaItems(ideas, '')).toHaveLength(2)
-    expect(filterIdeaItems(ideas, '   ')).toHaveLength(2)
+    const proposals = [makeProposal('d1'), makeProposal('d2')]
+    expect(filterProposalItems(proposals, '')).toHaveLength(2)
+    expect(filterProposalItems(proposals, '   ')).toHaveLength(2)
   })
 
   it('typing "draft" keeps all proposals (kind token)', () => {
-    const ideas = [makeIdea('d1'), makeIdea('d2'), makeIdea('d3')]
-    expect(filterIdeaItems(ideas, 'draft')).toHaveLength(3)
+    const proposals = [makeProposal('d1'), makeProposal('d2'), makeProposal('d3')]
+    expect(filterProposalItems(proposals, 'draft')).toHaveLength(3)
   })
 
   it('typing "proposal" keeps all proposals (kind token)', () => {
-    const ideas = [makeIdea('d1'), makeIdea('d2')]
-    expect(filterIdeaItems(ideas, 'proposal')).toHaveLength(2)
+    const proposals = [makeProposal('d1'), makeProposal('d2')]
+    expect(filterProposalItems(proposals, 'proposal')).toHaveLength(2)
   })
 })
 
@@ -179,16 +179,16 @@ describe('filterIdeaItems', () => {
 describe('cross-kind filter', () => {
   it('typing "stale" keeps only alerts and zeroes proposals', () => {
     const alerts = [makeAlert('t1'), makeAlert('t2')]
-    const ideas = [makeIdea('d1'), makeIdea('d2')]
+    const proposals = [makeProposal('d1'), makeProposal('d2')]
     expect(filterAlertItems(alerts, 'stale')).toHaveLength(2)
-    expect(filterIdeaItems(ideas, 'stale')).toHaveLength(0)
+    expect(filterProposalItems(proposals, 'stale')).toHaveLength(0)
   })
 
   it('typing "draft" keeps only proposals and zeroes alerts', () => {
     const alerts = [makeAlert('t1'), makeAlert('t2')]
-    const ideas = [makeIdea('d1'), makeIdea('d2')]
+    const proposals = [makeProposal('d1'), makeProposal('d2')]
     expect(filterAlertItems(alerts, 'draft')).toHaveLength(0)
-    expect(filterIdeaItems(ideas, 'draft')).toHaveLength(2)
+    expect(filterProposalItems(proposals, 'draft')).toHaveLength(2)
   })
 })
 
@@ -199,7 +199,7 @@ describe('cross-kind filter', () => {
 describe('deriveSelectedKey', () => {
   const a1 = makeAlert('t1')
   const a2 = makeAlert('t2')
-  const d1 = makeIdea('d1')
+  const d1 = makeProposal('d1')
 
   it('keeps the current key when it is present in the filtered list', () => {
     const key = itemKey(a1)
@@ -224,7 +224,7 @@ describe('deriveSelectedKey', () => {
     expect(deriveSelectedKey([a1, a2], null)).toBe(itemKey(a1))
   })
 
-  it('handles mixed alert+idea filtered list', () => {
+  it('handles mixed alert+proposal filtered list', () => {
     // Only d1 remains after filter; d1 should be selected
     expect(deriveSelectedKey([d1], itemKey(a2))).toBe(itemKey(d1))
   })
