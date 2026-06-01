@@ -68,6 +68,7 @@ import {
 } from '../lib/action-queue'
 import {
   raiseAggregatedMainCommiterFailureRow,
+  releaseMainCommitterDependents,
   sweepStaleFailedMainCommiterActionQueue,
 } from './main-dirty-action-queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
@@ -1254,6 +1255,18 @@ export const startDaemon = async (
             const payload = parseMainCommiterPayload(after.recoveryPayload)
             if (payload && payload.recipe === MAIN_COMMITER_RECIPE) {
               await raiseAggregatedMainCommiterFailureRow(after.id, log)
+              // Release dependents blocked on the dead committer so they
+              // aren't permanently wedged. Each blocked task's edge to this
+              // committer is removed; tasks with no remaining active blockers
+              // are flipped back to 'queued' and will re-dispatch once the
+              // operator resolves the dirty-main state.
+              try {
+                await releaseMainCommitterDependents(after.id, log)
+              } catch (releaseErr) {
+                log(
+                  `[main-dirty] error releasing dependents of failed committer ${after.id}: ${(releaseErr as Error).message}`,
+                )
+              }
             }
           } catch (err) {
             log(

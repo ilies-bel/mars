@@ -44,6 +44,9 @@ const ALLOWLIST = [
   // only extra-column updates and terminal-event publishes remain there.
   'mastra/blocker-resolution.ts',
   'mastra/lib/main-dirty.ts',
+  // main-dirty-action-queue.ts: releaseMainCommitterDependents flips blocked
+  // tasks back to queued inside a transaction that also calls publish().
+  'mastra/daemon/main-dirty-action-queue.ts',
   'workflows/slice-workflow.ts',
 ].map((p) => p.split('/').join(sep))
 

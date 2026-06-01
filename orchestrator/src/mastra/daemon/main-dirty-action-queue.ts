@@ -16,8 +16,10 @@
  *    specific recovery so the operator sees the affected cohort at a glance.
  */
 import { raiseActionQueueItem, supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
-import { getDefaultTaskStore } from '../lib/task-store'
+import { getDefaultTaskStore, getDefaultQueueClient } from '../lib/task-store'
 import { MAIN_COMMITER_RECIPE } from '../lib/main-dirty'
+import { publish } from '../lib/outbox'
+import { internalBus } from '../../internal-bus'
 
 /**
  * SQL fragment that matches an open actionQueue row associated with a recovery
@@ -204,4 +206,103 @@ export const raiseAggregatedMainCommiterFailureRow = async (
     `[main-dirty] aggregated-row: raised actionQueue ${actionQueueItemId} for failed committer ${recoveryTaskId} with ${n} blocked dependent(s)`,
   )
   return actionQueueItemId
+}
+
+/**
+ * On committer FAILURE, release every task that is currently blocked solely
+ * because of this committer. Each dependent's `task_blockers` edge pointing at
+ * `committerTaskId` is deleted; if no other active (non-terminal) blocker
+ * remains the task is flipped from `blocked` back to `queued` so it can
+ * re-dispatch once the operator cleans main.
+ *
+ * This prevents the deadlock where a permanently-failed committer left its
+ * dependents blocked forever. The companion fix in `main-dirty.ts` (removing
+ * `'failed'` from `ACTIVE_COMMITTER_STATUSES`) ensures new tasks at dispatch
+ * time also never attach to a failed committer — they always spawn a fresh one.
+ *
+ * Tasks with other active blockers (besides the failed committer) have their
+ * committer edge removed but remain in `blocked` state, waiting for those
+ * other prerequisites.
+ *
+ * Idempotent: a second call finds no edges or no blocked rows and is a no-op.
+ */
+export const releaseMainCommitterDependents = async (
+  committerTaskId: string,
+  log: (msg: string) => void,
+): Promise<void> => {
+  const s = await getDefaultTaskStore()
+  const now = new Date().toISOString()
+
+  // Find all tasks currently `blocked` on this committer.
+  const r = await s.query({
+    sql: `SELECT t.id AS id
+            FROM task_blockers tb
+            JOIN tasks t ON t.id = tb.task_id
+           WHERE tb.blocker_task_id = ?
+             AND t.status = 'blocked'`,
+    args: [committerTaskId],
+  })
+
+  const dependents = r.rows as unknown as Array<{ id: string }>
+  if (dependents.length === 0) return
+
+  const c = await getDefaultQueueClient()
+  let released = 0
+
+  for (const row of dependents) {
+    const tx = await c.transaction('write')
+    let flipped = false
+    try {
+      // Remove the dead committer's blocker edge. Within this transaction the
+      // deletion is immediately visible to the subquery in the UPDATE below.
+      await tx.execute({
+        sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+        args: [row.id, committerTaskId],
+      })
+      // Re-queue only when no other non-terminal blocker still exists.
+      const upd = await tx.execute({
+        sql: `UPDATE tasks
+                 SET updated_at = ?, status = 'queued'
+               WHERE id = ? AND status = 'blocked'
+                 AND NOT EXISTS (
+                   SELECT 1
+                     FROM task_blockers b
+                     JOIN tasks t2 ON t2.id = b.blocker_task_id
+                    WHERE b.task_id = ?
+                      AND t2.status NOT IN ('done', 'failed')
+                      AND b.state IN ('confirmed', 'pending-review')
+                 )`,
+        args: [now, row.id, row.id],
+      })
+      flipped = (upd.rowsAffected ?? 0) > 0
+      if (flipped) {
+        await publish(tx, 'task.unblocked', {
+          taskId: row.id,
+          blockerTaskId: committerTaskId,
+        })
+      }
+      await tx.commit()
+    } catch (error: unknown) {
+      tx.close()
+      throw error
+    }
+    if (flipped) {
+      internalBus().emit('task.unblocked', {
+        taskId: row.id,
+        blockerTaskId: committerTaskId,
+      })
+      released++
+      log(
+        `[main-dirty] re-queued task ${row.id} released from failed committer ${committerTaskId}`,
+      )
+    } else {
+      log(
+        `[main-dirty] task ${row.id}: committer edge removed but other active blockers remain; left in blocked`,
+      )
+    }
+  }
+
+  log(
+    `[main-dirty] released ${released}/${dependents.length} dependent(s) from failed committer ${committerTaskId}`,
+  )
 }

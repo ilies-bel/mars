@@ -183,11 +183,14 @@ export const serialiseMainCommiterPayload = (
 ): string => JSON.stringify(payload)
 
 /**
- * Status set the dedup query considers "still relevant". Done committers are
- * NOT included — a done committer cleared the integration branch, so its
- * hash is no longer relevant; if the branch is dirty again now, we spawn
- * a fresh recovery. Failed committers ARE included so new dirty-main hits
- * with the same diff hash join the existing cohort rather than thrashing.
+ * Status set the dedup query considers "still relevant" for attaching new
+ * dirty-main tasks. Done committers are NOT included — a done committer
+ * cleared the integration branch, so its hash is no longer relevant; if the
+ * branch is dirty again we spawn a fresh recovery. Failed committers are also
+ * NOT included: a failed committer is a dead-end that can never unblock its
+ * dependents, so attaching new tasks to it would wedge them permanently. The
+ * on-failure handler in server.ts releases blocked dependents of a failed
+ * committer back to 'queued' and raises an action-queue item for the operator.
  */
 const ACTIVE_COMMITTER_STATUSES = [
   'queued',
@@ -196,7 +199,6 @@ const ACTIVE_COMMITTER_STATUSES = [
   'merging',
   'vega-reconciling',
   'blocked',
-  'failed',
 ] as const
 
 /**
