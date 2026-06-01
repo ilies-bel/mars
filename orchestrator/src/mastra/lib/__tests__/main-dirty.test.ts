@@ -269,7 +269,12 @@ describe('spawnOrAttachMainCommitter', () => {
     expect(second.fixTaskId).not.toBe(first.fixTaskId)
   })
 
-  it('attaches (does NOT respawn) when an existing committer FAILED at the SAME hash', async () => {
+  it('respawns when an existing committer FAILED at the SAME hash (never attach to a dead committer)', async () => {
+    // A failed committer must never become a new blocker. After the fix,
+    // 'failed' is removed from ACTIVE_COMMITTER_STATUSES so the dead task
+    // is invisible to findActiveMainCommitter and a fresh one is always
+    // spawned. This prevents the deadlock reported in the bug where tasks
+    // were permanently blocked on a committer that can never succeed.
     const queue = await import('../../queue')
     await queue.initQueue()
     const src1 = await queue.enqueueTask('source-1', undefined, {
@@ -308,8 +313,9 @@ describe('spawnOrAttachMainCommitter', () => {
       sourceOriginId: src2.id,
       traceStore: nullTraceStore,
     })
-    expect(second.spawned).toBe(false)
-    expect(second.fixTaskId).toBe(first.fixTaskId)
+    // Must spawn fresh — never block behind a failed (dead) committer.
+    expect(second.spawned).toBe(true)
+    expect(second.fixTaskId).not.toBe(first.fixTaskId)
   })
 
   it('respawns after a committer reaches DONE (its hash is historical)', async () => {
