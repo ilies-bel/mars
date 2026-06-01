@@ -2,7 +2,7 @@
  * Unit tests for the shared DAG cluster-colour helpers.
  *
  * Each cluster ("In progress", "Blocked", "Failed", "Queued") and the
- * proposal/idea pseudo-kind must return distinct style objects whose values
+ * proposal pseudo-kind must return distinct style objects whose values
  * are CSS custom-property references (so the token lives in @theme, not
  * scattered as hex literals across component files).
  */
@@ -24,9 +24,17 @@ describe('dagClusterStyle – token references', () => {
     expect(s.text).toContain('proposal')
   })
 
-  it('returns proposal style for kind="idea" (TaskDetailDrawer alias)', () => {
-    const s = dagClusterStyle('idea', undefined)
+  it('returns the full proposal palette for kind="proposal"', () => {
+    const s = dagClusterStyle('proposal', undefined)
     expect(s.fill).toContain('proposal')
+    expect(s.stroke).toContain('proposal')
+    expect(s.text).toContain('proposal')
+  })
+
+  it('returns distinct styles for proposal vs task kinds', () => {
+    const prop = dagClusterStyle('proposal', undefined)
+    const taskQueued = dagClusterStyle('task', 'Queued')
+    expect(prop.fill).not.toBe(taskQueued.fill)
   })
 
   it('returns in-progress style for "In progress" cluster', () => {

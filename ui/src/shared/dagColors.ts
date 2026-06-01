@@ -19,9 +19,8 @@ export interface DagNodeStyle {
 /**
  * Returns the fill/stroke/text CSS variable references for a DAG node.
  *
- * @param kind    Node kind — `"proposal"` or `"idea"` both map to the proposal
- *                palette (TaskDetailDrawer renames proposals to `"idea"` for
- *                subgraph logic).  Any other value falls through to cluster.
+ * @param kind    Node kind — `"proposal"` maps to the proposal palette.  Any
+ *                other value falls through to cluster.
  * @param cluster Server-assigned cluster label, or `undefined` for unknown /
  *                unclassified tasks (treated as "Queued").
  */
@@ -29,7 +28,7 @@ export const dagClusterStyle = (
   kind: string,
   cluster: string | undefined,
 ): DagNodeStyle => {
-  if (kind === 'proposal' || kind === 'idea') {
+  if (kind === 'proposal') {
     return {
       fill: 'var(--color-dag-proposal-fill)',
       stroke: 'var(--color-dag-proposal-stroke)',

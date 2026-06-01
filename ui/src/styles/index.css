@@ -61,15 +61,19 @@
   --color-dag-in-progress-fill:    #431407;
   --color-dag-in-progress-stroke:  #ea580c;
   --color-dag-in-progress-text:    #fdba74;
-  --color-dag-blocked-fill:        #18181b;
-  --color-dag-blocked-stroke:      #71717a;
-  --color-dag-blocked-text:        #a1a1aa;
+  /* Blocked: warm amber/ochre — separated from Queued's cool grey so the two
+     statuses are clearly distinct on the dark canvas (was #18181b vs Queued's
+     #1c1917, near-identical). Mirror these in CLUSTER_STYLE (topologyGraphModel.ts). */
+  --color-dag-blocked-fill:        #3f2a14;
+  --color-dag-blocked-stroke:      #d9a441;
+  --color-dag-blocked-text:        #fde9c8;
   --color-dag-failed-fill:         #450a0a;
   --color-dag-failed-stroke:       #dc2626;
   --color-dag-failed-text:         #fca5a5;
-  --color-dag-queued-fill:         #1c1917;
-  --color-dag-queued-stroke:       #78716c;
-  --color-dag-queued-text:         #d6d3d1;
+  /* Queued: cool grey — clearly cooler than Blocked's warm ochre. */
+  --color-dag-queued-fill:         #2a2a30;
+  --color-dag-queued-stroke:       #9ca3af;
+  --color-dag-queued-text:         #e5e7eb;
   --color-dag-edge-provenance:     #7c3aed;
   --color-dag-edge-blocker:        #52525b;
 

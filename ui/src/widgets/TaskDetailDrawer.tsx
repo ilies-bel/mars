@@ -117,7 +117,6 @@ const MINI_PAD_X = 12
 const MINI_PAD_Y = 12
 
 // Delegates to the shared dagClusterStyle so both canvases always match.
-// The 'idea' kind is TaskDetailDrawer's alias for proposal nodes.
 const miniNodeStyle = dagClusterStyle
 
 interface PositionedMiniNode {
@@ -137,7 +136,7 @@ interface SubgraphLayout {
 /**
  * Builds the focus subgraph for the drawer mini-canvas.
  *
- * Proposal nodes are mapped to `kind='idea'` so `focusSubgraph` correctly
+ * Proposal nodes are built with `kind='proposal'` so `focusSubgraph` correctly
  * treats provenance edges as fixed terminal hops.  Extra fields (`cluster`,
  * `label`) pass through the `GraphNode` index signature and are read back
  * after the subgraph slice is computed.
@@ -163,7 +162,7 @@ const buildSubgraphLayout = (
     })),
     ...proposals.map((p) => ({
       id: p.id,
-      kind: 'idea' as const,
+      kind: 'proposal' as const,
       cluster: undefined as string | undefined,
       label: p.title.slice(0, 30),
     })),
@@ -180,7 +179,7 @@ const buildSubgraphLayout = (
   }
 
   // focusSubgraph returns the task + its full upstream chain + one downstream
-  // hop + the originating Proposal (as 'idea' provenance).
+  // hop + the originating Proposal (as 'proposal' provenance).
   const subgraph = focusSubgraph({ nodes: graphNodes, edges: graphEdges }, taskId)
 
   // Topological layer assignment — identical algorithm to TopologyView.
@@ -861,9 +860,6 @@ export const TaskDetailDrawer = ({
                   Enter both invoke navigate(), matching TopologyView's pattern. */}
               {subgraph.positioned.map((node) => {
                 const s = miniNodeStyle(node.kind, node.cluster)
-                // Translate 'idea' back to 'proposal' for data-node-kind so the
-                // attribute matches TopologyView's convention on the main canvas.
-                const displayKind = node.kind === 'idea' ? 'proposal' : node.kind
                 return (
                   <a
                     key={node.id}
@@ -876,7 +872,7 @@ export const TaskDetailDrawer = ({
                   >
                     <g
                       data-node-id={node.id}
-                      data-node-kind={displayKind}
+                      data-node-kind={node.kind}
                       {...(node.kind === 'task' ? { 'data-cluster': node.cluster } : {})}
                       transform={`translate(${node.x}, ${node.y})`}
                     >

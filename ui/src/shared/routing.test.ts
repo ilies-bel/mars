@@ -15,7 +15,7 @@ const emptyTodo = (): TodoPayload => ({ drafts: [], staleWorktrees: [] })
 
 const withDrafts = (n: number): TodoPayload => ({
   drafts: Array.from({ length: n }, (_, i) => ({
-    id: `idea-${i}`,
+    id: `proposal-${i}`,
     title: `title ${i}`,
     problem: '',
     solution: '',

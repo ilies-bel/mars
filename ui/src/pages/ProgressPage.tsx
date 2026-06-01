@@ -174,6 +174,7 @@ export const ProgressPage = () => {
             ghostedClusters={ghostedClusters}
             selectedProposalId={selectedProposalId}
             searchMatchIds={searchMatchIds}
+            onSelectProposal={setSelectedProposalId}
           />
         ) : (
           <BoardView

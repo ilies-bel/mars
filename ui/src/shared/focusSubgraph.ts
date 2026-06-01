@@ -7,7 +7,7 @@
  *   - the focused task,
  *   - its full upstream blocker chain back to the roots,
  *   - one downstream hop (immediate dependents),
- *   - the originating Idea attached as a fixed provenance hop.
+ *   - the originating Proposal attached as a fixed provenance hop.
  *
  * When no node is focused (null/undefined/empty) or the focus id is absent
  * from the graph, the input graph is returned unchanged — the caller decides
@@ -16,13 +16,13 @@
  * Edges:
  *   - kind 'blocker' goes blocker -> dependent (so `e.to === current` is the
  *     upstream direction from `current`'s perspective).
- *   - kind 'provenance' goes idea -> task. We never walk further upstream
- *     through an Idea hop; the Idea is a fixed terminal provenance node.
+ *   - kind 'provenance' goes proposal -> task. We never walk further upstream
+ *     through a Proposal hop; the Proposal is a fixed terminal provenance node.
  *
  * The function is pure and side-effect-free.
  */
 
-type NodeKind = 'task' | 'idea'
+type NodeKind = 'task' | 'proposal'
 type EdgeKind = 'blocker' | 'provenance'
 
 interface GraphNode {
@@ -83,8 +83,8 @@ export const focusSubgraph = (graph: Graph, focusId: string | null | undefined):
     keepNodes.add(e.to)
   }
 
-  // Provenance: the originating Idea (idea -> focus). Fixed hop, not traversed
-  // further upstream.
+  // Provenance: the originating Proposal (proposal -> focus). Fixed hop, not
+  // traversed further upstream.
   for (const e of graph.edges) {
     if (e.kind !== 'provenance') continue
     if (e.to !== focusId) continue

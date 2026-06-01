@@ -11,8 +11,8 @@ import type { DraftFeature } from '../shared/schemas'
 // ---- Types ----------------------------------------------------------------
 
 export type AlertItem = { kind: 'stale'; id: string; worktree: StaleWorktree }
-export type IdeaItem = { kind: 'draft'; id: string; draft: DraftFeature }
-export type SidebarItem = AlertItem | IdeaItem
+export type ProposalItem = { kind: 'draft'; id: string; draft: DraftFeature }
+export type SidebarItem = AlertItem | ProposalItem
 
 export const itemKey = (item: SidebarItem): string => `${item.kind}:${item.id}`
 
@@ -49,10 +49,10 @@ export function filterAlertItems(items: AlertItem[], query: string): AlertItem[]
 }
 
 /**
- * Case-insensitive substring filter for idea (draft/proposal) items.
+ * Case-insensitive substring filter for draft proposal items.
  * A trimmed empty query returns the list unchanged.
  */
-export function filterIdeaItems(items: IdeaItem[], query: string): IdeaItem[] {
+export function filterProposalItems(items: ProposalItem[], query: string): ProposalItem[] {
   const q = query.trim().toLowerCase()
   if (!q) return items
   return items.filter((item) => {
