@@ -1777,6 +1777,48 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
     await publish(tx, 'task.dropped', { taskId: id, dropReason: 'purged' })
     await publish(tx, 'task.terminal', { taskId: id, reason: 'purged' })
 
+    // Release dependents: tasks blocked on <id> that have no other non-terminal
+    // blocker must flip to 'queued'. This must run BEFORE the bulk DELETE below
+    // so the NOT-EXISTS guard sees the correct remaining edge state.
+    // The individual edge deletions here make the remaining bulk DELETE a no-op
+    // for those rows — correctness is unchanged either way.
+    const depRows = await tx.execute({
+      sql: `SELECT task_id FROM task_blockers WHERE blocker_task_id = ?`,
+      args: [id],
+    })
+    const dependentIds = depRows.rows.map(
+      (r) => (r as unknown as { task_id: string }).task_id,
+    )
+    const releaseNow = new Date().toISOString()
+    for (const depId of dependentIds) {
+      // Remove this specific edge so the NOT-EXISTS subquery below does not
+      // count the dropped task as an active blocker when deciding to re-queue.
+      await tx.execute({
+        sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+        args: [depId, id],
+      })
+      // Re-queue the dependent only when every other blocker is already terminal.
+      // updated_at precedes status in the SET clause — exempt form required by
+      // the architecture guard (status-writer-singleton.test.ts).
+      const upd = await tx.execute({
+        sql: `UPDATE tasks
+                 SET updated_at = ?, status = 'queued'
+               WHERE id = ? AND status = 'blocked'
+                 AND NOT EXISTS (
+                   SELECT 1
+                     FROM task_blockers b
+                     JOIN tasks t2 ON t2.id = b.blocker_task_id
+                    WHERE b.task_id = ?
+                      AND t2.status NOT IN ('done', 'failed')
+                      AND b.state IN ('confirmed', 'pending-review')
+                 )`,
+        args: [releaseNow, depId, depId],
+      })
+      if ((upd.rowsAffected ?? 0) > 0) {
+        await publish(tx, 'task.unblocked', { taskId: depId, blockerTaskId: id })
+      }
+    }
+
     await tx.execute({
       sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
       args: [id, id],
