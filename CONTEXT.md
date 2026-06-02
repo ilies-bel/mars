@@ -374,3 +374,7 @@ _Avoid_: repo, workspace, target
 **Project registry**:
 The operator-maintained file listing the repo roots the dashboard exposes as Projects; the UI server's sole source of truth for which Projects exist.
 _Avoid_: projects.json, project list, workspace file
+
+**Context graph**:
+The task detail drawer's vertical mini-graph showing a focused task's originating Proposal, blocker chain, and one downstream hop, distinct from the main Progress Topology canvas.
+_Avoid_: context drawer, mini-graph, dependency graph, subgraph view
