@@ -365,6 +365,13 @@ export const startHttpServer = async (
   }
 
   const server: Server = createServer((req, res) => {
+    // GET /healthz — liveness probe. Pure read; no draining gate so the UI
+    // correctly shows the daemon as live even while it is draining.
+    if (req.method === 'GET' && req.url === '/healthz') {
+      sendJson(res, 200, { ok: true })
+      return
+    }
+
     // GET /error-kinds — the action-menu registry. Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/error-kinds') {
       sendJson(res, 200, { ok: true, errorKinds: listErrorKinds() })
