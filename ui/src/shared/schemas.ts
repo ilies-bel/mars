@@ -452,21 +452,6 @@ export type DaemonHealth = z.infer<typeof daemonHealthSchema>
 export type Project = z.infer<typeof projectSchema>
 
 // ----------------------------------------------------------------------------
-// Framework update availability (daemon `/view/framework-update` →
-// proxied as `/api/framework-update`). Reflects the installed vs latest
-// version state; the actual self-update action is a separate task.
-// ----------------------------------------------------------------------------
-
-export const frameworkUpdateSchema = z.object({
-  installed: z.string(),
-  latest: z.string(),
-  available: z.boolean(),
-  checkedAt: z.string().nullable(),
-  releaseUrl: z.string().nullable(),
-})
-
-export type FrameworkUpdate = z.infer<typeof frameworkUpdateSchema>
-
 export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
 export type ActionDescriptor = z.infer<typeof actionDescriptorSchema>
 export type DagNode = z.infer<typeof dagNodeSchema>

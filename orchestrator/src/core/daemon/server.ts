@@ -51,7 +51,7 @@ import { getDefaultTaskStore } from '../lib/task-store'
 import { getDefaultDomainTaskStore } from '../store/task-store'
 import { listTerminalEvents } from './view/terminal-events'
 import { listProposals, promoteProposal } from '../proposals'
-import type { DraftFeature, FrameworkUpdateState, StaleWorktreeAlert } from './http-server'
+import type { DraftFeature, StaleWorktreeAlert } from './http-server'
 import {
   CANCELLED_FAILURE_REASON,
   markOriginDoneFromRecovery,
@@ -2784,21 +2784,6 @@ export const startDaemon = async (
 
       return { drafts, staleWorktrees }
     },
-    viewFrameworkUpdate: async (): Promise<FrameworkUpdateState> => {
-      const cacheFile = resolvePath(resolveContext().stateDir, 'update.json')
-      try {
-        const raw = await readFile(cacheFile, 'utf8')
-        return JSON.parse(raw) as FrameworkUpdateState
-      } catch {
-        return {
-          installed: MARS_VERSION,
-          latest: MARS_VERSION,
-          available: false,
-          checkedAt: null,
-          releaseUrl: null,
-        }
-      }
-    },
     viewTerminalEvents: () =>
       listTerminalEvents(getDefaultDomainTaskStore()).then((events) => ({
         events,
@@ -2866,28 +2851,6 @@ export const startDaemon = async (
       log(`[blocker-resolution] boot drain failed: ${(err as Error).message}`)
     }
   })()
-
-  // ── GitHub release update poller ─────────────────────────────────────────
-  // Fetches https://api.github.com/repos/ilies-bel/mars/releases/latest once
-  // on startup and then every UPDATE_POLL_INTERVAL_MS (6 h). Writes the result
-  // to .mars/update.json; on any failure it leaves the cache untouched and
-  // logs at debug level. .unref() so the interval never prevents shutdown.
-  const { pollGithubRelease, UPDATE_POLL_INTERVAL_MS } = await import('./github-update-poller')
-  const runUpdatePoll = (): void => {
-    void (async () => {
-      try {
-        await pollGithubRelease(resolveContext().stateDir, {
-          debug: (msg) => log(msg),
-        })
-      } catch (err) {
-        log(`[github-update-poller] unexpected error: ${(err as Error).message}`)
-      }
-    })()
-  }
-  // One-shot on startup (fire-and-forget; errors already swallowed inside).
-  runUpdatePoll()
-  const githubUpdatePoll = setInterval(runUpdatePoll, UPDATE_POLL_INTERVAL_MS)
-  githubUpdatePoll.unref()
 
   // ── Poll-fallback tick ────────────────────────────────────────────────────
   // drain() is otherwise purely event-driven (bus 'task.added'/'task.queued'
@@ -3074,7 +3037,6 @@ export const startDaemon = async (
     if (shuttingDown) return
     shuttingDown = true
     clearInterval(pollFallback)
-    clearInterval(githubUpdatePoll)
     clearInterval(staleSweep)
     clearInterval(observabilityWatchdog)
     clearInterval(observabilitySweep)
