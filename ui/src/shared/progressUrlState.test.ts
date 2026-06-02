@@ -17,7 +17,6 @@ describe('decodeProgressState', () => {
     expect(state.view).toBe(defaults.view)
     expect(state.query).toBe(defaults.query)
     expect(state.proposal).toBeNull()
-    expect(state.recency).toBe(defaults.recency)
     expect(state.clusters.size).toBe(4)
   })
 
@@ -26,7 +25,6 @@ describe('decodeProgressState', () => {
     expect(state.view).toBe('topology')
     expect(state.query).toBe('')
     expect(state.proposal).toBeNull()
-    expect(state.recency).toBe('24h')
     expect([...state.clusters].sort()).toEqual(
       ['Blocked', 'Failed', 'In progress', 'Proposal'],
     )
@@ -102,20 +100,11 @@ describe('decodeProgressState', () => {
     expect(state.clusters.has('Proposal')).toBe(true)
   })
 
-  it('decodes a non-default recency stop', () => {
-    expect(decodeProgressState('#/progress?recency=7d').recency).toBe('7d')
-  })
-
-  it('falls back to the default recency for an unknown value', () => {
-    expect(decodeProgressState('#/progress?recency=bogus').recency).toBe('24h')
-  })
-
-  it('decodes all recency stop values', () => {
-    for (const stop of ['1h', '6h', '24h', '7d', '30d', 'all'] as const) {
-      expect(decodeProgressState(`#/progress?recency=${stop}`).recency).toBe(
-        stop,
-      )
-    }
+  it('silently ignores the legacy recency param', () => {
+    // The recency param no longer exists; old URLs with it should not throw.
+    const state = decodeProgressState('#/progress?recency=7d')
+    expect(state.view).toBe('topology')
+    expect(state.clusters.size).toBe(4)
   })
 })
 
@@ -191,14 +180,8 @@ describe('encodeProgressState', () => {
     expect(encoded).toContain('clusters=')
   })
 
-  it('encodes a non-default recency stop', () => {
-    const state: ProgressUrlState = { ...defaultProgressUrlState(), recency: '7d' }
-    expect(encodeProgressState(state)).toContain('recency=7d')
-  })
-
-  it('omits the recency param for the default 24h stop', () => {
-    const state: ProgressUrlState = { ...defaultProgressUrlState(), recency: '24h' }
-    expect(encodeProgressState(state)).not.toContain('recency=')
+  it('never encodes a recency param', () => {
+    expect(encodeProgressState(defaultProgressUrlState())).not.toContain('recency=')
   })
 
   it('starts with ? when any param is present', () => {
@@ -257,26 +240,18 @@ describe('encode → decode round-trip', () => {
     expect(restored.clusters.size).toBe(0)
   })
 
-  it('restores non-default recency stop', () => {
-    const state: ProgressUrlState = { ...defaultProgressUrlState(), recency: '1h' }
-    const restored = decodeProgressState(`#/progress${encodeProgressState(state)}`)
-    expect(restored.recency).toBe('1h')
-  })
-
   it('restores a fully non-default state', () => {
     const state: ProgressUrlState = {
       view: 'board',
       query: 'test search',
       proposal: 'p-abc',
       clusters: new Set(['Proposal', 'In progress'] as const),
-      recency: '7d',
     }
     const hash = `#/progress${encodeProgressState(state)}`
     const restored = decodeProgressState(hash)
     expect(restored.view).toBe('board')
     expect(restored.query).toBe('test search')
     expect(restored.proposal).toBe('p-abc')
-    expect(restored.recency).toBe('7d')
     expect(restored.clusters.has('Proposal')).toBe(true)
     expect(restored.clusters.has('In progress')).toBe(true)
     expect(restored.clusters.has('Blocked')).toBe(false)

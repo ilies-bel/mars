@@ -174,7 +174,7 @@ describe('GET /api/progress — column-view cluster contract', () => {
     }
   })
 
-  it('buckets blocked into Blocked and failed (recent) into Failed, with single-integer cluster counts', async () => {
+  it('buckets blocked into Blocked and failed into Failed, with single-integer cluster counts', async () => {
     const qc = createClient({ url: `file:${queueDbPath}` })
     await insertTask(qc, 't-blocked-1', 'blocked')
     await insertTask(qc, 't-blocked-2', 'blocked')
@@ -372,15 +372,10 @@ describe('GET /api/progress — proposal nodes for DAG view', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Slice 12 of PRD 10150b71: recency slider — ?failedWindow query param
+// Failed tasks are always in scope — no recency gate
 // ---------------------------------------------------------------------------
-//
-// The slider controls how far back the Failed cluster looks. The server must
-// honour a `?failedWindow=<ms>` (number) or `?failedWindow=all` query
-// parameter. In progress and Blocked tasks are never affected.
-//
 
-describe('GET /api/progress — recency slider: ?failedWindow query param', () => {
+describe('GET /api/progress — all failed tasks are always in scope', () => {
   let repo: string
   let server: ReturnType<typeof Bun.serve> | null = null
   let baseUrl: string
@@ -404,43 +399,7 @@ describe('GET /api/progress — recency slider: ?failedWindow query param', () =
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('default (no param) uses a 24h window: recent failed task appears, old one is excluded', async () => {
-    const now = Date.now()
-    const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString()
-    const twentyFiveHoursAgo = new Date(now - 25 * 60 * 60 * 1000).toISOString()
-
-    const qc = createClient({ url: `file:${queueDbPath}` })
-    await insertTask(qc, 't-failed-recent', 'failed', twoHoursAgo)
-    await insertTask(qc, 't-failed-old', 'failed', twentyFiveHoursAgo)
-    qc.close()
-
-    const res = await fetch(`${baseUrl}/api/progress`)
-    const body = (await res.json()) as ProgressBody
-    const ids = body.tasks.map((t) => t.id)
-
-    expect(ids).toContain('t-failed-recent')
-    expect(ids).not.toContain('t-failed-old')
-  })
-
-  it('?failedWindow=3600000 (1h) excludes a failed task updated 2h ago', async () => {
-    const now = Date.now()
-    const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString()
-    const thirtyMinutesAgo = new Date(now - 30 * 60 * 1000).toISOString()
-
-    const qc = createClient({ url: `file:${queueDbPath}` })
-    await insertTask(qc, 't-failed-2h', 'failed', twoHoursAgo)
-    await insertTask(qc, 't-failed-30m', 'failed', thirtyMinutesAgo)
-    qc.close()
-
-    const res = await fetch(`${baseUrl}/api/progress?failedWindow=3600000`)
-    const body = (await res.json()) as ProgressBody
-    const ids = body.tasks.map((t) => t.id)
-
-    expect(ids).toContain('t-failed-30m')
-    expect(ids).not.toContain('t-failed-2h')
-  })
-
-  it('?failedWindow=all includes all failed tasks regardless of age', async () => {
+  it('includes all failed tasks regardless of age', async () => {
     const now = Date.now()
     const twoYearsAgo = new Date(now - 2 * 365 * 24 * 60 * 60 * 1000).toISOString()
     const recent = new Date(now - 10 * 60 * 1000).toISOString()
@@ -450,7 +409,7 @@ describe('GET /api/progress — recency slider: ?failedWindow query param', () =
     await insertTask(qc, 't-failed-recent', 'failed', recent)
     qc.close()
 
-    const res = await fetch(`${baseUrl}/api/progress?failedWindow=all`)
+    const res = await fetch(`${baseUrl}/api/progress`)
     const body = (await res.json()) as ProgressBody
     const ids = body.tasks.map((t) => t.id)
 
@@ -458,30 +417,5 @@ describe('GET /api/progress — recency slider: ?failedWindow query param', () =
     expect(ids).toContain('t-failed-recent')
     const counts = countBy(body.tasks)
     expect(counts.Failed).toBe(2)
-  })
-
-  it('?failedWindow does not affect In progress or Blocked tasks', async () => {
-    const now = Date.now()
-    const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString()
-
-    const qc = createClient({ url: `file:${queueDbPath}` })
-    await insertTask(qc, 't-running', 'running', twoHoursAgo)
-    await insertTask(qc, 't-blocked', 'blocked', twoHoursAgo)
-    await insertTask(qc, 't-failed-2h', 'failed', twoHoursAgo)
-    qc.close()
-
-    // 1h window: the failed task 2h old should be excluded, but running/blocked remain
-    const res = await fetch(`${baseUrl}/api/progress?failedWindow=3600000`)
-    const body = (await res.json()) as ProgressBody
-    const ids = body.tasks.map((t) => t.id)
-
-    expect(ids).toContain('t-running')
-    expect(ids).toContain('t-blocked')
-    expect(ids).not.toContain('t-failed-2h')
-
-    const counts = countBy(body.tasks)
-    expect(counts['In progress']).toBe(1)
-    expect(counts.Blocked).toBe(1)
-    expect(counts.Failed).toBe(0)
   })
 })

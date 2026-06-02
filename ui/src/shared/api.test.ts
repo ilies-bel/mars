@@ -213,26 +213,12 @@ describe('fetchProgress', () => {
     fetchSpy.mockRestore()
   })
 
-  it('calls /api/progress without a query string when no failedWindowMs is given', async () => {
+  it('calls /api/progress without a failedWindow query param', async () => {
     fetchSpy.mockResolvedValue(json({ tasks: [], proposals: [] }))
     await fetchProgress()
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
     expect(calledUrl).not.toContain('failedWindow')
-  })
-
-  it('appends ?failedWindow=<ms> when a numeric failedWindowMs is given', async () => {
-    fetchSpy.mockResolvedValue(json({ tasks: [], proposals: [] }))
-    await fetchProgress(3_600_000)
-    const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
-    expect(calledUrl).toContain('failedWindow=3600000')
-  })
-
-  it('appends ?failedWindow=all when failedWindowMs is null', async () => {
-    fetchSpy.mockResolvedValue(json({ tasks: [], proposals: [] }))
-    await fetchProgress(null)
-    const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
-    expect(calledUrl).toContain('failedWindow=all')
   })
 
   it('returns typed tasks and proposals on a valid response', async () => {
@@ -569,7 +555,7 @@ describe('fetchTasks – ?project= appended', () => {
   })
 })
 
-describe('fetchProgress – ?project= appended alongside failedWindow', () => {
+describe('fetchProgress – ?project= param', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let fetchSpy: Mock<any>
   beforeEach(() => {
@@ -579,23 +565,19 @@ describe('fetchProgress – ?project= appended alongside failedWindow', () => {
     fetchSpy.mockRestore()
   })
 
-  it('appends &project=<id> after existing ?failedWindow param', async () => {
+  it('appends ?project=<id> when a projectId is given', async () => {
     fetchSpy.mockResolvedValue(json({ tasks: [], proposals: [] }))
-    await fetchProgress(3_600_000, 'proj-abc')
+    await fetchProgress('proj-abc')
     const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
-    expect(calledUrl).toContain('failedWindow=3600000')
     expect(calledUrl).toContain('project=proj-abc')
-    // project must come after the ? separator (i.e. as &project)
-    const questionMark = calledUrl.indexOf('?')
-    const projectIdx = calledUrl.indexOf('project=')
-    expect(projectIdx).toBeGreaterThan(questionMark)
+    expect(calledUrl).not.toContain('failedWindow')
   })
 
-  it('uses ?project= when there is no failedWindow param', async () => {
+  it('omits ?project= when no projectId is given', async () => {
     fetchSpy.mockResolvedValue(json({ tasks: [], proposals: [] }))
-    await fetchProgress(undefined, 'proj-xyz')
+    await fetchProgress()
     const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
-    expect(calledUrl).toContain('?project=proj-xyz')
+    expect(calledUrl).not.toContain('project=')
   })
 })
 

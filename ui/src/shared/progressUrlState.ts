@@ -1,7 +1,7 @@
 /**
  * URL state encoding/decoding for the Progress tab's filter controls.
  *
- * Five filter dimensions are encoded as query parameters appended to the
+ * Four filter dimensions are encoded as query parameters appended to the
  * `#/progress` hash:
  *
  *   view        'topology' (default, omitted) | 'board'
@@ -9,9 +9,8 @@
  *   proposal    proposal id to filter by (omitted when null)
  *   clusters    comma-separated list of active ClusterToggle values
  *               (omitted when all four are active — the default)
- *   recency     '1h' | '6h' | '24h' (default, omitted) | '7d' | '30d' | 'all'
  *
- * Example: `#/progress?view=board&q=deploy&clusters=Proposal,Blocked&recency=7d`
+ * Example: `#/progress?view=board&q=deploy&clusters=Proposal,Blocked`
  *
  * Default values are omitted to keep URLs clean. Absent parameters decode as
  * defaults, so a bare `#/progress` hash produces the full-default state.
@@ -24,15 +23,12 @@ import type { Tab } from './tabs'
 import { DEFAULT_TAB } from './tabs'
 import type { ClusterToggle } from '@/widgets/ClusterToggleBar'
 import { ALL_CLUSTER_TOGGLES } from '@/widgets/ClusterToggleBar'
-import type { RecencyStop } from './recencyStop'
-import { RECENCY_STOP_DEFAULT, RECENCY_STOPS } from './recencyStop'
 
 export type ProgressUrlState = {
   view: Tab
   query: string
   proposal: string | null
   clusters: Set<ClusterToggle>
-  recency: RecencyStop
 }
 
 /** Returns a fresh default state (new Set per call — not a shared reference). */
@@ -41,7 +37,6 @@ export const defaultProgressUrlState = (): ProgressUrlState => ({
   query: '',
   proposal: null,
   clusters: new Set(ALL_CLUSTER_TOGGLES),
-  recency: RECENCY_STOP_DEFAULT,
 })
 
 /**
@@ -67,10 +62,6 @@ export const encodeProgressState = (state: ProgressUrlState): string => {
   const activeList = ALL_CLUSTER_TOGGLES.filter((c) => state.clusters.has(c))
   if (activeList.length !== ALL_CLUSTER_TOGGLES.length) {
     parts.push(`clusters=${activeList.map(encodeURIComponent).join(',')}`)
-  }
-
-  if (state.recency !== RECENCY_STOP_DEFAULT) {
-    parts.push(`recency=${encodeURIComponent(state.recency)}`)
   }
 
   return parts.length > 0 ? `?${parts.join('&')}` : ''
@@ -119,14 +110,7 @@ export const decodeProgressState = (hash: string): ProgressUrlState => {
     clusters = new Set(ALL_CLUSTER_TOGGLES)
   }
 
-  const rawRecency = params.get('recency')
-  const recency: RecencyStop =
-    rawRecency !== undefined &&
-    (RECENCY_STOPS as readonly string[]).includes(rawRecency)
-      ? (rawRecency as RecencyStop)
-      : RECENCY_STOP_DEFAULT
-
-  return { view, query, proposal, clusters, recency }
+  return { view, query, proposal, clusters }
 }
 
 /**

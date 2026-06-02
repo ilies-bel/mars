@@ -13,15 +13,6 @@ interface State {
   connected: boolean
 }
 
-interface UseProgressOptions {
-  /**
-   * Recency window for the Failed cluster in milliseconds. `null` means "all"
-   * (no cutoff). `undefined` uses the server default (24h). Changing this
-   * value re-fetches /api/progress with an updated ?failedWindow parameter.
-   */
-  failedWindowMs?: number | null
-}
-
 const emptyByCluster = (): Record<Cluster, ProgressTask[]> => ({
   Queued: [],
   'In progress': [],
@@ -29,16 +20,15 @@ const emptyByCluster = (): Record<Cluster, ProgressTask[]> => ({
   Failed: [],
 })
 
-export const useProgress = (options: UseProgressOptions = {}): State => {
-  const { failedWindowMs } = options
+export const useProgress = (): State => {
   const { focusedProjectId: projectId, projectsSettled, projectsError, projects } = useFocusedProject()
   const connected = useSseConnected()
   // Option (a) fallback: fire without ?project= when registry is empty so the
   // server's --repo default can answer.
   const projectsEmpty = projectsSettled && projectsError === null && projects.length === 0
   const query = useQuery({
-    queryKey: ['progress', projectId, failedWindowMs ?? 'default'],
-    queryFn: () => fetchProgress(failedWindowMs, projectId ?? undefined),
+    queryKey: ['progress', projectId],
+    queryFn: () => fetchProgress(projectId ?? undefined),
     enabled: projectId !== null || projectsEmpty,
   })
 

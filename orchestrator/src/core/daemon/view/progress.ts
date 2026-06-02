@@ -94,19 +94,10 @@ export interface ProposalReader {
 
 /**
  * Maps a task to its Progress-tab cluster, or `null` if the task is out of
- * scope (draft/done/dropped, or failed older than the recency window).
- *
- * `windowMs` controls how far back the Failed cluster looks:
- * - A positive number means "include failed tasks updated within the last
- *   `windowMs` milliseconds".
- * - `null` means "all" — no recency cutoff; every failed task is in scope.
+ * scope (draft/done/dropped). All failed tasks are always in scope — there
+ * is no recency gate on the Failed cluster.
  */
-export const clusterFor = (
-  status: string,
-  updatedAt: string,
-  now: number,
-  windowMs: number | null,
-): Cluster | null => {
+export const clusterFor = (status: string): Cluster | null => {
   switch (status) {
     case 'queued':
       return 'Queued'
@@ -117,12 +108,8 @@ export const clusterFor = (
       return 'In progress'
     case 'blocked':
       return 'Blocked'
-    case 'failed': {
-      if (windowMs === null) return 'Failed'
-      const ms = Date.parse(updatedAt)
-      if (Number.isNaN(ms)) return 'Failed'
-      return now - ms <= windowMs ? 'Failed' : null
-    }
+    case 'failed':
+      return 'Failed'
     default:
       return null
   }
@@ -155,14 +142,13 @@ const normaliseSource = (raw: unknown): ProposalSource => {
 export const buildProgressView = async (
   taskStore: ProgressTaskStore,
   proposalReader: ProposalReader,
-  opts: { now: number; failedWindowMs: number | null },
 ): Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[] }> => {
   const rows = await taskStore.listProgressTasks()
   const tasks: ProgressTask[] = []
   const proposalIdSet = new Set<string>()
 
   for (const row of rows) {
-    const cluster = clusterFor(row.status, row.updatedAt, opts.now, opts.failedWindowMs)
+    const cluster = clusterFor(row.status)
     if (cluster === null) continue
     if (row.parentProposalId) proposalIdSet.add(row.parentProposalId)
 

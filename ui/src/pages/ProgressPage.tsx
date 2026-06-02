@@ -14,11 +14,6 @@ import {
   type ClusterToggle,
 } from '@/widgets/ClusterToggleBar'
 import { Footer } from '@/widgets/Footer'
-import {
-  RecencySlider,
-  recencyStopToMs,
-  type RecencyStop,
-} from '@/widgets/RecencySlider'
 import { Sidebar } from '@/widgets/Sidebar'
 import { TabStrip } from '@/widgets/TabStrip'
 import { TopologyView } from '@/widgets/TopologyView'
@@ -30,9 +25,7 @@ export const ProgressPage = () => {
   // readProgressStateFromUrl() returns defaults in non-browser environments.
   const [initialUrlState] = useState(() => readProgressStateFromUrl())
 
-  const [recencyStop, setRecencyStop] = useState<RecencyStop>(initialUrlState.recency)
-  const failedWindowMs = recencyStopToMs(recencyStop)
-  const { byCluster, tasks, proposals, error, connected } = useProgress({ failedWindowMs })
+  const { byCluster, tasks, proposals, error, connected } = useProgress()
   const { drafts } = useTodo()
   const [activeTab, setActiveTab] = useState<Tab>(initialUrlState.view)
   const [activeToggles, setActiveToggles] = useState<Set<ClusterToggle>>(
@@ -89,11 +82,10 @@ export const ProgressPage = () => {
         query: searchQuery,
         proposal: selectedProposalId,
         clusters: activeToggles,
-        recency: recencyStop,
       })
     }, 300)
     return () => clearTimeout(id)
-  }, [activeTab, searchQuery, selectedProposalId, activeToggles, recencyStop])
+  }, [activeTab, searchQuery, selectedProposalId, activeToggles])
 
   // Clusters whose nodes/cards should be suppressed.
   const ghostedClusters = new Set<string>(
@@ -122,9 +114,6 @@ export const ProgressPage = () => {
         <KpiVector />
         <TabStrip active={activeTab} onSelect={setActiveTab} />
         <ClusterToggleBar active={activeToggles} onToggle={handleToggle} />
-        <div className="flex items-center border-b border-iron/20 bg-bg px-4 py-1">
-          <RecencySlider value={recencyStop} onChange={setRecencyStop} />
-        </div>
         {/* Text search — always visible */}
         <div className="flex items-center gap-2 border-b border-iron/20 bg-bg px-4 py-1.5">
           <input
