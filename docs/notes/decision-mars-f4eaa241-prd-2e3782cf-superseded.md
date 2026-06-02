@@ -33,7 +33,7 @@ Commits that pre-empted the plan:
 
 ## Verification: migration idempotency
 
-`initProposals()` in `orchestrator/src/mastra/proposals.ts` is safe on re-run:
+`initProposals()` in `orchestrator/src/core/proposals.ts` is safe on re-run:
 
 1. Module-level `initialised` flag short-circuits the second call within a process.
 2. `tableSet.has('ideas') && !tableSet.has('proposals')` guards the `ALTER TABLE` rename.
@@ -42,7 +42,7 @@ Commits that pre-empted the plan:
 4. All `CREATE TABLE` / `CREATE INDEX` calls use `IF NOT EXISTS`.
 
 Both paths (legacy DB with `ideas` table, fresh DB without it) are covered by
-`orchestrator/src/mastra/__tests__/proposals-migration.test.ts`.
+`orchestrator/src/core/__tests__/proposals-migration.test.ts`.
 
 **No separate idempotency task is needed.**
 

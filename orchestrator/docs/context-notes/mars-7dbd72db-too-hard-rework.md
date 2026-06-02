@@ -20,7 +20,7 @@ class of bug. The recursion has self-collapsed one level (parent
 `mars-eab84df7` is `done`, `mars-5ceaeb55` is back to `queued`); an action queue
 item has been raised so a human can collapse the rest if it re-spawns.
 
-## Exact code locations (verified, file = orchestrator/src/mastra/...)
+## Exact code locations (verified, file = orchestrator/src/core/...)
 
 ### 1. `workflows/implement-workflow.ts`
 
@@ -111,7 +111,7 @@ child's verdict (final message / note file) and:
   parked. Match the existing exhausted-retry shape for consistency.
 
 Find the blocker-completion hook the implementor must extend:
-`rg -n "onBlockerTaskCompleted|recoverBlockedTasks|promoteBlockedToQueued|task_blockers" src/mastra/queue.ts src/mastra/daemon/server.ts`.
+`rg -n "onBlockerTaskCompleted|recoverBlockedTasks|promoteBlockedToQueued|task_blockers" src/core/queue.ts src/core/daemon/server.ts`.
 The verdict parse + fix-worker dispatch is a new helper invoked there
 (gated on the completed task being a diagnose-only child — detect via the
 `# Context-gathering for <id>` prompt prefix or a stored marker; the
@@ -169,8 +169,8 @@ read trail + the child's `## INVESTIGATION INCONCLUSIVE` block,
 src/**/__tests__/**` returns **NOTHING** — this path is currently
 **untested**. So "update existing assertions" is a no-op; the implementor
 must **create** the tests. Existing `__tests__` dirs for placement:
-`src/mastra/__tests__/`, `src/mastra/workflows/__tests__/`,
-`src/mastra/daemon/__tests__/`, `src/mastra/lib/__tests__/`. Add (per the
+`src/core/__tests__/`, `src/core/workflows/__tests__/`,
+`src/core/daemon/__tests__/`, `src/core/lib/__tests__/`. Add (per the
 parent prompt's Verify section):
 1. `buildTooHardChildPrompt` emits the diagnose-only contract + both
    verdict headings + keeps `## Parent prompt` / `## Read trail` sections.

@@ -7,7 +7,7 @@ read budget; this file front-loads that analysis so the next pass
 can act.
 
 **Read this file BEFORE running knip yourself.** It pre-triages every
-finding against `src/mastra/index.ts` and `AGENTS.md` so you don't
+finding against `src/core/index.ts` and `AGENTS.md` so you don't
 have to redo the cross-check from scratch. Re-confirmed 2026-05-17:
 running `npm --prefix orchestrator run knip` produces exactly the
 findings this plan triages — 8 unused files, 4 unused deps, 23
@@ -17,7 +17,7 @@ unused exports, 26 unused exported types.
 
 ## Mastra registration surface (verified)
 
-`orchestrator/src/mastra/index.ts` registers only:
+`orchestrator/src/core/index.ts` registers only:
 
 - workflows: `implementWorkflow`, `initWorkflow`, `triageWorkflow`,
   `sliceWorkflow`, `abExperimentWorkflow`
@@ -49,7 +49,7 @@ Watch for these that **look** internal but might be CLI-surface:
   daemon path matches the literal strings.
 - `planWorkflow` / `runPlan` in `plan-workflow.ts` — **CONFIRMED LIVE,
   do NOT delete.** `runPlan` is dynamically imported at
-  `src/mastra/daemon/server.ts:460` inside `dispatchRefine`, which is
+  `src/core/daemon/server.ts:460` inside `dispatchRefine`, which is
   invoked from a bus-event handler at `server.ts:566`. A literal-string
   `rg "plan-workflow|planWorkflow" orchestrator/src` catches it; a
   type-only static analysis like knip will miss the `await import()`.
@@ -58,7 +58,7 @@ Watch for these that **look** internal but might be CLI-surface:
 
 Commit as one slice (or split workflows / lib / init if diff is large).
 
-### Slice 2 — `src/mastra/lib/origin-timeline.ts` ✅ DONE
+### Slice 2 — `src/core/lib/origin-timeline.ts` ✅ DONE
 
 Deleted in commit `813da93` ("remove dead origin-timeline and
 load-manifest modules"). The stale JSDoc comment in

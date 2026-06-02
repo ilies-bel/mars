@@ -26,7 +26,7 @@ The PRD's mental model treats **Worker** as something an operator
 declares at runtime (with a Runtime mode and a bag of tags). The
 codebase's `Worker` is a different thing entirely:
 
-- `orchestrator/src/mastra/workers/index.ts` defines `WorkerName` as a
+- `orchestrator/src/core/workers/index.ts` defines `WorkerName` as a
   closed union of six **role** keys (`Coder | Planner | Slicer |
   Triager | Fixer | Writer`).
 - Each is a hardcoded `WorkerConfig` (model, effort, permission mode,

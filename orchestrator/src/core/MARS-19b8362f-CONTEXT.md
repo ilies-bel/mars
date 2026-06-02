@@ -65,7 +65,7 @@ preserve ADR-0021's hard-cut endpoint but stage the cut so each step
 is independently verifiable.
 
 1. **Slice 1 — Introduce the TaskStore module (no migrations yet).**
-   New `orchestrator/src/mastra/store/task-store.ts` exporting
+   New `orchestrator/src/core/store/task-store.ts` exporting
    `createTaskStore(client: Client): TaskStore`. Implements:
    - typed domain methods that *delegate to the existing queue.ts
      functions* (same signatures, same behaviour — this is a thin

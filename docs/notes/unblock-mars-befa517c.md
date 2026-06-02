@@ -15,7 +15,7 @@ That is not the agent failing — it is a **false premise in the brief**.
 The brief's "Background — what already exists, do not duplicate" section
 asserts:
 
-> `orchestrator/src/mastra/lib/origin-timeline.ts` — exports
+> `orchestrator/src/core/lib/origin-timeline.ts` — exports
 > `loadOriginTimeline(originId): Promise<OriginTimeline>` with shape
 > `{ origin, tasks, spans }` …
 
@@ -41,7 +41,7 @@ A prerequisite task has been filed and mars-befa517c is now **blocked on
 it**:
 
 - **mars-5648ba42** — "Restore
-  `orchestrator/src/mastra/lib/origin-timeline.ts`". It rebuilds
+  `orchestrator/src/core/lib/origin-timeline.ts`". It rebuilds
   `loadOriginTimeline` / `OriginTimeline` / `OriginTimelineSpan` for the
   **current** data layer (the deleted version used `@mastra/duckdb` +
   the `proposals` module + `kind: 'proposal' | 'task'`; the current
@@ -51,7 +51,7 @@ it**:
 
 mars-befa517c will re-dispatch automatically once mars-5648ba42 reaches
 `done`. **Do not start Scope 1/2 work until `origin-timeline.ts` exists
-on the branch base** — `git ls-files orchestrator/src/mastra/lib/origin-timeline.ts`
+on the branch base** — `git ls-files orchestrator/src/core/lib/origin-timeline.ts`
 should print the path before you begin.
 
 ## Corrected / verified facts for the re-dispatched implementor
@@ -61,12 +61,12 @@ Treat the brief's Background bullet about `origin-timeline.ts` as
 the brief was checked and holds, with these clarifications:
 
 - `resolveOriginIdForTask` **does** exist:
-  `orchestrator/src/mastra/lib/origin.ts` exports
+  `orchestrator/src/core/lib/origin.ts` exports
   `resolveOriginIdForTask(taskId): Promise<string>` — returns
   `origin_id` or falls back to the task id. Import as the brief says.
 - "idea" in the brief == the **`proposals`** module in code (there was
   an idea→proposal data-layer rename, commit `e968d85`). `getProposal`
-  lives at `orchestrator/src/mastra/proposals.ts:584`. mars-5648ba42
+  lives at `orchestrator/src/core/proposals.ts:584`. mars-5648ba42
   maps a proposal hit to `origin.kind === 'idea'`, so the consumer code
   in cli.ts / deep-reflect can use `'idea' | 'task'` as the brief
   describes.
@@ -88,7 +88,7 @@ the brief was checked and holds, with these clarifications:
   glossary terms (`originId`, `OriginTimeline`) are an operator
   post-merge step.
 - Load the `mastra` skill before editing anything under
-  `orchestrator/src/mastra/**`.
+  `orchestrator/src/core/**`.
 - Verify with `cd orchestrator && npx tsc --noEmit` (must be clean) then
   the `mars origin show …` smoke tests in the brief.
 - Conventional commit prefix `feat(origin)`; commit body mentions this
