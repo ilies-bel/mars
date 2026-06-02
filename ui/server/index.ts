@@ -2,7 +2,6 @@ import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { openTraceEventStore } from '../../orchestrator/src/core/lib/trace-events-store.ts'
 import { loadProjectRegistry } from '../../orchestrator/src/registry/projects.ts'
-import { loadAgents } from './agents.ts'
 import { fetchKpis, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'
 import { createProjectContextCache, type ProjectContextEntry } from './projectContext.ts'
 import { probeDaemonHealth } from './projectHealth.ts'
@@ -135,15 +134,6 @@ export const startServer = async (
               return jsonResponse(404, { error: 'not_found', id })
             }
             return jsonResponse(200, { task })
-          } catch (err) {
-            return jsonResponse(500, { error: (err as Error).message })
-          }
-        }
-
-        if (path === '/api/agents') {
-          try {
-            const agents = await loadAgents(ctx.repoRoot)
-            return jsonResponse(200, { agents })
           } catch (err) {
             return jsonResponse(500, { error: (err as Error).message })
           }
