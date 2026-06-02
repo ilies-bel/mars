@@ -25,6 +25,7 @@ import {
 import { resolveContext } from '../core/context'
 import {
   installWorktreeDeps,
+  ensureLocalDistBuilt,
   WorktreeInstallError,
 } from '../core/lib/worktree-install'
 import type { ClaudeEvent } from '../core/lib/claude-stream'
@@ -754,6 +755,33 @@ export const implementWorkflow = defineWorkflow<
               `[setup] task ${input.taskId} install completed in ${(
                 summary.totalDurationMs / 1000
               ).toFixed(1)}s (${summary.sites.length} manifest${summary.sites.length === 1 ? '' : 's'})`,
+            )
+          }
+          // Safety net: verify that local file: packages (e.g. @mars/workflow)
+          // have their dist/ available after install.  The primary guard is the
+          // preinstall script in orchestrator/package.json, which builds dist
+          // before pnpm copies files to the virtual store.  This call handles
+          // any residual case where the preinstall did not run or was skipped
+          // (e.g. non-standard install invocation).
+          for (const site of summary.sites) {
+            await ensureLocalDistBuilt(
+              site.dir,
+              async (cmd, args, cwd) => {
+                const r = await runTool(
+                  {
+                    tool: cmd,
+                    argv: [...args],
+                    cwd,
+                    timeoutMs: 120_000,
+                    taskId: input.taskId,
+                    originId: workflowOriginId,
+                    phase: 'setup',
+                  },
+                  workflowTraceStore,
+                )
+                return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr }
+              },
+              (line) => console.log(line),
             )
           }
         } catch (error: unknown) {

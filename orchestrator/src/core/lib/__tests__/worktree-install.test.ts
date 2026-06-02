@@ -6,6 +6,7 @@ import {
   detectInstallSites,
   installCommand,
   installWorktreeDeps,
+  ensureLocalDistBuilt,
   WorktreeInstallError,
 } from '../worktree-install'
 import type { RunSubprocessResult } from '../git'
@@ -179,6 +180,101 @@ describe('worktree-install', () => {
       })
       expect(lines).toHaveLength(1)
       expect(lines[0]).toMatch(/^\[setup:install\] pnpm \(\.\) exit=0 duration=/)
+    })
+  })
+
+  describe('ensureLocalDistBuilt', () => {
+    // Use workDir/orchestrator as the siteDir so that
+    // resolve(siteDir, '..', 'packages', 'workflow') stays inside workDir
+    // and is under our test's control.
+    let siteDir: string
+
+    beforeEach(() => {
+      siteDir = resolve(workDir, 'orchestrator')
+      mkdirSync(siteDir, { recursive: true })
+    })
+
+    it('is a no-op when dist/index.js already exists in node_modules', async () => {
+      // Simulate @mars/workflow already installed with dist
+      mkdirSync(resolve(siteDir, 'node_modules', '@mars', 'workflow', 'dist'), { recursive: true })
+      writeFileSync(resolve(siteDir, 'node_modules', '@mars', 'workflow', 'dist', 'index.js'), 'export {}')
+
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+
+      await ensureLocalDistBuilt(siteDir, runner)
+      expect(calls).toHaveLength(0)
+    })
+
+    it('runs npm run build when @mars/workflow dist is absent from node_modules', async () => {
+      // @mars/workflow installed but no dist
+      mkdirSync(resolve(siteDir, 'node_modules', '@mars', 'workflow'), { recursive: true })
+      writeFileSync(resolve(siteDir, 'node_modules', '@mars', 'workflow', 'package.json'), '{}')
+
+      // Simulate source dir existing at siteDir/../packages/workflow
+      const pkgSrc = resolve(siteDir, '..', 'packages', 'workflow')
+      mkdirSync(pkgSrc, { recursive: true })
+
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+
+      await ensureLocalDistBuilt(siteDir, runner)
+
+      const buildCall = calls.find((c) => c.cmd === 'npm' && c.args.includes('build'))
+      expect(buildCall).toBeDefined()
+      expect(buildCall?.args).toEqual(['run', 'build'])
+      expect(buildCall?.cwd).toBe(pkgSrc)
+    })
+
+    it('skips build when @mars/workflow is not present in node_modules', async () => {
+      // No @mars/workflow in node_modules at all
+      mkdirSync(resolve(siteDir, 'node_modules'), { recursive: true })
+
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+
+      await ensureLocalDistBuilt(siteDir, runner)
+      expect(calls).toHaveLength(0)
+    })
+
+    it('skips build when packages/workflow source dir is missing', async () => {
+      // @mars/workflow in node_modules but no dist, and no source dir
+      mkdirSync(resolve(siteDir, 'node_modules', '@mars', 'workflow'), { recursive: true })
+      writeFileSync(resolve(siteDir, 'node_modules', '@mars', 'workflow', 'package.json'), '{}')
+      // workDir/packages/workflow does NOT exist (deliberately not created)
+
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+
+      await ensureLocalDistBuilt(siteDir, runner)
+      // No build attempted because source dir is missing
+      expect(calls).toHaveLength(0)
+    })
+
+    it('logs a message when dist is absent and build is triggered', async () => {
+      mkdirSync(resolve(siteDir, 'node_modules', '@mars', 'workflow'), { recursive: true })
+      writeFileSync(resolve(siteDir, 'node_modules', '@mars', 'workflow', 'package.json'), '{}')
+      const pkgSrc = resolve(siteDir, '..', 'packages', 'workflow')
+      mkdirSync(pkgSrc, { recursive: true })
+
+      const lines: string[] = []
+      const runner = async () => ok()
+
+      await ensureLocalDistBuilt(siteDir, runner, (line) => lines.push(line))
+      expect(lines.some((l) => l.includes('@mars/workflow'))).toBe(true)
+      expect(lines.some((l) => l.includes('dist'))).toBe(true)
     })
   })
 })
