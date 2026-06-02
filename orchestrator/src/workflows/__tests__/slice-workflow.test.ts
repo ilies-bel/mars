@@ -14,6 +14,10 @@ import {
   subDeliverableSchema,
   detectActionAntiPattern,
   applyActionQualityGuard,
+  applyJudgeEscalation,
+  buildJudgePrompt,
+  buildJudgeRepromptPrompt,
+  judgeOutputSchema,
 } from '../slice-workflow'
 import {
   composePrompt,
@@ -3359,5 +3363,220 @@ describe('applyActionQualityGuard: re-prompt on vague actions', () => {
     expect(reprompt).toHaveBeenCalledTimes(1)
     expect(slices[0].prescriptiveAction).toBe(concreteAction)
     expect(slices[1].prescriptiveAction).toBe(concreteRewrite)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// applyJudgeEscalation — stage 2 LLM-judge escalation, injected mocks
+// ---------------------------------------------------------------------------
+
+describe('applyJudgeEscalation: LLM-judge escalation for borderline actions', () => {
+  // Actions used across tests.
+  //
+  // "concrete" — has BOTH a slash-containing file path AND a backtick
+  // identifier. Passes stage 1 and is deterministically classified as
+  // concrete: the judge is never called.
+  const CONCRETE_ACTION =
+    'In orchestrator/src/workflows/slice-workflow.ts, add `applyJudgeEscalation` after the `applyActionQualityGuard` block and export it.'
+
+  // "borderline" — has a backtick identifier but NO slash-containing file
+  // path. Passes stage 1 (has a backtick anchor) but is classified as
+  // borderline: the judge is called to evaluate richer concreteness criteria.
+  const BORDERLINE_ACTION =
+    'In `judgeOutputSchema` (slice-workflow.ts:404), add `missing: z.array(z.string())` as the second field after `concrete: z.boolean()`.'
+
+  // A fully concrete rewrite for the borderline action (has BOTH anchors).
+  const CONCRETE_REWRITE =
+    'In `judgeOutputSchema` (orchestrator/src/workflows/slice-workflow.ts:404), add `missing: z.array(z.string())` after `concrete: z.boolean()`, then run `cd orchestrator && npm run build` to verify.'
+
+  it('does not call judge for a concrete action (both file path and backtick present)', async () => {
+    const slices = [{ title: 'Add judge escalation', prescriptiveAction: CONCRETE_ACTION }]
+    const judge = vi.fn()
+    const reprompt = vi.fn()
+    const onVagueAfterRetry = vi.fn()
+
+    await applyJudgeEscalation(slices, judge, reprompt, onVagueAfterRetry)
+
+    // Concrete action: stage 2 skipped entirely — zero LLM calls.
+    expect(judge).not.toHaveBeenCalled()
+    expect(reprompt).not.toHaveBeenCalled()
+    expect(onVagueAfterRetry).not.toHaveBeenCalled()
+    expect(slices[0].prescriptiveAction).toBe(CONCRETE_ACTION)
+  })
+
+  it('calls judge exactly once for a borderline action, then triggers one reprompt with the missing[] list', async () => {
+    const slices = [{ title: 'Extend schema', prescriptiveAction: BORDERLINE_ACTION }]
+    const missingItems = ['exact file path with directory slashes', 'verification command']
+    const judge = vi.fn().mockResolvedValue({ concrete: false, missing: missingItems })
+    const reprompt = vi.fn().mockResolvedValue(CONCRETE_REWRITE)
+    // Second judge call (after reprompt) says concrete.
+    judge.mockResolvedValueOnce({ concrete: false, missing: missingItems })
+    judge.mockResolvedValueOnce({ concrete: true, missing: [] })
+    const onVagueAfterRetry = vi.fn()
+
+    await applyJudgeEscalation(slices, judge, reprompt, onVagueAfterRetry)
+
+    // First judge call: on the original borderline action.
+    expect(judge).toHaveBeenCalledWith(expect.objectContaining({ prescriptiveAction: BORDERLINE_ACTION }))
+    // Reprompt: called once with the judge's missing list.
+    expect(reprompt).toHaveBeenCalledTimes(1)
+    expect(reprompt).toHaveBeenCalledWith(
+      expect.objectContaining({ prescriptiveAction: BORDERLINE_ACTION }),
+      missingItems,
+    )
+  })
+
+  it('updates the slice prescriptiveAction when the judge-escalated reprompt produces a concrete rewrite', async () => {
+    const slices = [{ title: 'Extend schema', prescriptiveAction: BORDERLINE_ACTION }]
+    const judge = vi.fn()
+      .mockResolvedValueOnce({ concrete: false, missing: ['exact file path', 'verify command'] })
+      .mockResolvedValueOnce({ concrete: true, missing: [] })
+    const reprompt = vi.fn().mockResolvedValue(CONCRETE_REWRITE)
+    const onVagueAfterRetry = vi.fn()
+
+    await applyJudgeEscalation(slices, judge, reprompt, onVagueAfterRetry)
+
+    // Action updated to the concrete rewrite.
+    expect(slices[0].prescriptiveAction).toBe(CONCRETE_REWRITE)
+    // No signal emitted: the action is now concrete.
+    expect(onVagueAfterRetry).not.toHaveBeenCalled()
+  })
+
+  it('persists original action and calls onVagueAfterRetry when still non-concrete after retry', async () => {
+    const slices = [{ title: 'Extend schema', prescriptiveAction: BORDERLINE_ACTION }]
+    // Both judge calls return non-concrete — the reprompt does not fix it.
+    const judge = vi.fn().mockResolvedValue({ concrete: false, missing: ['file path missing'] })
+    // Reprompt returns something that passes stage 1 but judge still says non-concrete.
+    const stillBorderlineAction =
+      'In `judgeOutputSchema` (slice-workflow.ts:404), also add a `sliceTitle: z.string()` field so the signal carries the failing slice title.'
+    const reprompt = vi.fn().mockResolvedValue(stillBorderlineAction)
+    const onVagueAfterRetry = vi.fn().mockResolvedValue(undefined)
+
+    await applyJudgeEscalation(slices, judge, reprompt, onVagueAfterRetry)
+
+    // After the one retry the slice is persisted (original action kept since the
+    // rewrite also failed the full quality check).
+    expect(slices[0].prescriptiveAction).toBe(BORDERLINE_ACTION)
+    // Signal emitted for the reflection pass.
+    expect(onVagueAfterRetry).toHaveBeenCalledTimes(1)
+    expect(onVagueAfterRetry).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Extend schema' }),
+    )
+  })
+
+  it('persists original action and calls onVagueAfterRetry when reprompt returns null', async () => {
+    const slices = [{ title: 'Extend schema', prescriptiveAction: BORDERLINE_ACTION }]
+    const judge = vi.fn().mockResolvedValue({ concrete: false, missing: ['file path missing'] })
+    const reprompt = vi.fn().mockResolvedValue(null)
+    const onVagueAfterRetry = vi.fn().mockResolvedValue(undefined)
+
+    await applyJudgeEscalation(slices, judge, reprompt, onVagueAfterRetry)
+
+    // Reprompt failure: original action kept, signal emitted.
+    expect(slices[0].prescriptiveAction).toBe(BORDERLINE_ACTION)
+    expect(onVagueAfterRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips escalation when judge returns null (error), treating it as concrete', async () => {
+    const slices = [{ title: 'Extend schema', prescriptiveAction: BORDERLINE_ACTION }]
+    const judge = vi.fn().mockResolvedValue(null)
+    const reprompt = vi.fn()
+    const onVagueAfterRetry = vi.fn()
+
+    await applyJudgeEscalation(slices, judge, reprompt, onVagueAfterRetry)
+
+    // Judge failure is treated as "non-escalating" — pipeline continues.
+    expect(reprompt).not.toHaveBeenCalled()
+    expect(onVagueAfterRetry).not.toHaveBeenCalled()
+    expect(slices[0].prescriptiveAction).toBe(BORDERLINE_ACTION)
+  })
+
+  it('processes only borderline slices; leaves concrete slices untouched', async () => {
+    const slices = [
+      { title: 'Concrete slice', prescriptiveAction: CONCRETE_ACTION },
+      { title: 'Borderline slice', prescriptiveAction: BORDERLINE_ACTION },
+    ]
+    const judge = vi.fn()
+      .mockResolvedValueOnce({ concrete: false, missing: ['file path'] })
+      .mockResolvedValueOnce({ concrete: true, missing: [] })
+    const reprompt = vi.fn().mockResolvedValue(CONCRETE_REWRITE)
+    const onVagueAfterRetry = vi.fn()
+
+    await applyJudgeEscalation(slices, judge, reprompt, onVagueAfterRetry)
+
+    // Concrete slice is never touched; borderline slice is updated.
+    expect(slices[0].prescriptiveAction).toBe(CONCRETE_ACTION)
+    expect(slices[1].prescriptiveAction).toBe(CONCRETE_REWRITE)
+    // Judge called only for the borderline slice (twice: initial + re-run).
+    expect(judge).toHaveBeenCalledTimes(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// buildJudgePrompt / buildJudgeRepromptPrompt — prompt content checks
+// ---------------------------------------------------------------------------
+
+describe('buildJudgePrompt: rubric and output format', () => {
+  it('includes the slice title and prescriptiveAction in the prompt', () => {
+    const prompt = buildJudgePrompt('My Slice', 'Add `foo` to bar.ts.')
+    expect(prompt).toContain('My Slice')
+    expect(prompt).toContain('Add `foo` to bar.ts.')
+  })
+
+  it('states all three rubric criteria', () => {
+    const prompt = buildJudgePrompt('S', 'Action text.')
+    // Criterion 1: exact symbol or file
+    expect(prompt).toMatch(/exact.*(symbol|file)/i)
+    // Criterion 2: diff / specific changes
+    expect(prompt).toMatch(/diff/i)
+    // Criterion 3: verification command
+    expect(prompt).toMatch(/verif/i)
+  })
+
+  it('instructs the model to return JSON with concrete and missing fields', () => {
+    const prompt = buildJudgePrompt('S', 'A.')
+    expect(prompt).toMatch(/"concrete"/)
+    expect(prompt).toMatch(/"missing"/)
+  })
+})
+
+describe('buildJudgeRepromptPrompt: missing list and output format', () => {
+  it('embeds the missing items from the judge', () => {
+    const prompt = buildJudgeRepromptPrompt('My Slice', 'old action', ['file path', 'verify cmd'])
+    expect(prompt).toContain('- file path')
+    expect(prompt).toContain('- verify cmd')
+  })
+
+  it('includes the current action and slice title', () => {
+    const prompt = buildJudgeRepromptPrompt('My Slice', 'old action text', [])
+    expect(prompt).toContain('My Slice')
+    expect(prompt).toContain('old action text')
+  })
+
+  it('instructs the model to return JSON with prescriptiveAction', () => {
+    const prompt = buildJudgeRepromptPrompt('S', 'A', ['x'])
+    expect(prompt).toMatch(/"prescriptiveAction"/)
+  })
+})
+
+describe('judgeOutputSchema: validates concrete/missing shape', () => {
+  it('accepts a concrete verdict with empty missing array', () => {
+    const result = judgeOutputSchema.parse({ concrete: true, missing: [] })
+    expect(result.concrete).toBe(true)
+    expect(result.missing).toEqual([])
+  })
+
+  it('accepts a non-concrete verdict with a missing array', () => {
+    const result = judgeOutputSchema.parse({ concrete: false, missing: ['file path', 'diff'] })
+    expect(result.concrete).toBe(false)
+    expect(result.missing).toEqual(['file path', 'diff'])
+  })
+
+  it('rejects input missing the concrete field', () => {
+    expect(() => judgeOutputSchema.parse({ missing: [] })).toThrow()
+  })
+
+  it('rejects input missing the missing field', () => {
+    expect(() => judgeOutputSchema.parse({ concrete: true })).toThrow()
   })
 })
