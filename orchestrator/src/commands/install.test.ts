@@ -211,39 +211,6 @@ describe('runInstall — hybrid files (clean repo)', () => {
       expect(deps.written.has(dstPath), `expected ${dstPath} to be written`).toBe(true)
     }
   })
-
-  it('skips a hybrid file that already exists', async () => {
-    const manifest: Manifest = {
-      schemaVersion: 1,
-      owned: [],
-      hybrid: ['CLAUDE.md'],
-      scopes: [],
-    }
-    const deps = makeDeps({
-      existingPaths: new Set([join(CONSUMER_ROOT, 'CLAUDE.md')]),
-      sourceFiles: new Map([[join(FRAMEWORK_ROOT, 'CLAUDE.md'), Buffer.from('# new')]]),
-    })
-    await runInstall(manifest, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps)
-
-    expect(deps.written.has(join(CONSUMER_ROOT, 'CLAUDE.md'))).toBe(false)
-  })
-
-  it('logs a skip message for an existing hybrid file', async () => {
-    const manifest: Manifest = {
-      schemaVersion: 1,
-      owned: [],
-      hybrid: ['CLAUDE.md'],
-      scopes: [],
-    }
-    const deps = makeDeps({
-      existingPaths: new Set([join(CONSUMER_ROOT, 'CLAUDE.md')]),
-      sourceFiles: new Map([[join(FRAMEWORK_ROOT, 'CLAUDE.md'), Buffer.from('# new')]]),
-    })
-    await runInstall(manifest, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps)
-
-    const skipped = deps.logged.some((msg) => /skip.*CLAUDE\.md/i.test(msg))
-    expect(skipped).toBe(true)
-  })
 })
 
 // ---------------------------------------------------------------------------
@@ -318,25 +285,6 @@ describe('runInstall — mars.lock', () => {
     for (const entry of lock.files as Array<{ path: string; kind: string }>) {
       expect(['owned', 'hybrid']).toContain(entry.kind)
     }
-  })
-
-  it('mars.lock does not include skipped hybrid files', async () => {
-    const manifest: Manifest = {
-      schemaVersion: 1,
-      owned: [],
-      hybrid: ['CLAUDE.md'],
-      scopes: [],
-    }
-    const deps = makeDeps({
-      existingPaths: new Set([join(CONSUMER_ROOT, 'CLAUDE.md')]),
-      sourceFiles: new Map([[join(FRAMEWORK_ROOT, 'CLAUDE.md'), Buffer.from('# x')]]),
-    })
-    await runInstall(manifest, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps)
-
-    const lockPath = join(CONSUMER_ROOT, 'mars.lock')
-    const raw = deps.written.get(lockPath)!.content.toString('utf8')
-    const lock = JSON.parse(raw)
-    expect(lock.files.map((f: { path: string }) => f.path)).not.toContain('CLAUDE.md')
   })
 
   it('mars.lock schemaVersion matches the manifest schemaVersion', async () => {
@@ -544,6 +492,264 @@ describe('runInstall — settings.json hook merge', () => {
 
     expect(deps.written.has(SETTINGS_DST)).toBe(true)
     expect(deps.written.get(SETTINGS_DST)!.content.toString('utf8')).toBe(frameworkSettings)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Refusal guards (slice 2/5 — ADR-0007)
+// ---------------------------------------------------------------------------
+
+describe('runInstall — refuses when mars.lock already exists', () => {
+  it('returns the refused-already-installed outcome', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([join(CONSUMER_ROOT, 'mars.lock')]),
+    })
+    withManifestSources(deps, FULL_MANIFEST)
+    const result = await runInstall(
+      FULL_MANIFEST,
+      FRAMEWORK_ROOT,
+      CONSUMER_ROOT,
+      MARS_VERSION,
+      deps,
+    )
+    expect(result.outcome).toBe('refused-already-installed')
+  })
+
+  it('writes nothing to the consumer when refusing', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([join(CONSUMER_ROOT, 'mars.lock')]),
+    })
+    withManifestSources(deps, FULL_MANIFEST)
+    await runInstall(FULL_MANIFEST, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps)
+    expect(deps.written.size).toBe(0)
+  })
+
+  it('takes precedence over a hybrid collision when both conditions hold', async () => {
+    // When BOTH mars.lock exists AND a hybrid file exists, the more
+    // actionable "run mars update" outcome wins.
+    const manifest: Manifest = {
+      schemaVersion: 1,
+      owned: [],
+      hybrid: ['CLAUDE.md'],
+      scopes: [],
+    }
+    const deps = makeDeps({
+      existingPaths: new Set([
+        join(CONSUMER_ROOT, 'mars.lock'),
+        join(CONSUMER_ROOT, 'CLAUDE.md'),
+      ]),
+    })
+    withManifestSources(deps, manifest)
+    const result = await runInstall(manifest, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps)
+    expect(result.outcome).toBe('refused-already-installed')
+  })
+})
+
+describe('runInstall — refuses when a hybrid destination already exists', () => {
+  const manifest: Manifest = {
+    schemaVersion: 1,
+    owned: [],
+    hybrid: ['CLAUDE.md'],
+    scopes: [],
+  }
+
+  it('returns the refused-hybrid-collision outcome', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([join(CONSUMER_ROOT, 'CLAUDE.md')]),
+      sourceFiles: new Map([[join(FRAMEWORK_ROOT, 'CLAUDE.md'), Buffer.from('# new')]]),
+    })
+    const result = await runInstall(manifest, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps)
+    expect(result.outcome).toBe('refused-hybrid-collision')
+  })
+
+  it('lists the colliding path in collidingPaths', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([join(CONSUMER_ROOT, 'CLAUDE.md')]),
+      sourceFiles: new Map([[join(FRAMEWORK_ROOT, 'CLAUDE.md'), Buffer.from('# new')]]),
+    })
+    const result = await runInstall(manifest, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps)
+    if (result.outcome !== 'refused-hybrid-collision') {
+      throw new Error(`expected refused-hybrid-collision, got ${result.outcome}`)
+    }
+    expect(result.collidingPaths).toEqual([join(CONSUMER_ROOT, 'CLAUDE.md')])
+  })
+
+  it('lists every colliding destination when several hybrid files collide', async () => {
+    const multiManifest: Manifest = {
+      schemaVersion: 1,
+      owned: [],
+      hybrid: ['CLAUDE.md', '.gitignore', 'AGENTS.md'],
+      scopes: [],
+    }
+    const deps = makeDeps({
+      existingPaths: new Set([
+        join(CONSUMER_ROOT, 'CLAUDE.md'),
+        join(CONSUMER_ROOT, '.gitignore'),
+        join(CONSUMER_ROOT, 'AGENTS.md'),
+      ]),
+    })
+    const result = await runInstall(
+      multiManifest,
+      FRAMEWORK_ROOT,
+      CONSUMER_ROOT,
+      MARS_VERSION,
+      deps,
+    )
+    if (result.outcome !== 'refused-hybrid-collision') {
+      throw new Error(`expected refused-hybrid-collision, got ${result.outcome}`)
+    }
+    expect(result.collidingPaths).toEqual(
+      expect.arrayContaining([
+        join(CONSUMER_ROOT, 'CLAUDE.md'),
+        join(CONSUMER_ROOT, '.gitignore'),
+        join(CONSUMER_ROOT, 'AGENTS.md'),
+      ]),
+    )
+    expect(result.collidingPaths).toHaveLength(3)
+  })
+
+  it('writes nothing to the consumer when refusing', async () => {
+    const deps = makeDeps({
+      existingPaths: new Set([join(CONSUMER_ROOT, 'CLAUDE.md')]),
+      sourceFiles: new Map([[join(FRAMEWORK_ROOT, 'CLAUDE.md'), Buffer.from('# new')]]),
+    })
+    await runInstall(manifest, FRAMEWORK_ROOT, CONSUMER_ROOT, MARS_VERSION, deps)
+    expect(deps.written.size).toBe(0)
+  })
+
+  it('does NOT refuse when only .claude/settings.json pre-exists (merge-exempt)', async () => {
+    const settingsManifest: Manifest = {
+      schemaVersion: 1,
+      owned: [],
+      hybrid: ['.claude/settings.json'],
+      scopes: [],
+    }
+    const settingsDst = join(CONSUMER_ROOT, '.claude/settings.json')
+    const deps = makeDeps({
+      existingPaths: new Set([settingsDst]),
+      sourceFiles: new Map([[settingsDst, Buffer.from('{}')]]),
+    })
+    const result = await runInstall(
+      settingsManifest,
+      FRAMEWORK_ROOT,
+      CONSUMER_ROOT,
+      MARS_VERSION,
+      deps,
+    )
+    expect(result.outcome).toBe('success')
+  })
+
+  it('does NOT refuse when only owned files pre-exist (ADR-0004 overwrite)', async () => {
+    const ownedManifest: Manifest = {
+      schemaVersion: 1,
+      owned: ['.claude/plugin.json'],
+      hybrid: [],
+      scopes: [],
+    }
+    const deps = makeDeps({
+      existingPaths: new Set([join(CONSUMER_ROOT, '.claude/plugin.json')]),
+      sourceFiles: new Map([
+        [join(FRAMEWORK_ROOT, '.claude/plugin.json'), Buffer.from('new')],
+      ]),
+    })
+    const result = await runInstall(
+      ownedManifest,
+      FRAMEWORK_ROOT,
+      CONSUMER_ROOT,
+      MARS_VERSION,
+      deps,
+    )
+    expect(result.outcome).toBe('success')
+  })
+})
+
+describe('runInstall — refusal no-mutation guarantees', () => {
+  it('leaves an existing mars.lock byte-identical (real filesystem)', async () => {
+    const fwDir = mkdtempSync(join(tmpdir(), 'mars-install-fw-'))
+    const consumerDir = mkdtempSync(join(tmpdir(), 'mars-install-consumer-'))
+    try {
+      const manifest: Manifest = {
+        schemaVersion: 1,
+        owned: ['.claude/plugin.json'],
+        hybrid: ['CLAUDE.md'],
+        scopes: [],
+      }
+      mkdirSync(join(fwDir, '.claude'), { recursive: true })
+      writeFileSync(join(fwDir, '.claude', 'plugin.json'), '{"plugin":"new"}')
+      writeFileSync(join(fwDir, 'CLAUDE.md'), '# new')
+
+      // Pre-existing mars.lock from a prior install — must NOT be touched.
+      const originalLock = Buffer.from('{"existing":"lock","sentinel":42}\n')
+      const lockPath = join(consumerDir, 'mars.lock')
+      writeFileSync(lockPath, originalLock)
+
+      const realDeps: InstallDeps = {
+        readBytes: (p) => readFileSync(p),
+        writeFile: (p, c, mode) => {
+          mkdirSync(dirname(p), { recursive: true })
+          writeFileSync(p, c, mode !== undefined ? { mode } : {})
+        },
+        exists: (p) => existsSync(p),
+        log: () => {},
+      }
+
+      const result = await runInstall(manifest, fwDir, consumerDir, '0.1.0', realDeps)
+      expect(result.outcome).toBe('refused-already-installed')
+
+      // Byte-identical pre/post.
+      const after = readFileSync(lockPath)
+      expect(after.equals(originalLock)).toBe(true)
+
+      // Nothing else got written either.
+      expect(existsSync(join(consumerDir, '.claude', 'plugin.json'))).toBe(false)
+      expect(existsSync(join(consumerDir, 'CLAUDE.md'))).toBe(false)
+    } finally {
+      rmSync(fwDir, { recursive: true, force: true })
+      rmSync(consumerDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not create, modify, or delete any file when refusing for a hybrid collision', async () => {
+    const fwDir = mkdtempSync(join(tmpdir(), 'mars-install-fw-'))
+    const consumerDir = mkdtempSync(join(tmpdir(), 'mars-install-consumer-'))
+    try {
+      const manifest: Manifest = {
+        schemaVersion: 1,
+        owned: ['.claude/plugin.json'],
+        hybrid: ['CLAUDE.md'],
+        scopes: [],
+      }
+      mkdirSync(join(fwDir, '.claude'), { recursive: true })
+      writeFileSync(join(fwDir, '.claude', 'plugin.json'), '{"plugin":"new"}')
+      writeFileSync(join(fwDir, 'CLAUDE.md'), '# new')
+
+      // Consumer has a CLAUDE.md already.
+      const originalClaudeMd = Buffer.from('# existing — should not be touched\n')
+      writeFileSync(join(consumerDir, 'CLAUDE.md'), originalClaudeMd)
+
+      const realDeps: InstallDeps = {
+        readBytes: (p) => readFileSync(p),
+        writeFile: (p, c, mode) => {
+          mkdirSync(dirname(p), { recursive: true })
+          writeFileSync(p, c, mode !== undefined ? { mode } : {})
+        },
+        exists: (p) => existsSync(p),
+        log: () => {},
+      }
+
+      const result = await runInstall(manifest, fwDir, consumerDir, '0.1.0', realDeps)
+      expect(result.outcome).toBe('refused-hybrid-collision')
+
+      // CLAUDE.md unchanged.
+      expect(readFileSync(join(consumerDir, 'CLAUDE.md')).equals(originalClaudeMd)).toBe(true)
+      // No new owned-file write.
+      expect(existsSync(join(consumerDir, '.claude', 'plugin.json'))).toBe(false)
+      // No mars.lock written.
+      expect(existsSync(join(consumerDir, 'mars.lock'))).toBe(false)
+    } finally {
+      rmSync(fwDir, { recursive: true, force: true })
+      rmSync(consumerDir, { recursive: true, force: true })
+    }
   })
 })
 

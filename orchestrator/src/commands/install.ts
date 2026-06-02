@@ -67,12 +67,34 @@ export interface InstallDeps {
   log: (msg: string) => void
 }
 
-export type InstallOutcome = 'success'
+/**
+ * Discriminated union result type for runInstall (slice 2/5 introduced the
+ * refusal variants).
+ *
+ * - `success`: all files written, mars.lock created.
+ * - `refused-already-installed`: mars.lock already exists at the consumer
+ *   root; the user must run `mars update` instead.
+ * - `refused-hybrid-collision`: one or more hybrid file destinations already
+ *   exist (excluding `.claude/settings.json`, which uses merge semantics).
+ *   The user must back up and remove every path in `collidingPaths` before
+ *   re-running `mars install` (ADR-0007).
+ *
+ * Both refusal variants are STRICT no-ops: not a single file is created,
+ * modified, or deleted on the consumer's disk.
+ */
+export type InstallResult =
+  | { outcome: 'success'; lock: MarsLock }
+  | { outcome: 'refused-already-installed' }
+  | { outcome: 'refused-hybrid-collision'; collidingPaths: string[] }
 
-export interface InstallResult {
-  outcome: InstallOutcome
-  lock: MarsLock
-}
+/**
+ * Hybrid path with special merge semantics — its existence does NOT trigger
+ * a hybrid-collision refusal. Kept as a module-level constant so the install
+ * logic and any introspecting test can reference the same source of truth.
+ */
+const HYBRID_MERGE_EXEMPTIONS: ReadonlySet<string> = new Set([
+  '.claude/settings.json',
+])
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -162,6 +184,28 @@ export async function runInstall(
   marsVersion: string,
   deps: InstallDeps,
 ): Promise<InstallResult> {
+  // --- guard 1: mars.lock already exists → repo is already installed ---
+  // Checked BEFORE the hybrid-collision scan so the user gets the more
+  // actionable "run mars update" message when both conditions hold.
+  const lockPath = join(consumerRoot, 'mars.lock')
+  if (deps.exists(lockPath)) {
+    return { outcome: 'refused-already-installed' }
+  }
+
+  // --- guard 2: any hybrid destination already exists (ADR-0007) ---
+  // .claude/settings.json is exempt: it has merge semantics and is allowed
+  // to pre-exist. Owned files are NOT scanned — ADR-0004 says they overwrite
+  // unconditionally.
+  const collidingPaths: string[] = []
+  for (const relPath of manifest.hybrid) {
+    if (HYBRID_MERGE_EXEMPTIONS.has(relPath)) continue
+    const dstPath = join(consumerRoot, relPath)
+    if (deps.exists(dstPath)) collidingPaths.push(dstPath)
+  }
+  if (collidingPaths.length > 0) {
+    return { outcome: 'refused-hybrid-collision', collidingPaths }
+  }
+
   const files: MarsLock['files'] = []
 
   // --- owned files (always overwrite) ---
@@ -176,6 +220,9 @@ export async function runInstall(
   }
 
   // --- hybrid files (write if absent; merge settings.json hooks if present) ---
+  // Any non-exempt hybrid collision has already short-circuited above as a
+  // `refused-hybrid-collision`, so the only existing-path case reachable here
+  // is `.claude/settings.json` (the merge-exempt entry).
   for (const relPath of manifest.hybrid) {
     const dstPath = join(consumerRoot, relPath)
 
@@ -188,11 +235,6 @@ export async function runInstall(
       deps.writeFile(dstPath, mergedContent)
       deps.log(`merged hooks: ${relPath}`)
       files.push({ path: relPath, kind: 'hybrid' })
-      continue
-    }
-
-    if (deps.exists(dstPath)) {
-      deps.log(`skip (exists): ${relPath}`)
       continue
     }
 
@@ -212,7 +254,6 @@ export async function runInstall(
     mode: 'prod',
     files,
   }
-  const lockPath = join(consumerRoot, 'mars.lock')
   deps.writeFile(lockPath, Buffer.from(JSON.stringify(lock, null, 2) + '\n'))
   deps.log('wrote mars.lock')
 
