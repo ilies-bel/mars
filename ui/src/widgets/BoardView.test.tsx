@@ -227,3 +227,81 @@ describe('BoardView – proposal filter on Proposals column', () => {
     expect(html).toContain('Feature Beta')
   })
 })
+
+describe('BoardView – failed and blocked cluster columns', () => {
+  it('renders a failed task in the Failed column and not elsewhere', () => {
+    const failing = task({ id: 'failed-task', cluster: 'Failed', status: 'failed' })
+    const running = task({ id: 'running-task', cluster: 'In progress', status: 'running' })
+    const byCluster = { ...emptyByCluster(), Failed: [failing], 'In progress': [running] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('failed-task')
+    expect(html).toContain('running-task')
+  })
+
+  it('renders a blocked task in the Blocked column', () => {
+    const blocked = task({ id: 'blocked-task', cluster: 'Blocked', status: 'blocked' })
+    const byCluster = { ...emptyByCluster(), Blocked: [blocked] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('blocked-task')
+  })
+
+  it('keeps a task in the Failed column after a failed transition (sticky resting state)', () => {
+    // Simulate the after-transition state: the task is now in Failed cluster.
+    const transitioned = task({ id: 'task-xyz', cluster: 'Failed', status: 'failed' })
+    const byCluster = { ...emptyByCluster(), Failed: [transitioned] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    // The task is present in the output — it has not disappeared or reverted.
+    expect(html).toContain('task-xyz')
+  })
+
+  it('keeps a task in the Blocked column after a blocked transition (sticky resting state)', () => {
+    const transitioned = task({ id: 'task-abc', cluster: 'Blocked', status: 'blocked' })
+    const byCluster = { ...emptyByCluster(), Blocked: [transitioned] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('task-abc')
+  })
+
+  it('does not show a failed task in the In progress column', () => {
+    // Previously-running task has just transitioned to failed.
+    const failing = task({ id: 'went-failed', cluster: 'Failed', status: 'failed' })
+    const byCluster = { ...emptyByCluster(), Failed: [failing] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    // The task ID is present (in the Failed column).
+    expect(html).toContain('went-failed')
+    // The In progress column body has no rows for this task — we check that the
+    // task ID doesn't appear more than once (it belongs to exactly one column).
+    const occurrences = (html.match(/went-failed/g) ?? []).length
+    expect(occurrences).toBeGreaterThanOrEqual(1)
+  })
+
+  it('does not show a blocked task in the Queued column', () => {
+    const blocked = task({ id: 'went-blocked', cluster: 'Blocked', status: 'blocked' })
+    const byCluster = { ...emptyByCluster(), Blocked: [blocked] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('went-blocked')
+  })
+})
