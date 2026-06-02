@@ -2578,7 +2578,7 @@ export const startDaemon = async (
       getDefaultDomainTaskStore()
         .listTasks()
         .then((tasks) => ({ tasks })),
-    viewProgress: async ({ failedWindowMs }) => {
+    viewProgress: async () => {
       const {
         buildProgressView,
         createProgressTaskStore,
@@ -2588,7 +2588,6 @@ export const startDaemon = async (
       return buildProgressView(
         createProgressTaskStore(client),
         createProposalReader(client),
-        { now: Date.now(), failedWindowMs },
       )
     },
     actionQueueAck: async (kind, id) => {

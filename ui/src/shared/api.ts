@@ -105,16 +105,9 @@ export const fetchTasks = async (projectId?: string): Promise<Task[]> => {
 }
 
 export const fetchProgress = async (
-  failedWindowMs?: number | null,
   projectId?: string,
 ): Promise<{ tasks: ProgressTask[]; proposals: ProgressProposalNode[] }> => {
-  let path = '/api/progress'
-  if (failedWindowMs === null) {
-    path += '?failedWindow=all'
-  } else if (failedWindowMs !== undefined) {
-    path += `?failedWindow=${failedWindowMs}`
-  }
-  path = appendProject(path, projectId)
+  const path = appendProject('/api/progress', projectId)
   const data = await fetchJson(path, progressResponseSchema)
   return { tasks: data.tasks, proposals: data.proposals }
 }

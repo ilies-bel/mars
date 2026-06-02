@@ -201,18 +201,10 @@ const normaliseSource = (raw: unknown): ProposalSource => {
 
 /**
  * Maps a task to its Progress-tab cluster, or `null` if the task is out of
- * scope (draft/done/dropped, or failed older than the recency window).
- *
- * `windowMs` controls how far back the Failed cluster looks:
- * - A positive number means "include failed tasks updated within the last
- *   `windowMs` milliseconds".
- * - `null` means "all" — no recency cutoff; every failed task is in scope.
+ * scope (draft/done/dropped). All failed tasks are always in scope — there
+ * is no recency gate on the Failed cluster.
  */
-const clusterFor = (
-  task: Task,
-  now: number,
-  windowMs: number | null,
-): Cluster | null => {
+const clusterFor = (task: Task): Cluster | null => {
   switch (task.status) {
     case 'queued':
       return 'Queued'
@@ -223,12 +215,8 @@ const clusterFor = (
       return 'In progress'
     case 'blocked':
       return 'Blocked'
-    case 'failed': {
-      if (windowMs === null) return 'Failed'
-      const updatedAt = Date.parse(task.updatedAt)
-      if (Number.isNaN(updatedAt)) return 'Failed'
-      return now - updatedAt <= windowMs ? 'Failed' : null
-    }
+    case 'failed':
+      return 'Failed'
     case 'draft':
     case 'done':
     case 'dropped':
@@ -330,29 +318,22 @@ export class TaskDb {
    *
    * Scope:
    * - all non-terminal statuses (queued, running, verifying, merging, blocked)
-   * - plus `failed` tasks whose `updated_at` is within the recency window
+   * - all `failed` tasks regardless of age
    *
    * Excluded:
    * - `draft` (not yet enqueued)
    * - `done` and `dropped` (terminal-success or operator-dismissed)
-   * - `failed` outside the recency window
-   *
-   * `windowMs` is the recency window for the Failed cluster (default 24h).
-   * Pass `null` to include all failed tasks regardless of age ("all" stop).
    *
    * Each returned task carries a server-derived `cluster` tag so the UI
    * does not encode the cluster taxonomy itself.
    */
-  async listProgressTasks(
-    now: number = Date.now(),
-    windowMs: number | null = 24 * 60 * 60 * 1000,
-  ): Promise<ProgressTask[]> {
+  async listProgressTasks(): Promise<ProgressTask[]> {
     const exists = await this.tableExists()
     if (!exists) return []
     const all = await this.listTasks()
     const out: ProgressTask[] = []
     for (const t of all) {
-      const cluster = clusterFor(t, now, windowMs)
+      const cluster = clusterFor(t)
       if (cluster === null) continue
       out.push({ ...t, cluster })
     }

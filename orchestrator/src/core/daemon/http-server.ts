@@ -133,15 +133,10 @@ export interface HttpServerDeps {
   /**
    * Build the Progress-tab view: tasks with cluster tags + referenced proposals.
    * Called by GET /view/progress; the UI server proxies this endpoint rather
-   * than reading the DB directly.
-   *
-   * `failedWindowMs` controls the Failed cluster recency window:
-   * - positive number → include failed tasks updated within the last N ms
-   * - null → all failed tasks regardless of age ("all" mode)
+   * than reading the DB directly. All failed tasks are always in scope — there
+   * is no recency gate on the Failed cluster.
    */
-  viewProgress: (q: {
-    failedWindowMs: number | null
-  }) => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[] }>
+  viewProgress: () => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[] }>
   /**
    * Acknowledge an actionQueue row for the given entity: marks it as seen without
    * hiding it from the open filter. Backed by `POST /view/action-queue/ack`.
@@ -477,27 +472,14 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /view/progress?failedWindow=<ms>|all — Progress-tab view.
+    // GET /view/progress — Progress-tab view.
     // Returns { tasks: ProgressTask[], proposals: ProposalNode[] } with
-    // cluster tags already attached. The UI server proxies this endpoint
-    // rather than computing the view locally. Pure read; no draining gate.
-    //
-    // failedWindow parsing (mirrors ui/server/index.ts:130-137):
-    //   - absent or invalid → default 24 h
-    //   - "all"             → null (every failed task in scope)
-    //   - positive number   → that many ms
+    // cluster tags already attached. All failed tasks are always in scope.
+    // The UI server proxies this endpoint rather than computing the view
+    // locally. Pure read; no draining gate.
     if (req.method === 'GET' && req.url && req.url.startsWith('/view/progress')) {
-      const parsedUrl = new URL(req.url, 'http://localhost')
-      const failedWindowParam = parsedUrl.searchParams.get('failedWindow')
-      let failedWindowMs: number | null = 24 * 60 * 60 * 1000
-      if (failedWindowParam === 'all') {
-        failedWindowMs = null
-      } else if (failedWindowParam !== null) {
-        const parsed = Number(failedWindowParam)
-        if (!Number.isNaN(parsed) && parsed > 0) failedWindowMs = parsed
-      }
       deps
-        .viewProgress({ failedWindowMs })
+        .viewProgress()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return
