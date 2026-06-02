@@ -19,16 +19,6 @@ import type { RestartTaskError } from './restart-task'
 import type { ProgressTask, ProposalNode } from './view/progress'
 import type { ViewStreamHub } from './view/stream-hub'
 
-/** Wire shape returned by GET /view/framework-update. */
-export interface FrameworkUpdateState {
-  installed: string
-  latest: string
-  available: boolean
-  /** ISO-8601 timestamp of the last successful check, or null before the first poll completes. */
-  checkedAt: string | null
-  releaseUrl: string | null
-}
-
 /** Wire shape returned by GET /view/todo for a single draft proposal. */
 export interface DraftFeature {
   id: string
@@ -158,13 +148,6 @@ export interface HttpServerDeps {
    * Backed by `POST /view/todo/dismiss`.
    */
   todoDismiss: (kind: 'draft' | 'stale', id: string) => Promise<void>
-  /**
-   * Return the framework update state from the poller cache (.mars/update.json).
-   * When the cache file does not exist yet (e.g. before the first poll
-   * completes), return a safe fallback where `available` is false and
-   * `checkedAt` / `releaseUrl` are null rather than 404.
-   */
-  viewFrameworkUpdate: () => Promise<FrameworkUpdateState>
   /**
    * SSE hub for `GET /view/stream`. When provided, the stream endpoint
    * registers each connecting client here and delivers invalidation events
@@ -480,18 +463,6 @@ export const startHttpServer = async (
     if (req.method === 'GET' && req.url && req.url.startsWith('/view/progress')) {
       deps
         .viewProgress()
-        .then((body) => sendJson(res, 200, body))
-        .catch((err: unknown) => sendError(res, err))
-      return
-    }
-
-    // GET /view/framework-update — returns the update-poller cache from
-    // .mars/update.json, or a safe fallback when the file does not exist yet.
-    // The daemon is the sole writer of this cache; nothing else calls GitHub.
-    // Pure read; no draining gate.
-    if (req.method === 'GET' && req.url === '/view/framework-update') {
-      deps
-        .viewFrameworkUpdate()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return
