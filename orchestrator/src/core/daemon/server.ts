@@ -2617,6 +2617,7 @@ export const startDaemon = async (
       const { listActionQueueItems } = await import('../lib/action-queue')
       const { listDismissals } = await import('../lib/action-queue-dismissals')
       const { listTasks: qListTasks, initQueue, getClient: getQueueClient } = await import('../queue')
+      const { getDiagnosis } = await import('../lib/diagnose')
       const { listErrorKinds: listErrKinds } = await import('../lib/error-kinds')
       const { getRepoRoot } = await import('../context')
 
@@ -2704,6 +2705,14 @@ export const startDaemon = async (
         errorKindRegistry,
         repoRoot: getRepoRoot(),
         filter,
+        diagnosisLookup: async (taskId) => {
+          const stored = await getDiagnosis(taskId)
+          if (stored.kind === 'no-verdict') return null
+          if (stored.kind === 'root-cause-found') {
+            return { text: stored.evidence, diagnosedAt: stored.recordedAt }
+          }
+          return { text: stored.whatChecked, diagnosedAt: stored.recordedAt }
+        },
       })
     },
     viewTodo: async () => {
