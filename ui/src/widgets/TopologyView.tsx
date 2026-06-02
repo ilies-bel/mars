@@ -78,6 +78,11 @@ export interface TopologyViewProps {
    * when it collapses. Optional so tests / other callers don't break.
    */
   onSelectProposal?: (id: string | null) => void
+  /**
+   * IDs of tasks currently in the done-flash window. These nodes flash green
+   * then fade before being removed when the graph rebuilds.
+   */
+  flashingTaskIds?: Set<string>
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +115,7 @@ export const TopologyView = ({
   selectedProposalId,
   searchMatchIds,
   onSelectProposal,
+  flashingTaskIds,
 }: TopologyViewProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const graphRef = useRef<Graph | null>(null)
@@ -127,6 +133,16 @@ export const TopologyView = ({
   // Latest props the imperative handlers read (avoids stale closures).
   const propsRef = useRef({ tasks, ghostedClusters, searchMatchIds })
   propsRef.current = { tasks, ghostedClusters, searchMatchIds }
+
+  // Flash animation state: nodes currently showing the green flash.
+  // allFlashingIdsRef: all nodes in the 3-second flash window.
+  // greenPhaseIdsRef: the subset currently showing the green fill (pulsing).
+  const allFlashingIdsRef = useRef<Set<string>>(new Set())
+  const greenPhaseIdsRef = useRef<Set<string>>(new Set())
+  allFlashingIdsRef.current = flashingTaskIds ?? new Set()
+  // applyHighlightRef allows the flash effect to call applyHighlight without
+  // a stale-closure reference into the mount effect.
+  const applyHighlightRef = useRef<() => void>(() => {})
   const onSelectProposalRef = useRef(onSelectProposal)
   onSelectProposalRef.current = onSelectProposal
   // Tracks the externally-driven selectedProposalId so we only react to changes
@@ -195,6 +211,9 @@ export const TopologyView = ({
         state: {
           active: { lineWidth: 2.5, shadowColor: 'rgba(167,139,250,0.5)', shadowBlur: 8 },
           dim: { fillOpacity: 0.14, strokeOpacity: 0.14, labelFillOpacity: 0.14 },
+          // Done-flash states: green confirmation burst then near-transparent fade.
+          'done-flash': { fill: '#4ade80', stroke: '#22c55e', lineWidth: 2, fillOpacity: 1, strokeOpacity: 1, labelFill: '#14532d' },
+          'done-fading': { fillOpacity: 0.08, strokeOpacity: 0.08, labelFillOpacity: 0.08 },
         },
       },
       edge: {
@@ -262,14 +281,22 @@ export const TopologyView = ({
     // ---- highlight: one batched setElementState per change ----------------
     // All dim/active resolution lives in the pure `computeStateMap` (model
     // module); here we just feed it the live element snapshot + current inputs.
+    // Flash node states are overlaid on top so they are preserved across hover /
+    // filter changes without needing to plumb flash state into computeStateMap.
     const applyHighlight = (): void => {
       const { ghostedClusters: gc, searchMatchIds: search } = propsRef.current
       const map = computeStateMap(
         { nodes: graph.getNodeData(), edges: graph.getEdgeData(), combos: graph.getComboData() },
         { searchMatchIds: search, ghostedClusters: gc, lit: litRef.current },
       )
+      // Overlay flash states: flashing nodes bypass the normal dim / active
+      // resolution so the confirmation animation always shows.
+      for (const id of allFlashingIdsRef.current) {
+        map[id] = greenPhaseIdsRef.current.has(id) ? ['done-flash'] : []
+      }
       void graph.setElementState(map)
     }
+    applyHighlightRef.current = applyHighlight
 
     // ---- debounced hover --------------------------------------------------
     const hoverDelay = (): number => (reduced() ? 0 : 100)
@@ -775,6 +802,72 @@ export const TopologyView = ({
     if (targetCombo) driver.__marsToggle?.(targetCombo)
     else driver.__marsCollapse?.()
   }, [selectedProposalId])
+
+  // Flash animation for done-transitioning nodes. When flashingTaskIds gains new
+  // IDs, start a 3-second animation: green pulses for ~2.4s then fade to near-
+  // transparent over 0.6s. The graph still holds the task nodes during this
+  // window (ProgressPage passes tasksWithFlashing so the signature is stable).
+  // We track which IDs are newly added to avoid restarting in-flight animations
+  // when an unrelated filter change re-runs this effect.
+  const prevFlashIdsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const current = flashingTaskIds ?? new Set<string>()
+    const prev = prevFlashIdsRef.current
+    const newIds = [...current].filter((id) => !prev.has(id))
+    prevFlashIdsRef.current = new Set(current)
+
+    if (newIds.length === 0) return
+
+    const PULSE_MS = 450
+    const FADE_START_MS = 2400
+    const TOTAL_MS = 3000
+
+    const intervals: ReturnType<typeof setInterval>[] = []
+    const timeouts: ReturnType<typeof setTimeout>[] = []
+
+    for (const nodeId of newIds) {
+      // Start with green phase.
+      greenPhaseIdsRef.current.add(nodeId)
+      applyHighlightRef.current()
+
+      // Pulse: alternate green/normal every PULSE_MS until fade phase.
+      const intervalId = setInterval(() => {
+        if (greenPhaseIdsRef.current.has(nodeId)) {
+          greenPhaseIdsRef.current.delete(nodeId)
+        } else {
+          greenPhaseIdsRef.current.add(nodeId)
+        }
+        applyHighlightRef.current()
+      }, PULSE_MS)
+      intervals.push(intervalId)
+
+      // Fade phase: stop pulsing and apply the near-transparent done-fading state.
+      const fadeId = setTimeout(() => {
+        clearInterval(intervalId)
+        greenPhaseIdsRef.current.delete(nodeId)
+        const graph = graphRef.current
+        if (graph) {
+          void graph.setElementState({ [nodeId]: ['done-fading'] }).catch(() => {})
+        }
+      }, FADE_START_MS)
+      timeouts.push(fadeId)
+
+      // Cleanup: remove from green phase refs once the window expires.
+      const cleanupId = setTimeout(() => {
+        greenPhaseIdsRef.current.delete(nodeId)
+      }, TOTAL_MS)
+      timeouts.push(cleanupId)
+    }
+
+    return () => {
+      for (const id of intervals) clearInterval(id)
+      for (const id of timeouts) clearTimeout(id)
+      // On cleanup: remove all new IDs from green phase (handles unmount /
+      // effect re-run before the timers fire).
+      for (const nodeId of newIds) greenPhaseIdsRef.current.delete(nodeId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flashingTaskIds])
 
   if (empty) {
     return (

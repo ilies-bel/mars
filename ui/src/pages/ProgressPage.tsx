@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useTodo } from '@/entities/todo/useTodo'
+import { useDoneFlash } from '@/hooks/useDoneFlash'
 import { useProgress } from '@/hooks/useProgress'
 import {
   readProgressStateFromUrl,
@@ -27,6 +28,15 @@ export const ProgressPage = () => {
 
   const { byCluster, tasks, proposals, error, connected } = useProgress()
   const { drafts } = useTodo()
+  const { flashingTasks, flashingTaskIds } = useDoneFlash(tasks)
+
+  // Include flashing tasks in the topology view's task list so the graph keeps
+  // their nodes alive during the 3-second flash window (the graph rebuilds only
+  // when dataSignature changes, which is stable while flash tasks are present).
+  const tasksWithFlashing = useMemo(
+    () => [...(tasks ?? []), ...flashingTasks],
+    [tasks, flashingTasks],
+  )
   const [activeTab, setActiveTab] = useState<Tab>(initialUrlState.view)
   const [activeToggles, setActiveToggles] = useState<Set<ClusterToggle>>(
     initialUrlState.clusters,
@@ -158,12 +168,13 @@ export const ProgressPage = () => {
           </main>
         ) : activeTab === 'topology' ? (
           <TopologyView
-            tasks={tasks ?? []}
+            tasks={tasksWithFlashing}
             proposals={proposals}
             ghostedClusters={ghostedClusters}
             selectedProposalId={selectedProposalId}
             searchMatchIds={searchMatchIds}
             onSelectProposal={setSelectedProposalId}
+            flashingTaskIds={flashingTaskIds}
           />
         ) : (
           <BoardView
@@ -173,6 +184,8 @@ export const ProgressPage = () => {
             selectedProposalId={selectedProposalId}
             ghostedClusters={ghostedClusters}
             searchMatchIds={searchMatchIds}
+            flashingTasks={flashingTasks}
+            flashingTaskIds={flashingTaskIds}
           />
         )}
         <Footer />
