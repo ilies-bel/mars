@@ -45,6 +45,7 @@ import { chainForProposal, chainForTask, type ChainResult } from '@/shared/chain
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
   ACTIVE_ACCENT,
+  ADHOC_COMBO_ID,
   buildG6Data,
   CANVAS_SURFACE,
   CLUSTER_STYLE,
@@ -763,7 +764,9 @@ export const TopologyView = ({
     if (prevClusterSigRef.current === sig) return
     prevClusterSigRef.current = sig
 
-    // Only update nodes that exist in the graph (orphan tasks aren't included).
+    // Only update nodes that exist in the graph. Ad hoc nodes (no parentProposalId
+    // or unknown proposal) are now included in the graph under the ADHOC_COMBO_ID
+    // combo, so this guard correctly covers both proposal and ad hoc tasks.
     const graphNodeIds = new Set(graph.getNodeData().map((n) => String(n.id)))
     const nodeUpdates = tasks
       .filter((t) => graphNodeIds.has(t.id))
@@ -771,13 +774,28 @@ export const TopologyView = ({
     graph.updateNodeData(nodeUpdates)
 
     // Recompute dominant cluster per proposal and update combo tints.
+    const proposalIdSet = new Set(proposals.map((p) => p.id))
     const rollupMap = rollupByProposal(tasks, proposals)
-    graph.updateComboData(
-      proposals.map((p) => ({
-        id: `combo:${p.id}`,
-        data: { dom: dominant(rollupMap.get(p.id)!) },
-      })),
-    )
+    const comboUpdates = proposals.map((p) => ({
+      id: `combo:${p.id}`,
+      data: { dom: dominant(rollupMap.get(p.id)!) },
+    }))
+
+    // Also patch the Ad hoc combo if it's present in the graph.
+    if (graph.getComboData(ADHOC_COMBO_ID)) {
+      const adHocTasks = tasks.filter(
+        (t) => t.parentProposalId == null || !proposalIdSet.has(t.parentProposalId),
+      )
+      const adHocCounts: Record<string, number> = { Queued: 0, 'In progress': 0, Blocked: 0, Failed: 0 }
+      for (const t of adHocTasks) adHocCounts[t.cluster] = (adHocCounts[t.cluster] ?? 0) + 1
+      const adHocRollup = {
+        total: adHocTasks.length,
+        counts: adHocCounts as Parameters<typeof dominant>[0]['counts'],
+      }
+      comboUpdates.push({ id: ADHOC_COMBO_ID, data: { dom: dominant(adHocRollup) } })
+    }
+
+    graph.updateComboData(comboUpdates)
 
     void graph.draw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
