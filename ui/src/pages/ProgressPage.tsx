@@ -128,33 +128,6 @@ export const ProgressPage = () => {
             className="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-fg placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-border"
           />
         </div>
-        {/* Proposal filter — shown only when there are in-scope proposals */}
-        {proposals.length > 0 ? (
-          <div
-            className="flex items-center gap-2 border-b border-border px-4 py-2"
-            data-testid="proposal-filter"
-          >
-            <label
-              htmlFor="proposal-filter-select"
-              className="shrink-0 font-mono text-[11px] text-muted"
-            >
-              Proposal
-            </label>
-            <select
-              id="proposal-filter-select"
-              value={selectedProposalId ?? ''}
-              onChange={(e) => setSelectedProposalId(e.target.value || null)}
-              className="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-fg focus:outline-none focus:ring-1 focus:ring-border"
-            >
-              <option value="">All</option>
-              {proposals.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.title.length > 60 ? `${p.title.slice(0, 59)}…` : p.title}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : null}
         {error && tasks === null ? (
           <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
             <ApiErrorPanel error={error.message} />
