@@ -472,72 +472,12 @@ export class StateDb {
   }
 
   /**
-   * Read open `stale-worktree` actionQueue items from `action_queue_items` and return them
-   * as the same `StaleWorktree` shape the TodoPage already consumes, so the
-   * unified model is the single source of truth for the web UI's Alerts section.
-   *
-   * Falls back to an empty array when the table does not yet exist (fresh repo
-   * before any daemon has ever run).
-   */
-  async listOpenStaleWorktreeAlerts(): Promise<
-    Array<{
-      taskId: string
-      status: string
-      ageHours: number
-      updatedAt: string
-      prompt: string
-      error: string | null
-      branch: string | null
-      blockerTaskId: string | null
-    }>
-  > {
-    try {
-      const r = await this.client.execute(
-        `SELECT context, payload, last_seen_at, raised_at
-           FROM action_queue_items
-          WHERE kind = 'stale-worktree' AND state = 'open'
-          ORDER BY raised_at DESC`,
-      )
-      return r.rows.flatMap((row) => {
-        const r0 = row as unknown as Record<string, unknown>
-        let ctx: Record<string, unknown> = {}
-        let pld: Record<string, unknown> = {}
-        try {
-          const parsed = JSON.parse(r0.context as string)
-          if (parsed && typeof parsed === 'object') ctx = parsed as Record<string, unknown>
-        } catch { /* ignore */ }
-        try {
-          const parsed = JSON.parse(r0.payload as string)
-          if (parsed && typeof parsed === 'object') pld = parsed as Record<string, unknown>
-        } catch { /* ignore */ }
-        const taskId = typeof ctx.taskId === 'string' ? ctx.taskId : null
-        if (!taskId) return []
-        return [{
-          taskId,
-          status: typeof pld.status === 'string' ? pld.status : 'unknown',
-          ageHours: typeof pld.ageHours === 'number' ? pld.ageHours : 0,
-          updatedAt: typeof r0.last_seen_at === 'string'
-            ? r0.last_seen_at
-            : (typeof r0.raised_at === 'string' ? r0.raised_at : new Date().toISOString()),
-          prompt: typeof pld.prompt === 'string' ? pld.prompt : '',
-          error: typeof pld.error === 'string' ? pld.error : null,
-          branch: typeof pld.branch === 'string' ? pld.branch : null,
-          blockerTaskId: null,
-        }]
-      })
-    } catch {
-      // action_queue_items table may not exist yet on a fresh repo.
-      return []
-    }
-  }
-
-  /**
    * Read ALL open actionQueue items from `action_queue_items` and return raw rows for the
    * UI action-queue handler. Cheaper than a derived scan: one bounded SELECT
    * instead of an N-task SQL scan + a .mars/worktrees readdir/stat fan-out.
    *
    * Falls back to an empty array when the table does not yet exist (fresh repo
-   * before any daemon has ever run), matching listOpenStaleWorktreeAlerts().
+   * before any daemon has ever run).
    */
   async listOpenActionQueueItems(): Promise<
     Array<{
