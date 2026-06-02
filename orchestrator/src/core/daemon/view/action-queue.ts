@@ -129,6 +129,13 @@ export interface BuildActionQueueViewParams {
   /** Absolute path to the repo root — used for the stale-worktree git probe. */
   repoRoot: string
   filter: DerivedActionQueueFilter
+  /**
+   * Optional lookup for a task's diagnosis. The daemon wires this to
+   * getDiagnosis() from diagnose.ts so the view always reflects the current
+   * diagnoses table, not a stale payload copy. When omitted (e.g. in tests
+   * that don't exercise diagnosis), diagnosis is always null.
+   */
+  diagnosisLookup?: (taskId: string) => Promise<{ text: string; diagnosedAt: string } | null>
 }
 
 /**
@@ -144,6 +151,7 @@ export const buildActionQueueView = async ({
   errorKindRegistry,
   repoRoot,
   filter,
+  diagnosisLookup,
 }: BuildActionQueueViewParams): Promise<ActionQueueRow[]> => {
   const persistedRows = await stateStore.listOpenActionQueueItems()
   const dismissalMap = await stateStore.listActionQueueDismissals()
@@ -345,20 +353,10 @@ export const buildActionQueueView = async ({
       }
     }
 
-    // Diagnosis persisted by the diagnose-failure agent onto the actionQueue payload.
-    let diagnosis: { text: string; diagnosedAt: string } | null = null
-    const rawDiagnosis = row.payload.diagnosis
-    if (
-      rawDiagnosis !== null &&
-      typeof rawDiagnosis === 'object' &&
-      typeof (rawDiagnosis as { text?: unknown }).text === 'string' &&
-      typeof (rawDiagnosis as { diagnosedAt?: unknown }).diagnosedAt === 'string'
-    ) {
-      diagnosis = {
-        text: (rawDiagnosis as { text: string }).text,
-        diagnosedAt: (rawDiagnosis as { diagnosedAt: string }).diagnosedAt,
-      }
-    }
+    // Derive diagnosis from the diagnoses table via the injected lookup so that
+    // 'mars diagnose set' is reflected immediately without a re-run of the
+    // diagnose-failure agent.
+    const diagnosis = diagnosisLookup ? await diagnosisLookup(entityId) : null
 
     // Pull the failure-reason catalog code from the payload.
     const failureReasonCode =
