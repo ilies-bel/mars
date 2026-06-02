@@ -14,12 +14,13 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "scripts/maybe-build.mjs"
   ],
   "scripts": {
     "build": "tsup",
     "build:watch": "tsup --watch",
-    "prepare": "tsup",
+    "prepare": "node scripts/maybe-build.mjs",
     "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
