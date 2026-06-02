@@ -785,6 +785,80 @@ describe('runNonLlmStepWithSpan — command output', () => {
   })
 })
 
+// ── MARS_REFLECT_DISABLED=1 does not suppress capture ────────────────────────
+
+describe('runWorkerWithSpan — MARS_REFLECT_DISABLED=1 does not suppress capture', () => {
+  it('still writes the step_ended row including transcript when MARS_REFLECT_DISABLED=1', async () => {
+    const orig = process.env.MARS_REFLECT_DISABLED
+    process.env.MARS_REFLECT_DISABLED = '1'
+    try {
+      const traceStore = await openTraceEventStore(tmpDbPath())
+      const conversation = [{ type: 'assistant', message: { content: 'hello' } }] as never[]
+      const worker = makeWorker('Coder', {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        sessionId: null,
+        conversation,
+      })
+
+      await runWorkerWithSpan({
+        worker,
+        prompt: 'implement the thing',
+        runOptions: { cwd: '/tmp' },
+        traceStore,
+        stepName: 'run-claude-code',
+        workflowInstanceId: 'wf-disabled-001',
+        originId: 'task-disabled-abc',
+      })
+
+      const ended = (
+        await traceStore.query({ taskId: 'task-disabled-abc', kind: ['step_ended'] })
+      )[0]
+      // transcript is always captured — env var no longer suppresses it
+      expect(typeof ended.payload.transcript).toBe('string')
+      expect(JSON.parse(ended.payload.transcript as string)).toEqual(conversation)
+      // usage signals are also present
+      expect(ended.payload.usageSignals).toBeDefined()
+    } finally {
+      if (orig === undefined) {
+        delete process.env.MARS_REFLECT_DISABLED
+      } else {
+        process.env.MARS_REFLECT_DISABLED = orig
+      }
+    }
+  })
+
+  it('runNonLlmStepWithSpan still writes its step_spans row when MARS_REFLECT_DISABLED=1', async () => {
+    const orig = process.env.MARS_REFLECT_DISABLED
+    process.env.MARS_REFLECT_DISABLED = '1'
+    try {
+      const traceStore = await openTraceEventStore(tmpDbPath())
+
+      await runNonLlmStepWithSpan({
+        stepName: 'setup-worktree',
+        workflowInstanceId: 'wf-disabled-nonllm',
+        originId: 'task-disabled-nonllm',
+        phase: 'setup',
+        traceStore,
+        fn: async () => 'done',
+      })
+
+      const events = await traceStore.query({ taskId: 'task-disabled-nonllm' })
+      expect(events).toHaveLength(2)
+      expect(events.map((e) => e.kind).sort()).toEqual(['step_ended', 'step_started'])
+      const ended = events.find((e) => e.kind === 'step_ended')!
+      expect(ended.payload.outcome).toBe('completed')
+    } finally {
+      if (orig === undefined) {
+        delete process.env.MARS_REFLECT_DISABLED
+      } else {
+        process.env.MARS_REFLECT_DISABLED = orig
+      }
+    }
+  })
+})
+
 // ── multiple verify spans (three verify attempts) ──────────────────────────
 
 describe('runNonLlmStepWithSpan — three verify attempts produce three spans', () => {

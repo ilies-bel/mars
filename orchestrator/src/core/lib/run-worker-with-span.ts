@@ -10,12 +10,12 @@
 // no worker name and no session id — the invariant "a Step span is a Session iff
 // worker IS NOT NULL" means these are Step spans, not Sessions.
 //
-// Only the transcript in `runWorkerWithSpan` is gated behind isReflectDisabled()
-// (it can be large). Session id and usage signals are always recorded so
-// lightweight queries remain accurate even when reflection is globally disabled.
+// Capture (transcripts, usage signals, step spans) is unconditional — the
+// MARS_REFLECT_DISABLED env var does NOT suppress writes here. Only the
+// analysis verbs (mars reflect / mars arc reflect) consult that flag and
+// skip their automatic runs when it is set.
 
 import { summarizeUsage } from './claude-usage'
-import { isReflectDisabled } from './reflect-signals'
 import type { TraceEventStore, TraceEventPhase } from './trace-events-store'
 import type { Worker, RunOptions } from '../workers'
 import type { RunClaudeResult } from './git'
@@ -56,7 +56,7 @@ const safeRecord = async (
  *
  * The step_ended payload records the worker name, Claude session id, the
  * outcome (`success` | `failure`), the run duration, token usage signals,
- * and — when reflection is enabled — the full conversation transcript.
+ * and the full conversation transcript.
  * The span is always closed, even when the worker throws.
  *
  * Trace capture is best-effort: errors from `record` are swallowed so a
@@ -129,9 +129,7 @@ export const runWorkerWithSpan = async (
     result.exitCode === 0 || result.exitCode === 138
       ? undefined
       : `exit-${result.exitCode}`
-  const transcript = isReflectDisabled()
-    ? undefined
-    : JSON.stringify(result.conversation)
+  const transcript = JSON.stringify(result.conversation)
 
   await safeRecord(traceStore, {
     kind: 'step_ended',
