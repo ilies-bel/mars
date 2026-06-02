@@ -6,7 +6,7 @@
  *     ~/.claude/settings.json so mars:* skills become visible in Claude Code.
  *   - The plugin path registered is <repo-root>/.claude.
  *   - The consumer's pre-existing ~/.claude/settings.json is not overwritten —
- *     only the `plugins` key is extended.
+ *     only the `enabledPlugins` and `extraKnownMarketplaces` keys are extended.
  *
  * The test runs the real install-dev.sh in an isolated temp directory to
  * confirm the full shell → tsx → CLI → claude-plugin chain works end-to-end.
@@ -41,6 +41,9 @@ const INSTALL_DEV_SH = resolve(REPO_ROOT, 'install-dev.sh')
 const PLUGIN_DIR = resolve(REPO_ROOT, '.claude')
 const canRun = existsSync(INSTALL_DEV_SH) && existsSync(PLUGIN_DIR)
 
+const PLUGIN_KEY = 'mars@mars'
+const MARKETPLACE_KEY = 'mars'
+
 describe.skipIf(!canRun)('install-dev.sh — plugin activation', () => {
   let tmpHome: string
   let binDir: string
@@ -72,10 +75,11 @@ describe.skipIf(!canRun)('install-dev.sh — plugin activation', () => {
     expect(existsSync(settingsPath)).toBe(true)
 
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
-      plugins?: string[]
+      enabledPlugins?: Record<string, boolean>
+      extraKnownMarketplaces?: Record<string, { source?: { source?: string; path?: string } }>
     }
-    expect(Array.isArray(settings.plugins)).toBe(true)
-    expect(settings.plugins).toContain(PLUGIN_DIR)
+    expect(settings.enabledPlugins?.[PLUGIN_KEY]).toBe(true)
+    expect(settings.extraKnownMarketplaces?.[MARKETPLACE_KEY]?.source?.path).toBe(PLUGIN_DIR)
   })
 
   it('preserves pre-existing ~/.claude/settings.json content when activating', () => {
@@ -104,13 +108,19 @@ describe.skipIf(!canRun)('install-dev.sh — plugin activation', () => {
 
     const settings = JSON.parse(
       readFileSync(join(claudeDir, 'settings.json'), 'utf8'),
-    ) as { env?: { FOO?: string }; permissions?: { allow?: string[] }; plugins?: string[] }
+    ) as {
+      env?: { FOO?: string }
+      permissions?: { allow?: string[] }
+      enabledPlugins?: Record<string, boolean>
+      extraKnownMarketplaces?: Record<string, { source?: { path?: string } }>
+    }
 
     // Existing keys must be preserved
     expect(settings.env?.FOO).toBe('bar')
     expect(settings.permissions?.allow).toContain('Bash(git status)')
     // And the plugin must be registered
-    expect(settings.plugins).toContain(PLUGIN_DIR)
+    expect(settings.enabledPlugins?.[PLUGIN_KEY]).toBe(true)
+    expect(settings.extraKnownMarketplaces?.[MARKETPLACE_KEY]?.source?.path).toBe(PLUGIN_DIR)
   })
 
   it('does not write any .claude/ files into the repository install ran from', () => {

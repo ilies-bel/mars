@@ -2,8 +2,9 @@
  * Tests for the activate-plugin step of mars init.
  *
  * Behaviour under test (routed through tryActivatePlugin with injected deps):
- *   - after the step runs, settings.json at the given path contains the
- *     framework .claude dir in plugins (acceptance criterion a)
+ *   - after the step runs, settings.json has enabledPlugins["mars@mars"] = true
+ *     and extraKnownMarketplaces["mars"] pointing to the framework .claude dir
+ *     (acceptance criterion a)
  *   - the step does NOT throw when the framework dir is not a Mars plugin
  *     directory (acceptance criterion b — missing dir)
  *   - the step does NOT throw when writeSettings throws (acceptance
@@ -40,26 +41,31 @@ function makeDeps(
 
 const SETTINGS_PATH = '/tmp/test-home/.claude/settings.json'
 const FRAMEWORK_CLAUDE_DIR = '/opt/mars-framework/.claude'
-const OTHER_PLUGIN = '/home/user/other-plugin'
+const PLUGIN_KEY = 'mars@mars'
+const MARKETPLACE_KEY = 'mars'
 
 // ---------------------------------------------------------------------------
 // init activate-plugin step — success path
 // ---------------------------------------------------------------------------
 
 describe('init activate-plugin step — success', () => {
-  it('registers the framework .claude dir in settings.plugins', () => {
+  it('sets enabledPlugins["mars@mars"] = true', () => {
     const deps = makeDeps({}, [FRAMEWORK_CLAUDE_DIR])
     tryActivatePlugin(FRAMEWORK_CLAUDE_DIR, SETTINGS_PATH, deps)
 
-    expect(deps.store.plugins).toContain(FRAMEWORK_CLAUDE_DIR)
+    const enabledPlugins = deps.store.enabledPlugins as Record<string, boolean>
+    expect(enabledPlugins[PLUGIN_KEY]).toBe(true)
   })
 
-  it('preserves existing non-mars plugins alongside the new entry', () => {
-    const deps = makeDeps({ plugins: [OTHER_PLUGIN] }, [FRAMEWORK_CLAUDE_DIR])
+  it('registers the framework .claude dir in extraKnownMarketplaces["mars"].source.path', () => {
+    const deps = makeDeps({}, [FRAMEWORK_CLAUDE_DIR])
     tryActivatePlugin(FRAMEWORK_CLAUDE_DIR, SETTINGS_PATH, deps)
 
-    expect(deps.store.plugins).toContain(OTHER_PLUGIN)
-    expect(deps.store.plugins).toContain(FRAMEWORK_CLAUDE_DIR)
+    const marketplaces = deps.store.extraKnownMarketplaces as Record<
+      string,
+      { source: { path: string } }
+    >
+    expect(marketplaces[MARKETPLACE_KEY].source.path).toBe(FRAMEWORK_CLAUDE_DIR)
   })
 
   it('preserves other settings keys (env, permissions, hooks, …)', () => {
@@ -71,7 +77,17 @@ describe('init activate-plugin step — success', () => {
 
     expect(deps.store.env).toEqual({ FOO: 'bar' })
     expect(deps.store.permissions).toEqual({ allow: [] })
-    expect(deps.store.plugins).toContain(FRAMEWORK_CLAUDE_DIR)
+    const enabledPlugins = deps.store.enabledPlugins as Record<string, boolean>
+    expect(enabledPlugins[PLUGIN_KEY]).toBe(true)
+  })
+
+  it('preserves existing non-mars enabledPlugins entries', () => {
+    const deps = makeDeps({ enabledPlugins: { 'other@marketplace': true } }, [FRAMEWORK_CLAUDE_DIR])
+    tryActivatePlugin(FRAMEWORK_CLAUDE_DIR, SETTINGS_PATH, deps)
+
+    const enabledPlugins = deps.store.enabledPlugins as Record<string, boolean>
+    expect(enabledPlugins['other@marketplace']).toBe(true)
+    expect(enabledPlugins[PLUGIN_KEY]).toBe(true)
   })
 })
 
@@ -91,7 +107,7 @@ describe('init activate-plugin step — non-fatal when framework dir is missing'
     const deps = makeDeps()
     tryActivatePlugin(FRAMEWORK_CLAUDE_DIR, SETTINGS_PATH, deps)
 
-    expect(deps.store.plugins).toBeUndefined()
+    expect(deps.store.enabledPlugins).toBeUndefined()
   })
 })
 
@@ -134,24 +150,36 @@ describe('init activate-plugin step — non-fatal when settings file is unwritab
 // ---------------------------------------------------------------------------
 
 describe('init activate-plugin step — idempotent (double-run)', () => {
-  it('running twice leaves exactly one mars entry in plugins', () => {
+  it('running twice leaves exactly one mars@mars entry in enabledPlugins', () => {
     const deps = makeDeps({}, [FRAMEWORK_CLAUDE_DIR])
     tryActivatePlugin(FRAMEWORK_CLAUDE_DIR, SETTINGS_PATH, deps)
     tryActivatePlugin(FRAMEWORK_CLAUDE_DIR, SETTINGS_PATH, deps)
 
-    const plugins = deps.store.plugins as string[]
-    expect(
-      plugins.filter((p) => p === FRAMEWORK_CLAUDE_DIR),
-    ).toHaveLength(1)
+    const pluginKeys = Object.keys(
+      deps.store.enabledPlugins as Record<string, boolean>,
+    ).filter((k) => k === PLUGIN_KEY)
+    expect(pluginKeys).toHaveLength(1)
   })
 
-  it('preserves non-mars plugins across multiple runs', () => {
-    const deps = makeDeps({ plugins: [OTHER_PLUGIN] }, [FRAMEWORK_CLAUDE_DIR])
+  it('running twice leaves exactly one mars entry in extraKnownMarketplaces', () => {
+    const deps = makeDeps({}, [FRAMEWORK_CLAUDE_DIR])
     tryActivatePlugin(FRAMEWORK_CLAUDE_DIR, SETTINGS_PATH, deps)
     tryActivatePlugin(FRAMEWORK_CLAUDE_DIR, SETTINGS_PATH, deps)
 
-    const plugins = deps.store.plugins as string[]
-    expect(plugins).toContain(OTHER_PLUGIN)
-    expect(plugins.filter((p) => p === OTHER_PLUGIN)).toHaveLength(1)
+    const marketplaceKeys = Object.keys(
+      deps.store.extraKnownMarketplaces as Record<string, unknown>,
+    ).filter((k) => k === MARKETPLACE_KEY)
+    expect(marketplaceKeys).toHaveLength(1)
+  })
+
+  it('preserves non-mars enabledPlugins entries across multiple runs', () => {
+    const deps = makeDeps({ enabledPlugins: { 'other@marketplace': true } }, [FRAMEWORK_CLAUDE_DIR])
+    tryActivatePlugin(FRAMEWORK_CLAUDE_DIR, SETTINGS_PATH, deps)
+    tryActivatePlugin(FRAMEWORK_CLAUDE_DIR, SETTINGS_PATH, deps)
+
+    const enabledPlugins = deps.store.enabledPlugins as Record<string, boolean>
+    expect(enabledPlugins['other@marketplace']).toBe(true)
+    const otherKeys = Object.keys(enabledPlugins).filter((k) => k === 'other@marketplace')
+    expect(otherKeys).toHaveLength(1)
   })
 })
