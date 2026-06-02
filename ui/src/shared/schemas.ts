@@ -45,6 +45,8 @@ const taskSpecSchema = z
   })
   .nullable()
 
+const clusterSchema = z.enum(['Queued', 'In progress', 'Blocked', 'Failed'])
+
 export const taskSchema = z.object({
   id: z.string(),
   prompt: z.string(),
@@ -73,12 +75,17 @@ export const taskSchema = z.object({
    * Drives provenance edges in the Topology DAG view.
    */
   parentProposalId: z.string().nullable().optional(),
+  /**
+   * Progress-tab cluster tag derived server-side. Null for terminal statuses
+   * (draft/done/dropped) that fall outside the kanban scope. Non-null for all
+   * active and failed tasks. Absent on legacy responses that pre-date the
+   * daemon-side enrichment — consumers should treat absent as null.
+   */
+  cluster: clusterSchema.nullable().optional(),
   spec: taskSpecSchema.optional().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
-
-const clusterSchema = z.enum(['Queued', 'In progress', 'Blocked', 'Failed'])
 
 const progressTaskSchema = taskSchema.extend({
   cluster: clusterSchema,

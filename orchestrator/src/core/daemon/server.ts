@@ -2574,10 +2574,11 @@ export const startDaemon = async (
     failureReasonCatalog,
     recipeCatalog,
     traceStore,
-    viewTasks: () =>
-      getDefaultDomainTaskStore()
-        .listTasks()
-        .then((tasks) => ({ tasks })),
+    viewTasks: async () => {
+      const { buildTasksView } = await import('./view/tasks.js')
+      const client = getClient()
+      return buildTasksView(client)
+    },
     viewProgress: async () => {
       const {
         buildProgressView,
