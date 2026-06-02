@@ -125,11 +125,13 @@ export const isTaskTag = (value: unknown): value is TaskTag =>
 /**
  * The phase that stamped a `'failed'` task. Set on the failure transition
  * by the implement workflow and consumed by `mars continue <id>` to decide
- * which step to resume from. `'code'` is reserved for failures that occur
- * before any verifiable artefact exists (e.g. install errors): such tasks
- * cannot be continued and must be restarted from scratch.
+ * which step to resume from. `'setup'` is for true pre-coding failures
+ * (e.g. install errors, worktree creation failures) where the task never
+ * entered the coding step; such tasks must be restarted from scratch.
+ * `'code'` is for failures that occurred during the actual coder run, which
+ * may have left commits ahead of main and can potentially be continued.
  */
-export type FailedPhase = 'code' | 'verify' | 'merge'
+export type FailedPhase = 'setup' | 'code' | 'verify' | 'merge'
 
 /**
  * Structured-task contract (gsd-executor-style). When a task ships with a
@@ -1172,7 +1174,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
 }
 
 const coerceFailedPhase = (raw: unknown): FailedPhase | null => {
-  if (raw === 'code' || raw === 'verify' || raw === 'merge') return raw
+  if (raw === 'setup' || raw === 'code' || raw === 'verify' || raw === 'merge') return raw
   return null
 }
 
