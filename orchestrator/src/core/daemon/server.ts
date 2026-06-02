@@ -1983,6 +1983,14 @@ export const startDaemon = async (
             const { NestedTechError, WalkAccessError } = await import(
               '../../init/walk-manifests'
             )
+            const { InitConfigError } = await import('../../init/init-config')
+            if (err instanceof InitConfigError) {
+              return {
+                ok: false,
+                error: err.message,
+                errorCode: `init-config:${err.configPath}`,
+              }
+            }
             if (err instanceof NestedTechError) {
               return {
                 ok: false,

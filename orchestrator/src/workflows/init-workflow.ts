@@ -10,8 +10,10 @@ import { initDatabases } from '../init/databases'
 import {
   detectStack,
   type ManifestFinding,
+  type StackDetection,
   type SupervisorSpec,
 } from '../init/detect-stack'
+import { loadInitConfig } from '../init/init-config'
 import {
   renderSupervisor,
   minimalRenderInput,
@@ -141,9 +143,11 @@ const ensureBaseline = (stack: {
 type DetectedStack = z.infer<typeof stackSchema>
 type RenderedSupervisor = z.infer<typeof renderedSupervisorSchema>
 
-const runDetectStack = async (): Promise<DetectedStack> => {
+const runDetectStack = async (configPath?: string): Promise<DetectedStack> => {
   const ctx = resolveContext()
-  const detected = detectStack(ctx.repoRoot)
+  const detected = configPath
+    ? loadInitConfig(configPath, ctx.repoRoot)
+    : detectStack(ctx.repoRoot)
   return {
     languages: detected.languages,
     frameworks: detected.frameworks,
@@ -375,7 +379,9 @@ const runActivatePlugin = (): void => {
   tryActivatePlugin(frameworkClaudeDir, userSettingsPath, realDeps)
 }
 
-const initInputSchema = z.object({})
+const initInputSchema = z.object({
+  configPath: z.string().optional(),
+})
 
 type InitInput = z.infer<typeof initInputSchema>
 
@@ -395,7 +401,9 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
   id: 'init',
   inputSchema: initInputSchema,
   fn: async (ctx: WorkflowCtx, input: InitInput): Promise<InitWorkflowOutput> => {
-    const stack = await ctx.step('detect-stack', runDetectStack)
+    const stack = await ctx.step('detect-stack', () =>
+      runDetectStack(input.configPath),
+    )
     const rendered = await ctx.step('render-supervisors', () =>
       runRenderSupervisors(stack),
     )
@@ -415,6 +423,13 @@ export interface RunInitOptions {
   force: boolean
   dryRun: boolean
   verbose?: boolean
+  /**
+   * Path to a declarative TOML init config (`mars init -f <path>`). When set,
+   * the stack is read from the config instead of being auto-detected by
+   * walking the repo — the escape hatch for layouts the walker rejects (e.g.
+   * a root packaging manifest nesting over per-package manifests).
+   */
+  configPath?: string
 }
 
 export interface RunInitResult {
@@ -426,13 +441,26 @@ export interface RunInitResult {
 export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
   const ctx = resolveContext()
 
-  const detectedForReport = detectStack(ctx.repoRoot, {
-    onManifest: opts.verbose
-      ? (m: ManifestFinding) => {
-          process.stderr.write(`[mars init] ${m.dir}: ${m.techs.join(', ')}\n`)
-        }
-      : undefined,
-  })
+  // When a declarative config is supplied, the "detection" report reflects the
+  // config-derived stack rather than a repo walk — this is what makes the
+  // config the escape hatch for layouts the walker would reject.
+  let detectedForReport: StackDetection
+  if (opts.configPath) {
+    detectedForReport = loadInitConfig(opts.configPath, ctx.repoRoot)
+    if (opts.verbose) {
+      for (const m of detectedForReport.manifests) {
+        process.stderr.write(`[mars init] ${m.dir}: ${m.techs.join(', ')}\n`)
+      }
+    }
+  } else {
+    detectedForReport = detectStack(ctx.repoRoot, {
+      onManifest: opts.verbose
+        ? (m: ManifestFinding) => {
+            process.stderr.write(`[mars init] ${m.dir}: ${m.techs.join(', ')}\n`)
+          }
+        : undefined,
+    })
+  }
 
   if (opts.dryRun) {
     return {
@@ -496,7 +524,7 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
 
   const result = await runWorkflow(
     initWorkflow,
-    {},
+    opts.configPath ? { configPath: opts.configPath } : {},
     { store: createQueueWorkflowStore() },
   )
 
