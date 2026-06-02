@@ -2,7 +2,7 @@ import { existsSync, unlinkSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { type Client, createClient } from '@libsql/client'
 
-import { resolveContext } from '../mastra/context'
+import { resolveContext } from '../core/context'
 
 /**
  * One-shot, idempotent merge of the historical two-database layout

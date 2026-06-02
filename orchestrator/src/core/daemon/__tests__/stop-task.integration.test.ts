@@ -25,7 +25,7 @@
  *   5) Stop a task already in terminal `done` state; assert refusal
  *      with a 'terminal state' message and row unchanged.
  *
- * See orchestrator/src/mastra/daemon/__tests__/http-restart.test.ts for
+ * See orchestrator/src/core/daemon/__tests__/http-restart.test.ts for
  * the in-process queue + repo bootstrap pattern this file should adopt
  * once the RPC exists.
  */

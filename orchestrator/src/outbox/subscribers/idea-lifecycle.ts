@@ -1,7 +1,7 @@
 import type { Client } from '@libsql/client'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
-import { drainWithStall } from '../../mastra/daemon/subscriber-drain.js'
+import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 
 export const IDEA_LIFECYCLE_SUBSCRIBER = 'idea-lifecycle'
 

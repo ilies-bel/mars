@@ -121,7 +121,7 @@ export async function statuslineCommand(repo?: string): Promise<void> {
     // Read update cache — file only, never network.
     let cache: UpdateCache | null = null
     try {
-      const { resolveContext } = await import('../mastra/context.js')
+      const { resolveContext } = await import('../core/context.js')
       const ctx = resolveContext(repo)
       const updatePath = join(ctx.stateDir, 'update.json')
       if (existsSync(updatePath)) {

@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 import { createQueueWorkflowStore } from './queue-workflow-store'
-import { resolveContext } from '../mastra/context'
+import { resolveContext } from '../core/context'
 import { initDatabases } from '../init/databases'
 import {
   detectStack,

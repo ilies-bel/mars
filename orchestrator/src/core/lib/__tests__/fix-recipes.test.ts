@@ -633,7 +633,7 @@ describe('fix-recipes', () => {
     const ctx = {
       targetPath: '/tmp/worktrees/task-abc',
       statusOutput:
-        "src/mastra/lib/__tests__/reflector.test.ts(40,9): error TS2353: Object literal may only specify known properties, and 'removedField' does not exist in type '{ inputTokens: number; outputTokens: number; cacheCreateTokens: number; cacheReadTokens: number; cacheHitRatio: number; }'.\nCommand failed: npx tsc --noEmit\n",
+        "src/core/lib/__tests__/reflector.test.ts(40,9): error TS2353: Object literal may only specify known properties, and 'removedField' does not exist in type '{ inputTokens: number; outputTokens: number; cacheCreateTokens: number; cacheReadTokens: number; cacheHitRatio: number; }'.\nCommand failed: npx tsc --noEmit\n",
       targetBranch: 'task/abc',
       integrationBranch: 'main',
       originalPrompt: '',
@@ -718,7 +718,7 @@ describe('fix-recipes', () => {
     const ctx = {
       targetPath: '/tmp/worktrees/task-abc',
       statusOutput:
-        "src/mastra/lib/deep-reflect-query.ts(169,21): error TS2339: Property 'removedField' does not exist on type 'SomeType'.\nCommand failed: npx tsc --noEmit\n",
+        "src/core/lib/deep-reflect-query.ts(169,21): error TS2339: Property 'removedField' does not exist on type 'SomeType'.\nCommand failed: npx tsc --noEmit\n",
       targetBranch: 'task/abc',
       integrationBranch: 'main',
       originalPrompt: '',
@@ -805,7 +805,7 @@ describe('fix-recipes', () => {
     const ctx = {
       targetPath: '/tmp/worktrees/task-abc',
       statusOutput:
-        'src/mastra/blocker-resolution.test.ts(19,73): error TS2694: Namespace \'...\' has no exported member \'markOriginDoneFromRecovery\'.\nCommand failed: npx tsc --noEmit\n',
+        'src/core/blocker-resolution.test.ts(19,73): error TS2694: Namespace \'...\' has no exported member \'markOriginDoneFromRecovery\'.\nCommand failed: npx tsc --noEmit\n',
       targetBranch: 'task/abc',
       integrationBranch: 'main',
       originalPrompt: '',
@@ -870,7 +870,7 @@ describe('fix-recipes', () => {
     const ctx = {
       targetPath: '/tmp/worktrees/task-abc',
       statusOutput:
-        "src/mastra/daemon/__tests__/liveness.test.ts(144,51): error TS2345: Argument of type '(value: void | PromiseLike<void>) => void' is not assignable to parameter of type '(err?: Error | undefined) => void'.\nCommand failed: npx tsc --noEmit\n",
+        "src/core/daemon/__tests__/liveness.test.ts(144,51): error TS2345: Argument of type '(value: void | PromiseLike<void>) => void' is not assignable to parameter of type '(err?: Error | undefined) => void'.\nCommand failed: npx tsc --noEmit\n",
       targetBranch: 'task/abc',
       integrationBranch: 'main',
       originalPrompt: '',
@@ -917,15 +917,15 @@ describe('fix-recipes', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
       const promptWithSource = recipe.buildPrompt({
         ...ctx,
-        originalPrompt: 'add isDaemonAlive helper in src/mastra/daemon/liveness.ts',
+        originalPrompt: 'add isDaemonAlive helper in src/core/daemon/liveness.ts',
       })
       expect(promptWithSource).toContain(
-        'add isDaemonAlive helper in src/mastra/daemon/liveness.ts',
+        'add isDaemonAlive helper in src/core/daemon/liveness.ts',
       )
       expect(promptWithSource).toMatch(/inlined/i)
       const promptWithout = recipe.buildPrompt(ctx)
       expect(promptWithout).not.toContain(
-        'add isDaemonAlive helper in src/mastra/daemon/liveness.ts',
+        'add isDaemonAlive helper in src/core/daemon/liveness.ts',
       )
       expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
     })
@@ -941,7 +941,7 @@ describe('fix-recipes', () => {
     const ctx = {
       targetPath: '/tmp/worktrees/task-abc',
       statusOutput:
-        "src/mastra/queue-fix-tasks.ts(605,11): error TS2304: Cannot find name 'NO_RECIPE_ACTION_QUEUE_KIND'.\nCommand failed: npx tsc --noEmit\n",
+        "src/core/queue-fix-tasks.ts(605,11): error TS2304: Cannot find name 'NO_RECIPE_ACTION_QUEUE_KIND'.\nCommand failed: npx tsc --noEmit\n",
       targetBranch: 'task/abc',
       integrationBranch: 'main',
       originalPrompt: '',
@@ -1020,7 +1020,7 @@ describe('fix-recipes', () => {
     const ctx = {
       targetPath: '/tmp/worktrees/task-eda2d54c',
       statusOutput: [
-        "src/mastra/lib/error-kinds.ts(119,7): error TS2322: Type 'Readonly<...>' is not assignable to type 'Readonly<Record<...>>'.",
+        "src/core/lib/error-kinds.ts(119,7): error TS2322: Type 'Readonly<...>' is not assignable to type 'Readonly<Record<...>>'.",
         "  The types of '\"stale-worktree\".recoveryActions' are incompatible between these types.",
         "    Type '{ id: string; label: string; op: \"investigate\"; }[]' is not assignable to type 'ActionDescriptor[]'.",
         "      Type '{ id: string; label: string; op: \"investigate\"; }' is not assignable to type 'ActionDescriptor'.",
@@ -1401,8 +1401,8 @@ describe('verify:test/test-no-suite-found recipe', () => {
     statusOutput: [
       '⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯',
       '',
-      ' FAIL  src/mastra/agents/__tests__/registry.test.ts',
-      'Error: No test suite found in file /tmp/worktrees/task-abc/orchestrator/src/mastra/agents/__tests__/registry.test.ts',
+      ' FAIL  src/core/agents/__tests__/registry.test.ts',
+      'Error: No test suite found in file /tmp/worktrees/task-abc/orchestrator/src/core/agents/__tests__/registry.test.ts',
     ].join('\n'),
     targetBranch: 'task/abc',
     integrationBranch: 'main',
@@ -1479,7 +1479,7 @@ describe('verify:test/test-libsql-not-an-error recipe', () => {
   const ctx = {
     targetPath: '/tmp/worktrees/task-mars-8c56c297',
     statusOutput: [
-      ' FAIL  src/mastra/lib/__tests__/triaging-and-blocker-state.test.ts > Triaging status + Blocker state schema > initialises the tasks schema with no `actionable` column',
+      ' FAIL  src/core/lib/__tests__/triaging-and-blocker-state.test.ts > Triaging status + Blocker state schema > initialises the tasks schema with no `actionable` column',
       'LibsqlError: SQLITE_UNKNOWN_0: not an error',
       ' ❯ runMigration src/db/migrate.ts:280:13',
       'Caused by: SqliteError: not an error',

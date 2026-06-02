@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
-import { openTraceEventStore } from '../../orchestrator/src/mastra/lib/trace-events-store.ts'
+import { openTraceEventStore } from '../../orchestrator/src/core/lib/trace-events-store.ts'
 import { loadProjectRegistry } from '../../orchestrator/src/registry/projects.ts'
 import { loadAgents } from './agents.ts'
 import { fetchKpis, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'

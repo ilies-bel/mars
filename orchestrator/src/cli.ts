@@ -1048,7 +1048,7 @@ const main = async (): Promise<void> => {
     return
   }
 
-  const { resolveContext } = await import('./mastra/context')
+  const { resolveContext } = await import('./core/context')
   const ctx = resolveContext(repo)
 
   if (cmd === 'where') {
@@ -1064,7 +1064,7 @@ const main = async (): Promise<void> => {
 
     if (sub === 'list') {
       const { listMergedWorkers } = await import(
-        './mastra/workers/persisted-registry'
+        './core/workers/persisted-registry'
       )
       const workers = listMergedWorkers(ctx.stateDir)
       const header =
@@ -1134,7 +1134,7 @@ const main = async (): Promise<void> => {
       const tags = multiFlags['--tag']
 
       const { addWorkerToRegistry } = await import(
-        './mastra/workers/persisted-registry'
+        './core/workers/persisted-registry'
       )
       addWorkerToRegistry(ctx.stateDir, {
         name,
@@ -1167,7 +1167,7 @@ const main = async (): Promise<void> => {
     const force = boolFlags.has('--force')
     const dryRun = boolFlags.has('--dry-run')
     const verbose = boolFlags.has('--verbose')
-    const { sendRequest } = await import('./mastra/daemon/client')
+    const { sendRequest } = await import('./core/daemon/client')
     let result
     try {
       result = (await sendRequest({
@@ -1299,7 +1299,7 @@ const main = async (): Promise<void> => {
       prescriptiveAction?: string | null | undefined
     },
   ): Promise<void> => {
-    const { detectNoCommitMarker } = await import('./mastra/lib/no-commit-marker')
+    const { detectNoCommitMarker } = await import('./core/lib/no-commit-marker')
     const marker = detectNoCommitMarker(prompt)
     if (marker !== null) {
       console.error(
@@ -1327,9 +1327,9 @@ const main = async (): Promise<void> => {
       functional !== undefined || technical !== undefined
         ? { functional: functional ?? '', technical: technical ?? '' }
         : undefined
-    const { resolveAuthor, formatAuthor } = await import('./mastra/author')
+    const { resolveAuthor, formatAuthor } = await import('./core/author')
     const author = resolveAuthor(flags['--author'])
-    const { sendRequest } = await import('./mastra/daemon/client')
+    const { sendRequest } = await import('./core/daemon/client')
     const task = (await sendRequest(
       {
         op: 'add',
@@ -1441,9 +1441,9 @@ const main = async (): Promise<void> => {
         console.error('usage: mars task show <id>')
         process.exit(1)
       }
-      const { formatAuthor } = await import('./mastra/author')
+      const { formatAuthor } = await import('./core/author')
       const { getTask, listBlockers, listSiblings } = await import(
-        './mastra/queue'
+        './core/queue'
       )
       const task = await getTask(id)
       if (!task) {
@@ -1507,7 +1507,7 @@ const main = async (): Promise<void> => {
       if (task.failureSignature) {
         console.log(`failureSig: ${task.failureSignature}`)
         const { causeForSignature } = await import(
-          './mastra/lib/failure-signature'
+          './core/lib/failure-signature'
         )
         const cause = causeForSignature(task.failureSignature, task.id)
         if (cause) {
@@ -1519,7 +1519,7 @@ const main = async (): Promise<void> => {
         console.log(`blockedBy:  ${blockerTaskIds.join(', ')}`)
       }
       if (task.originId && task.originId !== task.id) {
-        const { getProposal } = await import('./mastra/proposals')
+        const { getProposal } = await import('./core/proposals')
         const originIdea = await getProposal(task.originId).catch(() => null)
         if (originIdea) {
           const firstLine = originIdea.title.split('\n')[0]?.trim() ?? ''
@@ -1547,7 +1547,7 @@ const main = async (): Promise<void> => {
         console.error(`priority must be an integer in 0..3; got '${valueRaw}'`)
         process.exit(1)
       }
-      const { sendRequest } = await import('./mastra/daemon/client')
+      const { sendRequest } = await import('./core/daemon/client')
       try {
         const task = (await sendRequest({
           op: 'task.priority',
@@ -1573,9 +1573,9 @@ const main = async (): Promise<void> => {
         console.error('usage: mars proposal add "<goal>" [--author kind:name]')
         process.exit(1)
       }
-      const { resolveAuthor, formatAuthor } = await import('./mastra/author')
+      const { resolveAuthor, formatAuthor } = await import('./core/author')
       const author = resolveAuthor(flags['--author'])
-      const { createProposal } = await import('./mastra/proposals')
+      const { createProposal } = await import('./core/proposals')
       try {
         const idea = await createProposal(goal, { author })
         console.log(`${idea.id} (author: ${formatAuthor(author)})`)
@@ -1591,7 +1591,7 @@ const main = async (): Promise<void> => {
         console.error('usage: mars proposal new "<goal>"')
         process.exit(1)
       }
-      const { createProposal } = await import('./mastra/proposals')
+      const { createProposal } = await import('./core/proposals')
       try {
         const idea = await createProposal(goal)
         console.log(idea.id)
@@ -1608,9 +1608,9 @@ const main = async (): Promise<void> => {
         process.exit(1)
       }
       const { getProposal, resolveProposalId } = await import(
-        './mastra/proposals'
+        './core/proposals'
       )
-      const { formatAuthor } = await import('./mastra/author')
+      const { formatAuthor } = await import('./core/author')
       const resolved = await resolveProposalId(id)
       if (resolved.kind === 'ambiguous') {
         console.error(
@@ -1652,7 +1652,7 @@ const main = async (): Promise<void> => {
         console.log(`notes:`)
         console.log(idea.notes)
       }
-      const { listTasksForProposal } = await import('./mastra/queue')
+      const { listTasksForProposal } = await import('./core/queue')
       const proposalTasks = await listTasksForProposal(idea.id)
       if (proposalTasks.length > 0) {
         console.log(
@@ -1684,7 +1684,7 @@ const main = async (): Promise<void> => {
         )
         process.exit(1)
       }
-      const { setProposalField } = await import('./mastra/proposals')
+      const { setProposalField } = await import('./core/proposals')
       try {
         await setProposalField(id, field, value)
         console.log(`updated ${id}`)
@@ -1701,7 +1701,7 @@ const main = async (): Promise<void> => {
         console.error('usage: mars proposal add-user-story <id> "<text>"')
         process.exit(1)
       }
-      const { addProposalUserStory } = await import('./mastra/proposals')
+      const { addProposalUserStory } = await import('./core/proposals')
       try {
         const idea = await addProposalUserStory(id, story)
         console.log(`added user story [${idea.userStories.length - 1}] to ${id}`)
@@ -1723,7 +1723,7 @@ const main = async (): Promise<void> => {
         console.error(`index must be a non-negative integer; got '${idxRaw}'`)
         process.exit(1)
       }
-      const { removeProposalUserStory } = await import('./mastra/proposals')
+      const { removeProposalUserStory } = await import('./core/proposals')
       try {
         await removeProposalUserStory(id, idx)
         console.log(`removed user story [${idx}] from ${id}`)
@@ -1739,7 +1739,7 @@ const main = async (): Promise<void> => {
         console.error('usage: mars proposal promote <id>')
         process.exit(1)
       }
-      const { sendRequest } = await import('./mastra/daemon/client')
+      const { sendRequest } = await import('./core/daemon/client')
       try {
         const r = (await sendRequest(
           { op: 'proposal.promote', proposalId: id },
@@ -1761,7 +1761,7 @@ const main = async (): Promise<void> => {
         console.error('usage: mars proposal slice <id>')
         process.exit(1)
       }
-      const { sendRequest } = await import('./mastra/daemon/client')
+      const { sendRequest } = await import('./core/daemon/client')
       try {
         const r = (await sendRequest(
           { op: 'proposal.slice', proposalId: id },
@@ -1786,7 +1786,7 @@ const main = async (): Promise<void> => {
         console.error('usage: mars proposal reject <id>')
         process.exit(1)
       }
-      const { rejectProposal } = await import('./mastra/proposals')
+      const { rejectProposal } = await import('./core/proposals')
       try {
         const idea = await rejectProposal(id)
         console.log(`rejected ${idea.id}`)
@@ -1802,7 +1802,7 @@ const main = async (): Promise<void> => {
         console.error('usage: mars proposal delete <id>')
         process.exit(1)
       }
-      const { deleteProposal } = await import('./mastra/proposals')
+      const { deleteProposal } = await import('./core/proposals')
       try {
         const deletedId = await deleteProposal(id)
         console.log(`deleted ${deletedId}`)
@@ -1822,7 +1822,7 @@ const main = async (): Promise<void> => {
         )
         process.exit(1)
       }
-      const { listProposals } = await import('./mastra/proposals')
+      const { listProposals } = await import('./core/proposals')
       const filter: { source?: 'reflection' | 'human' | 'planner'; status?: string } = {}
       if (sourceFlag) filter.source = sourceFlag as 'reflection' | 'human' | 'planner'
       if (statusFlag) filter.status = statusFlag
@@ -1854,7 +1854,7 @@ const main = async (): Promise<void> => {
         console.error(`proposal ${id} cannot block itself`)
         process.exit(1)
       }
-      const { addProposalDependencies } = await import('./mastra/proposals')
+      const { addProposalDependencies } = await import('./core/proposals')
       try {
         await addProposalDependencies(id, blockerArgs)
         console.log(`blocked ${id} by: ${blockerArgs.join(', ')}`)
@@ -1875,7 +1875,7 @@ const main = async (): Promise<void> => {
         )
         process.exit(1)
       }
-      const { removeProposalDependency } = await import('./mastra/proposals')
+      const { removeProposalDependency } = await import('./core/proposals')
       try {
         const removed: string[] = []
         for (const b of blockerArgs) {
@@ -1899,7 +1899,7 @@ const main = async (): Promise<void> => {
         console.error('usage: mars proposal blockers <idea-id>')
         process.exit(1)
       }
-      const { listProposalDependencies } = await import('./mastra/proposals')
+      const { listProposalDependencies } = await import('./core/proposals')
       try {
         const blockers = await listProposalDependencies(id)
         if (blockers.length === 0) {
@@ -1925,8 +1925,8 @@ const main = async (): Promise<void> => {
         )
         process.exit(1)
       }
-      const { resolveProposalId } = await import('./mastra/proposals')
-      const { addProposalBlockers } = await import('./mastra/queue')
+      const { resolveProposalId } = await import('./core/proposals')
+      const { addProposalBlockers } = await import('./core/queue')
       try {
         const resolvedIds: string[] = []
         for (const raw of ideaArgs) {
@@ -1960,8 +1960,8 @@ const main = async (): Promise<void> => {
         )
         process.exit(1)
       }
-      const { resolveProposalId } = await import('./mastra/proposals')
-      const { removeProposalBlocker } = await import('./mastra/queue')
+      const { resolveProposalId } = await import('./core/proposals')
+      const { removeProposalBlocker } = await import('./core/queue')
       try {
         const removed: string[] = []
         for (const raw of ideaArgs) {
@@ -1987,7 +1987,7 @@ const main = async (): Promise<void> => {
         console.error('usage: mars proposal task-blockers <task-id>')
         process.exit(1)
       }
-      const { listProposalBlockers } = await import('./mastra/queue')
+      const { listProposalBlockers } = await import('./core/queue')
       try {
         const blockers = await listProposalBlockers(taskId)
         if (blockers.length === 0) {
@@ -2008,7 +2008,7 @@ const main = async (): Promise<void> => {
         console.error('usage: mars proposal ship-summary <id> [--json]')
         process.exit(1)
       }
-      const { resolveProposalId, getProposal } = await import('./mastra/proposals')
+      const { resolveProposalId, getProposal } = await import('./core/proposals')
       const resolved = await resolveProposalId(id)
       if (resolved.kind === 'ambiguous') {
         console.error(
@@ -2023,11 +2023,11 @@ const main = async (): Promise<void> => {
         process.exit(1)
       }
 
-      const { getDefaultTaskStore } = await import('./mastra/lib/task-store')
+      const { getDefaultTaskStore } = await import('./core/lib/task-store')
       const taskStore = await getDefaultTaskStore()
       const arc = await taskStore.arcStatus(proposal.id, { cwd: ctx.repoRoot })
 
-      const { getTask } = await import('./mastra/queue')
+      const { getTask } = await import('./core/queue')
       const { execFile } = await import('node:child_process')
       const { promisify } = await import('node:util')
       const execFileAsync = promisify(execFile)
@@ -2130,7 +2130,7 @@ const main = async (): Promise<void> => {
       console.error(`usage: mars ${cmd} <id> <text|@file>`)
       process.exit(1)
     }
-    const { getTask } = await import('./mastra/queue')
+    const { getTask } = await import('./core/queue')
     const task = await getTask(id)
     if (!task) {
       console.error(`task ${id} not found`)
@@ -2148,7 +2148,7 @@ const main = async (): Promise<void> => {
       cmd === 'set-functional'
         ? { ...current, functional: text }
         : { ...current, technical: text }
-    const { sendRequest } = await import('./mastra/daemon/client')
+    const { sendRequest } = await import('./core/daemon/client')
     await sendRequest({ op: 'update', id, patch: { plan: next } })
     console.log(`updated ${id}`)
     return
@@ -2160,8 +2160,8 @@ const main = async (): Promise<void> => {
       console.error('usage: mars show <id>')
       process.exit(1)
     }
-    const { formatAuthor } = await import('./mastra/author')
-    const { getTask } = await import('./mastra/queue')
+    const { formatAuthor } = await import('./core/author')
+    const { getTask } = await import('./core/queue')
     const task = await getTask(id)
     if (task) {
       console.log(`kind:       task`)
@@ -2221,20 +2221,20 @@ const main = async (): Promise<void> => {
       if (task.failureSignature) {
         console.log(`failureSig: ${task.failureSignature}`)
         const { causeForSignature } = await import(
-          './mastra/lib/failure-signature'
+          './core/lib/failure-signature'
         )
         const cause = causeForSignature(task.failureSignature, task.id)
         if (cause) {
           console.log(`cause:      ${cause}`)
         }
       }
-      const { listBlockers, listSiblings } = await import('./mastra/queue')
+      const { listBlockers, listSiblings } = await import('./core/queue')
       const blockerTaskIds = await listBlockers(task.id)
       if (blockerTaskIds.length > 0) {
         console.log(`blockedBy:  ${blockerTaskIds.join(', ')}`)
       }
       if (task.originId && task.originId !== task.id) {
-        const { getProposal } = await import('./mastra/proposals')
+        const { getProposal } = await import('./core/proposals')
         const originIdea = await getProposal(task.originId).catch(() => null)
         if (originIdea) {
           const firstLine = originIdea.title.split('\n')[0]?.trim() ?? ''
@@ -2251,7 +2251,7 @@ const main = async (): Promise<void> => {
       return
     }
     const { getProposal, resolveProposalId } = await import(
-      './mastra/proposals'
+      './core/proposals'
     )
     const ideaResolved = await resolveProposalId(id)
     if (ideaResolved.kind === 'ambiguous') {
@@ -2294,7 +2294,7 @@ const main = async (): Promise<void> => {
         console.log(`notes:`)
         console.log(idea.notes)
       }
-      const { listTasksForProposal } = await import('./mastra/queue')
+      const { listTasksForProposal } = await import('./core/queue')
       const ideaTasks = await listTasksForProposal(idea.id)
       if (ideaTasks.length > 0) {
         console.log(
@@ -2320,7 +2320,7 @@ const main = async (): Promise<void> => {
       console.error(`usage: mars ${cmd} <id> [<id> ...]`)
       process.exit(1)
     }
-    const { sendRequest } = await import('./mastra/daemon/client')
+    const { sendRequest } = await import('./core/daemon/client')
     for (const id of ids) {
       let res: unknown
       try {
@@ -2359,7 +2359,7 @@ const main = async (): Promise<void> => {
       process.exit(1)
     }
     const force = flags.has('--force')
-    const { sendRequest } = await import('./mastra/daemon/client')
+    const { sendRequest } = await import('./core/daemon/client')
     for (const id of ids) {
       try {
         await sendRequest({ op: 'purge', id, force })
@@ -2381,7 +2381,7 @@ const main = async (): Promise<void> => {
       )
       process.exit(1)
     }
-    const { sendRequest } = await import('./mastra/daemon/client')
+    const { sendRequest } = await import('./core/daemon/client')
     if (blockerArgs.length === 0) {
       const data = (await sendRequest({ op: 'unblock', id })) as {
         taskId: string
@@ -2410,7 +2410,7 @@ const main = async (): Promise<void> => {
 
   if (cmd === 'recover') {
     const id = rest[0]
-    const { sendRequest } = await import('./mastra/daemon/client')
+    const { sendRequest } = await import('./core/daemon/client')
     const data = (await sendRequest({ op: 'recover', id })) as {
       outcomes: Array<{
         taskId: string
@@ -2475,7 +2475,7 @@ const main = async (): Promise<void> => {
       process.exit(1)
     }
     const force = flags.has('--force')
-    const { sendRequest } = await import('./mastra/daemon/client')
+    const { sendRequest } = await import('./core/daemon/client')
     const data = (await sendRequest({ op: 'drop', id, force })) as {
       taskId: string
       previousStatus: string
@@ -2510,7 +2510,7 @@ const main = async (): Promise<void> => {
       console.error(`task ${id} cannot block itself`)
       process.exit(1)
     }
-    const { sendRequest } = await import('./mastra/daemon/client')
+    const { sendRequest } = await import('./core/daemon/client')
     const data = (await sendRequest({
       op: 'block',
       id,
@@ -2520,7 +2520,7 @@ const main = async (): Promise<void> => {
     return
   }
 
-  const { listTasks } = await import('./mastra/queue')
+  const { listTasks } = await import('./core/queue')
 
   if (cmd === 'list') {
     const tasks = await listTasks(rest[0] as never)
@@ -2555,7 +2555,7 @@ const main = async (): Promise<void> => {
 
     if (sub === 'stop') {
       const force = subFlags.has('--force')
-      const { sendRequest } = await import('./mastra/daemon/client')
+      const { sendRequest } = await import('./core/daemon/client')
       try {
         if (force) {
           await sendRequest({ op: 'shutdown', force: true }, { autoSpawn: false })
@@ -2585,7 +2585,7 @@ const main = async (): Promise<void> => {
     }
 
     if (sub === 'kill') {
-      const { sendRequest } = await import('./mastra/daemon/client')
+      const { sendRequest } = await import('./core/daemon/client')
       try {
         const data = (await sendRequest({ op: 'kill' }, { autoSpawn: false })) as {
           killed: ReadonlyArray<{ taskId: string; kind: string }>
@@ -2615,7 +2615,7 @@ const main = async (): Promise<void> => {
     }
 
     if (sub === 'reload') {
-      const { sendRequest } = await import('./mastra/daemon/client')
+      const { sendRequest } = await import('./core/daemon/client')
       try {
         const data = (await sendRequest(
           { op: 'reload-config' },
@@ -2656,7 +2656,7 @@ const main = async (): Promise<void> => {
         console.error(`mars daemon set-flag: value must be 'on' or 'off'; got '${value}'`)
         process.exit(2)
       }
-      const { sendRequest } = await import('./mastra/daemon/client')
+      const { sendRequest } = await import('./core/daemon/client')
       try {
         const data = (await sendRequest(
           { op: 'set-flag', flag, value },
@@ -2677,13 +2677,13 @@ const main = async (): Promise<void> => {
     }
 
     if (sub === 'status') {
-      const { isDaemonAlive } = await import('./mastra/daemon/paths')
+      const { isDaemonAlive } = await import('./core/daemon/paths')
       const liveness = await isDaemonAlive()
       if (!liveness.alive) {
         console.error(`daemon not running (${liveness.reason})`)
         process.exit(1)
       }
-      const { sendRequest } = await import('./mastra/daemon/client')
+      const { sendRequest } = await import('./core/daemon/client')
       const data = (await sendRequest({ op: 'status' }, { autoSpawn: false })) as {
         pid: number
         startedAt: string
@@ -2705,7 +2705,7 @@ const main = async (): Promise<void> => {
       if (foreground) {
         // Foreground mode: used internally by the detach path when it spawns
         // a child process to actually run the daemon. Not documented publicly.
-        const { startDaemon } = await import('./mastra/daemon/server')
+        const { startDaemon } = await import('./core/daemon/server')
         await startDaemon({ log: (line) => console.log(line) })
         // Block until SIGINT/SIGTERM (the daemon handles shutdown).
         await new Promise(() => {})
@@ -2715,7 +2715,7 @@ const main = async (): Promise<void> => {
       // Detach mode (default). Fork the daemon to the background.
       const { spawn } = await import('node:child_process')
       const { daemonPaths, resolveLaunchCommand, isDaemonAlive } =
-        await import('./mastra/daemon/paths')
+        await import('./core/daemon/paths')
       const liveness = await isDaemonAlive()
       if (liveness.alive) {
         const { logFile } = daemonPaths()
@@ -2741,13 +2741,13 @@ const main = async (): Promise<void> => {
 
     if (sub === 'restart') {
       const { daemonPaths, isDaemonAlive, resolveLaunchCommand } =
-        await import('./mastra/daemon/paths')
+        await import('./core/daemon/paths')
       const { spawn } = await import('node:child_process')
 
       // Step 1: force-stop any running daemon.
       const liveness = await isDaemonAlive()
       if (liveness.alive) {
-        const { sendRequest } = await import('./mastra/daemon/client')
+        const { sendRequest } = await import('./core/daemon/client')
         try {
           await sendRequest({ op: 'shutdown', force: true }, { autoSpawn: false })
         } catch (err) {
@@ -2787,8 +2787,8 @@ const main = async (): Promise<void> => {
   if (cmd === 'kpi') {
     const sub = rest[0]
     if (sub === 'snapshot') {
-      const { takeKpiSnapshot } = await import('./mastra/lib/kpi-snapshots.js')
-      const { getDefaultTaskStore } = await import('./mastra/lib/task-store.js')
+      const { takeKpiSnapshot } = await import('./core/lib/kpi-snapshots.js')
+      const { getDefaultTaskStore } = await import('./core/lib/task-store.js')
       const surface = await getDefaultTaskStore()
       const snapshot = await takeKpiSnapshot({
         surface,
@@ -2798,7 +2798,7 @@ const main = async (): Promise<void> => {
       return
     }
     if (sub === 'show') {
-      const { readKpiWindowComparison } = await import('./mastra/lib/kpi-snapshots.js')
+      const { readKpiWindowComparison } = await import('./core/lib/kpi-snapshots.js')
       const result = await readKpiWindowComparison({ now: new Date().toISOString() })
       console.log(JSON.stringify(result, null, 2))
       return
@@ -2823,8 +2823,8 @@ const main = async (): Promise<void> => {
       listLocalTaskBranches,
       listUniqueCommitsAhead,
       applyCommitsCherryPick,
-    } = await import('./mastra/lib/sweep')
-    const { getTask } = await import('./mastra/queue')
+    } = await import('./core/lib/sweep')
+    const { getTask } = await import('./core/queue')
     const { execFile: cpExecFile } = await import('node:child_process')
     const { promisify: cpPromisify } = await import('node:util')
     const cpExec = cpPromisify(cpExecFile)
@@ -2882,7 +2882,7 @@ const main = async (): Promise<void> => {
     const dryRun = wtFlags.has('--dry-run')
 
     if (sub === 'prune') {
-      const { runWorktreePrune } = await import('./mastra/lib/worktree-prune')
+      const { runWorktreePrune } = await import('./core/lib/worktree-prune')
       const summary = await runWorktreePrune({
         dryRun,
         log: (line) => console.log(line),
@@ -2900,7 +2900,7 @@ const main = async (): Promise<void> => {
     }
 
     const forceOrphans = wtFlags.has('--force-orphans')
-    const { runWorktreeClean } = await import('./mastra/lib/worktree-clean')
+    const { runWorktreeClean } = await import('./core/lib/worktree-clean')
 
     const summary = await runWorktreeClean({
       dryRun,
@@ -2941,7 +2941,7 @@ const main = async (): Promise<void> => {
             .map((a) => a.trim())
             .filter((a) => a.length > 0)
         : []
-      const { sendRequest } = await import('./mastra/daemon/client')
+      const { sendRequest } = await import('./core/daemon/client')
       await sendRequest(
         {
           op: 'glossary-write',
@@ -2966,7 +2966,7 @@ const main = async (): Promise<void> => {
         console.error('usage: mars glossary remove "<term>"')
         process.exit(1)
       }
-      const { sendRequest } = await import('./mastra/daemon/client')
+      const { sendRequest } = await import('./core/daemon/client')
       await sendRequest(
         { op: 'glossary-write', kind: 'remove', term },
         {
@@ -2980,7 +2980,7 @@ const main = async (): Promise<void> => {
     }
 
     if (sub === 'list') {
-      const { readGlossaryFile } = await import('./mastra/lib/glossary')
+      const { readGlossaryFile } = await import('./core/lib/glossary')
       const doc = await readGlossaryFile(contextPath)
       if (doc.terms.length === 0) {
         console.log('(no glossary terms; CONTEXT.md is empty or missing)')
@@ -2999,7 +2999,7 @@ const main = async (): Promise<void> => {
         console.error('usage: mars glossary show "<term>"')
         process.exit(1)
       }
-      const { readGlossaryFile } = await import('./mastra/lib/glossary')
+      const { readGlossaryFile } = await import('./core/lib/glossary')
       const doc = await readGlossaryFile(contextPath)
       const lower = term.toLowerCase()
       const found = doc.terms.find((t) => t.term.toLowerCase() === lower)
@@ -3034,7 +3034,7 @@ const main = async (): Promise<void> => {
         process.exit(1)
       }
       const body = readMaybeFile(bodyArg)
-      const { sendRequest } = await import('./mastra/daemon/client')
+      const { sendRequest } = await import('./core/daemon/client')
       await sendRequest(
         { op: 'adr-add', title, body },
         {
@@ -3154,8 +3154,8 @@ const main = async (): Promise<void> => {
       process.exit(1)
     }
     const sinceIso = flags['--since']
-    const { loadRecentTaskCorpus } = await import('./mastra/lib/reflect-query')
-    const { runReflector, persistSuggestions } = await import('./mastra/lib/reflector')
+    const { loadRecentTaskCorpus } = await import('./core/lib/reflect-query')
+    const { runReflector, persistSuggestions } = await import('./core/lib/reflector')
     const corpus = await loadRecentTaskCorpus({ sinceIso, limit })
     if (corpus.entries.length === 0) {
       console.log('no completed tasks in window — nothing to reflect on')
@@ -3201,7 +3201,7 @@ const main = async (): Promise<void> => {
       }
       return
     }
-    const { insertReflectionTask } = await import('./mastra/queue')
+    const { insertReflectionTask } = await import('./core/queue')
     const sourceTaskId = await insertReflectionTask(corpus.entries.length)
     await persistSuggestions(result.suggestions, sourceTaskId)
     console.log('\nSuggestions')
@@ -3233,7 +3233,7 @@ const main = async (): Promise<void> => {
         chosenOriginInput = inputId
       } else {
         // Interactive picker: print the arc list then prompt for selection
-        const { listDeepReflectArcCandidates } = await import('./mastra/lib/deep-reflect-query')
+        const { listDeepReflectArcCandidates } = await import('./core/lib/deep-reflect-query')
         const candidates = await listDeepReflectArcCandidates({ limit: 10, withTranscriptOnly: false })
 
         console.log('originId\ttasks\tdone\tfailed\ttokens\tlastActivity')
@@ -3270,10 +3270,10 @@ const main = async (): Promise<void> => {
       const {
         loadDeepReflectArc,
         resolveOriginIdForTaskOrSelf,
-      } = await import('./mastra/lib/deep-reflect-query')
-      const { runDeepReflectorArc } = await import('./mastra/lib/deep-reflector')
-      const { applyVerdicts } = await import('./mastra/lib/reflector')
-      const { insertReflectionTask } = await import('./mastra/queue')
+      } = await import('./core/lib/deep-reflect-query')
+      const { runDeepReflectorArc } = await import('./core/lib/deep-reflector')
+      const { applyVerdicts } = await import('./core/lib/reflector')
+      const { insertReflectionTask } = await import('./core/queue')
 
       const originId = await resolveOriginIdForTaskOrSelf(chosenOriginInput)
       const arc = await loadDeepReflectArc(originId)
@@ -3309,7 +3309,7 @@ const main = async (): Promise<void> => {
 
       const { mkdir, writeFile } = await import('node:fs/promises')
       const { resolve: resolvePath } = await import('node:path')
-      const { getStateDir } = await import('./mastra/context')
+      const { getStateDir } = await import('./core/context')
       const outDir = resolvePath(getStateDir(), 'deep-reflections')
       await mkdir(outDir, { recursive: true })
       const isoStamp = new Date().toISOString().replace(/[:.]/g, '-')
@@ -3373,7 +3373,7 @@ const main = async (): Promise<void> => {
       process.exit(1)
     }
     const { listDeepReflectArcCandidates } = await import(
-      './mastra/lib/deep-reflect-query'
+      './core/lib/deep-reflect-query'
     )
     const emitJson = rest.includes('--json')
     const withTranscriptOnly = rest.includes('--with-transcript-only')
@@ -3416,9 +3416,9 @@ const main = async (): Promise<void> => {
     const lean = rest.includes('--lean')
     const subRest = lean ? rest.filter((a) => a !== '--lean') : rest
     const sub = subRest[0]
-    const actionQueue = await import('./mastra/lib/action-queue')
-    const dismissals = await import('./mastra/lib/action-queue-dismissals')
-    type ActionQueueItem = import('./mastra/lib/action-queue').ActionQueueItem
+    const actionQueue = await import('./core/lib/action-queue')
+    const dismissals = await import('./core/lib/action-queue-dismissals')
+    type ActionQueueItem = import('./core/lib/action-queue').ActionQueueItem
 
     const LEAN_PREVIEW = 3
 
@@ -3630,7 +3630,7 @@ const main = async (): Promise<void> => {
       const entityKind = actionQueueKindToEntityKind(item.kind)
       const entityId = extractEntityId(item)
       if (sub === 'dismiss') {
-        const { resolveAuthor, formatAuthor } = await import('./mastra/author')
+        const { resolveAuthor, formatAuthor } = await import('./core/author')
         const by = formatAuthor(resolveAuthor(flags['--author']))
         const note = flags['--note']
         await dismissals.dismissEntity(entityKind, entityId, {
@@ -3658,7 +3658,7 @@ const main = async (): Promise<void> => {
   if (cmd === 'diagnose') {
     const sub = rest[0]
     const { setDiagnosis, getDiagnosis, DIAGNOSIS_KINDS } = await import(
-      './mastra/lib/diagnose'
+      './core/lib/diagnose'
     )
 
     if (sub === 'set') {
@@ -3937,7 +3937,7 @@ const main = async (): Promise<void> => {
         maxAgeDays = parsed
       }
       const { pruneObservability } = await import(
-        './mastra/lib/observability-prune'
+        './core/lib/observability-prune'
       )
       const deleted = await pruneObservability(ctx.stateDbPath, maxAgeDays)
       console.log(`pruned ${deleted} telemetry row${deleted === 1 ? '' : 's'}`)

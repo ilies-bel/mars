@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createClient, type Client } from '@libsql/client';
 import { publishWithRetry } from '../../bus/publisher.js';
 import { registerSubscriber, getCursor } from '../../bus/subscribers.js';
-import { ensureInboxSchema, closeInboxRow as _closeInboxRow } from '../../mastra/lib/inbox.js';
+import { ensureInboxSchema, closeInboxRow as _closeInboxRow } from '../../core/lib/inbox.js';
 import {
   INVALIDATOR_SUBSCRIBER,
   ensureInvalidator,

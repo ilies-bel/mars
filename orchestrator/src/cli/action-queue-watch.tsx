@@ -4,7 +4,7 @@
  * Mirrors the web UI's Todo page: a single feed of drafts (proposals
  * waiting to be shaped) and stale worktrees (operational alerts), grouped
  * into Today / Yesterday / This Week / Older. Bucketing rules live in
- * `orchestrator/src/mastra/lib/todo-feed.ts` so the CLI, web UI server,
+ * `orchestrator/src/core/lib/todo-feed.ts` so the CLI, web UI server,
  * and React Todo page all agree.
  *
  * Data source: the local web UI server's `/api/todo` endpoint at
@@ -38,7 +38,7 @@ import {
   type DraftLike,
   type StaleLike,
   type TodoItem,
-} from '../mastra/lib/todo-feed'
+} from '../core/lib/todo-feed'
 
 const POLL_INTERVAL_MS = 1000
 

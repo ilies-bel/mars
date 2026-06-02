@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveContext } from '../mastra/context'
+import { resolveContext } from '../core/context'
 import { stopProcess, makeOsStopDeps } from './ui-stop'
 
 interface LaunchOptions {

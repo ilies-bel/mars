@@ -382,7 +382,7 @@ export const startHttpServer = async (
 
     // GET /recipes — the resolved recovery-recipe catalog. Same lifecycle
     // as /failure-reasons: loaded once at boot from
-    // `src/mastra/recipes/built-in/*.md` plus `.mars/recipes/*.md`
+    // `src/core/recipes/built-in/*.md` plus `.mars/recipes/*.md`
     // overrides; consumers re-`mars daemon reload` to pick up edits. Pure
     // read; no draining gate. No recipes are dispatched in slice E — this
     // endpoint exists for symmetry and so the actionQueue UI can name them.

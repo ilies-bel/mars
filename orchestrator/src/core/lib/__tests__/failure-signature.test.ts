@@ -94,7 +94,7 @@ describe('computeFailureSignature', () => {
     ).toBe('typecheck-cannot-find-module')
     expect(
       classifyError(
-        "src/mastra/daemon/__tests__/liveness.test.ts(144,51): error TS2345: Argument of type '(value: void | PromiseLike<void>) => void' is not assignable to parameter of type '(err?: Error | undefined) => void'.",
+        "src/core/daemon/__tests__/liveness.test.ts(144,51): error TS2345: Argument of type '(value: void | PromiseLike<void>) => void' is not assignable to parameter of type '(err?: Error | undefined) => void'.",
       ),
     ).toBe('typecheck-arg-type-mismatch')
     expect(
@@ -261,8 +261,8 @@ describe('matchFull rules are checked against full output', () => {
     const errorOutput = [
       '⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯',
       '',
-      ' FAIL  src/mastra/agents/__tests__/registry.test.ts [ src/mastra/agents/__tests__/registry.test.ts ]',
-      'Error: No test suite found in file /Users/dev/repo/orchestrator/src/mastra/agents/__tests__/registry.test.ts',
+      ' FAIL  src/core/agents/__tests__/registry.test.ts [ src/core/agents/__tests__/registry.test.ts ]',
+      'Error: No test suite found in file /Users/dev/repo/orchestrator/src/core/agents/__tests__/registry.test.ts',
       '⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯',
     ].join('\n')
     expect(computeFailureSignature('verify:test', errorOutput)).toBe(
@@ -300,7 +300,7 @@ describe('matchFull rules are checked against full output', () => {
     // The distinguishing signal is buried in the body after the vitest preamble,
     // hence matchFull.
     const errorOutput = [
-      ' FAIL  src/mastra/lib/__tests__/triaging-and-blocker-state.test.ts > Triaging status + Blocker state schema > initialises the tasks schema',
+      ' FAIL  src/core/lib/__tests__/triaging-and-blocker-state.test.ts > Triaging status + Blocker state schema > initialises the tasks schema',
       'LibsqlError: SQLITE_UNKNOWN_0: not an error',
       ' ❯ mapSqliteError node_modules/@libsql/client/lib-esm/sqlite3.js:434:16',
       ' ❯ runMigration src/db/migrate.ts:280:13',

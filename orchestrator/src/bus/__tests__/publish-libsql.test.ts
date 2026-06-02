@@ -5,8 +5,8 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 interface QueueMod {
-  initQueue: typeof import('../../mastra/queue').initQueue
-  getClient: typeof import('../../mastra/queue').getClient
+  initQueue: typeof import('../../core/queue').initQueue
+  getClient: typeof import('../../core/queue').getClient
 }
 
 interface PublishMod {
@@ -25,7 +25,7 @@ const loadMods = async (
 ): Promise<{ q: QueueMod; p: PublishMod }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
-  const q = (await import('../../mastra/queue')) as unknown as QueueMod
+  const q = (await import('../../core/queue')) as unknown as QueueMod
   await q.initQueue()
   const p = (await import('../publisher')) as unknown as PublishMod
   return { q, p }

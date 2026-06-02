@@ -2228,7 +2228,7 @@ export const startDaemon = async (
     { onWarn: (msg) => log(msg) },
   )
   // Same lifecycle as the failure-reason catalog: built-in seed under
-  // `src/mastra/recipes/built-in/*.md` merged with `.mars/recipes/*.md`
+  // `src/core/recipes/built-in/*.md` merged with `.mars/recipes/*.md`
   // overrides, loaded once. No recipe is dispatched in this slice — the
   // catalog is exposed so the actionQueue UI can name which recipe a recovery
   // task ran under (wiring lands in slice F).

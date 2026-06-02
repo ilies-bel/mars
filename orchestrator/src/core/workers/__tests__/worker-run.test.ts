@@ -3,7 +3,7 @@
 // Session — an object with a claudeSessionId — and that the onEvent hook
 // and message-cap accounting behave identically to a bare runClaudeCode call.
 //
-// The stub binary approach mirrors src/mastra/lib/__tests__/git.test.ts:
+// The stub binary approach mirrors src/core/lib/__tests__/git.test.ts:
 // a tiny Node script is placed on PATH so resolveClaudeBin() picks it up
 // in place of the real `claude` CLI, making these tests hermetic.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

@@ -3,17 +3,17 @@ import { resolve } from 'node:path'
 import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 import { createQueueWorkflowStore } from './queue-workflow-store'
-import { getProposal, getProposalsClient, markProposalSliced } from '../mastra/proposals'
-import { enqueueTask, setTaskStatus } from '../mastra/queue'
-import { assertNotRecoveryEdge } from '../mastra/lib/blocker-invariant'
-import { getDefaultTaskStore } from '../mastra/lib/task-store'
-import { buildEventInsert } from '../mastra/lib/outbox'
-import { Workers } from '../mastra/workers'
-import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
-import { getRepoRoot, resolveContext } from '../mastra/context'
-import { listActionQueueItems, raiseActionQueueItem } from '../mastra/lib/action-queue'
-import { openTraceEventStore } from '../mastra/lib/trace-events-store'
-import { runWorkerWithSpan } from '../mastra/lib/run-worker-with-span'
+import { getProposal, getProposalsClient, markProposalSliced } from '../core/proposals'
+import { enqueueTask, setTaskStatus } from '../core/queue'
+import { assertNotRecoveryEdge } from '../core/lib/blocker-invariant'
+import { getDefaultTaskStore } from '../core/lib/task-store'
+import { buildEventInsert } from '../core/lib/outbox'
+import { Workers } from '../core/workers'
+import { parseClaudeJsonResult } from '../core/lib/claude-json'
+import { getRepoRoot, resolveContext } from '../core/context'
+import { listActionQueueItems, raiseActionQueueItem } from '../core/lib/action-queue'
+import { openTraceEventStore } from '../core/lib/trace-events-store'
+import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 
 const sliceInputSchema = z.object({
   proposalId: z.string(),
@@ -1054,7 +1054,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       // whole arc still gates on it transitively in the common chained
       // shape. True N-fan-out is deferred and called out in the report.
       if (taskIds.length > 0) {
-        const { transferProposalBlockerToTask } = await import('../mastra/queue')
+        const { transferProposalBlockerToTask } = await import('../core/queue')
         await transferProposalBlockerToTask(proposal.id, taskIds[0])
       }
     } catch (error: unknown) {

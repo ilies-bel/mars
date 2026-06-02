@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { WORKER_CONFIGS } from '../../orchestrator/src/mastra/workers/index.ts'
+import { WORKER_CONFIGS } from '../../orchestrator/src/core/workers/index.ts'
 
 // Public, read-only shape for the upcoming Agents page. Field names mirror
 // the worker registry; `allowedTools` is exposed for parity with future

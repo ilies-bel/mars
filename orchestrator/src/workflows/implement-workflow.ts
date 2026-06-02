@@ -1,7 +1,7 @@
 import { defineWorkflow, type StepHandle, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 
-import { runTool, nullTraceStore, type TraceCtx } from '../mastra/lib/run-tool'
+import { runTool, nullTraceStore, type TraceCtx } from '../core/lib/run-tool'
 import {
   cleanWorktreeIfNoCommitsAhead,
   createWorktree,
@@ -12,8 +12,8 @@ import {
   getChangedFiles,
   mergeBranch,
   checkMergeTargetStatus,
-} from '../mastra/lib/git'
-import { createWorker, pickWorkerForTags, Workers, type Worker, type WorkerName } from '../mastra/workers'
+} from '../core/lib/git'
+import { createWorker, pickWorkerForTags, Workers, type Worker, type WorkerName } from '../core/workers'
 import {
   TASK_TAGS,
   isTaskTag,
@@ -21,23 +21,23 @@ import {
   type TaskTag,
   type TaskSpec,
   type Task,
-} from '../mastra/queue'
-import { resolveContext } from '../mastra/context'
+} from '../core/queue'
+import { resolveContext } from '../core/context'
 import {
   installWorktreeDeps,
   WorktreeInstallError,
-} from '../mastra/lib/worktree-install'
-import type { ClaudeEvent } from '../mastra/lib/claude-stream'
+} from '../core/lib/worktree-install'
+import type { ClaudeEvent } from '../core/lib/claude-stream'
 import {
   enqueueTask,
   addBlockers,
   hasIncompleteBlockers,
   updateTask,
-} from '../mastra/queue'
-import { handleTaskFailureWithFixTask } from '../mastra/queue-fix-tasks'
-import { failureReasonStringToCode } from '../mastra/lib/failure-reasons'
-import { resolveOriginIdForTask } from '../mastra/lib/origin'
-import { type TaskStore } from '../mastra/lib/task-store'
+} from '../core/queue'
+import { handleTaskFailureWithFixTask } from '../core/queue-fix-tasks'
+import { failureReasonStringToCode } from '../core/lib/failure-reasons'
+import { resolveOriginIdForTask } from '../core/lib/origin'
+import { type TaskStore } from '../core/lib/task-store'
 
 export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} has incomplete blockers; aborting dispatch (task remains queued)`
@@ -117,21 +117,21 @@ export const CONTEXT_EXHAUSTED_ABORT_MESSAGE = (taskId: string): string =>
 export const isContextExhaustedAbortError = (err: unknown): boolean =>
   errorHaystack(err).includes('aborted by context-budget ceiling')
 
-import { summarizeUsage } from '../mastra/lib/claude-usage'
-import { recordSignals } from '../mastra/lib/reflect-signals'
-import { openTraceEventStore, type TraceEventStore } from '../mastra/lib/trace-events-store'
-import { runWorkerWithSpan, runNonLlmStepWithSpan } from '../mastra/lib/run-worker-with-span'
-import { resolveVerifyCwd, type RanVerifyStep } from '../mastra/lib/derive-repro-command'
-import { resolveTaskCwd } from '../mastra/lib/resolve-task-cwd'
+import { summarizeUsage } from '../core/lib/claude-usage'
+import { recordSignals } from '../core/lib/reflect-signals'
+import { openTraceEventStore, type TraceEventStore } from '../core/lib/trace-events-store'
+import { runWorkerWithSpan, runNonLlmStepWithSpan } from '../core/lib/run-worker-with-span'
+import { resolveVerifyCwd, type RanVerifyStep } from '../core/lib/derive-repro-command'
+import { resolveTaskCwd } from '../core/lib/resolve-task-cwd'
 import { relative } from 'node:path'
 import {
   createReadSpanWatcher,
   resolveReadSpanLimit,
   resolveReadSpanAbortLimit,
-} from '../mastra/lib/read-span-watch'
+} from '../core/lib/read-span-watch'
 import { TDD_WORKER_BRIEF } from './tdd-brief'
 import { CONTEXT_GATHERING_BRIEF } from './context-gathering-brief'
-import { buildDiagnoseChorePrompt } from '../mastra/lib/diagnose-chore'
+import { buildDiagnoseChorePrompt } from '../core/lib/diagnose-chore'
 
 const planSchema = z
   .object({
@@ -856,7 +856,7 @@ export const implementWorkflow = defineWorkflow<
       // are loaded here and merged with built-in Workers so their tag sets are
       // visible to pickWorkerForTags. A registry entry for a built-in name
       // overrides that built-in's config; a novel name appends a new Worker.
-      const { listMergedWorkers } = await import('../mastra/workers/persisted-registry')
+      const { listMergedWorkers } = await import('../core/workers/persisted-registry')
       const declarations = listMergedWorkers(resolveContext().stateDir)
       const allWorkers: Record<string, Worker> = { ...Workers }
       for (const decl of declarations) {
@@ -1204,8 +1204,8 @@ export const implementWorkflow = defineWorkflow<
       if (input.kind !== 'fix') {
         try {
           const { checkIntegrationBranchDirty, MAIN_COMMITER_RECIPE, spawnOrAttachMainCommitter } =
-            await import('../mastra/lib/main-dirty')
-          const { loadRecipeCatalog } = await import('../mastra/lib/recipes')
+            await import('../core/lib/main-dirty')
+          const { loadRecipeCatalog } = await import('../core/lib/recipes')
           const verifyTopCtx = resolveContext()
           const detection = await checkIntegrationBranchDirty({
             repoRoot: verifyTopCtx.repoRoot,

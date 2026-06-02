@@ -16,8 +16,8 @@
  */
 import { randomBytes } from 'node:crypto'
 import { type Client } from '@libsql/client'
-import { resolveContext } from '../mastra/context.js'
-import { openLibsql } from '../mastra/lib/libsql.js'
+import { resolveContext } from '../core/context.js'
+import { openLibsql } from '../core/lib/libsql.js'
 import { MarsId, parseMarsId } from '../mars-id/index.js'
 
 export interface ProposalNote {

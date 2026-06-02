@@ -36,7 +36,7 @@ describe('slicerOutputSchema: readFirst + prescriptiveAction', () => {
           acceptanceCriteria: ['a'],
           blockedBy: [],
           readFirst: [
-            'orchestrator/src/mastra/workflows/slice-workflow.ts',
+            'orchestrator/src/core/workflows/slice-workflow.ts',
           ],
           prescriptiveAction:
             'In slicerOutputSchema (slice-workflow.ts ~line 23), add `readFirst: z.array(z.string()).min(1)` and `prescriptiveAction: z.string().min(1)` as required fields.',
@@ -44,7 +44,7 @@ describe('slicerOutputSchema: readFirst + prescriptiveAction', () => {
       ],
     })
     expect(parsed.slices[0].readFirst).toEqual([
-      'orchestrator/src/mastra/workflows/slice-workflow.ts',
+      'orchestrator/src/core/workflows/slice-workflow.ts',
     ])
     expect(parsed.slices[0].prescriptiveAction).toContain('readFirst')
   })
@@ -132,14 +132,14 @@ describe('slicerOutputSchema: readFirst + prescriptiveAction', () => {
           ],
           blockedBy: [],
           readFirst: [
-            'orchestrator/src/mastra/workflows/slice-workflow.ts',
-            'orchestrator/src/mastra/workflows/__tests__/slice-workflow.test.ts',
+            'orchestrator/src/core/workflows/slice-workflow.ts',
+            'orchestrator/src/core/workflows/__tests__/slice-workflow.test.ts',
           ],
           prescriptiveAction:
             'In `slicerOutputSchema` (slice-workflow.ts:23–49), add `readFirst: z.array(z.string()).min(1)` after `blockedBy` and `prescriptiveAction: z.string().min(1)` after `readFirst`. Update `buildSlicerPrompt` to document both fields in the "Output shape" section and include them in the example JSON object.',
           modifies: [
-            'orchestrator/src/mastra/workflows/slice-workflow.ts',
-            'orchestrator/src/mastra/workflows/__tests__/slice-workflow.test.ts',
+            'orchestrator/src/core/workflows/slice-workflow.ts',
+            'orchestrator/src/core/workflows/__tests__/slice-workflow.test.ts',
           ],
           creates: [],
           verifyCmd: 'cd orchestrator && npx tsc --noEmit',
@@ -225,7 +225,7 @@ describe('composeTaskPrompt: readFirst and prescriptiveAction sections', () => {
     creates: [] as string[],
     verifyCmd: null,
     taskType: 'auto' as const,
-    readFirst: ['orchestrator/src/mastra/workflows/slice-workflow.ts'],
+    readFirst: ['orchestrator/src/core/workflows/slice-workflow.ts'],
     prescriptiveAction:
       'In `slicerOutputSchema` (slice-workflow.ts:23), add `readFirst: z.array(z.string()).min(1)` and `prescriptiveAction: z.string().min(1)`.',
   }
@@ -234,17 +234,17 @@ describe('composeTaskPrompt: readFirst and prescriptiveAction sections', () => {
     const slice = {
       ...baseSlice,
       readFirst: [
-        'orchestrator/src/mastra/workflows/slice-workflow.ts',
-        'orchestrator/src/mastra/workflows/__tests__/slice-workflow.test.ts',
+        'orchestrator/src/core/workflows/slice-workflow.ts',
+        'orchestrator/src/core/workflows/__tests__/slice-workflow.test.ts',
       ],
     }
     const prompt = composeTaskPrompt(idea, slice, 1, 1)
     expect(prompt).toContain('## Read first')
     expect(prompt).toContain(
-      '1. orchestrator/src/mastra/workflows/slice-workflow.ts',
+      '1. orchestrator/src/core/workflows/slice-workflow.ts',
     )
     expect(prompt).toContain(
-      '2. orchestrator/src/mastra/workflows/__tests__/slice-workflow.test.ts',
+      '2. orchestrator/src/core/workflows/__tests__/slice-workflow.test.ts',
     )
   })
 
@@ -419,7 +419,7 @@ describe('slicerOutputSchema: modifies + creates', () => {
           whatToBuild: 'x',
           acceptanceCriteria: ['a'],
           blockedBy: [],
-          readFirst: ['orchestrator/src/mastra/context.ts'],
+          readFirst: ['orchestrator/src/core/context.ts'],
           prescriptiveAction:
             'Create orchestrator/src/manifest/load.ts with a loadManifest() export.',
           modifies: [],
@@ -470,7 +470,7 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
   it('persists modifies + creates concatenated into spec.files', async () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
 
     const slice = {
@@ -496,7 +496,7 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
   it("round-trips a creates entry that uses the 'NEW: ' prefix verbatim", async () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
 
     // Simulate a slicer output that uses the prefix to flag a brand-new
@@ -510,10 +510,10 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
           whatToBuild: 'x',
           acceptanceCriteria: ['a'],
           blockedBy: [],
-          readFirst: ['orchestrator/src/mastra/queue.ts'],
+          readFirst: ['orchestrator/src/core/queue.ts'],
           prescriptiveAction:
             'Create loadManifest() in NEW: orchestrator/src/manifest/load.ts.',
-          modifies: ['orchestrator/src/mastra/queue.ts'],
+          modifies: ['orchestrator/src/core/queue.ts'],
           creates: ['NEW: orchestrator/src/manifest/load.ts'],
         },
       ],
@@ -530,7 +530,7 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
     })
     const reloaded = await queue.getTask(task.id)
     expect(reloaded?.spec?.files).toEqual([
-      'orchestrator/src/mastra/queue.ts',
+      'orchestrator/src/core/queue.ts',
       'NEW: orchestrator/src/manifest/load.ts',
     ])
   })
@@ -553,8 +553,8 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../mastra/lib/git')
-    vi.doUnmock('../../mastra/queue')
+    vi.doUnmock('../../core/lib/git')
+    vi.doUnmock('../../core/queue')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -583,7 +583,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
   // Seed a fresh idea in 'prd-ready' status (the precondition `generateStep`
   // checks) and return its id.
   const seedPrdReadyIdea = async (): Promise<string> => {
-    const proposals = await import('../../mastra/proposals')
+    const proposals = await import('../../core/proposals')
     await proposals.initProposals()
     const idea = await proposals.createProposal('t', {
       problem: 'p',
@@ -596,8 +596,8 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
   }
 
   const countTasksForIdea = async (ideaId: string): Promise<number> => {
-    const queue = await vi.importActual<typeof import('../../mastra/queue')>(
-      '../../mastra/queue',
+    const queue = await vi.importActual<typeof import('../../core/queue')>(
+      '../../core/queue',
     )
     await queue.initQueue()
     const rows = await queue.getClient().execute({
@@ -612,9 +612,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // NOT a valid slicerOutput JSON. parseSlicerOutput throws — that
     // throw lands BEFORE Phase 4 flips the idea, so the idea must still
     // be prd-ready and no tasks must have been inserted.
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -633,7 +633,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     const slice = await import('../slice-workflow')
     await expect(slice.runSlice(ideaId)).rejects.toThrow()
 
-    const proposals = await import('../../mastra/proposals')
+    const proposals = await import('../../core/proposals')
     const after = await proposals.getProposal(ideaId)
     expect(after?.status).toBe('prd-ready')
     expect(await countTasksForIdea(ideaId)).toBe(0)
@@ -647,9 +647,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // We simulate that exact shape by stubbing the slicer to emit a
     // valid one-slice output AND forcing transferProposalBlockerToTask
     // to throw — the catch must now revert the idea AND clean tasks.
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -662,9 +662,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
         })),
       }
     })
-    vi.doMock('../../mastra/queue', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/queue')>(
-        '../../mastra/queue',
+    vi.doMock('../../core/queue', async () => {
+      const actual = await vi.importActual<typeof import('../../core/queue')>(
+        '../../core/queue',
       )
       return {
         ...actual,
@@ -681,7 +681,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
       /phase 5 injected failure/,
     )
 
-    const proposals = await import('../../mastra/proposals')
+    const proposals = await import('../../core/proposals')
     const after = await proposals.getProposal(ideaId)
     // The whole point of the compensating revert: a Phase 5 failure
     // must not strand the idea at 'sliced'.
@@ -696,9 +696,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // write fires. The idea must remain prd-ready so the daemon's
     // auto-slice loop (which only picks up prd-ready ideas) can
     // retry once the slicer is healthy.
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -717,7 +717,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     const slice = await import('../slice-workflow')
     await expect(slice.runSlice(ideaId)).rejects.toThrow()
 
-    const proposals = await import('../../mastra/proposals')
+    const proposals = await import('../../core/proposals')
     const after = await proposals.getProposal(ideaId)
     expect(after?.status).toBe('prd-ready')
     expect(await countTasksForIdea(ideaId)).toBe(0)
@@ -733,9 +733,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // is needed. This test pins that: a timeout must NOT set the proposal to
     // 'sliced', and `mars proposal slice` must be re-runnable without a manual
     // `mars proposal set <id> status prd-ready` poke.
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -754,7 +754,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     const slice = await import('../slice-workflow')
     await expect(slice.runSlice(ideaId)).rejects.toThrow(/124/)
 
-    const proposals = await import('../../mastra/proposals')
+    const proposals = await import('../../core/proposals')
     const after = await proposals.getProposal(ideaId)
     // Must remain prd-ready — `mars proposal slice` must be directly re-runnable.
     expect(after?.status).toBe('prd-ready')
@@ -767,9 +767,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // slice-task creation. This test verifies the "happy path" invariant:
     // a successful runSlice must produce BOTH idea.status='sliced' AND
     // the expected tasks in the queue — not one without the other.
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -789,7 +789,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     const result = await slice.runSlice(ideaId)
 
     // Status flip: the idea must now be 'sliced'.
-    const proposals = await import('../../mastra/proposals')
+    const proposals = await import('../../core/proposals')
     const after = await proposals.getProposal(ideaId)
     expect(after?.status).toBe('sliced')
 
@@ -810,9 +810,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // orphans, duplicating the queue work. The pre-flight must delete any
     // tasks with parent_proposal_id = idea.id before Phase 1 runs, so a
     // retry lands exactly N tasks — not N orphans + N fresh ones.
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -831,8 +831,8 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // Simulate the crash: manually insert an orphaned task that claims
     // this idea as its parent (as if Phase 1 ran but the process died
     // before Phase 4 could flip the status).
-    const queue = await vi.importActual<typeof import('../../mastra/queue')>(
-      '../../mastra/queue',
+    const queue = await vi.importActual<typeof import('../../core/queue')>(
+      '../../core/queue',
     )
     await queue.initQueue()
     await queue.enqueueTask('orphaned task from crashed run', undefined, {
@@ -851,7 +851,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     expect(await countTasksForIdea(ideaId)).toBe(1)
 
     // And the idea must now be sliced (not prd-ready).
-    const proposals = await import('../../mastra/proposals')
+    const proposals = await import('../../core/proposals')
     const after = await proposals.getProposal(ideaId)
     expect(after?.status).toBe('sliced')
   })
@@ -1042,7 +1042,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../mastra/lib/git')
+    vi.doUnmock('../../core/lib/git')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -1051,7 +1051,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
     JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
   const seedPrdReadyIdea = async (): Promise<string> => {
-    const proposals = await import('../../mastra/proposals')
+    const proposals = await import('../../core/proposals')
     await proposals.initProposals()
     const idea = await proposals.createProposal('Remove legacy_data_col', {
       problem: 'p',
@@ -1090,7 +1090,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         whatToBuild: 'Stop reading legacy_data_col from the parser output',
         acceptanceCriteria: ['parser no longer references legacy_data_col'],
         blockedBy: [] as number[],
-        readFirst: ['orchestrator/src/mastra/lib/claude-usage.ts'] as string[],
+        readFirst: ['orchestrator/src/core/lib/claude-usage.ts'] as string[],
         prescriptiveAction: 'Delete the legacy_data_col field from the ClaudeUsage type and its parser in claude-usage.ts.',
         modifies: [] as string[],
         creates: [] as string[],
@@ -1103,7 +1103,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         whatToBuild: 'Stop writing legacy_data_col through the storage layer',
         acceptanceCriteria: ['storage layer no longer writes legacy_data_col'],
         blockedBy: [] as number[],
-        readFirst: ['orchestrator/src/mastra/reflect-signals.ts'] as string[],
+        readFirst: ['orchestrator/src/core/reflect-signals.ts'] as string[],
         prescriptiveAction: 'Remove legacy_data_col from the INSERT statement and the ReflectSignal type in reflect-signals.ts.',
         modifies: [] as string[],
         creates: [] as string[],
@@ -1116,7 +1116,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         whatToBuild: 'Stop summing legacy_data_col in the aggregation query',
         acceptanceCriteria: ['aggregation no longer references legacy_data_col'],
         blockedBy: [] as number[],
-        readFirst: ['orchestrator/src/mastra/reflect-query.ts'] as string[],
+        readFirst: ['orchestrator/src/core/reflect-query.ts'] as string[],
         prescriptiveAction: 'Remove `SUM(s.legacy_data_col)` from the SELECT in the aggregation query in reflect-query.ts.',
         modifies: [] as string[],
         creates: [] as string[],
@@ -1130,7 +1130,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         whatToBuild: 'Drop the legacy_data_col column from the tasks table',
         acceptanceCriteria: ['legacy_data_col column dropped'],
         blockedBy: [] as number[],
-        readFirst: ['orchestrator/src/mastra/queue.ts'] as string[],
+        readFirst: ['orchestrator/src/core/queue.ts'] as string[],
         prescriptiveAction: 'In queue.ts, remove the `legacy_data_col REAL` column definition from the CREATE TABLE tasks DDL and drop it from all INSERT/SELECT statements.',
         modifies: [] as string[],
         creates: [] as string[],
@@ -1141,9 +1141,9 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
   }
 
   it('persists blocker edges from the schema-drop slice onto every consumer slice', async () => {
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -1164,7 +1164,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
     expect(result.taskIds).toHaveLength(5)
     const [readmeId, parserId, storageId, aggregationId, dropId] = result.taskIds
 
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
     const rows = await queue.getClient().execute({
       sql: `SELECT task_id, blocker_task_id FROM task_blockers
@@ -1229,7 +1229,7 @@ describe('composeTaskPrompt: parent digest replaces full PRD dump', () => {
     acceptanceCriteria: ['prompt contains the PRD body'],
     blockedBy: [] as number[],
     readFirst: [
-      'orchestrator/src/mastra/workflows/slice-workflow.ts',
+      'orchestrator/src/core/workflows/slice-workflow.ts',
     ] as string[],
     prescriptiveAction:
       'In composeTaskPrompt (slice-workflow.ts), inline idea.title, idea.solution, and idea.outOfScope into the returned template string.',
@@ -1457,7 +1457,7 @@ describe('composeTaskPrompt: Files section', () => {
       whatToBuild: 'Render creates with NEW: prefix.',
       acceptanceCriteria: ['NEW: prefix preserved'],
       blockedBy: [] as number[],
-      readFirst: ['orchestrator/src/mastra/context.ts'] as string[],
+      readFirst: ['orchestrator/src/core/context.ts'] as string[],
       prescriptiveAction:
         'Create loadManifest() in NEW: orchestrator/src/manifest/load.ts.',
       modifies: [] as string[],
@@ -1540,7 +1540,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../mastra/lib/git')
+    vi.doUnmock('../../core/lib/git')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -1549,7 +1549,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
     JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
   const seedPrdReadyIdea = async (): Promise<string> => {
-    const proposals = await import('../../mastra/proposals')
+    const proposals = await import('../../core/proposals')
     await proposals.initProposals()
     const idea = await proposals.createProposal('3-slice sequential PRD', {
       problem: 'p',
@@ -1609,9 +1609,9 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
       ],
     }
 
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -1633,7 +1633,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
 
     const [task1Id, task2Id, task3Id] = result.taskIds
 
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
 
     // Consecutive pair 1→2: task 2 must be blocked by task 1
@@ -1728,9 +1728,9 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
       ],
     }
 
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -1750,7 +1750,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
     const result = await sliceModule.runSlice(ideaId)
     expect(result.taskIds).toHaveLength(3)
 
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
 
     // Zero task_blockers rows across all 3 tasks
@@ -2166,7 +2166,7 @@ describe('enqueueTask round-trip: hitl slice kind and subDeliverable land on tas
   it('round-trips kind and subDeliverable from an hitl slice spec through enqueueTask', async () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
 
     // Parse a slicer output that contains one hitl slice with a subDeliverable.
@@ -2227,7 +2227,7 @@ describe('enqueueTask round-trip: hitl slice kind and subDeliverable land on tas
   it('coder slices without subDeliverable land with sliceKind=coder and no subDeliverable', async () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
 
     const task = await queue.enqueueTask('p', undefined, {
@@ -2269,7 +2269,7 @@ describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Tas
     acceptanceCriteria: ['per-task prompt has zero copies of the brief'],
     blockedBy: [] as number[],
     readFirst: [
-      'orchestrator/src/mastra/workflows/slice-workflow.ts',
+      'orchestrator/src/core/workflows/slice-workflow.ts',
     ] as string[],
     prescriptiveAction:
       'In composeTaskPrompt (slice-workflow.ts), remove any reference to TDD_WORKER_BRIEF from the returned template string.',
@@ -2351,7 +2351,7 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../mastra/lib/git')
+    vi.doUnmock('../../core/lib/git')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -2360,7 +2360,7 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
     JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
   const seedPrdReadyIdea = async (): Promise<string> => {
-    const proposals = await import('../../mastra/proposals')
+    const proposals = await import('../../core/proposals')
     await proposals.initProposals()
     const idea = await proposals.createProposal('Action queue drop test PRD', {
       problem: 'p',
@@ -2382,9 +2382,9 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
       'export function alreadyShipped() {}\n',
     )
 
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -2437,7 +2437,7 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
     expect(result.taskIds).toHaveLength(1)
 
     // One actionQueue item must have been created for the dropped slice.
-    const actionQueue = await import('../../mastra/lib/action-queue')
+    const actionQueue = await import('../../core/lib/action-queue')
     await actionQueue.initActionQueue()
     const items = await actionQueue.listActionQueueItems('open', { kind: 'slices-dropped' })
 
@@ -2451,9 +2451,9 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
     // No files pre-created → nothing satisfies the pre-flight check.
     // The slicer emits one slice that creates a file that does not yet
     // exist on disk — it must be dispatched normally with no actionQueue item.
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -2488,7 +2488,7 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
     const sliceModule = await import('../slice-workflow')
     await sliceModule.runSlice(ideaId)
 
-    const actionQueue = await import('../../mastra/lib/action-queue')
+    const actionQueue = await import('../../core/lib/action-queue')
     await actionQueue.initActionQueue()
     const items = await actionQueue.listActionQueueItems('open', { kind: 'slices-dropped' })
 
@@ -2523,7 +2523,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../mastra/lib/git')
+    vi.doUnmock('../../core/lib/git')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -2532,7 +2532,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
   const seedPrdReadyIdea = async (): Promise<string> => {
-    const proposals = await import('../../mastra/proposals')
+    const proposals = await import('../../core/proposals')
     await proposals.initProposals()
     const idea = await proposals.createProposal('HITL routing test PRD', {
       problem: 'operator must release manually',
@@ -2579,9 +2579,9 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   }
 
   it('creates exactly one actionQueue item of kind hitl-slice-needs-operator when an hitl slice is present', async () => {
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -2600,7 +2600,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     const sliceModule = await import('../slice-workflow')
     await sliceModule.runSlice(ideaId)
 
-    const actionQueue = await import('../../mastra/lib/action-queue')
+    const actionQueue = await import('../../core/lib/action-queue')
     await actionQueue.initActionQueue()
     const items = await actionQueue.listActionQueueItems('open', {
       kind: 'hitl-slice-needs-operator',
@@ -2610,9 +2610,9 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   })
 
   it('actionQueue item body contains the hitl slice title and acceptance criteria as a manual checklist', async () => {
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -2631,7 +2631,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     const sliceModule = await import('../slice-workflow')
     await sliceModule.runSlice(ideaId)
 
-    const actionQueue = await import('../../mastra/lib/action-queue')
+    const actionQueue = await import('../../core/lib/action-queue')
     await actionQueue.initActionQueue()
     const items = await actionQueue.listActionQueueItems('open', {
       kind: 'hitl-slice-needs-operator',
@@ -2646,9 +2646,9 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   })
 
   it('enqueues exactly one Coder sub-task built from the subDeliverable spec, dispatchable as queued', async () => {
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -2670,7 +2670,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     // result.taskIds contains only the slice task ids (1 hitl slice → 1 id)
     expect(result.taskIds).toHaveLength(1)
 
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
 
     // hitl slice task + Coder sub-task = 2 tasks for this proposal
@@ -2699,9 +2699,9 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   })
 
   it('leaves the hitl slice task in status=blocked immediately after slicing', async () => {
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -2720,7 +2720,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     const sliceModule = await import('../slice-workflow')
     const result = await sliceModule.runSlice(ideaId)
 
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
 
     // The hitl slice task itself must be blocked — never queued for Coder dispatch
@@ -2753,9 +2753,9 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
       ],
     }
 
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -2777,7 +2777,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     // One task only (the coder slice) — no sub-tasks created
     expect(result.taskIds).toHaveLength(1)
 
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
     const totalTasks = await queue.getClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE parent_proposal_id = ?`,
@@ -2790,7 +2790,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     ).toBe(1)
 
     // No hitl-slice-needs-operator actionQueue items
-    const actionQueue = await import('../../mastra/lib/action-queue')
+    const actionQueue = await import('../../core/lib/action-queue')
     await actionQueue.initActionQueue()
     const items = await actionQueue.listActionQueueItems('open', {
       kind: 'hitl-slice-needs-operator',
@@ -2827,7 +2827,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../mastra/lib/git')
+    vi.doUnmock('../../core/lib/git')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -2836,7 +2836,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
   const seedPrdReadyIdea = async (): Promise<string> => {
-    const proposals = await import('../../mastra/proposals')
+    const proposals = await import('../../core/proposals')
     await proposals.initProposals()
     const idea = await proposals.createProposal('HITL completion test PRD', {
       problem: 'operator must confirm manually',
@@ -2886,7 +2886,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   // Helper: find the Coder sub-task id for a given hitl slice task.
   // Self-imports the queue module so callers don't need to pass a reference.
   const findSubTaskId = async (hitlSliceTaskId: string): Promise<string> => {
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
     const r = await queue.getClient().execute({
       sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ?`,
@@ -2898,7 +2898,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
 
   // Helper: find and return the actionQueue item id for the hitl slice.
   const findHitlActionQueueItemId = async (): Promise<string> => {
-    const actionQueue = await import('../../mastra/lib/action-queue')
+    const actionQueue = await import('../../core/lib/action-queue')
     await actionQueue.initActionQueue()
     const items = await actionQueue.listActionQueueItems('all', {
       kind: 'hitl-slice-needs-operator',
@@ -2910,7 +2910,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   // Helper: mark a task as 'done' directly in the DB (simulates daemon behaviour
   // after a Coder worktree successfully merges).
   const markTaskDone = async (taskId: string): Promise<void> => {
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
     await queue.getClient().execute({
       sql: `UPDATE tasks SET status = 'done', updated_at = datetime('now') WHERE id = ?`,
@@ -2919,9 +2919,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   }
 
   it('resolving the actionQueue item while the sub-task is still in-flight leaves the hitl slice blocked', async () => {
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -2942,9 +2942,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     expect(result.taskIds).toHaveLength(1)
     const hitlSliceTaskId = result.taskIds[0]
 
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
-    const actionQueue = await import('../../mastra/lib/action-queue')
+    const actionQueue = await import('../../core/lib/action-queue')
 
     // Resolve the actionQueue item — but sub-task is still 'queued' (in-flight).
     const actionQueueItemId = await findHitlActionQueueItemId()
@@ -2965,9 +2965,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   })
 
   it('the sub-task reaching done while the actionQueue item is still open leaves the hitl slice blocked', async () => {
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -2988,7 +2988,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     expect(result.taskIds).toHaveLength(1)
     const hitlSliceTaskId = result.taskIds[0]
 
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
 
     // Mark the Coder sub-task as 'done' — actionQueue item is still open.
@@ -3010,9 +3010,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   })
 
   it('action-queue-first ordering: hitl slice flips to done once both conditions are met', async () => {
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -3032,9 +3032,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     const result = await sliceModule.runSlice(ideaId)
     const hitlSliceTaskId = result.taskIds[0]
 
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
-    const actionQueue = await import('../../mastra/lib/action-queue')
+    const actionQueue = await import('../../core/lib/action-queue')
 
     // Step 1: operator resolves actionQueue item first.
     const actionQueueItemId = await findHitlActionQueueItemId()
@@ -3062,9 +3062,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   })
 
   it('sub-task-first ordering: hitl slice flips to done once both conditions are met', async () => {
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -3084,9 +3084,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     const result = await sliceModule.runSlice(ideaId)
     const hitlSliceTaskId = result.taskIds[0]
 
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
-    const actionQueue = await import('../../mastra/lib/action-queue')
+    const actionQueue = await import('../../core/lib/action-queue')
 
     // Step 1: sub-task reaches done first.
     const subTaskId = await findSubTaskId(hitlSliceTaskId)
@@ -3114,9 +3114,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   })
 
   it('simultaneous ordering: hitl slice flips to done when both conditions are met at once', async () => {
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -3136,9 +3136,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     const result = await sliceModule.runSlice(ideaId)
     const hitlSliceTaskId = result.taskIds[0]
 
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
-    const actionQueue = await import('../../mastra/lib/action-queue')
+    const actionQueue = await import('../../core/lib/action-queue')
 
     // Both conditions fulfilled back-to-back (simultaneous from the function's
     // perspective — no intermediate tryCompleteHitlSlice call).
@@ -3180,9 +3180,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
       ],
     }
 
-    vi.doMock('../../mastra/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../mastra/lib/git')>(
-        '../../mastra/lib/git',
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
       )
       return {
         ...actual,
@@ -3203,7 +3203,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     expect(result.taskIds).toHaveLength(1)
     const coderTaskId = result.taskIds[0]
 
-    const queue = await import('../../mastra/queue')
+    const queue = await import('../../core/queue')
     await queue.initQueue()
 
     // Coder task starts 'queued' (dispatchable), not 'blocked'.

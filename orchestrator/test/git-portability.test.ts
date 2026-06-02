@@ -23,10 +23,10 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { pathExists } from '../src/mastra/lib/git'
+import { pathExists } from '../src/core/lib/git'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const gitModulePath = resolve(here, '..', 'src', 'mastra', 'lib', 'git.ts')
+const gitModulePath = resolve(here, '..', 'src', 'core', 'lib', 'git.ts')
 
 describe('git helper — cross-OS path existence', () => {
   let scratch: string

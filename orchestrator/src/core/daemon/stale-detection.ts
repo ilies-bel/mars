@@ -60,8 +60,8 @@ export interface DaemonSourceStamp {
 
 const proposalsSourcePath = (): string => {
   const here = dirname(fileURLToPath(import.meta.url))
-  // server.ts/stale-detection.ts both live under src/mastra/daemon/; proposals.ts
-  // is the sibling directory's file at src/mastra/proposals.ts.
+  // server.ts/stale-detection.ts both live under src/core/daemon/; proposals.ts
+  // is the sibling directory's file at src/core/proposals.ts.
   return resolve(here, '..', 'proposals.ts')
 }
 

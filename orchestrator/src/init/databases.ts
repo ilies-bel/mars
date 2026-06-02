@@ -1,6 +1,6 @@
-import { initQueue } from '../mastra/queue'
-import { initProposals } from '../mastra/proposals'
-import { initActionQueue } from '../mastra/lib/action-queue'
+import { initQueue } from '../core/queue'
+import { initProposals } from '../core/proposals'
+import { initActionQueue } from '../core/lib/action-queue'
 import { mergeLegacyDatabases } from './merge-databases'
 
 /**

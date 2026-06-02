@@ -22,9 +22,9 @@ import {
   shouldWireReadSpanWatcher,
 } from '../implement-workflow'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
-import { buildDiagnoseChorePrompt } from '../../mastra/lib/diagnose-chore'
-import { resolveReadSpanLimit, createReadSpanWatcher } from '../../mastra/lib/read-span-watch'
-import type { ReadSpanTrace } from '../../mastra/lib/read-span-watch'
+import { buildDiagnoseChorePrompt } from '../../core/lib/diagnose-chore'
+import { resolveReadSpanLimit, createReadSpanWatcher } from '../../core/lib/read-span-watch'
+import type { ReadSpanTrace } from '../../core/lib/read-span-watch'
 
 describe('composePrompt — coder default', () => {
   it('appends the commit footer to a bare prompt', () => {

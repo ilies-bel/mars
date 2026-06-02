@@ -11,8 +11,8 @@
  * See orchestrator/docs/runbook-cut-tagged-ids.md for the full procedure.
  */
 
-import { openLibsql } from '../mastra/lib/libsql'
-import { resolveContext } from '../mastra/context'
+import { openLibsql } from '../core/lib/libsql'
+import { resolveContext } from '../core/context'
 
 /** The seven proposals that must be re-entered after the cut (PRD 52ec700f slice 9). */
 const CARRY_FORWARD: ReadonlyArray<{ readonly hex: string; readonly title: string }> = [

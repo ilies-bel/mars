@@ -2,9 +2,9 @@ import type { Client } from '@libsql/client'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { ensureProcessedOnceSchema } from '../../bus/processed-once.js'
-import { drainWithStall } from '../../mastra/daemon/subscriber-drain.js'
-import { handleTaskFailureWithFixTask } from '../../mastra/queue-fix-tasks.js'
-import { getTask } from '../../mastra/queue.js'
+import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
+import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks.js'
+import { getTask } from '../../core/queue.js'
 
 /**
  * Durable outbox subscriber that enforces exactly-one recovery per task

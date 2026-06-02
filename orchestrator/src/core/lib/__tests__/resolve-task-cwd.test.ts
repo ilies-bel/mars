@@ -88,11 +88,11 @@ describe('resolveTaskCwd', () => {
 
   it('walks up to find the project when the common prefix points deeper than the project root', () => {
     const sub = seedOrchestrator()
-    // Files all live under orchestrator/src/mastra — common prefix is
+    // Files all live under orchestrator/src/core — common prefix is
     // 3 segments deep, but the project is at orchestrator/.
     const cwd = resolveTaskCwd(worktree, [
-      'orchestrator/src/mastra/agents/foo.ts',
-      'orchestrator/src/mastra/agents/bar.ts',
+      'orchestrator/src/core/agents/foo.ts',
+      'orchestrator/src/core/agents/bar.ts',
     ])
     expect(cwd).toBe(sub)
   })

@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 interface QueueModule {
-  initQueue: typeof import('../../mastra/queue').initQueue
-  enqueueTask: typeof import('../../mastra/queue').enqueueTask
-  addBlockers: typeof import('../../mastra/queue').addBlockers
-  getTask: typeof import('../../mastra/queue').getTask
-  getClient: typeof import('../../mastra/queue').getClient
+  initQueue: typeof import('../../core/queue').initQueue
+  enqueueTask: typeof import('../../core/queue').enqueueTask
+  addBlockers: typeof import('../../core/queue').addBlockers
+  getTask: typeof import('../../core/queue').getTask
+  getClient: typeof import('../../core/queue').getClient
 }
 
 interface BlockerResolutionSubscriberModule {
@@ -45,7 +45,7 @@ const setupRepo = (): string => {
 const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
-  const q = (await import('../../mastra/queue')) as unknown as QueueModule
+  const q = (await import('../../core/queue')) as unknown as QueueModule
   await q.initQueue()
   const sub = (await import('./blocker-resolution')) as unknown as BlockerResolutionSubscriberModule
   const pub = (await import('../../bus/publisher')) as unknown as PublisherModule

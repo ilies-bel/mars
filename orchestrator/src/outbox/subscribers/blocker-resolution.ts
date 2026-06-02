@@ -1,8 +1,8 @@
 import type { Client } from '@libsql/client'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
-import { onBlockerTaskCompleted } from '../../mastra/blocker-resolution.js'
-import { drainWithStall } from '../../mastra/daemon/subscriber-drain.js'
+import { onBlockerTaskCompleted } from '../../core/blocker-resolution.js'
+import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 
 /**
  * Durable Outbox Subscriber: drives blocked-task unblocking in response to
