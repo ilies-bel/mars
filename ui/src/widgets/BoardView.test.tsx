@@ -192,6 +192,86 @@ describe('BoardView – search filter on cluster columns', () => {
   })
 })
 
+describe('BoardView – done-flash tasks', () => {
+  it('renders a flashing task in its last-known cluster column', () => {
+    // task-flash was in "In progress" and just went done
+    const flashTask = task({ id: 'task-flash', cluster: 'In progress', status: 'running' })
+
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={emptyByCluster()}
+        drafts={[]}
+        error={null}
+        selectedProposalId={null}
+        flashingTasks={[flashTask]}
+        flashingTaskIds={new Set(['task-flash'])}
+      />,
+    )
+
+    expect(html).toContain('task-flash')
+    expect(html).toContain('animate-mars-done-flash')
+  })
+
+  it('does not render flashing tasks in columns other than their last-known cluster', () => {
+    const flashTask = task({ id: 'task-flash', cluster: 'In progress', status: 'running' })
+    const normalQueuedTask = task({ id: 'task-queued', cluster: 'Queued' })
+    const byCluster = { ...emptyByCluster(), Queued: [normalQueuedTask] }
+
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={byCluster}
+        drafts={[]}
+        error={null}
+        selectedProposalId={null}
+        flashingTasks={[flashTask]}
+        flashingTaskIds={new Set(['task-flash'])}
+      />,
+    )
+
+    expect(html).toContain('task-flash')
+    expect(html).toContain('task-queued')
+    // flash task appears in the In progress column, queued task stays in Queued
+    expect(html).toContain('animate-mars-done-flash')
+  })
+
+  it('renders nothing extra when flashingTasks is empty', () => {
+    const normalTask = task({ id: 'task-a', cluster: 'Queued' })
+    const byCluster = { ...emptyByCluster(), Queued: [normalTask] }
+
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={byCluster}
+        drafts={[]}
+        error={null}
+        selectedProposalId={null}
+        flashingTasks={[]}
+        flashingTaskIds={new Set()}
+      />,
+    )
+
+    expect(html).toContain('task-a')
+    expect(html).not.toContain('animate-mars-done-flash')
+  })
+
+  it('renders flashing tasks even when byCluster column is empty', () => {
+    const flashTask = task({ id: 'task-done', cluster: 'Queued', status: 'queued' })
+
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={emptyByCluster()}
+        drafts={[]}
+        error={null}
+        selectedProposalId={null}
+        flashingTasks={[flashTask]}
+        flashingTaskIds={new Set(['task-done'])}
+      />,
+    )
+
+    expect(html).toContain('task-done')
+    expect(html).toContain('animate-mars-done-flash')
+  })
+})
+
 describe('BoardView – proposal filter on Proposals column', () => {
   it('shows only the selected proposal draft when a filter is active', () => {
     const d1 = draft('p1', 'Feature Alpha')

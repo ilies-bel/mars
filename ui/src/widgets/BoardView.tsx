@@ -67,6 +67,17 @@ export interface BoardViewProps {
    * null = no active text search (show all tasks).
    */
   searchMatchIds?: Set<string> | null
+  /**
+   * Tasks that have recently transitioned to done and are in the 3-second
+   * flash window. They are appended to their last-known cluster column and
+   * rendered with the done-flash animation.
+   */
+  flashingTasks?: ProgressTask[]
+  /**
+   * IDs of tasks currently flashing. Passed down to Column → TaskCard so the
+   * flash animation class is applied.
+   */
+  flashingTaskIds?: Set<string>
 }
 
 export const BoardView = ({
@@ -76,6 +87,8 @@ export const BoardView = ({
   selectedProposalId,
   ghostedClusters,
   searchMatchIds,
+  flashingTasks,
+  flashingTaskIds,
 }: BoardViewProps) => {
   let cursor = 0
 
@@ -99,7 +112,10 @@ export const BoardView = ({
             searchMatchIds != null
               ? filtered.filter((t) => searchMatchIds.has(t.id))
               : filtered
-          const tasksForCluster = searched.map(toUI)
+          // Flashing tasks always show in their last-known cluster (they bypass
+          // search / proposal filters to ensure the confirmation is always visible).
+          const flashForCluster = (flashingTasks ?? []).filter((t) => t.cluster === cluster)
+          const tasksForCluster = [...searched, ...flashForCluster].map(toUI)
           const startIndex = cursor
           cursor += tasksForCluster.length
           const accent: 'flame' | 'muted' =
@@ -111,6 +127,7 @@ export const BoardView = ({
               accent={accent}
               tasks={tasksForCluster}
               startIndex={startIndex}
+              flashingTaskIds={flashingTaskIds}
             />
           )
         })}
