@@ -15,7 +15,6 @@ import {
   type ClusterToggle,
 } from '@/widgets/ClusterToggleBar'
 import { Footer } from '@/widgets/Footer'
-import { Sidebar } from '@/widgets/Sidebar'
 import { TabStrip } from '@/widgets/TabStrip'
 import { TopologyView } from '@/widgets/TopologyView'
 import { KpiVector } from '@/widgets/KpiVector'
@@ -102,18 +101,12 @@ export const ProgressPage = () => {
     ALL_CLUSTER_TOGGLES.filter((c) => !activeToggles.has(c)),
   )
 
-  const totalTasks = tasks?.length ?? 0
   const inProgressCount = byCluster['In progress'].length
   const blockedCount = byCluster.Blocked.length
   const failedCount = byCluster.Failed.length
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg">
-      <Sidebar
-        tasksCount={totalTasks}
-        triageCount={blockedCount}
-        connected={connected}
-      />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopStripe
           inProgress={inProgressCount}
