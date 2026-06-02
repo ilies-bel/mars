@@ -23,6 +23,9 @@ importers:
       react:
         specifier: ^19.2.0
         version: 19.2.6
+      smol-toml:
+        specifier: ^1.6.1
+        version: 1.6.1
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
