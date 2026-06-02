@@ -13,7 +13,8 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { tryActivatePlugin } from './init-workflow.js'
+import { tryActivatePlugin, getFrameworkClaudeDir } from './init-workflow.js'
+import { realDeps } from '../commands/claude-plugin.js'
 import type { ClaudePluginDeps } from '../commands/claude-plugin.js'
 
 // ---------------------------------------------------------------------------
@@ -142,6 +143,24 @@ describe('init activate-plugin step — non-fatal when settings file is unwritab
     expect(() =>
       tryActivatePlugin(FRAMEWORK_CLAUDE_DIR, SETTINGS_PATH, failDeps),
     ).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getFrameworkClaudeDir — path resolution
+// ---------------------------------------------------------------------------
+
+describe('getFrameworkClaudeDir — path resolution', () => {
+  it('resolves to <frameworkRoot>/.claude, not orchestrator/.claude', () => {
+    const dir = getFrameworkClaudeDir()
+    // Must end with /<repoName>/.claude — not /orchestrator/.claude
+    expect(dir).toMatch(/\/\.claude$/)
+    expect(dir).not.toMatch(/orchestrator\/\.claude$/)
+  })
+
+  it('resolved directory is a real Mars plugin directory (contains .claude-plugin/plugin.json with name=mars)', () => {
+    const dir = getFrameworkClaudeDir()
+    expect(realDeps.isMarsPlugin(dir)).toBe(true)
   })
 })
 
