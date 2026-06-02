@@ -1307,7 +1307,36 @@ const main = async (): Promise<void> => {
         MARS_VERSION,
         deps,
       )
-      console.log(`mars install: ${result.outcome} (${result.lock.files.length} files)`)
+      if (result.outcome === 'success') {
+        console.log(
+          `mars install: ${result.outcome} (${result.lock.files.length} files)`,
+        )
+        return
+      }
+      if (result.outcome === 'refused-already-installed') {
+        console.error(
+          'mars install: refused — this repo is already installed ' +
+            '(mars.lock already exists). Run `mars update` to update an ' +
+            'existing install.',
+        )
+        process.exit(1)
+      }
+      // refused-hybrid-collision
+      console.error(
+        'mars install: refused — one or more destination files already ' +
+          'exist in this repo (ADR-0007 — hybrid files refuse on existence).',
+      )
+      console.error('')
+      console.error('Colliding paths:')
+      for (const p of result.collidingPaths) {
+        console.error(`  ${p}`)
+      }
+      console.error('')
+      console.error(
+        'Back up and remove each of the files listed above, then re-run ' +
+          '`mars install`.',
+      )
+      process.exit(1)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`mars install: ${msg}`)
