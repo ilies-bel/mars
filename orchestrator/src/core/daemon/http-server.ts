@@ -115,9 +115,11 @@ export interface HttpServerDeps {
    */
   listKpis?: () => Promise<KpiRecord[]>
   /**
-   * Return the full task list from the daemon's DomainTaskStore.
+   * Return the full task list enriched with cluster tag and blocker list.
    * Served by `GET /view/tasks` so the read-only UI renders only what the
-   * daemon exposes — no direct DB access on the UI side.
+   * daemon exposes — no direct DB access on the UI side. Every row carries
+   * `cluster` (null for terminal statuses) and `blockedBy` (empty array when
+   * the task has no blockers).
    */
   viewTasks: () => Promise<{ tasks: unknown[] }>
   /**

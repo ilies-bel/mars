@@ -115,7 +115,7 @@ export const clusterFor = (status: string): Cluster | null => {
   }
 }
 
-const parseJsonArray = (raw: string | null): string[] => {
+export const parseJsonArray = (raw: string | null): string[] => {
   if (!raw) return []
   try {
     const parsed = JSON.parse(raw)
