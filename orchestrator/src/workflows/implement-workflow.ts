@@ -134,6 +134,21 @@ import { TDD_WORKER_BRIEF } from './tdd-brief'
 import { CONTEXT_GATHERING_BRIEF } from './context-gathering-brief'
 import { buildDiagnoseChorePrompt } from '../core/lib/diagnose-chore'
 
+// ---------------------------------------------------------------------------
+// Per-phase resume/retry policy table — colocated with the step definitions.
+//
+// The canonical definitions live in phase-policies.ts (a lean import with no
+// transitive heavy dependencies). This file re-exports them so callers that
+// prefer the implement-workflow import path still see them here, next to the
+// step definitions that produce each FailedPhase value.
+// ---------------------------------------------------------------------------
+export type {
+  ContinuePolicy,
+  RetryPolicy,
+  PhasePolicy,
+} from './phase-policies'
+export { PHASE_POLICIES } from './phase-policies'
+
 const planSchema = z
   .object({
     functional: z.string(),
@@ -791,7 +806,7 @@ export const implementWorkflow = defineWorkflow<
           await updateTask(input.taskId, {
             status: 'failed',
             error: failSummary,
-            failedPhase: 'code',
+            failedPhase: 'setup',
             failureReason: failSummary,
             failureReasonCode: failureReasonStringToCode(failSummary),
           }, store)
@@ -817,7 +832,7 @@ export const implementWorkflow = defineWorkflow<
             )
           })
           // Throw so the engine records the step failed. install failures
-          // stamp failedPhase 'code' — a non-resumable, pre-coding failure.
+          // stamp failedPhase 'setup' — a non-resumable, pre-coding failure.
           throw error instanceof Error ? error : new Error(errorOutput)
         }
 
