@@ -2,17 +2,16 @@
  * Proposal scratchpad store.
  *
  * Scratchpad proposals are stored with a bare hex primary key (8 chars,
- * 4 random bytes) and a slug column (derived from the text). All
- * user-facing output renders through the MarsId value object, so the
- * 'mars-proposal-' prefix is never constructed by string concatenation
- * in this module.
+ * 4 random bytes) and a slug column (derived from the text, kept for
+ * human-readable DB inspection but NOT included in the rendered id).
+ * All user-facing output renders through the MarsId value object, so the
+ * 'prop-' prefix is never constructed by string concatenation in this module.
  *
  * DB table (in state.db):
  *   proposal_notes(id TEXT PK, slug TEXT, text TEXT, created_at INTEGER)
  *
- * The id column stores the bare 8-char hex; the slug column stores the
- * slugified text. Together they form the rendered id:
- *   MarsId.create('proposal', id, slug).toString()  →  mars-proposal-<hex>-<slug>
+ * The id column stores the bare 8-char hex. The rendered id is:
+ *   MarsId.create('proposal', id).toString()  →  prop-<hex>
  */
 import { randomBytes } from 'node:crypto'
 import { type Client } from '@libsql/client'
@@ -21,7 +20,7 @@ import { openLibsql } from '../core/lib/libsql.js'
 import { MarsId, parseMarsId } from '../mars-id/index.js'
 
 export interface ProposalNote {
-  /** Rendered id: mars-proposal-<hex>-<slug> */
+  /** Rendered id: prop-<hex> */
   id: string
   text: string
   createdAt: number
@@ -65,7 +64,7 @@ const slugify = (text: string): string => {
 type ProposalNoteRow = { id: string; slug: string; text: string; created_at: number }
 
 const rowToProposalNote = (row: ProposalNoteRow): ProposalNote => ({
-  id: MarsId.create('proposal', row.id, row.slug).toString(),
+  id: MarsId.create('proposal', row.id).toString(),
   text: row.text,
   createdAt: Number(row.created_at),
 })
@@ -97,11 +96,10 @@ export const listProposalNotes = async (): Promise<ProposalNote[]> => {
 }
 
 /**
- * Resolve a proposal note by any of the four user-facing input shapes:
- *   1. Full rendered form   — mars-proposal-<hex>-<slug>
- *   2. Prefix without slug  — mars-proposal-<hex>
- *   3. Bare hex             — <hex> (8 chars)
- *   4. Hex prefix           — <hex-prefix> (1–7 chars)
+ * Resolve a proposal note by any supported input shape:
+ *   1. Full tagged form  — prop-<hex>          (e.g. `prop-04830c8e`)
+ *   2. Bare hex          — <hex> (8 chars)     (e.g. `04830c8e`)
+ *   3. Hex prefix        — <hex-prefix> (1–7 chars)
  *
  * Resolution is against the bare-hex `id` column. Exact match is tried
  * first; a LIKE prefix match is used when the hex is shorter than 8 chars.
