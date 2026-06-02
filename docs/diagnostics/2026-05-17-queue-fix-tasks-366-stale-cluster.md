@@ -5,7 +5,7 @@
 
 ## Claim (recurring across ~8 reflection/planner drafts)
 
-`orchestrator/src/mastra/lib/__tests__/queue-fix-tasks.test.ts` >
+`orchestrator/src/core/lib/__tests__/queue-fix-tasks.test.ts` >
 `'fails dependent task at unblock time when retry budget already
 exhausted'` (line ~366) returns outcome `'queued'` but expects
 `'failed'`.
@@ -24,11 +24,11 @@ obsolete artifacts of older worktree bases that predated the fix.
 ## Verification log (clean main, 2026-05-17)
 
 ```
-$ cd orchestrator && npx vitest run src/mastra/lib/__tests__/queue-fix-tasks.test.ts
+$ cd orchestrator && npx vitest run src/core/lib/__tests__/queue-fix-tasks.test.ts
 
  RUN  v2.1.9 /Users/.../mars-d370f54c/orchestrator
 
- ✓ src/mastra/lib/__tests__/queue-fix-tasks.test.ts (21 tests) 4186ms
+ ✓ src/core/lib/__tests__/queue-fix-tasks.test.ts (21 tests) 4186ms
 
  Test Files  1 passed (1)
       Tests  21 passed (21)

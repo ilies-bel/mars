@@ -17,7 +17,7 @@ note for mars-b44a45fc:
 
 - Commit `3f1ed50` — *context(mars-b44a45fc): unblock agent registry
   foundation slice*
-- File: `orchestrator/src/mastra/agents/MARS-b44a45fc-CONTEXT.md` (sits
+- File: `orchestrator/src/core/agents/MARS-b44a45fc-CONTEXT.md` (sits
   next to this note)
 
 That note covers everything the next dispatch needs:
@@ -28,7 +28,7 @@ That note covers everything the next dispatch needs:
    stale.
 2. The "previously inlined writer prompt constant" is
    `WRITER_SYSTEM_PROMPT`, exported from
-   `orchestrator/src/mastra/workflows/implement-workflow.ts` (~line 182).
+   `orchestrator/src/core/workflows/implement-workflow.ts` (~line 182).
    `WRITER_FOOTER` is a *user-prompt* footer and is **not** the one the
    slice means.
 3. Schema mismatch (`id`/`displayName` in the slice vs. `name`/
@@ -45,8 +45,8 @@ That note covers everything the next dispatch needs:
   1. Grep → `orchestrator/src`
   2. Glob → worktree root
   3. Grep → `orchestrator/src`
-  4. Read → `orchestrator/src/mastra/agents/index.ts`
-  5. Read → `orchestrator/src/mastra/agents/__tests__/registry.test.ts`
+  4. Read → `orchestrator/src/core/agents/index.ts`
+  5. Read → `orchestrator/src/core/agents/__tests__/registry.test.ts`
 
 Both of those files are exactly what `MARS-b44a45fc-CONTEXT.md` describes:
 the typed registry with `vcs-supervisor` and the existing four-test

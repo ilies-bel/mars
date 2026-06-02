@@ -34,12 +34,12 @@ npm run typecheck
 | Folder              | Description                                                                  |
 | ------------------- | ---------------------------------------------------------------------------- |
 | `src/workflows`     | Imperative `@mars/workflow` pipelines (implement/triage/plan/slice/init).    |
-| `src/mastra`        | The orchestrator's core (the dir name is vestigial — no Mastra here). Holds `queue.ts`, `proposals.ts`, `context.ts`, and the subdirs below. |
-| `src/mastra/agents` | Worker/agent specs and the agent registry.                                   |
-| `src/mastra/workers`| Role-pinned Worker primitives (Coder/Fixer/Triager/Planner/Slicer/Writer).   |
-| `src/mastra/daemon` | The long-lived daemon: dispatch loop, per-kind semaphores, socket protocol.  |
-| `src/mastra/lib`    | Non-AI side-effect helpers (git, verify, claude-stream, task-store).         |
-| `src/mastra/store`  | Domain task store.                                                           |
+| `src/core`        | The orchestrator's core. Holds `queue.ts`, `proposals.ts`, `context.ts`, and the subdirs below. |
+| `src/core/agents` | Worker/agent specs and the agent registry.                                   |
+| `src/core/workers`| Role-pinned Worker primitives (Coder/Fixer/Triager/Planner/Slicer/Writer).   |
+| `src/core/daemon` | The long-lived daemon: dispatch loop, per-kind semaphores, socket protocol.  |
+| `src/core/lib`    | Non-AI side-effect helpers (git, verify, claude-stream, task-store).         |
+| `src/core/store`  | Domain task store.                                                           |
 | `src/init`          | `mars init`: stack detection, supervisor render, scaffolding, DB init.       |
 
 ### Top-level files
@@ -59,7 +59,7 @@ npm run typecheck
   Copy the pattern in `docs/implement-pipeline.md`.
 - Use Zod schemas for workflow inputs.
 - Run `npm run typecheck` and `npm test` to verify changes.
-- Non-AI side-effect logic lives in `src/mastra/lib/` and is called from
+- Non-AI side-effect logic lives in `src/core/lib/` and is called from
   inside a `ctx.step`.
 - Gate any new per-task signal-capture call site through
   `isReflectDisabled()` (or `recordSignals`, which already gates itself)
@@ -73,7 +73,7 @@ npm run typecheck
 
 ### Daemon worker pool
 
-`src/mastra/daemon/server.ts` dispatches work behind per-kind semaphores.
+`src/core/daemon/server.ts` dispatches work behind per-kind semaphores.
 When you add a new dispatch path, route it through `acquire(sems.<kind>)`
 in the dispatcher and `release(sems.<kind>)` in `finally`, then call
 `drain()` so any pending work picks up the freed slot. Do **not**

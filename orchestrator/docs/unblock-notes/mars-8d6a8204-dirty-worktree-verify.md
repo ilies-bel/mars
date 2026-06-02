@@ -8,7 +8,7 @@ attempt can go straight to writing one test, then one implementation.
 ## Where the new check lives
 
 Add a sibling to `checkBranchHasDiff` in
-`orchestrator/src/mastra/lib/git.ts`:
+`orchestrator/src/core/lib/git.ts`:
 
 ```ts
 export const checkWorktreeClean = async (cwd: string): Promise<VerifyStep>
@@ -72,7 +72,7 @@ short-circuits on `!inputData.verified`.
 ## Failure-signature registration
 
 Add one rule to `errorClassRules` in
-`orchestrator/src/mastra/lib/failure-signature.ts`:
+`orchestrator/src/core/lib/failure-signature.ts`:
 
 ```ts
 {
@@ -86,7 +86,7 @@ from `verify:has-diff/no-commits-ahead`.
 
 ## Tests (vertical, one at a time)
 
-Extend `orchestrator/src/mastra/lib/__tests__/verify-changes.test.ts`.
+Extend `orchestrator/src/core/lib/__tests__/verify-changes.test.ts`.
 Follow the existing `checkBranchHasDiff` describe block's tmpdir +
 `execFileSync('git', ...)` pattern — no mocks. One tracer-bullet test
 first, then add one per acceptance criterion as you green each:

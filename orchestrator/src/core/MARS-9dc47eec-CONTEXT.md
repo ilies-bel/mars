@@ -7,7 +7,7 @@ without an action.
 
 **Status:** Redundant. The unblock note this follow-up was created to
 produce **already exists on `main`** at
-`orchestrator/src/mastra/MARS-19b8362f-CONTEXT.md` (committed as
+`orchestrator/src/core/MARS-19b8362f-CONTEXT.md` (committed as
 `eb6c57f context note for mars-19b8362f: TaskStore migration is too big
 for one session`).
 
@@ -41,7 +41,7 @@ note's findings and surface two additional issues worth flagging
 when the slices are filed:
 
 - **`lib/origin-timeline.ts` does not exist** in
-  `orchestrator/src/mastra/lib/` — the parent prompt lists it as one of
+  `orchestrator/src/core/lib/` — the parent prompt lists it as one of
   the "7 live modules" to migrate. ADR-0021 also references it as a
   DuckDB span reader. Either the file was removed since the brief was
   written, or it was always misnamed (cf. `lib/read-span-watch.ts`,
@@ -71,7 +71,7 @@ when the slices are filed:
 This is the second time the no-action-after-reads watcher has fired on
 a parent that already had a sibling `MARS-<parent-id>-CONTEXT.md` on
 `main`, producing a redundant context-gathering child (see
-`MARS-817fa15d-CONTEXT.md` in `orchestrator/src/mastra/agents/`). The
+`MARS-817fa15d-CONTEXT.md` in `orchestrator/src/core/agents/`). The
 recommended fix recorded there still applies: when the watcher trips
 and a sibling unblock note already exists, the dispatcher should
 short-circuit (auto-mark the new follow-up `done` with the existing

@@ -60,7 +60,7 @@ one `export` and note it.
 - DEFER (do not touch): `context.ts:resolveRepo` (parallel impl in
   `ui/`) and the `AbExperiment*` types (registered workflow).
 - Load the `mastra` skill before editing anything under
-  `orchestrator/src/mastra/**`.
+  `orchestrator/src/core/**`.
 - Removing `export` only — never delete the symbol itself.
 
 ## For the orchestrator / re-dispatch

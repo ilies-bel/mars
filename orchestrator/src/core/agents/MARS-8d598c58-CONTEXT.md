@@ -9,18 +9,18 @@ vcs-supervisor entry* (Slice 1 of 4 for PRD
 When this task was re-dispatched, every acceptance criterion was already
 satisfied on `main`:
 
-- `orchestrator/src/mastra/agents/index.ts` already exports the typed
+- `orchestrator/src/core/agents/index.ts` already exports the typed
   `AgentSpec` map and the `getAgentSpec` lookup helper that throws on
   unknown names (commit `11f7a3a`, *"feat(agents): introduce typed agent
   registry with vcs-supervisor entry"*).
 - The map already holds a single `vcs-supervisor` entry whose
   `systemPrompt` is the markdown body of
-  `orchestrator/src/mastra/public/prompts/vcs-supervisor.md` with the
+  `orchestrator/src/core/public/prompts/vcs-supervisor.md` with the
   YAML frontmatter stripped.
-- `orchestrator/src/mastra/agents/__tests__/registry.test.ts` already
+- `orchestrator/src/core/agents/__tests__/registry.test.ts` already
   asserts presence, prompt parity with the markdown, lookup-by-name,
   and the throw-on-unknown contract. The verify command
-  (`npm test -- src/mastra/agents/__tests__/registry.test.ts`) passes
+  (`npm test -- src/core/agents/__tests__/registry.test.ts`) passes
   unchanged: 4/4 tests green.
 
 No source change was needed to land the slice; this note exists only so

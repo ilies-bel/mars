@@ -59,9 +59,9 @@ Add `/.mars/` to the target repo's `.gitignore`.
 | Path                            | Purpose                                            |
 | ------------------------------- | -------------------------------------------------- |
 | `src/cli.ts`                    | CLI: `add`, `list`, `run`, `where`                 |
-| `src/mastra/context.ts`         | Resolves target repo + state paths                 |
-| `src/mastra/queue.ts`           | LibSQL-backed task queue                           |
-| `src/mastra/lib/git.ts`         | All shell side-effects (git, claude, verify)       |
+| `src/core/context.ts`         | Resolves target repo + state paths                 |
+| `src/core/queue.ts`           | LibSQL-backed task queue                           |
+| `src/core/lib/git.ts`         | All shell side-effects (git, claude, verify)       |
 | `src/workflows/`                | `@mars/workflow` pipelines: implement, triage, plan, slice, init |
 | `src/prompts/vcs-supervisor.md` | Bundled supervisor spec, inlined into `claude -p`  |
 
@@ -302,13 +302,13 @@ signature** — a human-readable technical key of shape
 `<failingStep>/<error-class>` (e.g. `verify:has-diff/no-commits-ahead`,
 `merge:preflight/uncommitted-changes`). The mapping from raw error to
 class lives in `errorClassRules` in
-`src/mastra/lib/failure-signature.ts`.
+`src/core/lib/failure-signature.ts`.
 
 The handler then takes one of three paths (see ADR
 `docs/adr/0002-recipe-per-failure-signature.md` for the contract):
 
 1. **Recipe registered** — a recovery task is enqueued from the recipe
-   in `src/mastra/lib/fix-recipes.ts`. The original task becomes
+   in `src/core/lib/fix-recipes.ts`. The original task becomes
    `blocked`. If the recovery succeeds, the original is re-queued via
    the normal blocker-resolution path.
 2. **Recovery itself fails** — the orchestrator does NOT enqueue

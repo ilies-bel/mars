@@ -9,13 +9,13 @@
 | Component | Path | Purpose |
 | --- | --- | --- |
 | Orchestrator CLI | `orchestrator/src/cli.ts` | Single entry point. All subcommands (`add`, `run`, `watch`, `init`, `plan`, `answer`, `show`, `list`, `where`, etc.). |
-| Mastra runtime | `orchestrator/src/mastra/index.ts` | Registers workflows + tools. No agents (we don't use Mastra's agent abstraction — see CLAUDE.md). |
-| Implement workflow | `orchestrator/src/mastra/workflows/implement-workflow.ts` | 4 steps: setup → claude → verify → merge. |
-| Plan workflow | `orchestrator/src/mastra/workflows/plan-workflow.ts` | Auto-generates follow-up suggestions on draft tasks. |
-| Init workflow | `orchestrator/src/mastra/workflows/init-workflow.ts` | Stack detection + specialist fetch + supervisor render. |
-| Watcher daemon | `orchestrator/src/mastra/watcher.ts` | Polls `queue.db`, dispatches `queued` tasks to `implementWorkflow`. |
-| Queue | `orchestrator/src/mastra/queue.ts` | LibSQL-backed task store. Tables: `tasks`, `task_suggestions`. |
-| Git/claude/verify primitives | `orchestrator/src/mastra/lib/git.ts` | `runClaudeCode`, `createWorktree`, `verifyChanges`, `mergeBranch`, lock primitives. |
+| @mars/workflow registration | `orchestrator/src/core/index.ts` | Registers workflows + tools on the in-house `@mars/workflow` engine. |
+| Implement workflow | `orchestrator/src/core/workflows/implement-workflow.ts` | 4 steps: setup → claude → verify → merge. |
+| Plan workflow | `orchestrator/src/core/workflows/plan-workflow.ts` | Auto-generates follow-up suggestions on draft tasks. |
+| Init workflow | `orchestrator/src/core/workflows/init-workflow.ts` | Stack detection + specialist fetch + supervisor render. |
+| Watcher daemon | `orchestrator/src/core/watcher.ts` | Polls `queue.db`, dispatches `queued` tasks to `implementWorkflow`. |
+| Queue | `orchestrator/src/core/queue.ts` | LibSQL-backed task store. Tables: `tasks`, `task_suggestions`. |
+| Git/claude/verify primitives | `orchestrator/src/core/lib/git.ts` | `runClaudeCode`, `createWorktree`, `verifyChanges`, `mergeBranch`, lock primitives. |
 | Init pipeline | `orchestrator/src/init/` | Stack detection, GitHub HTTPS fetch against `ayush-that/sub-agents.directory`, supervisor templating. |
 | UI | `ui/` | Vite + React SPA with a small Express SSE server (`ui/server/`). Reads `queue.db` directly via `@libsql/client`. Read-only. |
 | Bundled prompts | `orchestrator/src/prompts/vcs-supervisor.md` | Inlined into `claude -p` for git conflict reconciliation. |
@@ -25,7 +25,7 @@
 
 ### Implement workflow (the hot path)
 
-`orchestrator/src/mastra/workflows/implement-workflow.ts`
+`orchestrator/src/core/workflows/implement-workflow.ts`
 
 ```
                         queue.db row (status=queued)
@@ -77,11 +77,11 @@
 ```
 
 Side effects: shell out to `git`, `claude`, project's typecheck/test/lint.
-All wrapped in `orchestrator/src/mastra/lib/git.ts`. No LLM SDK calls.
+All wrapped in `orchestrator/src/core/lib/git.ts`. No LLM SDK calls.
 
 ### Plan workflow
 
-`orchestrator/src/mastra/workflows/plan-workflow.ts`
+`orchestrator/src/core/workflows/plan-workflow.ts`
 
 Single step: `generate-plan`. Calls `claude -p` against the draft's prompt,
 parses a JSON envelope (tolerating extra prose), and writes rows into the
@@ -95,7 +95,7 @@ parses a JSON envelope (tolerating extra prose), and writes rows into the
 
 ### Init workflow
 
-`orchestrator/src/mastra/workflows/init-workflow.ts`
+`orchestrator/src/core/workflows/init-workflow.ts`
 
 Three steps:
 
@@ -115,7 +115,7 @@ Outcomes per specialist are recorded as hit/miss/error.
 
 ### Watcher
 
-`orchestrator/src/mastra/watcher.ts`
+`orchestrator/src/core/watcher.ts`
 
 ```
 loop every <intervalMs> (default 2000):
@@ -138,7 +138,7 @@ All state for a target repo lives in `<target-repo>/.mars/`:
 | File | Purpose | Status |
 | --- | --- | --- |
 | `queue.db` | LibSQL: `tasks`, `task_suggestions` | Active |
-| `mastra.db` | Mastra observability (workflow runs, spans) | Active |
+| `mastra.db` | Pre-`@mars/workflow` legacy observability DB (cleaned up by `removeLegacyMastraDb` in server.ts) | Legacy |
 | `state.db` | Currently unused; reserved | **Dead — drift** |
 | `cache/sub-agents/trees.json` | 7-day cached specialist index | Active |
 | `supervisors/<name>.md` | Generated supervisor system prompts | Active |
@@ -151,7 +151,7 @@ Add `/.mars/` to the target repo's `.gitignore`.
 
 ## Task schema (`queue.db`)
 
-`orchestrator/src/mastra/queue.ts`
+`orchestrator/src/core/queue.ts`
 
 **`tasks`**
 
@@ -198,7 +198,7 @@ Repo resolution order: `--repo` flag → `MARS_REPO` env → `git rev-parse
 ## LLM call boundary
 
 Every call out to a model goes through `runClaudeCode` in
-`orchestrator/src/mastra/lib/git.ts`:
+`orchestrator/src/core/lib/git.ts`:
 
 ```ts
 runClaudeCode({ cwd, prompt, timeoutMs })

@@ -33,8 +33,8 @@ implementor needs.
   1. Grep → `orchestrator/src`
   2. Glob → worktree root
   3. Grep → `orchestrator/src`
-  4. Read → `orchestrator/src/mastra/agents/index.ts`
-  5. Read → `orchestrator/src/mastra/agents/__tests__/registry.test.ts`
+  4. Read → `orchestrator/src/core/agents/index.ts`
+  5. Read → `orchestrator/src/core/agents/__tests__/registry.test.ts`
 
 Both of those files already match what `MARS-b44a45fc-CONTEXT.md`
 describes. There is no new context to surface.

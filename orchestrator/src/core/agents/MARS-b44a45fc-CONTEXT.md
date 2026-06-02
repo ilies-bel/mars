@@ -13,7 +13,7 @@ three ways. This note resolves all three so the next dispatch can act.
 ## What's already on `main`
 
 The typed agent registry already exists at
-`orchestrator/src/mastra/agents/index.ts`. It exports:
+`orchestrator/src/core/agents/index.ts`. It exports:
 
 - `AgentSpec` — the record interface
 - `agents` — the readonly map
@@ -30,7 +30,7 @@ prompt constant" to be replaced by a reference into the registry. That
 constant is:
 
 - `WRITER_SYSTEM_PROMPT` — exported from
-  `orchestrator/src/mastra/workflows/implement-workflow.ts` (around line
+  `orchestrator/src/core/workflows/implement-workflow.ts` (around line
   182).
 - It is the system prompt injected when the implement workflow dispatches
   a `writer`-tagged task (see the same file's `codeStep`, around line
@@ -47,7 +47,7 @@ Search the whole `orchestrator/src` tree.
 ## Workers vs. agents — disambiguation
 
 The existing capital-W `Writer` in
-`orchestrator/src/mastra/workers/index.ts` (`WorkerName = ... | 'Writer'`)
+`orchestrator/src/core/workers/index.ts` (`WorkerName = ... | 'Writer'`)
 is a different thing: a Worker is the pinned `claude -p` configuration
 (model / effort / permissionMode / disallowedTools / message cap) used by
 the implement workflow to dispatch a stage. It carries **no** system
@@ -111,7 +111,7 @@ worded, note the deviation in the commit message.
 
 ## Recap — the path forward for the next dispatch
 
-1. In `orchestrator/src/mastra/agents/index.ts`:
+1. In `orchestrator/src/core/agents/index.ts`:
    - Add optional `displayName?: string` to `AgentSpec`.
    - Add a `writer` entry whose `systemPrompt` is the value of
      `WRITER_SYSTEM_PROMPT` (import from
@@ -119,16 +119,16 @@ worded, note the deviation in the commit message.
    - Set the `writer` entry's `model`, `allowedTools`, `deniedTools` as
      described in the *Workers vs. agents* section above.
    - Extend `AgentName` to `'vcs-supervisor' | 'writer'`.
-2. In `orchestrator/src/mastra/workflows/implement-workflow.ts`:
+2. In `orchestrator/src/core/workflows/implement-workflow.ts`:
    - Replace the inlined `WRITER_SYSTEM_PROMPT` constant with a
      reference to `getAgentSpec('writer').systemPrompt` (re-export under
      the old name if call sites need it).
-3. In `orchestrator/src/mastra/agents/__tests__/registry.test.ts`:
+3. In `orchestrator/src/core/agents/__tests__/registry.test.ts`:
    - Add a test asserting the `writer` entry exists and exposes a
      non-empty `systemPrompt`, plus the generic "every entry has id +
      displayName + systemPrompt" test the slice asks for.
 4. Verify with the test command the PRD names (typically
-   `npm test -- src/mastra/agents/__tests__/registry.test.ts` from
+   `npm test -- src/core/agents/__tests__/registry.test.ts` from
    `orchestrator/`).
 
 ## Implication for sibling slices

@@ -24,7 +24,7 @@ that arc). Their shape and semantics do not match this slice:
 
 The status semantics matter: in this repo `failed` is a transient
 attempt-level state inside the retry budget and `dropped` is the terminal
-"give up" state — see `orchestrator/src/mastra/queue.ts` and
+"give up" state — see `orchestrator/src/core/queue.ts` and
 `queue-retry.ts`. The slice's "items needing review" definition is the
 terminal one (`dropped`), not the transient one (`failed`).
 

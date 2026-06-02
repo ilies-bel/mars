@@ -6,13 +6,13 @@ harness that does not exist. This note collapses the search.
 
 ## What's already in place
 
-`orchestrator/src/mastra/workflows/implement-workflow.ts` already calls
+`orchestrator/src/core/workflows/implement-workflow.ts` already calls
 `removeWorktree` after a successful merge:
 
 - **line 938**: `await removeWorktree({ path: inputData.path, branch: inputData.branch }, true)`
 - **line 939**: `await updateTask(inputData.taskId, { status: 'done', failedPhase: null })`
 
-`removeWorktree` is defined in `orchestrator/src/mastra/lib/git.ts:163-175`:
+`removeWorktree` is defined in `orchestrator/src/core/lib/git.ts:163-175`:
 
 ```ts
 export const removeWorktree = async (
@@ -56,7 +56,7 @@ Three precise changes against the acceptance criteria:
    `workflows/__tests__/`. Instead, exercise `removeWorktree`
    directly with a real git repo + worktree in a temp dir, mirroring
    the existing `describe('checkMergeTargetStatus', …)` block in
-   `orchestrator/src/mastra/lib/__tests__/git.test.ts:338-415`. That
+   `orchestrator/src/core/lib/__tests__/git.test.ts:338-415`. That
    block already shows the exact pattern: `mkdtempSync` + `git init` +
    `MARS_REPO=repo` + `vi.resetModules()` + `await import('../git')`.
 

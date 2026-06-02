@@ -90,7 +90,7 @@ graceful path closes them explicitly when it has the chance.
 
 ## Where tests go
 
-`src/mastra/daemon/__tests__/`. Existing patterns: `sem-reload.test.ts`
+`src/core/daemon/__tests__/`. Existing patterns: `sem-reload.test.ts`
 (in-process daemon start + RPC), `duckdb-lock.test.ts` (probe-only).
 Slice 1 needs a test that:
 

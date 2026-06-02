@@ -40,11 +40,11 @@ your exhaustive change-list; follow the type errors.
 
 ## Tracer bullet (start here)
 
-1. **RED test** in `src/mastra/workers/__tests__/registry.test.ts`:
+1. **RED test** in `src/core/workers/__tests__/registry.test.ts`:
    assert `getWorkerForTag('coder')` returns `Workers.Coder` and that
    there is no `Writer` named worker (e.g. `('Writer' in Workers)` is
    `false`, `WorkerName` no longer includes `'Writer'`).
-2. **GREEN**: in `src/mastra/workers/index.ts` delete
+2. **GREEN**: in `src/core/workers/index.ts` delete
    `WRITER_DENIED_TOOLS`, the `Writer` entries in `WorkerName`,
    `WORKER_CONFIGS`, and `Workers`, and the `writer` row in
    `TAG_TO_WORKER` (leaving `{ coder: 'Coder' }`).
@@ -53,15 +53,15 @@ Then loop one criterion at a time.
 
 ## Change-map (let typecheck confirm completeness — do not treat as exhaustive)
 
-`src/mastra/queue.ts`
+`src/core/queue.ts`
 - `TaskTag` → `'coder'`; `TASK_TAGS` → `['coder']`; `isTaskTag` → `value === 'coder'`.
   (This is the keystone change that makes typecheck list every other site.)
 
-`src/mastra/workers/index.ts`
+`src/core/workers/index.ts`
 - Delete `WRITER_DENIED_TOOLS`, `Writer` from `WorkerName`, `WORKER_CONFIGS.Writer`,
   `Workers.Writer`, and the `writer` mapping in `TAG_TO_WORKER`.
 
-`src/mastra/workflows/implement-workflow.ts`
+`src/core/workflows/implement-workflow.ts`
 - Delete `WRITER_FOOTER`, `WRITER_SYSTEM_PROMPT`.
 - `composePrompt`: drop the `tag !== 'writer'` / `tag === 'writer'`
   branches — always append `DEVIATION_RULES` then `COMMIT_FOOTER`.
@@ -74,7 +74,7 @@ Then loop one criterion at a time.
   short-circuit block (the one that `removeWorktree` + marks `done`
   without merging). Every task now flows through the real merge path.
 
-`src/mastra/lib/git.ts`
+`src/core/lib/git.ts`
 - Remove `skipDiffCheck` from `VerifyArgs` and from the `verifyChanges`
   guard `if (args.branch && args.integrationBranch && !args.skipDiffCheck)`
   → `if (args.branch && args.integrationBranch)`. The gate must expose no
@@ -92,13 +92,13 @@ surface them. Fix every one in this slice (hard cut).
 
 ## Tests to update (acceptance criterion 6)
 
-`src/mastra/workers/__tests__/registry.test.ts`
+`src/core/workers/__tests__/registry.test.ts`
 - Delete the `Writer pinned config` describe, the `WRITER_DENIED_TOOLS`
   import + assertions, and the `getWorkerForTag('writer')` expectation.
 - Update the "named Workers" test to assert Writer is absent.
 - Keep/strengthen: `getWorkerForTag('coder') === Workers.Coder`.
 
-`src/mastra/workflows/__tests__/implement-workflow.test.ts`
+`src/core/workflows/__tests__/implement-workflow.test.ts`
 - Delete the `composePrompt — writer routing` describe and the
   `WRITER_FOOTER` / `WRITER_SYSTEM_PROMPT` imports.
 - Add: `composePrompt(...)` always ends with `COMMIT_FOOTER` and contains
