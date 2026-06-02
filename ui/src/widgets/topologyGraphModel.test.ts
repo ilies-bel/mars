@@ -5,6 +5,7 @@ import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
   buildG6Data,
   CLUSTER_STYLE,
+  clusterSignature,
   computeStateMap,
   dataSignature,
   dominant,
@@ -12,6 +13,7 @@ import {
   proposalIdFromComboId,
   rollupByProposal,
   type Rollup,
+  structuralSignature,
 } from './topologyGraphModel'
 
 const task = (
@@ -290,5 +292,94 @@ describe('dataSignature', () => {
     const before = dataSignature([], [proposal('p1', 'Old')])
     const after = dataSignature([], [proposal('p1', 'New')])
     expect(before).not.toBe(after)
+  })
+})
+
+describe('structuralSignature', () => {
+  it('is stable when only cluster changes (failed/blocked transition does not force rebuild)', () => {
+    const before = structuralSignature([task({ id: 't1', cluster: 'In progress' })], [])
+    const after = structuralSignature([task({ id: 't1', cluster: 'Failed' })], [])
+    expect(before).toBe(after)
+  })
+
+  it('is stable for queued → blocked transition', () => {
+    const before = structuralSignature([task({ id: 't1', cluster: 'Queued' })], [])
+    const after = structuralSignature([task({ id: 't1', cluster: 'Blocked' })], [])
+    expect(before).toBe(after)
+  })
+
+  it('changes when a task is added', () => {
+    const before = structuralSignature([task({ id: 't1', cluster: 'Queued' })], [])
+    const after = structuralSignature(
+      [task({ id: 't1', cluster: 'Queued' }), task({ id: 't2', cluster: 'Queued' })],
+      [],
+    )
+    expect(before).not.toBe(after)
+  })
+
+  it('changes when a blocker edge is added', () => {
+    const before = structuralSignature([task({ id: 't1', cluster: 'Queued' })], [])
+    const after = structuralSignature([task({ id: 't1', cluster: 'Queued', blockedBy: ['other'] })], [])
+    expect(before).not.toBe(after)
+  })
+
+  it('changes when a proposal title changes', () => {
+    const before = structuralSignature([], [proposal('p1', 'Old')])
+    const after = structuralSignature([], [proposal('p1', 'New')])
+    expect(before).not.toBe(after)
+  })
+})
+
+describe('clusterSignature', () => {
+  it('changes when a task transitions to Failed', () => {
+    const before = clusterSignature([task({ id: 't1', cluster: 'In progress' })])
+    const after = clusterSignature([task({ id: 't1', cluster: 'Failed' })])
+    expect(before).not.toBe(after)
+  })
+
+  it('changes when a task transitions to Blocked', () => {
+    const before = clusterSignature([task({ id: 't1', cluster: 'In progress' })])
+    const after = clusterSignature([task({ id: 't1', cluster: 'Blocked' })])
+    expect(before).not.toBe(after)
+  })
+
+  it('is stable when non-cluster task data changes', () => {
+    const before = clusterSignature([task({ id: 't1', cluster: 'Failed', prompt: 'Old prompt' })])
+    const after = clusterSignature([task({ id: 't1', cluster: 'Failed', prompt: 'New prompt' })])
+    expect(before).toBe(after)
+  })
+
+  it('is stable for identical inputs', () => {
+    const tasks = [task({ id: 't1', cluster: 'Blocked' }), task({ id: 't2', cluster: 'Failed' })]
+    expect(clusterSignature(tasks)).toBe(clusterSignature(tasks))
+  })
+})
+
+describe('buildG6Data – failed and blocked cluster node data', () => {
+  it('assigns cluster: Failed to a failed task node so red fill/stroke apply', () => {
+    const tasks = [task({ id: 'f1', cluster: 'Failed', parentProposalId: 'p1' })]
+    const { nodes } = buildG6Data(tasks, [proposal('p1')])
+    expect(nodes[0]!.data?.cluster).toBe('Failed')
+  })
+
+  it('assigns cluster: Blocked to a blocked task node so amber fill/stroke apply', () => {
+    const tasks = [task({ id: 'b1', cluster: 'Blocked', parentProposalId: 'p1' })]
+    const { nodes } = buildG6Data(tasks, [proposal('p1')])
+    expect(nodes[0]!.data?.cluster).toBe('Blocked')
+  })
+
+  it('sets combo dom to Failed when all tasks failed (card turns red)', () => {
+    const tasks = [
+      task({ id: 'f1', cluster: 'Failed', parentProposalId: 'p1' }),
+      task({ id: 'f2', cluster: 'Failed', parentProposalId: 'p1' }),
+    ]
+    const { combos } = buildG6Data(tasks, [proposal('p1')])
+    expect(combos[0]!.data?.dom).toBe('Failed')
+  })
+
+  it('sets combo dom to Blocked when all tasks blocked (card turns amber)', () => {
+    const tasks = [task({ id: 'b1', cluster: 'Blocked', parentProposalId: 'p1' })]
+    const { combos } = buildG6Data(tasks, [proposal('p1')])
+    expect(combos[0]!.data?.dom).toBe('Blocked')
   })
 })

@@ -272,3 +272,30 @@ export const dataSignature = (
   const propSig = proposals.map((p) => `${p.id}|${p.title}`).join(';')
   return `${tasks.length}/${proposals.length}#${taskSig}#${propSig}`
 }
+
+/**
+ * Structural signature — changes only when the graph topology changes: nodes
+ * added/removed, edge wiring changes, or proposals change.  Does NOT include
+ * cluster, so a failed/blocked status transition does NOT trigger a full graph
+ * rebuild (which would cause a blank-canvas flash).  TopologyView's mount
+ * effect keys on this; the cluster-patch effect keys on clusterSignature.
+ */
+export const structuralSignature = (
+  tasks: ReadonlyArray<ProgressTask>,
+  proposals: ReadonlyArray<ProgressProposalNode>,
+): string => {
+  const taskSig = tasks
+    .map((t) => `${t.id}|${t.parentProposalId ?? ''}|${(t.blockedBy ?? []).join(',')}`)
+    .join(';')
+  const propSig = proposals.map((p) => `${p.id}|${p.title}`).join(';')
+  return `${tasks.length}/${proposals.length}#${taskSig}#${propSig}`
+}
+
+/**
+ * Cluster-only signature — changes when any task's cluster assignment changes
+ * (e.g., 'In progress' → 'Failed', 'Queued' → 'Blocked').  TopologyView uses
+ * this to detect when nodes need a colour patch (updateNodeData + draw) without
+ * a full rebuild.
+ */
+export const clusterSignature = (tasks: ReadonlyArray<ProgressTask>): string =>
+  tasks.map((t) => `${t.id}:${t.cluster}`).join(';')

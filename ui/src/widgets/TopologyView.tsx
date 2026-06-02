@@ -48,12 +48,15 @@ import {
   buildG6Data,
   CANVAS_SURFACE,
   CLUSTER_STYLE,
+  clusterSignature,
   computeStateMap,
-  dataSignature,
+  dominant,
   EDGE_BLOCK,
   PROPOSAL_STROKE,
   PROPOSAL_TEXT,
   proposalIdFromComboId,
+  rollupByProposal,
+  structuralSignature,
 } from './topologyGraphModel'
 import type { Cluster } from '@/shared/schemas'
 
@@ -129,7 +132,9 @@ export const TopologyView = ({
   // Tracks the externally-driven selectedProposalId so we only react to changes
   // and don't echo our own onSelectProposal callbacks back into a drill-in.
   const lastSelectedRef = useRef<string | null | undefined>(undefined)
-  const lastSignatureRef = useRef<string>('')
+  // Tracks the last cluster signature applied to the graph so the in-place
+  // colour patch effect only fires when clusters actually changed.
+  const prevClusterSigRef = useRef<string>('')
 
   const empty = tasks.length === 0
 
@@ -158,7 +163,9 @@ export const TopologyView = ({
     window.addEventListener('unhandledrejection', onRejection)
 
     const { nodes, edges, combos } = buildG6Data(propsRef.current.tasks, proposals)
-    lastSignatureRef.current = dataSignature(propsRef.current.tasks, proposals)
+    // Record the current cluster state so the patch effect skips its first run
+    // (the graph already has the right colours from buildG6Data).
+    prevClusterSigRef.current = clusterSignature(propsRef.current.tasks)
 
     const graph = new Graph({
       container,
@@ -699,11 +706,13 @@ export const TopologyView = ({
       cloudHome.clear()
       nudgeHome.clear()
     }
-    // Recreate the graph only when the structural data signature changes, or the
-    // empty/non-empty boundary flips. (Filter/selection props are applied via
-    // the separate effects below without rebuilding the graph.)
+    // Recreate the graph only when the structural topology changes (new/removed
+    // nodes, edge wiring, proposals) or the empty/non-empty boundary flips.
+    // Cluster transitions (failed/blocked) do NOT trigger a rebuild — they are
+    // patched in-place by the clusterSignature effect below, avoiding a
+    // blank-canvas flash.  Filter/selection props are handled by separate effects.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empty, dataSignature(tasks, proposals)])
+  }, [empty, structuralSignature(tasks, proposals)])
 
   // Re-apply the dim/highlight map when filter props change (no graph rebuild).
   // Uses the same pure resolver as the hover handlers so the two can't drift.
@@ -716,6 +725,36 @@ export const TopologyView = ({
     )
     void graph.setElementState(map)
   }, [searchMatchIds, ghostedClusters])
+
+  // In-place colour patch: when a task transitions to failed/blocked (cluster
+  // changes) without a structural topology change, update node and combo data
+  // directly then redraw — no graph rebuild, no blank-canvas flash.
+  useEffect(() => {
+    const graph = graphRef.current
+    if (!graph) return
+    const sig = clusterSignature(tasks)
+    if (prevClusterSigRef.current === sig) return
+    prevClusterSigRef.current = sig
+
+    // Only update nodes that exist in the graph (orphan tasks aren't included).
+    const graphNodeIds = new Set(graph.getNodeData().map((n) => String(n.id)))
+    const nodeUpdates = tasks
+      .filter((t) => graphNodeIds.has(t.id))
+      .map((t) => ({ id: t.id, data: { cluster: t.cluster } }))
+    graph.updateNodeData(nodeUpdates)
+
+    // Recompute dominant cluster per proposal and update combo tints.
+    const rollupMap = rollupByProposal(tasks, proposals)
+    graph.updateComboData(
+      proposals.map((p) => ({
+        id: `combo:${p.id}`,
+        data: { dom: dominant(rollupMap.get(p.id)!) },
+      })),
+    )
+
+    void graph.draw()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, proposals])
 
   // Drive drill-in from the external selectedProposalId control.
   useEffect(() => {
