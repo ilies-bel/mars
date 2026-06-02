@@ -50,6 +50,7 @@ import { resolveGitBin } from '../lib/git'
 import { getDefaultTaskStore } from '../lib/task-store'
 import { getDefaultDomainTaskStore } from '../store/task-store'
 import { listTerminalEvents } from './view/terminal-events'
+import { buildSessionsView } from './view/sessions'
 import { listProposals, promoteProposal } from '../proposals'
 import type { DraftFeature, StaleWorktreeAlert } from './http-server'
 import {
@@ -2798,6 +2799,7 @@ export const startDaemon = async (
       listTerminalEvents(getDefaultDomainTaskStore()).then((events) => ({
         events,
       })),
+    viewSessions: (agentName: string) => buildSessionsView(traceStore, agentName),
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
