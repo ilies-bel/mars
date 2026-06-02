@@ -66,7 +66,15 @@ const FLAGS_WITH_VALUES = new Set([
   '--max-messages',
   '--name',
   '--path',
+  '--config',
 ])
+
+// Short aliases for value-bearing flags, normalised to their long form in
+// parseArgs before the FLAGS_WITH_VALUES lookup. `-f` is `mars init`'s
+// declarative-config flag (`mars init -f mars.init.toml`).
+const SHORT_FLAG_ALIASES: Record<string, string> = {
+  '-f': '--config',
+}
 
 const REPEATABLE_FLAGS = new Set(['--blocked-by', '--files', '--done', '--tag'])
 
@@ -81,7 +89,8 @@ const parseArgs = (argv: readonly string[]): ParsedArgs => {
     if (a === undefined) continue
 
     const eq = a.indexOf('=')
-    const key = eq === -1 ? a : a.slice(0, eq)
+    const rawKey = eq === -1 ? a : a.slice(0, eq)
+    const key = SHORT_FLAG_ALIASES[rawKey] ?? rawKey
     const inlineValue = eq === -1 ? undefined : a.slice(eq + 1)
 
     if (key === '--repo') {
@@ -133,7 +142,7 @@ Usage:
   mars [--repo <path>] <command> [args]
 
 Commands:
-  init [--force] [--dry-run] [--verbose]
+  init [--force] [--dry-run] [--verbose] [-f|--config <path>]
                                 detect tech stack and generate specialized supervisors
                                 in .mars/supervisors/ (skeleton + workflow contract).
                                 Recurses into subdirectories (depth cap 6) to merge
@@ -141,7 +150,9 @@ Commands:
                                 and skips .git, node_modules, .mars, .worktrees,
                                 dist, build, .next, target, out, plus git submodules.
                                 Nested tech-bearing manifests (e.g. frontend/ AND
-                                frontend/admin/ both with package.json) are rejected.
+                                frontend/admin/ both with package.json) are rejected
+                                — pass -f/--config <path> to declare the stack in a
+                                TOML file and skip auto-detection entirely.
                                 --verbose lists each discovered manifest on stderr.
                                 On success, prints 'mars ui --repo <root>' to launch
                                 the read-only Kanban + trace dashboard.
@@ -455,7 +466,7 @@ Other env:
 const HELP_FLAGS = new Set(['--help', '-h', 'help'])
 
 const COMMAND_HELP: Record<string, string> = {
-  init: `mars init [--force] [--dry-run] [--verbose]
+  init: `mars init [--force] [--dry-run] [--verbose] [-f|--config <path>]
 
 Detect tech stack and generate specialized supervisors in
 .mars/supervisors/ (skeleton + workflow contract). Also activates the Mars
@@ -469,6 +480,22 @@ Recurses into subdirectories (depth cap 6) to merge manifests from
 monorepo layouts; honors .gitignore and skips .git, node_modules, .mars,
 .worktrees, dist, build, .next, target, out, plus git submodules.
 
+Pass -f/--config <path> to skip auto-detection entirely and read the stack
+from a declarative TOML file instead — the escape hatch for layouts the
+walker rejects (e.g. a root packaging package.json nesting over per-package
+manifests). The file lists one [[stack]] table per tech-bearing folder:
+
+  [[stack]]
+  path = "gateway"      # repo-relative dir; "." means the repo root
+  tech = "node-backend"
+
+  [[stack]]
+  path = "dashboard"
+  tech = "react"
+
+Known tech values: react, nextjs, vue, nuxt, svelte, angular, node-backend,
+python-backend, go, rust, jvm-backend, flutter, ios, android, infra, web3, ml.
+
 After a successful init, mars prints the exact command to launch the
 read-only Kanban + trace dashboard:
 
@@ -477,9 +504,10 @@ read-only Kanban + trace dashboard:
 If the UI package is not yet built, init prints instructions to build it.
 
 Flags:
-  --force       overwrite existing supervisors
-  --dry-run     show detected stack and proposed supervisors only
-  --verbose     list discovered manifests on stderr`,
+  --force            overwrite existing supervisors
+  --dry-run          show detected stack and proposed supervisors only
+  --verbose          list discovered manifests on stderr
+  -f, --config <p>   read stack from a declarative TOML config (skips detection)`,
   add: `mars add "<prompt>" [plan flags] [--author kind:name]
 
 (deprecated) Draft a task. Lands in 'draft' state; triage promotes it to
@@ -1167,17 +1195,25 @@ const main = async (): Promise<void> => {
     const force = boolFlags.has('--force')
     const dryRun = boolFlags.has('--dry-run')
     const verbose = boolFlags.has('--verbose')
+    // `-f <path>` / `--config <path>`: declarative TOML config that names each
+    // tech-bearing folder + its technology, bypassing auto-detection.
+    const configPath = flags['--config']
     const { sendRequest } = await import('./core/daemon/client')
     let result
     try {
       result = (await sendRequest({
         op: 'init',
-        opts: { force, dryRun, verbose },
+        opts: { force, dryRun, verbose, ...(configPath ? { configPath } : {}) },
       })) as Awaited<
         ReturnType<typeof import('./workflows/init-workflow').runInit>
       >
     } catch (err: unknown) {
       const e = err as Error & { code?: string }
+      if (e.code?.startsWith('init-config:')) {
+        console.error(`error: ${e.message}`)
+        console.error(`  config: ${e.code.slice('init-config:'.length)}`)
+        process.exit(1)
+      }
       if (e.code?.startsWith('nested-tech:')) {
         const [outer, inner] = e.code.slice('nested-tech:'.length).split('::')
         console.error(`error: ${e.message}`)
