@@ -18,16 +18,16 @@ import type { EventName, EventPayload } from '../../bus/events.js'
 // ---------------------------------------------------------------------------
 
 interface QueueModule {
-  enqueueTask: typeof import('../../mastra/queue').enqueueTask
-  updateTask: typeof import('../../mastra/queue').updateTask
-  getTask: typeof import('../../mastra/queue').getTask
-  getClient: typeof import('../../mastra/queue').getClient
-  initQueue: typeof import('../../mastra/queue').initQueue
+  enqueueTask: typeof import('../../core/queue').enqueueTask
+  updateTask: typeof import('../../core/queue').updateTask
+  getTask: typeof import('../../core/queue').getTask
+  getClient: typeof import('../../core/queue').getClient
+  initQueue: typeof import('../../core/queue').initQueue
 }
 
 interface ActionQueueModule {
-  initActionQueue: typeof import('../../mastra/lib/action-queue').initActionQueue
-  listActionQueueItems: typeof import('../../mastra/lib/action-queue').listActionQueueItems
+  initActionQueue: typeof import('../../core/lib/action-queue').initActionQueue
+  listActionQueueItems: typeof import('../../core/lib/action-queue').listActionQueueItems
 }
 
 interface ActionQueueItem {
@@ -38,11 +38,11 @@ interface ActionQueueItem {
 }
 
 interface FixTasksModule {
-  upsertFixTask: typeof import('../../mastra/queue-fix-tasks').upsertFixTask
+  upsertFixTask: typeof import('../../core/queue-fix-tasks').upsertFixTask
 }
 
 interface RecipesModule {
-  recipes: typeof import('../../mastra/lib/fix-recipes').recipes
+  recipes: typeof import('../../core/lib/fix-recipes').recipes
 }
 
 interface RecoverySpawnModule {
@@ -84,17 +84,17 @@ const setupRepo = (): string => {
 const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
-  const q = (await import('../../mastra/queue')) as unknown as QueueModule
+  const q = (await import('../../core/queue')) as unknown as QueueModule
   await q.initQueue()
   const aq = (await import(
-    '../../mastra/lib/action-queue'
+    '../../core/lib/action-queue'
   )) as unknown as ActionQueueModule
   await aq.initActionQueue()
   const ft = (await import(
-    '../../mastra/queue-fix-tasks'
+    '../../core/queue-fix-tasks'
   )) as unknown as FixTasksModule
   const rc = (await import(
-    '../../mastra/lib/fix-recipes'
+    '../../core/lib/fix-recipes'
   )) as unknown as RecipesModule
   const rs = (await import('./recovery-spawn')) as unknown as RecoverySpawnModule
   const pub = (await import(

@@ -6,7 +6,7 @@ import type {
   StepStatus,
   WorkflowStore,
 } from '@mars/workflow'
-import { getClient } from '../mastra/queue'
+import { getClient } from '../core/queue'
 
 /**
  * `WorkflowStore` adapter over the orchestrator's `.mars/queue.db`.

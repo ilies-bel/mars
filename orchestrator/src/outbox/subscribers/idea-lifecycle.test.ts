@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 interface QueueModule {
-  initQueue: typeof import('../../mastra/queue').initQueue
-  getClient: typeof import('../../mastra/queue').getClient
+  initQueue: typeof import('../../core/queue').initQueue
+  getClient: typeof import('../../core/queue').getClient
 }
 
 interface IdeaLifecycleModule {
@@ -37,7 +37,7 @@ const setupRepo = (): string => {
 const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
-  const q = (await import('../../mastra/queue')) as unknown as QueueModule
+  const q = (await import('../../core/queue')) as unknown as QueueModule
   await q.initQueue()
   const sub = (await import('./idea-lifecycle')) as unknown as IdeaLifecycleModule
   const pub = (await import('../../bus/publisher')) as unknown as PublisherModule

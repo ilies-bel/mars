@@ -4,7 +4,7 @@ import {
   fetchPending,
   advanceCursor,
 } from '../../bus/subscribers.js';
-import { closeInboxRow } from '../../mastra/lib/inbox.js';
+import { closeInboxRow } from '../../core/lib/inbox.js';
 
 /**
  * The Invalidator: a durable Outbox Subscriber that auto-closes

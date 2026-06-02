@@ -16,7 +16,7 @@ import { resolve } from 'node:path'
 import {
   listBuiltInRecipeFiles,
   recipesDir,
-} from '../mastra/lib/recipes'
+} from '../core/lib/recipes'
 
 /** Result of seeding the override directory. */
 export interface RecipesSeedResult {

@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { load as parseYaml } from 'js-yaml'
 import { writeFailureReasonsSeed } from '../failure-reasons-seed'
-import { BUILT_IN_FAILURE_REASONS } from '../../mastra/failure-reasons/built-in'
-import { codeToFilename } from '../../mastra/lib/failure-reasons'
+import { BUILT_IN_FAILURE_REASONS } from '../../core/failure-reasons/built-in'
+import { codeToFilename } from '../../core/lib/failure-reasons'
 
 describe('writeFailureReasonsSeed', () => {
   let stateDir: string

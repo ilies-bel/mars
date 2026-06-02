@@ -14,7 +14,7 @@ import {
   listBuiltInRecipeFiles,
   loadRecipeCatalog,
   recipesDir,
-} from '../../mastra/lib/recipes'
+} from '../../core/lib/recipes'
 
 describe('writeRecipesSeed', () => {
   let stateDir: string

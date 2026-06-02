@@ -85,8 +85,8 @@ describe('mars proposal ship-summary — with proposal and tasks', () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
 
-    const { createProposal, initProposals } = await import('../../mastra/proposals')
-    const { enqueueTask, updateTask, initQueue } = await import('../../mastra/queue')
+    const { createProposal, initProposals } = await import('../../core/proposals')
+    const { enqueueTask, updateTask, initQueue } = await import('../../core/queue')
     await initProposals()
     await initQueue()
 
@@ -214,8 +214,8 @@ describe('mars proposal ship-summary — all tasks done with commits', () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
 
-    const { createProposal, initProposals } = await import('../../mastra/proposals')
-    const { enqueueTask, updateTask, initQueue } = await import('../../mastra/queue')
+    const { createProposal, initProposals } = await import('../../core/proposals')
+    const { enqueueTask, updateTask, initQueue } = await import('../../core/queue')
     await initProposals()
     await initQueue()
 

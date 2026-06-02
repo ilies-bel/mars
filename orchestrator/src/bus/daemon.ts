@@ -1,5 +1,5 @@
 import { WebSocketServer, type WebSocket } from 'ws';
-import { getClient } from '../mastra/queue.js';
+import { getClient } from '../core/queue.js';
 import { isEventName, type EventName } from './events.js';
 import { log } from './log.js';
 

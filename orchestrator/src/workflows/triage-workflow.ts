@@ -1,13 +1,13 @@
 import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
-import { type Task } from '../mastra/queue'
-import { type DomainTaskStore, getDefaultDomainTaskStore } from '../mastra/store/task-store'
-import { Workers } from '../mastra/workers'
-import { parseClaudeJsonResult } from '../mastra/lib/claude-json'
-import { getRepoRoot, resolveContext } from '../mastra/context'
+import { type Task } from '../core/queue'
+import { type DomainTaskStore, getDefaultDomainTaskStore } from '../core/store/task-store'
+import { Workers } from '../core/workers'
+import { parseClaudeJsonResult } from '../core/lib/claude-json'
+import { getRepoRoot, resolveContext } from '../core/context'
 import { createQueueWorkflowStore } from './queue-workflow-store'
-import { openTraceEventStore } from '../mastra/lib/trace-events-store'
-import { runWorkerWithSpan } from '../mastra/lib/run-worker-with-span'
+import { openTraceEventStore } from '../core/lib/trace-events-store'
+import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 
 const TASK_GRAPH_LIMIT = 30
 const PROMPT_PREVIEW_CHARS = 200

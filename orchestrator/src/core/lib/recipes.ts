@@ -7,7 +7,7 @@
  * The catalog is loaded once per daemon process. Resolution rules mirror
  * the failure-reason catalog from slice D:
  *
- *  1. Built-in seed recipes live under `src/mastra/recipes/built-in/*.md`
+ *  1. Built-in seed recipes live under `src/core/recipes/built-in/*.md`
  *     in this repo. They are resolved off `import.meta.url` so the
  *     loader keeps working when run from a worktree with an unusual cwd.
  *  2. `.mars/recipes/*.md` files override per-name. A file whose `name`
@@ -106,9 +106,9 @@ export const recipesDir = (stateDir: string): string =>
 /**
  * Resolve the built-in seed directory. Resolved off this module's own URL
  * so the path is correct whether the orchestrator is invoked from source
- * (`src/mastra/lib/recipes.ts`) or from a worktree where the process cwd
- * has shifted. The seed `.md` files sit alongside this file's `mastra/`
- * subtree as `mastra/recipes/built-in/*.md`.
+ * (`src/core/lib/recipes.ts`) or from a worktree where the process cwd
+ * has shifted. The seed `.md` files sit alongside this file's `core/`
+ * subtree as `core/recipes/built-in/*.md`.
  */
 const BUILT_IN_RECIPES_DIR = resolve(
   dirname(fileURLToPath(import.meta.url)),

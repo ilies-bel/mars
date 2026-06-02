@@ -108,7 +108,7 @@ describe('mars init: root CLAUDE.md template', () => {
     // CLAUDE.md that ships to target repos.
     const forbidden: ReadonlyArray<string> = [
       'orchestrator/',
-      'orchestrator/src/mastra',
+      'orchestrator/src/core',
       'ui/',
       'design/',
       'get-mars.sh',

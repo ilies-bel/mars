@@ -5,7 +5,7 @@
  *
  *   npx tsx scripts/add-dod-glossary-terms.ts
  */
-import { readGlossaryFile, writeGlossaryFile, upsertTerm } from '../src/mastra/lib/glossary.js'
+import { readGlossaryFile, writeGlossaryFile, upsertTerm } from '../src/core/lib/glossary.js'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 

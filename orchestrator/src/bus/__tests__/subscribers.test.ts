@@ -13,7 +13,7 @@ import {
 
 /**
  * Create a file-backed libsql client carrying the production `events`
- * schema (see `src/mastra/queue.ts`). File-backed rather than
+ * schema (see `src/core/queue.ts`). File-backed rather than
  * `:memory:` because the libsql local backend opens a fresh
  * connection per transaction for in-memory URLs, which makes the
  * table invisible across transactions.

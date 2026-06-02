@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { openTraceEventStore } from '../../orchestrator/src/mastra/lib/trace-events-store.ts'
+import { openTraceEventStore } from '../../orchestrator/src/core/lib/trace-events-store.ts'
 import { startServer } from './index.ts'
 
 interface WorkerSession {

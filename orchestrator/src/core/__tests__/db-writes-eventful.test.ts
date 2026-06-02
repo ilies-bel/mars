@@ -25,7 +25,7 @@ import { resolve, relative, sep } from 'node:path'
  *      `buildEventInsert(` — i.e., it emits, rather than silently writing.
  */
 
-// Scan all of src/ (not just src/mastra) so workflow writers are covered.
+// Scan all of src/ (not just src/core) so workflow writers are covered.
 const SRC_ROOT = resolve(__dirname, '..', '..', '..', 'src')
 // A status write: `UPDATE tasks SET ... status = ...`. The SET clause and the
 // `status =` assignment frequently sit on different physical lines, so the
@@ -38,15 +38,15 @@ const DELETE_PATTERN = /DELETE\s+FROM\s+tasks\b/
 const SINGLE_LINE_STATUS = /UPDATE\s+tasks\s+SET\b[^;]*\bstatus\s*=/
 
 const ALLOWLIST = [
-  'mastra/queue.ts',
-  'mastra/queue-fix-tasks.ts',
+  'core/queue.ts',
+  'core/queue-fix-tasks.ts',
   // queue-retry.ts: status writes routed through setTaskStatus (queue.ts);
   // only extra-column updates and terminal-event publishes remain there.
-  'mastra/blocker-resolution.ts',
-  'mastra/lib/main-dirty.ts',
+  'core/blocker-resolution.ts',
+  'core/lib/main-dirty.ts',
   // main-dirty-action-queue.ts: releaseMainCommitterDependents flips blocked
   // tasks back to queued inside a transaction that also calls publish().
-  'mastra/daemon/main-dirty-action-queue.ts',
+  'core/daemon/main-dirty-action-queue.ts',
   'workflows/slice-workflow.ts',
 ].map((p) => p.split('/').join(sep))
 

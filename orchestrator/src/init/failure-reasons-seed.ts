@@ -15,12 +15,12 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { dump as dumpYaml } from 'js-yaml'
-import { BUILT_IN_FAILURE_REASONS } from '../mastra/failure-reasons/built-in'
+import { BUILT_IN_FAILURE_REASONS } from '../core/failure-reasons/built-in'
 import {
   codeToFilename,
   failureReasonsDir,
   type FailureReason,
-} from '../mastra/lib/failure-reasons'
+} from '../core/lib/failure-reasons'
 
 /** Result of seeding the override directory. `written` lists the relative
  * filenames (e.g. `verify:typecheck.yaml`) that were created on this run;

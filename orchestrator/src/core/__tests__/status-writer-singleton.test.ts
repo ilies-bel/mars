@@ -5,7 +5,7 @@ import { resolve, relative, sep } from 'node:path'
 /**
  * Architecture guard: the literal `UPDATE tasks SET status` (status as the
  * FIRST column after SET) must appear in exactly one non-test production
- * source file — orchestrator/src/mastra/queue.ts — and within that file it
+ * source file — orchestrator/src/core/queue.ts — and within that file it
  * must be confined to the body of `setTaskStatus`, the single-writer
  * chokepoint (PRD 12fdef39 / ADR-0030).
  *
@@ -31,7 +31,7 @@ import { resolve, relative, sep } from 'node:path'
 
 const SRC_ROOT = resolve(__dirname, '..', '..', '..', 'src')
 const STATUS_WRITE = /UPDATE\s+tasks\s+SET\s+status/i
-const ALLOWED = ['mastra', 'queue.ts'].join(sep)
+const ALLOWED = ['core', 'queue.ts'].join(sep)
 
 const SKIP_DIRS = new Set(['node_modules', '__tests__', '.git', 'dist', 'build'])
 
@@ -80,7 +80,7 @@ describe('architecture: UPDATE tasks SET status is confined to setTaskStatus in 
     )
   })
 
-  it('exactly one non-test production file carries the pattern: mastra/queue.ts', () => {
+  it('exactly one non-test production file carries the pattern: core/queue.ts', () => {
     const files = walk(SRC_ROOT)
     const matches = files
       .filter((f) => STATUS_WRITE.test(stripComments(readFileSync(f, 'utf8'))))
