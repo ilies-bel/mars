@@ -4,9 +4,24 @@
   "description": "Standalone library for programmatically controlling interactive Claude sessions.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
   },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "//node-pty": "NATIVE DEP STRATEGY: prebuilt-binary path (option a). node-pty v1.1.0 ships prebuilts for darwin-arm64/x64, win32-arm64/x64. postinstall chmods spawn-helper so the prebuilt works on macOS/Linux. Fallback source build needs python3 + C++ toolchain + node-gyp. See README.",
   "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "postinstall": "node -e \"var fs=require('fs'),path=require('path'),g=path.join(__dirname,'node_modules/node-pty/prebuilds');try{fs.readdirSync(g).forEach(function(d){var f=path.join(g,d,'spawn-helper');try{fs.chmodSync(f,0o755);}catch(e){}});}catch(e){}\""
@@ -16,6 +31,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
+    "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vitest": "^2.1.9"
   }
