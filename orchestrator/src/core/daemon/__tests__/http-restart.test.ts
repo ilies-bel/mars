@@ -83,6 +83,7 @@ const makeDeps = (
   viewActionQueue: async () => [],
   viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
+  viewSessions: async () => ({ sessions: [] }),
   ...overrides,
 })
 

@@ -629,6 +629,7 @@ describe('GET /view/action-queue via HTTP server', () => {
       todoDismiss: async () => {},
       viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
       viewTerminalEvents: async () => ({ events: [] }),
+      viewSessions: async () => ({ sessions: [] }),
       viewActionQueue: async (filter) => {
         // Return a predictable payload based on filter.
         const row: ActionQueueRow = {

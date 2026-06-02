@@ -5,6 +5,7 @@ import type { RecipeCatalog } from '../lib/recipes'
 import { buildOriginTree } from '../lib/origin-tree'
 import type { ActionQueueRow, DerivedActionQueueFilter } from './view/action-queue'
 import type { TerminalEvent } from './view/terminal-events'
+import type { Session } from './view/sessions'
 import {
   cursorAfter,
   TRACE_EVENT_KINDS,
@@ -174,6 +175,13 @@ export interface HttpServerDeps {
    * what the daemon exposes — no direct DB access on the UI side.
    */
   viewTerminalEvents: () => Promise<{ events: TerminalEvent[] }>
+  /**
+   * Return the session feed for a given agentName, derived from
+   * step_started / step_ended trace events. Served by
+   * `GET /view/sessions?agentName=<name>` so the read-only UI proxies
+   * this endpoint instead of opening the trace store directly.
+   */
+  viewSessions: (agentName: string) => Promise<{ sessions: Session[] }>
 }
 
 export interface HttpServerHandle {
@@ -489,6 +497,24 @@ export const startHttpServer = async (
     if (req.method === 'GET' && req.url === '/view/terminal-events') {
       deps
         .viewTerminalEvents()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/sessions?agentName=<name> — session feed for a given worker,
+    // derived from step_started / step_ended trace events. The read-only UI
+    // proxies this endpoint instead of opening the trace store directly.
+    // Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/sessions')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const agentName = parsed.searchParams.get('agentName')
+      if (!agentName) {
+        sendJson(res, 400, { error: 'agentName query parameter is required' })
+        return
+      }
+      deps
+        .viewSessions(agentName)
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return
