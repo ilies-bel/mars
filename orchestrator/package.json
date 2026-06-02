@@ -7,6 +7,7 @@
     "mars": "./bin/mars.mjs"
   },
   "scripts": {
+    "postinstall": "node scripts/ensure-local-deps-built.mjs",
     "sync-claude-templates": "bash ./scripts/sync-claude-templates.sh",
     "mars:bundle:refresh": "bash ./scripts/sync-claude-templates.sh",
     "sync-version": "node ./scripts/sync-version.mjs",

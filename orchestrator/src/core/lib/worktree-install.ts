@@ -180,6 +180,97 @@ const makeDefaultInstallRunner = (
   }
 }
 
+/**
+ * Post-install guard for local file: packages that produce a dist/ build.
+ *
+ * After pnpm copies a file: dependency to its virtual store it only includes
+ * files that existed on disk at copy time. Because `dist/` is gitignored,
+ * a fresh worktree or a `rm -rf dist` scenario leaves the virtual-store entry
+ * without dist, and `node_modules/@mars/workflow/dist/index.js` does not
+ * exist.
+ *
+ * The primary guard is the `postinstall` hook in orchestrator/package.json
+ * (scripts/ensure-local-deps-built.mjs), which builds dist and copies it into
+ * node_modules after every pnpm install. This function is a secondary safety
+ * net invoked from the setup-worktree workflow step for any site that has
+ * @mars/workflow but still lacks dist after install — covering edge cases
+ * where the postinstall hook was not executed (e.g. non-standard install
+ * invocations or install sites other than orchestrator/).
+ *
+ * This function detects that condition for `@mars/workflow` and:
+ *  1. Logs a clear message so the operator knows what is happening.
+ *  2. Runs `npm run build` in the package source directory to produce dist.
+ *  3. Copies the built dist into the node_modules entry (which points into
+ *     the pnpm virtual store) so the package is immediately importable.
+ *
+ * Safe to call repeatedly — no-ops in under a millisecond when dist already
+ * exists.  Non-fatal: if the build or copy fails the function logs and
+ * returns without throwing; tsx path-alias resolution keeps the dev workflow
+ * functional even without dist.
+ *
+ * @param siteDir   The install site directory (the directory that owns
+ *                  node_modules, i.e. the orchestrator directory inside the
+ *                  worktree).
+ * @param runner    The same runner used for the pnpm/npm install commands.
+ * @param log       Optional line logger.
+ */
+export const ensureLocalDistBuilt = async (
+  siteDir: string,
+  runner: InstallRunner,
+  log?: (line: string) => void,
+): Promise<void> => {
+  const nmWorkflow = resolve(siteDir, 'node_modules', '@mars', 'workflow')
+  const nmWorkflowDist = resolve(nmWorkflow, 'dist', 'index.js')
+
+  // Fast path: dist already present — nothing to do.
+  if (await fileExists(nmWorkflowDist)) return
+
+  // @mars/workflow not installed in this site at all — not our concern.
+  if (!await dirExists(nmWorkflow)) return
+
+  // Locate the source package. In the monorepo layout the orchestrator sits
+  // one level below the repo root, and packages/ is a sibling of orchestrator.
+  const srcDir = resolve(siteDir, '..', 'packages', 'workflow')
+  if (!await dirExists(srcDir)) {
+    log?.(
+      `[setup:install] @mars/workflow: dist/index.js absent from node_modules ` +
+      `but source dir ${srcDir} not found — skipping rebuild`,
+    )
+    return
+  }
+
+  log?.(
+    `[setup:install] @mars/workflow: dist/index.js absent from node_modules after install, ` +
+    `rebuilding from ${srcDir}`,
+  )
+
+  const result = await runner('npm', ['run', 'build'], srcDir)
+  if (result.exitCode !== 0) {
+    log?.(
+      `[setup:install] @mars/workflow: build failed (exit ${result.exitCode}) — ` +
+      `tsx path-alias will still work but plain-node imports of @mars/workflow will fail`,
+    )
+    return
+  }
+
+  // Inject the freshly built dist/ into the node_modules entry.  The entry is
+  // the pnpm virtual-store copy (a real directory, not a symlink), so writing
+  // into it is safe and immediately visible to importers.
+  const srcDist = resolve(srcDir, 'dist')
+  if (await dirExists(srcDist)) {
+    try {
+      const { cp } = await import('node:fs/promises')
+      await cp(srcDist, resolve(nmWorkflow, 'dist'), { recursive: true })
+      log?.(`[setup:install] @mars/workflow: dist rebuilt and injected into node_modules`)
+    } catch (copyErr) {
+      log?.(
+        `[setup:install] @mars/workflow: dist built but copy into node_modules failed: ` +
+        `${copyErr instanceof Error ? copyErr.message : String(copyErr)}`,
+      )
+    }
+  }
+}
+
 export const installWorktreeDeps = async ({
   worktreeRoot,
   runner,
