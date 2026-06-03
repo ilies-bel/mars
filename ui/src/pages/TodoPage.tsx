@@ -109,6 +109,7 @@ export const ActionQueueRow = memo(({
         {onRestart !== null && (
           <button
             type="button"
+            data-testid="restart-btn"
             disabled={restartPending}
             onClick={(e) => {
               e.stopPropagation()
