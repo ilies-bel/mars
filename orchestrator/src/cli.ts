@@ -3502,7 +3502,7 @@ const main = async (): Promise<void> => {
       for (const row of rows) {
         const flag = row.dismissed ? 'dismissed' : 'open'
         console.log(
-          `${row.id}\t${flag}\t${row.priority}\t${row.kind}\t${row.title}`,
+          `${row.id.padEnd(13)}  ${flag.padEnd(9)}  ${row.priority.padEnd(6)}  ${row.kind.padEnd(36)}  ${row.title}`,
         )
       }
     }

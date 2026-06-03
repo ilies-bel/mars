@@ -1,5 +1,5 @@
 import type { Client } from '@libsql/client';
-import { randomUUID } from 'node:crypto';
+import { genId } from '../../mars-id/index.js';
 import {
   processedOnce,
   ensureProcessedOnceSchema,
@@ -63,7 +63,7 @@ function questionRaiseSubscriber(client: Client): Subscriber {
         subscriberId: 'question-raiser:task.question',
         eventId: event.id,
         sideEffect: async (tx) => {
-          const id = randomUUID().slice(0, 8);
+          const id = genId('inbox-item').toString();
           await tx.execute({
             sql: `INSERT INTO action_queue_items (
                    id, kind, category, priority, state,
@@ -92,7 +92,7 @@ function questionRaiseSubscriber(client: Client): Subscriber {
             sql: `INSERT INTO action_queue_history (
                    id, item_id, at, from_state, to_state, by, note
                  ) VALUES (?, ?, ?, NULL, 'open', ?, NULL)`,
-            args: [randomUUID(), id, now, raisedBy],
+            args: [genId('inbox-history').toString(), id, now, raisedBy],
           });
         },
       });

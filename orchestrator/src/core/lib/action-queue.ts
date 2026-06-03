@@ -1,5 +1,6 @@
 import { type Client } from '@libsql/client'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
+import { genId } from '../../mars-id/index.js'
 import { resolveContext } from '../context'
 import { openLibsql } from './libsql'
 import { publishWithRetry } from './outbox'
@@ -165,7 +166,7 @@ const sha1Hex = (input: string): string =>
 const computeFingerprint = (kind: string, signature: string): string =>
   sha1Hex(`${kind}:${signature}`)
 
-const generateActionQueueId = (): string => randomUUID().slice(0, 8)
+const generateActionQueueId = (): string => genId('inbox-item').toString()
 
 export const initActionQueue = async (): Promise<void> => {
   if (initialised) return
@@ -318,7 +319,7 @@ const insertHistory = async (
     sql: `INSERT INTO action_queue_history (id, item_id, at, from_state, to_state, by, note)
           VALUES (?, ?, ?, ?, ?, ?, ?)`,
     args: [
-      randomUUID(),
+      genId('inbox-history').toString(),
       itemId,
       new Date().toISOString(),
       fromState,
