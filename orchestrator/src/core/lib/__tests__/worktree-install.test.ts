@@ -180,5 +180,74 @@ describe('worktree-install', () => {
       expect(lines).toHaveLength(1)
       expect(lines[0]).toMatch(/^\[setup:install\] pnpm \(\.\) exit=0 duration=/)
     })
+
+    it('retries once when install fails with ENOTEMPTY and succeeds on retry', async () => {
+      writeFileSync(resolve(workDir, 'package-lock.json'), '{}')
+      let callCount = 0
+      const runner = async (): Promise<RunSubprocessResult> => {
+        callCount++
+        if (callCount === 1) {
+          return fail(
+            'npm warn cleanup ENOTEMPTY: directory not empty, rmdir .../node_modules/sucrase',
+          )
+        }
+        return ok()
+      }
+      const summary = await installWorktreeDeps({ worktreeRoot: workDir, runner })
+      expect(callCount).toBe(2)
+      expect(summary.sites).toHaveLength(1)
+      expect(summary.sites[0].exitCode).toBe(0)
+    })
+
+    it('throws WorktreeInstallError when ENOTEMPTY retry also fails', async () => {
+      writeFileSync(resolve(workDir, 'package-lock.json'), '{}')
+      let callCount = 0
+      const runner = async (): Promise<RunSubprocessResult> => {
+        callCount++
+        return fail(
+          'npm warn cleanup ENOTEMPTY: directory not empty, rmdir .../node_modules/sucrase',
+        )
+      }
+      await expect(
+        installWorktreeDeps({ worktreeRoot: workDir, runner }),
+      ).rejects.toBeInstanceOf(WorktreeInstallError)
+      expect(callCount).toBe(2)
+    })
+
+    it('does not retry non-ENOTEMPTY failures', async () => {
+      writeFileSync(resolve(workDir, 'package-lock.json'), '{}')
+      let callCount = 0
+      const runner = async (): Promise<RunSubprocessResult> => {
+        callCount++
+        return fail('ERR_INVALID_PACKAGE_NAME: lockfile drift\n')
+      }
+      await expect(
+        installWorktreeDeps({ worktreeRoot: workDir, runner }),
+      ).rejects.toBeInstanceOf(WorktreeInstallError)
+      expect(callCount).toBe(1)
+    })
+
+    it('logs ENOTEMPTY retry attempt before the outcome line', async () => {
+      writeFileSync(resolve(workDir, 'package-lock.json'), '{}')
+      let callCount = 0
+      const lines: string[] = []
+      const runner = async (): Promise<RunSubprocessResult> => {
+        callCount++
+        if (callCount === 1) {
+          return fail(
+            'npm warn cleanup ENOTEMPTY: directory not empty, rmdir .../node_modules/sucrase',
+          )
+        }
+        return ok()
+      }
+      await installWorktreeDeps({
+        worktreeRoot: workDir,
+        runner,
+        log: (line) => lines.push(line),
+      })
+      expect(lines).toHaveLength(2)
+      expect(lines[0]).toMatch(/ENOTEMPTY.*retrying/)
+      expect(lines[1]).toMatch(/exit=0/)
+    })
   })
 })

@@ -197,10 +197,21 @@ export const installWorktreeDeps = async ({
   const results = await Promise.all(
     sites.map(async (site) => {
       const [cmd, args] = installCommand(site.manager)
-      const t0 = Date.now()
-      const r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
-      const durationMs = Date.now() - t0
       const rel = relative(worktreeRoot, site.dir) || '.'
+      const t0 = Date.now()
+      let r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
+
+      // Retry once on transient ENOTEMPTY filesystem race (macOS npm ci cleanup race).
+      // This occurs when a prior process holds file descriptors open in node_modules
+      // while npm tries to rmdir the stale tree before a fresh install.
+      if (r.exitCode !== 0 && /ENOTEMPTY/.test(r.stderr)) {
+        log?.(
+          `[setup:install] ${site.manager} (${rel}) ENOTEMPTY race detected — retrying once`,
+        )
+        r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
+      }
+
+      const durationMs = Date.now() - t0
       log?.(
         `[setup:install] ${site.manager} (${rel}) exit=${r.exitCode} duration=${(durationMs / 1000).toFixed(1)}s`,
       )
