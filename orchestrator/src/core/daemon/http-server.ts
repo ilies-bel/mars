@@ -28,6 +28,20 @@ import {
   type ArcCandidate,
 } from '../lib/deep-reflect-query'
 
+/** Wire shape for a single step span, returned by GET /view/step-spans. */
+export interface StepSpan {
+  stepName: string
+  phase: string | null
+  workflowInstanceId: string
+  workerName: string | null
+  outcome: string
+  startedAt: string
+  endedAt: string | null
+  durationMs: number | null
+  taskId: string | null
+  originId: string | null
+}
+
 /** Wire shape returned by GET /view/framework-update. */
 export interface FrameworkUpdateState {
   installed: string
@@ -198,6 +212,13 @@ export interface HttpServerDeps {
    * what the daemon exposes — no direct DB access on the UI side.
    */
   viewTerminalEvents: () => Promise<{ events: TerminalEvent[] }>
+  /**
+   * Return step-span pairs for the given originId.
+   * Served by GET /view/step-spans?originId=<id>. Lifts the step_started /
+   * step_ended pairing logic that previously lived in ui/server/index.ts into
+   * the daemon so the UI can proxy rather than opening the trace store directly.
+   */
+  viewStepSpans: (originId: string) => Promise<{ spans: StepSpan[] }>
   /**
    * Return recent task corpus data for GET /view/reflect. Wraps
    * {@link loadRecentTaskCorpus} from reflect-query.ts. When omitted, the
@@ -504,6 +525,26 @@ export const startHttpServer = async (
     if (req.method === 'GET' && req.url && req.url.startsWith('/view/progress')) {
       deps
         .viewProgress()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/step-spans?originId=<id> — step timeline for a task arc.
+    // Pairs step_started / step_ended events from the trace store by
+    // (workflowInstanceId, stepName). Steps with no matching step_ended have
+    // outcome='running'. Ordered by startedAt ascending (workflow order).
+    // The daemon is the sole reader of the trace store; the UI proxies here
+    // rather than opening the trace store directly. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/step-spans')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const originId = parsed.searchParams.get('originId')
+      if (!originId) {
+        sendJson(res, 400, { error: 'originId query parameter is required' })
+        return
+      }
+      deps
+        .viewStepSpans(originId)
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return

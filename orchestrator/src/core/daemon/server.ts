@@ -2401,6 +2401,60 @@ export const startDaemon = async (
         createProposalReader(client),
       )
     },
+    viewStepSpans: async (originId) => {
+      const [started, ended] = await Promise.all([
+        traceStore.query({ originId, kind: ['step_started'], limit: 1000 }),
+        traceStore.query({ originId, kind: ['step_ended'], limit: 1000 }),
+      ])
+
+      // Map (workflowInstanceId, stepName) → ended event for O(n) pairing.
+      const endedMap = new Map<string, (typeof ended)[0]>()
+      for (const e of ended) {
+        const wfId = e.payload.workflowInstanceId
+        const stepName = e.payload.stepName
+        if (typeof wfId === 'string' && typeof stepName === 'string') {
+          endedMap.set(`${wfId}\0${stepName}`, e)
+        }
+      }
+
+      const spans = started
+        .map((s) => {
+          const wfId = s.payload.workflowInstanceId
+          const stepName = s.payload.stepName
+          const key =
+            typeof wfId === 'string' && typeof stepName === 'string'
+              ? `${wfId}\0${stepName}`
+              : null
+          const endEvent = key ? endedMap.get(key) : undefined
+
+          return {
+            stepName: typeof stepName === 'string' ? stepName : '',
+            phase: s.phase,
+            workflowInstanceId: typeof wfId === 'string' ? wfId : '',
+            workerName:
+              typeof s.payload.workerName === 'string'
+                ? s.payload.workerName
+                : null,
+            outcome: endEvent
+              ? typeof endEvent.payload.outcome === 'string'
+                ? endEvent.payload.outcome
+                : 'completed'
+              : 'running',
+            startedAt: s.timestamp,
+            endedAt: endEvent ? endEvent.timestamp : null,
+            durationMs:
+              endEvent && typeof endEvent.payload.durationMs === 'number'
+                ? endEvent.payload.durationMs
+                : null,
+            taskId: s.taskId,
+            originId: s.originId,
+          }
+        })
+        // Ascending by startedAt — preserves workflow execution order.
+        .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+
+      return { spans }
+    },
     actionQueueAck: async (kind, id) => {
       const { dismissEntity } = await import('../lib/action-queue-dismissals')
       await dismissEntity(kind, id, { by: 'daemon', note: 'ack' })
