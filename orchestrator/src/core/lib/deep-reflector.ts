@@ -207,10 +207,28 @@ ${conversationJson}${verifyBlock}${transcriptNotes}${transcriptNote}`
     })
     .join('\n\n')
 
+  // Build the step timeline section: every closed Step span in started_at order.
+  // This surfaces Planner/Slicer spans at the top for Proposal arcs, followed by
+  // per-task setup → code → verify(s) → merge/recovery sequences.
+  const timelineLines = arc.stepTimeline.map((s, i) => {
+    const worker = s.workerName ? ` worker=${s.workerName}` : ''
+    const phase = s.phase ? ` phase=${s.phase}` : ''
+    const session = s.sessionId ? ` session=${s.sessionId}` : ''
+    const verify = s.verifyOutput ? ` verifyOutput=<${s.verifyOutput.length}b>` : ''
+    const tx = s.transcript ? ` transcript=<${s.transcript.length}b>` : ''
+    return `  [${i + 1}] ${s.startedAt} ${s.stepName}${worker}${phase} outcome=${s.outcome} durationMs=${s.durationMs}${session}${verify}${tx}`
+  })
+  const timelineSection =
+    arc.stepTimeline.length > 0
+      ? `Step timeline (${arc.stepTimeline.length} span(s), started_at order):\n${timelineLines.join('\n')}`
+      : 'Step timeline: (no step spans recorded for this arc)'
+
   return `${SYNTHESIS_INSTRUCTIONS_ARC}
 
 Arc metadata:
 ${headJson}
+
+${timelineSection}
 
 ${taskBlocks}`
 }
