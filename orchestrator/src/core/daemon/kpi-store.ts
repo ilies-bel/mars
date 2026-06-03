@@ -1,14 +1,16 @@
 /**
- * KPI persistence and computation stub.
+ * KPI wire format and reader for the daemon GET /kpis endpoint.
  *
- * This module provides the four-KPI vector defined in ADR-0038 (harness health
- * as a four-KPI vector). The real computation layer (proposal 9a2ab5f8) will
- * replace this stub with reads from the persisted KPI table.
+ * Reads from the persisted kpi_snapshots table via readKpiWindowComparison —
+ * the same function the CLI's `mars kpi show` uses — so both surfaces always
+ * reflect the same numbers.
  *
- * Until proposal 9a2ab5f8 lands, every KPI returns zero values with
- * `lowConfidence: true` and `sampleCount: 0` — the UI renders them in a
- * low-confidence state and no drift arrows are displayed.
+ * When no snapshot exists yet, all four KPIs return sampleCount=0 and
+ * lowConfidence=true (derived from the real table, not hardcoded).
  */
+
+import { readKpiWindowComparison } from '../lib/kpi-snapshots.js'
+import type { TaskStore } from '../lib/task-store.js'
 
 export type KpiKey =
   | 'cost_per_arc'
@@ -25,24 +27,55 @@ export interface KpiRecord {
   lowConfidence: boolean
 }
 
-const KPI_KEYS: KpiKey[] = [
-  'cost_per_arc',
-  'failure_rate',
-  'autonomous_completion_rate',
-  'recovery_success_rate',
-]
-
 /**
- * Return the current KPI vector. Each entry carries the four ADR-0038 KPIs.
- * When no data has been computed yet (stub state), all values are 0 and
- * `lowConfidence` is `true`.
+ * Return the current KPI vector by reading the most recent kpi_snapshots row
+ * and comparing it against the prior window.
+ *
+ * Accepts an optional TaskStore for test injection; when omitted the
+ * production default store is used (via readKpiWindowComparison's own
+ * default).
  */
-export const listKpis = async (): Promise<KpiRecord[]> =>
-  KPI_KEYS.map((key) => ({
-    key,
-    currentValue: 0,
-    priorValue: 0,
-    delta: 0,
-    sampleCount: 0,
-    lowConfidence: true,
-  }))
+export const listKpis = async (store?: TaskStore): Promise<KpiRecord[]> => {
+  const { current, prior, deltas } = await readKpiWindowComparison({
+    now: new Date().toISOString(),
+    store,
+  })
+
+  const lowConfidence = current === null || current.low_confidence === 1
+  const sampleCount = current?.sample_count ?? 0
+
+  return [
+    {
+      key: 'cost_per_arc',
+      currentValue: current?.cost_per_arc_p50 ?? 0,
+      priorValue: prior?.cost_per_arc_p50 ?? 0,
+      delta: deltas.cost_per_arc_p50.value ?? 0,
+      sampleCount,
+      lowConfidence,
+    },
+    {
+      key: 'failure_rate',
+      currentValue: current?.failure_rate ?? 0,
+      priorValue: prior?.failure_rate ?? 0,
+      delta: deltas.failure_rate.value ?? 0,
+      sampleCount,
+      lowConfidence,
+    },
+    {
+      key: 'autonomous_completion_rate',
+      currentValue: current?.autonomous_completion_rate ?? 0,
+      priorValue: prior?.autonomous_completion_rate ?? 0,
+      delta: deltas.autonomous_completion_rate.value ?? 0,
+      sampleCount,
+      lowConfidence,
+    },
+    {
+      key: 'recovery_success_rate',
+      currentValue: current?.recovery_success_rate ?? 0,
+      priorValue: prior?.recovery_success_rate ?? 0,
+      delta: deltas.recovery_success_rate.value ?? 0,
+      sampleCount,
+      lowConfidence,
+    },
+  ]
+}
