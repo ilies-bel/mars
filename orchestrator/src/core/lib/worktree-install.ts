@@ -201,17 +201,33 @@ export const installWorktreeDeps = async ({
       const t0 = Date.now()
       let r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
 
-      // Retry once on transient ENOTEMPTY filesystem race (macOS npm ci cleanup race).
+      // Retry on transient ENOTEMPTY filesystem race (macOS npm ci cleanup race).
       // This occurs when a prior process holds file descriptors open in node_modules
       // while npm tries to rmdir the stale tree before a fresh install. The failed
-      // cleanup leaves a partially corrupt node_modules behind, so the retry must
+      // cleanup leaves a partially corrupt node_modules behind, so each retry must
       // clear it first — otherwise the second install hits ENOENT chmod errors on
       // the half-removed tree (e.g. node_modules/esbuild/bin/esbuild).
-      if (r.exitCode !== 0 && /ENOTEMPTY/.test(r.stderr)) {
+      //
+      // We allow up to ENOTEMPTY_MAX_RETRIES additional attempts: a single retry
+      // was empirically not enough — the race can recur when the same fs handle
+      // holder (a concurrent worktree install, a Spotlight indexer) is still
+      // active a moment later. The rm() between attempts uses node's built-in
+      // retry to absorb brief EBUSY/EPERM races on the cleanup itself.
+      const ENOTEMPTY_MAX_RETRIES = 2
+      for (
+        let attempt = 1;
+        attempt <= ENOTEMPTY_MAX_RETRIES && r.exitCode !== 0 && /ENOTEMPTY/.test(r.stderr);
+        attempt++
+      ) {
         log?.(
-          `[setup:install] ${site.manager} (${rel}) ENOTEMPTY race detected — retrying once`,
+          `[setup:install] ${site.manager} (${rel}) ENOTEMPTY race detected — retrying (attempt ${attempt}/${ENOTEMPTY_MAX_RETRIES})`,
         )
-        await rm(resolve(site.dir, 'node_modules'), { recursive: true, force: true })
+        await rm(resolve(site.dir, 'node_modules'), {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 200,
+        })
         r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
       }
 

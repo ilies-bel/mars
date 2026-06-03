@@ -199,7 +199,7 @@ describe('worktree-install', () => {
       expect(summary.sites[0].exitCode).toBe(0)
     })
 
-    it('throws WorktreeInstallError when ENOTEMPTY retry also fails', async () => {
+    it('throws WorktreeInstallError when every ENOTEMPTY retry also fails', async () => {
       writeFileSync(resolve(workDir, 'package-lock.json'), '{}')
       let callCount = 0
       const runner = async (): Promise<RunSubprocessResult> => {
@@ -211,7 +211,27 @@ describe('worktree-install', () => {
       await expect(
         installWorktreeDeps({ worktreeRoot: workDir, runner }),
       ).rejects.toBeInstanceOf(WorktreeInstallError)
-      expect(callCount).toBe(2)
+      // Implementation retries up to 2 additional times after the first failure
+      // (3 attempts total) before surfacing the install error.
+      expect(callCount).toBe(3)
+    })
+
+    it('recovers when a transient ENOTEMPTY occurs on two consecutive attempts before succeeding', async () => {
+      writeFileSync(resolve(workDir, 'package-lock.json'), '{}')
+      let callCount = 0
+      const runner = async (): Promise<RunSubprocessResult> => {
+        callCount++
+        if (callCount <= 2) {
+          return fail(
+            'npm warn cleanup ENOTEMPTY: directory not empty, rmdir .../node_modules/typescript/lib',
+          )
+        }
+        return ok()
+      }
+      const summary = await installWorktreeDeps({ worktreeRoot: workDir, runner })
+      expect(callCount).toBe(3)
+      expect(summary.sites).toHaveLength(1)
+      expect(summary.sites[0].exitCode).toBe(0)
     })
 
     it('does not retry non-ENOTEMPTY failures', async () => {
