@@ -1,0 +1,10 @@
+{
+  "name": "mars",
+  "plugins": [
+    {
+      "name": "mars",
+      "source": ".",
+      "description": "Mars Claude Code plugin — mars:* skills, agents, hooks, settings"
+    }
+  ]
+}
