@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createClient } from '@libsql/client'
-import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -125,6 +125,20 @@ describe('mergeLegacyDatabases', () => {
     c.close()
     expect((r.rows[0] as unknown as { status: string }).status).toBe('failed')
     expect(await countRows(marsPath, 'tasks')).toBe(1)
+  })
+
+  it('unlinks a 0-byte legacy file without touching mars.db', async () => {
+    // A 0-byte file is left when a stray client open materialised the path
+    // before any data was written — nothing to fold, just delete it.
+    writeFileSync(queuePath, '')
+
+    const { mergeLegacyDatabases } = await import('./merge-databases')
+    await mergeLegacyDatabases()
+
+    // The 0-byte file must be gone
+    expect(existsSync(queuePath)).toBe(false)
+    // No client was opened for mars.db, so no spurious tables were created
+    expect(existsSync(marsPath)).toBe(false)
   })
 
   it('is a no-op once the legacy files are gone', async () => {

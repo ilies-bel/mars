@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync } from 'node:fs'
+import { existsSync, statSync, unlinkSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { type Client, createClient } from '@libsql/client'
 
@@ -38,9 +38,23 @@ export const mergeLegacyDatabases = async (): Promise<void> => {
 
   // Sentinel: only run while at least one legacy file is present. The
   // presence (or emptiness) of mars.db is deliberately NOT a gate.
+  //
+  // Short-circuit: a 0-byte file has no tables to fold — skip the ATTACH/copy
+  // dance entirely and just delete it. The empty file could have been left by
+  // a stray client open before any data was ever written. It is safe to remove
+  // it directly because there is nothing to migrate.
   const sources: Array<{ alias: string; path: string }> = []
-  if (existsSync(queuePath)) sources.push({ alias: 'legacy_queue', path: queuePath })
-  if (existsSync(statePath)) sources.push({ alias: 'legacy_state', path: statePath })
+  for (const [alias, path] of [
+    ['legacy_queue', queuePath],
+    ['legacy_state', statePath],
+  ] as const) {
+    if (!existsSync(path)) continue
+    if (statSync(path).size === 0) {
+      unlinkSync(path)
+      continue
+    }
+    sources.push({ alias, path })
+  }
   if (sources.length === 0) return
 
   // Drive the merge through the canonical mars.db destination so existing
