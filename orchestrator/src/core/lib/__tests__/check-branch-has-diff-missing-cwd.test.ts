@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { checkBranchHasDiff } from '../git'
+import { checkBranchHasDiff } from '../git/verify'
 
 describe('checkBranchHasDiff — worktree removed during verify', () => {
   let repo: string

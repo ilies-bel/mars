@@ -2,17 +2,15 @@ import { defineWorkflow, type StepHandle, type WorkflowCtx } from '@mars/workflo
 import { z } from 'zod'
 
 import { runTool, nullTraceStore, type TraceCtx } from '../core/lib/run-tool'
+import { createWorktree, removeWorktree } from '../core/lib/git/worktree'
 import {
   cleanWorktreeIfNoCommitsAhead,
-  createWorktree,
-  removeWorktree,
   verifyChanges,
   loadVerifyScopes,
   selectVerifySteps,
   getChangedFiles,
-  mergeBranch,
-  checkMergeTargetStatus,
-} from '../core/lib/git'
+} from '../core/lib/git/verify'
+import { mergeBranch, checkMergeTargetStatus } from '../core/lib/git/merge'
 import { createWorker, pickWorkerForTags, Workers, type Worker, type WorkerName } from '../core/workers'
 import {
   TASK_TAGS,

@@ -3,7 +3,7 @@ import { rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { resolveContext } from '../context'
 import { getTask, type Task, type TaskStatus } from '../queue'
-import { isBranchMergedIntoMain, isZeroCommitBranch } from './git'
+import { isBranchMergedIntoMain, isZeroCommitBranch } from './git/merge'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 
 export const DEFAULT_WORKTREE_REMOVE_TIMEOUT_MS = 60_000

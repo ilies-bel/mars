@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { openTraceEventStore } from '../trace-events-store'
 import { runWorkerWithSpan, runNonLlmStepWithSpan } from '../run-worker-with-span'
 import type { Worker, WorkerConfig, RunOptions } from '../../workers'
-import type { RunClaudeResult } from '../git'
+import type { RunClaudeResult } from '../git/claude'
 
 const tmpDbPath = (): string => {
   const dir = mkdtempSync(join(tmpdir(), 'mars-worker-span-'))

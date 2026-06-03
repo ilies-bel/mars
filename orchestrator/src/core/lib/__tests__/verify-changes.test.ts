@@ -17,7 +17,7 @@ import {
   getChangedFiles,
   checkBranchHasDiff,
   type VerifyScope,
-} from '../git'
+} from '../git/verify'
 
 const truthyCmd = { cmd: 'node', args: ['-e', 'process.exit(0)'] }
 const falsyCmd = { cmd: 'node', args: ['-e', 'process.stderr.write("boom"); process.exit(1)'] }

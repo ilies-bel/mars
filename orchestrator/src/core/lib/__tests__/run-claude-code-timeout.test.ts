@@ -11,7 +11,7 @@ import {
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { runClaudeCode } from '../git'
+import { runClaudeCode } from '../git/claude'
 
 // The wrapper's wall-clock timeout uses `timeoutMs` from the moment
 // `runClaudeCode` is called. The previous incarnation of this test set

@@ -56,7 +56,7 @@ export const coreRestartTask = async (
   const { execFile } = await import('node:child_process')
   const { promisify } = await import('node:util')
   const exec = promisify(execFile)
-  const { removeWorktree } = await import('../lib/git')
+  const { removeWorktree } = await import('../lib/git/worktree')
   const { getRepoRoot } = await import('../context')
 
   const branch = task.branch ?? `task/${task.id}`

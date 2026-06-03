@@ -41,7 +41,7 @@ if (r.exitCode !== 0) {
 }
 ```
 
-The cap string is emitted verbatim by `lib/git.ts` (`runClaudeCode`,
+The cap string is emitted verbatim by `lib/git/claude.ts` (`runClaudeCode`,
 ~lines 662-669): `claude -p hit message cap of ${cap}`
 with `exitCode: 137`. `Workers.Slicer.run` is a thin wrapper that returns
 that `RunClaudeResult` unchanged (`workers/index.ts:185-203`).
@@ -61,7 +61,7 @@ does not apply — it doesn't collapse.)
 
 The prompt says "stub Workers.Slicer.run"; the existing suite never does
 that and you should not either. `Workers.Slicer.run === runClaudeCode(...)`,
-so you stub **`runClaudeCode` from `../../lib/git`** via `vi.doMock`. Copy
+so you stub **`runClaudeCode` from `../../lib/git/claude`** via `vi.doMock`. Copy
 the existing test verbatim as your template:
 
 > `slice-workflow.test.ts` lines 420-450 — *"leaves the idea at prd-ready

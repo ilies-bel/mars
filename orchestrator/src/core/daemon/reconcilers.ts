@@ -162,7 +162,7 @@ const verifyingRecovery: Reconciler = {
     const { execFile } = await import('node:child_process')
     const { promisify } = await import('node:util')
     const exec = promisify(execFile)
-    const { removeWorktree } = await import('../lib/git')
+    const { removeWorktree } = await import('../lib/git/worktree')
     const { getRepoRoot } = await import('../context')
 
     let verifyingRequeued = 0
@@ -247,7 +247,8 @@ const mergingRecovery: Reconciler = {
     const { execFile } = await import('node:child_process')
     const { promisify } = await import('node:util')
     const exec = promisify(execFile)
-    const { removeWorktree, isBranchMergedIntoMain } = await import('../lib/git')
+    const { removeWorktree } = await import('../lib/git/worktree')
+    const { isBranchMergedIntoMain } = await import('../lib/git/merge')
     const { getRepoRoot } = await import('../context')
 
     let mergingFinalized = 0

@@ -11,7 +11,7 @@ import {
   WorktreeInstallError,
 } from '../worktree-install'
 import type { InstallSite } from '../worktree-install'
-import type { RunSubprocessResult } from '../git'
+import type { RunSubprocessResult } from '../git/claude'
 
 interface RecordedCall {
   cmd: string

@@ -9,7 +9,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import type { ClaudeEffort, ClaudePermissionMode } from '../lib/git'
+import type { ClaudeEffort, ClaudePermissionMode } from '../lib/git/claude'
 import {
   WORKER_CONFIGS,
   type ClaudeOutputFormat,

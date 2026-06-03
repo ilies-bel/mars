@@ -7,7 +7,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { runClaudeCode } from '../git'
+import { runClaudeCode } from '../git/claude'
 
 // Stub that emits assistant events with growing usage.input_tokens so the
 // context budget guard fires without needing a real Claude session.

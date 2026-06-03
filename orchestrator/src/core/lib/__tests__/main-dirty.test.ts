@@ -422,7 +422,7 @@ describe('provisionCommitterWorktree carries dirty state into the new tree', () 
       resolve(repo, 'README.md'),
       'dirty-state-that-must-survive\n',
     )
-    const { provisionCommitterWorktree } = await import('../git')
+    const { provisionCommitterWorktree } = await import('../git/worktree')
     const ref = await provisionCommitterWorktree({
       recoveryTaskId: 'committer-' + Math.random().toString(36).slice(2, 8),
       integrationBranch: 'main',

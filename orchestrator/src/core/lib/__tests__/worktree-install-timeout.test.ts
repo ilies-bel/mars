@@ -7,7 +7,7 @@ import {
   WorktreeInstallError,
   DEFAULT_INSTALL_TIMEOUT_MS,
 } from '../worktree-install'
-import type { RunSubprocessResult } from '../git'
+import type { RunSubprocessResult } from '../git/claude'
 
 // Very short timeout so the test completes quickly.
 const SHORT_TIMEOUT_MS = 200

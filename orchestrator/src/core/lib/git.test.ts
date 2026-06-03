@@ -4,7 +4,8 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { checkMergeTargetStatus, pathExists } from './git'
+import { checkMergeTargetStatus } from './git/merge'
+import { pathExists } from './git/internal'
 import { __resetContextCacheForTests } from '../context'
 
 const execAsync = promisify(execFile)

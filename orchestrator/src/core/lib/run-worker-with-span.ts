@@ -18,7 +18,7 @@ import { summarizeUsage } from './claude-usage'
 import { isReflectDisabled } from './reflect-signals'
 import type { TraceEventStore, TraceEventPhase } from './trace-events-store'
 import type { Worker, RunOptions } from '../workers'
-import type { RunClaudeResult } from './git'
+import type { RunClaudeResult } from './git/claude'
 
 export interface RunWorkerWithSpanOptions {
   worker: Worker

@@ -1,12 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { createWorktree, removeWorktree } from './git/worktree'
 import {
-  createWorktree,
-  removeWorktree,
   mergeBranch,
   checkMergeTargetStatus,
   type MergeResult,
-} from './git'
+} from './git/merge'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 
 export interface StructuredWriteArgs {

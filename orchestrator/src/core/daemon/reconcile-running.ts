@@ -15,7 +15,7 @@ import { existsSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { hasIncompleteBlockers, listTasks, updateTask } from '../queue'
-import { removeWorktree } from '../lib/git'
+import { removeWorktree } from '../lib/git/worktree'
 
 const exec = promisify(execFile)
 

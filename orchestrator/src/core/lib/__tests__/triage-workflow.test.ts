@@ -18,8 +18,8 @@ interface ClaudeStub {
 }
 
 const setClaudeStub = (stub: ClaudeStub): void => {
-  vi.doMock('../git', async () => {
-    const actual = await vi.importActual<typeof import('../git')>('../git')
+  vi.doMock('../git/claude', async () => {
+    const actual = await vi.importActual<typeof import('../git/claude')>('../git/claude')
     return {
       ...actual,
       runClaudeCode: vi.fn(async () => ({
@@ -46,7 +46,7 @@ describe('triage workflow', () => {
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../git')
+    vi.doUnmock('../git/claude')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })

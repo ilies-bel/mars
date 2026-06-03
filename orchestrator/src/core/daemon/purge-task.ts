@@ -68,7 +68,7 @@ export const corePurgeTask = async (
     }
   }
 
-  const { removeWorktree } = await import('../lib/git')
+  const { removeWorktree } = await import('../lib/git/worktree')
 
   if (task.worktreePath && existsSync(task.worktreePath)) {
     await removeWorktree({ path: task.worktreePath, branch }, true).catch(() => {})

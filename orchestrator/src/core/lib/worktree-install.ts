@@ -1,6 +1,7 @@
 import { stat, rm, readFile } from 'node:fs/promises'
 import { resolve, relative } from 'node:path'
-import { acquireLock, type RunSubprocessResult } from './git'
+import { acquireLock } from './git/lock'
+import { type RunSubprocessResult } from './git/claude'
 import { getStateDir } from '../context'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 

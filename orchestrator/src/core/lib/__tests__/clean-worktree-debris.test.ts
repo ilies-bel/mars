@@ -10,7 +10,7 @@ import {
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { cleanWorktreeIfNoCommitsAhead } from '../git'
+import { cleanWorktreeIfNoCommitsAhead } from '../git/verify'
 
 /**
  * Build a fixture repo that mimics a task worktree:

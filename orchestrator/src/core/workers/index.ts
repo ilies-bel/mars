@@ -5,7 +5,7 @@
 // instead of assembling claude flags ad-hoc.
 //
 // The agent-to-user denial (AskUserQuestion + SendUserMessage) is enforced at
-// the runClaudeCode wrapper layer (see ../lib/git.ts:AGENT_TO_USER_DENIED_TOOLS).
+// the runClaudeCode wrapper layer (see ../lib/git/claude.ts:AGENT_TO_USER_DENIED_TOOLS).
 // Any extra Worker-level `disallowedTools` here are unioned on top — they
 // cannot remove the agent-to-user denial.
 //
@@ -16,7 +16,7 @@ import {
   type ClaudeEffort,
   type ClaudePermissionMode,
   type RunClaudeResult,
-} from '../lib/git'
+} from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'
 
 // Mutation tools denied for read-only Workers (Planner, Slicer, Triager).

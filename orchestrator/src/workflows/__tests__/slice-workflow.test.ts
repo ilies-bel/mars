@@ -553,7 +553,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../core/lib/git')
+    vi.doUnmock('../../core/lib/git/claude')
     vi.doUnmock('../../core/queue')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
@@ -612,9 +612,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // NOT a valid slicerOutput JSON. parseSlicerOutput throws — that
     // throw lands BEFORE Phase 4 flips the idea, so the idea must still
     // be prd-ready and no tasks must have been inserted.
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -647,9 +647,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // We simulate that exact shape by stubbing the slicer to emit a
     // valid one-slice output AND forcing transferProposalBlockerToTask
     // to throw — the catch must now revert the idea AND clean tasks.
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -696,9 +696,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // write fires. The idea must remain prd-ready so the daemon's
     // auto-slice loop (which only picks up prd-ready ideas) can
     // retry once the slicer is healthy.
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -733,9 +733,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // is needed. This test pins that: a timeout must NOT set the proposal to
     // 'sliced', and `mars proposal slice` must be re-runnable without a manual
     // `mars proposal set <id> status prd-ready` poke.
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -767,9 +767,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // slice-task creation. This test verifies the "happy path" invariant:
     // a successful runSlice must produce BOTH idea.status='sliced' AND
     // the expected tasks in the queue — not one without the other.
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -810,9 +810,9 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     // orphans, duplicating the queue work. The pre-flight must delete any
     // tasks with parent_proposal_id = idea.id before Phase 1 runs, so a
     // retry lands exactly N tasks — not N orphans + N fresh ones.
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -1042,7 +1042,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../core/lib/git')
+    vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -1141,9 +1141,9 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
   }
 
   it('persists blocker edges from the schema-drop slice onto every consumer slice', async () => {
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -1540,7 +1540,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../core/lib/git')
+    vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -1609,9 +1609,9 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
       ],
     }
 
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -1728,9 +1728,9 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
       ],
     }
 
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -2351,7 +2351,7 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../core/lib/git')
+    vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -2382,9 +2382,9 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
       'export function alreadyShipped() {}\n',
     )
 
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -2451,9 +2451,9 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
     // No files pre-created → nothing satisfies the pre-flight check.
     // The slicer emits one slice that creates a file that does not yet
     // exist on disk — it must be dispatched normally with no actionQueue item.
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -2523,7 +2523,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../core/lib/git')
+    vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -2579,9 +2579,9 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   }
 
   it('creates exactly one actionQueue item of kind hitl-slice-needs-operator when an hitl slice is present', async () => {
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -2610,9 +2610,9 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   })
 
   it('actionQueue item body contains the hitl slice title and acceptance criteria as a manual checklist', async () => {
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -2646,9 +2646,9 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   })
 
   it('enqueues exactly one Coder sub-task built from the subDeliverable spec, dispatchable as queued', async () => {
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -2699,9 +2699,9 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   })
 
   it('leaves the hitl slice task in status=blocked immediately after slicing', async () => {
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -2753,9 +2753,9 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
       ],
     }
 
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -2827,7 +2827,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
 
   afterEach(() => {
     vi.resetModules()
-    vi.doUnmock('../../core/lib/git')
+    vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -2919,9 +2919,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   }
 
   it('resolving the actionQueue item while the sub-task is still in-flight leaves the hitl slice blocked', async () => {
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -2965,9 +2965,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   })
 
   it('the sub-task reaching done while the actionQueue item is still open leaves the hitl slice blocked', async () => {
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -3010,9 +3010,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   })
 
   it('action-queue-first ordering: hitl slice flips to done once both conditions are met', async () => {
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -3062,9 +3062,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   })
 
   it('sub-task-first ordering: hitl slice flips to done once both conditions are met', async () => {
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -3114,9 +3114,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   })
 
   it('simultaneous ordering: hitl slice flips to done when both conditions are met at once', async () => {
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,
@@ -3180,9 +3180,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
       ],
     }
 
-    vi.doMock('../../core/lib/git', async () => {
-      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
-        '../../core/lib/git',
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
       )
       return {
         ...actual,

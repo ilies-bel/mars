@@ -46,7 +46,7 @@ import {
 } from '../../outbox/subscribers/blocker-resolution'
 import type { Logger, WorkflowEvent } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
-import { resolveGitBin } from '../lib/git'
+import { resolveGitBin } from '../lib/git/internal'
 import { getDefaultTaskStore } from '../lib/task-store'
 import { getDefaultDomainTaskStore } from '../store/task-store'
 import { listTerminalEvents } from './view/terminal-events'
@@ -1530,7 +1530,7 @@ export const startDaemon = async (
     const { execFile } = await import('node:child_process')
     const { promisify } = await import('node:util')
     const exec = promisify(execFile)
-    const { removeWorktree } = await import('../lib/git')
+    const { removeWorktree } = await import('../lib/git/worktree')
     const { getRepoRoot } = await import('../context')
 
     const branch = task.branch ?? `task/${task.id}`
@@ -1940,7 +1940,7 @@ export const startDaemon = async (
           // safely signal our process group (foreground daemons share the
           // user's terminal pgid). killAllChildren() is a no-op if nothing
           // is in flight.
-          const { killAllChildren } = await import('../lib/git')
+          const { killAllChildren } = await import('../lib/git/claude')
           const killedPids = killAllChildren()
           if (killedPids.length > 0) {
             log(`SIGKILL'd ${killedPids.length} child pid(s): ${killedPids.join(', ')}`)
@@ -2082,7 +2082,7 @@ export const startDaemon = async (
           { code: 'WRONG_STATUS' as const },
         )
       }
-      const { removeWorktree } = await import('../lib/git')
+      const { removeWorktree } = await import('../lib/git/worktree')
       const { getRepoRoot } = await import('../context')
       const { join } = await import('node:path')
       const path = join(getRepoRoot(), '.mars', 'worktrees', id)
@@ -2106,7 +2106,7 @@ export const startDaemon = async (
           const { execFile } = await import('node:child_process')
           const { promisify } = await import('node:util')
           const { getRepoRoot } = await import('../context')
-          const { runClaudeCode } = await import('../lib/git')
+          const { runClaudeCode } = await import('../lib/git/claude')
           const { getTask } = await import('../queue')
           const { patchOpenActionQueuePayload } = await import('../lib/action-queue')
 
@@ -2233,7 +2233,7 @@ export const startDaemon = async (
           const { promisify } = await import('node:util')
           const { existsSync } = await import('node:fs')
           const { getRepoRoot } = await import('../context')
-          const { runClaudeCode } = await import('../lib/git')
+          const { runClaudeCode } = await import('../lib/git/claude')
           const { getTask } = await import('../queue')
           const { patchOpenActionQueuePayload } = await import('../lib/action-queue')
 

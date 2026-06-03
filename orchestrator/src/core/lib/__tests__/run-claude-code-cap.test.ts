@@ -7,7 +7,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { runClaudeCode } from '../git'
+import { runClaudeCode } from '../git/claude'
 
 const writeStub = (stubDir: string, eventCount: number, sessionId: string) => {
   const stubPath = resolve(stubDir, 'claude')

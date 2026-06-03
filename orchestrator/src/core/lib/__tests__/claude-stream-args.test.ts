@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { claudeStreamArgs, SEARCH_TOOL_SYSTEM_PROMPT } from '../git'
+import { claudeStreamArgs, SEARCH_TOOL_SYSTEM_PROMPT } from '../git/claude'
 
 describe('claudeStreamArgs', () => {
   it('always denies AskUserQuestion and SendUserMessage', () => {

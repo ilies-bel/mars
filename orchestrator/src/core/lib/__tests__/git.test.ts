@@ -20,16 +20,16 @@ import {
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { isAbsolute, resolve } from 'node:path'
+import { acquireLock } from '../git/lock'
 import {
-  acquireLock,
   buildWorkerEnv,
   claudeBinEnvFingerprint,
   resolveClaudeBin,
-  resolveGitBin,
   runSubprocessStreaming,
   runClaudeCode,
-  stripFrontmatter,
-} from '../git'
+} from '../git/claude'
+import { resolveGitBin } from '../git/internal'
+import { stripFrontmatter } from '../git/merge'
 
 describe('claudeBinEnvFingerprint', () => {
   it('produces identical fingerprints for identical envs', () => {
@@ -541,12 +541,13 @@ process.exit(r.status ?? 1);
   })
 
   it('WORKTREE_GIT_TIMEOUT_MS is read from env at module load', async () => {
-    const { WORKTREE_GIT_TIMEOUT_MS } = await import('../git')
+    const { WORKTREE_GIT_TIMEOUT_MS } = await import('../git/internal')
     expect(WORKTREE_GIT_TIMEOUT_MS).toBe(300)
   })
 
   it('createWorktree completes within 2× timeout even when git worktree list hangs', async () => {
-    const { createWorktree, WORKTREE_GIT_TIMEOUT_MS } = await import('../git')
+    const { createWorktree } = await import('../git/worktree')
+    const { WORKTREE_GIT_TIMEOUT_MS } = await import('../git/internal')
     const start = Date.now()
     // createWorktree may succeed (worktree add goes through the stub to real
     // git) or fail (other git error), but it MUST NOT hang for the duration
@@ -594,7 +595,7 @@ describe('checkMergeTargetStatus', () => {
   })
 
   it('reports clean when ff is feasible and target is pristine', async () => {
-    const { checkMergeTargetStatus } = await import('../git')
+    const { checkMergeTargetStatus } = await import('../git/merge')
     const status = await checkMergeTargetStatus(args)
     expect(status.kind).toBe('clean')
   })
@@ -603,21 +604,21 @@ describe('checkMergeTargetStatus', () => {
     writeFileSync(resolve(repo, 'leftover.tmp'), 'x\n')
     mkdirSync(resolve(repo, '.idea'), { recursive: true })
     writeFileSync(resolve(repo, '.idea/workspace.xml'), '<x/>\n')
-    const { checkMergeTargetStatus } = await import('../git')
+    const { checkMergeTargetStatus } = await import('../git/merge')
     const status = await checkMergeTargetStatus(args)
     expect(status.kind).toBe('clean')
   })
 
   it('ignores tracked uncommitted changes on paths the ff would not touch', async () => {
     writeFileSync(resolve(repo, 'B'), 'b-mutated\n')
-    const { checkMergeTargetStatus } = await import('../git')
+    const { checkMergeTargetStatus } = await import('../git/merge')
     const status = await checkMergeTargetStatus(args)
     expect(status.kind).toBe('clean')
   })
 
   it('reports dirty when a tracked uncommitted change overlaps the ff path set', async () => {
     writeFileSync(resolve(repo, 'A'), 'a-local\n')
-    const { checkMergeTargetStatus } = await import('../git')
+    const { checkMergeTargetStatus } = await import('../git/merge')
     const status = await checkMergeTargetStatus(args)
     expect(status.kind).toBe('dirty')
     if (status.kind === 'dirty') {
@@ -637,7 +638,7 @@ describe('checkMergeTargetStatus', () => {
     writeFileSync(resolve(repo, 'C'), 'c0\n')
     execFileSync('git', ['add', 'C'], { cwd: repo })
     execFileSync('git', ['commit', '-q', '-m', 'main-only commit'], { cwd: repo })
-    const { checkMergeTargetStatus } = await import('../git')
+    const { checkMergeTargetStatus } = await import('../git/merge')
     const status = await checkMergeTargetStatus(args)
     expect(status.kind).toBe('needs-rebase')
     if (status.kind === 'needs-rebase') {
@@ -714,7 +715,7 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
     // If the git version doesn't support --dry-run, skip this precondition check
     // and proceed — the test itself is the real guard.
 
-    const { mergeBranch } = await import('../git')
+    const { mergeBranch } = await import('../git/merge')
     const result = await mergeBranch({
       branch: 'task/ff-test',
       worktreePath: worktreeDir,
@@ -735,7 +736,7 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
   })
 
   it('never fires onVegaStart on a clean fast-forward (task stays in plain merging)', async () => {
-    const { mergeBranch } = await import('../git')
+    const { mergeBranch } = await import('../git/merge')
     let vegaStarts = 0
     const result = await mergeBranch({
       branch: 'task/ff-test',
@@ -757,7 +758,7 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
     const { execFile: execFileCb } = await import('node:child_process')
     const { promisify } = await import('node:util')
     const execP = promisify(execFileCb)
-    const { mergeBranch } = await import('../git')
+    const { mergeBranch } = await import('../git/merge')
 
     const taskTip = (await execP('git', ['rev-parse', 'task/ff-test'], { cwd: repo })).stdout.trim()
 
@@ -788,7 +789,7 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
     // setup from beforeEach leaves us elsewhere; switch to main cleanly).
     await execP('git', ['checkout', '-q', '-f', 'main'], { cwd: repo })
 
-    const { mergeBranch } = await import('../git')
+    const { mergeBranch } = await import('../git/merge')
     const result = await mergeBranch({
       branch: 'task/ff-test',
       worktreePath: worktreeDir,
@@ -927,7 +928,7 @@ describe('mergeBranch — onVegaStart fires when fast-forward fails (conflict)',
   })
 
   it('fires onVegaStart exactly once when the rebase conflicts and Vega is spawned', async () => {
-    const { mergeBranch } = await import('../git')
+    const { mergeBranch } = await import('../git/merge')
     let vegaStarts = 0
     const result = await mergeBranch({
       branch: 'task/conflict',
@@ -1020,7 +1021,7 @@ process.exit(1);
   })
 
   it('returns merged:true when Vega resolves the rebase despite supervisor exiting with code 1', async () => {
-    const { mergeBranch } = await import('../git')
+    const { mergeBranch } = await import('../git/merge')
     const result = await mergeBranch({
       branch: 'task/tree-truth',
       worktreePath: worktreeDir,

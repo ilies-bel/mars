@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { claudeStreamArgs } from '../../lib/git'
+import { claudeStreamArgs } from '../../lib/git/claude'
 import {
   CODER_MODEL,
   DEFAULT_MAX_MESSAGES,

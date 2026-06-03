@@ -1,4 +1,4 @@
-import { runClaudeCode } from './git'
+import { runClaudeCode } from './git/claude'
 import { getRepoRoot } from '../context'
 import {
   collectAssistantText,

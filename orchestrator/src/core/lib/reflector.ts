@@ -1,4 +1,4 @@
-import { runClaudeCode } from './git'
+import { runClaudeCode } from './git/claude'
 import { getRepoRoot } from '../context'
 import { createProposal } from '../proposals'
 import type { ReflectCorpus } from './reflect-query'

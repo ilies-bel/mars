@@ -1,0 +1,541 @@
+import { resolve } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import {
+  exec,
+  execProbe,
+  resolveGitBin,
+  type TraceCtx,
+} from './internal'
+
+export interface VerifyStep {
+  name: string
+  passed: boolean
+  output: string
+  /**
+   * The command that was run. Populated by {@link verifyChanges} so callers
+   * can build accurate reproduce hints from `r.steps` without re-correlating
+   * them against the original step specs.
+   */
+  cmd?: string
+  args?: readonly string[]
+  /** Absolute directory the step ran in. */
+  stepDir?: string
+}
+
+export interface VerifyStepSpec {
+  name: string
+  cmd: string
+  args: readonly string[]
+  required: boolean
+  /**
+   * The verify scope directory this step belongs to, relative to the
+   * verify root passed to {@link verifyChanges} as `cwd`. `'.'` (or
+   * omitted) is the repo-root scope and runs in the verify root itself;
+   * a narrower scope (e.g. `'apps/web'`) runs in that subdirectory.
+   */
+  dir?: string
+}
+
+/**
+ * One verify scope from the recipe: a repo subtree and the steps that
+ * apply to it. `scope` is normalised — `'.'` is the repo-root scope
+ * (the always-on floor); anything else is a path relative to the repo
+ * root, slash-separated, no leading `./` and no trailing `/`.
+ */
+export interface VerifyScope {
+  scope: string
+  steps: VerifyStepSpec[]
+}
+
+export interface VerifyArgs {
+  cwd: string
+  steps: ReadonlyArray<VerifyStepSpec>
+  branch?: string
+  integrationBranch?: string
+  // No skip option: the diff / commits-ahead gate runs for every dispatched
+  // task (ADR 0019). It fails only the genuine no-work case — a branch that has
+  // diverged from integration without landing a commit on it. A branch whose
+  // tip equals integration (legitimate no-op, e.g. the main-committer finding
+  // the tree already clean) or is an ancestor of integration (work already
+  // merged) passes: the integration branch is clean and nothing is un-merged.
+  /** Optional trace context. When supplied, each verify step's shell-out
+   *  emits a `tool_invoked` event under `phase: 'verify'`. Steps are probes
+   *  whose non-zero exit IS the failure signal — passed through with
+   *  `expectsFailure: true` so the trace severity stays warn instead of
+   *  flagging every failing verify run as a hard error. */
+  traceCtx?: TraceCtx
+}
+
+const runVerifyStep = async (
+  name: string,
+  cmd: string,
+  args: readonly string[],
+  cwd: string,
+  traceCtx?: TraceCtx,
+): Promise<VerifyStep> => {
+  const verifyCtx: TraceCtx | undefined = traceCtx
+    ? { ...traceCtx, phase: traceCtx.phase ?? 'verify' }
+    : undefined
+  const r = await execProbe(cmd, [...args], { cwd }, verifyCtx)
+  if (r.exitCode === 0) {
+    return {
+      name,
+      passed: true,
+      output: r.stdout + r.stderr,
+      cmd,
+      args,
+      stepDir: cwd,
+    }
+  }
+  return {
+    name,
+    passed: false,
+    output: r.stdout + r.stderr,
+    cmd,
+    args,
+    stepDir: cwd,
+  }
+}
+
+// Best-effort capture of the worktree state at the moment has-diff failed.
+// Surfaced in the failure output so post-mortems and actionQueue investigators
+// can tell apart "agent really did nothing" from "agent's commit landed
+// after verify ran" (the runClaudeCode timeout-leak class) without having
+// to re-shell into the worktree manually.
+const captureHasDiffDiagnostics = async (
+  cwd: string,
+  branch: string,
+  integrationBranch: string,
+  traceCtx?: TraceCtx,
+): Promise<string> => {
+  const probe = async (
+    label: string,
+    args: readonly string[],
+  ): Promise<string> => {
+    try {
+      const r = await execProbe(resolveGitBin(), [...args], { cwd }, traceCtx)
+      if (r.exitCode !== 0) {
+        return `${label}: <error: ${(r.stderr || 'unknown').trim()}>`
+      }
+      const trimmed = r.stdout.trim()
+      return `${label}: ${trimmed.length > 0 ? trimmed : '(empty)'}`
+    } catch (error: unknown) {
+      const e = error as { stderr?: string; message?: string }
+      return `${label}: <error: ${(e.stderr ?? e.message ?? 'unknown').trim()}>`
+    }
+  }
+  const lines = await Promise.all([
+    probe(`HEAD`, ['rev-parse', 'HEAD']),
+    probe(`${branch}`, ['rev-parse', '--verify', `${branch}^{commit}`]),
+    probe(`${integrationBranch}`, [
+      'rev-parse',
+      '--verify',
+      `${integrationBranch}^{commit}`,
+    ]),
+    probe(`status`, ['status', '--porcelain=v1']),
+    probe(`recent log on ${branch}`, [
+      'log',
+      '--oneline',
+      '-n',
+      '3',
+      branch,
+    ]),
+  ])
+  return lines.join('\n')
+}
+
+export const checkBranchHasDiff = async (
+  cwd: string,
+  branch: string,
+  integrationBranch: string,
+  traceCtx?: TraceCtx,
+): Promise<VerifyStep> => {
+  const verifyCtx: TraceCtx | undefined = traceCtx
+    ? { ...traceCtx, phase: traceCtx.phase ?? 'verify' }
+    : undefined
+  try {
+    const { stdout } = await exec(
+      resolveGitBin(),
+      ['rev-list', '--count', `${integrationBranch}..${branch}`],
+      { cwd },
+      verifyCtx,
+    )
+    const count = Number.parseInt(stdout.trim(), 10)
+    if (!Number.isInteger(count) || count <= 0) {
+      // Zero commits ahead is benign, not a failure. `integration..branch == 0`
+      // means every commit reachable from the branch is already reachable from
+      // integration — i.e. the branch tip is an ancestor of, or equal to,
+      // integration. Two sub-shapes, both fine:
+      //
+      //   - tip != integration → the branch's commit already fast-forwarded
+      //     into integration between this task's setup and this check (the
+      //     late-merge / runClaudeCode timeout-leak class). Work shipped.
+      //   - tip == integration → either the just-merged commit lands the tip
+      //     exactly on integration, or the agent legitimately concluded there
+      //     was nothing to do. This is the main-committer no-op: the dirty
+      //     state it was spawned to clean was already resolved upstream, so it
+      //     leaves the integration branch clean — its success condition. (An
+      //     empty `recover(noop)` commit collapses to this shape once merged.)
+      //
+      // In every case the integration branch already contains everything the
+      // task produced and is clean: there is no un-integrated work to lose and
+      // no dirty tree, so failing the task would recover nothing and only
+      // strand any chain blocked on it (the 2026-05-29 main-committer incident,
+      // where a correct no-op was failed as verify:has-diff/no-commits-ahead).
+      // Pass. The diagnostics still ride along so a post-mortem can tell a
+      // no-op apart from real shipped work without re-shelling into the tree.
+      const branchSha = (
+        await exec(
+          resolveGitBin(),
+          ['rev-parse', '--verify', `${branch}^{commit}`],
+          { cwd },
+          verifyCtx,
+        )
+      ).stdout.trim()
+      const integrationSha = (
+        await exec(
+          resolveGitBin(),
+          ['rev-parse', '--verify', `${integrationBranch}^{commit}`],
+          { cwd },
+          verifyCtx,
+        )
+      ).stdout.trim()
+      const diagnostics = await captureHasDiffDiagnostics(
+        cwd,
+        branch,
+        integrationBranch,
+        verifyCtx,
+      )
+      const summary =
+        branchSha === integrationSha
+          ? `branch ${branch} tip equals ${integrationBranch} — no un-integrated work, tree clean (no-op accepted)`
+          : `branch ${branch} is an ancestor of ${integrationBranch} — work already merged`
+      return {
+        name: 'has-diff',
+        passed: true,
+        output: `${summary}\n${diagnostics}`,
+      }
+    }
+    return { name: 'has-diff', passed: true, output: `${count} commit(s) ahead of ${integrationBranch}` }
+  } catch (error: unknown) {
+    const e = error as { stdout?: string; stderr?: string; message?: string }
+    const msg = e.message ?? ''
+    // runTool surfaces "working directory no longer exists: <path>" when the
+    // spawn's cwd is absent. Propagate that as a distinct, named failure so a
+    // post-mortem can immediately distinguish a deleted worktree from a git
+    // binary that is missing from PATH — both produce the same raw ENOENT.
+    const cwdMissingMatch = /working directory no longer exists: (.+)/.exec(msg)
+    if (cwdMissingMatch) {
+      return {
+        name: 'has-diff',
+        passed: false,
+        output: `has-diff: worktree path ${cwdMissingMatch[1]} no longer exists`,
+      }
+    }
+    return {
+      name: 'has-diff',
+      passed: false,
+      output: `git rev-list failed: ${(e.stderr ?? '') + msg}`,
+    }
+  }
+}
+
+export interface CleanWorktreeArgs {
+  worktreePath: string
+  integrationBranch: string
+  /** Optional trace context piped through to the git invocations. */
+  traceCtx?: TraceCtx
+}
+
+export interface CleanWorktreeResult {
+  cleaned: boolean
+  reason: string
+  output: string
+}
+
+/**
+ * Remove stray untracked files from a task worktree before re-invoking
+ * the coder, BUT only when the branch is still 0 commits ahead of the
+ * integration branch. The 0-commits-ahead gate distinguishes "debris
+ * from a prior failed attempt that exited without committing" (clean
+ * it) from "real work the agent committed on a previous turn" (leave
+ * it alone — those commits ARE the worktree's state).
+ *
+ * Background: when a source task is re-dispatched after a recovery
+ * fix-task unblocks it, the orchestrator reuses the original branch+
+ * worktree (see {@link createWorktree}'s reuse path). The reused
+ * worktree may carry untracked files the previous Coder wrote and never
+ * staged — including misnested paths like
+ * `orchestrator/orchestrator/...` — which the new agent then spends
+ * turns inspecting before getting to the actual work.
+ *
+ * Honours .gitignore (no `-x`), so `node_modules/` (already populated
+ * by the install step) and `.mars/` are preserved either way.
+ */
+export const cleanWorktreeIfNoCommitsAhead = async (
+  args: CleanWorktreeArgs,
+): Promise<CleanWorktreeResult> => {
+  const ctx = args.traceCtx
+  let count: number
+  try {
+    const { stdout } = await exec(
+      resolveGitBin(),
+      ['rev-list', '--count', `${args.integrationBranch}..HEAD`],
+      { cwd: args.worktreePath },
+      ctx,
+    )
+    count = Number.parseInt(stdout.trim(), 10)
+    if (!Number.isInteger(count)) {
+      return {
+        cleaned: false,
+        reason: `rev-list emitted non-integer count: ${stdout.trim()}`,
+        output: '',
+      }
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      cleaned: false,
+      reason: `rev-list ${args.integrationBranch}..HEAD failed: ${message}`,
+      output: '',
+    }
+  }
+
+  if (count > 0) {
+    return {
+      cleaned: false,
+      reason: `branch is ${count} commit(s) ahead of ${args.integrationBranch}; preserving worktree state`,
+      output: '',
+    }
+  }
+
+  try {
+    const { stdout, stderr } = await exec(
+      resolveGitBin(),
+      ['clean', '-fd'],
+      { cwd: args.worktreePath },
+      ctx,
+    )
+    return {
+      cleaned: true,
+      reason: `branch is 0 commits ahead of ${args.integrationBranch}; removed untracked debris`,
+      output: stdout + stderr,
+    }
+  } catch (error: unknown) {
+    const e = error as { stdout?: string; stderr?: string; message?: string }
+    return {
+      cleaned: false,
+      reason: `git clean -fd failed: ${e.message ?? ''}`,
+      output: (e.stdout ?? '') + (e.stderr ?? ''),
+    }
+  }
+}
+
+export const verifyChanges = async (
+  args: VerifyArgs,
+): Promise<{ passed: boolean; steps: VerifyStep[] }> => {
+  const verifyCtx: TraceCtx | undefined = args.traceCtx
+    ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'verify' }
+    : undefined
+  if (args.branch && args.integrationBranch) {
+    const diffStep = await checkBranchHasDiff(
+      args.cwd,
+      args.branch,
+      args.integrationBranch,
+      verifyCtx,
+    )
+    if (!diffStep.passed) {
+      return { passed: false, steps: [diffStep] }
+    }
+  }
+
+  const results: VerifyStep[] = []
+  let stoppedOnRequired = false
+  for (const spec of args.steps) {
+    if (stoppedOnRequired && spec.required) continue
+    // Each step runs in its own scope directory rather than from one
+    // flattened working directory: the root scope ('.' or unset) runs in
+    // the verify root; a narrower scope runs in its subdirectory.
+    const stepCwd =
+      spec.dir && spec.dir !== '.' ? resolve(args.cwd, spec.dir) : args.cwd
+    const result = await runVerifyStep(
+      spec.name,
+      spec.cmd,
+      spec.args,
+      stepCwd,
+      verifyCtx,
+    )
+    results.push(result)
+    if (!result.passed && spec.required) {
+      stoppedOnRequired = true
+    }
+  }
+
+  const requiredFailed = args.steps.some((spec, i) => {
+    const r = results[i]
+    return spec.required && r && !r.passed
+  })
+  return { passed: !requiredFailed && !stoppedOnRequired, steps: results }
+}
+
+const DEFAULT_VERIFY_STEPS: VerifyStepSpec[] = [
+  { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
+  { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+  { name: 'lint', cmd: 'npx', args: ['biome', 'check', '.'], required: true },
+]
+
+interface ManifestSupervisorEntry {
+  name?: string
+  scope?: string
+  verify?: ReadonlyArray<{
+    name: string
+    cmd: string
+    args: readonly string[]
+    required?: boolean
+  }>
+}
+
+interface SupervisorsManifest {
+  supervisors?: ReadonlyArray<ManifestSupervisorEntry>
+}
+
+// Normalise a recipe scope to the canonical form used as the scope key:
+// '.' is the repo-root scope; anything else is slash-separated, no
+// leading './', no trailing '/'. An absent/empty scope is the root.
+const normalizeScope = (scope: string | undefined): string => {
+  if (!scope) return '.'
+  const s = scope
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/\/+$/, '')
+  return s === '' || s === '.' ? '.' : s
+}
+
+// Path-containment test: is `file` (a repo-root-relative path) inside the
+// subtree `scope`? The root scope contains every file.
+const fileInScope = (file: string, scope: string): boolean => {
+  if (scope === '.') return true
+  const f = file.replace(/\\/g, '/').replace(/^\.\//, '')
+  return f === scope || f.startsWith(`${scope}/`)
+}
+
+const rootScopeOnly = (): VerifyScope[] => [
+  { scope: '.', steps: DEFAULT_VERIFY_STEPS.map((s) => ({ ...s, dir: '.' })) },
+]
+
+/**
+ * Load the recipe's verify steps grouped by scope. Unlike the previous
+ * collapse-by-name behaviour, two scopes that declare a step with the
+ * same name are kept as distinct entries — each scope owns its steps and
+ * its directory. Within a single scope a repeated step name keeps the
+ * first occurrence. A missing, unparseable, or verify-less manifest
+ * degrades to a single root scope running the default steps.
+ */
+export const loadVerifyScopes = async (
+  manifestPath: string,
+): Promise<VerifyScope[]> => {
+  let raw: string
+  try {
+    raw = await readFile(manifestPath, 'utf8')
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return rootScopeOnly()
+    }
+    throw error
+  }
+  let parsed: SupervisorsManifest
+  try {
+    parsed = JSON.parse(raw) as SupervisorsManifest
+  } catch {
+    return rootScopeOnly()
+  }
+  const supervisors = parsed.supervisors ?? []
+  const byScope = new Map<string, Map<string, VerifyStepSpec>>()
+  const order: string[] = []
+  for (const sup of supervisors) {
+    const verify = sup.verify
+    if (!verify || verify.length === 0) continue
+    const scope = normalizeScope(sup.scope)
+    let steps = byScope.get(scope)
+    if (!steps) {
+      steps = new Map()
+      byScope.set(scope, steps)
+      order.push(scope)
+    }
+    for (const v of verify) {
+      if (steps.has(v.name)) continue
+      steps.set(v.name, {
+        name: v.name,
+        cmd: v.cmd,
+        args: [...v.args],
+        required: v.required ?? true,
+        dir: scope,
+      })
+    }
+  }
+  if (byScope.size === 0) return rootScopeOnly()
+  return order.map((scope) => ({
+    scope,
+    steps: Array.from(byScope.get(scope)!.values()),
+  }))
+}
+
+/**
+ * Select the verify steps to run for a task from the recipe scopes and
+ * the files the task actually changed. The root scope ('.') is an
+ * always-on floor; every narrower scope whose subtree contains at least
+ * one changed file is layered on top. Root steps come first, then the
+ * matched narrower scopes in declared order. Each returned step carries
+ * the `dir` of its scope so {@link verifyChanges} runs it where it
+ * belongs.
+ */
+export const selectVerifySteps = (
+  scopes: ReadonlyArray<VerifyScope>,
+  changedFiles: ReadonlyArray<string>,
+): VerifyStepSpec[] => {
+  const roots = scopes.filter((s) => s.scope === '.')
+  const rest = scopes.filter((s) => s.scope !== '.')
+  const selected: VerifyStepSpec[] = []
+  for (const sc of [...roots, ...rest]) {
+    const matched =
+      sc.scope === '.' ||
+      changedFiles.some((f) => fileInScope(f, sc.scope))
+    if (!matched) continue
+    for (const step of sc.steps) {
+      selected.push({ ...step, dir: sc.scope })
+    }
+  }
+  return selected
+}
+
+/**
+ * The files a task changed between the integration branch and its task
+ * branch, as repo-root-relative slash-separated paths. Empty on any git
+ * failure so verification still runs (the root floor) rather than
+ * crashing the verify step.
+ */
+export const getChangedFiles = async (
+  cwd: string,
+  integrationBranch: string,
+  branch: string,
+  traceCtx?: TraceCtx,
+): Promise<string[]> => {
+  try {
+    const { stdout } = await exec(
+      resolveGitBin(),
+      ['diff', '--name-only', `${integrationBranch}..${branch}`],
+      { cwd },
+      traceCtx,
+    )
+    return stdout
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0)
+  } catch {
+    return []
+  }
+}
+
+export const DEFAULT_VERIFY_STEPS_FALLBACK: ReadonlyArray<VerifyStepSpec> =
+  DEFAULT_VERIFY_STEPS

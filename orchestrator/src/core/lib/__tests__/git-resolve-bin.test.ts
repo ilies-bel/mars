@@ -12,12 +12,21 @@
  * silently reappears.
  */
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve, dirname, join } from 'node:path'
+import { readFileSync, readdirSync } from 'node:fs'
+import { resolve, dirname, join, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const GIT_TS = resolve(join(__dirname, '..', 'git.ts'))
+// The git library was split from a single `git.ts` into the `git/` directory
+// (internal/worktree/claude/verify/merge/lock). The exec/execProbe shims live
+// in `git/internal.ts` and their callers in the sibling modules — scan the
+// whole concatenated module so the lint covers every call site.
+const GIT_DIR = resolve(join(__dirname, '..', 'git'))
+const GIT_SOURCE = readdirSync(GIT_DIR)
+  .filter((name) => extname(name) === '.ts' && !name.endsWith('.test.ts'))
+  .sort()
+  .map((name) => readFileSync(join(GIT_DIR, name), 'utf-8'))
+  .join('\n')
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -69,9 +78,9 @@ function lineOf(source: string, offset: number): number {
 // Test
 // ---------------------------------------------------------------------------
 
-describe('git.ts exec/execProbe command-position arg — lint', () => {
+describe('git/ exec/execProbe command-position arg — lint', () => {
   it('passes resolveGitBin() (not bare "git") as the command to every exec/execProbe call', () => {
-    const source = readFileSync(GIT_TS, 'utf-8')
+    const source = GIT_SOURCE
 
     // Match standalone exec( and execProbe( — exclude method calls like re.exec(
     const callRe = /(?<![.\w])(exec|execProbe)\s*\(/g
@@ -87,7 +96,7 @@ describe('git.ts exec/execProbe command-position arg — lint', () => {
       // A bare string literal 'git' or "git" is a violation.
       if (firstArg === "'git'" || firstArg === '"git"') {
         const line = lineOf(source, match.index)
-        violations.push(`  git.ts:${line} — ${match[1]}() first arg is bare ${firstArg}`)
+        violations.push(`  git/:${line} — ${match[1]}() first arg is bare ${firstArg}`)
       }
     }
 
@@ -106,12 +115,12 @@ describe('git.ts exec/execProbe command-position arg — lint', () => {
   })
 
   it('finds at least one exec/execProbe call to confirm the scan is working', () => {
-    const source = readFileSync(GIT_TS, 'utf-8')
-    // Sanity: the file must have exec/execProbe calls; if the scan found zero,
-    // the regex is wrong or the file was gutted.
+    const source = GIT_SOURCE
+    // Sanity: the module must have exec/execProbe calls; if the scan found
+    // zero, the regex is wrong or the files were gutted.
     const callRe = /(?<![.\w])(exec|execProbe)\s*\(/g
     let count = 0
     while (callRe.exec(source)) count++
-    expect(count, 'git.ts must contain at least one exec/execProbe call').toBeGreaterThan(0)
+    expect(count, 'git/ must contain at least one exec/execProbe call').toBeGreaterThan(0)
   })
 })

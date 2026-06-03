@@ -19,14 +19,27 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { pathExists } from '../src/core/lib/git'
+import { pathExists } from '../src/core/lib/git/internal'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const gitModulePath = resolve(here, '..', 'src', 'core', 'lib', 'git.ts')
+// The git helper was split from a single `git.ts` into the `git/` directory
+// (internal/worktree/claude/verify/merge/lock). Scan every module in it so
+// the POSIX-shell-out audit can't be evaded by a regression in any one file.
+const gitModuleDir = resolve(here, '..', 'src', 'core', 'lib', 'git')
+
+async function readGitModuleSource(): Promise<string> {
+  const names = (await readdir(gitModuleDir))
+    .filter((name) => extname(name) === '.ts' && !name.endsWith('.test.ts'))
+    .sort()
+  const parts = await Promise.all(
+    names.map((name) => readFile(join(gitModuleDir, name), 'utf8')),
+  )
+  return parts.join('\n')
+}
 
 describe('git helper — cross-OS path existence', () => {
   let scratch: string
@@ -84,7 +97,7 @@ describe('git helper — cross-OS path existence', () => {
 
 describe('git helper — no POSIX-only shell-outs', () => {
   it('does not invoke /bin/test, /usr/bin/test, sh -c, or bash -c anywhere in the module', async () => {
-    const source = await readFile(gitModulePath, 'utf8')
+    const source = await readGitModuleSource()
 
     // Strip line and block comments so prose like the doc comment
     // explaining why `test -e` was retired does not produce a false

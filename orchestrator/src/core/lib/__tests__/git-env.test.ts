@@ -20,17 +20,26 @@ const libDir = resolve(__dirname, '..')
 // Source-file collection
 // ---------------------------------------------------------------------------
 
-/** All non-test TypeScript source files directly inside lib/ (not recursive). */
+/**
+ * Non-test TypeScript source files directly inside lib/, PLUS the modules of
+ * the `git/` subdirectory. The git library was split out of a single `git.ts`
+ * into `git/` (internal/worktree/claude/verify/merge/lock) — the lone spawn()
+ * now lives in `git/claude.ts`, so the subdir must be scanned to keep the
+ * PATH-preservation lint covering the git library.
+ */
 function collectSourceFiles(): string[] {
-  return readdirSync(libDir)
-    .filter(
-      (name) =>
-        name !== '__tests__' &&
-        extname(name) === '.ts' &&
-        !name.endsWith('.test.ts'),
-    )
-    .map((name) => join(libDir, name))
-    .filter((p) => statSync(p).isFile())
+  const tsFilesIn = (dir: string): string[] =>
+    readdirSync(dir)
+      .filter(
+        (name) =>
+          name !== '__tests__' &&
+          extname(name) === '.ts' &&
+          !name.endsWith('.test.ts'),
+      )
+      .map((name) => join(dir, name))
+      .filter((p) => statSync(p).isFile())
+
+  return [...tsFilesIn(libDir), ...tsFilesIn(join(libDir, 'git'))]
 }
 
 // ---------------------------------------------------------------------------
@@ -168,9 +177,12 @@ describe('subprocess PATH preservation — lint', () => {
   it('enumerates every spawn/exec/execFile call site and fails if any passes env without PATH', () => {
     const sourceFiles = collectSourceFiles()
 
-    // Sanity guard: the scan must cover at least the main git library file.
+    // Sanity guard: the scan must cover the git library's subprocess module,
+    // where the lone spawn() lives after the git.ts → git/ split.
     const fileNames = sourceFiles.map((p) => p.split('/').at(-1))
-    expect(fileNames, 'git.ts must be in the scanned source set').toContain('git.ts')
+    expect(fileNames, 'git/claude.ts must be in the scanned source set').toContain(
+      'claude.ts',
+    )
 
     const allSites: CallSite[] = []
     for (const filePath of sourceFiles) {
@@ -178,7 +190,7 @@ describe('subprocess PATH preservation — lint', () => {
       allSites.push(...scanCallSites(filePath, source))
     }
 
-    // Must find at least the known spawn() call in git.ts.
+    // Must find at least the known spawn() call in git/claude.ts.
     const spawnSites = allSites.filter((s) => s.functionName === 'spawn')
     expect(
       spawnSites.length,

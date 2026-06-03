@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { buildWorkerEnv, claudeStreamArgs } from '../git'
+import { buildWorkerEnv, claudeStreamArgs } from '../git/claude'
 
 describe('claudeStreamArgs isolation flags', () => {
   it('includes --strict-mcp-config', () => {
