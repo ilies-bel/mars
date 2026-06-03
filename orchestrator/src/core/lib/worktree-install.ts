@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises'
+import { stat, rm } from 'node:fs/promises'
 import { resolve, relative } from 'node:path'
 import { type RunSubprocessResult } from './git'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
@@ -203,11 +203,15 @@ export const installWorktreeDeps = async ({
 
       // Retry once on transient ENOTEMPTY filesystem race (macOS npm ci cleanup race).
       // This occurs when a prior process holds file descriptors open in node_modules
-      // while npm tries to rmdir the stale tree before a fresh install.
+      // while npm tries to rmdir the stale tree before a fresh install. The failed
+      // cleanup leaves a partially corrupt node_modules behind, so the retry must
+      // clear it first — otherwise the second install hits ENOENT chmod errors on
+      // the half-removed tree (e.g. node_modules/esbuild/bin/esbuild).
       if (r.exitCode !== 0 && /ENOTEMPTY/.test(r.stderr)) {
         log?.(
           `[setup:install] ${site.manager} (${rel}) ENOTEMPTY race detected — retrying once`,
         )
+        await rm(resolve(site.dir, 'node_modules'), { recursive: true, force: true })
         r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
       }
 
