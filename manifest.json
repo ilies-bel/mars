@@ -14,14 +14,7 @@
     ".claude/skills/mars:reflect/SKILL.md",
     ".claude/skills/mars:task/SKILL.md",
     ".claude/skills/mars:to-prd/SKILL.md",
-    ".claude/skills/mars:unblock/SKILL.md",
-    ".agents/skills/mastra/SKILL.md",
-    ".agents/skills/mastra/references/common-errors.md",
-    ".agents/skills/mastra/references/create-mastra.md",
-    ".agents/skills/mastra/references/embedded-docs.md",
-    ".agents/skills/mastra/references/migration-guide.md",
-    ".agents/skills/mastra/references/remote-docs.md",
-    ".agents/skills/mastra/scripts/provider-registry.mjs"
+    ".claude/skills/mars:unblock/SKILL.md"
   ],
   "hybrid": [
     "CLAUDE.md",
