@@ -19,7 +19,6 @@ import { Footer } from '@/widgets/Footer'
 import { TabStrip } from '@/widgets/TabStrip'
 import { TopologyView } from '@/widgets/TopologyView'
 import { KpiVector } from '@/widgets/KpiVector'
-import { TopStripe } from '@/widgets/TopStripe'
 
 export const ProgressPage = () => {
   // Initialise every filter dimension from the URL on first render.
@@ -109,13 +108,12 @@ export const ProgressPage = () => {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg">
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopStripe
-          inProgress={inProgressCount}
-          todo={blockedCount}
-          done={failedCount}
+        <KpiVector
           connected={connected}
+          inProgress={inProgressCount}
+          blocked={blockedCount}
+          failed={failedCount}
         />
-        <KpiVector />
         <TabStrip active={activeTab} onSelect={setActiveTab} />
         <ClusterToggleBar active={activeToggles} onToggle={handleToggle} />
         {/* Text search — always visible */}
