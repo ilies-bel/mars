@@ -23,6 +23,7 @@ import {
   planClaudeConflicts,
   scaffoldClaudeConfig,
 } from '../init/scaffold'
+import { enrichRootClaudeMd, type ProjectLayoutEntry } from '../init/project-layout'
 import { writeSlimInit, writePerFolderClaudeMds, purgeStaleSupervisorMds, type VerifyStepEntry } from '../init/writer'
 import { writeDetectionReport } from '../init/write-detection-report'
 import { readInitManifest, writeInitManifest } from '../init/init-manifest'
@@ -245,8 +246,15 @@ const runWriteSlimInit = async (rendered: RenderedSupervisor[]): Promise<string[
  * `--force` or there is nothing to overwrite — we therefore call
  * `scaffoldClaudeConfig` with `force: true` and treat any residual conflict
  * (e.g. a file that appeared between pre-flight and now) as a hard error.
+ *
+ * After the base CLAUDE.md is written, a project-layout block is inserted
+ * (or replaced on re-run) between stable HTML marker comments so the file
+ * lists the detected stacks, their folders, supervisors, and verify commands.
  */
-const runScaffoldClaude = async (written: string[]): Promise<string[]> => {
+const runScaffoldClaude = async (
+  rendered: RenderedSupervisor[],
+  written: string[],
+): Promise<string[]> => {
   const ctx = resolveContext()
   const result = scaffoldClaudeConfig({ repoRoot: ctx.repoRoot, force: true })
   if (result.status === 'conflict') {
@@ -254,6 +262,19 @@ const runScaffoldClaude = async (written: string[]): Promise<string[]> => {
       `scaffold-claude: unexpected conflict after pre-flight: ${result.conflicts.join(', ')}`,
     )
   }
+
+  // Enrich the root CLAUDE.md with a detected-stacks summary block.
+  // This is additive and idempotent: re-running replaces only the marker block.
+  const layoutEntries: ProjectLayoutEntry[] = rendered.map((r) => ({
+    folder: r.spec.scope,
+    techs: r.spec.techs,
+    supervisorName: r.spec.name,
+    persona: r.spec.persona,
+    verifyCommands: (r.verify ?? []).map((v) => `${v.cmd} ${v.args.join(' ')}`),
+  }))
+  const claudeMdPath = resolve(ctx.repoRoot, 'CLAUDE.md')
+  enrichRootClaudeMd(claudeMdPath, layoutEntries)
+
   return [...written, ...result.written]
 }
 
@@ -408,7 +429,7 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
       runRenderSupervisors(stack),
     )
     const w1 = await ctx.step('write-slim-init', () => runWriteSlimInit(rendered))
-    const w2 = await ctx.step('scaffold-claude', () => runScaffoldClaude(w1))
+    const w2 = await ctx.step('scaffold-claude', () => runScaffoldClaude(rendered, w1))
     const w3 = await ctx.step('init-databases', () => runInitDatabases(w2))
     const w4 = await ctx.step('seed-failure-reasons', () =>
       runSeedFailureReasons(w3),
