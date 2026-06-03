@@ -3228,6 +3228,64 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     })
     expect((coderRowAfter.rows[0] as unknown as { status: string }).status).toBe('queued')
   })
+
+  it('completing an hitl slice closes the operator action-queue row (open→resolved)', async () => {
+    // Regression: a completed HITL slice must leave no open 'hitl-slice-needs-operator'
+    // rows.  The operator row starts 'open' when the slice is created; the gate in
+    // tryCompleteHitlSlice requires the operator to resolve/dismiss it first, and
+    // the supersedeActionQueueItemsBySignature call at the end of that function
+    // closes any residual open row as belt-and-suspenders cleanup.
+    vi.doMock('../../core/lib/git', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git')>(
+        '../../core/lib/git',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(hitlSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const ideaId = await seedPrdReadyIdea()
+
+    const sliceModule = await import('../slice-workflow')
+    const result = await sliceModule.runSlice(ideaId)
+    const hitlSliceTaskId = result.taskIds[0]
+
+    const actionQueue = await import('../../core/lib/action-queue')
+
+    // After slicing, the operator row must be open.
+    const itemsBefore = await actionQueue.listActionQueueItems('all', {
+      kind: 'hitl-slice-needs-operator',
+    })
+    expect(itemsBefore).toHaveLength(1)
+    expect(itemsBefore[0].state).toBe('open')
+    const actionQueueItemId = itemsBefore[0].id
+
+    // Drive to completion: mark sub-task done and let the operator resolve
+    // the action-queue item (in whichever order — both conditions required).
+    const subTaskId = await findSubTaskId(hitlSliceTaskId)
+    await markTaskDone(subTaskId)
+    await actionQueue.setActionQueueState(actionQueueItemId, 'resolved')
+
+    const completed = await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)
+    expect(completed).toBe(true)
+
+    // After completion the operator row must be resolved — no open rows remain.
+    const itemsAfter = await actionQueue.listActionQueueItems('all', {
+      kind: 'hitl-slice-needs-operator',
+    })
+    const openItems = itemsAfter.filter((item) => item.state === 'open')
+    expect(openItems).toHaveLength(0)
+    // The original row is in the resolved state.
+    const originalItem = itemsAfter.find((item) => item.id === actionQueueItemId)
+    expect(originalItem?.state).toBe('resolved')
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -11,7 +11,11 @@ import { buildEventInsert } from '../core/lib/outbox'
 import { Workers } from '../core/workers'
 import { parseClaudeJsonResult } from '../core/lib/claude-json'
 import { getRepoRoot, resolveContext } from '../core/context'
-import { listActionQueueItems, raiseActionQueueItem } from '../core/lib/action-queue'
+import {
+  listActionQueueItems,
+  raiseActionQueueItem,
+  supersedeActionQueueItemsBySignature,
+} from '../core/lib/action-queue'
 import { openTraceEventStore } from '../core/lib/trace-events-store'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 
@@ -1372,10 +1376,13 @@ export const tryCompleteHitlSlice = async (
   if (actionQueueItem.state !== 'resolved' && actionQueueItem.state !== 'dismissed') return false
 
   // 4. Both conditions met — flip the HITL slice from 'blocked' to 'done'.
-  // Status write + lifecycle emit share one atomic batch (ADR-0030). The
-  // task.terminal{done} lets the Invalidator close any Action-queue row tied
-  // to this HITL slice; before this emit, a completed HITL slice stranded
-  // its own operator row (the measured hitl-slice staleness).
+  // Status write + lifecycle emit share one atomic batch (ADR-0030).
+  // NOTE: task.terminal{done} does NOT close this operator row — the
+  // alert-dismisser only handles origin-keyed rows, and this item is
+  // signature-only (no originTaskId). The gate in step 3 ensures the row
+  // is already resolved/dismissed, so the explicit close below is
+  // belt-and-suspenders cleanup (guards against any re-raise between the
+  // operator action and this point).
   const now = new Date().toISOString()
   await taskStore.batch(
     [
@@ -1397,6 +1404,16 @@ export const tryCompleteHitlSlice = async (
     ],
     'write',
   )
+  // Close any open operator rows for this signature. The gate above already
+  // ensures the operator row is resolved or dismissed, so this is ordinarily
+  // a no-op — but it closes any residual open row that was re-raised between
+  // the operator action and this completion point.
+  await supersedeActionQueueItemsBySignature(
+    'hitl-slice-needs-operator',
+    signature,
+    'origin-done',
+    'hitl-slice-completion',
+  ).catch(() => {})
   return true
 }
 
