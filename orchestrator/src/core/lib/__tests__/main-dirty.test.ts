@@ -440,23 +440,3 @@ describe('provisionCommitterWorktree carries dirty state into the new tree', () 
   })
 })
 
-describe('failure-reason catalog routes verify:main-dirty to main-commiter', () => {
-  let stateDir: string
-
-  beforeEach(() => {
-    stateDir = mkdtempSync(resolve(tmpdir(), 'mars-fr-cat-'))
-    mkdirSync(stateDir, { recursive: true })
-  })
-
-  afterEach(() => {
-    rmSync(stateDir, { recursive: true, force: true })
-  })
-
-  it('catalog get(verify:main-dirty).recipe === "main-commiter"', async () => {
-    const { loadFailureReasonCatalog } = await import('../failure-reasons')
-    const cat = await loadFailureReasonCatalog(stateDir)
-    const entry = cat.get('verify:main-dirty')
-    expect(entry.code).toBe('verify:main-dirty')
-    expect(entry.recipe).toBe('main-commiter')
-  })
-})

@@ -13,16 +13,11 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
-import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
-let cachedCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
 let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
 beforeAll(async () => {
-  cachedCatalog = await loadFailureReasonCatalog(
-    mkdtempSync(resolve(tmpdir(), 'mars-http-inv-cat-')),
-  )
   cachedRecipeCatalog = await loadRecipeCatalog(
     mkdtempSync(resolve(tmpdir(), 'mars-http-inv-rec-')),
   )
@@ -46,7 +41,6 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
-  failureReasonCatalog: cachedCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>,
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),
@@ -162,28 +156,17 @@ describe('POST /actions/investigate/:id', () => {
     }
   })
 
-  // ── The stale-worktree error kind advertises the investigate action ────────
+  // ── The stale-worktree derived-row menu advertises the investigate action ──
+  // Stale-worktree is not a `<failingStep>/<error-class>` failure, so its menu
+  // lives in derived-row-actions.ts (ADR-0042), not in the signature-keyed
+  // Failure-kind registry served over HTTP.
 
-  it('error-kinds registry includes investigate as a stale-worktree recovery action', async () => {
-    const { port, close } = await httpServer.startHttpServer(makeDeps())
-
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/error-kinds`)
-      expect(res.status).toBe(200)
-      const body = (await res.json()) as {
-        ok: boolean
-        errorKinds: Array<{ kind: string; recoveryActions: Array<{ op: string; id: string }> }>
-      }
-      const stale = body.errorKinds.find((k) => k.kind === 'stale-worktree')
-      expect(stale).toBeDefined()
-      const investigateAction = stale?.recoveryActions.find(
-        (a) => a.op === 'investigate',
-      )
-      expect(investigateAction).toBeDefined()
-      expect(investigateAction?.id).toBe('investigate')
-    } finally {
-      await close()
-    }
+  it('derived-row menu includes investigate as a stale-worktree recovery action', async () => {
+    const { derivedRowActions } = await import('../../lib/derived-row-actions')
+    const actions = derivedRowActions('stale-worktree')
+    const investigateAction = actions.find((a) => a.op === 'investigate')
+    expect(investigateAction).toBeDefined()
+    expect(investigateAction?.id).toBe('investigate')
   })
 })
 
@@ -273,24 +256,26 @@ describe('POST /actions/diagnose-failure/:id', () => {
     }
   })
 
-  it('error-kinds registry includes diagnose-failure as a failed-task recovery action', async () => {
+  it('failure-kinds registry includes diagnose-failure on a failed-task signature', async () => {
     const { port, close } = await httpServer.startHttpServer(makeDeps())
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/error-kinds`)
+      const res = await fetch(`http://127.0.0.1:${port}/failure-kinds`)
       expect(res.status).toBe(200)
       const body = (await res.json()) as {
         ok: boolean
-        errorKinds: Array<{
-          kind: string
-          recoveryActions: Array<{ op: string; id: string }>
+        failureKinds: Array<{
+          signature: string
+          actions: Array<{ op: string; id: string }>
         }>
       }
-      const failed = body.errorKinds.find((k) => k.kind === 'failed-task')
-      expect(failed).toBeDefined()
-      const diagnoseAction = failed?.recoveryActions.find(
-        (a) => a.op === 'diagnose-failure',
+      // Every failed-task Failure kind offers Investigate (diagnose-failure),
+      // the error-kind `failed-task` menu folded into the FailureKind record.
+      const fk = body.failureKinds.find(
+        (k) => k.signature === 'setup:install/install-frozen-lockfile',
       )
+      expect(fk).toBeDefined()
+      const diagnoseAction = fk?.actions.find((a) => a.op === 'diagnose-failure')
       expect(diagnoseAction).toBeDefined()
       expect(diagnoseAction?.id).toBe('diagnose-failure')
     } finally {

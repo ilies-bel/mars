@@ -4,7 +4,6 @@ import {
   buildVerifyReproHint,
   type RanVerifyStep,
 } from './lib/derive-repro-command'
-import { failureReasonStringToCode } from './lib/failure-reasons'
 import {
   getRecipe,
   hasRecipe,
@@ -641,7 +640,8 @@ export const handleTaskFailureWithFixTask = async (
       status: 'failed',
       error: recoveryFailureReason,
       failureReason: recoveryFailureReason,
-      failureReasonCode: failureReasonStringToCode(failureSignature),
+      failureSignature,
+      failureReasonCode: failureSignature,
     }, s)
 
     const originId = task.originId
@@ -746,9 +746,8 @@ export const handleTaskFailureWithFixTask = async (
         status: 'failed',
         error: noRecipeReason,
         failureReason: noRecipeReason,
-        failureReasonCode: failureReasonStringToCode(
-          `${input.failingStep}:${failureSignature}`,
-        ),
+        failureSignature,
+        failureReasonCode: failureSignature,
       },
       s,
     )

@@ -1,130 +1,15 @@
 /**
- * Pure helpers for the actionQueue detail panel.
+ * Pure helpers for the actionQueue detail panel: trace-event payload summary
+ * and severity styling, kept out of the React component so they can be
+ * unit-tested without a render.
  *
- * Keeps the catalog lookup, action-op binding table, trace-event payload
- * summary, and origin-node styling decisions out of the React component so
- * they can be unit-tested without a render.
+ * The former failure-reason catalog helpers (lookup, action-op binding,
+ * CLI-hint rendering) were removed with the code-keyed catalog (ADR-0042):
+ * failed-task rows now render their reason and recovery menu directly from the
+ * row's `body` and `actions` fields, derived daemon-side from the single
+ * signature-keyed Failure kind record.
  */
-import type {
-  ActionDescriptor,
-  FailureActionCatalog,
-  FailureReasonCatalogEntry,
-  TraceEvent,
-} from './schemas'
-
-/**
- * The fallback code emitted by the orchestrator when no failure code is
- * known. Mirrors `UNKNOWN_FAILURE_CODE` on the orchestrator side; declared
- * inline so the UI stays a standalone package.
- */
-export const UNKNOWN_FAILURE_CODE = 'unknown'
-
-/**
- * Resolve a code to its catalog entry. Falls back to the `unknown` entry
- * when the code is absent or not present in the catalog. Returns null when
- * the catalog itself has no `unknown` entry (defensive: the orchestrator's
- * built-in seed always carries one).
- */
-export const resolveFailureReason = (
-  code: string | null | undefined,
-  catalog: readonly FailureReasonCatalogEntry[],
-): FailureReasonCatalogEntry | null => {
-  const fallback =
-    catalog.find((e) => e.code === UNKNOWN_FAILURE_CODE) ?? null
-  if (!code) return fallback
-  return catalog.find((e) => e.code === code) ?? fallback
-}
-
-/**
- * Map a catalog action id to the existing UI action op (the verb the daemon's
- * `/actions/:op/:id` route handles). Returns null when the catalog action has
- * no UI binding — the renderer then falls back to a disabled button labelled
- * with the action's `cliHint`.
- */
-export const CATALOG_ACTION_OP_BINDING: Record<string, string> = {
-  restart: 'restart',
-  purge: 'purge',
-  dismiss: 'dismiss',
-  investigate: 'investigate',
-  'diagnose-failure': 'diagnose-failure',
-  unblock: 'unblock',
-  'prune-worktree': 'prune-worktree',
-  'restart-daemon': 'restart-daemon',
-}
-
-export const opForCatalogAction = (
-  action: FailureActionCatalog,
-): string | null => {
-  return CATALOG_ACTION_OP_BINDING[action.id] ?? null
-}
-
-/**
- * Substitute `<id>` placeholders in an action's cliHint with the task id.
- * Mirrors `substituteTaskId` on the orchestrator side; inlined here so the
- * disabled-button label can show the operator-ready CLI.
- */
-export const substituteTaskId = (hint: string, taskId: string): string =>
-  hint.replace(/<id>/g, taskId)
-
-/**
- * Render a catalog action as the ActionDescriptor shape the rest of the actionQueue
- * UI already speaks. Bound actions keep their op + label as-is; unbound
- * actions are flagged via `op: ''` (the renderer disables the button and
- * shows the CLI hint instead).
- */
-export interface CatalogActionDescriptor {
-  /** The catalog action id, used as the React key. */
-  id: string
-  /** The button label. Unbound actions wrap the label in `(CLI only: ...)`. */
-  label: string
-  /**
-   * The op the renderer hands to `invokeAction`. Empty string for unbound
-   * actions — the button is disabled and never fires.
-   */
-  op: string
-  /**
-   * Whether the button should be disabled. Always true for unbound actions.
-   */
-  disabled: boolean
-  /**
-   * The raw catalog entry, preserved so callers can read `cliHint`/`label`
-   * if they need the underlying text.
-   */
-  raw: FailureActionCatalog
-}
-
-export const catalogActionsForDetail = (
-  actions: readonly FailureActionCatalog[],
-  taskId: string,
-): CatalogActionDescriptor[] =>
-  actions.map((a) => {
-    const op = opForCatalogAction(a)
-    if (op !== null) {
-      return { id: a.id, label: a.label, op, disabled: false, raw: a }
-    }
-    const cli = a.cliHint ? substituteTaskId(a.cliHint, taskId) : 'no CLI hint'
-    return {
-      id: a.id,
-      label: `${a.label} (CLI only: ${cli})`,
-      op: '',
-      disabled: true,
-      raw: a,
-    }
-  })
-
-/**
- * Wrap a catalog descriptor as an ActionDescriptor (the existing UI shape).
- * Useful when the renderer wants to fall through to the same action machinery
- * as the existing ActionBar (e.g. `needsConfirm` semantics).
- */
-export const toActionDescriptor = (
-  c: CatalogActionDescriptor,
-): ActionDescriptor => ({
-  id: c.id,
-  label: c.label,
-  op: c.op,
-  needsConfirm: c.id === 'purge',
-})
+import type { TraceEvent } from './schemas'
 
 /**
  * Build a one-line summary of a trace event payload. Defers to the kind so

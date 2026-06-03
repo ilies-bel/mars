@@ -72,7 +72,7 @@ import {
   sweepStaleFailedMainCommiterActionQueue,
 } from './main-dirty-action-queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
-import { failureReasonStringToCode } from '../lib/failure-reasons'
+import { computeFailureSignature } from '../lib/failure-signature'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore } from '../lib/trace-events-store'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
 import { loadDaemonConfig } from './config'
@@ -521,11 +521,13 @@ export const startDaemon = async (
       const message = err instanceof Error ? err.message : String(err)
       log(`[triage] ${taskId} failed: ${message}`)
       try {
+        const triageSignature = computeFailureSignature('triage:crashed', message)
         await updateTask(taskId, {
           status: 'failed',
           error: message,
           failureReason: message,
-          failureReasonCode: failureReasonStringToCode(message),
+          failureSignature: triageSignature,
+          failureReasonCode: triageSignature,
         })
       } catch {
         // best-effort
@@ -739,11 +741,13 @@ export const startDaemon = async (
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
         try {
+          const implementSignature = computeFailureSignature('implement:crashed', message)
           await updateTask(task.id, {
             status: 'failed',
             error: message,
             failureReason: message,
-            failureReasonCode: failureReasonStringToCode(message),
+            failureSignature: implementSignature,
+            failureReasonCode: implementSignature,
           })
         } catch {
           // best-effort
@@ -2016,19 +2020,12 @@ export const startDaemon = async (
   // tooling resolve an error-kind action's `op` to a route here; the daemon —
   // the single writer — performs the state transition. Verbs mirror the CLI:
   // restart/unblock/purge and a worktree prune, plus a process-level
-  // daemon restart. GET /error-kinds serves the action-menu registry.
+  // daemon restart. GET /failure-kinds serves the signature-keyed Failure-kind
+  // registry (ADR-0042).
   const { startHttpServer } = await import('./http-server')
   const { coreRestartTask: coreRestart } = await import('./restart-task')
   const { createQueueWorkflowStore: makeWorkflowStore } = await import('../../workflows/queue-workflow-store')
-  // Load the failure-reason catalog once at boot — built-in seed merged
-  // with `.mars/failure-reasons/*.yaml` overrides. Consumers re-`mars
-  // daemon reload` (or restart) to pick up file edits; no hot-reload.
-  const { loadFailureReasonCatalog } = await import('../lib/failure-reasons')
-  const failureReasonCatalog = await loadFailureReasonCatalog(
-    resolveContext().stateDir,
-    { onWarn: (msg) => log(msg) },
-  )
-  // Same lifecycle as the failure-reason catalog: built-in seed under
+  // Same lifecycle as the Failure-kind registry: built-in seed under
   // `src/core/recipes/built-in/*.md` merged with `.mars/recipes/*.md`
   // overrides, loaded once. No recipe is dispatched in this slice — the
   // catalog is exposed so the actionQueue UI can name which recipe a recovery
@@ -2364,7 +2361,6 @@ export const startDaemon = async (
       return restarted
     },
     isAcceptingWork: () => acceptingWork,
-    failureReasonCatalog,
     recipeCatalog,
     traceStore,
     viewTasks: () =>
@@ -2464,7 +2460,6 @@ export const startDaemon = async (
       const { listActionQueueItems } = await import('../lib/action-queue')
       const { listDismissals } = await import('../lib/action-queue-dismissals')
       const { listTasks: qListTasks, initQueue, getClient: getQueueClient } = await import('../queue')
-      const { listErrorKinds: listErrKinds } = await import('../lib/error-kinds')
       const { getRepoRoot } = await import('../context')
 
       await initQueue()
@@ -2540,15 +2535,9 @@ export const startDaemon = async (
         },
       }
 
-      const errorKinds = listErrKinds()
-      const errorKindRegistry = new Map(
-        errorKinds.map((ek) => [ek.kind, ek]),
-      )
-
       return buildActionQueueView({
         stateStore,
         taskStore,
-        errorKindRegistry,
         repoRoot: getRepoRoot(),
         filter,
       })
@@ -2688,7 +2677,6 @@ export const startDaemon = async (
       await ensureActionQueueRepopulator(getClient())
       const { processed } = await drainActionQueueRepopulations(
         getClient(),
-        failureReasonCatalog,
         log,
       )
       if (processed > 0) {
@@ -2889,7 +2877,7 @@ export const startDaemon = async (
   const actionQueueRepopulatorDrain = setInterval(() => {
     void (async () => {
       try {
-        const { processed } = await drainActionQueueRepopulations(getClient(), failureReasonCatalog, log)
+        const { processed } = await drainActionQueueRepopulations(getClient(), log)
         if (processed > 0) viewStreamHub.broadcast('action-queue')
       } catch (err) {
         log(`[action-queue-repopulator] drain errored: ${(err as Error).message}`)

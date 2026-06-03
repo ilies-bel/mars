@@ -13,7 +13,6 @@ import { ActionQueuePage as _Page, ActionQueueRow } from './TodoPage'
 import type {
   ActionQueueItem,
   EventsResponse,
-  FailureReasonCatalogEntry,
   OriginsResponse,
 } from '@/shared/schemas'
 
@@ -25,27 +24,6 @@ void _Page
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-const CATALOG: FailureReasonCatalogEntry[] = [
-  {
-    code: 'unknown',
-    userMessage: 'Inspect the transcript to triage.',
-    recipe: null,
-    availableActions: [
-      { id: 'investigate', label: 'Investigate', cliHint: null },
-      { id: 'restart', label: 'Restart', cliHint: 'mars restart <id>' },
-    ],
-  },
-  {
-    code: 'verify:typecheck',
-    userMessage: 'TypeScript typecheck failed in the verify step.',
-    recipe: null,
-    availableActions: [
-      { id: 'restart', label: 'Restart', cliHint: 'mars restart <id>' },
-      { id: 'purge', label: 'Purge', cliHint: 'mars purge <id>' },
-    ],
-  },
-]
 
 const EMPTY_EVENTS: EventsResponse = { events: [], nextCursor: null }
 
@@ -115,7 +93,6 @@ const makeItem = (overrides: Record<string, unknown>): ActionQueueItem =>
  * renderToStaticMarkup.
  */
 const makeClient = (opts: {
-  catalog?: FailureReasonCatalogEntry[]
   events?: EventsResponse
   origins?: OriginsResponse
   taskId: string
@@ -125,7 +102,6 @@ const makeClient = (opts: {
   })
   // The null slot is the projectId from FocusedProjectContext, which defaults
   // to null when rendered outside FocusedProjectProvider (as in these tests).
-  qc.setQueryData(['failure-reasons', null], opts.catalog ?? CATALOG)
   qc.setQueryData(['events', null, opts.taskId], opts.events ?? EMPTY_EVENTS)
   qc.setQueryData(
     ['origins', null, opts.taskId],
@@ -173,24 +149,25 @@ describe('TodoPage exports', () => {
 })
 
 // ---------------------------------------------------------------------------
-// AC1: A failed-task row with a known code renders the catalog's userMessage.
+// AC1: A failed-task row renders its reason from the row body (ADR-0042),
+// which the daemon derived from the signature-keyed Failure kind record.
 // ---------------------------------------------------------------------------
 
 describe('actionQueue detail – Reason section', () => {
-  it('renders the catalog userMessage for a known code', () => {
+  it('renders the row body as the reason for a failed-task row', () => {
     const qc = makeClient({ taskId: 't-1' })
     const html = renderDetail(BASE_ITEM, qc)
-    expect(html).toContain('TypeScript typecheck failed in the verify step.')
+    expect(html).toContain('verbatim body text')
     expect(html).toContain('>Reason<')
   })
 
-  it('falls back to the unknown entry for an unrecognised code', () => {
+  it('renders a different body verbatim for a different row', () => {
     const qc = makeClient({ taskId: 't-1' })
     const html = renderDetail(
-      makeItem({ failureReasonCode: 'verify:something-new' }),
+      makeItem({ body: 'The changes did not pass type-checking.' }),
       qc,
     )
-    expect(html).toContain('Inspect the transcript to triage.')
+    expect(html).toContain('The changes did not pass type-checking.')
   })
 
   it('does NOT render the Reason section for a stale-worktree row', () => {
@@ -219,17 +196,34 @@ describe('actionQueue detail – Reason section', () => {
 })
 
 // ---------------------------------------------------------------------------
-// AC2: Available actions render as buttons from the catalog.
+// AC2: Recovery actions render as buttons from the row's own `actions` (the
+// Failure kind menu), via the shared ActionBar.
 // ---------------------------------------------------------------------------
 
-describe('actionQueue detail – Available actions', () => {
-  it('renders a Restart action button for a verify:typecheck row', () => {
+describe('actionQueue detail – Recovery actions', () => {
+  it('renders a Restart action button from the row actions', () => {
     const qc = makeClient({ taskId: 't-1' })
     const html = renderDetail(BASE_ITEM, qc)
-    expect(html).toContain('Available actions')
-    // Catalog action labels: Restart and Purge for verify:typecheck.
+    expect(html).toContain('Recovery')
+    // BASE_ITEM carries a single restart action on the row.
     expect(html).toContain('>Restart<')
-    expect(html).toContain('>Purge<')
+  })
+
+  it('renders every action the row carries', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(
+      makeItem({
+        actions: [
+          { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },
+          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
+          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+        ],
+      }),
+      qc,
+    )
+    expect(html).toContain('>Investigate<')
+    expect(html).toContain('>Restart from scratch<')
+    expect(html).toContain('>Drop permanently<')
   })
 })
 
@@ -363,31 +357,6 @@ describe('ActionQueuePage – responsive layout', () => {
 // to trigger the `isError || !data` branch in the relevant component.
 // ---------------------------------------------------------------------------
 
-describe('actionQueue detail – failure-reason catalog fallback (prod)', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs()
-  })
-
-  it('shows warm headline and omits "Failed to load" in prod mode', () => {
-    vi.stubEnv('DEV', false)
-    const qc = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
-    })
-    // null triggers the `!data` branch without a real fetch error
-    qc.setQueryData(['failure-reasons', null], null)
-    qc.setQueryData(['events', null, 't-1'], EMPTY_EVENTS)
-    qc.setQueryData(['origins', null, 't-1'], SINGLE_NODE_ORIGINS('t-1'))
-    qc.setQueryData(['action-queue', null], [BASE_ITEM])
-    const html = renderToStaticMarkup(
-      <QueryClientProvider client={qc}>
-        <_Page />
-      </QueryClientProvider>,
-    )
-    expect(html).toContain("Couldn&#x27;t load the failure-reason catalog.")
-    expect(html).not.toContain('Failed to load')
-  })
-})
-
 describe('actionQueue detail – trace events fallback (prod)', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
@@ -398,7 +367,6 @@ describe('actionQueue detail – trace events fallback (prod)', () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity } },
     })
-    qc.setQueryData(['failure-reasons', null], CATALOG)
     // null triggers the `!data` branch for the events query
     qc.setQueryData(['events', null, 't-1'], null)
     qc.setQueryData(['origins', null, 't-1'], SINGLE_NODE_ORIGINS('t-1'))
@@ -423,7 +391,6 @@ describe('actionQueue detail – origin tasks fallback (prod)', () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity } },
     })
-    qc.setQueryData(['failure-reasons', null], CATALOG)
     qc.setQueryData(['events', null, 't-1'], EMPTY_EVENTS)
     // null triggers the `!data` branch for the origins query
     qc.setQueryData(['origins', null, 't-1'], null)

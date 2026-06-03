@@ -11,7 +11,6 @@ import {
   ApiError,
   fetchActionQueue,
   fetchEvents,
-  fetchFailureReasons,
   fetchOrigins,
   fetchProgress,
   fetchProjects,
@@ -300,45 +299,6 @@ describe('fetchActionQueue', () => {
   it('throws on HTTP error', async () => {
     fetchSpy.mockResolvedValue(json({ error: 'not found' }, 500))
     await expect(fetchActionQueue()).rejects.toThrow('500')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// fetchFailureReasons / fetchEvents / fetchOrigins (slice H)
-// ---------------------------------------------------------------------------
-
-describe('fetchFailureReasons', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let fetchSpy: Mock<any>
-  beforeEach(() => {
-    fetchSpy = spyOn(globalThis, 'fetch')
-  })
-  afterEach(() => {
-    fetchSpy.mockRestore()
-  })
-
-  it('returns the typed catalog on a valid response', async () => {
-    fetchSpy.mockResolvedValue(
-      json([
-        {
-          code: 'verify:typecheck',
-          userMessage: 'msg',
-          recipe: null,
-          availableActions: [
-            { id: 'restart', label: 'Restart', cliHint: 'mars restart <id>' },
-          ],
-        },
-      ]),
-    )
-    const r = await fetchFailureReasons()
-    expect(r).toHaveLength(1)
-    expect(r[0].code).toBe('verify:typecheck')
-    expect(r[0].availableActions[0].id).toBe('restart')
-  })
-
-  it('throws when an entry is missing required fields', async () => {
-    fetchSpy.mockResolvedValue(json([{ code: 'x' }]))
-    await expect(fetchFailureReasons()).rejects.toThrow('schema validation')
   })
 })
 

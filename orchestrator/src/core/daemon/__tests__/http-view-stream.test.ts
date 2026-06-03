@@ -13,19 +13,15 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { HttpServerDeps } from '../http-server'
 import { ViewStreamHub } from '../view/stream-hub'
-import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
-let cachedCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null =
-  null
 let cachedRecipeCatalog: Awaited<
   ReturnType<typeof loadRecipeCatalog>
 > | null = null
 
 beforeAll(async () => {
   const tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-http-stream-'))
-  cachedCatalog = await loadFailureReasonCatalog(tmpDir)
   cachedRecipeCatalog = await loadRecipeCatalog(tmpDir)
 })
 
@@ -39,9 +35,6 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
-  failureReasonCatalog: cachedCatalog as Awaited<
-    ReturnType<typeof loadFailureReasonCatalog>
-  >,
   recipeCatalog: cachedRecipeCatalog as Awaited<
     ReturnType<typeof loadRecipeCatalog>
   >,

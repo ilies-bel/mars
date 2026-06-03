@@ -11,31 +11,31 @@
  * the moment the task leaves `failed` (e.g. when the operator clicks Requeue and
  * it flips back to `queued`).
  *
- * The body lists the recovery actions from the `daemon-killed` entry of the
- * error-kind registry, so the CLI actionQueue reads the same menu the UI renders as
+ * The body lists the recovery actions from the daemon-killed `FailureKind`
+ * record (ADR-0042), so the CLI actionQueue reads the same menu the UI renders as
  * buttons — one source of truth for "what can I do about this?".
  */
 
 import { listTasks } from '../queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
-import { getErrorKind } from '../lib/error-kinds'
+import { lookupFailureKind, unknownFailureKind } from '../lib/failure-kinds'
 import { type ActionQueueKind, raiseActionQueueItem } from '../lib/action-queue'
 
 export const DAEMON_KILLED_ACTION_QUEUE_KIND: ActionQueueKind = 'daemon-killed'
 
 /**
- * Render the alert body from the registry's daemon-killed entry. Exported so a
- * test can assert the body stays in lockstep with the registry without coupling
- * to the surrounding raise logic.
+ * Render the alert body from the daemon-killed `FailureKind` record. Exported
+ * so a test can assert the body stays in lockstep with the registry without
+ * coupling to the surrounding raise logic.
  */
 export const buildDaemonKilledBody = (taskId: string): string => {
-  const entry = getErrorKind('daemon-killed')
-  const actions = entry.recoveryActions
-    .map((a) => `  • ${a.label}`)
-    .join('\n')
+  const kind =
+    lookupFailureKind(DAEMON_KILLED_SIGNATURE) ??
+    unknownFailureKind(DAEMON_KILLED_SIGNATURE, '')
+  const actions = kind.actions.map((a) => `  • ${a.label}`).join('\n')
   return (
     `Task ${taskId} was in flight when the daemon was killed.\n` +
-    `${entry.recipe}\n\n` +
+    `${kind.verboseReason}\n\n` +
     `Recovery:\n${actions}`
   )
 }

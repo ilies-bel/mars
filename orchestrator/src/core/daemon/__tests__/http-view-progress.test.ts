@@ -10,7 +10,6 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { HttpServerDeps } from '../http-server'
-import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import {
   clusterFor,
@@ -19,15 +18,12 @@ import {
 } from '../view/progress'
 import type { TraceEventStore } from '../../lib/trace-events-store'
 
-let cachedCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null =
-  null
 let cachedRecipeCatalog: Awaited<
   ReturnType<typeof loadRecipeCatalog>
 > | null = null
 
 beforeAll(async () => {
   const tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-http-progress-cat-'))
-  cachedCatalog = await loadFailureReasonCatalog(tmpDir)
   cachedRecipeCatalog = await loadRecipeCatalog(tmpDir)
 })
 
@@ -47,9 +43,6 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
-  failureReasonCatalog: cachedCatalog as Awaited<
-    ReturnType<typeof loadFailureReasonCatalog>
-  >,
   recipeCatalog: cachedRecipeCatalog as Awaited<
     ReturnType<typeof loadRecipeCatalog>
   >,

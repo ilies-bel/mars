@@ -8,7 +8,6 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { HttpServerDeps } from '../http-server'
-import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import {
   openTraceEventStore,
@@ -16,12 +15,8 @@ import {
   type TraceEventStore,
 } from '../../lib/trace-events-store'
 
-let cachedCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
 let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
 beforeAll(async () => {
-  cachedCatalog = await loadFailureReasonCatalog(
-    mkdtempSync(resolve(tmpdir(), 'mars-http-ev-cat-')),
-  )
   cachedRecipeCatalog = await loadRecipeCatalog(
     mkdtempSync(resolve(tmpdir(), 'mars-http-ev-rec-')),
   )
@@ -40,8 +35,6 @@ const makeDeps = (
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
-  failureReasonCatalog:
-    cachedCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>,
   recipeCatalog:
     cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: store,

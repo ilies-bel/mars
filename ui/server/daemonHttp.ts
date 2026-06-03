@@ -7,8 +7,9 @@
  * is forwarded here, and the daemon — the single writer — performs the state
  * transition. The UI never mutates `mars.db` itself.
  *
- * The error-kind registry (the action menus) is also fetched from the daemon
- * (`GET /error-kinds`) so the UI never imports orchestrator code: it stays a
+ * The Failure-kind registry (the signature-keyed records bundling human reason,
+ * recipe, and action menu) is also fetched from the daemon
+ * (`GET /failure-kinds`) so the UI never imports orchestrator code: it stays a
  * standalone package that renders descriptors it's handed.
  */
 
@@ -24,13 +25,16 @@ export interface ActionDescriptor {
   hint?: string
 }
 
-/** Mirror of the orchestrator's ErrorKind entity (received over the wire). */
-export interface ErrorKind {
-  kind: string
-  rowKind: string
-  trigger: string
-  recipe: string
-  recoveryActions: ActionDescriptor[]
+/**
+ * Mirror of the orchestrator's FailureKind record (received over the wire).
+ * Keyed by the `<failingStep>/<error-class>` signature (ADR-0042).
+ */
+export interface FailureKind {
+  signature: string
+  warmTitle: string
+  verboseReason: string
+  recipe: string | null
+  actions: ActionDescriptor[]
 }
 
 export interface DaemonActionResult {
@@ -57,20 +61,20 @@ export const readDaemonHttpPort = async (
 }
 
 /**
- * Fetch the error-kind registry from the daemon. Returns an empty list when the
- * daemon is unreachable — the UI then renders rows without action buttons
- * rather than failing the whole actionQueue.
+ * Fetch the signature-keyed Failure-kind registry from the daemon (ADR-0042).
+ * Returns an empty list when the daemon is unreachable — the UI then renders
+ * rows without action buttons rather than failing the whole actionQueue.
  */
-export const fetchErrorKinds = async (
+export const fetchFailureKinds = async (
   stateDir: string,
-): Promise<ErrorKind[]> => {
+): Promise<FailureKind[]> => {
   const port = await readDaemonHttpPort(stateDir)
   if (port === null) return []
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/error-kinds`)
+    const res = await fetch(`http://127.0.0.1:${port}/failure-kinds`)
     if (!res.ok) return []
-    const body = (await res.json()) as { errorKinds?: ErrorKind[] }
-    return Array.isArray(body.errorKinds) ? body.errorKinds : []
+    const body = (await res.json()) as { failureKinds?: FailureKind[] }
+    return Array.isArray(body.failureKinds) ? body.failureKinds : []
   } catch {
     return []
   }

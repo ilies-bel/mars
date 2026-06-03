@@ -8,7 +8,7 @@ import {
   markTaskFailed,
   raiseRetryBudgetExhaustedActionQueue,
 } from './queue-retry'
-import { failureReasonStringToCode } from './lib/failure-reasons'
+import { computeFailureSignature } from './lib/failure-signature'
 import { getTask, setTaskStatus, updateTask } from './queue'
 import { getDefaultQueueClient } from './lib/task-store'
 import { type ActionQueueKind, raiseActionQueueItem, supersedeActionQueueItemsForOrigin } from './lib/action-queue'
@@ -502,13 +502,16 @@ export const onBlockerTaskCancelled = async (
   const outcomes: UnblockOutcome[] = []
   for (const row of r.rows as unknown as BlockedDependentRow[]) {
     const retryCount = Number(row.retry_count ?? 0)
+    const cascadeSignature = computeFailureSignature(
+      'blocked-dependent',
+      CANCELLED_CASCADE_FAILURE_REASON,
+    )
     await updateTask(row.id, {
       status: 'failed',
       error: `cancelled-blocker-cascade: blocker ${blockerTaskId} was cancelled by user`,
       failureReason: CANCELLED_CASCADE_FAILURE_REASON,
-      failureReasonCode: failureReasonStringToCode(
-        CANCELLED_CASCADE_FAILURE_REASON,
-      ),
+      failureSignature: cascadeSignature,
+      failureReasonCode: cascadeSignature,
     })
     try {
       await raiseActionQueueItem({

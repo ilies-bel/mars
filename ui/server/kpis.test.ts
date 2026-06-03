@@ -10,19 +10,14 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { startHttpServer } from '../../orchestrator/src/core/daemon/http-server.ts'
 import type { HttpServerDeps } from '../../orchestrator/src/core/daemon/http-server.ts'
-import { loadFailureReasonCatalog } from '../../orchestrator/src/core/lib/failure-reasons.ts'
 import { loadRecipeCatalog } from '../../orchestrator/src/core/lib/recipes.ts'
 import { nullTraceStore } from '../../orchestrator/src/core/lib/run-tool.ts'
 import { fetchKpis } from './daemonHttp.ts'
 import type { KpiRecord } from './daemonHttp.ts'
 
-let cachedFailureCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
 let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
 
 beforeAll(async () => {
-  cachedFailureCatalog = await loadFailureReasonCatalog(
-    mkdtempSync(resolve(tmpdir(), 'mars-kpi-fr-')),
-  )
   cachedRecipeCatalog = await loadRecipeCatalog(
     mkdtempSync(resolve(tmpdir(), 'mars-kpi-rec-')),
   )
@@ -38,8 +33,6 @@ const makeKpiDeps = (kpis: KpiRecord[]): HttpServerDeps => ({
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
-  failureReasonCatalog:
-    cachedFailureCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>,
   recipeCatalog:
     cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,

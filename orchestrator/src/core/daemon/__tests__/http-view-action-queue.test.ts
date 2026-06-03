@@ -58,63 +58,6 @@ const makeTask = (overrides: Partial<TaskForActionQueue> = {}): TaskForActionQue
   ...overrides,
 })
 
-/** Minimal error-kind registry for most tests. */
-const makeRegistry = () =>
-  new Map([
-    [
-      'failed-task',
-      {
-        kind: 'failed-task',
-        recoveryActions: [
-          { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },
-          { id: 'restart', label: 'Restart', op: 'restart' },
-          { id: 'purge', label: 'Purge', op: 'purge' },
-        ],
-      },
-    ],
-    [
-      'daemon-killed',
-      {
-        kind: 'daemon-killed',
-        recoveryActions: [
-          { id: 'requeue', label: 'Requeue now', op: 'restart' },
-        ],
-      },
-    ],
-    [
-      'daemon-killed-batch',
-      {
-        kind: 'daemon-killed-batch',
-        recoveryActions: [
-          {
-            id: 'restart-all',
-            label: 'Restart all daemon-killed',
-            op: 'restart-all-daemon-killed',
-          },
-        ],
-      },
-    ],
-    [
-      'stale-worktree',
-      {
-        kind: 'stale-worktree',
-        recoveryActions: [
-          { id: 'investigate', label: 'Investigate', op: 'investigate' },
-          { id: 'prune', label: 'Prune worktree', op: 'prune-worktree' },
-        ],
-      },
-    ],
-    [
-      'draft-proposal',
-      {
-        kind: 'draft-proposal',
-        recoveryActions: [
-          { id: 'shape', label: 'Shape', op: 'shape' },
-        ],
-      },
-    ],
-  ])
-
 const makeStateStore = (
   rows: PersistedActionQueueRow[] = [],
   dismissals: Map<string, string | null> = new Map(),
@@ -134,7 +77,6 @@ describe('buildActionQueueView — failed-task row', () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([makeTask()]),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -174,7 +116,6 @@ describe('buildActionQueueView — failed-task row', () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow({ payload: { taskId: 'task-1' } })]),
       taskStore: makeTaskStore([blockerTask, mainTask, dependentTask]),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -195,7 +136,6 @@ describe('buildActionQueueView — failed-task row', () => {
         makeRow({ payload: { taskId: 'task-1', failureReasonCode: 'verify:typecheck' } }),
       ]),
       taskStore: makeTaskStore([makeTask()]),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -210,7 +150,6 @@ describe('buildActionQueueView — failed-task row', () => {
         makeRow({ payload: { taskId: 'task-1', diagnosis } }),
       ]),
       taskStore: makeTaskStore([makeTask()]),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -222,37 +161,35 @@ describe('buildActionQueueView — failed-task row', () => {
 // ── Action assembly: actions sourced from FailureKind registry ────────────────
 
 describe('buildActionQueueView — action assembly', () => {
-  it('includes investigate for an unregistered signature', async () => {
+  it('includes diagnose-failure for an unregistered signature', async () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([
         makeTask({ failureSignature: 'some:unknown/signature' }),
       ]),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
 
     const actions = rows[0]!.actions
-    expect(actions.some((a) => a.op === 'investigate')).toBe(true)
-    // diagnose-failure is no longer surfaced — investigate replaces it.
-    expect(actions.some((a) => a.op === 'diagnose-failure')).toBe(false)
+    // ADR-0042 folds the error-kind failed-task menu into the FailureKind
+    // record, so unknown failures offer Investigate (diagnose-failure).
+    expect(actions.some((a) => a.op === 'diagnose-failure')).toBe(true)
   })
 
-  it('does not include diagnose-failure for a registered signature', async () => {
+  it('includes diagnose-failure for a registered signature', async () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([
         makeTask({ failureSignature: 'setup:install/install-frozen-lockfile' }),
       ]),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
 
     const actions = rows[0]!.actions
-    expect(actions.some((a) => a.op === 'diagnose-failure')).toBe(false)
-    // Registered actions (restart + purge) are present.
+    expect(actions.some((a) => a.op === 'diagnose-failure')).toBe(true)
+    // Registered actions (restart + purge) are present too.
     expect(actions.some((a) => a.op === 'restart')).toBe(true)
   })
 
@@ -264,7 +201,6 @@ describe('buildActionQueueView — action assembly', () => {
       taskStore: makeTaskStore([
         makeTask({ failureSignature: 'daemon-killed' }),
       ]),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -302,7 +238,6 @@ describe('buildActionQueueView — stale-worktree row', () => {
           branch: 'task/abc',
         }),
       ]),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent/repo',
       filter: 'open',
     })
@@ -369,7 +304,6 @@ describe('buildActionQueueView — stale-worktree row', () => {
         taskStore: makeTaskStore([
           makeTask({ id: taskId, status: 'done', prompt: 'Build something' }),
         ]),
-        errorKindRegistry: makeRegistry(),
           repoRoot,
         filter: 'open',
       })
@@ -397,7 +331,6 @@ describe('buildActionQueueView — stale-worktree row', () => {
         taskStore: makeTaskStore([
           makeTask({ id: taskId, status: 'done', prompt: 'Build something' }),
         ]),
-        errorKindRegistry: makeRegistry(),
           repoRoot,
         filter: 'open',
       })
@@ -425,7 +358,6 @@ describe('buildActionQueueView — draft-proposal row', () => {
         }),
       ]),
       taskStore: makeTaskStore([]),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -463,7 +395,6 @@ describe('buildActionQueueView — daemon-killed-batch', () => {
       taskStore: makeTaskStore([
         makeTask({ id: 'task-1', failureSignature: 'daemon-killed' }),
       ]),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -483,7 +414,6 @@ describe('buildActionQueueView — daemon-killed-batch', () => {
         makeTask({ id: 'task-1', failureSignature: 'daemon-killed' }),
         makeTask({ id: 'task-2', failureSignature: 'daemon-killed' }),
       ]),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -520,7 +450,6 @@ describe('buildActionQueueView — filter', () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore(twoRows, dismissalMap),
       taskStore: makeTaskStore(twoTasks),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -535,7 +464,6 @@ describe('buildActionQueueView — filter', () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore(twoRows, dismissalMap),
       taskStore: makeTaskStore(twoTasks),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'dismissed',
     })
@@ -549,7 +477,6 @@ describe('buildActionQueueView — filter', () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore(twoRows, mixedDismissals),
       taskStore: makeTaskStore(twoTasks),
-      errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'all',
     })
@@ -569,14 +496,10 @@ describe('GET /view/action-queue via HTTP server', () => {
 
   beforeEach(async () => {
     const { startHttpServer } = await import('../http-server.js')
-    const { loadFailureReasonCatalog } = await import(
-      '../../lib/failure-reasons.js'
-    )
     const { loadRecipeCatalog } = await import('../../lib/recipes.js')
     const { nullTraceStore } = await import('../../lib/run-tool.js')
 
     const stateDir = mkdtempSync(resolvePath(tmpdir(), 'mars-http-view-actionQueue-'))
-    const failureReasonCatalog = await loadFailureReasonCatalog(stateDir)
     const recipeCatalog = await loadRecipeCatalog(stateDir)
 
     httpServer = await startHttpServer({
@@ -589,7 +512,6 @@ describe('GET /view/action-queue via HTTP server', () => {
       restartDaemon: async () => {},
       restartAllDaemonKilled: async () => [],
       isAcceptingWork: () => true,
-      failureReasonCatalog,
       recipeCatalog,
       traceStore: nullTraceStore,
       viewTasks: async () => ({ tasks: [] }),

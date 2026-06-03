@@ -179,9 +179,11 @@ const actionQueueBaseSchema = z.object({
     })
     .nullish(),
   /**
-   * Failure-reason catalog code. The detail panel looks the code up in the
-   * `/failure-reasons` catalog to render `Reason: <userMessage>`. Null on
-   * non-failed rows and on legacy rows landed before slice G.
+   * The failure signature (`<failingStep>/<error-class>`) mirrored onto the
+   * row (ADR-0042). The detail panel renders the reason from the row's `body`
+   * and the recovery menu from `actions`, both derived daemon-side from the
+   * signature-keyed Failure kind record. Null on non-failed rows and on legacy
+   * rows landed before the signature was written everywhere.
    */
   failureReasonCode: z.string().nullable().optional(),
 })
@@ -316,30 +318,6 @@ export type SessionOutcome = z.infer<typeof sessionOutcomeSchema>
 export type WorkerSession = z.infer<typeof workerSessionSchema>
 
 // ----------------------------------------------------------------------------
-// Failure-reason catalog (daemon `/failure-reasons` → proxied as
-// `/api/failure-reasons`). Mirror of the FailureReason shape declared on the
-// orchestrator side; we re-derive locally rather than importing from the
-// orchestrator to keep the UI a standalone package.
-// ----------------------------------------------------------------------------
-
-export const failureActionCatalogSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  cliHint: z.string().nullable(),
-})
-
-export const failureReasonCatalogEntrySchema = z.object({
-  code: z.string(),
-  userMessage: z.string(),
-  recipe: z.string().nullable(),
-  availableActions: z.array(failureActionCatalogSchema),
-})
-
-export const failureReasonsResponseSchema = z.array(
-  failureReasonCatalogEntrySchema,
-)
-
-// ----------------------------------------------------------------------------
 // Trace events (daemon `/events` → proxied as `/api/trace-events`).
 // ----------------------------------------------------------------------------
 
@@ -390,10 +368,6 @@ export const originsResponseSchema = z.object({
   node: originNodeSchema,
 })
 
-export type FailureReasonCatalogEntry = z.infer<
-  typeof failureReasonCatalogEntrySchema
->
-export type FailureActionCatalog = z.infer<typeof failureActionCatalogSchema>
 export type TraceEvent = z.infer<typeof traceEventSchema>
 export type EventsResponse = z.infer<typeof eventsResponseSchema>
 export type OriginsResponse = z.infer<typeof originsResponseSchema>

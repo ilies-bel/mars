@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
-import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 import { InMemoryStore } from '@mars/workflow'
@@ -36,18 +35,8 @@ const loadModules = async (repo: string) => {
  * Build HttpServerDeps with sane no-op defaults; tests override only the verb
  * they exercise. Keeps each test focused on one route.
  */
-// Built-in-only catalog reused across tests. Tests that need overrides
-// build their own catalog from a temp `.mars/failure-reasons/` directory.
-let cachedBuiltInCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
+// Built-in-only recipe catalog reused across tests.
 let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
-const getBuiltInCatalog = async () => {
-  if (!cachedBuiltInCatalog) {
-    cachedBuiltInCatalog = await loadFailureReasonCatalog(
-      mkdtempSync(resolve(tmpdir(), 'mars-http-cat-')),
-    )
-  }
-  return cachedBuiltInCatalog
-}
 const getBuiltInRecipeCatalog = async () => {
   if (!cachedRecipeCatalog) {
     cachedRecipeCatalog = await loadRecipeCatalog(
@@ -59,7 +48,6 @@ const getBuiltInRecipeCatalog = async () => {
 
 const makeDeps = (
   overrides: Partial<HttpServerDeps> = {},
-  catalogOverride?: Awaited<ReturnType<typeof loadFailureReasonCatalog>>,
 ): HttpServerDeps => ({
   restartTask: async () => {},
   unblockTask: async () => {},
@@ -70,8 +58,6 @@ const makeDeps = (
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
-  failureReasonCatalog:
-    catalogOverride ?? (cachedBuiltInCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>),
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),
@@ -96,7 +82,6 @@ const makeDeps = (
 
 // Vitest lifecycle: ensure the cached catalog is ready before any test runs.
 beforeAll(async () => {
-  await getBuiltInCatalog()
   await getBuiltInRecipeCatalog()
 })
 
@@ -199,23 +184,27 @@ describe('HTTP action endpoint', () => {
 
   // ── Registry endpoint ──────────────────────────────────────────────────────
 
-  it('serves the error-kind registry on GET /error-kinds', async () => {
+  it('serves the signature-keyed Failure-kind registry on GET /failure-kinds', async () => {
     const { httpServer } = await loadModules(repo)
     const { port, close } = await httpServer.startHttpServer(makeDeps())
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/error-kinds`)
+      const res = await fetch(`http://127.0.0.1:${port}/failure-kinds`)
       expect(res.status).toBe(200)
       const body = (await res.json()) as {
         ok: boolean
-        errorKinds: Array<{ kind: string; recoveryActions: unknown[] }>
+        failureKinds: Array<{ signature: string; actions: unknown[] }>
       }
       expect(body.ok).toBe(true)
-      const kinds = body.errorKinds.map((k) => k.kind)
-      expect(kinds).toContain('daemon-killed')
-      expect(kinds).toContain('failed-task')
-      const daemonKilled = body.errorKinds.find((k) => k.kind === 'daemon-killed')
-      expect(daemonKilled?.recoveryActions.length).toBeGreaterThan(0)
+      const signatures = body.failureKinds.map((k) => k.signature)
+      // Keyed by `<failingStep>/<error-class>` signature (ADR-0042), plus the
+      // daemon-killed special case.
+      expect(signatures).toContain('daemon-killed')
+      expect(signatures).toContain('setup:install/install-frozen-lockfile')
+      const daemonKilled = body.failureKinds.find(
+        (k) => k.signature === 'daemon-killed',
+      )
+      expect(daemonKilled?.actions.length).toBeGreaterThan(0)
     } finally {
       await close()
     }

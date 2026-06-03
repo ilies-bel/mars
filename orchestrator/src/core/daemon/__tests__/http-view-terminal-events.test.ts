@@ -5,7 +5,6 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
 import type { TerminalEvent, TaskStoreForEvents } from '../view/terminal-events'
-import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
@@ -28,19 +27,11 @@ const loadModules = async (repo: string) => {
   return { httpServer, listTerminalEvents: view.listTerminalEvents }
 }
 
-let cachedFailureCatalog: Awaited<
-  ReturnType<typeof loadFailureReasonCatalog>
-> | null = null
 let cachedRecipeCatalog: Awaited<
   ReturnType<typeof loadRecipeCatalog>
 > | null = null
 
 const ensureCatalogs = async (): Promise<void> => {
-  if (!cachedFailureCatalog) {
-    cachedFailureCatalog = await loadFailureReasonCatalog(
-      mkdtempSync(resolve(tmpdir(), 'mars-http-te-cat-')),
-    )
-  }
   if (!cachedRecipeCatalog) {
     cachedRecipeCatalog = await loadRecipeCatalog(
       mkdtempSync(resolve(tmpdir(), 'mars-http-te-rec-')),
@@ -61,7 +52,6 @@ const makeDeps = (
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
-  failureReasonCatalog: cachedFailureCatalog!,
   recipeCatalog: cachedRecipeCatalog!,
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),

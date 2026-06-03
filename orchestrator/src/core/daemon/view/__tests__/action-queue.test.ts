@@ -68,60 +68,7 @@ const makeTaskStore = (
   listTasks: async () => tasks,
 })
 
-const emptyRegistry = new Map()
-
-const daemonKilledRegistry = new Map([
-  [
-    'daemon-killed',
-    {
-      kind: 'daemon-killed',
-      recoveryActions: [
-        { id: 'restart-all', label: 'Restart all daemon-killed', op: 'restart-all-daemon-killed' },
-      ],
-    },
-  ],
-  [
-    'daemon-killed-batch',
-    {
-      kind: 'daemon-killed-batch',
-      recoveryActions: [
-        { id: 'restart-all', label: 'Restart all daemon-killed', op: 'restart-all-daemon-killed' },
-      ],
-    },
-  ],
-  [
-    'failed-task',
-    {
-      kind: 'failed-task',
-      recoveryActions: [],
-    },
-  ],
-])
-
-/** Minimal error-kind registry for stale-worktree / draft-proposal rows. */
-const makeRegistry = () =>
-  new Map([
-    [
-      'stale-worktree',
-      {
-        kind: 'stale-worktree',
-        recoveryActions: [
-          { id: 'investigate', label: 'Investigate', op: 'investigate' },
-          { id: 'prune', label: 'Prune worktree', op: 'prune-worktree' },
-        ],
-      },
-    ],
-    [
-      'draft-proposal',
-      {
-        kind: 'draft-proposal',
-        recoveryActions: [{ id: 'shape', label: 'Shape', op: 'shape' }],
-      },
-    ],
-  ])
-
 const BASE_PARAMS = {
-  errorKindRegistry: makeRegistry(),
   repoRoot: '/nonexistent',
   filter: 'open' as const,
 }
@@ -135,7 +82,6 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       taskStore: makeTaskStore([
         makeTask({ failureSignature: 'setup:install/install-frozen-lockfile' }),
       ]),
-      errorKindRegistry: emptyRegistry,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -150,7 +96,6 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       taskStore: makeTaskStore([
         makeTask({ failureSignature: 'setup:install/install-frozen-lockfile' }),
       ]),
-      errorKindRegistry: emptyRegistry,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -167,7 +112,6 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       taskStore: makeTaskStore([
         makeTask({ failureSignature: 'verify:test/unclassified' }),
       ]),
-      errorKindRegistry: emptyRegistry,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -181,7 +125,6 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
         makeRow({ kind: 'stale-worktree', payload: { taskId: 'task-1' } }),
       ]),
       taskStore: makeTaskStore([makeTask()]),
-      errorKindRegistry: emptyRegistry,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -217,7 +160,7 @@ describe('buildActionQueueView — failed-task action assembly', () => {
     )
   })
 
-  it('does not include diagnose-failure for a known signature', async () => {
+  it('includes diagnose-failure for a known signature (folded error-kind failed-task menu)', async () => {
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,
       stateStore: makeStateStore([makeRow()]),
@@ -226,14 +169,16 @@ describe('buildActionQueueView — failed-task action assembly', () => {
       ]),
     })
 
-    expect(rows[0]!.actions.some((a) => a.op === 'diagnose-failure')).toBe(false)
+    // ADR-0042 folds the error-kind `failed-task` menu into the FailureKind
+    // record, so every failed-task row offers Investigate (diagnose-failure).
+    expect(rows[0]!.actions.some((a) => a.op === 'diagnose-failure')).toBe(true)
   })
 })
 
 // ── Failed-task: unregistered signature (slice 3) ─────────────────────────────
 
 describe('buildActionQueueView — unregistered signature', () => {
-  it('includes investigate action for an unregistered signature', async () => {
+  it('includes diagnose-failure action for an unregistered signature', async () => {
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,
       stateStore: makeStateStore([makeRow()]),
@@ -244,7 +189,7 @@ describe('buildActionQueueView — unregistered signature', () => {
 
     expect(rows).toHaveLength(1)
     const actions = rows[0]!.actions
-    expect(actions.some((a) => a.op === 'investigate')).toBe(true)
+    expect(actions.some((a) => a.op === 'diagnose-failure')).toBe(true)
   })
 
   it('still includes restart and purge for an unregistered signature', async () => {
@@ -261,14 +206,14 @@ describe('buildActionQueueView — unregistered signature', () => {
     expect(ops).toContain('purge')
   })
 
-  it('includes investigate for a null failureSignature', async () => {
+  it('includes diagnose-failure for a null failureSignature', async () => {
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([makeTask({ failureSignature: null })]),
     })
 
-    expect(rows[0]!.actions.some((a) => a.op === 'investigate')).toBe(true)
+    expect(rows[0]!.actions.some((a) => a.op === 'diagnose-failure')).toBe(true)
   })
 })
 
@@ -285,7 +230,6 @@ describe('buildActionQueueView — daemon-killed batch row', () => {
         makeTask({ id: 'task-1', failureSignature: DAEMON_KILLED_SIGNATURE }),
         makeTask({ id: 'task-2', failureSignature: DAEMON_KILLED_SIGNATURE }),
       ]),
-      errorKindRegistry: daemonKilledRegistry,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -304,7 +248,6 @@ describe('buildActionQueueView — daemon-killed batch row', () => {
       taskStore: makeTaskStore([
         makeTask({ id: 'task-1', failureSignature: DAEMON_KILLED_SIGNATURE }),
       ]),
-      errorKindRegistry: daemonKilledRegistry,
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -344,7 +287,7 @@ describe('buildActionQueueView — daemon-killed batch row', () => {
     ).toBe(true)
   })
 
-  it('batch row actions come from the daemon-killed FailureKind entry', async () => {
+  it('batch row surfaces only the batch verb from the daemon-killed FailureKind entry', async () => {
     const daemonKilledFk = lookupFailureKind(DAEMON_KILLED_SIGNATURE)
     expect(daemonKilledFk).not.toBeNull()
 
@@ -369,16 +312,18 @@ describe('buildActionQueueView — daemon-killed batch row', () => {
     })
 
     const batchRow = rows.find((r) => r.entityId === '__daemon-killed-batch__')
-    expect(batchRow!.actions.map((a) => a.op)).toEqual(
-      daemonKilledFk!.actions.map((a) => a.op),
-    )
+    // The batch row carries only the `restart-all-daemon-killed` verb, filtered
+    // from the daemon-killed Failure kind's full menu.
+    expect(batchRow!.actions.map((a) => a.op)).toEqual([
+      'restart-all-daemon-killed',
+    ])
   })
 })
 
 // ── Stale-worktree: actions unchanged (slice 3 regression coverage) ───────────
 
 describe('buildActionQueueView — stale-worktree row (no regression)', () => {
-  it('derives stale-worktree actions from errorKindRegistry, not FailureKind registry', async () => {
+  it('derives stale-worktree actions from the derived-row menu, not the FailureKind registry', async () => {
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,
       stateStore: makeStateStore([
@@ -405,7 +350,7 @@ describe('buildActionQueueView — stale-worktree row (no regression)', () => {
 // ── Draft-proposal: actions unchanged (slice 3 regression coverage) ───────────
 
 describe('buildActionQueueView — draft-proposal row (no regression)', () => {
-  it('derives draft-proposal actions from errorKindRegistry, not FailureKind registry', async () => {
+  it('derives draft-proposal actions from the derived-row menu, not the FailureKind registry', async () => {
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,
       stateStore: makeStateStore([

@@ -17,18 +17,13 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { startHttpServer } from '../../orchestrator/src/core/daemon/http-server.ts'
 import type { HttpServerDeps } from '../../orchestrator/src/core/daemon/http-server.ts'
-import { loadFailureReasonCatalog } from '../../orchestrator/src/core/lib/failure-reasons.ts'
 import { loadRecipeCatalog } from '../../orchestrator/src/core/lib/recipes.ts'
 import { nullTraceStore } from '../../orchestrator/src/core/lib/run-tool.ts'
 import { startServer } from './index.ts'
 
-let cachedFailureCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
 let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
 
 beforeAll(async () => {
-  cachedFailureCatalog = await loadFailureReasonCatalog(
-    mkdtempSync(resolve(tmpdir(), 'mars-ui-tasks-fr-')),
-  )
   cachedRecipeCatalog = await loadRecipeCatalog(
     mkdtempSync(resolve(tmpdir(), 'mars-ui-tasks-rc-')),
   )
@@ -46,8 +41,6 @@ const makeDaemonDeps = (
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
-  failureReasonCatalog:
-    cachedFailureCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>,
   recipeCatalog:
     cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,

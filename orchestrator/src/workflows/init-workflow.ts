@@ -27,7 +27,6 @@ import { enrichRootClaudeMd, type ProjectLayoutEntry } from '../init/project-lay
 import { writeSlimInit, writePerFolderClaudeMds, purgeStaleSupervisorMds, type VerifyStepEntry } from '../init/writer'
 import { writeDetectionReport } from '../init/write-detection-report'
 import { readInitManifest, writeInitManifest } from '../init/init-manifest'
-import { writeFailureReasonsSeed } from '../init/failure-reasons-seed'
 import { writeRecipesSeed } from '../init/recipes-seed'
 import { activatePlugin, realDeps, type ClaudePluginDeps } from '../commands/claude-plugin.js'
 import { ensureProjectRegistered } from '../registry/projects.js'
@@ -313,28 +312,6 @@ const runInitDatabases = async (written: string[]): Promise<string[]> => {
 }
 
 /**
- * Seed `.mars/failure-reasons/<code>.yaml` overrides for every built-in
- * failure-reason entry. Hard rule: this step never overwrites an existing
- * file — once a consumer owns the entry, the binary leaves it alone. A
- * future binary that adds new built-in codes will land those new files on
- * the next `mars init`; existing files stay untouched. Prints a one-line
- * summary on stdout when something was written; silent otherwise.
- */
-const runSeedFailureReasons = async (written: string[]): Promise<string[]> => {
-  const ctx = resolveContext()
-  const result = writeFailureReasonsSeed(ctx.stateDir)
-  if (result.written.length > 0) {
-    process.stdout.write(
-      `[mars init] wrote ${result.written.length} failure-reason seeds to ${relative(ctx.repoRoot, result.dir)}/\n`,
-    )
-  }
-  return [
-    ...written,
-    ...result.written.map((f) => relative(ctx.repoRoot, resolve(result.dir, f))),
-  ]
-}
-
-/**
  * Seed `.mars/recipes/<name>.md` overrides for every shipped built-in
  * recovery recipe. Same no-overwrite rule as failure-reasons: once the
  * consumer owns the file, the binary leaves it alone. A future binary
@@ -435,10 +412,7 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
     const w1 = await ctx.step('write-slim-init', () => runWriteSlimInit(rendered))
     const w2 = await ctx.step('scaffold-claude', () => runScaffoldClaude(rendered, w1))
     const w3 = await ctx.step('init-databases', () => runInitDatabases(w2))
-    const w4 = await ctx.step('seed-failure-reasons', () =>
-      runSeedFailureReasons(w3),
-    )
-    const written = await ctx.step('seed-recipes', () => runSeedRecipes(w4))
+    const written = await ctx.step('seed-recipes', () => runSeedRecipes(w3))
     await ctx.step('activate-plugin', runActivatePlugin)
     return { written }
   },

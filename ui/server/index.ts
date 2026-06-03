@@ -210,13 +210,6 @@ export const startServer = async (
           return jsonResponse(result.status, result.body)
         }
 
-        // GET /api/failure-reasons — proxy the daemon's resolved failure-reason
-        // catalog so the actionQueue detail panel can render `Reason: <userMessage>`.
-        if (path === '/api/failure-reasons' && req.method === 'GET') {
-          const result = await proxyGet(ctx.stateDir, '/failure-reasons')
-          return jsonResponse(result.status, result.body)
-        }
-
         // GET /api/trace-events — proxy the daemon's unified trace surface.
         // The path differs from the daemon's `/events` so it doesn't collide
         // with the UI server's existing `/events` SSE endpoint.

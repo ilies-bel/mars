@@ -15,6 +15,7 @@ import {
   unknownFailureKind,
   failingStepFromSignature,
 } from '../../lib/failure-kinds'
+import { derivedRowActions } from '../../lib/derived-row-actions'
 
 export type DerivedActionQueueKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
 export type DerivedActionQueueFilter = 'open' | 'dismissed' | 'all'
@@ -91,12 +92,6 @@ export interface TaskForActionQueue {
   updatedAt: string
 }
 
-/** Narrow error-kind entry shape needed for action-menu assembly. */
-interface ActionQueueErrorKind {
-  kind: string
-  recoveryActions: { id: string; label: string; op: string }[]
-}
-
 /**
  * State-store dependency: reads open actionQueue items and operator dismissals.
  * In the daemon this is backed by the in-process actionQueue / action-queue-dismissals
@@ -119,13 +114,6 @@ export interface ActionQueueTaskStore {
 export interface BuildActionQueueViewParams {
   stateStore: ActionQueueStateStore
   taskStore: ActionQueueTaskStore
-  /**
-   * Error-kind registry map (key = error kind id). In the daemon this is
-   * built from `listErrorKinds()` at request time. Used for stale-worktree
-   * and draft-proposal row action assembly; failed-task rows derive actions
-   * from the FailureKind registry instead.
-   */
-  errorKindRegistry: Map<string, ActionQueueErrorKind>
   /** Absolute path to the repo root — used for the stale-worktree git probe. */
   repoRoot: string
   filter: DerivedActionQueueFilter
@@ -141,7 +129,6 @@ export interface BuildActionQueueViewParams {
 export const buildActionQueueView = async ({
   stateStore,
   taskStore,
-  errorKindRegistry,
   repoRoot,
   filter,
 }: BuildActionQueueViewParams): Promise<ActionQueueRow[]> => {
@@ -241,19 +228,19 @@ export const buildActionQueueView = async ({
 
     // For failed-task rows, actions come from the FailureKind registry so
     // the title, reason, and action menu are always from the same record.
-    // For stale-worktree and draft-proposal rows, the errorKindRegistry is
-    // the authority (unchanged behaviour).
+    // For stale-worktree and draft-proposal rows, the non-failure derived-row
+    // action menu is the authority (unchanged behaviour).
     let actions: { id: string; label: string; op: string }[]
     if (uiKind === 'failed-task') {
       const sig = taskById.get(entityId)?.failureSignature ?? null
       const fk =
         sig !== null
           ? (lookupFailureKind(sig) ??
-            unknownFailureKind(sig.split('/')[0] ?? 'unknown', ''))
+            unknownFailureKind(failingStepFromSignature(sig), ''))
           : unknownFailureKind('unknown', '')
       actions = fk.actions as { id: string; label: string; op: string }[]
     } else {
-      actions = (errorKindRegistry.get(errorKind)?.recoveryActions ?? []) as {
+      actions = derivedRowActions(errorKind) as {
         id: string
         label: string
         op: string
@@ -427,9 +414,16 @@ export const buildActionQueueView = async ({
     (r) => r.errorKind === 'daemon-killed',
   )
   if (daemonKilledVisible.length >= 2) {
+    // The synthetic batch row surfaces only the batch verb from the
+    // daemon-killed Failure kind record (the per-task requeue / restart-daemon
+    // actions stay on the individual rows).
     const batchActions = (
       lookupFailureKind(DAEMON_KILLED_SIGNATURE)?.actions ?? []
-    ) as { id: string; label: string; op: string }[]
+    ).filter((a) => a.op === 'restart-all-daemon-killed') as {
+      id: string
+      label: string
+      op: string
+    }[]
     const newest = daemonKilledVisible[0]!
     // Derive the batch row's title and body from the daemon-killed Failure kind
     // entry so the copy stays consistent with the registry rather than being

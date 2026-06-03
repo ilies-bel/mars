@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
-import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
@@ -26,19 +25,11 @@ const loadModules = async (repo: string) => {
   return { queue, httpServer }
 }
 
-let cachedFailureCatalog: Awaited<
-  ReturnType<typeof loadFailureReasonCatalog>
-> | null = null
 let cachedRecipeCatalog: Awaited<
   ReturnType<typeof loadRecipeCatalog>
 > | null = null
 
 const ensureCatalogs = async (): Promise<void> => {
-  if (!cachedFailureCatalog) {
-    cachedFailureCatalog = await loadFailureReasonCatalog(
-      mkdtempSync(resolve(tmpdir(), 'mars-http-vt-cat-')),
-    )
-  }
   if (!cachedRecipeCatalog) {
     cachedRecipeCatalog = await loadRecipeCatalog(
       mkdtempSync(resolve(tmpdir(), 'mars-http-vt-rec-')),
@@ -59,7 +50,6 @@ const makeDeps = (
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
-  failureReasonCatalog: cachedFailureCatalog!,
   recipeCatalog: cachedRecipeCatalog!,
   traceStore: nullTraceStore,
   viewTasks,

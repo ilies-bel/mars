@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
-import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
@@ -24,17 +23,7 @@ const loadModules = async (repo: string) => {
   return { httpServer }
 }
 
-let cachedFailureReasonCatalog: Awaited<ReturnType<typeof loadFailureReasonCatalog>> | null = null
 let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
-
-const getBuiltInFailureReasonCatalog = async () => {
-  if (!cachedFailureReasonCatalog) {
-    cachedFailureReasonCatalog = await loadFailureReasonCatalog(
-      mkdtempSync(resolve(tmpdir(), 'mars-http-actionQueue-cat-')),
-    )
-  }
-  return cachedFailureReasonCatalog
-}
 
 const getBuiltInRecipeCatalog = async () => {
   if (!cachedRecipeCatalog) {
@@ -55,7 +44,6 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
-  failureReasonCatalog: cachedFailureReasonCatalog as Awaited<ReturnType<typeof loadFailureReasonCatalog>>,
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),
@@ -79,7 +67,6 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
 })
 
 beforeAll(async () => {
-  await getBuiltInFailureReasonCatalog()
   await getBuiltInRecipeCatalog()
 })
 

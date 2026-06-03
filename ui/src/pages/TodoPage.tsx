@@ -6,16 +6,12 @@ import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { OriginTree } from '@/widgets/OriginTree'
 import {
   fetchEvents,
-  fetchFailureReasons,
   invokeAction,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import {
-  catalogActionsForDetail,
-  resolveFailureReason,
   severityColor,
   summarizeTraceEvent,
-  type CatalogActionDescriptor,
 } from '@/shared/actionQueueDetail'
 import type {
   ActionDescriptor,
@@ -264,117 +260,30 @@ const ActionBar = ({ item }: ActionBarProps) => {
   )
 }
 
-// ---- Catalog-driven Reason + Available actions (failed rows only) ----
+// ---- Reason + Recovery actions (failed rows only) ----
 
-interface CatalogPanelProps {
+interface FailedTaskPanelProps {
   item: ActionQueueItem
 }
 
-const CatalogReasonAndActions = ({ item }: CatalogPanelProps) => {
-  const qc = useQueryClient()
-  const projectId = useFocusedProjectId()
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
-
-  // The catalog is small (a few dozen entries) and rarely changes. One
-  // fetch on panel open is plenty; React Query's default staleTime keeps
-  // it cached across detail-panel re-mounts.
-  const catalogQuery = useQuery({
-    queryKey: ['failure-reasons', projectId],
-    queryFn: () => fetchFailureReasons(projectId ?? undefined),
-    enabled: projectId !== null,
-  })
-
-  const mutation = useMutation({
-    mutationFn: (op: string) => invokeAction(op, item.entityId),
-    onMutate: () => setErrorMsg(null),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['action-queue'] })
-      void qc.invalidateQueries({ queryKey: ['progress'] })
-    },
-    onError: (err) => setErrorMsg((err as Error).message),
-  })
-
-  useEffect(() => {
-    if (catalogQuery.isError) {
-      logFallbackError(catalogQuery.error)
-    }
-  }, [catalogQuery.isError, catalogQuery.error])
-
-  if (catalogQuery.isPending) {
-    return (
-      <div>
-        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-          Reason
-        </dt>
-        <dd className="text-iron/60">Loading catalog…</dd>
-      </div>
-    )
-  }
-  if (catalogQuery.isError || !catalogQuery.data) {
-    const { headline, detail } = getFallbackCopy('failure-reason catalog', catalogQuery.error)
-    return (
-      <div>
-        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-          Reason
-        </dt>
-        <dd className="text-error">
-          {headline}{detail !== null ? ` ${detail}` : null}
-        </dd>
-      </div>
-    )
-  }
-
-  const entry = resolveFailureReason(item.failureReasonCode, catalogQuery.data)
-  if (!entry) {
-    return null
-  }
-  const actions = catalogActionsForDetail(entry.availableActions, item.entityId)
-
-  const run = (action: CatalogActionDescriptor) => {
-    if (mutation.isPending || action.disabled) return
-    if (
-      action.id === 'purge' &&
-      !window.confirm(`${action.raw.label}: ${item.entityId}. Proceed?`)
-    ) {
-      return
-    }
-    mutation.mutate(action.op)
-  }
-
+/**
+ * Reason + recovery actions for a failed-task row, rendered entirely from the
+ * row's own fields (ADR-0042). The daemon's `buildActionQueueView` derives the
+ * row's `body` (the Failure kind's verboseReason) and `actions` (the Failure
+ * kind's recovery menu) from the single signature-keyed Failure kind record, so
+ * the UI no longer re-fetches a separate failure-reason catalog or re-resolves a
+ * code — it renders what it is handed.
+ */
+const FailedTaskReasonAndActions = ({ item }: FailedTaskPanelProps) => {
   return (
     <>
       <div>
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Reason
         </dt>
-        <dd className="text-fg">{entry.userMessage}</dd>
+        <dd className="text-fg">{item.body || '(no reason recorded)'}</dd>
       </div>
-      <div>
-        <dt className="mb-2 text-[10px] uppercase tracking-wider text-iron">
-          Available actions
-        </dt>
-        <dd className="flex flex-wrap gap-2">
-          {actions.map((action) => (
-            <button
-              key={action.id}
-              type="button"
-              disabled={mutation.isPending || action.disabled}
-              onClick={() => run(action)}
-              className={[
-                'border px-3 py-1.5 font-mono text-[11px] uppercase transition active:scale-[0.97] disabled:opacity-50',
-                action.id === 'purge'
-                  ? 'border-error/50 text-error hover:bg-error/10'
-                  : 'border-iron/40 text-fg hover:bg-iron/20',
-              ].join(' ')}
-            >
-              {action.label}
-            </button>
-          ))}
-        </dd>
-        {errorMsg ? (
-          <p className="mt-2 font-mono text-[10px] text-error">{errorMsg}</p>
-        ) : null}
-      </div>
+      <ActionBar item={item} />
     </>
   )
 }
@@ -543,7 +452,7 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
       <main className="flex-1 px-6 py-4">
         <dl className="flex flex-col gap-4 font-mono text-[12px]">
           {item.kind === 'failed-task' ? (
-            <CatalogReasonAndActions item={item} />
+            <FailedTaskReasonAndActions item={item} />
           ) : (
             <ActionBar item={item} />
           )}

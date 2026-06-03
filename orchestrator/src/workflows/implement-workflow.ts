@@ -34,7 +34,7 @@ import {
   updateTask,
 } from '../core/queue'
 import { handleTaskFailureWithFixTask } from '../core/queue-fix-tasks'
-import { failureReasonStringToCode } from '../core/lib/failure-reasons'
+import { computeFailureSignature } from '../core/lib/failure-signature'
 import { resolveOriginIdForTask } from '../core/lib/origin'
 import { type TaskStore } from '../core/lib/task-store'
 
@@ -834,12 +834,14 @@ export const implementWorkflow = defineWorkflow<
           }
 
           const failSummary = errorOutput.slice(0, 1000)
+          const setupSignature = computeFailureSignature('setup:install', errorOutput)
           await updateTask(input.taskId, {
             status: 'failed',
             error: failSummary,
             failedPhase: 'code',
             failureReason: failSummary,
-            failureReasonCode: failureReasonStringToCode(failSummary),
+            failureSignature: setupSignature,
+            failureReasonCode: setupSignature,
           }, store)
           await handleTaskFailureWithFixTask({
             taskId: input.taskId,
@@ -1188,8 +1190,13 @@ export const implementWorkflow = defineWorkflow<
               error: `diagnose Chore spawn failed: ${String(err).slice(0, 500)}`,
               failedPhase: 'code',
               failureReason: `diagnose Chore spawn failed: ${String(err).slice(0, 500)}`,
-              failureReasonCode: failureReasonStringToCode(
-                `diagnose Chore spawn failed: ${String(err)}`,
+              failureSignature: computeFailureSignature(
+                'code:diagnose-spawn',
+                String(err),
+              ),
+              failureReasonCode: computeFailureSignature(
+                'code:diagnose-spawn',
+                String(err),
               ),
             },
             store,
@@ -1395,14 +1402,17 @@ export const implementWorkflow = defineWorkflow<
             stepDir: s.stepDir,
             passed: s.passed,
           }))
+        const verifySignature = computeFailureSignature(
+          `verify:${firstFailedName}`,
+          summary,
+        )
         await updateTask(input.taskId, {
           status: 'failed',
           error: summary,
           failedPhase: 'verify',
           failureReason: `verify:${firstFailedName}`,
-          failureReasonCode: failureReasonStringToCode(
-            `verify:${firstFailedName}`,
-          ),
+          failureSignature: verifySignature,
+          failureReasonCode: verifySignature,
         }, store)
         // Wrap the recovery dispatch in its own span so it is visible as a
         // distinct step in the trace surface alongside setup/verify/merge.
@@ -1547,12 +1557,14 @@ export const implementWorkflow = defineWorkflow<
         }
         if (targetStatus.kind === 'error') {
           const errorMsg = `merge pre-flight git status failed: ${targetStatus.error.message}`.slice(0, 1000)
+          const preflightSignature = computeFailureSignature('merge:preflight', errorMsg)
           await updateTask(input.taskId, {
             status: 'failed',
             error: errorMsg,
             failedPhase: 'merge',
             failureReason: errorMsg,
-            failureReasonCode: failureReasonStringToCode(errorMsg),
+            failureSignature: preflightSignature,
+            failureReasonCode: preflightSignature,
           }, store)
           throw new Error(
             `task ${input.taskId} merge pre-flight failed: ${targetStatus.error.message}`,
@@ -1648,12 +1660,14 @@ export const implementWorkflow = defineWorkflow<
         const message = error instanceof Error ? error.message : String(error)
         console.error(`[merge] task ${input.taskId} crashed:`, error)
         const crashMsg = `merge step crashed: ${message}`.slice(0, 1000)
+        const crashSignature = computeFailureSignature('merge:crashed', crashMsg)
         await updateTask(input.taskId, {
           status: 'failed',
           error: crashMsg,
           failedPhase: 'merge',
           failureReason: crashMsg,
-          failureReasonCode: failureReasonStringToCode(crashMsg),
+          failureSignature: crashSignature,
+          failureReasonCode: crashSignature,
         }, store)
         await handleTaskFailureWithFixTask({
           taskId: input.taskId,

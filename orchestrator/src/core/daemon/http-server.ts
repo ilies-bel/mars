@@ -1,6 +1,5 @@
 import { createServer, type Server } from 'node:http'
-import { listErrorKinds } from '../lib/error-kinds'
-import type { FailureReasonCatalog } from '../lib/failure-reasons'
+import { FAILURE_KINDS } from '../lib/failure-kinds'
 import type { RecipeCatalog } from '../lib/recipes'
 import { buildOriginTree } from '../lib/origin-tree'
 import type { ActionQueueRow, DerivedActionQueueFilter } from './view/action-queue'
@@ -122,12 +121,6 @@ export interface HttpServerDeps {
   restartAllDaemonKilled: () => Promise<string[]>
   /** Returns `true` while the daemon is accepting work (draining → `false`). */
   isAcceptingWork: () => boolean
-  /**
-   * Resolved failure-reason catalog (built-in seed + `.mars/failure-reasons/`
-   * overrides), loaded once at daemon start. Served verbatim by
-   * `GET /failure-reasons` for the actionQueue UI.
-   */
-  failureReasonCatalog: FailureReasonCatalog
   /**
    * Resolved recovery-recipe catalog (built-in seed + `.mars/recipes/`
    * overrides), loaded once at daemon start. Served verbatim by
@@ -379,8 +372,7 @@ const handleEventsRequest = async (
 /**
  * Start a local HTTP server bound to `127.0.0.1` only. Exposes:
  *
- *   GET  /error-kinds            → the error-kind registry (action menus)
- *   GET  /failure-reasons        → the resolved failure-reason catalog
+ *   GET  /failure-kinds          → the signature-keyed Failure-kind registry
  *   GET  /recipes                → the resolved recovery-recipe catalog
  *   GET  /events?...             → unified trace events (taskId, kind, etc.)
  *   GET  /origins/:taskId        → the origin tree for a task
@@ -412,18 +404,12 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /error-kinds — the action-menu registry. Pure read; no draining gate.
-    if (req.method === 'GET' && req.url === '/error-kinds') {
-      sendJson(res, 200, { ok: true, errorKinds: listErrorKinds() })
-      return
-    }
-
-    // GET /failure-reasons — the resolved failure-reason catalog. The
-    // catalog is loaded once at daemon start (built-in seed + per-repo
-    // overrides under `.mars/failure-reasons/`); consumers re-`mars daemon
-    // reload` to pick up edits. Pure read; no draining gate.
-    if (req.method === 'GET' && req.url === '/failure-reasons') {
-      sendJson(res, 200, deps.failureReasonCatalog.list())
+    // GET /failure-kinds — the signature-keyed Failure-kind registry (ADR-0042,
+    // superseding ADR-0035's `/error-kinds`). Serves one record per known
+    // `<failingStep>/<error-class>` signature bundling its human reason, recipe
+    // reference, and recovery action menu. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/failure-kinds') {
+      sendJson(res, 200, { ok: true, failureKinds: FAILURE_KINDS })
       return
     }
 

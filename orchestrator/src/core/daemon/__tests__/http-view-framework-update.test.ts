@@ -7,14 +7,9 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { FrameworkUpdateState, HttpServerDeps } from '../http-server'
-import type { FailureReasonCatalog } from '../../lib/failure-reasons'
 import type { RecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
-const nullFailureReasonCatalog: FailureReasonCatalog = {
-  get: () => ({ code: 'unknown', userMessage: '', recipe: null, availableActions: [] }),
-  list: () => [],
-}
 const nullRecipeCatalog: RecipeCatalog = {
   get: () => null,
   list: () => [],
@@ -30,7 +25,6 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
-  failureReasonCatalog: nullFailureReasonCatalog,
   recipeCatalog: nullRecipeCatalog,
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),

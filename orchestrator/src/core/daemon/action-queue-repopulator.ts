@@ -3,15 +3,7 @@ import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { ensureProcessedOnceSchema } from '../../bus/processed-once.js'
 import { drainWithStall } from './subscriber-drain.js'
-import {
-  type FailureReasonCatalog,
-  failureReasonStringToCode,
-} from '../lib/failure-reasons'
-import {
-  lookupFailureKind,
-  unknownFailureKind,
-  failingStepFromSignature,
-} from '../lib/failure-kinds'
+import { resolveFailureKind } from '../lib/failure-kinds'
 import {
   raiseActionQueueItem,
   supersedeActionQueueItemsForOrigin,
@@ -119,15 +111,11 @@ const isMainCommiterRecovery = (
  * transaction on queue.db while also writing to state.db (which may be
  * the same file in some configurations, causing SQLITE_BUSY).
  */
-async function applyActionQueueMutation(
-  event: BusEvent,
-  catalog: FailureReasonCatalog,
-): Promise<void> {
+async function applyActionQueueMutation(event: BusEvent): Promise<void> {
   if (TASK_RAISE_EVENTS.has(event.type)) {
     const { taskId } = event.payload as { taskId: string }
-    // Load the task to read failure_reason_code, the legacy failure_reason
-    // string, and the recovery metadata that decides whether F.2's
-    // aggregated writer owns this row.
+    // Load the task to read its structured failure signature and the recovery
+    // metadata that decides whether F.2's aggregated writer owns this row.
     const task = await getTask(taskId)
 
     // F.2 override: failed `main-commiter` recoveries are handled by
@@ -141,25 +129,15 @@ async function applyActionQueueMutation(
       return
     }
 
-    // Resolve the failure code: prefer the typed column; fall back to mapping
-    // the legacy string; finally fall back to `unknown`.
-    const code =
-      task?.failureReasonCode ??
-      (task?.failureReason !== null && task?.failureReason !== undefined
-        ? failureReasonStringToCode(task.failureReason)
-        : 'unknown')
-    const entry = catalog.get(code)
-
-    // Derive the human-readable title and body from the Failure kind registry,
-    // keyed on the task's failure signature (the `<failingStep>/<error-class>`
-    // string written by the implement workflow). Falls through to
-    // unknownFailureKind when the signature is null or unregistered.
+    // Resolve the single Failure kind record from the structured failure
+    // signature (ADR-0042). This keys on the `<failingStep>/<error-class>`
+    // signature written at failure time — NOT a re-grep of the raw failure
+    // string — so a failure whose step and cause are known resolves to its
+    // real record (title, reason, recipe ref, action menu) instead of
+    // collapsing to `unknown`. Falls through to an unknown record when the
+    // signature is null or unregistered.
     const sig = task?.failureSignature ?? null
-    const fk =
-      sig !== null
-        ? (lookupFailureKind(sig) ??
-            unknownFailureKind(failingStepFromSignature(sig), task?.error ?? ''))
-        : unknownFailureKind('unknown', task?.error ?? '')
+    const fk = resolveFailureKind(sig, task?.error ?? '')
 
     // raiseActionQueueItem is idempotent: if an open origin row already exists
     // (raised by a richer writer such as queue-fix-tasks), it bumps
@@ -173,12 +151,12 @@ async function applyActionQueueMutation(
       payload: {
         taskId,
         eventType: event.type,
-        failureReasonCode: entry.code,
-        userMessage: entry.userMessage,
-        availableActions: entry.availableActions.map((a) => ({
+        failureSignature: fk.signature,
+        failureReasonCode: fk.signature,
+        availableActions: fk.actions.map((a) => ({
           id: a.id,
           label: a.label,
-          cliHint: a.cliHint,
+          op: a.op,
         })),
       },
       context: {},
@@ -252,7 +230,6 @@ async function applyActionQueueMutation(
  */
 export async function drainActionQueueRepopulations(
   client: Client,
-  catalog: FailureReasonCatalog,
   log?: (msg: string) => void,
 ): Promise<{ processed: number }> {
   // Stall contract (ADR-0032) is shared with the Invalidator via
@@ -271,7 +248,7 @@ export async function drainActionQueueRepopulations(
         event.type === 'proposal.added' ||
         event.type in PROPOSAL_EVICT_REASONS
       if (!isMapped) return false
-      await applyActionQueueMutation(event, catalog)
+      await applyActionQueueMutation(event)
       return true
     },
   })

@@ -2,7 +2,6 @@ import type { ZodType } from 'zod'
 import {
   actionQueueResponseSchema,
   eventsResponseSchema,
-  failureReasonsResponseSchema,
   frameworkUpdateSchema,
   kpisResponseSchema,
   originsResponseSchema,
@@ -13,7 +12,6 @@ import {
   workerSessionsResponseSchema,
   type ActionQueueItem,
   type EventsResponse,
-  type FailureReasonCatalogEntry,
   type FrameworkUpdate,
   type Kpi,
   type OriginsResponse,
@@ -214,19 +212,6 @@ export const invokeAction = async (
 
 export const eventsUrl = (): string => `${BASE}/events`
 
-/**
- * Fetch the resolved failure-reason catalog from the daemon (proxied through
- * the UI server). The catalog is keyed by `code`. The actionQueue detail panel
- * looks up `failureReasonCode` to render `Reason: <userMessage>` plus the
- * `availableActions` button list. Falls back to the catalog's `unknown`
- * entry when the code is absent or not in the catalog.
- */
-export const fetchFailureReasons = async (
-  projectId?: string,
-): Promise<FailureReasonCatalogEntry[]> => {
-  return fetchJson(appendProject('/api/failure-reasons', projectId), failureReasonsResponseSchema)
-}
-
 export interface EventsFilter {
   taskId?: string
   originId?: string
@@ -352,7 +337,6 @@ export type {
   ActionQueueItem,
   DaemonHealth,
   EventsResponse,
-  FailureReasonCatalogEntry,
   FrameworkUpdate,
   Kpi,
   OriginsResponse,

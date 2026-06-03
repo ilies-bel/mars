@@ -1,4 +1,4 @@
-import { failureReasonStringToCode } from './lib/failure-reasons'
+import { computeFailureSignature } from './lib/failure-signature'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
 import { publish } from './lib/outbox'
 import { getDefaultQueueClient } from './lib/task-store'
@@ -20,16 +20,18 @@ export const markTaskDropped = async (
   taskId: string,
   reason: string,
   /**
-   * Optional catalog code recorded on `failure_reason_code`. Defaults to
-   * mapping `reason` through {@link failureReasonStringToCode} so the actionQueue
-   * row renders against the structured catalog even for callers that don't
-   * yet thread an explicit code.
+   * Optional failure signature recorded on `failure_reason_code`. Defaults to
+   * classifying `reason` under a generic `terminal` step via
+   * {@link computeFailureSignature} so the column always holds a
+   * `<step>/<error-class>` signature even for callers that don't thread an
+   * explicit one. The Failure-kind resolution path keys on the task's
+   * structured `failureSignature`, so this is a forensic mirror.
    */
   failureReasonCode?: string | null,
 ): Promise<void> => {
   const now = new Date().toISOString()
   const c = await getDefaultQueueClient()
-  const code = failureReasonCode ?? failureReasonStringToCode(reason)
+  const code = failureReasonCode ?? computeFailureSignature('terminal', reason)
   // Route the status change and its paired event through the single-writer
   // chokepoint so the UPDATE and `task.dropped` publish share one write tx.
   await setTaskStatus(taskId, 'dropped', { dropReason: reason })
@@ -63,17 +65,17 @@ export const markTaskFailed = async (
   taskId: string,
   reason: string,
   /**
-   * Optional catalog code recorded on `failure_reason_code`. Defaults to
-   * mapping `reason` through {@link failureReasonStringToCode} so the actionQueue
-   * row renders against the structured catalog. Callers that already know
-   * the code (e.g. dispatch-time `verify:main-dirty` parking) pass it
-   * explicitly to skip the string-matching shim.
+   * Optional failure signature recorded on `failure_reason_code`. Defaults to
+   * classifying `reason` under a generic `terminal` step via
+   * {@link computeFailureSignature} so the column always holds a
+   * `<step>/<error-class>` signature. Callers that already know the signature
+   * (e.g. dispatch-time `verify:main-dirty` parking) pass it explicitly.
    */
   failureReasonCode?: string | null,
 ): Promise<void> => {
   const now = new Date().toISOString()
   const c = await getDefaultQueueClient()
-  const code = failureReasonCode ?? failureReasonStringToCode(reason)
+  const code = failureReasonCode ?? computeFailureSignature('terminal', reason)
   // Route the status change and its paired event through the single-writer
   // chokepoint so the UPDATE and `task.failed` publish share one write tx.
   await setTaskStatus(taskId, 'failed', { error: reason })
