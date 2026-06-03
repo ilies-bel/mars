@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'bun:test'
 import {
   catalogActionsForDetail,
+  ID_LESS_OPS,
   opForCatalogAction,
   originKindLabel,
   resolveFailureReason,
@@ -48,6 +49,20 @@ const catalog: FailureReasonCatalogEntry[] = [
     ],
   },
 ]
+
+describe('ID_LESS_OPS', () => {
+  it('includes restart-daemon and restart-all-daemon-killed (process-level ops, no entity id)', () => {
+    expect(ID_LESS_OPS.has('restart-daemon')).toBe(true)
+    expect(ID_LESS_OPS.has('restart-all-daemon-killed')).toBe(true)
+  })
+
+  it('does not include per-entity ops that carry an id', () => {
+    expect(ID_LESS_OPS.has('restart')).toBe(false)
+    expect(ID_LESS_OPS.has('purge')).toBe(false)
+    expect(ID_LESS_OPS.has('dismiss')).toBe(false)
+    expect(ID_LESS_OPS.has('investigate')).toBe(false)
+  })
+})
 
 describe('resolveFailureReason', () => {
   it('returns the entry matching the code', () => {
