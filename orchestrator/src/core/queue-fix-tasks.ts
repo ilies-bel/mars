@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { genId } from '../mars-id/index.js'
 import {
   deriveReproCommand,
   buildVerifyReproHint,
@@ -239,7 +239,7 @@ export const upsertFixTask = async (
         : source.prompt ?? '',
   }
   const prompt = recipe.buildPrompt(recipeContextWithSource)
-  const fixTaskId = randomUUID().slice(0, 8)
+  const fixTaskId = genId('fix-task').toString()
   // Shared remediations run at top priority — every other queued task is
   // waiting on this one resource (e.g. a clean main). Non-shared fix-tasks
   // stay at default priority; they only unblock the single source.

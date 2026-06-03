@@ -426,6 +426,7 @@ export const initQueue = async (): Promise<void> => {
     await c.execute(`ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`)
   }
   if (!names.has('fix_for_task_id')) {
+    // TEXT accepts any tagged id form, e.g. `task-<hex>` (the source task) or `fixt-<hex>`.
     await c.execute(`ALTER TABLE tasks ADD COLUMN fix_for_task_id TEXT`)
   }
   if (!names.has('failure_signature')) {
@@ -483,6 +484,7 @@ export const initQueue = async (): Promise<void> => {
   // back/forward-filled explicitly: backfill old rows below, populate new
   // rows in enqueueTask.
   if (!names.has('origin_id')) {
+    // TEXT accepts any tagged id form, e.g. `task-<hex>` or `fixt-<hex>`.
     await c.execute(`ALTER TABLE tasks ADD COLUMN origin_id TEXT`)
     await c.execute(`UPDATE tasks SET origin_id = id WHERE origin_id IS NULL`)
   }
