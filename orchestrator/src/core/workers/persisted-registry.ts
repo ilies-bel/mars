@@ -29,6 +29,7 @@ export interface WorkerDeclaration {
   readonly bare: boolean
   readonly disallowedTools: readonly string[]
   readonly outputFormat: ClaudeOutputFormat
+  readonly maxMessages: number
   readonly runtime: WorkerRuntime
   // Free-form list of routing tags. pickWorkerForTags routes a task to this
   // Worker when the task's tag list intersects this set. Any string is valid;
@@ -66,6 +67,7 @@ const configToDeclaration = (
   bare: config.bare,
   disallowedTools: [...config.disallowedTools],
   outputFormat: config.outputFormat,
+  maxMessages: config.maxMessages,
   runtime: config.runtime,
   ...(config.tags !== undefined ? { tags: [...config.tags] } : {}),
 })

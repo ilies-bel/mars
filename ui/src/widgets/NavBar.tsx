@@ -34,12 +34,7 @@ export const NavBar = ({ hash }: NavBarProps) => {
   const progressCount = tasks?.length ?? 0
 
   return (
-    <nav
-      className="flex items-center gap-2 border-b bg-bg px-4 py-1.5"
-      // Use the focused project's signature color for the bottom border.
-      // Falls back to iron/30 (≈ #9C2E35 at 30% opacity) when no project is focused.
-      style={{ borderBottomColor: 'color-mix(in srgb, var(--project-tint, var(--color-iron)) 40%, transparent)' }}
-    >
+    <nav className="flex items-center gap-2 border-b border-iron/30 bg-bg px-4 py-1.5">
       <ProjectSelector />
       <span className="mx-1 h-3 w-px bg-iron/30" aria-hidden="true" />
       <span className="relative">

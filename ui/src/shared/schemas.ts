@@ -45,8 +45,6 @@ const taskSpecSchema = z
   })
   .nullable()
 
-const clusterSchema = z.enum(['Queued', 'In progress', 'Blocked', 'Failed'])
-
 export const taskSchema = z.object({
   id: z.string(),
   prompt: z.string(),
@@ -75,32 +73,15 @@ export const taskSchema = z.object({
    * Drives provenance edges in the Topology DAG view.
    */
   parentProposalId: z.string().nullable().optional(),
-  /**
-   * Progress-tab cluster tag derived server-side. Null for terminal statuses
-   * (draft/done/dropped) that fall outside the kanban scope. Non-null for all
-   * active and failed tasks. Absent on legacy responses that pre-date the
-   * daemon-side enrichment — consumers should treat absent as null.
-   */
-  cluster: clusterSchema.nullable().optional(),
   spec: taskSpecSchema.optional().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
 
+const clusterSchema = z.enum(['Queued', 'In progress', 'Blocked', 'Failed'])
+
 const progressTaskSchema = taskSchema.extend({
   cluster: clusterSchema,
-  /**
-   * The workflow step the task is currently executing (setup | code | verify |
-   * merge). Set by the orchestrator once a step_started event is recorded.
-   * Absent on legacy responses or tasks that have not yet emitted a step event.
-   * Added by task mars-c07d0768 — consumers should treat absent as null.
-   */
-  currentStep: z.string().nullable().optional(),
-  /**
-   * ISO timestamp when the current step started. Absent when currentStep is
-   * absent. Added by task mars-c07d0768 — consumers should treat absent as null.
-   */
-  currentStepStartedAt: z.string().nullable().optional(),
 })
 
 /**
@@ -431,11 +412,6 @@ export const kpiKeySchema = z.enum([
   'recovery_success_rate',
 ])
 
-export const kpiSeriesPointSchema = z.object({
-  takenAt: z.string(),
-  value: z.number().nullable(),
-})
-
 export const kpiSchema = z.object({
   key: kpiKeySchema,
   currentValue: z.number(),
@@ -443,9 +419,6 @@ export const kpiSchema = z.object({
   delta: z.number(),
   sampleCount: z.number(),
   lowConfidence: z.boolean(),
-  /** Recent time-series points for sparkline rendering. Oldest-first.
-   *  Present when the daemon has snapshots; absent/empty when no data yet. */
-  series: z.array(kpiSeriesPointSchema).optional(),
 })
 
 export const kpisResponseSchema = z.object({
@@ -453,7 +426,6 @@ export const kpisResponseSchema = z.object({
 })
 
 export type KpiKey = z.infer<typeof kpiKeySchema>
-export type KpiSeriesPoint = z.infer<typeof kpiSeriesPointSchema>
 export type Kpi = z.infer<typeof kpiSchema>
 export type KpisPayload = z.infer<typeof kpisResponseSchema>
 
@@ -480,6 +452,21 @@ export type DaemonHealth = z.infer<typeof daemonHealthSchema>
 export type Project = z.infer<typeof projectSchema>
 
 // ----------------------------------------------------------------------------
+// Framework update availability (daemon `/view/framework-update` →
+// proxied as `/api/framework-update`). Reflects the installed vs latest
+// version state; the actual self-update action is a separate task.
+// ----------------------------------------------------------------------------
+
+export const frameworkUpdateSchema = z.object({
+  installed: z.string(),
+  latest: z.string(),
+  available: z.boolean(),
+  checkedAt: z.string().nullable(),
+  releaseUrl: z.string().nullable(),
+})
+
+export type FrameworkUpdate = z.infer<typeof frameworkUpdateSchema>
+
 export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
 export type ActionDescriptor = z.infer<typeof actionDescriptorSchema>
 export type DagNode = z.infer<typeof dagNodeSchema>

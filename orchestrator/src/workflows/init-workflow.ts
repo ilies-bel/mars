@@ -370,23 +370,11 @@ export function tryActivatePlugin(
   }
 }
 
-/**
- * Return the framework's `.claude` directory, which holds the Mars plugin.
- *
- * init-workflow.ts lives at <frameworkRoot>/orchestrator/src/workflows/
- * Walking up four directories (workflows → src → orchestrator → frameworkRoot)
- * then appending '.claude' reaches <frameworkRoot>/.claude.
- *
- * Exported so path-resolution can be verified independently of the real
- * filesystem side-effects in runActivatePlugin.
- */
-export const getFrameworkClaudeDir = (): string => {
-  const thisFile = fileURLToPath(import.meta.url)
-  return join(dirname(dirname(dirname(dirname(thisFile)))), '.claude')
-}
-
 const runActivatePlugin = (): void => {
-  const frameworkClaudeDir = getFrameworkClaudeDir()
+  // init-workflow.ts lives at <frameworkRoot>/orchestrator/src/workflows/
+  // walking up three directories reaches <frameworkRoot>
+  const thisFile = fileURLToPath(import.meta.url)
+  const frameworkClaudeDir = join(dirname(dirname(dirname(thisFile))), '.claude')
   const userSettingsPath = join(homedir(), '.claude', 'settings.json')
   tryActivatePlugin(frameworkClaudeDir, userSettingsPath, realDeps)
 }

@@ -50,9 +50,8 @@ import { resolveGitBin } from '../lib/git'
 import { getDefaultTaskStore } from '../lib/task-store'
 import { getDefaultDomainTaskStore } from '../store/task-store'
 import { listTerminalEvents } from './view/terminal-events'
-import { buildSessionsView } from './view/sessions'
 import { listProposals, promoteProposal } from '../proposals'
-import type { DraftFeature, StaleWorktreeAlert } from './http-server'
+import type { DraftFeature, FrameworkUpdateState, StaleWorktreeAlert } from './http-server'
 import {
   CANCELLED_FAILURE_REASON,
   markOriginDoneFromRecovery,
@@ -2575,16 +2574,10 @@ export const startDaemon = async (
     failureReasonCatalog,
     recipeCatalog,
     traceStore,
-    viewTasks: async () => {
-      const { buildTasksView } = await import('./view/tasks.js')
-      const client = getClient()
-      return buildTasksView(client)
-    },
-    viewTaskById: async (id: string) => {
-      const { buildTaskViewById } = await import('./view/tasks.js')
-      const client = getClient()
-      return buildTaskViewById(client, id)
-    },
+    viewTasks: () =>
+      getDefaultDomainTaskStore()
+        .listTasks()
+        .then((tasks) => ({ tasks })),
     viewProgress: async () => {
       const {
         buildProgressView,
@@ -2624,7 +2617,6 @@ export const startDaemon = async (
       const { listActionQueueItems } = await import('../lib/action-queue')
       const { listDismissals } = await import('../lib/action-queue-dismissals')
       const { listTasks: qListTasks, initQueue, getClient: getQueueClient } = await import('../queue')
-      const { getDiagnosis } = await import('../lib/diagnose')
       const { listErrorKinds: listErrKinds } = await import('../lib/error-kinds')
       const { getRepoRoot } = await import('../context')
 
@@ -2712,14 +2704,6 @@ export const startDaemon = async (
         errorKindRegistry,
         repoRoot: getRepoRoot(),
         filter,
-        diagnosisLookup: async (taskId) => {
-          const stored = await getDiagnosis(taskId)
-          if (stored.kind === 'no-verdict') return null
-          if (stored.kind === 'root-cause-found') {
-            return { text: stored.evidence, diagnosedAt: stored.recordedAt }
-          }
-          return { text: stored.whatChecked, diagnosedAt: stored.recordedAt }
-        },
       })
     },
     viewTodo: async () => {
@@ -2800,11 +2784,25 @@ export const startDaemon = async (
 
       return { drafts, staleWorktrees }
     },
+    viewFrameworkUpdate: async (): Promise<FrameworkUpdateState> => {
+      const cacheFile = resolvePath(resolveContext().stateDir, 'update.json')
+      try {
+        const raw = await readFile(cacheFile, 'utf8')
+        return JSON.parse(raw) as FrameworkUpdateState
+      } catch {
+        return {
+          installed: MARS_VERSION,
+          latest: MARS_VERSION,
+          available: false,
+          checkedAt: null,
+          releaseUrl: null,
+        }
+      }
+    },
     viewTerminalEvents: () =>
       listTerminalEvents(getDefaultDomainTaskStore()).then((events) => ({
         events,
       })),
-    viewSessions: (agentName: string) => buildSessionsView(traceStore, agentName),
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
@@ -2868,6 +2866,28 @@ export const startDaemon = async (
       log(`[blocker-resolution] boot drain failed: ${(err as Error).message}`)
     }
   })()
+
+  // ── GitHub release update poller ─────────────────────────────────────────
+  // Fetches https://api.github.com/repos/ilies-bel/mars/releases/latest once
+  // on startup and then every UPDATE_POLL_INTERVAL_MS (6 h). Writes the result
+  // to .mars/update.json; on any failure it leaves the cache untouched and
+  // logs at debug level. .unref() so the interval never prevents shutdown.
+  const { pollGithubRelease, UPDATE_POLL_INTERVAL_MS } = await import('./github-update-poller')
+  const runUpdatePoll = (): void => {
+    void (async () => {
+      try {
+        await pollGithubRelease(resolveContext().stateDir, {
+          debug: (msg) => log(msg),
+        })
+      } catch (err) {
+        log(`[github-update-poller] unexpected error: ${(err as Error).message}`)
+      }
+    })()
+  }
+  // One-shot on startup (fire-and-forget; errors already swallowed inside).
+  runUpdatePoll()
+  const githubUpdatePoll = setInterval(runUpdatePoll, UPDATE_POLL_INTERVAL_MS)
+  githubUpdatePoll.unref()
 
   // ── Poll-fallback tick ────────────────────────────────────────────────────
   // drain() is otherwise purely event-driven (bus 'task.added'/'task.queued'
@@ -3048,41 +3068,19 @@ export const startDaemon = async (
   }, BLOCKER_RESOLUTION_DRAIN_MS)
   blockerResolutionDrain.unref()
 
-  // ── KPI snapshot cadence ──────────────────────────────────────────────────
-  // Takes a KPI snapshot once per hour (configurable via MARS_KPI_SNAPSHOT_MS).
-  // Snapshots accumulate in kpi_snapshots so the /kpis/series endpoint has
-  // points to return. Each tick writes independently; duplicate taken_at values
-  // are not possible because the timestamp is taken fresh at each tick.
-  // .unref() so the interval never keeps the process alive after shutdown.
-  const { takeKpiSnapshot } = await import('../lib/kpi-snapshots.js')
-  const KPI_SNAPSHOT_MS = Number(process.env.MARS_KPI_SNAPSHOT_MS ?? 60 * 60_000)
-  const kpiSnapshotTick = setInterval(() => {
-    void (async () => {
-      try {
-        const surface = await getDefaultTaskStore()
-        const snapshot = await takeKpiSnapshot({ surface, now: new Date().toISOString() })
-        log(`[kpi-snapshot] took snapshot ${snapshot.id} (sample_count=${snapshot.sample_count})`)
-        viewStreamHub.broadcast('kpis')
-      } catch (err) {
-        log(`[kpi-snapshot] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, KPI_SNAPSHOT_MS)
-  kpiSnapshotTick.unref()
-
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
     clearInterval(pollFallback)
+    clearInterval(githubUpdatePoll)
     clearInterval(staleSweep)
     clearInterval(observabilityWatchdog)
     clearInterval(observabilitySweep)
     clearInterval(alertDrain)
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)
-    clearInterval(kpiSnapshotTick)
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.

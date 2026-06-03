@@ -1,5 +1,11 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { execSync } from 'node:child_process'
+
+interface UpdateCache {
+  available?: boolean
+  latest?: string
+}
 
 /**
  * Pure function: builds a GSD-style context-window segment showing
@@ -43,8 +49,14 @@ export function buildContextSegment(
  */
 export function buildStatusLine(
   branch: string | null,
+  cache: UpdateCache | null,
 ): string {
-  return branch ? `mars · ${branch}` : 'mars'
+  const base = branch ? `mars · ${branch}` : 'mars'
+  const nudge =
+    cache?.available === true && cache.latest
+      ? `  ⚡ v${cache.latest} available`
+      : ''
+  return `${base}${nudge}`
 }
 
 /**
@@ -106,7 +118,20 @@ export async function statuslineCommand(repo?: string): Promise<void> {
       // Not a git repo or git unavailable — emit "mars" without a branch.
     }
 
-    const line = buildStatusLine(branch) + buildContextSegment(contextRemainingPct)
+    // Read update cache — file only, never network.
+    let cache: UpdateCache | null = null
+    try {
+      const { resolveContext } = await import('../core/context.js')
+      const ctx = resolveContext(repo)
+      const updatePath = join(ctx.stateDir, 'update.json')
+      if (existsSync(updatePath)) {
+        cache = JSON.parse(readFileSync(updatePath, 'utf8')) as UpdateCache
+      }
+    } catch {
+      // Can't resolve repo or can't read cache — no nudge.
+    }
+
+    const line = buildStatusLine(branch, cache) + buildContextSegment(contextRemainingPct)
     process.stdout.write(`${line}\n`)
   } catch {
     // Last-resort safety net: print something minimal and exit 0.

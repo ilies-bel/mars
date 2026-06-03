@@ -25,7 +25,6 @@ import {
 import { resolveContext } from '../core/context'
 import {
   installWorktreeDeps,
-  ensureLocalDistBuilt,
   WorktreeInstallError,
 } from '../core/lib/worktree-install'
 import type { ClaudeEvent } from '../core/lib/claude-stream'
@@ -133,21 +132,6 @@ import {
 import { TDD_WORKER_BRIEF } from './tdd-brief'
 import { CONTEXT_GATHERING_BRIEF } from './context-gathering-brief'
 import { buildDiagnoseChorePrompt } from '../core/lib/diagnose-chore'
-
-// ---------------------------------------------------------------------------
-// Per-phase resume/retry policy table — colocated with the step definitions.
-//
-// The canonical definitions live in phase-policies.ts (a lean import with no
-// transitive heavy dependencies). This file re-exports them so callers that
-// prefer the implement-workflow import path still see them here, next to the
-// step definitions that produce each FailedPhase value.
-// ---------------------------------------------------------------------------
-export type {
-  ContinuePolicy,
-  RetryPolicy,
-  PhasePolicy,
-} from './phase-policies'
-export { PHASE_POLICIES } from './phase-policies'
 
 const planSchema = z
   .object({
@@ -772,33 +756,6 @@ export const implementWorkflow = defineWorkflow<
               ).toFixed(1)}s (${summary.sites.length} manifest${summary.sites.length === 1 ? '' : 's'})`,
             )
           }
-          // Safety net: verify that local file: packages (e.g. @mars/workflow)
-          // have their dist/ available after install.  The primary guard is the
-          // preinstall script in orchestrator/package.json, which builds dist
-          // before pnpm copies files to the virtual store.  This call handles
-          // any residual case where the preinstall did not run or was skipped
-          // (e.g. non-standard install invocation).
-          for (const site of summary.sites) {
-            await ensureLocalDistBuilt(
-              site.dir,
-              async (cmd, args, cwd) => {
-                const r = await runTool(
-                  {
-                    tool: cmd,
-                    argv: [...args],
-                    cwd,
-                    timeoutMs: 120_000,
-                    taskId: input.taskId,
-                    originId: workflowOriginId,
-                    phase: 'setup',
-                  },
-                  workflowTraceStore,
-                )
-                return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr }
-              },
-              (line) => console.log(line),
-            )
-          }
         } catch (error: unknown) {
           const isInstallErr = error instanceof WorktreeInstallError
           const errorOutput = isInstallErr ? error.message : String(error)
@@ -806,7 +763,7 @@ export const implementWorkflow = defineWorkflow<
           await updateTask(input.taskId, {
             status: 'failed',
             error: failSummary,
-            failedPhase: 'setup',
+            failedPhase: 'code',
             failureReason: failSummary,
             failureReasonCode: failureReasonStringToCode(failSummary),
           }, store)
@@ -832,7 +789,7 @@ export const implementWorkflow = defineWorkflow<
             )
           })
           // Throw so the engine records the step failed. install failures
-          // stamp failedPhase 'setup' — a non-resumable, pre-coding failure.
+          // stamp failedPhase 'code' — a non-resumable, pre-coding failure.
           throw error instanceof Error ? error : new Error(errorOutput)
         }
 
@@ -913,6 +870,7 @@ export const implementWorkflow = defineWorkflow<
             bare: decl.bare,
             disallowedTools: decl.disallowedTools,
             outputFormat: decl.outputFormat,
+            maxMessages: decl.maxMessages,
             maxContextTokens: 0,
             runtime: decl.runtime,
             ...(decl.tags !== undefined ? { tags: decl.tags } : {}),

@@ -121,3 +121,60 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
   })
 })
 
+// ---------------------------------------------------------------------------
+// Acceptance criterion 3: message-cap accounting identical to bare dispatch.
+// A Worker constructed with maxMessages=2 stops the session at 2 events —
+// the same behaviour as runClaudeCode({ maxMessages: 2 }).
+// ---------------------------------------------------------------------------
+describe('worker.run() — per-Worker message cap', () => {
+  let stubDir: string
+  let originalPath: string | undefined
+
+  beforeAll(() => {
+    stubDir = mkdtempSync(resolve(tmpdir(), 'mars-worker-cap-stub-'))
+    const stubPath = resolve(stubDir, 'claude')
+    // Emits many events without exiting so the cap is the only stop condition.
+    const stubScript = `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'cap-session' }) + '\\n');
+let i = 0;
+const tick = () => {
+  process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'm' + i }] } }) + '\\n');
+  i++;
+  setTimeout(tick, 5);
+};
+tick();
+`
+    writeFileSync(stubPath, stubScript, 'utf8')
+    chmodSync(stubPath, 0o755)
+    originalPath = process.env.PATH
+    process.env.PATH = `${stubDir}:${originalPath ?? ''}`
+  })
+
+  afterAll(() => {
+    if (originalPath !== undefined) process.env.PATH = originalPath
+    rmSync(stubDir, { recursive: true, force: true })
+  })
+
+  it('exits with code 137 when the pinned message cap is reached', async () => {
+    // Build a Worker with a cap of 3 events (system + 2 assistants).
+    const capCfg: WorkerConfig = {
+      name: 'Coder',
+      model: 'claude-sonnet-4-6',
+      effort: 'high',
+      permissionMode: 'bypassPermissions',
+      bare: false,
+      disallowedTools: [],
+      outputFormat: 'stream-json',
+      maxMessages: 3,
+      maxContextTokens: 0,
+      runtime: 'headless',
+    }
+    const capper = createWorker(capCfg)
+    const r = await capper.run('noop', {
+      cwd: process.cwd(),
+    })
+    expect(r.exitCode).toBe(137)
+    // The conversation must be ≤ the cap — events recorded before the kill.
+    expect(r.conversation.length).toBeLessThanOrEqual(capCfg.maxMessages)
+  }, 15_000)
+})

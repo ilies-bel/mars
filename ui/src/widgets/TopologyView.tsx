@@ -45,19 +45,15 @@ import { chainForProposal, chainForTask, type ChainResult } from '@/shared/chain
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
   ACTIVE_ACCENT,
-  UNATTACHED_COMBO_ID,
   buildG6Data,
   CANVAS_SURFACE,
   CLUSTER_STYLE,
-  clusterSignature,
   computeStateMap,
-  dominant,
+  dataSignature,
   EDGE_BLOCK,
   PROPOSAL_STROKE,
   PROPOSAL_TEXT,
   proposalIdFromComboId,
-  rollupByProposal,
-  structuralSignature,
 } from './topologyGraphModel'
 import type { Cluster } from '@/shared/schemas'
 
@@ -79,11 +75,6 @@ export interface TopologyViewProps {
    * when it collapses. Optional so tests / other callers don't break.
    */
   onSelectProposal?: (id: string | null) => void
-  /**
-   * IDs of tasks currently in the done-flash window. These nodes flash green
-   * then fade before being removed when the graph rebuilds.
-   */
-  flashingTaskIds?: Set<string>
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +107,6 @@ export const TopologyView = ({
   selectedProposalId,
   searchMatchIds,
   onSelectProposal,
-  flashingTaskIds,
 }: TopologyViewProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const graphRef = useRef<Graph | null>(null)
@@ -134,24 +124,12 @@ export const TopologyView = ({
   // Latest props the imperative handlers read (avoids stale closures).
   const propsRef = useRef({ tasks, ghostedClusters, searchMatchIds })
   propsRef.current = { tasks, ghostedClusters, searchMatchIds }
-
-  // Flash animation state: nodes currently showing the green flash.
-  // allFlashingIdsRef: all nodes in the 3-second flash window.
-  // greenPhaseIdsRef: the subset currently showing the green fill (pulsing).
-  const allFlashingIdsRef = useRef<Set<string>>(new Set())
-  const greenPhaseIdsRef = useRef<Set<string>>(new Set())
-  allFlashingIdsRef.current = flashingTaskIds ?? new Set()
-  // applyHighlightRef allows the flash effect to call applyHighlight without
-  // a stale-closure reference into the mount effect.
-  const applyHighlightRef = useRef<() => void>(() => {})
   const onSelectProposalRef = useRef(onSelectProposal)
   onSelectProposalRef.current = onSelectProposal
   // Tracks the externally-driven selectedProposalId so we only react to changes
   // and don't echo our own onSelectProposal callbacks back into a drill-in.
   const lastSelectedRef = useRef<string | null | undefined>(undefined)
-  // Tracks the last cluster signature applied to the graph so the in-place
-  // colour patch effect only fires when clusters actually changed.
-  const prevClusterSigRef = useRef<string>('')
+  const lastSignatureRef = useRef<string>('')
 
   const empty = tasks.length === 0
 
@@ -180,9 +158,7 @@ export const TopologyView = ({
     window.addEventListener('unhandledrejection', onRejection)
 
     const { nodes, edges, combos } = buildG6Data(propsRef.current.tasks, proposals)
-    // Record the current cluster state so the patch effect skips its first run
-    // (the graph already has the right colours from buildG6Data).
-    prevClusterSigRef.current = clusterSignature(propsRef.current.tasks)
+    lastSignatureRef.current = dataSignature(propsRef.current.tasks, proposals)
 
     const graph = new Graph({
       container,
@@ -212,9 +188,6 @@ export const TopologyView = ({
         state: {
           active: { lineWidth: 2.5, shadowColor: 'rgba(167,139,250,0.5)', shadowBlur: 8 },
           dim: { fillOpacity: 0.14, strokeOpacity: 0.14, labelFillOpacity: 0.14 },
-          // Done-flash states: green confirmation burst then near-transparent fade.
-          'done-flash': { fill: '#4ade80', stroke: '#22c55e', lineWidth: 2, fillOpacity: 1, strokeOpacity: 1, labelFill: '#14532d' },
-          'done-fading': { fillOpacity: 0.08, strokeOpacity: 0.08, labelFillOpacity: 0.08 },
         },
       },
       edge: {
@@ -239,7 +212,7 @@ export const TopologyView = ({
           shadowBlur: (d: ComboData) => (d.style?.collapsed === false ? 0 : 12),
           shadowOffsetY: 2,
           labelText: (d: ComboData) => String(d.data?.label ?? ''),
-          labelFill: (d: ComboData) => (d.data?.synthetic ? CLUSTER_STYLE.Queued.dot : PROPOSAL_TEXT),
+          labelFill: PROPOSAL_TEXT,
           labelFontSize: 11,
           labelFontWeight: 600,
           labelFontFamily: 'Inter, sans-serif',
@@ -282,22 +255,14 @@ export const TopologyView = ({
     // ---- highlight: one batched setElementState per change ----------------
     // All dim/active resolution lives in the pure `computeStateMap` (model
     // module); here we just feed it the live element snapshot + current inputs.
-    // Flash node states are overlaid on top so they are preserved across hover /
-    // filter changes without needing to plumb flash state into computeStateMap.
     const applyHighlight = (): void => {
       const { ghostedClusters: gc, searchMatchIds: search } = propsRef.current
       const map = computeStateMap(
         { nodes: graph.getNodeData(), edges: graph.getEdgeData(), combos: graph.getComboData() },
         { searchMatchIds: search, ghostedClusters: gc, lit: litRef.current },
       )
-      // Overlay flash states: flashing nodes bypass the normal dim / active
-      // resolution so the confirmation animation always shows.
-      for (const id of allFlashingIdsRef.current) {
-        map[id] = greenPhaseIdsRef.current.has(id) ? ['done-flash'] : []
-      }
       void graph.setElementState(map)
     }
-    applyHighlightRef.current = applyHighlight
 
     // ---- debounced hover --------------------------------------------------
     const hoverDelay = (): number => (reduced() ? 0 : 100)
@@ -734,13 +699,11 @@ export const TopologyView = ({
       cloudHome.clear()
       nudgeHome.clear()
     }
-    // Recreate the graph only when the structural topology changes (new/removed
-    // nodes, edge wiring, proposals) or the empty/non-empty boundary flips.
-    // Cluster transitions (failed/blocked) do NOT trigger a rebuild — they are
-    // patched in-place by the clusterSignature effect below, avoiding a
-    // blank-canvas flash.  Filter/selection props are handled by separate effects.
+    // Recreate the graph only when the structural data signature changes, or the
+    // empty/non-empty boundary flips. (Filter/selection props are applied via
+    // the separate effects below without rebuilding the graph.)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empty, structuralSignature(tasks, proposals)])
+  }, [empty, dataSignature(tasks, proposals)])
 
   // Re-apply the dim/highlight map when filter props change (no graph rebuild).
   // Uses the same pure resolver as the hover handlers so the two can't drift.
@@ -753,54 +716,6 @@ export const TopologyView = ({
     )
     void graph.setElementState(map)
   }, [searchMatchIds, ghostedClusters])
-
-  // In-place colour patch: when a task transitions to failed/blocked (cluster
-  // changes) without a structural topology change, update node and combo data
-  // directly then redraw — no graph rebuild, no blank-canvas flash.
-  useEffect(() => {
-    const graph = graphRef.current
-    if (!graph) return
-    const sig = clusterSignature(tasks)
-    if (prevClusterSigRef.current === sig) return
-    prevClusterSigRef.current = sig
-
-    // Only update nodes that exist in the graph. Unattached nodes (no
-    // parentProposalId or unknown proposal) are now included in the graph under
-    // the UNATTACHED_COMBO_ID combo, so this guard correctly covers both
-    // proposal and unattached tasks.
-    const graphNodeIds = new Set(graph.getNodeData().map((n) => String(n.id)))
-    const nodeUpdates = tasks
-      .filter((t) => graphNodeIds.has(t.id))
-      .map((t) => ({ id: t.id, data: { cluster: t.cluster } }))
-    graph.updateNodeData(nodeUpdates)
-
-    // Recompute dominant cluster per proposal and update combo tints.
-    const proposalIdSet = new Set(proposals.map((p) => p.id))
-    const rollupMap = rollupByProposal(tasks, proposals)
-    const comboUpdates = proposals.map((p) => ({
-      id: `combo:${p.id}`,
-      data: { dom: dominant(rollupMap.get(p.id)!) },
-    }))
-
-    // Also patch the Unattached combo if it's present in the graph.
-    if (graph.getComboData(UNATTACHED_COMBO_ID)) {
-      const unattachedTasks = tasks.filter(
-        (t) => t.parentProposalId == null || !proposalIdSet.has(t.parentProposalId),
-      )
-      const unattachedCounts: Record<string, number> = { Queued: 0, 'In progress': 0, Blocked: 0, Failed: 0 }
-      for (const t of unattachedTasks) unattachedCounts[t.cluster] = (unattachedCounts[t.cluster] ?? 0) + 1
-      const unattachedRollup = {
-        total: unattachedTasks.length,
-        counts: unattachedCounts as Parameters<typeof dominant>[0]['counts'],
-      }
-      comboUpdates.push({ id: UNATTACHED_COMBO_ID, data: { dom: dominant(unattachedRollup) } })
-    }
-
-    graph.updateComboData(comboUpdates)
-
-    void graph.draw()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, proposals])
 
   // Drive drill-in from the external selectedProposalId control.
   useEffect(() => {
@@ -821,72 +736,6 @@ export const TopologyView = ({
     if (targetCombo) driver.__marsToggle?.(targetCombo)
     else driver.__marsCollapse?.()
   }, [selectedProposalId])
-
-  // Flash animation for done-transitioning nodes. When flashingTaskIds gains new
-  // IDs, start a 3-second animation: green pulses for ~2.4s then fade to near-
-  // transparent over 0.6s. The graph still holds the task nodes during this
-  // window (ProgressPage passes tasksWithFlashing so the signature is stable).
-  // We track which IDs are newly added to avoid restarting in-flight animations
-  // when an unrelated filter change re-runs this effect.
-  const prevFlashIdsRef = useRef<Set<string>>(new Set())
-  useEffect(() => {
-    const current = flashingTaskIds ?? new Set<string>()
-    const prev = prevFlashIdsRef.current
-    const newIds = [...current].filter((id) => !prev.has(id))
-    prevFlashIdsRef.current = new Set(current)
-
-    if (newIds.length === 0) return
-
-    const PULSE_MS = 450
-    const FADE_START_MS = 2400
-    const TOTAL_MS = 3000
-
-    const intervals: ReturnType<typeof setInterval>[] = []
-    const timeouts: ReturnType<typeof setTimeout>[] = []
-
-    for (const nodeId of newIds) {
-      // Start with green phase.
-      greenPhaseIdsRef.current.add(nodeId)
-      applyHighlightRef.current()
-
-      // Pulse: alternate green/normal every PULSE_MS until fade phase.
-      const intervalId = setInterval(() => {
-        if (greenPhaseIdsRef.current.has(nodeId)) {
-          greenPhaseIdsRef.current.delete(nodeId)
-        } else {
-          greenPhaseIdsRef.current.add(nodeId)
-        }
-        applyHighlightRef.current()
-      }, PULSE_MS)
-      intervals.push(intervalId)
-
-      // Fade phase: stop pulsing and apply the near-transparent done-fading state.
-      const fadeId = setTimeout(() => {
-        clearInterval(intervalId)
-        greenPhaseIdsRef.current.delete(nodeId)
-        const graph = graphRef.current
-        if (graph) {
-          void graph.setElementState({ [nodeId]: ['done-fading'] }).catch(() => {})
-        }
-      }, FADE_START_MS)
-      timeouts.push(fadeId)
-
-      // Cleanup: remove from green phase refs once the window expires.
-      const cleanupId = setTimeout(() => {
-        greenPhaseIdsRef.current.delete(nodeId)
-      }, TOTAL_MS)
-      timeouts.push(cleanupId)
-    }
-
-    return () => {
-      for (const id of intervals) clearInterval(id)
-      for (const id of timeouts) clearTimeout(id)
-      // On cleanup: remove all new IDs from green phase (handles unmount /
-      // effect re-run before the timers fire).
-      for (const nodeId of newIds) greenPhaseIdsRef.current.delete(nodeId)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flashingTaskIds])
 
   if (empty) {
     return (

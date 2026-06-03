@@ -2,14 +2,13 @@ import { describe, it, expect } from 'vitest'
 import { shortId } from '../short-id'
 
 describe('shortId', () => {
-  it('keeps the task- prefix and 8 hex chars', () => {
-    expect(shortId('task-2e2bf341')).toBe('task-2e2bf341')
-    expect(shortId('task-2e2bf3411111')).toBe('task-2e2bf341')
+  it('keeps the mars- prefix and 8 hex chars', () => {
+    expect(shortId('mars-2e2bf341')).toBe('mars-2e2bf341')
+    expect(shortId('mars-2e2bf3411111')).toBe('mars-2e2bf341')
   })
 
-  it('keeps other kind-prefixes (prop-, refl-)', () => {
-    expect(shortId('prop-09abf133')).toBe('prop-09abf133')
-    expect(shortId('refl-09abf133')).toBe('refl-09abf133')
+  it('keeps other kind-prefixes (reflect-)', () => {
+    expect(shortId('reflect-09abf133')).toBe('reflect-09abf133')
   })
 
   it('takes 8 chars from a bare hex id', () => {

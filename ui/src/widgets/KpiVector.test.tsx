@@ -2,8 +2,7 @@
  * Tests for KpiTile and KpiVector components.
  *
  * KpiTile receives a Kpi prop and renders the label + current value.
- * KpiVector calls useKpis() and renders one KpiTile per KPI plus a
- * live/offline status bar with task counts.
+ * KpiVector calls useKpis() and renders one KpiTile per KPI.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -86,9 +85,7 @@ describe('KpiVector', () => {
 
   it('renders all four KPI tile labels side by side', async () => {
     const { KpiVector } = await import('./KpiVector')
-    const html = renderToStaticMarkup(
-      <KpiVector connected={false} inProgress={0} blocked={0} failed={0} />,
-    )
+    const html = renderToStaticMarkup(<KpiVector />)
     expect(html).toContain('Cost per Arc')
     expect(html).toContain('Failure Rate')
     expect(html).toContain('Autonomous Completion')
@@ -97,9 +94,7 @@ describe('KpiVector', () => {
 
   it('renders the currentValue of each KPI', async () => {
     const { KpiVector } = await import('./KpiVector')
-    const html = renderToStaticMarkup(
-      <KpiVector connected={false} inProgress={0} blocked={0} failed={0} />,
-    )
+    const html = renderToStaticMarkup(<KpiVector />)
     expect(html).toContain('1')
     expect(html).toContain('0.05')
     expect(html).toContain('0.9')
@@ -109,60 +104,10 @@ describe('KpiVector', () => {
   it('renders all four tiles even when some KPIs are low-confidence (layout invariant)', async () => {
     vi.mocked(useKpis).mockReturnValue({ data: MIXED_KPIS, isLoading: false, error: null })
     const { KpiVector } = await import('./KpiVector')
-    const html = renderToStaticMarkup(
-      <KpiVector connected={false} inProgress={0} blocked={0} failed={0} />,
-    )
+    const html = renderToStaticMarkup(<KpiVector />)
     expect(html).toContain('Cost per Arc')
     expect(html).toContain('Failure Rate')
     expect(html).toContain('Autonomous Completion')
     expect(html).toContain('Recovery Success')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// KpiVector status bar
-// ---------------------------------------------------------------------------
-
-describe('KpiVector status bar', () => {
-  beforeEach(() => {
-    vi.mocked(useKpis).mockReturnValue({ data: FOUR_KPIS, isLoading: false, error: null })
-  })
-
-  it('shows live text with animate-mars-pulse dot when connected is true', async () => {
-    const { KpiVector } = await import('./KpiVector')
-    const html = renderToStaticMarkup(
-      <KpiVector connected={true} inProgress={3} blocked={1} failed={2} />,
-    )
-    expect(html).toContain('live')
-    expect(html).toContain('animate-mars-pulse')
-  })
-
-  it('shows offline text and no pulse when connected is false', async () => {
-    const { KpiVector } = await import('./KpiVector')
-    const html = renderToStaticMarkup(
-      <KpiVector connected={false} inProgress={0} blocked={0} failed={0} />,
-    )
-    expect(html).toContain('offline')
-    expect(html).not.toContain('animate-mars-pulse')
-  })
-
-  it('displays running, blocked, and failed count labels', async () => {
-    const { KpiVector } = await import('./KpiVector')
-    const html = renderToStaticMarkup(
-      <KpiVector connected={true} inProgress={5} blocked={2} failed={1} />,
-    )
-    expect(html).toContain('running')
-    expect(html).toContain('blocked')
-    expect(html).toContain('failed')
-  })
-
-  it('displays the numeric values for each count', async () => {
-    const { KpiVector } = await import('./KpiVector')
-    const html = renderToStaticMarkup(
-      <KpiVector connected={true} inProgress={7} blocked={3} failed={4} />,
-    )
-    expect(html).toContain('7')
-    expect(html).toContain('3')
-    expect(html).toContain('4')
   })
 })

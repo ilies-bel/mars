@@ -1,6 +1,5 @@
 import { type Client } from '@libsql/client'
-import { createHash } from 'node:crypto'
-import { genId } from '../../mars-id/index.js'
+import { createHash, randomUUID } from 'node:crypto'
 import { resolveContext } from '../context'
 import { openLibsql } from './libsql'
 import { publishWithRetry } from './outbox'
@@ -166,7 +165,7 @@ const sha1Hex = (input: string): string =>
 const computeFingerprint = (kind: string, signature: string): string =>
   sha1Hex(`${kind}:${signature}`)
 
-const generateActionQueueId = (): string => genId('inbox-item').toString()
+const generateActionQueueId = (): string => randomUUID().slice(0, 8)
 
 export const initActionQueue = async (): Promise<void> => {
   if (initialised) return
@@ -319,7 +318,7 @@ const insertHistory = async (
     sql: `INSERT INTO action_queue_history (id, item_id, at, from_state, to_state, by, note)
           VALUES (?, ?, ?, ?, ?, ?, ?)`,
     args: [
-      genId('inbox-history').toString(),
+      randomUUID(),
       itemId,
       new Date().toISOString(),
       fromState,
@@ -649,8 +648,6 @@ export const setActionQueueState = async (
     })
     if (pref.rows.length === 1) {
       resolvedId = (pref.rows[0] as unknown as { id: string }).id
-    } else if (pref.rows.length > 1) {
-      throw new Error(`ambiguous id ${idOrPrefix}`)
     }
   }
   if (!resolvedId) return

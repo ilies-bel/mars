@@ -12,6 +12,41 @@ export type TaskStatus =
   | 'dropped'
   | 'blocked'
 
+/**
+ * Server-derived cluster tag for the Progress tab. The UI MUST NOT recompute
+ * this — it is the single source of truth for how a live or recently-broken
+ * task should be grouped on screen.
+ */
+export type Cluster = 'Queued' | 'In progress' | 'Blocked' | 'Failed'
+
+export interface ProgressTask extends Task {
+  cluster: Cluster
+}
+
+type ProposalSource = 'reflection' | 'human' | 'planner'
+
+/**
+ * Minimal proposal representation used as a DAG node in the Topology view.
+ * Only proposals with at least one in-scope task are returned.
+ */
+export interface ProposalNode {
+  id: string
+  title: string
+  source: ProposalSource
+  status: string
+}
+
+export interface DraftFeature {
+  id: string
+  title: string
+  problem: string
+  solution: string
+  status: string
+  source: ProposalSource
+  createdAt: number
+  updatedAt: number
+  acceptanceCount: number
+}
 
 interface TaskRow {
   id: string
@@ -159,6 +194,35 @@ const rowToTask = (row: TaskRow): Task => {
   }
 }
 
+const normaliseSource = (raw: unknown): ProposalSource => {
+  if (raw === 'reflection' || raw === 'planner' || raw === 'human') return raw
+  return 'human'
+}
+
+/**
+ * Maps a task to its Progress-tab cluster, or `null` if the task is out of
+ * scope (draft/done/dropped). All failed tasks are always in scope — there
+ * is no recency gate on the Failed cluster.
+ */
+const clusterFor = (task: Task): Cluster | null => {
+  switch (task.status) {
+    case 'queued':
+      return 'Queued'
+    case 'running':
+    case 'verifying':
+    case 'merging':
+    case 'vega-reconciling':
+      return 'In progress'
+    case 'blocked':
+      return 'Blocked'
+    case 'failed':
+      return 'Failed'
+    case 'draft':
+    case 'done':
+    case 'dropped':
+      return null
+  }
+}
 
 export class TaskDb {
   private client: Client
@@ -247,6 +311,40 @@ export class TaskDb {
     const all = await this.listTasks()
     const wanted = new Set<TaskStatus>(statuses)
     return all.filter((t) => wanted.has(t.status))
+  }
+
+  /**
+   * Tasks in scope for the Progress tab.
+   *
+   * Scope:
+   * - all non-terminal statuses (queued, running, verifying, merging, blocked)
+   * - all `failed` tasks regardless of age
+   *
+   * Excluded:
+   * - `draft` (not yet enqueued)
+   * - `done` and `dropped` (terminal-success or operator-dismissed)
+   *
+   * Each returned task carries a server-derived `cluster` tag so the UI
+   * does not encode the cluster taxonomy itself.
+   */
+  async listProgressTasks(): Promise<ProgressTask[]> {
+    const exists = await this.tableExists()
+    if (!exists) return []
+    const all = await this.listTasks()
+    const out: ProgressTask[] = []
+    for (const t of all) {
+      const cluster = clusterFor(t)
+      if (cluster === null) continue
+      out.push({ ...t, cluster })
+    }
+    return out
+  }
+
+  async findTaskById(id: string): Promise<Task | null> {
+    const exists = await this.tableExists()
+    if (!exists) return null
+    const all = await this.listTasks()
+    return all.find((t) => t.id === id) ?? null
   }
 
   async tableExists(): Promise<boolean> {
@@ -437,12 +535,72 @@ export class StateDb {
   }
 
   /**
+   * Read open `stale-worktree` actionQueue items from `action_queue_items` and return them
+   * as the same `StaleWorktree` shape the TodoPage already consumes, so the
+   * unified model is the single source of truth for the web UI's Alerts section.
+   *
+   * Falls back to an empty array when the table does not yet exist (fresh repo
+   * before any daemon has ever run).
+   */
+  async listOpenStaleWorktreeAlerts(): Promise<
+    Array<{
+      taskId: string
+      status: string
+      ageHours: number
+      updatedAt: string
+      prompt: string
+      error: string | null
+      branch: string | null
+      blockerTaskId: string | null
+    }>
+  > {
+    try {
+      const r = await this.client.execute(
+        `SELECT context, payload, last_seen_at, raised_at
+           FROM action_queue_items
+          WHERE kind = 'stale-worktree' AND state = 'open'
+          ORDER BY raised_at DESC`,
+      )
+      return r.rows.flatMap((row) => {
+        const r0 = row as unknown as Record<string, unknown>
+        let ctx: Record<string, unknown> = {}
+        let pld: Record<string, unknown> = {}
+        try {
+          const parsed = JSON.parse(r0.context as string)
+          if (parsed && typeof parsed === 'object') ctx = parsed as Record<string, unknown>
+        } catch { /* ignore */ }
+        try {
+          const parsed = JSON.parse(r0.payload as string)
+          if (parsed && typeof parsed === 'object') pld = parsed as Record<string, unknown>
+        } catch { /* ignore */ }
+        const taskId = typeof ctx.taskId === 'string' ? ctx.taskId : null
+        if (!taskId) return []
+        return [{
+          taskId,
+          status: typeof pld.status === 'string' ? pld.status : 'unknown',
+          ageHours: typeof pld.ageHours === 'number' ? pld.ageHours : 0,
+          updatedAt: typeof r0.last_seen_at === 'string'
+            ? r0.last_seen_at
+            : (typeof r0.raised_at === 'string' ? r0.raised_at : new Date().toISOString()),
+          prompt: typeof pld.prompt === 'string' ? pld.prompt : '',
+          error: typeof pld.error === 'string' ? pld.error : null,
+          branch: typeof pld.branch === 'string' ? pld.branch : null,
+          blockerTaskId: null,
+        }]
+      })
+    } catch {
+      // action_queue_items table may not exist yet on a fresh repo.
+      return []
+    }
+  }
+
+  /**
    * Read ALL open actionQueue items from `action_queue_items` and return raw rows for the
    * UI action-queue handler. Cheaper than a derived scan: one bounded SELECT
    * instead of an N-task SQL scan + a .mars/worktrees readdir/stat fan-out.
    *
    * Falls back to an empty array when the table does not yet exist (fresh repo
-   * before any daemon has ever run).
+   * before any daemon has ever run), matching listOpenStaleWorktreeAlerts().
    */
   async listOpenActionQueueItems(): Promise<
     Array<{
@@ -496,4 +654,55 @@ export class StateDb {
     }
   }
 
+  async listDraftFeatures(): Promise<DraftFeature[]> {
+    const r = await this.client.execute(
+      `SELECT p.id, p.title, p.problem, p.solution, p.status, p.source,
+              p.created_at, p.updated_at,
+              (SELECT COUNT(*) FROM proposal_user_stories s WHERE s.proposal_id = p.id) AS acceptance_count
+       FROM proposals p
+       WHERE p.status = 'draft'
+       ORDER BY p.created_at DESC`,
+    )
+    return r.rows.map((row) => {
+      const r0 = row as unknown as Record<string, unknown>
+      return {
+        id: r0.id as string,
+        title: (r0.title as string | null) ?? '',
+        problem: (r0.problem as string | null) ?? '',
+        solution: (r0.solution as string | null) ?? '',
+        status: (r0.status as string | null) ?? 'draft',
+        source: normaliseSource(r0.source),
+        createdAt: Number(r0.created_at ?? 0),
+        updatedAt: Number(r0.updated_at ?? 0),
+        acceptanceCount: Number(r0.acceptance_count ?? 0),
+      }
+    })
+  }
+
+  /**
+   * Returns ProposalNode data for each of the given proposal IDs.
+   * IDs not found in the proposals table are silently omitted.
+   * Falls back to an empty array when the proposals table does not exist.
+   */
+  async listProposalsByIds(ids: string[]): Promise<ProposalNode[]> {
+    if (ids.length === 0) return []
+    const exists = await this.proposalsTableExists()
+    if (!exists) return []
+    const placeholders = ids.map(() => '?').join(', ')
+    const r = await this.client.execute({
+      sql: `SELECT id, title, status, source
+              FROM proposals
+             WHERE id IN (${placeholders})`,
+      args: ids,
+    })
+    return r.rows.map((row) => {
+      const r0 = row as unknown as Record<string, unknown>
+      return {
+        id: r0.id as string,
+        title: (r0.title as string | null) ?? '',
+        status: (r0.status as string | null) ?? 'draft',
+        source: normaliseSource(r0.source),
+      }
+    })
+  }
 }

@@ -121,19 +121,6 @@ const comboId = (proposalId: string): string => `combo:${proposalId}`
 /** Strip the `combo:` prefix back to the bare proposal id. */
 export const proposalIdFromComboId = (id: string): string => id.replace(/^combo:/, '')
 
-/**
- * Stable id for the synthetic combo that collects unattached tasks — those with
- * no parentProposalId or a parentProposalId that does not match any known
- * proposal. Distinct from real proposal combos (which are `combo:<proposalId>`).
- */
-export const UNATTACHED_COMBO_ID = 'combo:__unattached__'
-
-/**
- * Synthetic proposal id used as the combo's `proposalId` data field and as the
- * key for `lit.proposals` / `comboFilterDim` lookups on the unattached combo.
- */
-const UNATTACHED_PROPOSAL_ID = proposalIdFromComboId(UNATTACHED_COMBO_ID) // '__unattached__'
-
 /** First non-empty line of a task's prompt, used as its node label. */
 const taskLabel = (t: ProgressTask): string => {
   const first = t.prompt.split('\n')[0]?.trim()
@@ -151,17 +138,12 @@ export interface G6GraphData {
  *
  *  - One COLLAPSED combo per proposal, carrying its plurality `dom` status and
  *    task `count` in `data`.
- *  - One synthetic COLLAPSED combo (`UNATTACHED_COMBO_ID`) for unattached tasks —
- *    those whose `parentProposalId` is null or does not match any known proposal.
- *    The combo is omitted when no unattached tasks exist, so proposal-only
- *    datasets are visually unchanged. It carries `synthetic: true` in its data so
- *    TopologyView can apply a neutral/iron label style (grey, not purple).
- *  - One task node per task, assigned to its proposal combo or to the unattached
- *    combo. Every task is now in scope; no tasks are dropped.
- *  - One blocker edge per `blockedBy` entry whose endpoints are both in scope
- *    (i.e. in the task list), keyed with `blockerKey(blocker, task)` so the
- *    highlight map (which uses the same key) matches. Cross-boundary edges
- *    between unattached tasks and proposal tasks are included freely.
+ *  - One task node per task that has a `parentProposalId` matching a known
+ *    proposal — assigned to that combo. (Orphan tasks with no in-scope proposal
+ *    are dropped: the cloud is a proposal-centric overview.)
+ *  - One blocker edge per `blockedBy` entry whose endpoints are both in scope,
+ *    keyed with `blockerKey(blocker, task)` so the highlight map (which uses the
+ *    same key) matches.
  */
 export const buildG6Data = (
   tasks: ReadonlyArray<ProgressTask>,
@@ -169,9 +151,6 @@ export const buildG6Data = (
 ): G6GraphData => {
   const rollup = rollupByProposal(tasks, proposals)
   const proposalIds = new Set(proposals.map((p) => p.id))
-
-  const isAdHoc = (t: ProgressTask): boolean =>
-    t.parentProposalId == null || !proposalIds.has(t.parentProposalId)
 
   const combos: ComboData[] = proposals.map((p) => {
     const r = rollup.get(p.id) ?? { total: 0, counts: emptyCounts() }
@@ -182,45 +161,17 @@ export const buildG6Data = (
     }
   })
 
-  // Emit the synthetic Unattached combo only when at least one unattached task
-  // exists, so proposal-only datasets are not affected. The `synthetic: true`
-  // flag lets TopologyView apply a neutral/iron label colour (grey, not purple).
-  const unattachedTasks = tasks.filter(isAdHoc)
-  if (unattachedTasks.length > 0) {
-    const unattachedCounts = emptyCounts()
-    for (const t of unattachedTasks) unattachedCounts[t.cluster]++
-    const unattachedRollup: Rollup = { total: unattachedTasks.length, counts: unattachedCounts }
-    combos.push({
-      id: UNATTACHED_COMBO_ID,
-      data: {
-        label: 'Unattached',
-        proposalId: UNATTACHED_PROPOSAL_ID,
-        count: unattachedTasks.length,
-        dom: dominant(unattachedRollup),
-        synthetic: true,
-      },
-      style: { collapsed: true },
-    })
-  }
+  const inScopeTasks = tasks.filter((t) => t.parentProposalId != null && proposalIds.has(t.parentProposalId))
+  const taskIds = new Set(inScopeTasks.map((t) => t.id))
 
-  // Every task is now in scope — proposal tasks go to their proposal combo;
-  // unattached tasks go to the synthetic Unattached combo.
-  const taskIds = new Set(tasks.map((t) => t.id))
-
-  const nodes: NodeData[] = tasks.map((t) => ({
+  const nodes: NodeData[] = inScopeTasks.map((t) => ({
     id: t.id,
-    combo: isAdHoc(t) ? UNATTACHED_COMBO_ID : comboId(t.parentProposalId as string),
-    data: {
-      label: taskLabel(t),
-      cluster: t.cluster,
-      // Unattached tasks carry the synthetic proposal id so computeStateMap can
-      // derive Unattached combo lighting from node membership.
-      proposalId: isAdHoc(t) ? UNATTACHED_PROPOSAL_ID : t.parentProposalId,
-    },
+    combo: comboId(t.parentProposalId as string),
+    data: { label: taskLabel(t), cluster: t.cluster, proposalId: t.parentProposalId },
   }))
 
   const edges: EdgeData[] = []
-  for (const t of tasks) {
+  for (const t of inScopeTasks) {
     for (const b of t.blockedBy ?? []) {
       // both endpoints must be in scope (otherwise the edge dangles)
       if (!taskIds.has(b) || !taskIds.has(t.id)) continue
@@ -270,21 +221,6 @@ export const computeStateMap = (snapshot: ElementSnapshot, inputs: HighlightInpu
 
   const nodeById = new Map<string, NodeData>(snapshot.nodes.map((n) => [String(n.id), n]))
 
-  // Derive lit proposal ids from chainTrace's proposals set PLUS each lit
-  // node's `data.proposalId`. The second source is needed for the synthetic
-  // Unattached combo: chainTrace never adds `'__unattached__'` to proposals
-  // (unattached tasks have a null parentProposalId, so attachProvenance skips
-  // them), but the Unattached combo should still light when one of its tasks is
-  // hover-lit.
-  const litProposalIds = new Set<string>(lit?.proposals ?? [])
-  if (lit) {
-    for (const n of snapshot.nodes) {
-      if (lit.nodes.has(String(n.id)) && n.data?.proposalId) {
-        litProposalIds.add(String(n.data.proposalId))
-      }
-    }
-  }
-
   const taskFilterDim = (id: string, cluster: unknown): boolean => {
     if (search != null && !search.has(id)) return true
     if (gc != null && gc.has(String(cluster))) return true
@@ -314,7 +250,7 @@ export const computeStateMap = (snapshot: ElementSnapshot, inputs: HighlightInpu
   for (const c of snapshot.combos) {
     const id = String(c.id)
     const pid = String(c.data?.proposalId ?? proposalIdFromComboId(id))
-    map[id] = resolve(litProposalIds.has(pid), comboFilterDim(pid))
+    map[id] = resolve(lit?.proposals.has(pid) ?? false, comboFilterDim(pid))
   }
   return map
 }
@@ -336,30 +272,3 @@ export const dataSignature = (
   const propSig = proposals.map((p) => `${p.id}|${p.title}`).join(';')
   return `${tasks.length}/${proposals.length}#${taskSig}#${propSig}`
 }
-
-/**
- * Structural signature — changes only when the graph topology changes: nodes
- * added/removed, edge wiring changes, or proposals change.  Does NOT include
- * cluster, so a failed/blocked status transition does NOT trigger a full graph
- * rebuild (which would cause a blank-canvas flash).  TopologyView's mount
- * effect keys on this; the cluster-patch effect keys on clusterSignature.
- */
-export const structuralSignature = (
-  tasks: ReadonlyArray<ProgressTask>,
-  proposals: ReadonlyArray<ProgressProposalNode>,
-): string => {
-  const taskSig = tasks
-    .map((t) => `${t.id}|${t.parentProposalId ?? ''}|${(t.blockedBy ?? []).join(',')}`)
-    .join(';')
-  const propSig = proposals.map((p) => `${p.id}|${p.title}`).join(';')
-  return `${tasks.length}/${proposals.length}#${taskSig}#${propSig}`
-}
-
-/**
- * Cluster-only signature — changes when any task's cluster assignment changes
- * (e.g., 'In progress' → 'Failed', 'Queued' → 'Blocked').  TopologyView uses
- * this to detect when nodes need a colour patch (updateNodeData + draw) without
- * a full rebuild.
- */
-export const clusterSignature = (tasks: ReadonlyArray<ProgressTask>): string =>
-  tasks.map((t) => `${t.id}:${t.cluster}`).join(';')

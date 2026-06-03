@@ -338,52 +338,6 @@ describe('inbox detail – Open task detail affordance', () => {
 })
 
 // ---------------------------------------------------------------------------
-// AC5: daemon-killed-batch sentinel renders its own warm reason + batch action.
-// ---------------------------------------------------------------------------
-
-describe('actionQueue detail – daemon-killed-batch sentinel', () => {
-  const BATCH_ITEM = makeItem({
-    id: 'failed-task:__daemon-killed-batch__',
-    entityId: '__daemon-killed-batch__',
-    title: 'Mars was shut down while this task was still running (2)',
-    body: 'The task was in flight when the Mars daemon was killed; the work is not lost and the task can be re-queued from setup.',
-    failureReasonCode: null,
-    actions: [
-      { id: 'restart-all', label: 'Restart all daemon-killed', op: 'restart-all-daemon-killed' },
-    ],
-  })
-
-  it('shows the registry-derived warm reason copy, not the unknown catalog copy', () => {
-    const qc = makeClient({ taskId: '__daemon-killed-batch__' })
-    const html = renderDetail(BATCH_ITEM, qc)
-    // Warm daemon-killed body is shown as the Reason.
-    expect(html).toContain('The task was in flight when the Mars daemon was killed')
-    // The unknown catalog copy must NOT appear.
-    expect(html).not.toContain('Inspect the transcript to triage.')
-  })
-
-  it('renders a Reason section containing the daemon-killed body', () => {
-    const qc = makeClient({ taskId: '__daemon-killed-batch__' })
-    const html = renderDetail(BATCH_ITEM, qc)
-    expect(html).toContain('>Reason<')
-    expect(html).toContain(
-      'The task was in flight when the Mars daemon was killed',
-    )
-  })
-
-  it('renders the Restart all daemon-killed action and no catalog-driven actions', () => {
-    const qc = makeClient({ taskId: '__daemon-killed-batch__' })
-    const html = renderDetail(BATCH_ITEM, qc)
-    // The batch restart button is present.
-    expect(html).toContain('Restart all daemon-killed')
-    // Catalog-driven generic actions must not appear for the sentinel.
-    expect(html).not.toContain('>Investigate<')
-    // ">Restart<" (exactly) is the catalog Restart button — not "Restart all daemon-killed".
-    expect(html).not.toContain('>Restart<')
-  })
-})
-
-// ---------------------------------------------------------------------------
 // Responsive layout: panes must stack on narrow viewports.
 // ---------------------------------------------------------------------------
 

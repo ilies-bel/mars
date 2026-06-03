@@ -61,11 +61,9 @@ npm run typecheck
 - Run `npm run typecheck` and `npm test` to verify changes.
 - Non-AI side-effect logic lives in `src/core/lib/` and is called from
   inside a `ctx.step`.
-- Trace capture (transcripts, usage signals, step spans) is **unconditional** —
-  `MARS_REFLECT_DISABLED=1` does NOT suppress writes in `runWorkerWithSpan` or
-  `runNonLlmStepWithSpan`. Only the analysis verbs (`mars reflect` /
-  `mars arc reflect`) consult that flag and skip their automatic runs.
-  Do NOT add `isReflectDisabled()` checks inside capture paths.
+- Gate any new per-task signal-capture call site through
+  `isReflectDisabled()` (or `recordSignals`, which already gates itself)
+  so `MARS_REFLECT_DISABLED=1` stays a single, comprehensive disable
 - File action queue items via `mars action-queue raise --from -` (JSON on stdin) instead
   of writing one-shot `.ts` scripts under `orchestrator/scripts/`. The CLI
   verb is the supported entry point for dispatched agents and self-heal

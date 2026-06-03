@@ -220,66 +220,6 @@ const SNAPSHOT_COLS = `id, taken_at, window_start, window_end,
                cost_per_arc_p50, cost_per_arc_p90,
                failure_rate, autonomous_completion_rate, recovery_success_rate`
 
-/** One {takenAt, value} point in a KPI time-series. value is null when the
- *  underlying snapshot column was not yet populated for that tick. */
-export interface KpiSeriesPoint {
-  takenAt: string
-  value: number | null
-}
-
-/** Per-column series returned by readKpiSeries. Each array is ordered by
- *  taken_at ascending so callers can render sparklines left-to-right. */
-export interface KpiSeries {
-  failure_rate: KpiSeriesPoint[]
-  autonomous_completion_rate: KpiSeriesPoint[]
-  recovery_success_rate: KpiSeriesPoint[]
-  cost_per_arc_p50: KpiSeriesPoint[]
-}
-
-/**
- * Return the last `limit` kpi_snapshots rows as a per-column time-series,
- * ordered oldest-first so callers can render sparklines directly.
- *
- * Accepts an optional TaskStore for test injection; defaults to the
- * production default store.
- */
-export async function readKpiSeries(opts: {
-  limit?: number
-  store?: TaskStore
-}): Promise<KpiSeries> {
-  const { limit = 90, store: injectedStore } = opts
-  const s = injectedStore ?? (await getDefaultTaskStore())
-  const result = await s.query({
-    sql: `SELECT taken_at, failure_rate, autonomous_completion_rate,
-                 recovery_success_rate, cost_per_arc_p50
-          FROM kpi_snapshots
-          ORDER BY taken_at ASC
-          LIMIT ?`,
-    args: [limit],
-  })
-
-  const failure_rate: KpiSeriesPoint[] = []
-  const autonomous_completion_rate: KpiSeriesPoint[] = []
-  const recovery_success_rate: KpiSeriesPoint[] = []
-  const cost_per_arc_p50: KpiSeriesPoint[] = []
-
-  for (const row of result.rows) {
-    const r = row as unknown as {
-      taken_at: string
-      failure_rate: number | null
-      autonomous_completion_rate: number | null
-      recovery_success_rate: number | null
-      cost_per_arc_p50: number | null
-    }
-    failure_rate.push({ takenAt: r.taken_at, value: r.failure_rate })
-    autonomous_completion_rate.push({ takenAt: r.taken_at, value: r.autonomous_completion_rate })
-    recovery_success_rate.push({ takenAt: r.taken_at, value: r.recovery_success_rate })
-    cost_per_arc_p50.push({ takenAt: r.taken_at, value: r.cost_per_arc_p50 })
-  }
-
-  return { failure_rate, autonomous_completion_rate, recovery_success_rate, cost_per_arc_p50 }
-}
-
 /**
  * Return the current and immediately preceding KPI window snapshots, plus
  * per-KPI deltas (current - prior).

@@ -60,32 +60,15 @@ const makeEntry = (pid: number, port = 7777): UiPidEntry => ({
   startedAt: new Date().toISOString(),
 })
 
-/** Controllable StopDeps for unit tests.
- *
- * If `sendSignalToGroup` is not explicitly provided, it mirrors `sendSignal`
- * so that existing tests which override `sendSignal` to track signals / drive
- * `isAlive` keep working unchanged through the new group-kill code path.
- */
-const makeTestDeps = (overrides?: Partial<StopDeps>): StopDeps => {
-  const deps: StopDeps = {
-    isAlive: () => false,
-    sendSignal: () => {},
-    sendSignalToGroup: () => {},
-    removePidFile: () => {},
-    gracePeriodMs: 200,
-    pollIntervalMs: 10,
-    probeHealthz: async () => false,
-    pidsOnPort: () => [],
-    ...overrides,
-  }
-  // Mirror sendSignal into sendSignalToGroup unless the caller explicitly
-  // provided sendSignalToGroup.  This preserves backward-compat for existing
-  // tests that only override sendSignal.
-  if (overrides !== undefined && !('sendSignalToGroup' in overrides)) {
-    deps.sendSignalToGroup = deps.sendSignal
-  }
-  return deps
-}
+/** Controllable StopDeps for unit tests. */
+const makeTestDeps = (overrides?: Partial<StopDeps>): StopDeps => ({
+  isAlive: () => false,
+  sendSignal: () => {},
+  removePidFile: () => {},
+  gracePeriodMs: 200,
+  pollIntervalMs: 10,
+  ...overrides,
+})
 
 // Sentinel so we can distinguish our test-abort from real errors.
 class ExitCalled extends Error {
@@ -227,110 +210,6 @@ describe('stopProcess', () => {
 
   it('STOP_GRACE_PERIOD_MS is the documented grace period (2 seconds)', () => {
     expect(STOP_GRACE_PERIOD_MS).toBe(2000)
-  })
-
-  // -------------------------------------------------------------------------
-  // New tests for group-kill and port-reclaim behaviours
-  // -------------------------------------------------------------------------
-
-  it('(a) live recorded PID: SIGTERM is sent via sendSignalToGroup, not sendSignal', async () => {
-    const groupSignals: Array<[number, NodeJS.Signals]> = []
-    const singleSignals: Array<[number, NodeJS.Signals]> = []
-    let alive = true
-
-    const deps = makeTestDeps({
-      isAlive: () => alive,
-      sendSignalToGroup: (pid, sig) => {
-        groupSignals.push([pid, sig])
-        if (sig === 'SIGTERM') alive = false
-      },
-      sendSignal: (pid, sig) => {
-        singleSignals.push([pid, sig])
-      },
-      gracePeriodMs: 300,
-    })
-
-    const entry = makeEntry(55555, 7777)
-    writePidEntry(entry)
-
-    const result = await stopProcess(entry, pidFilePath(), deps)
-
-    expect(result).toEqual({ kind: 'stopped', pid: 55555, port: 7777 })
-    expect(groupSignals.map(([, s]) => s)).toContain('SIGTERM')
-    expect(groupSignals.map(([p]) => p)).toContain(55555)
-    // No fallback to single-PID kill — sendSignalToGroup succeeded
-    expect(singleSignals).toHaveLength(0)
-  })
-
-  it('(b) dead recorded PID + healthz answers on port → lsof reclaim path returns stopped', async () => {
-    let orphanAlive = true
-    const orphanPid = 88888
-    const port = 7777
-
-    const deps = makeTestDeps({
-      isAlive: (pid) => (pid === orphanPid ? orphanAlive : false),
-      probeHealthz: async () => true,
-      pidsOnPort: () => [orphanPid],
-      sendSignalToGroup: (_pid, sig) => {
-        if (sig === 'SIGTERM') orphanAlive = false
-      },
-      gracePeriodMs: 300,
-    })
-
-    const entry = makeEntry(2_147_483_647, port) // recorded PID is dead
-    writePidEntry(entry)
-
-    const result = await stopProcess(entry, pidFilePath(), deps)
-
-    expect(result).toEqual({ kind: 'stopped', pid: orphanPid, port })
-  })
-
-  it('(c) dead recorded PID + nothing on port → not-running + stale pidfile removed', async () => {
-    const removedPaths: string[] = []
-
-    const deps = makeTestDeps({
-      isAlive: () => false,
-      probeHealthz: async () => false, // no server on port
-      removePidFile: (p) => removedPaths.push(p),
-    })
-
-    const entry = makeEntry(2_147_483_647, 7777)
-    writePidEntry(entry)
-
-    const result = await stopProcess(entry, pidFilePath(), deps)
-
-    expect(result).toEqual({ kind: 'not-running' })
-    expect(removedPaths).toContain(pidFilePath())
-  })
-
-  it('(d) group kill throws ESRCH → falls back to single-PID kill', async () => {
-    const singleSignals: NodeJS.Signals[] = []
-    let alive = true
-
-    const esrch = (): never => {
-      const err = new Error('no such process group') as NodeJS.ErrnoException
-      err.code = 'ESRCH'
-      throw err
-    }
-
-    const deps = makeTestDeps({
-      isAlive: () => alive,
-      sendSignalToGroup: (_pid, _sig) => esrch(),
-      sendSignal: (_pid, sig) => {
-        singleSignals.push(sig)
-        alive = false
-      },
-      gracePeriodMs: 300,
-    })
-
-    const entry = makeEntry(77777, 7777)
-    writePidEntry(entry)
-
-    const result = await stopProcess(entry, pidFilePath(), deps)
-
-    expect(result).toEqual({ kind: 'stopped', pid: 77777, port: 7777 })
-    // Fell back to single-PID signal because group kill threw ESRCH
-    expect(singleSignals).toContain('SIGTERM')
   })
 })
 

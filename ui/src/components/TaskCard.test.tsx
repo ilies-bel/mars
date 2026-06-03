@@ -123,35 +123,6 @@ describe('TaskCard – focus-visible ring', () => {
   })
 })
 
-describe('TaskCard – done flash', () => {
-  it('applies animate-mars-done-flash when flashDone is true', () => {
-    const html = renderToStaticMarkup(
-      <TaskCard task={minTask('t-flash-1')} index={0} flashDone />,
-    )
-    expect(html).toContain('animate-mars-done-flash')
-  })
-
-  it('does NOT apply animate-mars-done-flash by default', () => {
-    const html = renderToStaticMarkup(<TaskCard task={minTask('t-flash-2')} index={0} />)
-    expect(html).not.toContain('animate-mars-done-flash')
-  })
-
-  it('does NOT apply animate-mars-done-flash when flashDone is false', () => {
-    const html = renderToStaticMarkup(
-      <TaskCard task={minTask('t-flash-3')} index={0} flashDone={false} />,
-    )
-    expect(html).not.toContain('animate-mars-done-flash')
-  })
-
-  it('suppresses the pulse animation when flashDone is true', () => {
-    const html = renderToStaticMarkup(
-      <TaskCard task={minTask('t-flash-4', { status: 'running' })} index={0} flashDone />,
-    )
-    expect(html).not.toContain('animate-mars-pulse')
-    expect(html).toContain('animate-mars-done-flash')
-  })
-})
-
 describe('TaskCard – type scale', () => {
   it('uses text-body scale class for the task title', () => {
     const html = renderToStaticMarkup(<TaskCard task={minTask('t-scale-1')} index={0} />)

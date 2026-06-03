@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
-import type { TaskViewItem } from '../view/tasks.js'
 import { loadFailureReasonCatalog } from '../../lib/failure-reasons'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
@@ -72,8 +71,13 @@ const makeDeps = (
   viewActionQueue: async () => [],
   viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
-  viewSessions: async () => ({ sessions: [] }),
-  viewTaskById: async () => null,
+  viewFrameworkUpdate: async () => ({
+    installed: '0.1.0',
+    latest: '0.1.0',
+    available: false,
+    checkedAt: null,
+    releaseUrl: null,
+  }),
   ...overrides,
 })
 
@@ -151,84 +155,6 @@ describe('GET /view/tasks', () => {
       const body = (await res.json()) as { ok: boolean; error: string }
       expect(body.ok).toBe(false)
       expect(body.error).toBe('store unavailable')
-    } finally {
-      await close()
-    }
-  })
-})
-
-describe('GET /view/tasks/:id', () => {
-  let repo: string
-
-  beforeEach(() => {
-    repo = setupRepo()
-  })
-
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    vi.resetModules()
-    rmSync(repo, { recursive: true, force: true })
-  })
-
-  it('returns 200 with { task } when viewTaskById resolves a task', async () => {
-    const { httpServer } = await loadModules(repo)
-
-    const task = { id: 'abc-123', status: 'queued', prompt: 'do something' } as unknown as TaskViewItem
-    const { port, close } = await httpServer.startHttpServer(
-      makeDeps(
-        () => Promise.resolve({ tasks: [] }),
-        { viewTaskById: async () => ({ task }) },
-      ),
-    )
-
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/tasks/abc-123`)
-      expect(res.status).toBe(200)
-      const body = (await res.json()) as { task: typeof task }
-      expect(body.task.id).toBe('abc-123')
-      expect(body.task.status).toBe('queued')
-    } finally {
-      await close()
-    }
-  })
-
-  it('returns 404 when viewTaskById returns null', async () => {
-    const { httpServer } = await loadModules(repo)
-
-    const { port, close } = await httpServer.startHttpServer(
-      makeDeps(
-        () => Promise.resolve({ tasks: [] }),
-        { viewTaskById: async () => null },
-      ),
-    )
-
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/tasks/__nope__`)
-      expect(res.status).toBe(404)
-      const body = (await res.json()) as { ok: boolean; error: string; id: string }
-      expect(body.ok).toBe(false)
-      expect(body.id).toBe('__nope__')
-    } finally {
-      await close()
-    }
-  })
-
-  it('returns 500 when viewTaskById throws', async () => {
-    const { httpServer } = await loadModules(repo)
-
-    const { port, close } = await httpServer.startHttpServer(
-      makeDeps(
-        () => Promise.resolve({ tasks: [] }),
-        { viewTaskById: () => Promise.reject(new Error('db error')) },
-      ),
-    )
-
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/tasks/some-id`)
-      expect(res.status).toBe(500)
-      const body = (await res.json()) as { ok: boolean; error: string }
-      expect(body.ok).toBe(false)
-      expect(body.error).toBe('db error')
     } finally {
       await close()
     }

@@ -8,11 +8,9 @@ interface Props {
   tasks: UITask[]
   startIndex: number
   accent?: 'flame' | 'muted'
-  /** IDs of tasks currently in the done-flash window. */
-  flashingTaskIds?: Set<string>
 }
 
-export const Column = ({ label, tasks, startIndex, accent = 'muted', flashingTaskIds }: Props) => {
+export const Column = ({ label, tasks, startIndex, accent = 'muted' }: Props) => {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const virtualizer = useVirtualizer({
@@ -70,7 +68,6 @@ export const Column = ({ label, tasks, startIndex, accent = 'muted', flashingTas
                 <TaskCard
                   task={tasks[vItem.index]}
                   index={startIndex + vItem.index}
-                  flashDone={flashingTaskIds?.has(tasks[vItem.index]!.id) ?? false}
                 />
               </div>
             ))}
