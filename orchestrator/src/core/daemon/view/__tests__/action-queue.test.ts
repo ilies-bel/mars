@@ -424,3 +424,108 @@ describe('buildActionQueueView — draft-proposal row (no regression)', () => {
     expect(dpRow!.actions.some((a) => a.op === 'shape')).toBe(true)
   })
 })
+
+// ── Dismissal filtering: CLI/daemon parity ────────────────────────────────────
+//
+// These tests confirm that buildActionQueueView (the single builder used by
+// both the daemon HTTP handler and the CLI list command) correctly applies the
+// dismissals side-table to every filter mode.  Since the CLI now calls the
+// same buildActionQueueView the tests also serve as proof that `mars
+// action-queue list open` and `GET /view/action-queue?filter=open` return
+// identical row sets for any seeded store.
+
+describe('buildActionQueueView — dismissal filtering (CLI/daemon parity)', () => {
+  it('excludes a classically-dismissed item from the open filter', async () => {
+    const dismissed = makeRow({ id: 'row-dismissed', payload: { taskId: 'task-dismissed' } })
+    const open = makeRow({ id: 'row-open', payload: { taskId: 'task-open' } })
+    const dismissalMap = new Map<string, string | null>([
+      ['task:task-dismissed', null], // classic dismiss (note = null)
+    ])
+
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([dismissed, open], dismissalMap),
+      taskStore: makeTaskStore([
+        makeTask({ id: 'task-dismissed' }),
+        makeTask({ id: 'task-open' }),
+      ]),
+      ...BASE_PARAMS,
+      filter: 'open',
+    })
+
+    const ids = rows.map((r) => r.id)
+    expect(ids).not.toContain('row-dismissed')
+    expect(ids).toContain('row-open')
+  })
+
+  it('shows a dismissed item in the dismissed filter but not the open filter', async () => {
+    const row = makeRow({ id: 'row-a', payload: { taskId: 'task-a' } })
+    const dismissalMap = new Map<string, string | null>([['task:task-a', 'dismissed']])
+    const stateStore = makeStateStore([row], dismissalMap)
+    const taskStore = makeTaskStore([makeTask({ id: 'task-a' })])
+
+    const open = await buildActionQueueView({ stateStore, taskStore, ...BASE_PARAMS, filter: 'open' })
+    const dismissed = await buildActionQueueView({ stateStore, taskStore, ...BASE_PARAMS, filter: 'dismissed' })
+
+    expect(open.map((r) => r.id)).not.toContain('row-a')
+    expect(dismissed.map((r) => r.id)).toContain('row-a')
+  })
+
+  it('ack-only items remain visible in the open filter', async () => {
+    const row = makeRow({ id: 'row-acked', payload: { taskId: 'task-acked' } })
+    const dismissalMap = new Map<string, string | null>([
+      ['task:task-acked', 'ack'], // ack does NOT hide from open
+    ])
+
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([row], dismissalMap),
+      taskStore: makeTaskStore([makeTask({ id: 'task-acked' })]),
+      ...BASE_PARAMS,
+      filter: 'open',
+    })
+
+    expect(rows.map((r) => r.id)).toContain('row-acked')
+    expect(rows.find((r) => r.id === 'row-acked')!.dismissed).toBe(false)
+  })
+
+  it('CLI list and daemon view return identical row-id sets for the same seeded store', async () => {
+    // row-a: dismissed,  row-b: ack (still visible),  row-c: plain open
+    const rowA = makeRow({ id: 'row-a', payload: { taskId: 'task-a' } })
+    const rowB = makeRow({ id: 'row-b', payload: { taskId: 'task-b' } })
+    const rowC = makeRow({ id: 'row-c', payload: { taskId: 'task-c' } })
+    const dismissalMap = new Map<string, string | null>([
+      ['task:task-a', 'dismissed'],
+      ['task:task-b', 'ack'],
+    ])
+    const stateStore = makeStateStore([rowA, rowB, rowC], dismissalMap)
+    const taskStore = makeTaskStore([
+      makeTask({ id: 'task-a' }),
+      makeTask({ id: 'task-b' }),
+      makeTask({ id: 'task-c' }),
+    ])
+
+    // Both CLI and daemon call buildActionQueueView with identical adapters —
+    // assert they produce the same row-id sets per filter.
+    const openRows = await buildActionQueueView({ stateStore, taskStore, ...BASE_PARAMS, filter: 'open' })
+    const dismissedRows = await buildActionQueueView({ stateStore, taskStore, ...BASE_PARAMS, filter: 'dismissed' })
+    const allRows = await buildActionQueueView({ stateStore, taskStore, ...BASE_PARAMS, filter: 'all' })
+
+    const openIds = openRows.map((r) => r.id)
+    const dismissedIds = dismissedRows.map((r) => r.id)
+    const allIds = allRows.map((r) => r.id)
+
+    // open: task-a hidden (dismissed), task-b visible (ack only), task-c visible
+    expect(openIds).not.toContain('row-a')
+    expect(openIds).toContain('row-b')
+    expect(openIds).toContain('row-c')
+
+    // dismissed: only task-a
+    expect(dismissedIds).toContain('row-a')
+    expect(dismissedIds).not.toContain('row-b')
+    expect(dismissedIds).not.toContain('row-c')
+
+    // all: every row present
+    expect(allIds).toContain('row-a')
+    expect(allIds).toContain('row-b')
+    expect(allIds).toContain('row-c')
+  })
+})
