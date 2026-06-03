@@ -52,9 +52,14 @@ Prefer `/mars:task <prompt>` from a Claude Code session for a
 light-shaping wrapper that checks terminology against the glossary
 before enqueueing.
 
-Tasks live in `.mars/queue.db`. Enqueue via `mars task add "..."`; the
+Tasks live in `.mars/mars.db` (the single consolidated store — the old
+`queue.db`/`state.db` split was merged into `mars.db` by
+`orchestrator/src/init/merge-databases.ts`; any leftover `queue.db` /
+`state.db` files on disk are stale post-merge artifacts, often 0 bytes,
+and are NOT the live data). Enqueue via `mars task add "..."`; the
 orchestrator dispatches automatically (worktree → code → verify → merge).
-Inspect via `mars list`.
+Inspect via `mars list`. For direct reads, query `.mars/mars.db` with
+`sqlite3` (tables `tasks`, `task_blockers`, …), never `queue.db`.
 
 **All mutations route through the orchestrator.** Direct `Edit`/`Write`
 on the working tree (i.e. on `main`) is a last resort — see Routing
@@ -67,8 +72,9 @@ per-change and must be re-confirmed, even within the same session.
   `@mars/workflow` engine (`packages/workflow/`). Headless Claude Code in
   parallel worktrees → verify → fast-forward into `main`. Conflicts go
   to `vcs-supervisor` ("Vega"). Node `>=22.13.0`.
-- `.mars/` — per-repo state (`state.db`, `queue.db`,
-  `worktrees/<task-id>/`, `.merge.lock`). Gitignored.
+- `.mars/` — per-repo state (`mars.db` — the single consolidated
+  task+state store; `worktrees/<task-id>/`, `.merge.lock`). Gitignored.
+  Any `queue.db`/`state.db` on disk are dead pre-merge artifacts.
 
 ## Key concepts
 
