@@ -86,6 +86,27 @@ export interface KpiRecord {
   lowConfidence: boolean
 }
 
+/** One time-series point for a single KPI column. */
+export interface KpiSeriesPoint {
+  takenAt: string
+  value: number | null
+}
+
+/** Per-column series returned by GET /kpis/series on the daemon. */
+export interface KpiSeries {
+  failure_rate: KpiSeriesPoint[]
+  autonomous_completion_rate: KpiSeriesPoint[]
+  recovery_success_rate: KpiSeriesPoint[]
+  cost_per_arc_p50: KpiSeriesPoint[]
+}
+
+const EMPTY_KPI_SERIES: KpiSeries = {
+  failure_rate: [],
+  autonomous_completion_rate: [],
+  recovery_success_rate: [],
+  cost_per_arc_p50: [],
+}
+
 /**
  * Fetch the KPI vector from the daemon. Returns an empty array when the daemon
  * is unreachable — the UI then renders tiles in a loading/unavailable state
@@ -101,6 +122,27 @@ export const fetchKpis = async (stateDir: string): Promise<KpiRecord[]> => {
     return Array.isArray(body.kpis) ? body.kpis : []
   } catch {
     return []
+  }
+}
+
+/**
+ * Fetch the KPI time-series from the daemon for sparkline rendering.
+ * Returns an object of empty arrays when the daemon is unreachable — the UI
+ * renders tiles without sparklines rather than failing the whole page.
+ */
+export const fetchKpiSeries = async (
+  stateDir: string,
+  limit = 90,
+): Promise<KpiSeries> => {
+  const port = await readDaemonHttpPort(stateDir)
+  if (port === null) return EMPTY_KPI_SERIES
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/kpis/series?limit=${limit}`)
+    if (!res.ok) return EMPTY_KPI_SERIES
+    const body = (await res.json()) as { series?: KpiSeries }
+    return body.series ?? EMPTY_KPI_SERIES
+  } catch {
+    return EMPTY_KPI_SERIES
   }
 }
 

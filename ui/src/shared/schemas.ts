@@ -431,6 +431,11 @@ export const kpiKeySchema = z.enum([
   'recovery_success_rate',
 ])
 
+export const kpiSeriesPointSchema = z.object({
+  takenAt: z.string(),
+  value: z.number().nullable(),
+})
+
 export const kpiSchema = z.object({
   key: kpiKeySchema,
   currentValue: z.number(),
@@ -438,6 +443,9 @@ export const kpiSchema = z.object({
   delta: z.number(),
   sampleCount: z.number(),
   lowConfidence: z.boolean(),
+  /** Recent time-series points for sparkline rendering. Oldest-first.
+   *  Present when the daemon has snapshots; absent/empty when no data yet. */
+  series: z.array(kpiSeriesPointSchema).optional(),
 })
 
 export const kpisResponseSchema = z.object({
@@ -445,6 +453,7 @@ export const kpisResponseSchema = z.object({
 })
 
 export type KpiKey = z.infer<typeof kpiKeySchema>
+export type KpiSeriesPoint = z.infer<typeof kpiSeriesPointSchema>
 export type Kpi = z.infer<typeof kpiSchema>
 export type KpisPayload = z.infer<typeof kpisResponseSchema>
 

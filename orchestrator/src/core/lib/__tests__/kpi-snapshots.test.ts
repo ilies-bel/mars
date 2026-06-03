@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { openLibsql } from '../libsql.js'
 import { createLibsqlTaskStore, type TaskStore } from '../task-store.js'
-import { takeKpiSnapshot, readLatestKpiSnapshot, readKpiWindowComparison } from '../kpi-snapshots.js'
+import { takeKpiSnapshot, readLatestKpiSnapshot, readKpiWindowComparison, readKpiSeries } from '../kpi-snapshots.js'
 
 // ---------------------------------------------------------------------------
 // Test DB helpers
@@ -616,5 +616,89 @@ describe('takeKpiSnapshot — autonomous_completion_rate column', () => {
 
     expect(snap).not.toBeNull()
     expect(snap!.autonomous_completion_rate).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. readKpiSeries — time-series for sparklines
+// ---------------------------------------------------------------------------
+
+describe('readKpiSeries', () => {
+  it('returns empty arrays when no snapshots exist', async () => {
+    const store = await makeStore()
+    const result = await readKpiSeries({ store })
+    expect(result.failure_rate).toEqual([])
+    expect(result.autonomous_completion_rate).toEqual([])
+    expect(result.recovery_success_rate).toEqual([])
+    expect(result.cost_per_arc_p50).toEqual([])
+  })
+
+  it('returns points ordered by taken_at ascending', async () => {
+    const store = await makeStore()
+    await insertSnapshot(store, {
+      id: 'snap-a',
+      taken_at: '2026-01-06T00:00:00Z',
+      window_start: '2025-12-30T00:00:00Z',
+      window_end: '2026-01-06T00:00:00Z',
+      sample_count: 5,
+      low_confidence: 0,
+      failure_rate: 0.2,
+    })
+    await insertSnapshot(store, {
+      id: 'snap-b',
+      taken_at: '2026-01-07T00:00:00Z',
+      window_start: '2025-12-31T00:00:00Z',
+      window_end: '2026-01-07T00:00:00Z',
+      sample_count: 6,
+      low_confidence: 0,
+      failure_rate: 0.1,
+    })
+
+    const result = await readKpiSeries({ store })
+
+    expect(result.failure_rate).toHaveLength(2)
+    expect(result.failure_rate[0]).toEqual({ takenAt: '2026-01-06T00:00:00Z', value: 0.2 })
+    expect(result.failure_rate[1]).toEqual({ takenAt: '2026-01-07T00:00:00Z', value: 0.1 })
+  })
+
+  it('preserves null for columns not yet populated', async () => {
+    const store = await makeStore()
+    await insertSnapshot(store, {
+      id: 'snap-c',
+      taken_at: '2026-01-07T00:00:00Z',
+      window_start: '2026-01-01T00:00:00Z',
+      window_end: '2026-01-07T00:00:00Z',
+      sample_count: 5,
+      low_confidence: 0,
+      failure_rate: 0.1,
+      cost_per_arc_p50: null,
+      recovery_success_rate: null,
+    })
+
+    const result = await readKpiSeries({ store })
+
+    expect(result.cost_per_arc_p50[0].value).toBeNull()
+    expect(result.recovery_success_rate[0].value).toBeNull()
+  })
+
+  it('respects the limit parameter, returning at most limit rows', async () => {
+    const store = await makeStore()
+    for (let i = 1; i <= 5; i++) {
+      await insertSnapshot(store, {
+        id: `snap-${i}`,
+        taken_at: `2026-01-0${i}T00:00:00Z`,
+        window_start: `2025-12-2${i}T00:00:00Z`,
+        window_end: `2026-01-0${i}T00:00:00Z`,
+        sample_count: 5,
+        low_confidence: 0,
+        failure_rate: i * 0.1,
+      })
+    }
+
+    const result = await readKpiSeries({ store, limit: 3 })
+
+    // Should return the 3 oldest (ORDER BY taken_at ASC LIMIT 3)
+    expect(result.failure_rate).toHaveLength(3)
+    expect(result.failure_rate[0]).toEqual({ takenAt: '2026-01-01T00:00:00Z', value: 0.1 })
   })
 })
