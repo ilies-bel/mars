@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
@@ -225,6 +225,40 @@ describe('worktree-install', () => {
         installWorktreeDeps({ worktreeRoot: workDir, runner }),
       ).rejects.toBeInstanceOf(WorktreeInstallError)
       expect(callCount).toBe(1)
+    })
+
+    it('removes the partially corrupt node_modules before retrying on ENOTEMPTY', async () => {
+      writeFileSync(resolve(workDir, 'package-lock.json'), '{}')
+      // Simulate the partial corrupt tree left behind by npm's failed cleanup.
+      const nm = resolve(workDir, 'node_modules')
+      mkdirSync(resolve(nm, 'esbuild', 'bin'), { recursive: true })
+      writeFileSync(resolve(nm, 'esbuild', 'bin', 'esbuild'), '#!/usr/bin/env node\n')
+
+      let callCount = 0
+      let nodeModulesExistedOnRetry: boolean | null = null
+      const runner = async (
+        _cmd: string,
+        _args: readonly string[],
+        cwd: string,
+      ): Promise<RunSubprocessResult> => {
+        callCount++
+        if (callCount === 1) {
+          return fail(
+            "npm warn cleanup ENOTEMPTY: directory not empty, rmdir '" +
+              resolve(cwd, 'node_modules') +
+              "'\nnpm error code ENOENT\nnpm error enoent ENOENT: no such file or directory, chmod '" +
+              resolve(cwd, 'node_modules', 'esbuild', 'bin', 'esbuild') +
+              "'\n",
+          )
+        }
+        // On retry, observe whether the stale node_modules was cleared.
+        nodeModulesExistedOnRetry = existsSync(resolve(cwd, 'node_modules'))
+        return ok()
+      }
+      const summary = await installWorktreeDeps({ worktreeRoot: workDir, runner })
+      expect(callCount).toBe(2)
+      expect(nodeModulesExistedOnRetry).toBe(false)
+      expect(summary.sites[0].exitCode).toBe(0)
     })
 
     it('logs ENOTEMPTY retry attempt before the outcome line', async () => {
