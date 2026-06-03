@@ -56,6 +56,11 @@ cp -RL "$SRC_CLAUDE" "$DEST_CLAUDE"
 # fails `merge:preflight`. Prune them so only real template assets ship.
 find "$DEST_CLAUDE" -type f -name 'scheduled_tasks.lock' -delete
 find "$DEST_CLAUDE" -maxdepth 1 -type d -name 'worktrees' -exec rm -rf {} +
+# `settings.local.json` is a per-developer local override (gitignored in the
+# source tree) and must never ship as a seed template. Remove it so running
+# the refresh from the project root does not surface an untracked bundle file
+# and confuse the template-sync-check CI gate.
+find "$DEST_CLAUDE" -type f -name 'settings.local.json' -delete
 
 # `cp -RL` preserves source modes; force hooks executable for the case where
 # the source bit was somehow stripped (e.g. on a Windows-mounted checkout).
