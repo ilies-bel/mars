@@ -361,6 +361,18 @@ export const startDaemon = async (
     log(`[cleanup] legacy mastra.db sweep failed: ${(err as Error).message}`)
   }
 
+  // Self-heal: fold any residual legacy queue.db / state.db (the historical
+  // two-DB layout, ADR-0034) into mars.db. Must run BEFORE any client opens
+  // mars.db to preserve the ordering guarantee in databases.ts. Idempotent
+  // and a no-op once both legacy files are gone. Failure is logged but never
+  // prevents the daemon from starting.
+  try {
+    const { mergeLegacyDatabases } = await import('../../init/merge-databases.js')
+    await mergeLegacyDatabases()
+  } catch (err) {
+    log(`[cleanup] legacy database merge failed: ${(err as Error).message}`)
+  }
+
   await initQueue()
 
   // Load the persisted Worker registry. When the file is absent, the existing
