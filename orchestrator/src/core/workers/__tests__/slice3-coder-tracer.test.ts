@@ -66,7 +66,6 @@ describe('PRD 948691d0 slice 3 — Coder pinned config visible from a single reg
     expect(cfg.model).toBe(CODER_MODEL)
     expect(cfg.effort).toBe('high')
     expect(cfg.permissionMode).toBe('bypassPermissions')
-    expect(cfg.maxMessages).toBe(0) // 0 = unbounded
     expect(cfg.disallowedTools).toEqual([]) // wrapper-layer adds the agent-to-user pair
     expect(cfg.outputFormat).toBe('stream-json')
     expect(cfg.runtime).toBe('headless')

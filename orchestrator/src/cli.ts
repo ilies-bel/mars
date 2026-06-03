@@ -1112,7 +1112,7 @@ const main = async (): Promise<void> => {
       const model = flags['--model']
       if (!name || !model) {
         console.error(
-          'usage: mars worker add <name> --model <model> [--effort high|medium|...] [--permission-mode default|bypassPermissions] [--max-messages <n>] [--tag <tag> ...]',
+          'usage: mars worker add <name> --model <model> [--effort high|medium|...] [--permission-mode default|bypassPermissions] [--tag <tag> ...]',
         )
         process.exit(1)
       }
@@ -1142,19 +1142,6 @@ const main = async (): Promise<void> => {
         process.exit(1)
       }
 
-      let maxMessages = 0
-      const maxRaw = flags['--max-messages']
-      if (maxRaw !== undefined) {
-        const n = Number(maxRaw)
-        if (!Number.isInteger(n) || n < 0) {
-          console.error(
-            `max-messages must be a non-negative integer; got '${maxRaw}'`,
-          )
-          process.exit(1)
-        }
-        maxMessages = n
-      }
-
       const tags = multiFlags['--tag']
 
       const { addWorkerToRegistry } = await import(
@@ -1174,7 +1161,6 @@ const main = async (): Promise<void> => {
         bare: false,
         disallowedTools: [],
         outputFormat: 'stream-json',
-        maxMessages,
         runtime: 'headless',
         ...(tags !== undefined && tags.length > 0 ? { tags } : {}),
       })

@@ -56,8 +56,8 @@ export type ClaudeOutputFormat = 'stream-json' | 'json' | 'text'
 // `claude -p` invocation can be configured with appears here. A workflow
 // author who reads WORKER_CONFIGS sees the entire role-pinned posture
 // (model, fallback model, effort, permission mode, agent, system prompt
-// shape, allow/deny lists, tool list, output format, message cap, bare
-// mode) without having to chase the dispatch call site.
+// shape, allow/deny lists, tool list, output format, bare mode) without
+// having to chase the dispatch call site.
 //
 // `systemPrompt` and `appendSystemPrompt` are mutually exclusive. The
 // Worker factory throws at construction time if both are pinned — the
@@ -93,9 +93,6 @@ export interface WorkerConfig {
   // Wire format for claude -p's streamed output. Defaults to stream-json
   // (the only format the orchestrator's event reader currently parses).
   readonly outputFormat: ClaudeOutputFormat
-  // Per-Worker message cap. Resolved at construction time: explicit override,
-  // else DEFAULT_MAX_MESSAGES (0 = unbounded).
-  readonly maxMessages: number
   // Per-Worker context token budget. Compared against the LATEST assistant
   // event's input-side token count (input + cache_read + cache_creation) on
   // each turn; 0 = disabled. Set intentionally below the model's real context
@@ -111,22 +108,6 @@ export interface WorkerConfig {
   // task's tag list intersects this set. Workers with no tags entry are never
   // selected by tag (they are dispatched by kind or as the fallback).
   readonly tags?: readonly string[]
-}
-
-// Public default for the message-cap cascade. Matches the wrapper's
-// DEFAULT_CLAUDE_MAX_MESSAGES so the registry stays consistent with
-// runClaudeCode's per-invocation fallback. 0 = unbounded: the 100 default was
-// cutting Coders off mid-implementation. Workers that need a hard ceiling set
-// one explicitly (e.g. Triager=40).
-export const DEFAULT_MAX_MESSAGES = 0
-
-// Resolve a Worker's effective message cap: returns the explicit override when
-// it is a non-negative integer, otherwise DEFAULT_MAX_MESSAGES (0 = unbounded).
-export const resolveWorkerMaxMessages = (override?: number): number => {
-  if (override !== undefined && Number.isInteger(override) && override >= 0) {
-    return override
-  }
-  return DEFAULT_MAX_MESSAGES
 }
 
 // Resolve a Worker's effective context token budget. The env var
@@ -182,8 +163,7 @@ export const CODER_MODEL: string =
 // Sonnet may miss corner cases. Fixer also layers backlog-mutation denials so
 // a no-commit Session cannot refile its task as a loose end.
 // Planner, Slicer, and Triager are read-only synthesis stages: default
-// permissions, Edit/Write/NotebookEdit denied. Triager additionally pins a
-// 40-message cap (sonnet / medium effort). Bare mode is disabled because
+// permissions, Edit/Write/NotebookEdit denied. Bare mode is disabled because
 // the locally installed claude CLI 2.1.142 fails authentication when --bare
 // is set (returns "Not logged in") even though keychain auth is valid in
 // non-bare invocations.
@@ -192,8 +172,6 @@ export const CODER_MODEL: string =
 // before Claude Code would auto-compact. The 80% warn fires at 120k tokens
 // (well inside the window); the kill fires at 150k — leaving 50k of headroom
 // before the model's 200k limit so compaction never gets a chance to trigger.
-// Triager gets a much lower budget (50k) because its 40-message cap already
-// constrains it tightly; the context budget is a belt-and-suspenders guard.
 const CODER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(150_000)
 const GENEROUS_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(150_000)
 const TRIAGER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(50_000)
@@ -207,7 +185,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: [],
     outputFormat: 'stream-json',
-    maxMessages: resolveWorkerMaxMessages(),
     maxContextTokens: CODER_CONTEXT_TOKENS,
     runtime: 'headless',
     tags: ['coder'],
@@ -220,7 +197,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    maxMessages: resolveWorkerMaxMessages(),
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
     tags: ['planner'],
@@ -233,12 +209,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    // Slicing is a read-heavy, one-shot analysis of a whole PRD against the
-    // codebase; the 100-message default (shared with Coder/Planner) is too
-    // tight — the slicer spends 60+ messages orienting and was SIGKILLed
-    // before it could emit the slice JSON. 250 gives ~4x headroom while
-    // keeping a hard ceiling so a looping slicer can't burn unbounded tokens.
-    maxMessages: resolveWorkerMaxMessages(250),
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
     tags: ['slicer'],
@@ -251,7 +221,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    maxMessages: resolveWorkerMaxMessages(40),
     maxContextTokens: TRIAGER_CONTEXT_TOKENS,
     runtime: 'headless',
     tags: ['triager'],
@@ -264,7 +233,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: FIXER_BACKLOG_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    maxMessages: resolveWorkerMaxMessages(),
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
     tags: ['fixer'],
@@ -310,7 +278,6 @@ const buildWorker = (config: WorkerConfig): Worker => {
         bare: config.bare,
         agent: config.agent,
         disallowedTools: config.disallowedTools,
-        maxMessages: config.maxMessages,
         maxContextTokens: config.maxContextTokens,
         externalAbort: options.externalAbort,
       }),

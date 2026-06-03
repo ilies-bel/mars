@@ -22,7 +22,6 @@ const makeWorkerConfig = (name: WorkerConfig['name']): WorkerConfig => ({
   bare: false,
   disallowedTools: [],
   outputFormat: 'stream-json',
-  maxMessages: 0,
   maxContextTokens: 0,
   runtime: 'headless',
 })

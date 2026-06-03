@@ -22,7 +22,6 @@ const MINIMUM_DECL: WorkerDeclaration = {
   bare: false,
   disallowedTools: [],
   outputFormat: 'stream-json',
-  maxMessages: 0,
   runtime: 'headless',
 }
 
@@ -82,13 +81,11 @@ describe('addWorkerToRegistry', () => {
       ...MINIMUM_DECL,
       name: 'NewlyAddedWorker',
       model: 'claude-opus-4-7',
-      maxMessages: 50,
     }
     addWorkerToRegistry(stateDir, decl)
     const loaded = loadWorkerRegistry(stateDir)
     const found = loaded.find((d) => d.name === 'NewlyAddedWorker')
     expect(found?.model).toBe('claude-opus-4-7')
-    expect(found?.maxMessages).toBe(50)
   })
 
   it('overwrites an existing entry when called again with the same name', () => {
