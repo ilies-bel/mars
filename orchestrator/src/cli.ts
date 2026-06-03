@@ -305,6 +305,13 @@ Commands:
                                 recovery <on|off>' toggles the
                                 MARS_RECOVERY_DISABLED kill-switch in-memory
                                 (not persisted across restarts).
+  sync                          run the daemon's startup reconcile on demand:
+                                re-queue orphaned-blocked tasks (blocked with
+                                no live blocker edges), finalize landed merges,
+                                requeue stale-running tasks, repair blocker
+                                drift, etc. Routes via daemon RPC when alive
+                                (single-writer invariant); runs standalone in
+                                this process when the daemon is down.
   triage [<task-id>]            run triage once on one draft, or all drafts in
                                 parallel (Haiku assesses actionability)
   glossary set "<term>" "<definition>" [--avoid alias1,alias2]
@@ -2486,6 +2493,126 @@ const main = async (): Promise<void> => {
       }
       if (noop.length > 0) {
         console.log(`still blocked: ${noop.map((o) => o.taskId).join(', ')}`)
+      }
+    }
+    return
+  }
+
+  if (cmd === 'sync') {
+    const { isDaemonAlive } = await import('./core/daemon/paths')
+    const liveness = await isDaemonAlive()
+
+    if (liveness.alive) {
+      // Daemon is running — route via RPC so reconcile executes inside the
+      // single-writer daemon process. Never write to the DB from the CLI
+      // process while the daemon owns it (single-writer invariant).
+      const { sendRequest } = await import('./core/daemon/client')
+      const summary = (await sendRequest({ op: 'sync' }, { autoSpawn: false })) as {
+        daemonKilledAlerts: number
+        blockerDriftRepaired: number
+        orphanedBlockedRequeued: number
+        runningRequeued: number
+        orphanSpansSwept: number
+        verifyingRequeued: number
+        verifyingFailed: number
+        mergingFinalized: number
+        mergingRequeued: number
+        stalledProposalsSliced: number
+      }
+      console.log('sync complete (via daemon):')
+      if (summary.daemonKilledAlerts > 0)
+        console.log(`  daemon-killed alerts raised: ${summary.daemonKilledAlerts}`)
+      if (summary.blockerDriftRepaired > 0)
+        console.log(`  blocker-drift repaired: ${summary.blockerDriftRepaired}`)
+      if (summary.orphanedBlockedRequeued > 0)
+        console.log(`  orphaned-blocked re-queued: ${summary.orphanedBlockedRequeued}`)
+      if (summary.runningRequeued > 0)
+        console.log(`  stale-running re-queued: ${summary.runningRequeued}`)
+      if (summary.orphanSpansSwept > 0)
+        console.log(`  orphan spans swept: ${summary.orphanSpansSwept}`)
+      if (summary.verifyingRequeued > 0)
+        console.log(`  verifying re-queued: ${summary.verifyingRequeued}`)
+      if (summary.verifyingFailed > 0)
+        console.log(`  verifying marked failed (worktree missing): ${summary.verifyingFailed}`)
+      if (summary.mergingFinalized > 0)
+        console.log(`  merging finalized to done: ${summary.mergingFinalized}`)
+      if (summary.mergingRequeued > 0)
+        console.log(`  merging re-queued: ${summary.mergingRequeued}`)
+      if (summary.stalledProposalsSliced > 0)
+        console.log(`  stalled proposals sliced: ${summary.stalledProposalsSliced}`)
+      const anyWork =
+        summary.daemonKilledAlerts +
+          summary.blockerDriftRepaired +
+          summary.orphanedBlockedRequeued +
+          summary.runningRequeued +
+          summary.orphanSpansSwept +
+          summary.verifyingRequeued +
+          summary.verifyingFailed +
+          summary.mergingFinalized +
+          summary.mergingRequeued +
+          summary.stalledProposalsSliced >
+        0
+      if (!anyWork) console.log('  nothing to reconcile — queue is consistent')
+    } else {
+      // Daemon is down — run reconcile standalone in this process.
+      // Tables must exist before we read from them.
+      const { initQueue } = await import('./core/queue')
+      await initQueue()
+      const { runStartupReconcile } = await import('./core/daemon/startup-reconcile')
+      const { EventEmitter } = await import('node:events')
+      const bus = new EventEmitter()
+      const summary = await runStartupReconcile({
+        log: (line) => {
+          // Suppress verbose internal reconcile chatter; only show a summary.
+          void line
+        },
+        bus,
+        traceStore: null,
+        handleProposalSlice: null,
+      })
+      console.log('sync complete (standalone — daemon not running):')
+      if (summary.daemonKilledAlerts > 0)
+        console.log(`  daemon-killed alerts raised: ${summary.daemonKilledAlerts}`)
+      if (summary.blockerDriftRepaired > 0)
+        console.log(`  blocker-drift repaired: ${summary.blockerDriftRepaired}`)
+      if (summary.orphanedBlockedRequeued > 0)
+        console.log(`  orphaned-blocked re-queued: ${summary.orphanedBlockedRequeued}`)
+      if (summary.runningRequeued > 0)
+        console.log(`  stale-running re-queued: ${summary.runningRequeued}`)
+      if (summary.verifyingRequeued > 0)
+        console.log(`  verifying re-queued: ${summary.verifyingRequeued}`)
+      if (summary.verifyingFailed > 0)
+        console.log(`  verifying marked failed (worktree missing): ${summary.verifyingFailed}`)
+      if (summary.mergingFinalized > 0)
+        console.log(`  merging finalized to done: ${summary.mergingFinalized}`)
+      if (summary.mergingRequeued > 0)
+        console.log(`  merging re-queued: ${summary.mergingRequeued}`)
+      if (summary.stalledProposalsSliced > 0)
+        console.log(
+          `  stalled proposals detected (not sliced — daemon down): ${summary.stalledProposalsSliced}`,
+        )
+      const anyWork =
+        summary.daemonKilledAlerts +
+          summary.blockerDriftRepaired +
+          summary.orphanedBlockedRequeued +
+          summary.runningRequeued +
+          summary.verifyingRequeued +
+          summary.verifyingFailed +
+          summary.mergingFinalized +
+          summary.mergingRequeued +
+          summary.stalledProposalsSliced >
+        0
+      if (!anyWork) console.log('  nothing to reconcile — queue is consistent')
+      if (
+        summary.orphanedBlockedRequeued +
+          summary.runningRequeued +
+          summary.verifyingRequeued +
+          summary.mergingRequeued >
+        0
+      ) {
+        console.log(
+          '  note: tasks re-queued but daemon is not running — start it to dispatch them',
+        )
       }
     }
     return

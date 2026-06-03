@@ -1646,219 +1646,8 @@ export const startDaemon = async (
   // ── Reconcile on startup ──────────────────────────────────────────────────
 
   const reconcile = async (): Promise<void> => {
-    // Daemon-killed tasks: tasks SIGKILL'd with a prior daemon are stamped
-    // `failureSignature: 'daemon-killed'` and left in `failed`. We do NOT
-    // auto-requeue them — raise one alert-only actionQueue item per task so the
-    // operator decides (Requeue now / Restart daemon).
-    try {
-      const { detectAndRaiseDaemonKilled } = await import('./daemon-killed-sweep')
-      const raised = await detectAndRaiseDaemonKilled()
-      if (raised.length > 0) {
-        log(
-          `[reconcile] raised ${raised.length} daemon-killed alert(s) (alert-only; not auto-requeued)`,
-        )
-      }
-    } catch (err) {
-      log(`[reconcile] daemon-killed sweep failed: ${(err as Error).message}`)
-    }
-
-    // Blocker drift repair: any task in status='queued' with incomplete
-    // blockers violates the invariant and must be demoted back to 'blocked'
-    // BEFORE we re-seed the dispatch queue. This is a catch-all for bugs in
-    // any promotion path.
-    try {
-      const { repairQueuedWithIncompleteBlockers } = await import('./reconcile-blocker-drift')
-      const demoted = await repairQueuedWithIncompleteBlockers()
-      for (const taskId of demoted) {
-        log(
-          `[reconcile] BUG: task ${taskId} was queued with incomplete blockers — demoted to blocked`,
-        )
-      }
-    } catch (err) {
-      log(`[reconcile] blocker-drift repair failed: ${(err as Error).message}`)
-    }
-
-    const drafts = await listTasks('draft')
-    for (const t of drafts) bus.emit('task.added', { taskId: t.id })
-
-    const queued = await listTasks('queued')
-    for (const t of queued) bus.emit('task.queued', { taskId: t.id })
-
-    // Stale in-flight rows: the previous daemon died mid-work.
-    // Per-status recovery logic:
-    //   running  → requeue from setup (daemon restart is not a task fault;
-    //              do NOT consume the retry budget)
-    //   verifying → auto-resume if worktree intact; else mark failed
-    //   merging  → decide by git state: FF landed → done; else requeue from setup
-
-    const { existsSync: exists } = await import('node:fs')
-    const { execFile } = await import('node:child_process')
-    const { promisify } = await import('node:util')
-    const exec = promisify(execFile)
-    const { removeWorktree, isBranchMergedIntoMain } = await import('../lib/git')
-    const { getRepoRoot } = await import('../context')
-
-    {
-      const { requeueRunningTasksFromPriorDaemon } = await import('./reconcile-running')
-      const requeued = await requeueRunningTasksFromPriorDaemon(getRepoRoot())
-      for (const taskId of requeued) {
-        log(`[reconcile] task ${taskId} was running on prior daemon; requeued from setup`)
-        bus.emit('task.queued', { taskId })
-      }
-    }
-
-    // Sweep orphan running Step spans — any step_started with no step_ended
-    // belongs to a prior daemon that crashed without closing its spans. Mark
-    // them killed so the Agents page never shows a permanently-live Session.
-    try {
-      const swept = await sweepOrphanRunningSpans(traceStore)
-      if (swept > 0) {
-        log(`[reconcile] swept ${swept} orphan running span(s) to killed`)
-      }
-    } catch (err) {
-      log(`[reconcile] orphan span sweep failed: ${(err as Error).message}`)
-    }
-
-    const verifying = await listTasks('verifying')
-    for (const t of verifying) {
-      if (t.branch && t.worktreePath && exists(t.worktreePath)) {
-        // The prior daemon ran this task on Mastra (or a fresh engine run with
-        // no checkpoint rows), so there is no @mars/workflow step record to
-        // resume from — and re-running setup against the surviving worktree
-        // would conflict on the existing branch/path. Clear the in-flight
-        // worktree + branch and re-queue from a clean setup, mirroring the
-        // merging not-landed path. Engine-resume (runId=task.id) is the only
-        // resume mechanism now; there is no `resumeFrom` hint to skip into
-        // verify.
-        const branch = t.branch
-        if (exists(t.worktreePath)) {
-          await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
-        }
-        await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
-        // Guard: check blockers before promoting back to queued. A verifying
-        // task should have had all blockers done at dispatch time, but defensive
-        // checking prevents re-introducing the invariant violation on restart.
-        const verifyingHasBlockers = await hasIncompleteBlockers(t.id).catch(() => false)
-        if (verifyingHasBlockers) {
-          log(
-            `[reconcile] task ${t.id} was verifying; has incomplete blockers, restored to blocked`,
-          )
-          await updateTask(t.id, {
-            status: 'blocked',
-            branch: null,
-            worktreePath: null,
-            claudeSessionId: null,
-            error: null,
-            failedPhase: null,
-          }).catch(() => {})
-        } else {
-          log(
-            `[reconcile] task ${t.id} was verifying; clearing worktree and re-queuing from setup`,
-          )
-          await updateTask(t.id, {
-            status: 'queued',
-            branch: null,
-            worktreePath: null,
-            claudeSessionId: null,
-            error: null,
-            failedPhase: null,
-          }).catch(() => {})
-          bus.emit('task.queued', { taskId: t.id })
-        }
-      } else {
-        log(
-          `[reconcile] task ${t.id} was verifying; worktree missing, marking failed`,
-        )
-        // Best-effort: prune any stale git worktree registration even though
-        // the directory is already gone from disk. Keep the branch ref for
-        // post-mortem forensics (keepBranch=true). Errors are logged and
-        // swallowed — a missing/unregistered worktree must not break reconcile.
-        if (t.worktreePath) {
-          const branch = t.branch ?? `task/${t.id}`
-          try {
-            await removeWorktree({ path: t.worktreePath, branch }, true, true)
-            log(`[reconcile] removed stale worktree registration for ${t.id} at ${t.worktreePath}`)
-          } catch {
-            log(`[reconcile] worktree cleanup skipped for ${t.id}: not registered or already removed`)
-          }
-        }
-        await updateTask(t.id, {
-          status: 'failed',
-          error: 'daemon restart while task was verifying; worktree missing',
-          failedPhase: 'verify',
-          failureReason: 'daemon restart while task was verifying; worktree missing',
-          failureReasonCode: 'unknown',
-        }).catch(() => {})
-      }
-    }
-
-    const merging = await listTasks('merging')
-    for (const t of merging) {
-      const branch = t.branch ?? `task/${t.id}`
-      const landed = await isBranchMergedIntoMain(branch, getRepoRoot()).catch(() => false)
-      if (landed) {
-        log(
-          `[reconcile] task ${t.id} was merging; FF already landed, finalized to done`,
-        )
-        if (t.worktreePath && exists(t.worktreePath)) {
-          await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
-        }
-        await updateTask(t.id, {
-          status: 'done',
-          failedPhase: null,
-          error: null,
-        }).catch(() => {})
-      } else {
-        if (t.worktreePath && exists(t.worktreePath)) {
-          await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
-        }
-        await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
-        // Guard: check blockers before promoting back to queued. A merging
-        // task should have had all blockers done at dispatch time, but defensive
-        // checking prevents re-introducing the invariant violation on restart.
-        const mergingHasBlockers = await hasIncompleteBlockers(t.id).catch(() => false)
-        if (mergingHasBlockers) {
-          log(
-            `[reconcile] task ${t.id} was merging; FF not landed, has incomplete blockers, restored to blocked`,
-          )
-          await updateTask(t.id, {
-            status: 'blocked',
-            branch: null,
-            worktreePath: null,
-            claudeSessionId: null,
-            error: null,
-            failedPhase: null,
-          }).catch(() => {})
-        } else {
-          log(
-            `[reconcile] task ${t.id} was merging; FF not landed, requeued from setup`,
-          )
-          await updateTask(t.id, {
-            status: 'queued',
-            branch: null,
-            worktreePath: null,
-            claudeSessionId: null,
-            error: null,
-            failedPhase: null,
-          }).catch(() => {})
-          bus.emit('task.queued', { taskId: t.id })
-        }
-      }
-    }
-
-    // Proposals promoted while the daemon was offline are still in prd-ready;
-    // pick them up and slice. Failures stay logged but don't abort reconcile.
-    try {
-      const stalled = await listProposals({ status: 'prd-ready' })
-      for (const proposal of stalled) {
-        log(`[reconcile-slice] proposal ${proposal.id} prd-ready on startup; slicing`)
-        void handleProposalSlice(proposal.id).catch((err) =>
-          log(`[reconcile-slice] proposal ${proposal.id} failed: ${(err as Error).message}`),
-        )
-      }
-    } catch (err) {
-      log(`[reconcile-slice] failed: ${(err as Error).message}`)
-    }
+    const { runStartupReconcile } = await import('./startup-reconcile')
+    await runStartupReconcile({ log, bus, traceStore, handleProposalSlice })
   }
 
   // ── Network: UDS server ───────────────────────────────────────────────────
@@ -1946,6 +1735,16 @@ export const startDaemon = async (
         case 'recover': {
           const result = await handleRecover(req.id)
           return { ok: true, data: result }
+        }
+        case 'sync': {
+          const { runStartupReconcile } = await import('./startup-reconcile')
+          const summary = await runStartupReconcile({
+            log,
+            bus,
+            traceStore,
+            handleProposalSlice,
+          })
+          return { ok: true, data: summary }
         }
         case 'proposal.promote': {
           const r = await handleProposalPromote(req.proposalId)
