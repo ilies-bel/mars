@@ -8,6 +8,7 @@ import {
   writeProgressStateToUrl,
 } from '@/shared/progressUrlState'
 import type { Tab } from '@/shared/tabs'
+import { ActiveTasksPanel } from '@/widgets/ActiveTasksPanel'
 import { BoardView } from '@/widgets/BoardView'
 import {
   ALL_CLUSTER_TOGGLES,
@@ -156,6 +157,7 @@ export const ProgressPage = () => {
         )}
         <Footer />
       </div>
+      <ActiveTasksPanel tasks={byCluster['In progress']} />
     </div>
   )
 }

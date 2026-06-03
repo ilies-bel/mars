@@ -89,6 +89,18 @@ export const taskSchema = z.object({
 
 const progressTaskSchema = taskSchema.extend({
   cluster: clusterSchema,
+  /**
+   * The workflow step the task is currently executing (setup | code | verify |
+   * merge). Set by the orchestrator once a step_started event is recorded.
+   * Absent on legacy responses or tasks that have not yet emitted a step event.
+   * Added by task mars-c07d0768 — consumers should treat absent as null.
+   */
+  currentStep: z.string().nullable().optional(),
+  /**
+   * ISO timestamp when the current step started. Absent when currentStep is
+   * absent. Added by task mars-c07d0768 — consumers should treat absent as null.
+   */
+  currentStepStartedAt: z.string().nullable().optional(),
 })
 
 /**
