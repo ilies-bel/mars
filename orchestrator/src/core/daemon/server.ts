@@ -90,21 +90,13 @@ import {
   type DaemonStatusPayload,
 } from './protocol'
 import { ViewStreamHub } from './view/stream-hub'
+import {
+  createTaskFlightTracker,
+  type DispatchKind,
+} from './task-flight-tracker'
 import { MARS_VERSION } from '../../version'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
-
-type DispatchKind =
-  | 'triage'
-  | 'implement'
-  | 'refine'
-  | 'glossary-write'
-  | 'adr-add'
-
-interface InFlightEntry {
-  taskId: string
-  kind: DispatchKind
-}
 
 export interface Semaphore {
   limit: number
@@ -448,7 +440,14 @@ export const startDaemon = async (
   // re-fetch the relevant view endpoint on receipt.
   const viewStreamHub = new ViewStreamHub()
 
-  const inFlight = new Map<string, InFlightEntry>()
+  // The TaskFlightTracker owns the four dispatch-bookkeeping collections
+  // (inFlight + the two pending sets + the two claimed sets) and the
+  // dispatch-storm-prevention invariant over them. The per-kind semaphores,
+  // the `drain` single-flight loop, the dispatcher closures, and the bus glue
+  // all stay here in startDaemon (ADR-0024). The lifecycle the tracker forces
+  // is: claim (drain-driven kinds) → await acquire → commitInFlight → run →
+  // release(), where release() is the closure commitInFlight returns.
+  const tracker = createTaskFlightTracker()
   const startedAt = new Date().toISOString()
   let shuttingDown = false
   // When false, `drain()` is a no-op, new bus events skip enqueue, and
@@ -473,24 +472,6 @@ export const startDaemon = async (
     `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit}`,
   )
 
-  // Pending sets used by reconcile + drain: never bus.emit a storm; pull from
-  // these as semaphore slots free.
-  const pendingTriage = new Set<string>()
-  const pendingImplement = new Set<string>()
-
-  // Tasks claimed by a drain pass but not yet tracked in inFlight (the gap is
-  // the time it takes to await the implement semaphore). Without this set
-  // multiple concurrent `void drain()` invocations can each pick the same
-  // task id from `pendingImplement` and start parallel dispatches before any
-  // of them call `trackInFlight`. That was the dispatch-storm bug.
-  const claimedImplement = new Set<string>()
-  const claimedTriage = new Set<string>()
-
-  const trackInFlight = (taskId: string, kind: DispatchKind): (() => void) => {
-    inFlight.set(taskId, { taskId, kind })
-    return () => inFlight.delete(taskId)
-  }
-
   // Drain single-flight gate. While `drainRunning` is true, a second call
   // sets `drainAgain` and returns; the running drain re-runs once it finishes.
   // This + the claimed sets together guarantee no task id is ever dispatched
@@ -503,11 +484,13 @@ export const startDaemon = async (
   let drain: () => Promise<void> = async () => {}
 
   const dispatchTriage = async (taskId: string): Promise<void> => {
-    if (inFlight.has(taskId)) return
-    pendingTriage.delete(taskId)
+    if (tracker.isInFlight(taskId)) return
+    tracker.removePending(taskId, 'triage')
     await acquire(sems.triage)
-    const releaseTracking = trackInFlight(taskId, 'triage')
-    claimedTriage.delete(taskId)
+    // commitInFlight records the inFlight entry AND clears the matching claim
+    // in one step (claim-clears-after-commit), and is the sole producer of the
+    // release closure — so the storm-prevention lifecycle can't be reordered.
+    const releaseTracking = tracker.commitInFlight(taskId, 'triage')
     log(`[triage] ${taskId} dispatching`)
     try {
       const { runTriage } = await import('../../workflows/triage-workflow')
@@ -560,11 +543,12 @@ export const startDaemon = async (
   }
 
   const dispatchImplement = async (task: Task): Promise<void> => {
-    if (inFlight.has(task.id)) return
-    pendingImplement.delete(task.id)
+    if (tracker.isInFlight(task.id)) return
+    tracker.removePending(task.id, 'implement')
     await acquire(sems.implement)
-    const releaseTracking = trackInFlight(task.id, 'implement')
-    claimedImplement.delete(task.id)
+    // commitInFlight records the inFlight entry AND clears the matching claim
+    // in one step (claim-clears-after-commit); see dispatchTriage.
+    const releaseTracking = tracker.commitInFlight(task.id, 'implement')
     log(`[implement] ${task.id} dispatching`)
     try {
       // Slice F.2: dispatch-time dirty-main check. Runs BEFORE workflow
@@ -793,7 +777,7 @@ export const startDaemon = async (
   }): Promise<void> => {
     const synthetic = `glossary-write:${req.kind}:${req.term}:${Date.now()}`
     await acquire(sems['glossary-write'])
-    const releaseTracking = trackInFlight(synthetic, 'glossary-write')
+    const releaseTracking = tracker.commitInFlight(synthetic, 'glossary-write')
     log(`[glossary-write] ${req.kind} "${req.term}" dispatching`)
     try {
       const { runStructuredWrite } = await import('../lib/structured-write')
@@ -861,7 +845,7 @@ export const startDaemon = async (
   }): Promise<void> => {
     const synthetic = `adr-add:${req.title}:${Date.now()}`
     await acquire(sems['adr-add'])
-    const releaseTracking = trackInFlight(synthetic, 'adr-add')
+    const releaseTracking = tracker.commitInFlight(synthetic, 'adr-add')
     log(`[adr-add] "${req.title}" dispatching`)
     try {
       const { runStructuredWrite } = await import('../lib/structured-write')
@@ -907,9 +891,9 @@ export const startDaemon = async (
     taskId: string,
     refresh: boolean,
   ): Promise<void> => {
-    if (inFlight.has(taskId)) return
+    if (tracker.isInFlight(taskId)) return
     await acquire(sems.refine)
-    const releaseTracking = trackInFlight(taskId, 'refine')
+    const releaseTracking = tracker.commitInFlight(taskId, 'refine')
     log(`[refine] ${taskId} dispatching (refresh=${refresh})`)
     try {
       const { runPlan } = await import('../../workflows/plan-workflow')
@@ -941,15 +925,13 @@ export const startDaemon = async (
   // Pick the highest-priority pending task. Ties broken by oldest createdAt
   // so equal-priority work stays FIFO. Returns null if no pending row resolves
   // to a real task (drained while we looked).
-  const pickNextImplement = async (
-    pending: ReadonlySet<string>,
-  ): Promise<string | null> => {
+  const pickNextImplement = async (): Promise<string | null> => {
     let best: { id: string; priority: number; createdAt: string } | null = null
-    for (const id of pending) {
+    for (const id of tracker.drainPending('implement')) {
       // Skip ids already claimed by an in-flight (or about-to-be-in-flight)
       // dispatch — without this the same id can be picked by parallel
       // drains during the gap between pop-from-pending and acquire-slot.
-      if (claimedImplement.has(id) || inFlight.has(id)) continue
+      if (tracker.isClaimed(id, 'implement') || tracker.isInFlight(id)) continue
       const t = await getTask(id)
       if (!t) continue
       if (
@@ -989,30 +971,30 @@ export const startDaemon = async (
         try {
           // Triage: pick a candidate that isn't already claimed/in-flight,
           // mark it claimed BEFORE the dispatchTriage call so the next drain
-          // pass can't pick it again.
+          // pass can't pick it again. tracker.claim returns false when the id
+          // is already claimed/in-flight, folding the old has-checks in.
           while (sems.triage.inUse < sems.triage.limit) {
             let pickedTriage: string | null = null
-            for (const id of pendingTriage) {
-              if (claimedTriage.has(id) || inFlight.has(id)) continue
+            for (const id of tracker.drainPending('triage')) {
+              if (!tracker.claim(id, 'triage')) continue
               pickedTriage = id
               break
             }
             if (pickedTriage === null) break
-            claimedTriage.add(pickedTriage)
-            pendingTriage.delete(pickedTriage)
+            tracker.removePending(pickedTriage, 'triage')
             void dispatchTriage(pickedTriage)
           }
           // Implement: same guarantee but priority-ordered.
           while (sems.implement.inUse < sems.implement.limit) {
-            const id = await pickNextImplement(pendingImplement)
+            const id = await pickNextImplement()
             if (id === null) break
             // Mark claimed BEFORE any further await so concurrent drains
             // (which we've gated, but belt-and-suspenders) can't double-pick.
-            claimedImplement.add(id)
-            pendingImplement.delete(id)
+            tracker.claim(id, 'implement')
+            tracker.removePending(id, 'implement')
             const t = await getTask(id)
             if (!t || t.status !== 'queued') {
-              claimedImplement.delete(id)
+              tracker.unclaim(id, 'implement')
               continue
             }
             if (await hasIncompleteBlockers(id)) {
@@ -1033,7 +1015,7 @@ export const startDaemon = async (
               } else {
                 log(`[dispatch] ${id} blocked; deferring until blockers complete`)
               }
-              claimedImplement.delete(id)
+              tracker.unclaim(id, 'implement')
               continue
             }
             void dispatchImplement(t)
@@ -1057,8 +1039,8 @@ export const startDaemon = async (
 
   bus.on('task.added', (e: { taskId: string }) => {
     if (!acceptingWork) return
-    if (inFlight.has(e.taskId)) return
-    pendingTriage.add(e.taskId)
+    if (tracker.isInFlight(e.taskId)) return
+    tracker.enqueuePending(e.taskId, 'triage')
     void drain()
   })
 
@@ -1071,8 +1053,8 @@ export const startDaemon = async (
 
   bus.on('task.queued', (e: { taskId: string }) => {
     if (!acceptingWork) return
-    if (inFlight.has(e.taskId)) return
-    pendingImplement.add(e.taskId)
+    if (tracker.isInFlight(e.taskId)) return
+    tracker.enqueuePending(e.taskId, 'implement')
     void drain()
   })
 
@@ -1191,8 +1173,8 @@ export const startDaemon = async (
         // Previously this happened via the internal-bus wake-hint; now
         // the caller is responsible because the bus no longer delivers
         // payloads to handlers.
-        if (acceptingWork && !inFlight.has(id)) {
-          pendingImplement.add(id)
+        if (acceptingWork && !tracker.isInFlight(id)) {
+          tracker.enqueuePending(id, 'implement')
           void drain()
         }
       }
@@ -1207,16 +1189,16 @@ export const startDaemon = async (
   const handleRecover = async (id?: string): Promise<RecoverAllBlockedTasksResult> => {
     if (id) {
       const outcome = await recoverBlockedTask(id)
-      if (outcome.outcome === 'queued' && acceptingWork && !inFlight.has(id)) {
-        pendingImplement.add(id)
+      if (outcome.outcome === 'queued' && acceptingWork && !tracker.isInFlight(id)) {
+        tracker.enqueuePending(id, 'implement')
         void drain()
       }
       return { outcomes: [outcome] }
     }
     const result = await recoverAllBlockedTasks()
     for (const o of result.outcomes) {
-      if (o.outcome === 'queued' && acceptingWork && !inFlight.has(o.taskId)) {
-        pendingImplement.add(o.taskId)
+      if (o.outcome === 'queued' && acceptingWork && !tracker.isInFlight(o.taskId)) {
+        tracker.enqueuePending(o.taskId, 'implement')
       }
     }
     if (result.outcomes.some(o => o.outcome === 'queued')) void drain()
@@ -1450,7 +1432,7 @@ export const startDaemon = async (
         // updateTask already promoted any unblocked dependents; surface them.
         const queued = await listTasks('queued')
         for (const t of queued) {
-          if (!inFlight.has(t.id)) bus.emit('task.queued', { taskId: t.id })
+          if (!tracker.isInFlight(t.id)) bus.emit('task.queued', { taskId: t.id })
         }
       }
     }
@@ -1515,9 +1497,9 @@ export const startDaemon = async (
     // the gap between dispatch and the first persisted transition, so
     // the map is the source of truth, not status alone.
     const liveStatus = IN_FLIGHT_STATUSES.has(task.status)
-    const liveInFlight = inFlight.has(id)
+    const liveInFlight = tracker.isInFlight(id)
     if ((liveStatus || liveInFlight) && !force) {
-      const kind = inFlight.get(id)?.kind
+      const kind = tracker.inFlightKind(id)
       const detail = liveInFlight
         ? `dispatched (kind=${kind ?? 'unknown'})`
         : `status=${task.status}`
@@ -1559,12 +1541,14 @@ export const startDaemon = async (
         `fixForRefs=${result.fixForRefsCleared.length}, worktree=${worktreeRemoved}, branch=${branchDeleteResult})`,
     )
     if (liveInFlight) {
-      // The worker still holds an inFlight slot; clearing it here lets
+      // The worker still holds an inFlight slot; force-clearing it here lets
       // drain() reclaim the semaphore even though the workflow run will
       // continue to its natural end (we cannot reach in and kill the
-      // claude subprocess from here). Surfaced in the return payload so
-      // the caller knows.
-      inFlight.delete(id)
+      // claude subprocess from here). The dispatcher's own release closure is
+      // identity-checked, so when the run finishes it won't evict a newer
+      // entry that may have re-committed under this id. Surfaced in the return
+      // payload so the caller knows.
+      tracker.forceRelease(id)
     }
     return {
       ...result,
@@ -1576,8 +1560,8 @@ export const startDaemon = async (
   const handleRefine = async (id: string, refresh: boolean): Promise<void> => {
     const task = await getTask(id)
     if (!task) throw new Error(`task ${id} not found`)
-    if (inFlight.has(id)) {
-      throw new Error(`task ${id} already has a ${inFlight.get(id)?.kind} job in flight`)
+    if (tracker.isInFlight(id)) {
+      throw new Error(`task ${id} already has a ${tracker.inFlightKind(id)} job in flight`)
     }
     bus.emit('task.refine', { taskId: id, refresh })
   }
@@ -1638,7 +1622,7 @@ export const startDaemon = async (
     return {
       pid: process.pid,
       startedAt,
-      inFlight: Array.from(inFlight.values()),
+      inFlight: tracker.inFlightSnapshot(),
       counts,
     }
   }
@@ -1886,19 +1870,18 @@ export const startDaemon = async (
           if (req.drain) {
             if (acceptingWork) {
               acceptingWork = false
-              pendingTriage.clear()
-              pendingImplement.clear()
-              log(`drain requested; stopped accepting new work (inFlight=${inFlight.size})`)
+              tracker.clearPending()
+              log(`drain requested; stopped accepting new work (inFlight=${tracker.inFlightCount()})`)
             }
             queueMicrotask(() => {
               void shutdown(false)
             })
-            return { ok: true, data: { inFlight: inFlight.size, draining: true } }
+            return { ok: true, data: { inFlight: tracker.inFlightCount(), draining: true } }
           }
-          if (!req.force && inFlight.size > 0) {
+          if (!req.force && tracker.inFlightCount() > 0) {
             return {
               ok: false,
-              error: `${inFlight.size} task(s) in flight; pass drain=true to wait or use \`mars daemon kill\` to abort`,
+              error: `${tracker.inFlightCount()} task(s) in flight; pass drain=true to wait or use \`mars daemon kill\` to abort`,
             }
           }
           queueMicrotask(() => {
@@ -1911,9 +1894,8 @@ export const startDaemon = async (
           // daemon's process group so every spawned `claude -p` (and any
           // child git/verify processes) dies with it.
           acceptingWork = false
-          pendingTriage.clear()
-          pendingImplement.clear()
-          const victims = Array.from(inFlight.values())
+          tracker.clearPending()
+          const victims = tracker.inFlightSnapshot()
           log(
             `kill requested; aborting ${victims.length} in-flight task(s): ${
               victims.map((v) => `${v.taskId}(${v.kind})`).join(', ') || '(none)'
@@ -2731,7 +2713,7 @@ export const startDaemon = async (
         // Surface newly queued tasks to the dispatch loop.
         const queued = await listTasks('queued')
         for (const t of queued) {
-          if (!inFlight.has(t.id)) bus.emit('task.queued', { taskId: t.id })
+          if (!tracker.isInFlight(t.id)) bus.emit('task.queued', { taskId: t.id })
         }
       }
     } catch (err) {
@@ -2772,7 +2754,7 @@ export const startDaemon = async (
   // operation it is a no-op. .unref() so it never keeps the process alive.
   const POLL_FALLBACK_MS = Number(process.env.MARS_DRAIN_POLL_MS ?? 30_000)
   const pollFallback = setInterval(() => {
-    if (!acceptingWork || drainRunning || inFlight.size > 0) return
+    if (!acceptingWork || drainRunning || tracker.inFlightCount() > 0) return
     void (async () => {
       try {
         const [drafts, queued] = await Promise.all([
@@ -2782,10 +2764,10 @@ export const startDaemon = async (
         const seedable = drafts.length + queued.length
         if (seedable === 0) return
         for (const t of drafts) {
-          if (!inFlight.has(t.id)) pendingTriage.add(t.id)
+          if (!tracker.isInFlight(t.id)) tracker.enqueuePending(t.id, 'triage')
         }
         for (const t of queued) {
-          if (!inFlight.has(t.id)) pendingImplement.add(t.id)
+          if (!tracker.isInFlight(t.id)) tracker.enqueuePending(t.id, 'implement')
         }
         log(
           `[dispatch] poll-fallback re-seeding ${seedable} task(s) (idle with non-empty queue)`,
@@ -2930,7 +2912,7 @@ export const startDaemon = async (
         if (processed > 0) {
           const queued = await listTasks('queued')
           for (const t of queued) {
-            if (!inFlight.has(t.id)) bus.emit('task.queued', { taskId: t.id })
+            if (!tracker.isInFlight(t.id)) bus.emit('task.queued', { taskId: t.id })
           }
         }
       } catch (err) {
@@ -2957,12 +2939,12 @@ export const startDaemon = async (
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.
     acceptingWork = false
-    pendingTriage.clear()
-    pendingImplement.clear()
-    log(`shutting down (force=${force}, inFlight=${inFlight.size})`)
+    tracker.clearPending()
+    log(`shutting down (force=${force}, inFlight=${tracker.inFlightCount()})`)
 
-    if (force && inFlight.size > 0) {
-      const entries = Array.from(inFlight.values())
+    if (force && tracker.inFlightCount() > 0) {
+      const entries = tracker
+        .inFlightSnapshot()
         .map((e) => `${e.taskId}(${e.kind})`)
         .join(', ')
       log(`force shutdown abandoning in-flight: ${entries}`)
@@ -2972,10 +2954,11 @@ export const startDaemon = async (
       // No timeout: a drain stop waits as long as the in-flight tasks need.
       // `mars daemon kill` is the escape hatch for stuck work.
       let lastLogged = -1
-      while (inFlight.size > 0) {
-        if (inFlight.size !== lastLogged) {
-          log(`waiting on ${inFlight.size} in-flight task(s)`)
-          lastLogged = inFlight.size
+      while (tracker.inFlightCount() > 0) {
+        const remaining = tracker.inFlightCount()
+        if (remaining !== lastLogged) {
+          log(`waiting on ${remaining} in-flight task(s)`)
+          lastLogged = remaining
         }
         await new Promise((r) => setTimeout(r, 250))
       }
@@ -3015,6 +2998,6 @@ export const startDaemon = async (
 
   return {
     stop: shutdown,
-    inFlightCount: () => inFlight.size,
+    inFlightCount: () => tracker.inFlightCount(),
   }
 }
