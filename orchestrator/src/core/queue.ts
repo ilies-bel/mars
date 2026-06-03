@@ -45,6 +45,25 @@ export const isDispatchableStatus = (status: TaskStatus): boolean =>
   status === 'queued'
 
 /**
+ * Thrown by {@link updateTask} when a caller attempts to move a task out of a
+ * terminal status (`'done'` or `'dropped'`). Terminal tasks are immutable —
+ * any status write that bypasses this guard would silently corrupt lifecycle
+ * invariants tracked by subscribers (Invalidator, daemon dispatcher, UI).
+ */
+export class IllegalTransitionError extends Error {
+  constructor(
+    public readonly taskId: string,
+    public readonly fromStatus: string,
+    public readonly toStatus: string,
+  ) {
+    super(
+      `Illegal task status transition: task ${taskId} is in terminal status '${fromStatus}' and cannot transition to '${toStatus}'`,
+    )
+    this.name = 'IllegalTransitionError'
+  }
+}
+
+/**
  * State of a {@link Blocker} row. The Linker writes `'pending-review'` for
  * keyword-overlap candidates; causal writers (manual blocks, fix-task wiring)
  * write `'confirmed'`. `'rejected'` records that a candidate has been ruled
@@ -1557,6 +1576,18 @@ export const updateTask = async (
       before.rows.length > 0
         ? ((before.rows[0] as unknown as { status: string }).status ?? null)
         : null
+  }
+
+  // Guard: terminal statuses are immutable.  A task that reached 'done' or
+  // 'dropped' must never be moved to a different status — the daemon,
+  // Invalidator, and UI all treat those as absorbing states.
+  if (
+    patch.status !== undefined &&
+    previousStatus !== null &&
+    patch.status !== previousStatus &&
+    (previousStatus === 'done' || previousStatus === 'dropped')
+  ) {
+    throw new IllegalTransitionError(id, previousStatus, patch.status)
   }
 
   if (patch.status !== undefined) {

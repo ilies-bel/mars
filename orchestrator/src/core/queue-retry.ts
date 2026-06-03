@@ -1,8 +1,6 @@
 import { computeFailureSignature } from './lib/failure-signature'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
-import { buildEventInsert } from './lib/outbox'
-import { getDefaultTaskStore } from './store/task-store'
-import { setTaskStatus } from './queue'
+import { updateTask, resolveQueueClient } from './queue'
 
 export const DEFAULT_RETRY_BUDGET = 0
 
@@ -29,25 +27,16 @@ export const markTaskDropped = async (
    */
   failureReasonCode?: string | null,
 ): Promise<void> => {
-  const now = new Date().toISOString()
-  const store = await getDefaultTaskStore()
   const code = failureReasonCode ?? computeFailureSignature('terminal', reason)
-  // Route the status change and its paired event through the single-writer
-  // chokepoint so the UPDATE and `task.dropped` publish share one write tx.
-  await setTaskStatus(taskId, 'dropped', { dropReason: reason })
-  // Extra column updates, blocker-edge cleanup, and terminal event in one tx.
-  await store.atomic(async (scope) => {
-    await scope.execute({
-      sql: `UPDATE tasks SET drop_reason = ?, failure_reason_code = ?, updated_at = ? WHERE id = ?`,
-      args: [reason, code, now, taskId],
-    })
-    await scope.execute({
-      sql: `DELETE FROM task_blockers WHERE task_id = ?`,
-      args: [taskId],
-    })
-    await scope.execute(
-      buildEventInsert('task.terminal', { taskId, reason: 'dropped' }),
-    )
+  // Route the status write, paired events (task.dropped + task.terminal), and
+  // extra column updates through the single validated chokepoint.  An illegal
+  // transition (e.g. task already 'done') throws IllegalTransitionError before
+  // any DB write.
+  await updateTask(taskId, { status: 'dropped', failureReason: reason, failureReasonCode: code })
+  // Blocker-edge cleanup is not a status write; keep it here.
+  await resolveQueueClient().execute({
+    sql: `DELETE FROM task_blockers WHERE task_id = ?`,
+    args: [taskId],
   })
 }
 
@@ -70,25 +59,16 @@ export const markTaskFailed = async (
    */
   failureReasonCode?: string | null,
 ): Promise<void> => {
-  const now = new Date().toISOString()
-  const store = await getDefaultTaskStore()
   const code = failureReasonCode ?? computeFailureSignature('terminal', reason)
-  // Route the status change and its paired event through the single-writer
-  // chokepoint so the UPDATE and `task.failed` publish share one write tx.
-  await setTaskStatus(taskId, 'failed', { error: reason })
-  // Extra column updates, blocker-edge cleanup, and terminal event in one tx.
-  await store.atomic(async (scope) => {
-    await scope.execute({
-      sql: `UPDATE tasks SET failure_reason = ?, failure_reason_code = ?, updated_at = ? WHERE id = ?`,
-      args: [reason, code, now, taskId],
-    })
-    await scope.execute({
-      sql: `DELETE FROM task_blockers WHERE task_id = ?`,
-      args: [taskId],
-    })
-    await scope.execute(
-      buildEventInsert('task.terminal', { taskId, reason: 'failed' }),
-    )
+  // Route the status write, paired events (task.failed + task.terminal), and
+  // extra column updates through the single validated chokepoint.  An illegal
+  // transition (e.g. task already 'done') throws IllegalTransitionError before
+  // any DB write.
+  await updateTask(taskId, { status: 'failed', failureReason: reason, failureReasonCode: code })
+  // Blocker-edge cleanup is not a status write; keep it here.
+  await resolveQueueClient().execute({
+    sql: `DELETE FROM task_blockers WHERE task_id = ?`,
+    args: [taskId],
   })
   // Block downstream queued tasks whose only path to running was this
   // failed prerequisite. Dynamic import breaks the queue-retry <->

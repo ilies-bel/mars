@@ -961,4 +961,31 @@ describe('blocker-resolution (task_blockers)', () => {
       expect((await q.getTask(origin.id))?.status).toBe('done')
     })
   })
+
+  describe('IllegalTransitionError — terminal-state guard', () => {
+    it('markTaskFailed on a done task throws IllegalTransitionError and leaves the row in done', async () => {
+      const { q } = await loadModules(repo)
+      const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
+      // Force the task into the terminal 'done' state directly.
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [task.id],
+      })
+
+      const queueRetry = (await import('../../queue-retry')) as unknown as {
+        markTaskFailed: typeof import('../../queue-retry').markTaskFailed
+      }
+      const { IllegalTransitionError } = (await import('../../queue')) as unknown as {
+        IllegalTransitionError: typeof import('../../queue').IllegalTransitionError
+      }
+
+      await expect(queueRetry.markTaskFailed(task.id, 'some error')).rejects.toThrow(
+        IllegalTransitionError,
+      )
+
+      // Row must remain 'done' — no partial write.
+      const reloaded = await q.getTask(task.id)
+      expect(reloaded?.status).toBe('done')
+    })
+  })
 })
