@@ -39,6 +39,7 @@ import {
   type StaleLike,
   type TodoItem,
 } from '../core/lib/todo-feed'
+import { shortId } from './short-id.js'
 
 const POLL_INTERVAL_MS = 1000
 
@@ -80,8 +81,6 @@ const formatRelativeMs = (ts: number, now: number): string => {
   return `${d}d ago`
 }
 
-const shortId = (id: string): string =>
-  id.length <= 8 ? id : id.slice(0, 8)
 
 interface RowProps {
   item: TodoItem

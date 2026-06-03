@@ -13,11 +13,10 @@
  * The id column stores the bare 8-char hex. The rendered id is:
  *   MarsId.create('proposal', id).toString()  →  prop-<hex>
  */
-import { randomBytes } from 'node:crypto'
 import { type Client } from '@libsql/client'
 import { resolveContext } from '../core/context.js'
 import { openLibsql } from '../core/lib/libsql.js'
-import { MarsId, parseMarsId } from '../mars-id/index.js'
+import { genId, MarsId, parseMarsId } from '../mars-id/index.js'
 
 export interface ProposalNote {
   /** Rendered id: prop-<hex> */
@@ -72,7 +71,7 @@ const rowToProposalNote = (row: ProposalNoteRow): ProposalNote => ({
 export const addProposalNote = async (text: string): Promise<ProposalNote> => {
   await initProposalNotes()
   const c = getClient()
-  const hex = randomBytes(4).toString('hex')
+  const hex = genId('proposal').hex
   const slug = slugify(text)
   const now = Date.now()
   await c.execute({

@@ -1881,7 +1881,7 @@ const main = async (): Promise<void> => {
       for (const i of ideas) {
         const title = i.title.trim() || '(no title)'
         console.log(
-          `${i.id.slice(0, 8)}\t${i.status}\tsource=${i.source}\t${title}`,
+          `${i.id}\t${i.status}\tsource=${i.source}\t${title}`,
         )
       }
       return
