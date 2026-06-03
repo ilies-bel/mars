@@ -260,4 +260,41 @@ describe('ADR-0040 recovery-leaf guard', () => {
     expect(violations[0].taskIsRecovery).toBe(true)
     expect(violations[0].blockerIsRecovery).toBe(false)
   })
+
+  it('scanRecoveryBlockerEdges does NOT report the legitimate origin→recovery edge', async () => {
+    // The one edge shape ADR-0040 explicitly permits: origin waits on its own
+    // fix task (task_id=origin.id, blocker_task_id=fixId, fix_for_task_id=origin.id).
+    // upsertFixTask writes exactly this shape; the audit must not flag it.
+    const { q, inv } = await loadModules(repo)
+    const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+    const fixId = await insertFixTaskRow(q, origin.id)
+    const now = new Date().toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+      args: [origin.id, fixId, now],
+    })
+    const violations = await inv.scanRecoveryBlockerEdges()
+    expect(violations).toEqual([])
+  })
+
+  it('scanRecoveryBlockerEdges reports a recovery task blocking a DIFFERENT task (fix_for mismatch)', async () => {
+    // A fix task that blocks a task other than the one it was created to fix
+    // is a genuine violation and must still be reported.
+    const { q, inv } = await loadModules(repo)
+    const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+    const fixId = await insertFixTaskRow(q, origin.id)
+    const unrelated = await q.enqueueTask('unrelated', undefined, { skipTriage: true })
+    // Insert: unrelated is blocked by fixId, but fixId.fix_for_task_id = origin.id ≠ unrelated.id
+    const now = new Date().toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+      args: [unrelated.id, fixId, now],
+    })
+    const violations = await inv.scanRecoveryBlockerEdges()
+    expect(violations).toHaveLength(1)
+    expect(violations[0].taskId).toBe(unrelated.id)
+    expect(violations[0].blockerTaskId).toBe(fixId)
+    expect(violations[0].blockerIsRecovery).toBe(true)
+    expect(violations[0].taskIsRecovery).toBe(false)
+  })
 })

@@ -230,10 +230,12 @@ export interface RecoveryEdgeViolation {
 }
 
 /**
- * Read-only scan of `task_blockers` for rows that violate ADR-0040. Returns
- * the offending edges so the daemon startup hook can log a one-shot warning
- * for the operator. Never mutates the DB — cleanup is operator-driven via
- * `mars unblock <id>`.
+ * Read-only scan of `task_blockers` for rows that violate ADR-0040, EXCLUDING
+ * the legitimate origin→recovery edge written by `upsertFixTask` (where the
+ * blocker is a fix task whose `fix_for_task_id` equals the dependent
+ * `task_id`). Returns the remaining offending edges so the daemon startup hook
+ * can log a one-shot warning for the operator. Never mutates the DB — cleanup
+ * is operator-driven via `mars unblock <id>`.
  */
 export const scanRecoveryBlockerEdges = async (
   opts: BlockerInvariantOptions = {},
@@ -268,7 +270,12 @@ export const scanRecoveryBlockerEdges = async (
       kind: row.blocker_kind,
       fixForTaskId: row.blocker_fix_for,
     })
-    if (taskIsRecovery || blockerIsRecovery) {
+    const isLegitOriginToRecovery =
+      blockerIsRecovery &&
+      !taskIsRecovery &&
+      row.blocker_fix_for != null &&
+      row.blocker_fix_for === row.task_id
+    if ((taskIsRecovery || blockerIsRecovery) && !isLegitOriginToRecovery) {
       violations.push({
         taskId: row.task_id,
         blockerTaskId: row.blocker_task_id,
