@@ -10,6 +10,7 @@ import {
   computeAutonomousCompletionRate,
   computeCostPerArcDistribution,
   computeFailureRate,
+  computeRecoverySuccessRate,
 } from '../kpi-compute.js'
 
 // ---------------------------------------------------------------------------
@@ -521,5 +522,113 @@ describe('computeAutonomousCompletionRate — fixture cases', () => {
 
     expect(result.sampleCount).toBe(3)
     expect(result.value).toBeCloseTo(1 / 3, 5)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 10. computeRecoverySuccessRate
+// ---------------------------------------------------------------------------
+
+describe('computeRecoverySuccessRate — empty window', () => {
+  it('returns value=null and sampleCount=0 when no recovery tasks in window', async () => {
+    const store = await makeStore()
+
+    const result = await computeRecoverySuccessRate(store, WINDOW)
+
+    expect(result.value).toBeNull()
+    expect(result.sampleCount).toBe(0)
+  })
+
+  it('ignores recovery tasks outside the window', async () => {
+    const store = await makeStore()
+    // Recovery task completed before window start
+    await insertTask(store, { id: 'origin-old', status: 'done', origin_id: null })
+    await insertTask(store, {
+      id: 'fix-old',
+      status: 'done',
+      origin_id: 'origin-old',
+      fix_for_task_id: 'origin-old',
+      updated_at: '2025-12-01T00:00:00Z',
+    })
+
+    const result = await computeRecoverySuccessRate(store, WINDOW)
+
+    expect(result.value).toBeNull()
+    expect(result.sampleCount).toBe(0)
+  })
+})
+
+describe('computeRecoverySuccessRate — success-and-failure fixture', () => {
+  it('value === 0.5 and sampleCount === 2 for one success and one failure', async () => {
+    const store = await makeStore()
+
+    // Arc 1: recovery succeeded → origin flipped to done
+    await insertTask(store, {
+      id: 'origin-1',
+      status: 'done',
+      origin_id: null,
+      updated_at: '2026-01-04T12:00:00Z',
+    })
+    await insertTask(store, {
+      id: 'fix-1',
+      status: 'done',
+      origin_id: 'origin-1',
+      fix_for_task_id: 'origin-1',
+      updated_at: '2026-01-04T12:00:00Z',
+    })
+
+    // Arc 2: recovery failed → origin stays failed
+    await insertTask(store, {
+      id: 'origin-2',
+      status: 'failed',
+      origin_id: null,
+      updated_at: '2026-01-04T12:00:00Z',
+    })
+    await insertTask(store, {
+      id: 'fix-2',
+      status: 'failed',
+      origin_id: 'origin-2',
+      fix_for_task_id: 'origin-2',
+      updated_at: '2026-01-04T12:00:00Z',
+    })
+
+    const result = await computeRecoverySuccessRate(store, WINDOW)
+
+    expect(result.value).toBeCloseTo(0.5, 10)
+    expect(result.sampleCount).toBe(2)
+  })
+
+  it('returns value=0 when all recoveries failed', async () => {
+    const store = await makeStore()
+
+    await insertTask(store, { id: 'origin-a', status: 'failed' })
+    await insertTask(store, {
+      id: 'fix-a',
+      status: 'failed',
+      origin_id: 'origin-a',
+      fix_for_task_id: 'origin-a',
+    })
+
+    const result = await computeRecoverySuccessRate(store, WINDOW)
+
+    expect(result.value).toBe(0)
+    expect(result.sampleCount).toBe(1)
+  })
+
+  it('returns value=1 when all recoveries succeeded', async () => {
+    const store = await makeStore()
+
+    await insertTask(store, { id: 'origin-b', status: 'done' })
+    await insertTask(store, {
+      id: 'fix-b',
+      status: 'done',
+      origin_id: 'origin-b',
+      fix_for_task_id: 'origin-b',
+    })
+
+    const result = await computeRecoverySuccessRate(store, WINDOW)
+
+    expect(result.value).toBe(1)
+    expect(result.sampleCount).toBe(1)
   })
 })
