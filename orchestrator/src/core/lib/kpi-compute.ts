@@ -23,6 +23,13 @@ export interface AutonomousCompletionRateResult {
   sampleCount: number
 }
 
+export interface RecoverySuccessRateResult {
+  /** null when sampleCount === 0 (no recovery edges fired in window) */
+  value: number | null
+  /** Count of origin Tasks with a recovery Task that reached terminal status in-window */
+  sampleCount: number
+}
+
 /**
  * The four token-usage fields used in the cache-weighted cost formula.
  * Matches the shape of signal rows and task totals throughout the codebase.
@@ -255,4 +262,52 @@ export async function computeAutonomousCompletionRate(
   }).length
 
   return { value: autonomousCount / sampleCount, sampleCount }
+}
+
+/**
+ * Compute the recovery success rate over the given time window.
+ *
+ * A "sample" is any recovery Task (fix_for_task_id IS NOT NULL) that reached
+ * a terminal status (done or failed) within [windowStart, windowEnd]. Per
+ * ADR-0035 there is at most one recovery attempt per origin failure.
+ *
+ * Success = recovery Task reached done AND its origin Task also reached done.
+ * When a fix task reaches done, the daemon's markOriginDoneFromRecovery
+ * propagation flips the origin row to done — so checking origin.status='done'
+ * is the correct success condition.
+ *
+ * recovery_success_rate = successful_recoveries / total_recoveries_in_window
+ *
+ * value is null when sampleCount === 0.
+ */
+export async function computeRecoverySuccessRate(
+  surface: TaskStore,
+  window: KpiWindow,
+): Promise<RecoverySuccessRateResult> {
+  const result = await surface.query({
+    sql: `SELECT
+            t_origin.status AS origin_status,
+            t_recovery.status AS recovery_status
+          FROM tasks t_recovery
+          INNER JOIN tasks t_origin
+            ON t_origin.id = t_recovery.fix_for_task_id
+          WHERE t_recovery.fix_for_task_id IS NOT NULL
+            AND t_recovery.status IN ('done', 'failed')
+            AND t_recovery.updated_at >= ?
+            AND t_recovery.updated_at <= ?`,
+    args: [window.windowStart, window.windowEnd],
+  })
+
+  const sampleCount = result.rows.length
+  if (sampleCount === 0) return { value: null, sampleCount: 0 }
+
+  let successCount = 0
+  for (const row of result.rows) {
+    const r = row as unknown as { origin_status: string; recovery_status: string }
+    if (r.recovery_status === 'done' && r.origin_status === 'done') {
+      successCount++
+    }
+  }
+
+  return { value: successCount / sampleCount, sampleCount }
 }

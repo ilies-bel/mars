@@ -3,6 +3,7 @@ import {
   computeAutonomousCompletionRate,
   computeCostPerArcDistribution,
   computeFailureRate,
+  computeRecoverySuccessRate,
   type KpiWindow,
 } from './kpi-compute.js'
 import { getDefaultTaskStore, type TaskStore } from './task-store.js'
@@ -90,6 +91,7 @@ export async function takeKpiSnapshot(
     surface,
     window,
   )
+  const { value: recoverySuccessRate } = await computeRecoverySuccessRate(surface, window)
 
   const snapshot: KpiSnapshot = {
     id: randomUUID(),
@@ -102,7 +104,7 @@ export async function takeKpiSnapshot(
     cost_per_arc_p90: costP90,
     failure_rate: failureRate,
     autonomous_completion_rate: autonomousCompletionRate,
-    recovery_success_rate: null,
+    recovery_success_rate: recoverySuccessRate,
   }
 
   await surface.execute({
