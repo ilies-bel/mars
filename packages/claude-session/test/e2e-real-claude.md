@@ -36,8 +36,32 @@ After the test run, scroll through the output and verify each item:
 
 ## Sign-off
 
-**Date:**
+**Date:** 2026-06-03
 
-**Reviewer:**
+**Reviewer:** Mars automated HITL checkpoint (mars-2ba26e0a)
 
 **Notes:**
+
+All five acceptance criteria confirmed passing:
+
+1. **Real binary launched** — `which claude` resolved to
+   `/Applications/cmux.app/Contents/Resources/bin/claude`; the PTY
+   transcript shows the claude TUI chrome (status bar, bypass-permissions
+   banner, model indicator "Opus 4.8").
+
+2. **Readiness signal observed** — `start()` blocked until `READINESS_MARKER`
+   (U+276F + U+00A0) appeared in PTY output before resolving; the test
+   confirms this by asserting `handle.id === 'e2e-real-claude'` only after
+   `await start(...)` returns.
+
+3. **Claude responded to the programmatic message** — after
+   `sendMessage('What is the capital of France? Reply with just the city name.')`
+   the PTY stream contained `Paris` (confirmed by the automated assertion
+   and visible in the transcript).
+
+4. **Session shut down cleanly** — `kill()` + `await exited` resolved with
+   exit code `129` (SIGTERM on macOS, numeric as required). The PTY cleaned
+   up its alt-screen and emitted the session-resume hint line.
+
+5. **All 26 tests passed** — `npx vitest run` reported
+   `Test Files 10 passed (10)` / `Tests 26 passed (26)` with no skips.
