@@ -4,7 +4,9 @@ import {
   MarsIdPrefix,
   MarsIdParseError,
   parseMarsId,
+  KIND_TAGS,
 } from './mars-id/index.js'
+import { genId } from './mars-id/kinds.js'
 
 describe('MarsId.create', () => {
   it('renders a task id as task-<hex>', () => {
@@ -150,6 +152,55 @@ describe('parseMarsId — typed errors', () => {
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('UNKNOWN_KIND')
+  })
+})
+
+describe('KIND_TAGS registry', () => {
+  it('has a unique 4-letter tag for every registered kind', () => {
+    const tags = Object.values(KIND_TAGS)
+    // All tags are exactly 4 letters.
+    for (const tag of tags) {
+      expect(tag).toMatch(/^[a-z]{4}$/)
+    }
+    // All tags are unique.
+    const unique = new Set(tags)
+    expect(unique.size).toBe(tags.length)
+  })
+
+  it('enumerates the expected set of kinds', () => {
+    const kinds = Object.keys(KIND_TAGS)
+    expect(kinds).toContain('task')
+    expect(kinds).toContain('proposal')
+    expect(kinds).toContain('fix-task')
+    expect(kinds).toContain('inbox-item')
+    expect(kinds).toContain('reflection')
+    expect(kinds).toContain('step-span')
+    expect(kinds).toContain('inbox-history')
+    expect(kinds).toContain('origin')
+    expect(kinds).toContain('alert')
+  })
+})
+
+describe('genId', () => {
+  it('returns <tag>-<8 hex chars> for every registered kind', () => {
+    for (const kind of Object.keys(KIND_TAGS) as Array<keyof typeof KIND_TAGS>) {
+      const id = genId(kind)
+      const tag = KIND_TAGS[kind]
+      expect(id.toString()).toMatch(new RegExp(`^${tag}-[a-f0-9]{8}$`))
+    }
+  })
+
+  it('round-trips every kind through parseMarsId', () => {
+    for (const kind of Object.keys(KIND_TAGS) as Array<keyof typeof KIND_TAGS>) {
+      const id = genId(kind)
+      const r = parseMarsId(id.toString())
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      expect(r.kind).toBe('id')
+      if (r.kind !== 'id') return
+      expect(r.value.kind).toBe(kind)
+      expect(r.value.hex).toBe(id.hex)
+    }
   })
 })
 
