@@ -64,12 +64,49 @@ describe('probeDaemonHealth', () => {
     expect(await probeDaemonHealth('/any/repo', { degradedMs: 99999 })).toBe('live')
   })
 
-  // ── 2xx past degradedMs → 'degraded' ──────────────────────────────────────
+  // ── hysteresis: slow probes only degrade after sustained slowness ──────────
 
-  it('returns "degraded" on 2xx past degradedMs', async () => {
+  it('returns "live" on a single slow-but-reachable probe (hysteresis prevents flicker)', async () => {
     vi.mocked(fs.readFileSync).mockImplementation(() => '9876')
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })))
-    // degradedMs=0 forces elapsed >= degradedMs for any response, however fast
-    expect(await probeDaemonHealth('/any/repo', { degradedMs: 0 })).toBe('degraded')
+    // degradedMs=0 forces elapsed >= degradedMs for any response, however fast.
+    // With hysteresis, a single slow probe must NOT be reported as 'degraded'.
+    expect(await probeDaemonHealth('/hysteresis-single', { degradedMs: 0 })).toBe('live')
+  })
+
+  it('returns "degraded" after N consecutive slow-but-reachable probes', async () => {
+    vi.mocked(fs.readFileSync).mockImplementation(() => '9876')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })))
+    // First two calls: streak below threshold → still 'live'
+    expect(await probeDaemonHealth('/hysteresis-n', { degradedMs: 0 })).toBe('live')
+    expect(await probeDaemonHealth('/hysteresis-n', { degradedMs: 0 })).toBe('live')
+    // Third call: streak reaches DEGRADED_STREAK_THRESHOLD (3) → 'degraded'
+    expect(await probeDaemonHealth('/hysteresis-n', { degradedMs: 0 })).toBe('degraded')
+  })
+
+  it('resets to "live" when a fast probe follows a slow streak', async () => {
+    vi.mocked(fs.readFileSync).mockImplementation(() => '9876')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })))
+    // Build streak up to 'degraded'
+    await probeDaemonHealth('/hysteresis-reset', { degradedMs: 0 })
+    await probeDaemonHealth('/hysteresis-reset', { degradedMs: 0 })
+    await probeDaemonHealth('/hysteresis-reset', { degradedMs: 0 })
+    // A single fast probe must reset the streak and report 'live'
+    expect(await probeDaemonHealth('/hysteresis-reset', { degradedMs: 99999 })).toBe('live')
+  })
+
+  it('returns "down" immediately on fetch failure regardless of prior slow streak', async () => {
+    vi.mocked(fs.readFileSync).mockImplementation(() => '9876')
+    // Prime a streak with a couple of slow probes
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })))
+    await probeDaemonHealth('/hysteresis-down', { degradedMs: 0 })
+    // Now simulate a connection failure — 'down' must be reported immediately
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(
+        Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
+      ),
+    )
+    expect(await probeDaemonHealth('/hysteresis-down', { degradedMs: 0 })).toBe('down')
   })
 })
