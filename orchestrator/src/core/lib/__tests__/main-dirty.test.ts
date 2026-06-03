@@ -121,7 +121,7 @@ describe('spawnOrAttachMainCommitter', () => {
 
   it('spawns a fresh committer when no active one exists for the hash', async () => {
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const src = await queue.enqueueTask('source', undefined, {
       skipTriage: true,
     })
@@ -161,7 +161,7 @@ describe('spawnOrAttachMainCommitter', () => {
     expect(payload?.integrationBranch).toBe('main')
 
     // The edge is in place: source is blocked-by the committer.
-    const c = queue.getClient()
+    const c = queue.resolveQueueClient()
     const edges = await c.execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
       args: [src.id, resolution.fixTaskId],
@@ -171,7 +171,7 @@ describe('spawnOrAttachMainCommitter', () => {
 
   it('attaches a second source to the existing committer at the same hash', async () => {
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const src1 = await queue.enqueueTask('source-1', undefined, {
       skipTriage: true,
     })
@@ -211,7 +211,7 @@ describe('spawnOrAttachMainCommitter', () => {
     const src2After = await queue.getTask(src2.id)
     expect(src2After?.status).toBe('blocked')
 
-    const c = queue.getClient()
+    const c = queue.resolveQueueClient()
     const edges = await c.execute({
       sql: `SELECT task_id FROM task_blockers WHERE blocker_task_id = ? ORDER BY task_id`,
       args: [first.fixTaskId],
@@ -224,7 +224,7 @@ describe('spawnOrAttachMainCommitter', () => {
 
   it('respawns when an existing committer FAILED at a different hash', async () => {
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const src1 = await queue.enqueueTask('source-1', undefined, {
       skipTriage: true,
     })
@@ -276,7 +276,7 @@ describe('spawnOrAttachMainCommitter', () => {
     // spawned. This prevents the deadlock reported in the bug where tasks
     // were permanently blocked on a committer that can never succeed.
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const src1 = await queue.enqueueTask('source-1', undefined, {
       skipTriage: true,
     })
@@ -320,7 +320,7 @@ describe('spawnOrAttachMainCommitter', () => {
 
   it('respawns after a committer reaches DONE (its hash is historical)', async () => {
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const src1 = await queue.enqueueTask('source-1', undefined, {
       skipTriage: true,
     })
@@ -375,7 +375,7 @@ describe('attachToExistingFixTask preserves the ADR-0040 leaf invariant', () => 
 
   it('addBlockers still rejects a recovery endpoint (F.1 enforcement intact)', async () => {
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const { spawnOrAttachMainCommitter } = await import('../main-dirty')
     const src = await queue.enqueueTask('source', undefined, {
       skipTriage: true,

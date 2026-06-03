@@ -27,7 +27,7 @@ const loadModules = async (repo: string) => {
   const restartTask = (await import(
     '../restart-task'
   )) as typeof import('../restart-task')
-  await queue.initQueue()
+  await queue.migrateQueueSchema()
   return { queue, httpServer, restartTask }
 }
 

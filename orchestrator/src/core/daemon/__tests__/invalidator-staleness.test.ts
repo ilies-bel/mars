@@ -31,7 +31,7 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = await import('../../queue')
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const actionQueue = await import('../../lib/action-queue')
   const dismissals = await import('../../lib/action-queue-dismissals')
   const ad = await import('../alert-dismisser')
@@ -80,7 +80,7 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
 
   it('purge emits the terminal event BEFORE deleting the task, and the Invalidator clears the row + dismissal', async () => {
     const { q, actionQueue, dismissals, ad } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'P-1'
 
     await insertTask(client, taskId, 'failed')
@@ -113,7 +113,7 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
 
   it('clears rows for a task that ended while the daemon was DOWN (events replayed on first drain)', async () => {
     const { q, actionQueue, ad } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'D-1'
 
     await insertTask(client, taskId, 'failed')
@@ -132,7 +132,7 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
 
   it('a re-queued task (task.queued) evicts its stale failure row', async () => {
     const { q, actionQueue, ad } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'Q-1'
 
     await insertTask(client, taskId, 'failed')
@@ -149,7 +149,7 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
 
   it('a failed task KEEPS its row even after unblock flips it to failed', async () => {
     const { q, actionQueue, ad } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'F-1'
 
     await insertTask(client, taskId, 'blocked')

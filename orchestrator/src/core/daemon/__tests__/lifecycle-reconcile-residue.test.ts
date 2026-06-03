@@ -13,8 +13,8 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 interface QueueModule {
-  initQueue: typeof import('../../queue').initQueue
-  getClient: typeof import('../../queue').getClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
 }
 
 interface ActionQueueModule {
@@ -43,7 +43,7 @@ const loadModules = async (repo: string) => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   await actionQueue.initActionQueue()
   const dismissals = (await import(
@@ -68,7 +68,7 @@ describe('reconcileTerminalTasks — purged-task residue (pass c)', () => {
 
   it('resolves 5 open rows whose origin_task_id is absent from tasks, and clears 13 orphan dismissals', async () => {
     const { q, actionQueue, dismissals, reconcile } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     // Seed 5 open action_queue_items whose origin_task_id is NOT in tasks.
     const purgedIds: string[] = []
@@ -128,7 +128,7 @@ describe('reconcileTerminalTasks — purged-task residue (pass c)', () => {
 
   it('is idempotent: running twice after cleanup produces zero counts on second run', async () => {
     const { q, actionQueue, reconcile } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     // Seed one orphan row.
     await actionQueue.raiseActionQueueItem({

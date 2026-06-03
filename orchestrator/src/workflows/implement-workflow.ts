@@ -36,7 +36,7 @@ import {
 import { handleTaskFailureWithFixTask } from '../core/queue-fix-tasks'
 import { computeFailureSignature } from '../core/lib/failure-signature'
 import { resolveOriginIdForTask } from '../core/lib/origin'
-import { type TaskStore } from '../core/lib/task-store'
+import { type DomainTaskStore as TaskStore } from '../core/store/task-store'
 
 export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} has incomplete blockers; aborting dispatch (task remains queued)`

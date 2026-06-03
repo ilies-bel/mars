@@ -21,7 +21,7 @@ const loadModules = async (repo: string) => {
   const httpServer = (await import(
     '../http-server'
   )) as typeof import('../http-server')
-  await queue.initQueue()
+  await queue.migrateQueueSchema()
   return { queue, httpServer }
 }
 

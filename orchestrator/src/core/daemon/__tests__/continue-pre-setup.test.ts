@@ -16,7 +16,7 @@ const loadModules = async (repo: string) => {
   process.env.MARS_REPO = repo
   const queue = (await import('../../queue')) as typeof import('../../queue')
   const continueTask = (await import('../continue-task')) as typeof import('../continue-task')
-  await queue.initQueue()
+  await queue.migrateQueueSchema()
   return { queue, continueTask }
 }
 
@@ -143,7 +143,7 @@ describe('continue degrades to restart for pre-setup failures', () => {
 
     // Insert a recovery fix-task pointing at the source. enqueueTask rejects
     // kind='fix', so we use the task store directly.
-    const { getDefaultTaskStore } = (await import('../../lib/task-store')) as typeof import('../../lib/task-store')
+    const { getDefaultTaskStore } = (await import('../../store/task-store')) as typeof import('../../store/task-store')
     const store = await getDefaultTaskStore()
     const recoveryId = `mars-fix-00`
     const now = new Date().toISOString()

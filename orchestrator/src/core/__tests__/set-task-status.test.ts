@@ -16,8 +16,8 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 interface QueueMod {
-  initQueue: typeof import('../queue').initQueue
-  getClient: typeof import('../queue').getClient
+  migrateQueueSchema: typeof import('../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../queue').resolveQueueClient
   enqueueTask: typeof import('../queue').enqueueTask
   setTaskStatus: typeof import('../queue').setTaskStatus
   getTask: typeof import('../queue').getTask
@@ -34,7 +34,7 @@ const loadQueue = async (repo: string): Promise<QueueMod> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../queue')
-  await mod.initQueue()
+  await mod.migrateQueueSchema()
   return mod as unknown as QueueMod
 }
 
@@ -61,7 +61,7 @@ describe('setTaskStatus', () => {
     expect(fetched?.status).toBe('done')
 
     // Exactly one task.completed event — no duplicates, no task.terminal from setTaskStatus
-    const result = await q.getClient().execute({
+    const result = await q.resolveQueueClient().execute({
       sql: `SELECT type, payload FROM events WHERE type = 'task.completed' ORDER BY id`,
       args: [],
     })
@@ -81,7 +81,7 @@ describe('setTaskStatus', () => {
     const fetched = await q.getTask(task.id)
     expect(fetched?.status).toBe('failed')
 
-    const result = await q.getClient().execute({
+    const result = await q.resolveQueueClient().execute({
       sql: `SELECT type, payload FROM events WHERE type = 'task.failed' ORDER BY id`,
       args: [],
     })
@@ -97,13 +97,13 @@ describe('setTaskStatus', () => {
     const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
 
     // Drop the events table to force the INSERT inside the transaction to fail
-    await q.getClient().execute('DROP TABLE events')
+    await q.resolveQueueClient().execute('DROP TABLE events')
 
     // setTaskStatus must propagate the error
     await expect(q.setTaskStatus(task.id, 'done')).rejects.toThrow()
 
     // Row must still be queued — the UPDATE was rolled back atomically
-    const result = await q.getClient().execute({
+    const result = await q.resolveQueueClient().execute({
       sql: 'SELECT status FROM tasks WHERE id = ?',
       args: [task.id],
     })
@@ -121,7 +121,7 @@ describe('setTaskStatus', () => {
     expect(fetched?.status).toBe('blocked')
 
     // No events should have been written for this status-only write
-    const result = await q.getClient().execute(`SELECT COUNT(*) AS n FROM events`)
+    const result = await q.resolveQueueClient().execute(`SELECT COUNT(*) AS n FROM events`)
     const n = Number((result.rows[0] as unknown as { n: number | bigint }).n)
     expect(n).toBe(0)
   })

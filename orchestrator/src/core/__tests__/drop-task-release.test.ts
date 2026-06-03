@@ -16,12 +16,12 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 interface QueueMod {
-  initQueue: typeof import('../queue').initQueue
+  migrateQueueSchema: typeof import('../queue').migrateQueueSchema
   enqueueTask: typeof import('../queue').enqueueTask
   addBlockers: typeof import('../queue').addBlockers
   dropTask: typeof import('../queue').dropTask
   getTask: typeof import('../queue').getTask
-  getClient: typeof import('../queue').getClient
+  resolveQueueClient: typeof import('../queue').resolveQueueClient
 }
 
 const setupRepo = (): string => {
@@ -37,21 +37,21 @@ const loadQueue = async (repo: string): Promise<QueueMod> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../queue')
-  await mod.initQueue()
+  await mod.migrateQueueSchema()
   return mod as unknown as QueueMod
 }
 
 /** Set a task to 'blocked' and wire a blocker edge, bypassing auto-promote. */
 const blockOn = async (q: QueueMod, taskId: string, blockerTaskId: string): Promise<void> => {
   await q.addBlockers(taskId, [blockerTaskId])
-  await q.getClient().execute({
+  await q.resolveQueueClient().execute({
     sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
     args: [taskId],
   })
 }
 
 const blockerRowCount = async (q: QueueMod, taskId: string): Promise<number> => {
-  const r = await q.getClient().execute({
+  const r = await q.resolveQueueClient().execute({
     sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
     args: [taskId],
   })
@@ -79,7 +79,7 @@ describe('dropTask — dependent release', () => {
     await blockOn(q, dependent.id, blocker.id)
 
     // Simulate the blocker having failed (e.g. a failed committer or fix task).
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
       args: [blocker.id],
     })
@@ -102,13 +102,13 @@ describe('dropTask — dependent release', () => {
 
     // Block dependent on both F and B.
     await q.addBlockers(dependent.id, [blockerF.id, blockerB.id])
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
       args: [dependent.id],
     })
 
     // Mark F failed, leave B in its default (queued) status.
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
       args: [blockerF.id],
     })
@@ -121,7 +121,7 @@ describe('dropTask — dependent release', () => {
     expect(dep?.status).toBe('blocked')
 
     // The edge to B must still be present.
-    const remaining = await q.getClient().execute({
+    const remaining = await q.resolveQueueClient().execute({
       sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ?`,
       args: [dependent.id],
     })

@@ -7,8 +7,8 @@ import type { Client } from '@libsql/client'
 import type { EventName, EventPayload } from '../../../bus/events.js'
 
 interface QueueModule {
-  initQueue: typeof import('../../queue').initQueue
-  getClient: typeof import('../../queue').getClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
 }
 
 interface ActionQueueModule {
@@ -54,7 +54,7 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   const rep = (await import(
     '../action-queue-repopulator'
@@ -91,7 +91,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('raises one open row on task.failed then supersedes it on task.queued (net zero open rows)', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-raise-evict'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -115,7 +115,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('does not double-apply when drained again over already-processed events (processed-once)', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-idempotent'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -146,7 +146,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('produces zero actionQueue rows for task.blocked (no prior failed row)', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-blocked'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -172,7 +172,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     // spawned and the task transitions to blocked. The stale failed row must
     // be superseded so it does not surface as a spurious "needs attention" card.
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-failed-then-blocked'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -202,7 +202,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('nets zero open draft rows: proposal.added then proposal.promoted', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const proposalId = 'prop-abc123'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -230,7 +230,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('advances cursor for unmapped events without creating actionQueue rows', async () => {
     const { q, actionQueue, rep, pub, subs } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     await rep.ensureActionQueueRepopulator(client)
     await publish(pub, client, 'task.priority_changed', {
@@ -257,7 +257,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('evicts row on task.completed', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-completed'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -280,7 +280,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('evicts row on task.unblocked', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-unblocked'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -299,7 +299,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('nets zero open draft rows: proposal.added then proposal.dismissed', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const proposalId = 'prop-dismissed'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -321,7 +321,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('nets zero open draft rows: proposal.added then proposal.deleted', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const proposalId = 'prop-deleted'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -389,7 +389,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('derives title and body from the Failure kind registry when failureSignature is set', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-typecheck-code'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -425,7 +425,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('falls back to unknownFailureKind when only failure_reason is set (no failureSignature)', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-typecheck-legacy'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -451,7 +451,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('uses unknownFailureKind title/body when failureSignature and reason code are both absent', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-unknown'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -474,7 +474,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('does not raise the structured row for a failed main-commiter recovery', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-main-commiter-fix'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -502,7 +502,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('derives Failure kind title/body on task.dropped too', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-dropped'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -532,7 +532,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('never emits the legacy "without a specific recovery plan" fallback', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-legacy-template-check'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -553,7 +553,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     // to the proposal via originTaskId, so supersedeActionQueueItemsForOrigin
     // (called by the repopulator on proposal.promoted) closes them automatically.
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const proposalId = 'prop-slices-dropped-promoted'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -587,7 +587,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it('auto-closes slices-dropped row when the proposal is dismissed', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const proposalId = 'prop-slices-dropped-dismissed'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -616,7 +616,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it("task with signature 'setup:install/install-frozen-lockfile' produces title 'The coding environment could not be set up'", async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-setup-lockfile'
 
     await rep.ensureActionQueueRepopulator(client)
@@ -636,7 +636,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
 
   it("task with unregistered signature 'verify:test/unclassified' produces title 'The verify:test step failed — see the transcript'", async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-verify-test-unclassified'
 
     await rep.ensureActionQueueRepopulator(client)

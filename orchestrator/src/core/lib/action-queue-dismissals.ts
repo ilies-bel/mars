@@ -15,9 +15,7 @@
  * via {@link ./actionQueue}. Dismissals are a tiny side table.
  */
 
-import { type Client } from '@libsql/client'
-import { resolveContext } from '../context'
-import { openLibsql } from './libsql'
+import { resolveStateClient } from '../store/state-client'
 
 export type DismissalEntityKind = 'task' | 'worktree' | 'proposal'
 
@@ -29,19 +27,15 @@ export interface ActionQueueDismissal {
   note: string | null
 }
 
-let clientSingleton: Client | null = null
 let initialised = false
 
-const getClient = (): Client => {
-  if (clientSingleton) return clientSingleton
-  const { stateDbPath } = resolveContext()
-  clientSingleton = openLibsql({ url: `file:${stateDbPath}` })
-  return clientSingleton
-}
+// Shared state.db client (collapsed from the former private singleton); same
+// `mars.db` file as the TaskStore (ADR-0034), resolved through the seam.
+const stateClient = resolveStateClient
 
 export const initActionQueueDismissals = async (): Promise<void> => {
   if (initialised) return
-  const c = getClient()
+  const c = stateClient()
   await c.execute(`
     CREATE TABLE IF NOT EXISTS action_queue_dismissals (
       entity_kind  TEXT NOT NULL,
@@ -64,7 +58,7 @@ export const dismissEntity = async (
   opts: { by?: string; note?: string } = {},
 ): Promise<void> => {
   await initActionQueueDismissals()
-  const c = getClient()
+  const c = stateClient()
   await c.execute({
     sql: `INSERT INTO action_queue_dismissals (entity_kind, entity_id, dismissed_at, dismissed_by, note)
           VALUES (?, ?, ?, ?, ?)
@@ -87,7 +81,7 @@ export const undismissEntity = async (
   entityId: string,
 ): Promise<boolean> => {
   await initActionQueueDismissals()
-  const c = getClient()
+  const c = stateClient()
   const r = await c.execute({
     sql: `DELETE FROM action_queue_dismissals WHERE entity_kind = ? AND entity_id = ?`,
     args: [entityKind, entityId],
@@ -100,7 +94,7 @@ export const isEntityDismissed = async (
   entityId: string,
 ): Promise<boolean> => {
   await initActionQueueDismissals()
-  const c = getClient()
+  const c = stateClient()
   // Rows with note = 'ack' are acknowledged but not hidden from the open filter.
   // Only note = null (classic dismiss), 'dismissed', or 'resolved' count as dismissed.
   const r = await c.execute({
@@ -114,7 +108,7 @@ export const isEntityDismissed = async (
 
 export const listDismissals = async (): Promise<ActionQueueDismissal[]> => {
   await initActionQueueDismissals()
-  const c = getClient()
+  const c = stateClient()
   const r = await c.execute(
     `SELECT entity_kind, entity_id, dismissed_at, dismissed_by, note
        FROM action_queue_dismissals`,

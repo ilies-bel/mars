@@ -28,7 +28,7 @@
  * naturally. The view nests them under their parent task when the parent is
  * in the tree.
  */
-import { getClient, initQueue } from '../queue'
+import { getDefaultTaskStore } from '../store/task-store'
 import { getProposal } from '../proposals'
 
 export type OriginNodeKind = 'proposal' | 'prd' | 'task' | 'fix'
@@ -74,8 +74,8 @@ const readTaskRows = async (
   predicate: 'origin_id' | 'parent_proposal_id',
   value: string,
 ): Promise<TaskRow[]> => {
-  const c = getClient()
-  const r = await c.execute({
+  const store = await getDefaultTaskStore()
+  const r = await store.query({
     sql: `SELECT id, prompt, status, kind, fix_for_task_id, origin_id,
                  parent_proposal_id, created_at
             FROM tasks
@@ -92,8 +92,8 @@ const readTaskRows = async (
  * helper independent of the rich Task interface.
  */
 const readTaskRow = async (id: string): Promise<TaskRow | null> => {
-  const c = getClient()
-  const r = await c.execute({
+  const store = await getDefaultTaskStore()
+  const r = await store.query({
     sql: `SELECT id, prompt, status, kind, fix_for_task_id, origin_id,
                  parent_proposal_id, created_at
             FROM tasks
@@ -143,7 +143,6 @@ const proposalKindFromStatus = (status: string): OriginNodeKind => {
 export const buildOriginTree = async (
   taskId: string,
 ): Promise<OriginTree> => {
-  await initQueue()
   const row = await readTaskRow(taskId)
   if (!row) {
     // Unknown task id — synthesise a degenerate single-node tree so the

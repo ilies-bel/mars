@@ -22,7 +22,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { runTool, type TraceCtx } from './run-tool'
 import { attachToExistingFixTask } from '../queue-fix-tasks'
-import { getDefaultTaskStore, type TaskStore } from './task-store'
+import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store'
 import { buildEventInsert } from './outbox'
 import { internalBus } from '../../internal-bus'
 import type { TraceEventStore } from './trace-events-store'
@@ -210,7 +210,7 @@ const ACTIVE_COMMITTER_STATUSES = [
  */
 export const findActiveMainCommitter = async (
   dirtyMainHash: string,
-  store: import('./task-store').TaskStore,
+  store: TaskStore,
 ): Promise<{ id: string; status: string } | null> => {
   const placeholders = ACTIVE_COMMITTER_STATUSES.map(() => '?').join(',')
   const r = await store.query({

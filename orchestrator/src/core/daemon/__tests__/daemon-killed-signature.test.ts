@@ -19,7 +19,7 @@ import { execFileSync } from 'node:child_process'
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
-  initQueue: typeof import('../../queue').initQueue
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   updateTask: typeof import('../../queue').updateTask
 }
 
@@ -65,7 +65,7 @@ describe('daemon-killed failure signature', () => {
     )) as RetryBudgetModule
 
     const q = (await import('../../queue')) as unknown as QueueModule
-    await q.initQueue()
+    await q.migrateQueueSchema()
 
     const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
     // Simulate exactly what the server.ts kill loop now does.
@@ -86,7 +86,7 @@ describe('daemon-killed failure signature', () => {
     process.env.MARS_REPO = repo
 
     const q = (await import('../../queue')) as unknown as QueueModule
-    await q.initQueue()
+    await q.migrateQueueSchema()
 
     const task = await q.enqueueTask('another task', undefined, { skipTriage: true })
     await q.updateTask(task.id, {

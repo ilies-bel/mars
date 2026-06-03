@@ -14,7 +14,7 @@ interface Queue {
   transferProposalBlockerToTask: typeof import('../../queue').transferProposalBlockerToTask
   listBlockers: typeof import('../../queue').listBlockers
   hasIncompleteBlockers: typeof import('../../queue').hasIncompleteBlockers
-  initQueue: typeof import('../../queue').initQueue
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
 interface Proposals {
@@ -39,7 +39,7 @@ const load = async (
   process.env.MARS_REPO = repo
   const q = await import('../../queue')
   const p = await import('../../proposals')
-  await q.initQueue()
+  await q.migrateQueueSchema()
   await p.initProposals()
   return { q: q as unknown as Queue, p: p as unknown as Proposals }
 }

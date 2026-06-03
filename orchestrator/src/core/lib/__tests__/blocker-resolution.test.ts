@@ -8,8 +8,8 @@ interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   updateTask: typeof import('../../queue').updateTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   addBlockers: typeof import('../../queue').addBlockers
 }
 
@@ -81,7 +81,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const br = (await import(
     '../../blocker-resolution'
   )) as unknown as BlockerModule
@@ -96,7 +96,7 @@ const blockTask = async (
   retryCount: number = 1,
 ): Promise<void> => {
   await q.addBlockers(taskId, [blockerTaskId])
-  await q.getClient().execute({
+  await q.resolveQueueClient().execute({
     sql: `UPDATE tasks SET status = 'blocked', retry_count = ? WHERE id = ?`,
     args: [retryCount, taskId],
   })
@@ -144,7 +144,7 @@ describe('blocker-resolution (task_blockers)', () => {
     await blockTask(q, dep.id, fix.id, 1)
     // Mark fix done WITHOUT calling updateTask (which would auto-promote);
     // simulate the daemon-down path.
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
       args: [fix.id],
     })
@@ -177,7 +177,7 @@ describe('blocker-resolution (task_blockers)', () => {
     const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
     await blockTask(q, dep.id, fix.id, 0)
     // Bypass updateTask auto-promote so onBlockerTaskCompleted is exercised.
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
       args: [fix.id],
     })
@@ -205,12 +205,12 @@ describe('blocker-resolution (task_blockers)', () => {
     const a = await q.enqueueTask('a', undefined, { skipTriage: true })
     const b = await q.enqueueTask('b', undefined, { skipTriage: true })
     await q.addBlockers(dep.id, [a.id, b.id])
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked', retry_count = 1 WHERE id = ?`,
       args: [dep.id],
     })
     // Only a is done; b is still pending.
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
       args: [a.id],
     })
@@ -232,7 +232,7 @@ describe('blocker-resolution (task_blockers)', () => {
     const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
     // retry_count=1 so retryBudgetExhausted fires; no error field (never ran).
     await blockTask(q, dep.id, fix.id, 1)
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
       args: [fix.id],
     })
@@ -259,11 +259,11 @@ describe('blocker-resolution (task_blockers)', () => {
     const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
     await blockTask(q, dep.id, fix.id, 1)
     // Give it a real step error.
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET error = 'verify:test: npm test failed' WHERE id = ?`,
       args: [dep.id],
     })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
       args: [fix.id],
     })
@@ -292,7 +292,7 @@ describe('blocker-resolution (task_blockers)', () => {
       await q.addBlockers(b.id, [a.id])
       // b is queued; addBlockers does not auto-block when blocker is non-terminal.
       // Force b into 'queued' to match the AC precondition explicitly.
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'queued' WHERE id = ?`,
         args: [b.id],
       })
@@ -329,11 +329,11 @@ describe('blocker-resolution (task_blockers)', () => {
       const done = await q.enqueueTask('done-c', undefined, { skipTriage: true })
       await q.addBlockers(running.id, [a.id])
       await q.addBlockers(done.id, [a.id])
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'running' WHERE id = ?`,
         args: [running.id],
       })
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
         args: [done.id],
       })
@@ -355,7 +355,7 @@ describe('blocker-resolution (task_blockers)', () => {
       const a = await q.enqueueTask('prereq', undefined, { skipTriage: true })
       const b = await q.enqueueTask('downstream', undefined, { skipTriage: true })
       await q.addBlockers(b.id, [a.id])
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'queued' WHERE id = ?`,
         args: [b.id],
       })
@@ -375,7 +375,7 @@ describe('blocker-resolution (task_blockers)', () => {
       originTaskId: string,
     ): Promise<string> => {
       const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks
                  SET kind = 'fix',
                      fix_for_task_id = ?,
@@ -391,12 +391,12 @@ describe('blocker-resolution (task_blockers)', () => {
       const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
       const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
       await blockTask(q, dep.id, origin.id, 0)
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
         args: [origin.id],
       })
       const recoveryId = await makeRecoveryRow(q, origin.id)
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
         args: [recoveryId],
       })
@@ -413,12 +413,12 @@ describe('blocker-resolution (task_blockers)', () => {
     it('is idempotent — second call is a no-op', async () => {
       const { q, br } = await loadModules(repo)
       const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
         args: [origin.id],
       })
       const recoveryId = await makeRecoveryRow(q, origin.id)
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
         args: [recoveryId],
       })
@@ -435,7 +435,7 @@ describe('blocker-resolution (task_blockers)', () => {
     it('is a no-op when origin is already in a terminal state', async () => {
       const { q, br } = await loadModules(repo)
       const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
         args: [origin.id],
       })
@@ -457,7 +457,7 @@ describe('blocker-resolution (task_blockers)', () => {
     it('closes actionQueue rows keyed to a terminal origin even though it cannot flip status', async () => {
       const { q, br, actionQueue } = await loadModules(repo)
       const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
         args: [origin.id],
       })
@@ -535,7 +535,7 @@ describe('blocker-resolution (task_blockers)', () => {
       vi.resetModules()
       process.env.MARS_REPO = repoPath
       const q = (await import('../../queue')) as unknown as QueueModule
-      await q.initQueue()
+      await q.migrateQueueSchema()
       const br = (await import(
         '../../blocker-resolution'
       )) as unknown as BlockerModule
@@ -579,7 +579,7 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(r.outcomes).toHaveLength(0)
 
       // Exactly one fix attempt was enqueued, seeded with the recorded diagnosis.
-      const all = await q.getClient().execute({ sql: `SELECT * FROM tasks`, args: [] })
+      const all = await q.resolveQueueClient().execute({ sql: `SELECT * FROM tasks`, args: [] })
       const tasks = all.rows as unknown as Array<{ kind: string | null; prompt: string }>
       const fixes = tasks.filter((t) => t.kind === 'task' && t.prompt.includes('foo()'))
       expect(fixes).toHaveLength(1)
@@ -616,7 +616,7 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(diagnoseItems[0].body).toContain('does not exist in the repo')
 
       // No fix attempt was created.
-      const all = await q.getClient().execute({ sql: `SELECT kind FROM tasks`, args: [] })
+      const all = await q.resolveQueueClient().execute({ sql: `SELECT kind FROM tasks`, args: [] })
       const kinds = (all.rows as unknown as Array<{ kind: string | null }>).map((r) => r.kind)
       expect(kinds.filter((k) => k === 'task')).toHaveLength(1) // only the original parent
     })
@@ -637,7 +637,7 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(diagnoseItems[0].title).toMatch(/no verdict/i)
 
       // No fix was dispatched.
-      const all = await q.getClient().execute({ sql: `SELECT kind FROM tasks`, args: [] })
+      const all = await q.resolveQueueClient().execute({ sql: `SELECT kind FROM tasks`, args: [] })
       const kinds = (all.rows as unknown as Array<{ kind: string | null }>).map((r) => r.kind)
       expect(kinds.filter((k) => k === 'diagnose')).toHaveLength(1) // only the original chore
     })
@@ -648,11 +648,11 @@ describe('blocker-resolution (task_blockers)', () => {
       const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
       const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
       await q.addBlockers(dep.id, [blocker.id])
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'blocked', retry_count = 0 WHERE id = ?`,
         args: [dep.id],
       })
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
         args: [blocker.id],
       })
@@ -680,7 +680,7 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(headSha(worktreePath)).toBe(initialMainSha)
       // Resolve the blocker via the daemon-down path so onBlockerTaskCompleted
       // is exercised (auto-promote inside updateTask would otherwise short-circuit).
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
         args: [fix.id],
       })
@@ -710,7 +710,7 @@ describe('blocker-resolution (task_blockers)', () => {
       })
       const depHeadBefore = headSha(worktreePath)
       await blockTask(q, dep.id, fix.id, 0)
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
         args: [fix.id],
       })
@@ -747,7 +747,7 @@ describe('blocker-resolution (task_blockers)', () => {
       const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
       const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
       await blockTask(q, dep.id, fix.id, 0)
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
         args: [fix.id],
       })
@@ -772,7 +772,7 @@ describe('blocker-resolution (task_blockers)', () => {
       await blockTask(q, dep.id, fix.id, 0)
       // Mark the blocker done without going through onBlockerTaskCompleted —
       // simulates a daemon that missed the terminal event (crash, restart, etc.)
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
         args: [fix.id],
       })
@@ -790,7 +790,7 @@ describe('blocker-resolution (task_blockers)', () => {
       const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
       await blockTask(q, dep.id, blocker.id, 0)
       // Simulate the mars unblock dep.id blocker.id edge removal
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
         args: [dep.id, blocker.id],
       })
@@ -809,7 +809,7 @@ describe('blocker-resolution (task_blockers)', () => {
       await blockTask(q, dep.id, fix1.id, 0)
       await q.addBlockers(dep.id, [fix2.id])
       // Only fix1 is done; fix2 is still queued
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
         args: [fix1.id],
       })
@@ -836,14 +836,14 @@ describe('blocker-resolution (task_blockers)', () => {
       const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
       const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
       await blockTask(q, dep.id, fix.id, 0)
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
         args: [fix.id],
       })
 
       await br.recoverBlockedTask(dep.id)
 
-      const events = await q.getClient().execute({
+      const events = await q.resolveQueueClient().execute({
         sql: `SELECT type, payload FROM events WHERE type = 'task.unblocked' ORDER BY id DESC LIMIT 1`,
         args: [],
       })
@@ -868,7 +868,7 @@ describe('blocker-resolution (task_blockers)', () => {
       await blockTask(q, dep2.id, fix2.id, 0)
       await blockTask(q, dep3.id, unmet.id, 0)
       // fix1 and fix2 done; unmet still queued
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'done' WHERE id IN (?, ?)`,
         args: [fix1.id, fix2.id],
       })
@@ -913,14 +913,14 @@ describe('blocker-resolution (task_blockers)', () => {
       const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
       const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
       await blockTask(q, dep.id, fix.id, 0)
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
         args: [fix.id],
       })
 
       await br.onBlockerTaskCompleted(fix.id)
 
-      const events = await q.getClient().execute({
+      const events = await q.resolveQueueClient().execute({
         sql: `SELECT type, payload FROM events WHERE type = 'task.unblocked' ORDER BY id DESC LIMIT 1`,
         args: [],
       })
@@ -938,7 +938,7 @@ describe('blocker-resolution (task_blockers)', () => {
     it('markOriginDoneFromRecovery writes a task.completed event to the outbox atomically with the done flip', async () => {
       const { q, br } = await loadModules(repo)
       const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
         args: [origin.id],
       })
@@ -946,7 +946,7 @@ describe('blocker-resolution (task_blockers)', () => {
       const result = await br.markOriginDoneFromRecovery(origin.id)
 
       expect(result.originFlipped).toBe(true)
-      const events = await q.getClient().execute({
+      const events = await q.resolveQueueClient().execute({
         sql: `SELECT type, payload FROM events WHERE type = 'task.completed' ORDER BY id DESC LIMIT 1`,
         args: [],
       })

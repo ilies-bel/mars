@@ -8,8 +8,8 @@ interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   updateTask: typeof import('../../queue').updateTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   addBlockers: typeof import('../../queue').addBlockers
   listBlockers: typeof import('../../queue').listBlockers
 }
@@ -54,7 +54,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const d = (await import('../diagnose')) as unknown as DiagnoseModule
   const f = (await import('../diagnose-followup')) as unknown as FollowupModule
   const actionQueue = (await import('../action-queue')) as unknown as ActionQueueModule
@@ -74,7 +74,7 @@ const loadModulesWithDismisser = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const d = (await import('../diagnose')) as unknown as DiagnoseModule
   const f = (await import('../diagnose-followup')) as unknown as FollowupModule
   const actionQueue = (await import('../action-queue')) as unknown as ActionQueueModule
@@ -206,7 +206,7 @@ describe('runDiagnoseFollowup', () => {
     // blocker edge), but if the daemon re-fires `task.done` after a
     // crash/restart, the dedup must still hold. Simulate that by
     // re-adding the edge and re-running.
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
       args: [parentId, choreId, new Date().toISOString()],
     })
@@ -236,7 +236,7 @@ describe('runDiagnoseFollowup', () => {
     await f.runDiagnoseFollowup(choreId)
 
     const all = await q
-      .getClient()
+      .resolveQueueClient()
       .execute({ sql: `SELECT kind FROM tasks`, args: [] })
     const kinds = (all.rows as unknown as { kind: string | null }[]).map((r) =>
       r.kind,
@@ -274,7 +274,7 @@ describe('runDiagnoseFollowup', () => {
     // by computeOriginFingerprint) can never find the row, leaving it open forever
     // even after the parent task completes.
     const { q, d, f, actionQueue, ad, pub } = await loadModulesWithDismisser(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const { parentId, choreId } = await seedParkedParent(q)
 
     await d.setDiagnosis(choreId, {
@@ -308,7 +308,7 @@ describe('runDiagnoseFollowup', () => {
     // A parent that ends 'failed' must NOT auto-close the row — the operator
     // still needs to resolve the inconclusive diagnosis explicitly.
     const { q, d, f, actionQueue, ad, pub } = await loadModulesWithDismisser(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const { parentId, choreId } = await seedParkedParent(q)
 
     await d.setDiagnosis(choreId, {

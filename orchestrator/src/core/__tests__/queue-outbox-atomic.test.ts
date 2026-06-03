@@ -22,8 +22,8 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 interface QueueMod {
-  initQueue: typeof import('../queue').initQueue
-  getClient: typeof import('../queue').getClient
+  migrateQueueSchema: typeof import('../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../queue').resolveQueueClient
   enqueueTask: typeof import('../queue').enqueueTask
   updateTask: typeof import('../queue').updateTask
   getTask: typeof import('../queue').getTask
@@ -40,7 +40,7 @@ const loadQueue = async (repo: string): Promise<QueueMod> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../queue')
-  await mod.initQueue()
+  await mod.migrateQueueSchema()
   return mod as unknown as QueueMod
 }
 
@@ -48,7 +48,7 @@ const getEventsOfType = async (
   q: QueueMod,
   type: string,
 ): Promise<Array<{ type: string; payload: Record<string, unknown> }>> => {
-  const result = await q.getClient().execute({
+  const result = await q.resolveQueueClient().execute({
     sql: `SELECT type, payload FROM events WHERE type = ? ORDER BY id`,
     args: [type],
   })
@@ -104,7 +104,7 @@ describe('updateTask outbox atomicity', () => {
     // status is 'queued' — remember it for comparison after the failed update
 
     // Drop the events table so the INSERT inside the transaction will throw
-    await q.getClient().execute('DROP TABLE events')
+    await q.resolveQueueClient().execute('DROP TABLE events')
 
     // updateTask must now throw (not swallow the error)
     await expect(
@@ -112,7 +112,7 @@ describe('updateTask outbox atomicity', () => {
     ).rejects.toThrow()
 
     // State row must still be 'queued' — the UPDATE was rolled back
-    const result = await q.getClient().execute({
+    const result = await q.resolveQueueClient().execute({
       sql: 'SELECT status FROM tasks WHERE id = ?',
       args: [task.id],
     })
@@ -133,7 +133,7 @@ describe('updateTask outbox atomicity', () => {
     await expect(q.updateTask(task.id, { status: 'queued' })).resolves.toBeUndefined()
 
     // Zero events of any kind must have been written
-    const result = await q.getClient().execute('SELECT COUNT(*) AS n FROM events')
+    const result = await q.resolveQueueClient().execute('SELECT COUNT(*) AS n FROM events')
     const n = Number((result.rows[0] as unknown as { n: number | bigint }).n)
     expect(n).toBe(0)
   })
@@ -170,7 +170,7 @@ describe('updateTask outbox atomicity', () => {
     const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
 
     // Drop events table to force the event INSERT to fail
-    await q.getClient().execute('DROP TABLE events')
+    await q.resolveQueueClient().execute('DROP TABLE events')
 
     // updateTask without claudeSessionId (the common path) — must throw
     await expect(
@@ -178,7 +178,7 @@ describe('updateTask outbox atomicity', () => {
     ).rejects.toThrow()
 
     // State must not have been written
-    const result = await q.getClient().execute({
+    const result = await q.resolveQueueClient().execute({
       sql: 'SELECT status FROM tasks WHERE id = ?',
       args: [task.id],
     })

@@ -1,6 +1,6 @@
 /**
  * Tests for the `tasks.failure_reason_code` column migration introduced in
- * slice D. The column is added idempotently — running `initQueue` twice (or
+ * slice D. The column is added idempotently — running `migrateQueueSchema` twice (or
  * starting two daemons against the same `mars.db`) must not error.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -32,8 +32,8 @@ describe('failure_reason_code migration', () => {
   })
 
   it('adds the failure_reason_code column to a fresh tasks table', async () => {
-    const { initQueue } = await import('../queue')
-    await initQueue()
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
 
     const q = createClient({ url: `file:${repo}/.mars/mars.db` })
     const cols = await q.execute(`PRAGMA table_info(tasks)`)
@@ -44,11 +44,11 @@ describe('failure_reason_code migration', () => {
     q.close()
   })
 
-  it('is idempotent: running initQueue twice does not error', async () => {
-    const { initQueue } = await import('../queue')
-    await initQueue()
+  it('is idempotent: running migrateQueueSchema twice does not error', async () => {
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
     // Second run must be a no-op for already-applied migrations.
-    await expect(initQueue()).resolves.not.toThrow()
+    await expect(migrateQueueSchema()).resolves.not.toThrow()
 
     const q = createClient({ url: `file:${repo}/.mars/mars.db` })
     const cols = await q.execute(`PRAGMA table_info(tasks)`)
@@ -77,8 +77,8 @@ describe('failure_reason_code migration', () => {
     })
     q.close()
 
-    const { initQueue } = await import('../queue')
-    await initQueue()
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
 
     // Column is present; existing rows have NULL in the new column; the
     // legacy `failure_reason` is preserved verbatim.

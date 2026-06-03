@@ -42,8 +42,8 @@ interface QueueModule {
   updateTask: typeof import('../../queue').updateTask
   getTask: typeof import('../../queue').getTask
   addBlockers: typeof import('../../queue').addBlockers
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
 interface DiagnoseModule {
@@ -89,7 +89,7 @@ const loadModules = async (repo: string) => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const diagn = (await import('../diagnose')) as unknown as DiagnoseModule
   const followup = (await import(
     '../diagnose-followup'
@@ -111,7 +111,7 @@ describe('diagnose root-cause dispatch', () => {
     vi.resetModules()
     process.env.MARS_REPO = templateRepo
     const q = (await import('../../queue')) as unknown as QueueModule
-    await q.initQueue()
+    await q.migrateQueueSchema()
     const actionQueue = (await import('../action-queue')) as unknown as ActionQueueModule
     await actionQueue.initActionQueue()
     // Seed the diagnoses table into the template so clones already have it.
@@ -239,7 +239,7 @@ describe('diagnose root-cause dispatch', () => {
     expect(updatedParent?.status).toBe('blocked')
 
     // The parent should be blocked behind the new fix task, not the Chore
-    const blockers = await q.getClient().execute({
+    const blockers = await q.resolveQueueClient().execute({
       sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ?`,
       args: [parent.id],
     })
@@ -281,7 +281,7 @@ describe('diagnose root-cause dispatch', () => {
     expect(second.action).toBe('noop')
 
     // Exactly one blocker remains (the fix task from the first call)
-    const blockers = await q.getClient().execute({
+    const blockers = await q.resolveQueueClient().execute({
       sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ?`,
       args: [parent.id],
     })
@@ -382,7 +382,7 @@ describe('diagnose root-cause dispatch', () => {
     const updatedParent = await q.getTask(parent.id)
     expect(updatedParent?.status).toBe('blocked')
 
-    const blockers = await q.getClient().execute({
+    const blockers = await q.resolveQueueClient().execute({
       sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ?`,
       args: [parent.id],
     })
@@ -417,7 +417,7 @@ describe('diagnose root-cause dispatch', () => {
     expect(result.outcome).toBe('failed')
 
     // No child tasks spawned for the diagnose Chore
-    const children = await q.getClient().execute({
+    const children = await q.resolveQueueClient().execute({
       sql: `SELECT id FROM tasks WHERE fix_for_task_id = ? OR origin_id = ? AND id != ?`,
       args: [chore.id, chore.id, chore.id],
     })

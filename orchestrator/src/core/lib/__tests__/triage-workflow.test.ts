@@ -62,7 +62,7 @@ describe('triage workflow', () => {
     })
     vi.resetModules()
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const task = await queue.enqueueTask('implement X')
 
     const triage = await import('../../../workflows/triage-workflow')
@@ -78,7 +78,7 @@ describe('triage workflow', () => {
     setClaudeStub({ exitCode: 0, stdout: '' }) // placeholder, replaced below
     vi.resetModules()
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const a = await queue.enqueueTask('depends on b')
     const b = await queue.enqueueTask('prerequisite')
 
@@ -106,7 +106,7 @@ describe('triage workflow', () => {
   it('filters out hallucinated blocker ids and self-blocks', async () => {
     vi.resetModules()
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const a = await queue.enqueueTask('thing')
 
     vi.resetModules()

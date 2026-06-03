@@ -471,7 +471,7 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
     vi.resetModules()
     process.env.MARS_REPO = repo
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
 
     const slice = {
       modifies: ['src/existing.ts'],
@@ -497,7 +497,7 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
     vi.resetModules()
     process.env.MARS_REPO = repo
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
 
     // Simulate a slicer output that uses the prefix to flag a brand-new
     // directory — exactly the case (orchestrator/src/manifest/) that
@@ -599,8 +599,8 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     const queue = await vi.importActual<typeof import('../../core/queue')>(
       '../../core/queue',
     )
-    await queue.initQueue()
-    const rows = await queue.getClient().execute({
+    await queue.migrateQueueSchema()
+    const rows = await queue.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE parent_proposal_id = ?`,
       args: [ideaId],
     })
@@ -834,7 +834,7 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     const queue = await vi.importActual<typeof import('../../core/queue')>(
       '../../core/queue',
     )
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     await queue.enqueueTask('orphaned task from crashed run', undefined, {
       parentProposalId: ideaId,
       sliceIndex: 1,
@@ -1165,8 +1165,8 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
     const [readmeId, parserId, storageId, aggregationId, dropId] = result.taskIds
 
     const queue = await import('../../core/queue')
-    await queue.initQueue()
-    const rows = await queue.getClient().execute({
+    await queue.migrateQueueSchema()
+    const rows = await queue.resolveQueueClient().execute({
       sql: `SELECT task_id, blocker_task_id FROM task_blockers
             WHERE task_id = ? ORDER BY blocker_task_id`,
       args: [dropId],
@@ -1185,14 +1185,14 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
     // consumer tasks must be in 'queued' (they have none). This is the
     // whole point — the drop cannot dispatch and burn retry budget on
     // verify:test until every consumer has landed.
-    const dropRow = await queue.getClient().execute({
+    const dropRow = await queue.resolveQueueClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
       args: [dropId],
     })
     expect(
       (dropRow.rows[0] as unknown as { status: string }).status,
     ).toBe('blocked')
-    const parserRow = await queue.getClient().execute({
+    const parserRow = await queue.resolveQueueClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
       args: [parserId],
     })
@@ -1634,10 +1634,10 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
     const [task1Id, task2Id, task3Id] = result.taskIds
 
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
 
     // Consecutive pair 1→2: task 2 must be blocked by task 1
-    const blockers2 = await queue.getClient().execute({
+    const blockers2 = await queue.resolveQueueClient().execute({
       sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ? ORDER BY blocker_task_id`,
       args: [task2Id],
     })
@@ -1648,7 +1648,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
     ).toEqual([task1Id])
 
     // Consecutive pair 2→3: task 3 must be blocked by task 2
-    const blockers3 = await queue.getClient().execute({
+    const blockers3 = await queue.resolveQueueClient().execute({
       sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ? ORDER BY blocker_task_id`,
       args: [task3Id],
     })
@@ -1659,7 +1659,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
     ).toEqual([task2Id])
 
     // Task 1 is the root: it must have no blocker rows
-    const blockers1 = await queue.getClient().execute({
+    const blockers1 = await queue.resolveQueueClient().execute({
       sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ?`,
       args: [task1Id],
     })
@@ -1671,7 +1671,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
       [task2Id, 'blocked'],
       [task3Id, 'blocked'],
     ] as const) {
-      const row = await queue.getClient().execute({
+      const row = await queue.resolveQueueClient().execute({
         sql: `SELECT status FROM tasks WHERE id = ?`,
         args: [id],
       })
@@ -1751,10 +1751,10 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
     expect(result.taskIds).toHaveLength(3)
 
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
 
     // Zero task_blockers rows across all 3 tasks
-    const blockerCount = await queue.getClient().execute({
+    const blockerCount = await queue.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id IN (?, ?, ?)`,
       args: result.taskIds,
     })
@@ -1766,7 +1766,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
 
     // All 3 tasks must be immediately dispatchable (queued)
     for (const id of result.taskIds) {
-      const row = await queue.getClient().execute({
+      const row = await queue.resolveQueueClient().execute({
         sql: `SELECT status FROM tasks WHERE id = ?`,
         args: [id],
       })
@@ -2167,7 +2167,7 @@ describe('enqueueTask round-trip: hitl slice kind and subDeliverable land on tas
     vi.resetModules()
     process.env.MARS_REPO = repo
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
 
     // Parse a slicer output that contains one hitl slice with a subDeliverable.
     const hitlSlicerOutput = slicerOutputSchema.parse({
@@ -2228,7 +2228,7 @@ describe('enqueueTask round-trip: hitl slice kind and subDeliverable land on tas
     vi.resetModules()
     process.env.MARS_REPO = repo
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
 
     const task = await queue.enqueueTask('p', undefined, {
       spec: {
@@ -2671,10 +2671,10 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     expect(result.taskIds).toHaveLength(1)
 
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
 
     // hitl slice task + Coder sub-task = 2 tasks for this proposal
-    const allTasks = await queue.getClient().execute({
+    const allTasks = await queue.resolveQueueClient().execute({
       sql: `SELECT id, status, prompt FROM tasks WHERE parent_proposal_id = ? ORDER BY created_at ASC`,
       args: [ideaId],
     })
@@ -2721,10 +2721,10 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     const result = await sliceModule.runSlice(ideaId)
 
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
 
     // The hitl slice task itself must be blocked — never queued for Coder dispatch
-    const hitlRow = await queue.getClient().execute({
+    const hitlRow = await queue.resolveQueueClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
       args: [result.taskIds[0]],
     })
@@ -2778,8 +2778,8 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     expect(result.taskIds).toHaveLength(1)
 
     const queue = await import('../../core/queue')
-    await queue.initQueue()
-    const totalTasks = await queue.getClient().execute({
+    await queue.migrateQueueSchema()
+    const totalTasks = await queue.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE parent_proposal_id = ?`,
       args: [ideaId],
     })
@@ -2887,8 +2887,8 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   // Self-imports the queue module so callers don't need to pass a reference.
   const findSubTaskId = async (hitlSliceTaskId: string): Promise<string> => {
     const queue = await import('../../core/queue')
-    await queue.initQueue()
-    const r = await queue.getClient().execute({
+    await queue.migrateQueueSchema()
+    const r = await queue.resolveQueueClient().execute({
       sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ?`,
       args: [hitlSliceTaskId],
     })
@@ -2911,8 +2911,8 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   // after a Coder worktree successfully merges).
   const markTaskDone = async (taskId: string): Promise<void> => {
     const queue = await import('../../core/queue')
-    await queue.initQueue()
-    await queue.getClient().execute({
+    await queue.migrateQueueSchema()
+    await queue.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done', updated_at = datetime('now') WHERE id = ?`,
       args: [taskId],
     })
@@ -2943,7 +2943,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     const hitlSliceTaskId = result.taskIds[0]
 
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const actionQueue = await import('../../core/lib/action-queue')
 
     // Resolve the actionQueue item — but sub-task is still 'queued' (in-flight).
@@ -2955,7 +2955,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     expect(completed).toBe(false)
 
     // The hitl slice must remain 'blocked'.
-    const hitlRow = await queue.getClient().execute({
+    const hitlRow = await queue.resolveQueueClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
       args: [hitlSliceTaskId],
     })
@@ -2989,7 +2989,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     const hitlSliceTaskId = result.taskIds[0]
 
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
 
     // Mark the Coder sub-task as 'done' — actionQueue item is still open.
     const subTaskId = await findSubTaskId(hitlSliceTaskId)
@@ -3000,7 +3000,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     expect(completed).toBe(false)
 
     // The hitl slice must remain 'blocked'.
-    const hitlRow = await queue.getClient().execute({
+    const hitlRow = await queue.resolveQueueClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
       args: [hitlSliceTaskId],
     })
@@ -3033,7 +3033,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     const hitlSliceTaskId = result.taskIds[0]
 
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const actionQueue = await import('../../core/lib/action-queue')
 
     // Step 1: operator resolves actionQueue item first.
@@ -3042,7 +3042,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
 
     // Sub-task not yet done → still blocked.
     expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(false)
-    const afterStep1 = await queue.getClient().execute({
+    const afterStep1 = await queue.resolveQueueClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
       args: [hitlSliceTaskId],
     })
@@ -3054,7 +3054,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
 
     // Both conditions now met → hitl slice must flip to done.
     expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(true)
-    const afterStep2 = await queue.getClient().execute({
+    const afterStep2 = await queue.resolveQueueClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
       args: [hitlSliceTaskId],
     })
@@ -3085,7 +3085,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     const hitlSliceTaskId = result.taskIds[0]
 
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const actionQueue = await import('../../core/lib/action-queue')
 
     // Step 1: sub-task reaches done first.
@@ -3094,7 +3094,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
 
     // Action queue item not yet resolved → still blocked.
     expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(false)
-    const afterStep1 = await queue.getClient().execute({
+    const afterStep1 = await queue.resolveQueueClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
       args: [hitlSliceTaskId],
     })
@@ -3106,7 +3106,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
 
     // Both conditions now met → hitl slice must flip to done.
     expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(true)
-    const afterStep2 = await queue.getClient().execute({
+    const afterStep2 = await queue.resolveQueueClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
       args: [hitlSliceTaskId],
     })
@@ -3137,7 +3137,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     const hitlSliceTaskId = result.taskIds[0]
 
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const actionQueue = await import('../../core/lib/action-queue')
 
     // Both conditions fulfilled back-to-back (simultaneous from the function's
@@ -3149,7 +3149,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
 
     // Single call completes the slice.
     expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(true)
-    const hitlRow = await queue.getClient().execute({
+    const hitlRow = await queue.resolveQueueClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
       args: [hitlSliceTaskId],
     })
@@ -3204,10 +3204,10 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     const coderTaskId = result.taskIds[0]
 
     const queue = await import('../../core/queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
 
     // Coder task starts 'queued' (dispatchable), not 'blocked'.
-    const coderRow = await queue.getClient().execute({
+    const coderRow = await queue.resolveQueueClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
       args: [coderTaskId],
     })
@@ -3218,7 +3218,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     expect(completed).toBe(false)
 
     // Coder task status must be unchanged.
-    const coderRowAfter = await queue.getClient().execute({
+    const coderRowAfter = await queue.resolveQueueClient().execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,
       args: [coderTaskId],
     })

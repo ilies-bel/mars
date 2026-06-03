@@ -1,4 +1,4 @@
-import type { TaskStore } from './task-store.js'
+import type { DomainTaskStore as TaskStore } from '../store/task-store.js'
 
 /**
  * The time window over which KPI metrics are computed.

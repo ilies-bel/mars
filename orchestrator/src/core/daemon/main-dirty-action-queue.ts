@@ -16,9 +16,9 @@
  *    specific recovery so the operator sees the affected cohort at a glance.
  */
 import { raiseActionQueueItem, supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
-import { getDefaultTaskStore, getDefaultQueueClient } from '../lib/task-store'
+import { getDefaultTaskStore } from '../store/task-store'
 import { MAIN_COMMITER_RECIPE } from '../lib/main-dirty'
-import { publish } from '../lib/outbox'
+import { buildEventInsert } from '../lib/outbox'
 import { internalBus } from '../../internal-bus'
 
 /**
@@ -246,21 +246,18 @@ export const releaseMainCommitterDependents = async (
   const dependents = r.rows as unknown as Array<{ id: string }>
   if (dependents.length === 0) return
 
-  const c = await getDefaultQueueClient()
   let released = 0
 
   for (const row of dependents) {
-    const tx = await c.transaction('write')
-    let flipped = false
-    try {
+    const flipped = await s.atomic(async (scope) => {
       // Remove the dead committer's blocker edge. Within this transaction the
       // deletion is immediately visible to the subquery in the UPDATE below.
-      await tx.execute({
+      await scope.execute({
         sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
         args: [row.id, committerTaskId],
       })
       // Re-queue only when no other non-terminal blocker still exists.
-      const upd = await tx.execute({
+      const upd = await scope.execute({
         sql: `UPDATE tasks
                  SET updated_at = ?, status = 'queued'
                WHERE id = ? AND status = 'blocked'
@@ -274,18 +271,17 @@ export const releaseMainCommitterDependents = async (
                  )`,
         args: [now, row.id, row.id],
       })
-      flipped = (upd.rowsAffected ?? 0) > 0
-      if (flipped) {
-        await publish(tx, 'task.unblocked', {
-          taskId: row.id,
-          blockerTaskId: committerTaskId,
-        })
+      const didFlip = (upd.rowsAffected ?? 0) > 0
+      if (didFlip) {
+        await scope.execute(
+          buildEventInsert('task.unblocked', {
+            taskId: row.id,
+            blockerTaskId: committerTaskId,
+          }),
+        )
       }
-      await tx.commit()
-    } catch (error: unknown) {
-      tx.close()
-      throw error
-    }
+      return didFlip
+    })
     if (flipped) {
       internalBus().emit('task.unblocked', {
         taskId: row.id,

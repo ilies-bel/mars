@@ -39,9 +39,9 @@ const loadDeps = async (repo: string) => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const queue = await import('../../queue')
-  const store = await import('../task-store')
+  const store = await import('../../store/task-store')
   store.__resetDefaultTaskStoreForTests()
-  await queue.initQueue()
+  await queue.migrateQueueSchema()
   const taskStore = await store.getDefaultTaskStore()
   return { queue, store, taskStore }
 }

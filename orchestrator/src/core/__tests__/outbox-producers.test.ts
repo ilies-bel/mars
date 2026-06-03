@@ -11,8 +11,8 @@ import { execFileSync } from 'node:child_process'
 import { parseEvent } from '../../bus/events'
 
 interface QueueMod {
-  initQueue: typeof import('../queue').initQueue
-  getClient: typeof import('../queue').getClient
+  migrateQueueSchema: typeof import('../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../queue').resolveQueueClient
   enqueueTask: typeof import('../queue').enqueueTask
   updateTask: typeof import('../queue').updateTask
 }
@@ -46,7 +46,7 @@ const loadMods = async (
   const q = (await import('../queue')) as unknown as QueueMod
   const p = (await import('../proposals')) as unknown as ProposalsMod
   const actionQueue = (await import('../lib/action-queue')) as unknown as ActionQueueMod
-  await q.initQueue()
+  await q.migrateQueueSchema()
   await p.initProposals()
   await actionQueue.initActionQueue()
   return { q, p, actionQueue }
@@ -56,7 +56,7 @@ const getEvents = async (
   q: QueueMod,
   type: string,
 ): Promise<Array<{ type: string; payload: Record<string, unknown> }>> => {
-  const client = q.getClient()
+  const client = q.resolveQueueClient()
   const result = await client.execute({
     sql: `SELECT type, payload FROM events WHERE type = ? ORDER BY id`,
     args: [type],
@@ -70,7 +70,7 @@ const getEvents = async (
 }
 
 const countEvents = async (q: QueueMod, type: string): Promise<number> => {
-  const client = q.getClient()
+  const client = q.resolveQueueClient()
   const result = await client.execute({
     sql: `SELECT COUNT(*) AS n FROM events WHERE type = ?`,
     args: [type],

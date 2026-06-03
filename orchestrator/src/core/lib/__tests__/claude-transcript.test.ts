@@ -7,8 +7,8 @@ import { execFileSync } from 'node:child_process'
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   updateTask: typeof import('../../queue').updateTask
-  initQueue: typeof import('../../queue').initQueue
-  getClient: typeof import('../../queue').getClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
 }
 
 interface TranscriptModule {
@@ -31,7 +31,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const tx = (await import('../claude-transcript')) as unknown as TranscriptModule
   return { q, tx }
 }
@@ -54,7 +54,7 @@ const setSessionIds = async (
   taskId: string,
   ids: string[],
 ): Promise<void> => {
-  await q.getClient().execute({
+  await q.resolveQueueClient().execute({
     sql: `UPDATE tasks SET claude_session_ids = ? WHERE id = ?`,
     args: [JSON.stringify(ids), taskId],
   })
@@ -65,7 +65,7 @@ const setWorktreePath = async (
   taskId: string,
   worktreePath: string,
 ): Promise<void> => {
-  await q.getClient().execute({
+  await q.resolveQueueClient().execute({
     sql: `UPDATE tasks SET worktree_path = ? WHERE id = ?`,
     args: [worktreePath, taskId],
   })

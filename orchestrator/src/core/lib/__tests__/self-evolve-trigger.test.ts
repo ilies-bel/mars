@@ -21,11 +21,11 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { openLibsql } from '../libsql.js'
-import { createLibsqlTaskStore, type TaskStore } from '../task-store.js'
+import { createTaskStore, type DomainTaskStore as TaskStore } from '../../store/task-store.js'
 import type { ProposalSource } from '../../proposals.js'
 
 // ---------------------------------------------------------------------------
-// Test-DB DDL (minimal — initQueue brings the real schema, but we only need
+// Test-DB DDL (minimal — migrateQueueSchema brings the real schema, but we only need
 // kpi_snapshots and a countable tasks table for the "no tasks queued" check).
 // ---------------------------------------------------------------------------
 
@@ -90,7 +90,7 @@ const loadContext = async (repo: string): Promise<TestContext> => {
   await client.execute(KPI_SNAPSHOTS_DDL)
 
   // Minimal tasks table so we can count rows and prove no tasks were enqueued.
-  // (The real initQueue schema is not needed here — we only SELECT COUNT(*).)
+  // (The real migrateQueueSchema schema is not needed here — we only SELECT COUNT(*).)
   await client.execute(`
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
@@ -106,7 +106,7 @@ const loadContext = async (repo: string): Promise<TestContext> => {
   const { initProposals, listProposals: listProposalsFn } = await import('../../proposals.js')
   await initProposals()
 
-  const store = createLibsqlTaskStore(client)
+  const store = createTaskStore(client)
 
   const { runSelfEvolveTrigger } = await import('../self-evolve-trigger.js')
 

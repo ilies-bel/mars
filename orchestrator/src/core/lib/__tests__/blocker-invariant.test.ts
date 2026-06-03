@@ -6,8 +6,8 @@ import { execFileSync } from 'node:child_process'
 
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   addBlockers: typeof import('../../queue').addBlockers
   addPendingReviewBlockers: typeof import('../../queue').addPendingReviewBlockers
 }
@@ -36,7 +36,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const inv = (await import(
     '../blocker-invariant'
   )) as unknown as InvariantModule
@@ -117,7 +117,7 @@ const insertFixTaskRow = async (
   id: string = `fix-${Math.random().toString(36).slice(2, 10)}`,
 ): Promise<string> => {
   const now = new Date().toISOString()
-  await q.getClient().execute({
+  await q.resolveQueueClient().execute({
     sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, origin_id, priority, created_at, updated_at) VALUES (?, ?, 'queued', 'fix', ?, ?, 0, ?, ?)`,
     args: [id, 'recovery prompt', fixForTaskId, fixForTaskId, now, now],
   })
@@ -220,12 +220,12 @@ describe('ADR-0040 recovery-leaf guard', () => {
     // below tests the leaf-side (no edges OUT of the recovery), not the
     // guard at the user-facing writers.
     const now = new Date().toISOString()
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
       args: [origin.id, fixId, now],
     })
     // No row where the recovery is itself the dependent (task_id).
-    const r = await q.getClient().execute({
+    const r = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
       args: [fixId],
     })
@@ -250,7 +250,7 @@ describe('ADR-0040 recovery-leaf guard', () => {
     // Bypass the user-facing guard to simulate a row inserted before the
     // ADR-0040 enforcement landed: raw INSERT both directions.
     const now = new Date().toISOString()
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
       args: [fixId, other.id, now],
     })

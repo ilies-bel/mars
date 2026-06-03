@@ -15,7 +15,8 @@
  * non-standard promotion path).
  */
 
-import { hasIncompleteBlockers, initQueue, listTasks, updateTask } from '../queue'
+import { hasIncompleteBlockers, listTasks, updateTask } from '../queue'
+import { runCompositionRootMigrations } from '../store/task-store'
 
 /**
  * Scan all `queued` tasks and demote any that still have incomplete blocker
@@ -25,7 +26,7 @@ import { hasIncompleteBlockers, initQueue, listTasks, updateTask } from '../queu
  * side effects.
  */
 export const repairQueuedWithIncompleteBlockers = async (): Promise<string[]> => {
-  await initQueue()
+  await runCompositionRootMigrations()
   const queued = await listTasks('queued')
   const demoted: string[] = []
 

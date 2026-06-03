@@ -1,4 +1,4 @@
-import { getDefaultTaskStore } from './task-store'
+import { getDefaultTaskStore } from '../store/task-store'
 
 export const resolveOriginIdForTask = async (
   taskId: string,

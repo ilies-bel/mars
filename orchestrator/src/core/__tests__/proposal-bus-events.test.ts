@@ -10,14 +10,13 @@ interface ProposalsMod {
   rejectProposal: typeof import('../proposals').rejectProposal
   markProposalSliced: typeof import('../proposals').markProposalSliced
   initProposals: typeof import('../proposals').initProposals
-  getProposalsClient: typeof import('../proposals').getProposalsClient
   setProposalField: typeof import('../proposals').setProposalField
   addProposalUserStory: typeof import('../proposals').addProposalUserStory
 }
 
 interface QueueMod {
-  initQueue: typeof import('../queue').initQueue
-  getClient: typeof import('../queue').getClient
+  migrateQueueSchema: typeof import('../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../queue').resolveQueueClient
 }
 
 const setupRepo = (): string => {
@@ -33,7 +32,7 @@ const loadMods = async (repo: string): Promise<{ p: ProposalsMod; q: QueueMod }>
   const p = (await import('../proposals')) as unknown as ProposalsMod
   const q = (await import('../queue')) as unknown as QueueMod
   await p.initProposals()
-  await q.initQueue()
+  await q.migrateQueueSchema()
   return { p, q }
 }
 
@@ -41,7 +40,7 @@ const getEvents = async (
   q: QueueMod,
   type: string,
 ): Promise<Array<{ type: string; payload: Record<string, unknown> }>> => {
-  const client = q.getClient()
+  const client = q.resolveQueueClient()
   const result = await client.execute({
     sql: `SELECT type, payload FROM events WHERE type = ? ORDER BY id`,
     args: [type],

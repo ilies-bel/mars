@@ -1,8 +1,7 @@
-import { type Client } from '@libsql/client'
+import type { Client } from '@libsql/client'
 import { createHash, randomUUID } from 'node:crypto'
-import { resolveContext } from '../context'
-import { openLibsql } from './libsql'
-import { publishWithRetry } from './outbox'
+import { resolveStateClient } from '../store/state-client'
+import { buildEventInsert } from './outbox'
 import type { EventName, EventPayload } from './outbox'
 
 /**
@@ -19,9 +18,11 @@ async function emitActionQueueBusEvent<T extends EventName>(
   payload: EventPayload<T>,
 ): Promise<void> {
   try {
-    const { initQueue, getClient: getQueueClient } = await import('../queue')
-    await initQueue()
-    await publishWithRetry(getQueueClient(), type, payload)
+    const { getDefaultTaskStore } = await import('../store/task-store')
+    const store = await getDefaultTaskStore()
+    await store.atomic(async (scope) => {
+      await scope.execute(buildEventInsert(type, payload))
+    })
   } catch {
     // Non-fatal: actionQueue state change already committed in state.db.
   }
@@ -149,15 +150,11 @@ export interface SetActionQueueStateOptions {
   by?: string
 }
 
-let clientSingleton: Client | null = null
 let initialised = false
 
-const getClient = (): Client => {
-  if (clientSingleton) return clientSingleton
-  const { stateDbPath } = resolveContext()
-  clientSingleton = openLibsql({ url: `file:${stateDbPath}` })
-  return clientSingleton
-}
+// Shared state.db client (collapsed from the former private singleton); same
+// `mars.db` file as the TaskStore (ADR-0034), resolved through the seam.
+const stateClient = resolveStateClient
 
 const sha1Hex = (input: string): string =>
   createHash('sha1').update(input).digest('hex')
@@ -169,7 +166,7 @@ const generateActionQueueId = (): string => randomUUID().slice(0, 8)
 
 export const initActionQueue = async (): Promise<void> => {
   if (initialised) return
-  const c = getClient()
+  const c = stateClient()
   await c.execute(`
     CREATE TABLE IF NOT EXISTS action_queue_items (
       id TEXT PRIMARY KEY,
@@ -388,7 +385,7 @@ export const raiseActionQueueItem = async (
   item: RaiseActionQueueItem,
 ): Promise<string> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
   const fingerprint = item.originTaskId
     ? computeOriginFingerprint(item.originTaskId)
     : computeFingerprint(item.kind, item.signature)
@@ -481,7 +478,7 @@ export const setRecoveryFindings = async (
   findings: string,
 ): Promise<string | null> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
   const fingerprint = computeOriginFingerprint(originTaskId)
   const existing = await c.execute({
     sql: `SELECT id FROM action_queue_items
@@ -511,7 +508,7 @@ export const patchOpenActionQueuePayload = async (
   patch: Record<string, unknown>,
 ): Promise<string | null> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
   const fingerprint = computeOriginFingerprint(originTaskId)
   const existing = await c.execute({
     sql: `SELECT id, payload FROM action_queue_items
@@ -574,7 +571,7 @@ export const getActionQueueItem = async (
   liveTaskLookup: LiveTaskLookup = defaultLiveTaskLookup,
 ): Promise<ActionQueueItem | null> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
   const exact = await fetchById(c, idOrPrefix)
   if (exact) return enrichWithLiveStatus(exact, liveTaskLookup)
   if (idOrPrefix.length < 4) return null
@@ -598,7 +595,7 @@ export const listActionQueueItems = async (
   opts: ListActionQueueOptions = {},
 ): Promise<ActionQueueItem[]> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
   const wheres: string[] = []
   const args: Array<string> = []
   if (state !== 'all') {
@@ -632,7 +629,7 @@ export const setActionQueueState = async (
   opts?: SetActionQueueStateOptions,
 ): Promise<void> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
 
   let resolvedId: string | null = null
   const exact = await c.execute({
@@ -756,7 +753,7 @@ export const supersedeActionQueueItemsForOrigin = async (
   by = 'daemon:auto-supersede',
 ): Promise<string[]> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
   const fingerprint = computeOriginFingerprint(originTaskId)
   const rows = await c.execute({
     sql: `SELECT id FROM action_queue_items WHERE fingerprint = ? AND state = 'open'`,
@@ -789,7 +786,7 @@ export const supersedeActionQueueItemsBySignature = async (
   by = 'daemon:auto-supersede',
 ): Promise<string[]> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
   const rows = await c.execute({
     sql: `SELECT id FROM action_queue_items WHERE kind = ? AND signature = ? AND state = 'open'`,
     args: [kind, signature],
@@ -859,7 +856,7 @@ export const supersedeObsoletePreflightDirtyMainRows = async (
   by = 'daemon:slice-k-cleanup',
 ): Promise<string[]> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
   // The legacy strings can appear in any of three places:
   //  - `payload` (JSON blob) → matches the failure-signature or wrapped
   //    `retry_budget_exhausted:setup:preflight/...` form;
@@ -897,7 +894,7 @@ export const supersedeObsoletePreflightDirtyMainRows = async (
  */
 export const dismissStaleWorktree = async (taskId: string): Promise<void> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
   await c.execute(`
     CREATE TABLE IF NOT EXISTS stale_worktree_dismissals (
       task_id TEXT PRIMARY KEY,
@@ -919,7 +916,7 @@ export const clearStaleWorktreeDismissal = async (
   taskId: string,
 ): Promise<void> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
   // The table may not exist yet (first run before any dismissal).
   try {
     await c.execute({
@@ -950,7 +947,7 @@ export const dismissAlertsOnStatusChange = async (
   newStatus: string,
 ): Promise<string[]> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
   const fingerprint = computeOriginFingerprint(taskId)
   const rows = await c.execute({
     sql: `SELECT id FROM action_queue_items WHERE fingerprint = ? AND state = 'open'`,
@@ -983,7 +980,7 @@ export const resolveAllRowsForTask = async (
   taskId: string,
 ): Promise<void> => {
   await initActionQueue()
-  const c = getClient()
+  const c = stateClient()
   await c.execute({
     sql: `UPDATE action_queue_items
              SET state = 'resolved',

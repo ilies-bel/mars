@@ -22,8 +22,8 @@ interface QueueModule {
   enqueueTask: typeof import('./queue').enqueueTask
   updateTask: typeof import('./queue').updateTask
   getTask: typeof import('./queue').getTask
-  getClient: typeof import('./queue').getClient
-  initQueue: typeof import('./queue').initQueue
+  resolveQueueClient: typeof import('./queue').resolveQueueClient
+  migrateQueueSchema: typeof import('./queue').migrateQueueSchema
   addProposalBlockers: typeof import('./queue').addProposalBlockers
   listProposalBlockers: typeof import('./queue').listProposalBlockers
   listBlockers: typeof import('./queue').listBlockers
@@ -58,7 +58,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('./queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const p = (await import('./proposals')) as unknown as ProposalsModule
   await p.initProposals()
   const br = (await import(
@@ -94,7 +94,7 @@ describe('idea promotion atomically rewrites task_proposal_blockers edges', () =
     await q.addProposalBlockers(taskT.id, [proposalA.id])
     // Flip T to blocked (mirrors what the daemon does when it receives a
     // task_proposal_blockers gate).
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
       args: [taskT.id],
     })
@@ -122,7 +122,7 @@ describe('idea promotion atomically rewrites task_proposal_blockers edges', () =
 
     // Now A' completes. Mark it done via raw SQL (bypasses updateTask's
     // promoteDraftToQueued which only handles draft/triaging, not blocked).
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
       args: [taskAPrime.id],
     })
@@ -147,7 +147,7 @@ describe('idea promotion atomically rewrites task_proposal_blockers edges', () =
     const taskT2 = await q.enqueueTask('dependent T2', undefined, { skipTriage: true })
     await q.addProposalBlockers(taskT1.id, [proposalA.id])
     await q.addProposalBlockers(taskT2.id, [proposalA.id])
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id IN (?, ?)`,
       args: [taskT1.id, taskT2.id],
     })
@@ -173,7 +173,7 @@ describe('idea promotion atomically rewrites task_proposal_blockers edges', () =
     expect((await q.getTask(taskT2.id))?.status).toBe('blocked')
 
     // A' lands done → both dependents unblock.
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
       args: [taskAPrime.id],
     })

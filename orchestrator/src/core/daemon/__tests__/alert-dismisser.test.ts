@@ -7,8 +7,8 @@ import type { Client } from '@libsql/client'
 import type { EventName, EventPayload } from '../../../bus/events.js'
 
 interface QueueModule {
-  initQueue: typeof import('../../queue').initQueue
-  getClient: typeof import('../../queue').getClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
 }
 
 interface ActionQueueModule {
@@ -54,14 +54,14 @@ const setupRepo = (): string => {
 /**
  * Load every module against the same temp repo. `MARS_REPO` makes
  * `resolveContext()` resolve `stateDbPath`/`queueDbPath` to one
- * `.mars/mars.db`, so the events table (initQueue), action_queue_items, and
+ * `.mars/mars.db`, so the events table (migrateQueueSchema), action_queue_items, and
  * action_queue_dismissals all share a single libsql client.
  */
 const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   const dismissals = (await import(
     '../../lib/action-queue-dismissals'
@@ -126,7 +126,7 @@ describe('alert-dismisser outbox subscriber', () => {
 
   it('clears an open alert and the dismissal row on a task.terminal{done} event', async () => {
     const { q, actionQueue, dismissals, ad, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-done'
 
     const itemId = await raiseOpenItemFor(actionQueue, taskId)
@@ -151,7 +151,7 @@ describe('alert-dismisser outbox subscriber', () => {
 
   it('KEEPS an open alert on task.terminal{failed} (ADR-0028: failed needs a human)', async () => {
     const { q, actionQueue, dismissals, ad, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-failed'
 
     const itemId = await raiseOpenItemFor(actionQueue, taskId)
@@ -174,7 +174,7 @@ describe('alert-dismisser outbox subscriber', () => {
 
   it('clears open alerts on task.terminal{done}, task.terminal{purged}, and task.unblocked', async () => {
     const { q, actionQueue, ad, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     const completedId = await raiseOpenItemFor(actionQueue, 'T-completed')
     const purgedId = await raiseOpenItemFor(actionQueue, 'T-purged')
@@ -204,7 +204,7 @@ describe('alert-dismisser outbox subscriber', () => {
 
   it('treats an unmapped event as a no-op but still advances the cursor', async () => {
     const { q, actionQueue, ad, pub, subs } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     const itemId = await raiseOpenItemFor(actionQueue, 'T-prio')
 
@@ -233,7 +233,7 @@ describe('alert-dismisser outbox subscriber', () => {
 
   it('is idempotent: a second drain processes nothing (cursor already past)', async () => {
     const { q, actionQueue, ad, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     await raiseOpenItemFor(actionQueue, 'T-once')
     await ad.ensureAlertDismisser(client)

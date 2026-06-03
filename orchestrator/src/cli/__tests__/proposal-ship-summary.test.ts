@@ -86,9 +86,9 @@ describe('mars proposal ship-summary — with proposal and tasks', () => {
     process.env.MARS_REPO = repo
 
     const { createProposal, initProposals } = await import('../../core/proposals')
-    const { enqueueTask, updateTask, initQueue } = await import('../../core/queue')
+    const { enqueueTask, updateTask, migrateQueueSchema } = await import('../../core/queue')
     await initProposals()
-    await initQueue()
+    await migrateQueueSchema()
 
     const proposal = await createProposal(
       'Ship summary test proposal\nThis is the problem statement.',
@@ -215,9 +215,9 @@ describe('mars proposal ship-summary — all tasks done with commits', () => {
     process.env.MARS_REPO = repo
 
     const { createProposal, initProposals } = await import('../../core/proposals')
-    const { enqueueTask, updateTask, initQueue } = await import('../../core/queue')
+    const { enqueueTask, updateTask, migrateQueueSchema } = await import('../../core/queue')
     await initProposals()
-    await initQueue()
+    await migrateQueueSchema()
 
     const proposal = await createProposal('All-done proposal\nEvery slice landed.', {
       source: 'human',

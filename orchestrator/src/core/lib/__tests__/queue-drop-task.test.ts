@@ -8,8 +8,8 @@ interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   updateTask: typeof import('../../queue').updateTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   addBlockers: typeof import('../../queue').addBlockers
   dropTask: typeof import('../../queue').dropTask
 }
@@ -35,7 +35,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const ft = (await import(
     '../../queue-fix-tasks'
   )) as unknown as FixTasksModule
@@ -122,7 +122,7 @@ describe('dropTask (universal deletion)', () => {
     expect(child?.fixForTaskId).toBeNull()
 
     // No leftover task_blockers edges mentioning the dropped id.
-    const leftover = await q.getClient().execute({
+    const leftover = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
       args: [parent.id, parent.id],
     })

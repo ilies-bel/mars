@@ -22,8 +22,8 @@ import { execFileSync } from 'node:child_process'
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
 interface RecipesModule {
@@ -64,7 +64,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const rc = (await import('../../lib/fix-recipes')) as unknown as RecipesModule
   const sw = (await import('../server')) as unknown as SweeperModule
   return { q, rc, sw }
@@ -103,7 +103,7 @@ describe('sweeper/server', () => {
     vi.resetModules()
     process.env.MARS_REPO = templateRepo
     const q = (await import('../../queue')) as unknown as QueueModule
-    await q.initQueue()
+    await q.migrateQueueSchema()
     const actionQueue = (await import('../../lib/action-queue')) as unknown as {
       initActionQueue: typeof import('../../lib/action-queue').initActionQueue
     }
@@ -183,7 +183,7 @@ describe('sweeper/server', () => {
     expect(second.existingFixTaskId).toBe(first.fixTaskId)
 
     // Only one fix task row exists for this signature
-    const fixTasks = await q.getClient().execute({
+    const fixTasks = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks
              WHERE failure_signature = ? AND fix_for_task_id IS NOT NULL`,
       args: ['sweep-sig2'],

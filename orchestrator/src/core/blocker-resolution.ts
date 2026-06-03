@@ -10,9 +10,9 @@ import {
 } from './queue-retry'
 import { computeFailureSignature } from './lib/failure-signature'
 import { getTask, setTaskStatus, updateTask } from './queue'
-import { getDefaultQueueClient } from './lib/task-store'
+import { getDefaultTaskStore } from './store/task-store'
 import { type ActionQueueKind, raiseActionQueueItem, supersedeActionQueueItemsForOrigin } from './lib/action-queue'
-import { publish } from './lib/outbox'
+import { buildEventInsert } from './lib/outbox'
 
 const execFileP = promisify(execFile)
 
@@ -257,10 +257,10 @@ export const onBlockerTaskCompleted = async (
     return { blockerTaskId, outcomes: [] }
   }
 
-  const c = await getDefaultQueueClient()
+  const store = await getDefaultTaskStore()
   const now = new Date().toISOString()
 
-  const r = await c.execute({
+  const r = await store.query({
     sql: `SELECT t.id AS id, t.retry_count AS retry_count
             FROM task_blockers b
             JOIN tasks t ON t.id = b.task_id
@@ -286,7 +286,7 @@ export const onBlockerTaskCompleted = async (
       })
       continue
     }
-    const incomplete = await c.execute({
+    const incomplete = await store.query({
       sql: `SELECT 1
               FROM task_blockers b
               JOIN tasks t ON t.id = b.blocker_task_id
@@ -328,28 +328,25 @@ export const onBlockerTaskCompleted = async (
       }
       throw err
     }
-    const tx = await c.transaction('write')
-    let flipped = false
-    try {
-      const upd = await tx.execute({
+    const flipped = await store.atomic(async (scope) => {
+      const upd = await scope.execute({
         // updated_at first — exempt from STATUS_WRITE arch guard (conditional WHERE).
         sql: `UPDATE tasks
                  SET updated_at = ?, status = 'queued'
                WHERE id = ? AND status = 'blocked'`,
         args: [now, row.id],
       })
-      flipped = upd.rowsAffected > 0
-      if (flipped) {
-        await publish(tx, 'task.unblocked', {
-          taskId: row.id,
-          blockerTaskId,
-        })
+      const didFlip = upd.rowsAffected > 0
+      if (didFlip) {
+        await scope.execute(
+          buildEventInsert('task.unblocked', {
+            taskId: row.id,
+            blockerTaskId,
+          }),
+        )
       }
-      await tx.commit()
-    } catch (error: unknown) {
-      tx.close()
-      throw error
-    }
+      return didFlip
+    })
     if (flipped) {
       outcomes.push({ taskId: row.id, outcome: 'queued', retryCount })
       internalBus().emit('task.unblocked', {
@@ -386,10 +383,10 @@ export const onBlockerTaskCompleted = async (
 export const onBlockerTaskFailed = async (
   failedBlockerTaskId: string,
 ): Promise<BlockByFailureResult> => {
-  const c = await getDefaultQueueClient()
+  const store = await getDefaultTaskStore()
   const now = new Date().toISOString()
 
-  const r = await c.execute({
+  const r = await store.query({
     sql: `SELECT t.id AS id
             FROM task_blockers b
             JOIN tasks t ON t.id = b.task_id
@@ -401,32 +398,29 @@ export const onBlockerTaskFailed = async (
 
   const outcomes: BlockByFailureOutcome[] = []
   for (const row of r.rows as unknown as Array<{ id: string }>) {
-    const tx = await c.transaction('write')
-    let flipped = false
-    try {
-      const upd = await tx.execute({
+    const flipped = await store.atomic(async (scope) => {
+      const upd = await scope.execute({
         // updated_at first — exempt from STATUS_WRITE arch guard (conditional WHERE).
         sql: `UPDATE tasks
                  SET updated_at = ?, status = 'blocked'
                WHERE id = ? AND status = 'queued'`,
         args: [now, row.id],
       })
-      flipped = upd.rowsAffected > 0
+      const didFlip = upd.rowsAffected > 0
       // Emit the blocked transition durably, in the same tx, only when the
       // guarded UPDATE actually flipped the row (ADR-0030).
-      if (flipped) {
-        await publish(tx, 'task.blocked', {
-          taskId: row.id,
-          fixTaskId: null,
-          failureSignature: `prerequisite-failed:${failedBlockerTaskId}`,
-          failingStep: 'blocked-dependent',
-        })
+      if (didFlip) {
+        await scope.execute(
+          buildEventInsert('task.blocked', {
+            taskId: row.id,
+            fixTaskId: null,
+            failureSignature: `prerequisite-failed:${failedBlockerTaskId}`,
+            failingStep: 'blocked-dependent',
+          }),
+        )
       }
-      await tx.commit()
-    } catch (error: unknown) {
-      tx.close()
-      throw error
-    }
+      return didFlip
+    })
     if (flipped) {
       try {
         await raiseActionQueueItem({
@@ -487,9 +481,9 @@ export const onBlockerTaskFailed = async (
 export const onBlockerTaskCancelled = async (
   blockerTaskId: string,
 ): Promise<UnblockByTaskResult> => {
-  const c = await getDefaultQueueClient()
+  const store = await getDefaultTaskStore()
 
-  const r = await c.execute({
+  const r = await store.query({
     sql: `SELECT t.id AS id, t.retry_count AS retry_count
             FROM task_blockers b
             JOIN tasks t ON t.id = b.task_id
@@ -612,11 +606,11 @@ export const recoverBlockedTask = async (
     return { taskId, outcome: 'failed', retryCount, failureReason: RETRY_BUDGET_FAILURE_REASON }
   }
 
-  const c = await getDefaultQueueClient()
+  const store = await getDefaultTaskStore()
   const now = new Date().toISOString()
 
   // Any confirmed/pending-review blocker edge whose blocker is not yet done?
-  const incomplete = await c.execute({
+  const incomplete = await store.query({
     sql: `SELECT 1
             FROM task_blockers b
             JOIN tasks t ON t.id = b.blocker_task_id
@@ -651,25 +645,20 @@ export const recoverBlockedTask = async (
     throw err
   }
 
-  const tx = await c.transaction('write')
-  let flipped = false
-  try {
-    const upd = await tx.execute({
+  const flipped = await store.atomic(async (scope) => {
+    const upd = await scope.execute({
       // updated_at first — exempt from STATUS_WRITE arch guard (conditional WHERE).
       sql: `UPDATE tasks
                SET updated_at = ?, status = 'queued'
              WHERE id = ? AND status = 'blocked'`,
       args: [now, taskId],
     })
-    flipped = upd.rowsAffected > 0
-    if (flipped) {
-      await publish(tx, 'task.unblocked', { taskId })
+    const didFlip = upd.rowsAffected > 0
+    if (didFlip) {
+      await scope.execute(buildEventInsert('task.unblocked', { taskId }))
     }
-    await tx.commit()
-  } catch (error: unknown) {
-    tx.close()
-    throw error
-  }
+    return didFlip
+  })
 
   if (flipped) {
     internalBus().emit('task.unblocked', { taskId })
@@ -689,8 +678,8 @@ export const recoverBlockedTask = async (
  * time.
  */
 export const recoverAllBlockedTasks = async (): Promise<RecoverAllBlockedTasksResult> => {
-  const c = await getDefaultQueueClient()
-  const r = await c.execute({
+  const store = await getDefaultTaskStore()
+  const r = await store.query({
     sql: `SELECT id FROM tasks WHERE status = 'blocked'`,
     args: [],
   })
@@ -746,23 +735,20 @@ export const markOriginDoneFromRecovery = async (
   await setTaskStatus(originTaskId, 'done', { result: { via: 'recovery' } })
   const originFlipped = true
   // Clear the error field and emit the terminal event in a second transaction.
-  const c = await getDefaultQueueClient()
+  const store = await getDefaultTaskStore()
   const now = new Date().toISOString()
-  const tx = await c.transaction('write')
-  try {
-    await tx.execute({
+  await store.atomic(async (scope) => {
+    await scope.execute({
       sql: `UPDATE tasks SET error = NULL, updated_at = ? WHERE id = ?`,
       args: [now, originTaskId],
     })
-    await publish(tx, 'task.terminal', {
-      taskId: originTaskId,
-      reason: 'done',
-    })
-    await tx.commit()
-  } catch (error: unknown) {
-    tx.close()
-    throw error
-  }
+    await scope.execute(
+      buildEventInsert('task.terminal', {
+        taskId: originTaskId,
+        reason: 'done',
+      }),
+    )
+  })
   const unblock = await onBlockerTaskCompleted(originTaskId)
   return {
     originTaskId,

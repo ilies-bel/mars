@@ -1,9 +1,8 @@
 import { type Client } from '@libsql/client'
 import { randomBytes } from 'node:crypto'
-import { resolveContext } from './context'
 import type { Author, AuthorKind } from './author'
-import { openLibsql } from './lib/libsql'
-import { publishWithRetry } from '../bus/publisher.js'
+import { resolveStateClient } from './store/state-client'
+import { buildEventInsert } from './lib/outbox'
 import type { EventName, EventPayload } from '../bus/events.js'
 
 export type ProposalSource = 'reflection' | 'human' | 'planner'
@@ -23,43 +22,38 @@ export interface Proposal {
   userStories: string[]
 }
 
-let clientSingleton: Client | null = null
-
-const getClient = (): Client => {
-  if (clientSingleton) return clientSingleton
-  const { stateDbPath } = resolveContext()
-  clientSingleton = openLibsql({ url: `file:${stateDbPath}` })
-  return clientSingleton
-}
-
 /**
- * Direct access to the proposals DB client. Most callers should use the
- * typed helpers (`getProposal`, `setProposalField`, etc.); this is a
- * low-level escape hatch for workflows that need to coordinate cross-table
- * writes (e.g. the slicer flipping a proposal's status alongside per-slice
- * task inserts in queue.db).
+ * The state.db client, resolved through the shared seam-internal resolver
+ * (`store/state-client`). Same `mars.db` file as the TaskStore (ADR-0034); the
+ * three formerly-duplicated private singletons now collapse to this one.
+ *
+ * Module-internal only — the public seam is the StateStore
+ * (`store/state-store.ts`). No raw client crosses the module boundary
+ * (ADR-0021); the old `getProposalsClient()` escape hatch is gone, and the
+ * slicer's cross-table coordination routes through the StateStore.
  */
-export const getProposalsClient = (): Client => {
-  return getClient()
-}
+const stateClient = (): Client => resolveStateClient()
 
 /**
  * Emit a proposal lifecycle event to the queue.db events outbox.
  *
  * Proposals live in state.db; the events outbox lives in queue.db. Cross-DB
  * atomicity is not available via libsql transactions, so this emits in a
- * separate write transaction on queue.db after the state.db write has
- * committed. Emission failures are non-fatal: the proposal operation succeeds
- * regardless.
+ * separate write transaction on queue.db (via the TaskStore seam's `atomic`)
+ * after the state.db write has committed. Emission failures are non-fatal:
+ * the proposal operation succeeds regardless. The Outbox stays in queue.db
+ * (ADR-0021).
  */
 async function emitProposalBusEvent<T extends EventName>(
   type: T,
   payload: EventPayload<T>,
 ): Promise<void> {
   try {
-    const { initQueue, getClient: getQueueClient } = await import('./queue')
-    await initQueue()
-    await publishWithRetry(getQueueClient(), type, payload)
+    const { getDefaultTaskStore } = await import('./store/task-store')
+    const store = await getDefaultTaskStore()
+    await store.atomic(async (scope) => {
+      await scope.execute(buildEventInsert(type, payload))
+    })
   } catch {
     // Non-fatal: proposal state change already committed in state.db.
   }
@@ -69,7 +63,7 @@ let initialised = false
 
 export const initProposals = async (): Promise<void> => {
   if (initialised) return
-  const c = getClient()
+  const c = stateClient()
   // One-shot rename: a pre-existing state.db has an `ideas` table (and
   // possibly `idea_user_stories`). Flip them to the proposal vocabulary
   // before any CREATE/ALTER runs. This is a pure DDL rename with no
@@ -256,11 +250,11 @@ export const initProposals = async (): Promise<void> => {
   if (!colNames.has('kpi_tag')) {
     await c.execute(`ALTER TABLE proposals ADD COLUMN kpi_tag TEXT`)
   }
-  // Run after `initQueue` has had a chance to migrate `tasks.blocker_id`
-  // out into `task_blockers` rows, since that migration reads
-  // `task_suggestions` and we are about to drop it.
-  const { initQueue } = await import('./queue')
-  await initQueue()
+  // Run after the queue migration has had a chance to migrate
+  // `tasks.blocker_id` out into `task_blockers` rows, since that migration
+  // reads `task_suggestions` and we are about to drop it.
+  const { migrateQueueSchema } = await import('./queue')
+  await migrateQueueSchema()
   await migrateTaskSuggestions(c)
   initialised = true
 }
@@ -273,125 +267,114 @@ export const initProposals = async (): Promise<void> => {
  * during queue init, after this migration has copied the rows out.
  */
 const migrateTaskSuggestions = async (c: Client): Promise<void> => {
-  const { queueDbPath } = resolveContext()
-  let queueClient: Client
-  try {
-    queueClient = openLibsql({ url: `file:${queueDbPath}` })
-  } catch {
-    return
-  }
-  try {
-    const tableCheck = await queueClient.execute({
-      sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='task_suggestions'`,
-      args: [],
-    })
-    if (tableCheck.rows.length === 0) return
+  // tasks and proposals share one `mars.db` file (ADR-0034), so the legacy
+  // `task_suggestions` table is reachable through the same state client `c`.
+  // We must NOT close `c` here — it is the shared seam-internal singleton.
+  const tableCheck = await c.execute({
+    sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='task_suggestions'`,
+    args: [],
+  })
+  if (tableCheck.rows.length === 0) return
 
-    const cols = await queueClient.execute(`PRAGMA table_info(task_suggestions)`)
-    const colNames = new Set(
-      cols.rows.map((r) => (r as unknown as { name: string }).name),
-    )
-    const hasKind = colNames.has('kind')
-    const sql = hasKind
-      ? `SELECT id, title, prompt, rationale, status, kind, created_task_id, created_at
-           FROM task_suggestions
-          WHERE kind = 'reflection' OR kind IS NULL`
-      : `SELECT id, title, prompt, rationale, status, created_task_id, created_at,
-                NULL AS kind FROM task_suggestions`
-    const rows = await queueClient.execute(sql)
+  const cols = await c.execute(`PRAGMA table_info(task_suggestions)`)
+  const colNames = new Set(
+    cols.rows.map((r) => (r as unknown as { name: string }).name),
+  )
+  const hasKind = colNames.has('kind')
+  const sql = hasKind
+    ? `SELECT id, title, prompt, rationale, status, kind, created_task_id, created_at
+         FROM task_suggestions
+        WHERE kind = 'reflection' OR kind IS NULL`
+    : `SELECT id, title, prompt, rationale, status, created_task_id, created_at,
+              NULL AS kind FROM task_suggestions`
+  const rows = await c.execute(sql)
 
-    const tx = await c.transaction('write')
-    try {
-      for (const row of rows.rows) {
-        const r = row as unknown as {
-          id: string
-          title: string | null
-          prompt: string | null
-          rationale: string | null
-          status: string | null
-          kind: string | null
-          created_task_id: string | null
-          created_at: string | null
-        }
-        const title = (r.title ?? '').trim() || '(reflection)'
-        const solution = (r.prompt ?? '').trim()
-        const notes = (r.rationale ?? '').trim()
-        const status =
-          r.status === 'promoted' || r.status === 'accepted'
-            ? 'sliced'
-            : r.status === 'rejected'
-              ? 'dismissed'
-              : 'draft'
-        const createdMs = Date.parse(r.created_at ?? '')
-        const now = Date.now()
-        const createdAt = Number.isFinite(createdMs) ? createdMs : now
-        // Detect whether the legacy `goal` column is still present (and
-        // therefore NOT NULL) on this DB. New repos have only `title`.
-        const proposalCols = await tx.execute(`PRAGMA table_info(proposals)`)
-        const hasLegacyGoal = (
-          proposalCols.rows as unknown as Array<{ name: string }>
-        ).some((rr) => rr.name === 'goal')
-        if (hasLegacyGoal) {
-          await tx.execute({
-            sql: `INSERT OR IGNORE INTO proposals
-                    (id, goal, story, technical, title, solution, notes,
-                     status, source, author_kind, author_name,
-                     created_at, updated_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?,
-                          ?, 'reflection', 'agent', 'reflector',
-                          ?, ?)`,
-            args: [
-              r.id,
-              title,
-              solution,
-              notes,
-              title,
-              solution,
-              notes,
-              status,
-              createdAt,
-              createdAt,
-            ],
-          })
-        } else {
-          await tx.execute({
-            sql: `INSERT OR IGNORE INTO proposals
-                    (id, title, solution, notes, status, source,
-                     author_kind, author_name,
-                     created_at, updated_at)
-                  VALUES (?, ?, ?, ?, ?, 'reflection',
-                          'agent', 'reflector',
-                          ?, ?)`,
-            args: [
-              r.id,
-              title,
-              solution,
-              notes,
-              status,
-              createdAt,
-              createdAt,
-            ],
-          })
-        }
+  const tx = await c.transaction('write')
+  try {
+    for (const row of rows.rows) {
+      const r = row as unknown as {
+        id: string
+        title: string | null
+        prompt: string | null
+        rationale: string | null
+        status: string | null
+        kind: string | null
+        created_task_id: string | null
+        created_at: string | null
       }
-      await tx.commit()
-    } catch (error: unknown) {
-      tx.close()
-      throw error
+      const title = (r.title ?? '').trim() || '(reflection)'
+      const solution = (r.prompt ?? '').trim()
+      const notes = (r.rationale ?? '').trim()
+      const status =
+        r.status === 'promoted' || r.status === 'accepted'
+          ? 'sliced'
+          : r.status === 'rejected'
+            ? 'dismissed'
+            : 'draft'
+      const createdMs = Date.parse(r.created_at ?? '')
+      const now = Date.now()
+      const createdAt = Number.isFinite(createdMs) ? createdMs : now
+      // Detect whether the legacy `goal` column is still present (and
+      // therefore NOT NULL) on this DB. New repos have only `title`.
+      const proposalCols = await tx.execute(`PRAGMA table_info(proposals)`)
+      const hasLegacyGoal = (
+        proposalCols.rows as unknown as Array<{ name: string }>
+      ).some((rr) => rr.name === 'goal')
+      if (hasLegacyGoal) {
+        await tx.execute({
+          sql: `INSERT OR IGNORE INTO proposals
+                  (id, goal, story, technical, title, solution, notes,
+                   status, source, author_kind, author_name,
+                   created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?,
+                        ?, 'reflection', 'agent', 'reflector',
+                        ?, ?)`,
+          args: [
+            r.id,
+            title,
+            solution,
+            notes,
+            title,
+            solution,
+            notes,
+            status,
+            createdAt,
+            createdAt,
+          ],
+        })
+      } else {
+        await tx.execute({
+          sql: `INSERT OR IGNORE INTO proposals
+                  (id, title, solution, notes, status, source,
+                   author_kind, author_name,
+                   created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'reflection',
+                        'agent', 'reflector',
+                        ?, ?)`,
+          args: [
+            r.id,
+            title,
+            solution,
+            notes,
+            status,
+            createdAt,
+            createdAt,
+          ],
+        })
+      }
     }
-    // After copying reflection rows out, drop the legacy table from queue.db.
-    // Any remaining rows (kind='fix') are vestigial — fix tasks are now
-    // first-class entries in `tasks` linked via `task_blockers`.
-    await queueClient.execute(
-      `DROP INDEX IF EXISTS idx_task_suggestions_source_task_id`,
-    )
-    await queueClient.execute(
-      `DROP INDEX IF EXISTS idx_task_suggestions_failure_signature`,
-    )
-    await queueClient.execute(`DROP TABLE IF EXISTS task_suggestions`)
-  } finally {
-    queueClient.close()
+    await tx.commit()
+  } catch (error: unknown) {
+    tx.close()
+    throw error
   }
+  // After copying reflection rows out, drop the legacy table. Any remaining
+  // rows (kind='fix') are vestigial — fix tasks are now first-class entries
+  // in `tasks` linked via `task_blockers`. Uses the shared client `c`; never
+  // close it (it is the seam-internal singleton).
+  await c.execute(`DROP INDEX IF EXISTS idx_task_suggestions_source_task_id`)
+  await c.execute(`DROP INDEX IF EXISTS idx_task_suggestions_failure_signature`)
+  await c.execute(`DROP TABLE IF EXISTS task_suggestions`)
 }
 
 const slugify = (title: string): string => {
@@ -482,7 +465,7 @@ export const createProposal = async (
   opts?: CreateProposalOptions,
 ): Promise<Proposal> => {
   await initProposals()
-  const c = getClient()
+  const c = stateClient()
   const id = generateProposalId(title)
   const now = Date.now()
   const source: ProposalSource =
@@ -588,7 +571,7 @@ export const resolveProposalId = async (
   idOrPrefix: string,
 ): Promise<ProposalIdResolution> => {
   await initProposals()
-  const c = getClient()
+  const c = stateClient()
   const exact = await c.execute({
     sql: `SELECT id FROM proposals WHERE id = ?`,
     args: [idOrPrefix],
@@ -623,7 +606,7 @@ export const getProposal = async (
 ): Promise<Proposal | null> => {
   const resolved = await resolveProposalId(idOrPrefix)
   if (resolved.kind !== 'unique') return null
-  const c = getClient()
+  const c = stateClient()
   const r = await c.execute({
     sql: `SELECT * FROM proposals WHERE id = ?`,
     args: [resolved.id],
@@ -651,7 +634,7 @@ export const addProposalDependencies = async (
 ): Promise<void> => {
   if (blockerIdsOrPrefixes.length === 0) return
   await initProposals()
-  const c = getClient()
+  const c = stateClient()
 
   const subject = await resolveProposalId(proposalIdOrPrefix)
   if (subject.kind === 'ambiguous') {
@@ -714,7 +697,7 @@ export const listProposalDependencies = async (
   if (resolved.kind === 'none') {
     throw new Error(`proposal ${proposalIdOrPrefix} not found`)
   }
-  const c = getClient()
+  const c = stateClient()
   const r = await c.execute({
     sql: `SELECT blocker_proposal_id AS id
             FROM proposal_dependencies
@@ -753,7 +736,7 @@ export const removeProposalDependency = async (
   if (blocker.kind === 'none') {
     throw new Error(`blocker ${blockerIdOrPrefix} not found`)
   }
-  const c = getClient()
+  const c = stateClient()
   const r = await c.execute({
     sql: `DELETE FROM proposal_dependencies WHERE proposal_id = ? AND blocker_proposal_id = ?`,
     args: [subject.id, blocker.id],
@@ -765,7 +748,7 @@ export const listProposals = async (
   filter?: ListProposalsFilter,
 ): Promise<Proposal[]> => {
   await initProposals()
-  const c = getClient()
+  const c = stateClient()
   const where: string[] = []
   const args: unknown[] = []
   if (filter?.source) {
@@ -825,7 +808,7 @@ export const setProposalField = async (
     throw new Error(`proposal ${idOrPrefix} not found`)
   }
   const id = resolved.id
-  const c = getClient()
+  const c = stateClient()
   const now = Date.now()
   await c.execute({
     sql: `UPDATE proposals SET ${fieldColumn[field]} = ?, updated_at = ? WHERE id = ?`,
@@ -853,7 +836,7 @@ export const addProposalUserStory = async (
     throw new Error(`proposal ${idOrPrefix} not found`)
   }
   const id = resolved.id
-  const c = getClient()
+  const c = stateClient()
   const positionRow = await c.execute({
     sql: `SELECT COALESCE(MAX(position), -1) AS max_pos FROM proposal_user_stories WHERE proposal_id = ?`,
     args: [id],
@@ -894,7 +877,7 @@ export const removeProposalUserStory = async (
     throw new Error(`proposal ${idOrPrefix} not found`)
   }
   const id = resolved.id
-  const c = getClient()
+  const c = stateClient()
   if (!Number.isInteger(index) || index < 0) {
     throw new Error(`user-story index must be a non-negative integer`)
   }
@@ -978,7 +961,7 @@ export const promoteProposal = async (
       `proposal ${proposal.id} is not fully shaped; missing: ${missing.join(', ')}`,
     )
   }
-  const c = getClient()
+  const c = stateClient()
   const now = Date.now()
   await c.execute({
     sql: `UPDATE proposals SET status = 'prd-ready', updated_at = ? WHERE id = ?`,
@@ -1019,7 +1002,7 @@ export const deleteProposal = async (idOrPrefix: string): Promise<string> => {
         `Redirect or drop those tasks first (e.g. 'mars unblock <task-id> ${id}' or 'mars drop <task-id>').`,
     )
   }
-  const c = getClient()
+  const c = stateClient()
   // Older DBs were created before the FK existed, so wipe the children
   // explicitly to keep cleanup deterministic across schema vintages.
   await c.execute({
@@ -1075,7 +1058,7 @@ export const rejectProposal = async (
         `Redirect or drop those tasks first (e.g. 'mars unblock <task-id> ${id}' or 'mars drop <task-id>').`,
     )
   }
-  const c = getClient()
+  const c = stateClient()
   const now = Date.now()
   const r = await c.execute({
     sql: `UPDATE proposals SET status = 'dismissed', updated_at = ? WHERE id = ? AND status = 'draft'`,
@@ -1107,7 +1090,7 @@ export const findOpenReflectionDraftForKpi = async (
   kpi: string,
 ): Promise<{ id: string; title: string } | null> => {
   await initProposals()
-  const c = getClient()
+  const c = stateClient()
   const r = await c.execute({
     sql: `SELECT id, title FROM proposals
            WHERE source = 'reflection'
@@ -1145,7 +1128,7 @@ export const markProposalSliced = async (
     throw new Error(`proposal ${idOrPrefix} not found`)
   }
   const id = resolved.id
-  const c = getClient()
+  const c = stateClient()
   await c.execute({
     sql: `UPDATE proposals SET status = 'sliced', updated_at = ? WHERE id = ?`,
     args: [Date.now(), id],

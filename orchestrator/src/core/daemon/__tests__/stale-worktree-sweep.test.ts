@@ -6,8 +6,8 @@ import { resolve } from 'node:path'
 
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   updateTask: typeof import('../../queue').updateTask
 }
 
@@ -49,7 +49,7 @@ const loadModules = async (
   process.env.MARS_REPO = repo
   process.env.MARS_STALE_WORKTREE_HOURS = '24'
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   const sweep = (await import('../stale-worktree-sweep')) as unknown as SweepModule
   const ad = (await import('../alert-dismisser')) as unknown as AlertDismisserModule
@@ -74,7 +74,7 @@ describe('detectAndRaiseStaleWorktrees', () => {
     const task = await q.enqueueTask('some stale work', undefined, { skipTriage: true })
 
     // Age the task beyond the threshold
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
       args: [OLD_UPDATED_AT, task.id],
     })
@@ -95,7 +95,7 @@ describe('detectAndRaiseStaleWorktrees', () => {
     const { q, actionQueue, sweep } = await loadModules(repo)
     const task = await q.enqueueTask('some stale work', undefined, { skipTriage: true })
 
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
       args: [OLD_UPDATED_AT, task.id],
     })
@@ -122,7 +122,7 @@ describe('detectAndRaiseStaleWorktrees', () => {
     const { q, actionQueue, sweep } = await loadModules(repo)
     const task = await q.enqueueTask('work', undefined, { skipTriage: true })
 
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
       args: [OLD_UPDATED_AT, task.id],
     })
@@ -149,7 +149,7 @@ describe('detectAndRaiseStaleWorktrees', () => {
       [taskFailed.id, 'failed'],
       [taskDropped.id, 'dropped'],
     ] as const) {
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
         args: [st, OLD_UPDATED_AT, id],
       })
@@ -167,7 +167,7 @@ describe('detectAndRaiseStaleWorktrees', () => {
     const { q, actionQueue, sweep } = await loadModules(repo)
     const task = await q.enqueueTask('no worktree', undefined, { skipTriage: true })
 
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
       args: [OLD_UPDATED_AT, task.id],
     })
@@ -196,7 +196,7 @@ describe('detectAndRaiseStaleWorktrees', () => {
 
   it('closes the actionQueue item via the Invalidator when the origin task reaches a terminal state', async () => {
     const { q, actionQueue, sweep, ad } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const task = await q.enqueueTask('task to complete', undefined, { skipTriage: true })
 
     await client.execute({
@@ -234,7 +234,7 @@ describe('detectAndRaiseStaleWorktrees', () => {
     const task2 = await q.enqueueTask('stale work 2', undefined, { skipTriage: true })
 
     for (const id of [task1.id, task2.id]) {
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
         args: [OLD_UPDATED_AT, id],
       })

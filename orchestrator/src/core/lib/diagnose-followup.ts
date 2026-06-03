@@ -1,11 +1,10 @@
 import {
   addBlockers,
   enqueueTask,
-  getClient,
   getTask,
-  initQueue,
   updateTask,
 } from '../queue'
+import { getDefaultTaskStore } from '../store/task-store'
 import { getDiagnosis, type StoredDiagnosis } from './diagnose'
 import { raiseActionQueueItem } from './action-queue'
 
@@ -46,7 +45,8 @@ export interface DiagnoseFollowupOutcome {
 const findParentForDiagnoseChore = async (
   choreId: string,
 ): Promise<string | null> => {
-  const r = await getClient().execute({
+  const store = await getDefaultTaskStore()
+  const r = await store.query({
     sql: `SELECT task_id FROM task_blockers WHERE blocker_task_id = ? LIMIT 1`,
     args: [choreId],
   })
@@ -58,7 +58,8 @@ const removeBlockerEdge = async (
   parentTaskId: string,
   blockerTaskId: string,
 ): Promise<void> => {
-  await getClient().execute({
+  const store = await getDefaultTaskStore()
+  await store.execute({
     sql: `DELETE FROM task_blockers
            WHERE task_id = ? AND blocker_task_id = ?`,
     args: [parentTaskId, blockerTaskId],
@@ -130,7 +131,6 @@ const buildInconclusiveActionQueueBody = (
 export const runDiagnoseFollowup = async (
   choreId: string,
 ): Promise<DiagnoseFollowupOutcome> => {
-  await initQueue()
   const chore = await getTask(choreId)
   if (!chore || chore.kind !== 'diagnose') {
     return { action: 'noop', parentTaskId: null, verdictKind: 'no-verdict' }

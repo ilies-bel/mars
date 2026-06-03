@@ -43,7 +43,7 @@ const makeRepo = (): string => {
 const openDb = (repo: string) =>
   createClient({ url: `file:${resolve(repo, '.mars', 'mars.db')}` })
 
-/** Minimal tasks table init (subset of initQueue). */
+/** Minimal tasks table init (subset of migrateQueueSchema). */
 const initTables = async (repo: string): Promise<void> => {
   const c = openDb(repo)
   await c.execute(`

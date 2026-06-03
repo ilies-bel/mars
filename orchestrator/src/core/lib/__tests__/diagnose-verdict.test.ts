@@ -28,7 +28,7 @@ const loadModule = async (repo: string): Promise<VerdictModule> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = await import('../../queue')
-  await q.initQueue()
+  await q.migrateQueueSchema()
   return (await import('../diagnose-verdict')) as unknown as VerdictModule
 }
 

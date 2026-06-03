@@ -15,7 +15,7 @@ const loadQueue = async (repo: string) => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../../queue')
-  await mod.initQueue()
+  await mod.migrateQueueSchema()
   return mod
 }
 

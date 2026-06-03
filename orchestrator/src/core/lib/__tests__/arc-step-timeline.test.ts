@@ -15,8 +15,8 @@ import { randomUUID } from 'node:crypto'
 
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
 interface DeepQueryModule {
@@ -39,7 +39,7 @@ const loadModules = async (repo: string): Promise<Modules> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const dq = (await import('../deep-reflect-query')) as unknown as DeepQueryModule
   return { q, dq }
 }
@@ -80,7 +80,7 @@ const insertSpanEnded = async (
   const severity =
     opts.outcome === 'failed' ? 'error' : opts.outcome === 'killed' ? 'warn' : 'info'
 
-  await q.getClient().execute({
+  await q.resolveQueueClient().execute({
     sql: `INSERT INTO trace_events (id, timestamp, kind, severity, task_id, origin_id, phase, payload)
           VALUES (?, ?, 'step_ended', ?, ?, ?, ?, ?)`,
     args: [

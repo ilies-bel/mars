@@ -7,8 +7,8 @@ import { execFileSync } from 'node:child_process'
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   addBlockers: typeof import('../../queue').addBlockers
   updateTask: typeof import('../../queue').updateTask
 }
@@ -30,7 +30,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const drift = (await import(
     '../reconcile-blocker-drift'
   )) as unknown as DriftModule
@@ -69,7 +69,7 @@ describe('repairQueuedWithIncompleteBlockers', () => {
 
     // Force the dependent into 'queued' despite having an incomplete blocker
     // (simulates the invariant violation we are repairing)
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'queued' WHERE id = ?`,
       args: [dependent.id],
     })
@@ -111,7 +111,7 @@ describe('repairQueuedWithIncompleteBlockers', () => {
     await q.addBlockers(dep2.id, [blocker2.id])
 
     // Force both dependents to 'queued' with incomplete blockers
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'queued' WHERE id IN (?, ?)`,
       args: [dep1.id, dep2.id],
     })

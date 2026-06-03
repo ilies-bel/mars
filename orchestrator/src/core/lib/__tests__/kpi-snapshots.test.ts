@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { openLibsql } from '../libsql.js'
-import { createLibsqlTaskStore, type TaskStore } from '../task-store.js'
+import { createTaskStore, type DomainTaskStore as TaskStore } from '../../store/task-store.js'
 import { takeKpiSnapshot, readLatestKpiSnapshot, readKpiWindowComparison } from '../kpi-snapshots.js'
 
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ const makeStore = async (): Promise<TaskStore> => {
   await client.execute(ACTION_QUEUE_ITEMS_DDL)
   await client.execute(KPI_SNAPSHOTS_DDL)
   await client.execute(TRACE_EVENTS_DDL)
-  return createLibsqlTaskStore(client)
+  return createTaskStore(client)
 }
 
 const insertSignal = async (

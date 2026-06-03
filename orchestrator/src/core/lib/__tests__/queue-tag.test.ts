@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process'
 interface Queue {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
-  initQueue: typeof import('../../queue').initQueue
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   isTaskTag: typeof import('../../queue').isTaskTag
 }
 
@@ -24,7 +24,7 @@ const loadQueue = async (repo: string): Promise<Queue> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../../queue')
-  await mod.initQueue()
+  await mod.migrateQueueSchema()
   return mod as unknown as Queue
 }
 

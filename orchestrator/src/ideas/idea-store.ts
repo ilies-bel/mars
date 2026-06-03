@@ -15,9 +15,7 @@
  *   MarsId.create('proposal', id, slug).toString()  →  mars-proposal-<hex>-<slug>
  */
 import { randomBytes } from 'node:crypto'
-import { type Client } from '@libsql/client'
-import { resolveContext } from '../core/context.js'
-import { openLibsql } from '../core/lib/libsql.js'
+import { resolveStateClient } from '../core/store/state-client.js'
 import { MarsId, parseMarsId } from '../mars-id/index.js'
 
 export interface ProposalNote {
@@ -27,20 +25,15 @@ export interface ProposalNote {
   createdAt: number
 }
 
-let clientSingleton: Client | null = null
-
-const getClient = (): Client => {
-  if (clientSingleton) return clientSingleton
-  const { stateDbPath } = resolveContext()
-  clientSingleton = openLibsql({ url: `file:${stateDbPath}` })
-  return clientSingleton
-}
+// Shared state.db client (collapsed from the former private singleton); same
+// `mars.db` file as the TaskStore (ADR-0034), resolved through the seam.
+const stateClient = resolveStateClient
 
 let initialised = false
 
 export const initProposalNotes = async (): Promise<void> => {
   if (initialised) return
-  const c = getClient()
+  const c = stateClient()
   await c.execute(`
     CREATE TABLE IF NOT EXISTS proposal_notes (
       id         TEXT    NOT NULL PRIMARY KEY,
@@ -72,7 +65,7 @@ const rowToProposalNote = (row: ProposalNoteRow): ProposalNote => ({
 
 export const addProposalNote = async (text: string): Promise<ProposalNote> => {
   await initProposalNotes()
-  const c = getClient()
+  const c = stateClient()
   const hex = randomBytes(4).toString('hex')
   const slug = slugify(text)
   const now = Date.now()
@@ -85,7 +78,7 @@ export const addProposalNote = async (text: string): Promise<ProposalNote> => {
 
 export const listProposalNotes = async (): Promise<ProposalNote[]> => {
   await initProposalNotes()
-  const c = getClient()
+  const c = stateClient()
   // Tie-break on the implicit rowid so two notes added within the same
   // millisecond still sort deterministically newest-first (higher rowid =
   // inserted later). Without this, ties fall back to ascending rowid order
@@ -109,7 +102,7 @@ export const listProposalNotes = async (): Promise<ProposalNote[]> => {
  */
 export const getProposalNote = async (input: string): Promise<ProposalNote | null> => {
   await initProposalNotes()
-  const c = getClient()
+  const c = stateClient()
 
   const parsed = parseMarsId(input)
   if (!parsed.ok) return null

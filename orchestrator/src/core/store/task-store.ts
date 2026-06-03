@@ -1,35 +1,38 @@
 /**
- * TaskStore — typed domain facade over queue.ts.
+ * TaskStore — the deep seam over `.mars/mars.db` (ADR-0021).
  *
- * `createTaskStore(client)` returns a `DomainTaskStore` whose every method
- * is a thin pass-through to the corresponding `queue.ts` function: same
- * signature, same return value, no behavioural change.
+ * `createTaskStore(client)` returns a `DomainTaskStore` whose typed domain
+ * methods are the front door (each a thin pass-through to the corresponding
+ * `queue.ts` function) and whose generic SQL escape hatches are the side door:
  *
- * In addition to the typed domain methods, the store exposes three generic
- * SQL escape hatches:
+ * - `query(stmt | sql, params?)` — single read in a read-only batch.
+ * - `execute(stmt | sql, params?)` — single ad-hoc write.
+ * - `batch(stmts, mode?)` — multi-statement transaction (all-or-nothing).
+ * - `atomic(fn)` — callback-scoped write transaction. The libsql Transaction
+ *   NEVER crosses the seam: `atomic` inverts control (you give a callback, you
+ *   never get a handle) and the {@link Scope} it passes exposes only
+ *   query/execute, is non-nestable, and is revoked the moment the callback
+ *   settles. Returning commits; throwing rolls back and rethrows the original
+ *   error.
+ * - `arcStatus(originId, opts?)` — per-arc rollup predicate.
  *
- * - `query(sql, params)` — executes a single read in a read-only batch
- *   transaction and returns the ResultSet.
- * - `execute(sql, params)` — runs a single ad-hoc write statement and
- *   returns the ResultSet.
- * - `atomic(fn)` — opens a write transaction, passes a revocable Scope to
- *   the callback, and commits on return or rolls back on throw, rethrowing
- *   the original error. The Scope is revoked the moment the callback
- *   settles; any retained reference used afterwards throws a clear error.
- *   Nesting atomic() inside an active atomic() callback is rejected.
+ * Both side-door reads/writes and domain methods accept either the libsql
+ * `InStatement` shape (`{ sql, args }` or a bare string) or the
+ * `(sql, params)` two-argument form, so call sites can use whichever reads
+ * cleanest.
  *
- * `createRunMigrations(client)` returns a lazy, once-per-instance memoised
- * runner that drives queue.ts's `initQueue()`. The factory signature accepts
- * a `client` so the API is stable for the next slice, which will execute DDL
- * directly on the passed client and remove the `initQueue()` delegation.
- *
- * No callers of queue.ts are migrated in this slice. `getClient` and
- * `initQueue` remain exported from queue.ts unchanged.
+ * No raw libsql `Client` is ever exported from this seam. The composition
+ * root constructs exactly one store per process via {@link getDefaultDomainTaskStore}
+ * (production, file: client) or `createTaskStore(client)` with a `:memory:`/
+ * file-URL client (tests).
  */
 
-import type { Client, InValue, ResultSet } from '@libsql/client'
+import type { Client, InStatement, InValue, ResultSet } from '@libsql/client'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import {
-  initQueue,
+  resolveQueueClient,
+  migrateQueueSchema,
   getTask as queueGetTask,
   listTasks as queueListTasks,
   enqueueTask as queueEnqueueTask,
@@ -69,8 +72,63 @@ import type {
   TaskTranscriptRow,
 } from '../queue'
 
+const execFileAsync = promisify(execFile)
+
 /** Patch shape for `updateTask`, matching queue.ts's parameter exactly. */
 export type UpdateTaskPatch = Parameters<typeof queueUpdateTask>[1]
+
+/**
+ * Rollup verdict for an arc of tasks sharing one `origin_id`. See
+ * {@link DomainTaskStore.arcStatus} for the predicate semantics.
+ *
+ *   - `'in-progress'`: at least one task is in a non-terminal status.
+ *   - `'arc-done'`   : every task is terminal AND at least one reached `'done'`.
+ *   - `'arc-failed'` : every task is terminal but none reached `'done'`.
+ */
+export type ArcRollupStatus = 'in-progress' | 'arc-done' | 'arc-failed'
+
+export interface ArcTaskSummary {
+  id: string
+  status: TaskStatus
+}
+
+export interface ArcStatus {
+  status: ArcRollupStatus
+  tasks: ArcTaskSummary[]
+  /**
+   * Commit SHAs on the integration branch attributable to this arc, oldest →
+   * newest. Best-effort — `[]` when no integration branch / repo is reachable.
+   */
+  landedCommits: string[]
+}
+
+export interface ArcStatusOptions {
+  /** Defaults to `'main'`. */
+  integrationBranch?: string
+  /** Defaults to `process.env.MARS_REPO`. */
+  cwd?: string
+}
+
+/** Terminal statuses for the arc rollup. */
+const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
+  'done',
+  'failed',
+  'dropped',
+])
+
+/**
+ * Normalise the two accepted side-door call shapes into a single
+ * `InStatement`. `query(stmt)` / `query(sql, params)` both resolve here.
+ */
+const toStatement = (
+  stmt: InStatement | string,
+  params?: InValue[],
+): InStatement => {
+  if (typeof stmt === 'string') {
+    return params === undefined ? stmt : { sql: stmt, args: params }
+  }
+  return stmt
+}
 
 /**
  * The callback argument for {@link DomainTaskStore.atomic}.
@@ -81,21 +139,16 @@ export type UpdateTaskPatch = Parameters<typeof queueUpdateTask>[1]
  */
 export interface Scope {
   /** Execute a read statement inside the active transaction. */
-  query(sql: string, params?: InValue[]): Promise<ResultSet>
+  query(stmt: InStatement | string, params?: InValue[]): Promise<ResultSet>
   /** Execute a write statement inside the active transaction. */
-  execute(sql: string, params?: InValue[]): Promise<ResultSet>
+  execute(stmt: InStatement | string, params?: InValue[]): Promise<ResultSet>
 }
 
 /**
- * Typed domain interface over queue.db. Every method mirrors the
- * corresponding queue.ts export with an identical signature and return
- * type — no extra options, no narrowed constraints. This is the stable
- * seam callers will target after the migration; implementations move
- * to direct client execution in subsequent slices.
- *
- * In addition to the domain methods, three generic SQL escape hatches are
- * available on every store created with a non-null client:
- * `query`, `execute`, and `atomic`.
+ * Typed domain interface over mars.db (tasks side). Every domain method mirrors
+ * the corresponding queue.ts export. In addition, the generic SQL escape
+ * hatches (`query`, `execute`, `batch`, `atomic`) and the `arcStatus` rollup
+ * are available on every store created with a non-null client.
  */
 export interface DomainTaskStore {
   // ── Core task CRUD ───────────────────────────────────────────────────────
@@ -155,39 +208,70 @@ export interface DomainTaskStore {
   upsertTranscript(input: UpsertTranscriptInput): Promise<void>
   getTranscript(taskId: string): Promise<TaskTranscriptRow | null>
 
+  // ── Arc rollup ───────────────────────────────────────────────────────────
+  /**
+   * Compute the rollup status for the arc of tasks sharing `originId`.
+   * Stateless: recomputes from the tasks table on every call.
+   */
+  arcStatus(originId: string, opts?: ArcStatusOptions): Promise<ArcStatus>
+
   // ── Generic SQL escape hatches ───────────────────────────────────────────
+  /** Execute a single read in a read-only transaction. Non-null client. */
+  query(stmt: InStatement | string, params?: InValue[]): Promise<ResultSet>
+  /** Execute a single ad-hoc write. Non-null client. */
+  execute(stmt: InStatement | string, params?: InValue[]): Promise<ResultSet>
   /**
-   * Execute a single read statement in a read-only transaction and return
-   * the full ResultSet. Requires a non-null client.
+   * Run all statements in one transaction under `mode` (default `'write'`);
+   * rolls the whole batch back if any statement fails. Non-null client.
    */
-  query(sql: string, params?: InValue[]): Promise<ResultSet>
+  batch(
+    stmts: InStatement[],
+    mode?: 'write' | 'read' | 'deferred',
+  ): Promise<ResultSet[]>
   /**
-   * Execute a single ad-hoc write statement and return the full ResultSet.
-   * Requires a non-null client.
-   */
-  execute(sql: string, params?: InValue[]): Promise<ResultSet>
-  /**
-   * Run `fn` inside a write transaction. Commits when `fn` returns;
-   * rolls back and rethrows when `fn` throws. The {@link Scope} passed to
-   * `fn` is revoked the moment the callback settles — any retained reference
-   * used afterwards throws a clear 'revoked' error. Nesting `atomic` inside
-   * an active `atomic` callback is rejected immediately. Requires a non-null
-   * client.
+   * Run `fn` inside a write transaction. Commits when `fn` returns; rolls back
+   * and rethrows when `fn` throws. The {@link Scope} is revoked the moment the
+   * callback settles. Nesting is rejected. Non-null client.
    */
   atomic<T>(fn: (scope: Scope) => Promise<T>): Promise<T>
 }
 
 /**
- * Return a lazy, once-per-instance memoised migration runner.
- *
- * The runner delegates to `initQueue()` from queue.ts, which is the
- * authoritative migration source in this slice. The `client` parameter
- * establishes the stable factory signature that the next slice will activate
- * (executing DDL directly on the passed client, removing the delegation).
- *
- * Callers that want a guaranteed-initialised store can `await runner()`
- * before the first domain call; queue functions already call `initQueue()`
- * internally so the explicit `await` is optional when going through the store.
+ * Best-effort read of integration-branch commits attributable to an arc.
+ */
+const readLandedCommits = async (
+  originId: string,
+  opts?: ArcStatusOptions,
+): Promise<string[]> => {
+  const cwd = opts?.cwd ?? process.env.MARS_REPO
+  if (!cwd) return []
+  const integrationBranch = opts?.integrationBranch ?? 'main'
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      [
+        'log',
+        integrationBranch,
+        `--grep=${originId}`,
+        '--fixed-strings',
+        '--format=%H',
+      ],
+      { cwd },
+    )
+    const shas = stdout
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+    return shas.reverse()
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Return a lazy, once-per-instance memoised migration runner that drives
+ * queue.db's schema migration on the passed client's database. The migration
+ * lives behind the store per ADR-0021; callers no longer hand-sequence it.
  */
 export const createRunMigrations = (
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -195,7 +279,7 @@ export const createRunMigrations = (
 ): (() => Promise<void>) => {
   let promise: Promise<void> | null = null
   return (): Promise<void> => {
-    if (!promise) promise = initQueue()
+    if (!promise) promise = migrateQueueSchema()
     return promise
   }
 }
@@ -203,24 +287,16 @@ export const createRunMigrations = (
 /**
  * Create a `DomainTaskStore` over the given libsql client.
  *
- * Domain methods (getTask, listTasks, …) are thin pass-throughs to the
- * corresponding queue functions — identical signature, identical return value,
- * no extra behaviour. The `client` parameter is used by the generic escape
- * hatches (`query`, `execute`, `atomic`); domain methods resolve their own
- * client from the runtime context in this slice.
- *
- * Passing `null` as the client is supported for call sites that only use
- * domain methods. Calling `query`, `execute`, or `atomic` on a null-client
- * store throws a clear error.
+ * Passing `null` is supported for call sites that only use domain methods.
+ * Calling a generic escape hatch on a null-client store throws a clear error.
  */
 export const createTaskStore = (client: Client | null): DomainTaskStore => {
   let inTransaction = false
 
-  /** Asserts the client is non-null; throws a descriptive error otherwise. */
   const guardClient = (): Client => {
     if (!client)
       throw new Error(
-        'TaskStore: a libsql Client is required for query/execute/atomic — pass a non-null client to createTaskStore',
+        'TaskStore: a libsql Client is required for query/execute/batch/atomic — pass a non-null client to createTaskStore',
       )
     return client
   }
@@ -268,17 +344,53 @@ export const createTaskStore = (client: Client | null): DomainTaskStore => {
     upsertTranscript: (input) => queueUpsertTranscript(input),
     getTranscript: (taskId) => queueGetTranscript(taskId),
 
+    // ── Arc rollup ─────────────────────────────────────────────────────────
+    arcStatus: async (originId, opts) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `SELECT id, status FROM tasks
+                WHERE origin_id = ?
+                ORDER BY created_at ASC`,
+        args: [originId],
+      })
+      const tasks: ArcTaskSummary[] = r.rows.map((row) => {
+        const r0 = row as unknown as { id: string; status: string }
+        return { id: r0.id, status: r0.status as TaskStatus }
+      })
+
+      let status: ArcRollupStatus
+      if (tasks.length === 0) {
+        status = 'in-progress'
+      } else {
+        const allTerminal = tasks.every((t) => TERMINAL_STATUSES.has(t.status))
+        if (!allTerminal) {
+          status = 'in-progress'
+        } else {
+          const anyDone = tasks.some((t) => t.status === 'done')
+          status = anyDone ? 'arc-done' : 'arc-failed'
+        }
+      }
+
+      const landedCommits = await readLandedCommits(originId, opts)
+      return { status, tasks, landedCommits }
+    },
+
     // ── Generic SQL escape hatches ─────────────────────────────────────────
 
-    query: async (sql, params) => {
+    query: async (stmt, params) => {
       const c = guardClient()
-      const [result] = await c.batch([{ sql, args: params ?? [] }], 'read')
+      const [result] = await c.batch([toStatement(stmt, params)], 'read')
       return result
     },
 
-    execute: async (sql, params) => {
+    execute: async (stmt, params) => {
       const c = guardClient()
-      return c.execute({ sql, args: params ?? [] })
+      return c.execute(toStatement(stmt, params))
+    },
+
+    batch: (stmts, mode) => {
+      const c = guardClient()
+      return c.batch(stmts, mode ?? 'write')
     },
 
     atomic: async <T>(fn: (scope: Scope) => Promise<T>): Promise<T> => {
@@ -293,19 +405,19 @@ export const createTaskStore = (client: Client | null): DomainTaskStore => {
       let revoked = false
 
       const scope: Scope = {
-        query: async (sql, params) => {
+        query: async (stmt, params) => {
           if (revoked)
             throw new Error(
               'TaskStore: Scope has been revoked — cannot use scope after atomic() has settled',
             )
-          return tx.execute({ sql, args: params ?? [] })
+          return tx.execute(toStatement(stmt, params))
         },
-        execute: async (sql, params) => {
+        execute: async (stmt, params) => {
           if (revoked)
             throw new Error(
               'TaskStore: Scope has been revoked — cannot use scope after atomic() has settled',
             )
-          return tx.execute({ sql, args: params ?? [] })
+          return tx.execute(toStatement(stmt, params))
         },
       }
 
@@ -329,13 +441,55 @@ export const createTaskStore = (client: Client | null): DomainTaskStore => {
   }
 }
 
+let cachedDefaultStore: DomainTaskStore | null = null
+
 /**
- * Return a DomainTaskStore that routes through the queue module's singleton
- * client. Used as the fallback when no store is injected via RequestContext.
- *
- * Domain methods work without a real client (queue functions resolve their
- * own client internally). The generic escape hatches (query/execute/atomic)
- * are not available on this store — callers that need them should obtain a
- * store via `createTaskStore(client)` with a real client.
+ * Composition-root accessor: the single process-wide `DomainTaskStore` over
+ * `.mars/mars.db`. Lazily runs the queue migration and constructs the store
+ * around the seam-internal libsql client. This is the only sanctioned way for
+ * production modules to obtain a store when one was not threaded in via DI.
  */
-export const getDefaultDomainTaskStore = (): DomainTaskStore => createTaskStore(null)
+export const getDefaultTaskStore = async (): Promise<DomainTaskStore> => {
+  if (cachedDefaultStore) return cachedDefaultStore
+  await migrateQueueSchema()
+  cachedDefaultStore = createTaskStore(resolveQueueClient())
+  return cachedDefaultStore
+}
+
+/**
+ * Synchronous composition-root accessor for call sites that only need domain
+ * methods and cannot await. The migration is driven on first domain call by
+ * queue.ts's own defensive `migrateQueueSchema()` guards.
+ */
+export const getDefaultDomainTaskStore = (): DomainTaskStore =>
+  createTaskStore(resolveQueueClient())
+
+/**
+ * Composition-root-only access to the underlying libsql `Client` for the
+ * wire-bus / outbox subscriber layer (cursor reads on the `events` table,
+ * which lives below the domain seam — ADR-0021 keeps the Outbox in queue.db).
+ *
+ * This is NOT a domain escape hatch: domain modules must use the store. The
+ * only sanctioned importer is the daemon composition root, which threads this
+ * client into `ensure*`/`drain*` subscriber wiring. Returning the raw client
+ * here is the ADR's "constructor injection of a libsql Client at the
+ * composition root" — the leak the ADR closes is *domain* modules importing a
+ * raw `getClient`, not the root wiring the bus.
+ */
+export const getCompositionRootClient = (): Client => resolveQueueClient()
+
+/**
+ * Composition-root migration entry point. Runs the (memoised) queue schema
+ * migration. The daemon calls this once at startup so the schema exists before
+ * any subscriber or store touches the DB.
+ */
+export const runCompositionRootMigrations = (): Promise<void> =>
+  migrateQueueSchema()
+
+/**
+ * Test-only: drop the cached default store so a subsequent
+ * `getDefaultTaskStore()` rebuilds against whatever queue client is current.
+ */
+export const __resetDefaultTaskStoreForTests = (): void => {
+  cachedDefaultStore = null
+}

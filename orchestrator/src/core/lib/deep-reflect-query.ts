@@ -1,4 +1,4 @@
-import { getDefaultTaskStore } from './task-store'
+import { getDefaultTaskStore } from '../store/task-store'
 import type { ClaudeEvent } from './claude-stream'
 import { listTaskSignals, type TaskSignalRow } from './reflect-signals'
 import { loadScoresForTasks, type TaskScoreEntry } from './reflect-query'

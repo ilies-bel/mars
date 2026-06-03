@@ -9,7 +9,7 @@ interface Queue {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
   listTasks: typeof import('../../queue').listTasks
-  initQueue: typeof import('../../queue').initQueue
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
 const setupRepo = (): string => {
@@ -23,7 +23,7 @@ const loadQueue = async (repo: string): Promise<Queue> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../../queue')
-  await mod.initQueue()
+  await mod.migrateQueueSchema()
   return mod as unknown as Queue
 }
 
@@ -75,7 +75,7 @@ describe('queue prompt type guards', () => {
     )
   })
 
-  it('initQueue heals pre-existing blob prompts to TEXT (idempotent)', async () => {
+  it('migrateQueueSchema heals pre-existing blob prompts to TEXT (idempotent)', async () => {
     const q = await loadQueue(repo)
     await q.enqueueTask('seed', undefined, { skipTriage: true })
 
@@ -91,7 +91,7 @@ describe('queue prompt type guards', () => {
     )
     expect((before.rows[0] as unknown as { t: string }).t).toBe('blob')
 
-    await q.initQueue()
+    await q.migrateQueueSchema()
 
     const after = await direct.execute(
       `SELECT typeof(prompt) AS t, prompt AS p FROM tasks WHERE id = 'blobby01'`,
@@ -100,18 +100,18 @@ describe('queue prompt type guards', () => {
     expect((after.rows[0] as unknown as { p: string }).p).toBe('hi')
 
     // Idempotent: a second pass leaves text alone and reports 0 blobs.
-    await q.initQueue()
+    await q.migrateQueueSchema()
     const again = await direct.execute(
       `SELECT typeof(prompt) AS t FROM tasks WHERE id = 'blobby01'`,
     )
     expect((again.rows[0] as unknown as { t: string }).t).toBe('text')
   })
 
-  it('initQueue does not create task_transcripts (migrated to trace_events in PRD 436f14c7)', async () => {
+  it('migrateQueueSchema does not create task_transcripts (migrated to trace_events in PRD 436f14c7)', async () => {
     // task_transcripts is no longer created on fresh databases; data from
     // pre-migration databases is lifted into trace_events and the table is dropped.
     const q = await loadQueue(repo)
-    await q.initQueue()
+    await q.migrateQueueSchema()
     const dbPath = resolve(repo, '.mars/mars.db')
     const direct = createClient({ url: `file:${dbPath}` })
     const tables = await direct.execute(
@@ -133,7 +133,7 @@ describe('queue prompt type guards', () => {
     const direct = createClient({ url: `file:${dbPath}` })
     const now = new Date().toISOString()
     // Write a row with a non-string prompt, but skip the boot-time heal by
-    // inserting AFTER initQueue completes. getTask must still return a string.
+    // inserting AFTER migrateQueueSchema completes. getTask must still return a string.
     await direct.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
       args: ['raw00001', new Uint8Array([0x6f, 0x6b]), 'queued', now, now],

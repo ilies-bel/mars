@@ -18,10 +18,8 @@ import {
   deleteTask,
   dropTask,
   enqueueTask,
-  getClient,
   getTask,
   hasIncompleteBlockers,
-  initQueue,
   listTasks,
   removeBlocker,
   setTaskPriority,
@@ -47,8 +45,12 @@ import {
 import type { Logger, WorkflowEvent } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
 import { resolveGitBin } from '../lib/git/internal'
-import { getDefaultTaskStore } from '../lib/task-store'
-import { getDefaultDomainTaskStore } from '../store/task-store'
+import {
+  getDefaultTaskStore,
+  getDefaultDomainTaskStore,
+  getCompositionRootClient,
+  runCompositionRootMigrations,
+} from '../store/task-store'
 import { listTerminalEvents } from './view/terminal-events'
 import { listProposals, promoteProposal } from '../proposals'
 import type { DraftFeature, FrameworkUpdateState, StaleWorktreeAlert } from './http-server'
@@ -365,7 +367,7 @@ export const startDaemon = async (
     log(`[cleanup] legacy database merge failed: ${(err as Error).message}`)
   }
 
-  await initQueue()
+  await runCompositionRootMigrations()
 
   // Load the persisted Worker registry. When the file is absent, the existing
   // hard-coded WORKER_CONFIGS continue to serve as defaults. Dispatch
@@ -903,7 +905,7 @@ export const startDaemon = async (
       const { runPlan } = await import('../../workflows/plan-workflow')
       // Wire the TaskStore from the composition root into the workflow so
       // the generate step routes its queue reads through the store
-      // rather than calling getClient() directly (ADR-0021 seam, slice 2).
+      // rather than calling getCompositionRootClient() directly (ADR-0021 seam, slice 2).
       // The store is read inside the workflow as `ctx.services.store`.
       const taskStore = await getDefaultTaskStore()
       const result = await runPlan(taskId, refresh, taskStore)
@@ -1004,7 +1006,7 @@ export const startDaemon = async (
             if (await hasIncompleteBlockers(id)) {
               // Distinguish terminal (failed) blockers so operators know when
               // manual intervention is required vs. waiting for in-progress work.
-              const { rows: failedBlockerRows } = await getClient().execute({
+              const { rows: failedBlockerRows } = await getCompositionRootClient().execute({
                 sql: `SELECT b.blocker_task_id
                         FROM task_blockers b
                         JOIN tasks t ON t.id = b.blocker_task_id
@@ -2373,7 +2375,7 @@ export const startDaemon = async (
         createProgressTaskStore,
         createProposalReader,
       } = await import('./view/progress')
-      const client = getClient()
+      const client = getCompositionRootClient()
       return buildProgressView(
         createProgressTaskStore(client),
         createProposalReader(client),
@@ -2459,10 +2461,11 @@ export const startDaemon = async (
       const { buildActionQueueView } = await import('./view/action-queue')
       const { listActionQueueItems } = await import('../lib/action-queue')
       const { listDismissals } = await import('../lib/action-queue-dismissals')
-      const { listTasks: qListTasks, initQueue, getClient: getQueueClient } = await import('../queue')
+      const { listTasks: qListTasks } = await import('../queue')
+      const getQueueClient = getCompositionRootClient
       const { getRepoRoot } = await import('../context')
 
-      await initQueue()
+      await runCompositionRootMigrations()
 
       // Build the state store adapter.
       const stateStore = {
@@ -2543,7 +2546,7 @@ export const startDaemon = async (
       })
     },
     viewTodo: async () => {
-      const client = getClient()
+      const client = getCompositionRootClient()
       // Check if the proposals table exists (absent on a fresh repo before
       // the first `mars init` / daemon run that initialises the schema).
       const tablesResult = await client.execute(
@@ -2659,10 +2662,10 @@ export const startDaemon = async (
   // registry would change when it runs relative to the alert-dismisser drain.
   void (async () => {
     try {
-      await ensureAlertDismisser(getClient())
-      const { rowsResolved, dismissalsCleared } = await reconcileTerminalTasks(getClient())
+      await ensureAlertDismisser(getCompositionRootClient())
+      const { rowsResolved, dismissalsCleared } = await reconcileTerminalTasks(getCompositionRootClient())
       log(`[lifecycle-reconcile] resolved=${rowsResolved} dismissalsCleared=${dismissalsCleared}`)
-      const { processed } = await drainAlertDismissals(getClient(), log)
+      const { processed } = await drainAlertDismissals(getCompositionRootClient(), log)
       if (processed > 0)
         log(`[alert-dismisser] cleared alerts for ${processed} status change(s) on boot`)
     } catch (err) {
@@ -2674,9 +2677,9 @@ export const startDaemon = async (
   // apply any actionQueue mutations for events published while the daemon was down.
   void (async () => {
     try {
-      await ensureActionQueueRepopulator(getClient())
+      await ensureActionQueueRepopulator(getCompositionRootClient())
       const { processed } = await drainActionQueueRepopulations(
-        getClient(),
+        getCompositionRootClient(),
         log,
       )
       if (processed > 0) {
@@ -2694,8 +2697,8 @@ export const startDaemon = async (
   // cursor replays any task.terminal events published since the last drain.
   void (async () => {
     try {
-      await ensureBlockerResolutionSubscriber(getClient())
-      const { processed } = await drainBlockerResolution(getClient(), log)
+      await ensureBlockerResolutionSubscriber(getCompositionRootClient())
+      const { processed } = await drainBlockerResolution(getCompositionRootClient(), log)
       if (processed > 0) {
         log(`[blocker-resolution] unblocked ${processed} dependent(s) on boot`)
         // Surface newly queued tasks to the dispatch loop.
@@ -2859,7 +2862,7 @@ export const startDaemon = async (
   const alertDrain = setInterval(() => {
     void (async () => {
       try {
-        await drainAlertDismissals(getClient(), log)
+        await drainAlertDismissals(getCompositionRootClient(), log)
       } catch (err) {
         log(`[alert-dismisser] drain errored: ${(err as Error).message}`)
       }
@@ -2877,7 +2880,7 @@ export const startDaemon = async (
   const actionQueueRepopulatorDrain = setInterval(() => {
     void (async () => {
       try {
-        const { processed } = await drainActionQueueRepopulations(getClient(), log)
+        const { processed } = await drainActionQueueRepopulations(getCompositionRootClient(), log)
         if (processed > 0) viewStreamHub.broadcast('action-queue')
       } catch (err) {
         log(`[action-queue-repopulator] drain errored: ${(err as Error).message}`)
@@ -2896,7 +2899,7 @@ export const startDaemon = async (
   const blockerResolutionDrain = setInterval(() => {
     void (async () => {
       try {
-        const { processed } = await drainBlockerResolution(getClient(), log)
+        const { processed } = await drainBlockerResolution(getCompositionRootClient(), log)
         if (processed > 0) {
           const queued = await listTasks('queued')
           for (const t of queued) {

@@ -17,8 +17,8 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 interface QueueModule {
-  initQueue: typeof import('../../queue').initQueue
-  getClient: typeof import('../../queue').getClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
   enqueueTask: typeof import('../../queue').enqueueTask
   updateTask: typeof import('../../queue').updateTask
 }
@@ -61,7 +61,7 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   const ad = (await import('../alert-dismisser')) as unknown as AlertDismisserModule
   const pt = (await import('../purge-task')) as unknown as PurgeTaskModule
@@ -83,7 +83,7 @@ describe('corePurgeTask — task.dropped emitted before DELETE', () => {
 
   it('emits task.dropped in the same tx as DELETE, and drainAlertDismissals clears the inbox row', async () => {
     const { q, actionQueue, ad, pt } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     // Seed a terminal task.
     const task = await q.enqueueTask('purge-emit test', undefined, { skipTriage: true })

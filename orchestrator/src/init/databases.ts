@@ -1,4 +1,4 @@
-import { initQueue } from '../core/queue'
+import { runCompositionRootMigrations } from '../core/store/task-store'
 import { initProposals } from '../core/proposals'
 import { initActionQueue } from '../core/lib/action-queue'
 import { mergeLegacyDatabases } from './merge-databases'
@@ -18,10 +18,11 @@ export const initDatabases = async (): Promise<void> => {
   // otherwise the libsql client materialises an empty mars.db and the
   // merge sentinel never fires.
   await mergeLegacyDatabases()
-  // Order matters: `initProposals` runs `initQueue` internally to align FK
-  // expectations, but we call it explicitly first so the queue's own
-  // migrations land before any proposals-side `ALTER TABLE` ordering kicks in.
-  await initQueue()
+  // Order matters: `initProposals` runs the queue migration internally to align
+  // FK expectations, but we run the queue migration explicitly first (through
+  // the TaskStore seam) so the queue's own migrations land before any
+  // proposals-side `ALTER TABLE` ordering kicks in.
+  await runCompositionRootMigrations()
   await initProposals()
   await initActionQueue()
 }

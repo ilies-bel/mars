@@ -10,7 +10,7 @@ interface Queue {
   getTask: typeof import('../../queue').getTask
   setTaskPriority: typeof import('../../queue').setTaskPriority
   updateTask: typeof import('../../queue').updateTask
-  initQueue: typeof import('../../queue').initQueue
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
 const setupRepo = (): string => {
@@ -24,7 +24,7 @@ const loadQueue = async (repo: string): Promise<Queue> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../../queue')
-  await mod.initQueue()
+  await mod.migrateQueueSchema()
   return mod as unknown as Queue
 }
 

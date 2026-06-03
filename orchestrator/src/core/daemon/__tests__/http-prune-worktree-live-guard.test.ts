@@ -30,7 +30,7 @@ const loadModules = async (repo: string) => {
   process.env.MARS_REPO = repo
   const queue = (await import('../../queue')) as typeof import('../../queue')
   const httpServer = (await import('../http-server')) as typeof import('../http-server')
-  await queue.initQueue()
+  await queue.migrateQueueSchema()
   return { queue, httpServer }
 }
 

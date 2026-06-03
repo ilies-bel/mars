@@ -22,8 +22,8 @@ import { resolve } from 'node:path'
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   updateTask: typeof import('../../queue').updateTask
 }
 
@@ -78,7 +78,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const pt = (await import('../purge-task')) as unknown as PurgeTaskModule
   return { q, pt }
 }

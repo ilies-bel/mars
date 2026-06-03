@@ -17,8 +17,8 @@ import { InMemoryStore } from '@mars/workflow'
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   addBlockers: typeof import('../../queue').addBlockers
   updateTask: typeof import('../../queue').updateTask
 }
@@ -40,7 +40,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const restart = (await import('../restart-task')) as unknown as RestartModule
   return { q, restart }
 }
@@ -64,7 +64,7 @@ describe('coreRestartTask blocker invariant', () => {
 
     await q.addBlockers(dependent.id, [blocker.id])
     // Manually put dependent in 'failed' with an incomplete blocker still in place
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
       args: [dependent.id],
     })
@@ -82,7 +82,7 @@ describe('coreRestartTask blocker invariant', () => {
 
     await q.addBlockers(dependent.id, [blocker.id])
     await q.updateTask(blocker.id, { status: 'done' })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
       args: [dependent.id],
     })
@@ -96,7 +96,7 @@ describe('coreRestartTask blocker invariant', () => {
   it('puts a failed task with no blockers back to queued', async () => {
     const { q, restart } = await loadModules(repo)
     const t = await q.enqueueTask('standalone', undefined, { skipTriage: true })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
       args: [t.id],
     })

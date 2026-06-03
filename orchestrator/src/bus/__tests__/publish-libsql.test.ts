@@ -5,8 +5,8 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 interface QueueMod {
-  initQueue: typeof import('../../core/queue').initQueue
-  getClient: typeof import('../../core/queue').getClient
+  migrateQueueSchema: typeof import('../../core/queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../../core/queue').resolveQueueClient
 }
 
 interface PublishMod {
@@ -26,7 +26,7 @@ const loadMods = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../core/queue')) as unknown as QueueMod
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const p = (await import('../publisher')) as unknown as PublishMod
   return { q, p }
 }
@@ -45,7 +45,7 @@ describe('publish-libsql: atomic event insertion', () => {
 
   it('commits an event row atomically with a state write', async () => {
     const { q, p } = await loadMods(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     // Enqueue a real task row so we have something to write in the same tx.
     const now = new Date().toISOString()
@@ -87,7 +87,7 @@ describe('publish-libsql: atomic event insertion', () => {
 
   it('rolls back both event and state write on transaction rollback', async () => {
     const { q, p } = await loadMods(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     const now = new Date().toISOString()
     const tx = await client.transaction('write')

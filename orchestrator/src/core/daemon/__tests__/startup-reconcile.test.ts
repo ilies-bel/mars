@@ -17,8 +17,8 @@ import { execFileSync } from 'node:child_process'
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   addBlockers: typeof import('../../queue').addBlockers
   updateTask: typeof import('../../queue').updateTask
 }
@@ -40,7 +40,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const reconcile = (await import('../startup-reconcile')) as unknown as ReconcileModule
   return { q, reconcile }
 }
@@ -74,7 +74,7 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
     // This is the "orphaned-blocked" state: the edge was deleted (e.g. by
     // dropTask/purge) but the dependent was never promoted back to queued.
     const task = await q.enqueueTask('orphaned task', undefined, { skipTriage: true })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
       args: [task.id],
     })
@@ -95,7 +95,7 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
 
     await q.addBlockers(dependent.id, [blocker.id])
     // Force the dependent to blocked (simulating how blocked tasks are normally created)
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
       args: [dependent.id],
     })
@@ -112,7 +112,7 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
 
     // Create an orphaned-blocked task.
     const task = await q.enqueueTask('idempotent task', undefined, { skipTriage: true })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
       args: [task.id],
     })
@@ -139,7 +139,7 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
 
     // Orphaned: blocked with no edges → should be re-queued.
     const orphan = await q.enqueueTask('orphan', undefined, { skipTriage: true })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
       args: [orphan.id],
     })
@@ -150,7 +150,7 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
       skipTriage: true,
     })
     await q.addBlockers(dependent.id, [blocker.id])
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
       args: [dependent.id],
     })
@@ -175,13 +175,13 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
     const dependent = await q.enqueueTask('stranded dependent', undefined, { skipTriage: true })
 
     await q.addBlockers(dependent.id, [blocker.id])
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
       args: [dependent.id],
     })
 
     // Delete the blocker edge (as dropTask / purge would do).
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
       args: [dependent.id, blocker.id],
     })
@@ -215,14 +215,14 @@ describe('runStartupReconcile — blocker-drift repair precedes orphan scan', ()
     const drifted = await q.enqueueTask('drifted task', undefined, { skipTriage: true })
     await q.addBlockers(drifted.id, [blocker.id])
     // Force to queued despite having an incomplete blocker (invariant violation).
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'queued' WHERE id = ?`,
       args: [drifted.id],
     })
 
     // Set up an orphan: blocked with no edges.
     const orphan = await q.enqueueTask('orphan task', undefined, { skipTriage: true })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
       args: [orphan.id],
     })

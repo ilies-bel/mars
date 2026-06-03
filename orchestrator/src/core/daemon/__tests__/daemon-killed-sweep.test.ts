@@ -6,7 +6,7 @@ import { resolve } from 'node:path'
 
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
-  initQueue: typeof import('../../queue').initQueue
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   updateTask: typeof import('../../queue').updateTask
   getTask: typeof import('../../queue').getTask
 }
@@ -34,7 +34,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   const sweep = (await import('../daemon-killed-sweep')) as unknown as SweepModule
   return { q, actionQueue, sweep }

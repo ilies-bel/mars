@@ -85,7 +85,7 @@ describe('schema migration: drop blocker_id + task_suggestions, rename origin->s
     q.close()
     s.close()
 
-    // Trigger the migration via initProposals (which calls initQueue first).
+    // Trigger the migration via initProposals (which calls migrateQueueSchema first).
     const { initProposals } = await import('../proposals')
     await initProposals()
 
@@ -162,9 +162,9 @@ describe('integration_head_sha column', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('initQueue adds integration_head_sha column to tasks table', async () => {
-    const { initQueue } = await import('../queue')
-    await initQueue()
+  it('migrateQueueSchema adds integration_head_sha column to tasks table', async () => {
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
 
     const q = createClient({ url: `file:${repo}/.mars/mars.db` })
     const cols = await q.execute(`PRAGMA table_info(tasks)`)
@@ -176,8 +176,8 @@ describe('integration_head_sha column', () => {
   })
 
   it('updateTask + getTask round-trip a valid 40-char SHA', async () => {
-    const { initQueue, enqueueTask, updateTask, getTask } = await import('../queue')
-    await initQueue()
+    const { migrateQueueSchema, enqueueTask, updateTask, getTask } = await import('../queue')
+    await migrateQueueSchema()
 
     const task = await enqueueTask('test prompt', undefined, { skipTriage: true })
     const fakeSha = 'a'.repeat(40)
@@ -188,8 +188,8 @@ describe('integration_head_sha column', () => {
   })
 
   it('tasks without integration_head_sha load with null', async () => {
-    const { initQueue, enqueueTask, getTask } = await import('../queue')
-    await initQueue()
+    const { migrateQueueSchema, enqueueTask, getTask } = await import('../queue')
+    await migrateQueueSchema()
 
     const task = await enqueueTask('test prompt 2', undefined, { skipTriage: true })
     const loaded = await getTask(task.id)
@@ -214,8 +214,8 @@ describe('integration_head_sha column', () => {
     q.close()
 
     // Run migration
-    const { initQueue, getTask } = await import('../queue')
-    await initQueue()
+    const { migrateQueueSchema, getTask } = await import('../queue')
+    await migrateQueueSchema()
 
     // Legacy task loads without error; integration_head_sha is null
     const loaded = await getTask('legacy-task')
@@ -239,8 +239,8 @@ describe('schema bootstrap: task_proposal_blockers table + indexes', () => {
   })
 
   it('creates task_proposal_blockers with task_id/proposal_id/created_at and proposal-side index', async () => {
-    const { initQueue } = await import('../queue')
-    await initQueue()
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
 
     const q = createClient({ url: `file:${repo}/.mars/mars.db` })
 
@@ -318,8 +318,8 @@ describe('migration: task_signals + task_transcripts → trace_events (PRD 436f1
     q.close()
 
     // Run the migration.
-    const { initQueue } = await import('../queue')
-    await initQueue()
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
 
     const db = createClient({ url: dbPath })
 
@@ -377,8 +377,8 @@ describe('migration: task_signals + task_transcripts → trace_events (PRD 436f1
     })
     q.close()
 
-    const { initQueue } = await import('../queue')
-    await initQueue()
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
 
     const db = createClient({ url: dbPath })
 
@@ -407,14 +407,14 @@ describe('migration: task_signals + task_transcripts → trace_events (PRD 436f1
   })
 
   it('is a no-op when both legacy tables are already absent', async () => {
-    // Run initQueue twice; the second run must not error even though
+    // Run migrateQueueSchema twice; the second run must not error even though
     // neither task_signals nor task_transcripts exists.
-    const { initQueue } = await import('../queue')
-    await initQueue()
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
 
     vi.resetModules()
     process.env.MARS_REPO = repo
-    const { initQueue: initQueue2 } = await import('../queue')
+    const { migrateQueueSchema: initQueue2 } = await import('../queue')
     await expect(initQueue2()).resolves.not.toThrow()
   })
 
@@ -448,8 +448,8 @@ describe('migration: task_signals + task_transcripts → trace_events (PRD 436f1
     })
     q.close()
 
-    const { initQueue } = await import('../queue')
-    await initQueue()
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
 
     // task_transcripts dropped.
     const db = createClient({ url: dbPath })

@@ -1175,8 +1175,8 @@ describe('fix-recipes', () => {
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
 interface FixTaskModule {
@@ -1197,7 +1197,7 @@ const loadModules = async (
   process.env.MARS_REPO = repo
   delete process.env.MARS_FIX_RETRY_BUDGET
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const ft = (await import(
     '../../queue-fix-tasks'
   )) as unknown as FixTaskModule
@@ -1246,7 +1246,7 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
     expect(result.outcome).toBe('blocked')
     expect(result.failureSignature).toBe('verify:has-diff/no-commits-ahead')
 
-    const r = await q.getClient().execute({
+    const r = await q.resolveQueueClient().execute({
       sql: `SELECT prompt FROM tasks WHERE id = ?`,
       args: [result.fixTaskId ?? ''],
     })
@@ -1291,7 +1291,7 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
     expect(result.outcome).toBe('blocked')
     expect(result.failureSignature).toBe('verify:has-diff/no-commits-ahead')
 
-    const r = await q.getClient().execute({
+    const r = await q.resolveQueueClient().execute({
       sql: `SELECT prompt FROM tasks WHERE id = ?`,
       args: [result.fixTaskId ?? ''],
     })
@@ -1337,7 +1337,7 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
 
-    const r = await q.getClient().execute({
+    const r = await q.resolveQueueClient().execute({
       sql: `SELECT prompt FROM tasks WHERE id = ?`,
       args: [result.fixTaskId ?? ''],
     })
@@ -1387,7 +1387,7 @@ describe('handleTaskFailureWithFixTask unknown-signature path', () => {
     expect(source?.status).toBe('failed')
 
     // No new task rows beyond the source were created (no investigator).
-    const all = await q.getClient().execute({
+    const all = await q.resolveQueueClient().execute({
       sql: `SELECT id FROM tasks`,
       args: [],
     })

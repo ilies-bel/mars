@@ -39,7 +39,7 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
 
   it('lists every blocked dependent in the body and titles the cohort count', async () => {
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
       const m = await import('../../lib/main-dirty')
       const r = await import('../../lib/run-tool')
@@ -96,7 +96,7 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
 
   it('handles a committer with zero current dependents (cleared by other paths)', async () => {
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
       const m = await import('../../lib/main-dirty')
       const r = await import('../../lib/run-tool')
@@ -113,7 +113,7 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
       traceStore: nullTraceStore,
     })
     // Simulate the dependent being unblocked by another path: drop the edge.
-    const c = queue.getClient()
+    const c = queue.resolveQueueClient()
     await c.execute({
       sql: `DELETE FROM task_blockers WHERE blocker_task_id = ?`,
       args: [resolution.fixTaskId],
@@ -149,7 +149,7 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
 
   it('supersedes actionQueue rows for previously-failed committers at DIFFERENT hashes', async () => {
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
       const m = await import('../../lib/main-dirty')
       const r = await import('../../lib/run-tool')
@@ -211,7 +211,7 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
 
   it('leaves an actionQueue row alone when its hash matches the fresh hash', async () => {
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
       const m = await import('../../lib/main-dirty')
       const r = await import('../../lib/run-tool')
@@ -280,7 +280,7 @@ describe('releaseMainCommitterDependents', () => {
 
   it('re-queues tasks blocked on the failed committer', async () => {
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
       const m = await import('../../lib/main-dirty')
       const r = await import('../../lib/run-tool')
@@ -326,7 +326,7 @@ describe('releaseMainCommitterDependents', () => {
     expect((await queue.getTask(src2.id))?.status).toBe('queued')
 
     // Blocker edges for the failed committer must be gone.
-    const c = queue.getClient()
+    const c = queue.resolveQueueClient()
     const edges = await c.execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
       args: [res.fixTaskId],
@@ -336,7 +336,7 @@ describe('releaseMainCommitterDependents', () => {
 
   it('leaves a task blocked when other active blockers remain', async () => {
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
       const m = await import('../../lib/main-dirty')
       const r = await import('../../lib/run-tool')
@@ -357,7 +357,7 @@ describe('releaseMainCommitterDependents', () => {
       traceStore: nullTraceStore,
     })
     // Add a second blocker directly.
-    const c = queue.getClient()
+    const c = queue.resolveQueueClient()
     await c.execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
             VALUES (?, ?, 'confirmed', datetime('now'))`,
@@ -388,7 +388,7 @@ describe('releaseMainCommitterDependents', () => {
     // This is the regression test for the reported deadlock:
     // A failed committer must not poison-pill fresh tasks at dispatch time.
     const queue = await import('../../queue')
-    await queue.initQueue()
+    await queue.migrateQueueSchema()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
       const m = await import('../../lib/main-dirty')
       const r = await import('../../lib/run-tool')
@@ -429,7 +429,7 @@ describe('releaseMainCommitterDependents', () => {
     expect(second.spawned).toBe(true)
 
     // The edge from T2 to C1 must not exist.
-    const c = queue.getClient()
+    const c = queue.resolveQueueClient()
     const poisonEdge = await c.execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
       args: [t2.id, first.fixTaskId],

@@ -3,10 +3,11 @@ import { resolve } from 'node:path'
 import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 import { createQueueWorkflowStore } from './queue-workflow-store'
-import { getProposal, getProposalsClient, markProposalSliced } from '../core/proposals'
+import { getProposal, markProposalSliced } from '../core/proposals'
+import { getDefaultStateStore } from '../core/store/state-store'
 import { enqueueTask, setTaskStatus } from '../core/queue'
 import { assertNotRecoveryEdge } from '../core/lib/blocker-invariant'
-import { getDefaultTaskStore } from '../core/lib/task-store'
+import { getDefaultTaskStore } from '../core/store/task-store'
 import { buildEventInsert } from '../core/lib/outbox'
 import { Workers } from '../core/workers'
 import { parseClaudeJsonResult } from '../core/lib/claude-json'
@@ -714,8 +715,8 @@ Save your work: stage and commit when verify passes.
 type SliceInput = z.infer<typeof sliceInputSchema>
 type SliceOutput = z.infer<typeof sliceOutputSchema>
 
-// The slice workflow talks to proposals/queue via module-level clients
-// (getProposalsClient/getDefaultTaskStore), so no services need wiring.
+// The slice workflow talks to proposals/queue via the composition-root store
+// seams (getDefaultStateStore/getDefaultTaskStore), so no services need wiring.
 // One imperative step ('generate-slices', load-bearing as the trace-view
 // node label). Failures THROW; the engine records the step failed.
 export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
@@ -806,7 +807,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     }
 
     const taskStore = await getDefaultTaskStore()
-    const ideasClient = getProposalsClient()
+    const stateStore = await getDefaultStateStore()
 
     // Pre-flight: crash-recovery deduplication. A process crash between
     // Phase 1 (task inserts) and Phase 4 (status flip) leaves the proposal
@@ -1079,7 +1080,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       // `mars proposal slice` can pick it up again. Best-effort — a revert
       // failure should not mask the original cause.
       if (proposalFlipped) {
-        await ideasClient
+        await stateStore
           .execute({
             sql: `UPDATE proposals SET status = 'prd-ready', updated_at = ? WHERE id = ?`,
             args: [Date.now(), proposal.id],

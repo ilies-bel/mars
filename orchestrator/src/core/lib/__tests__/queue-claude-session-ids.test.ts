@@ -9,7 +9,7 @@ interface Queue {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
   updateTask: typeof import('../../queue').updateTask
-  initQueue: typeof import('../../queue').initQueue
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
 const setupRepo = (): string => {
@@ -23,7 +23,7 @@ const loadQueue = async (repo: string): Promise<Queue> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../../queue')
-  await mod.initQueue()
+  await mod.migrateQueueSchema()
   return mod as unknown as Queue
 }
 
@@ -93,7 +93,7 @@ describe('tasks.claude_session_ids (append-only history)', () => {
 
   it('backfills claude_session_ids from a legacy row with only claude_session_id set', async () => {
     // Lay down a row before the new column exists, then run the
-    // migration via initQueue() and confirm the array gets seeded.
+    // migration via migrateQueueSchema() and confirm the array gets seeded.
     const queueDb = `file:${repo}/.mars/mars.db`
     const c = createClient({ url: queueDb })
     await c.execute(`CREATE TABLE tasks (

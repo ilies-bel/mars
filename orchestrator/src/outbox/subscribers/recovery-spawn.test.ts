@@ -21,8 +21,8 @@ interface QueueModule {
   enqueueTask: typeof import('../../core/queue').enqueueTask
   updateTask: typeof import('../../core/queue').updateTask
   getTask: typeof import('../../core/queue').getTask
-  getClient: typeof import('../../core/queue').getClient
-  initQueue: typeof import('../../core/queue').initQueue
+  resolveQueueClient: typeof import('../../core/queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../core/queue').migrateQueueSchema
 }
 
 interface ActionQueueModule {
@@ -85,7 +85,7 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../core/queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const aq = (await import(
     '../../core/lib/action-queue'
   )) as unknown as ActionQueueModule
@@ -100,7 +100,7 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   const pub = (await import(
     '../../bus/publisher'
   )) as unknown as PublisherModule
-  return { q, aq, ft, rc, rs, pub, client: q.getClient() }
+  return { q, aq, ft, rc, rs, pub, client: q.resolveQueueClient() }
 }
 
 /**

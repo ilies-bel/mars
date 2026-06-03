@@ -20,8 +20,8 @@ interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   updateTask: typeof import('../../queue').updateTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   addBlockers: typeof import('../../queue').addBlockers
   addProposalBlockers: typeof import('../../queue').addProposalBlockers
   listProposalBlockers: typeof import('../../queue').listProposalBlockers
@@ -40,7 +40,7 @@ const loadQueue = async (repo: string): Promise<QueueModule> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   return q
 }
 
@@ -48,7 +48,7 @@ const loadQueue = async (repo: string): Promise<QueueModule> => {
  * task_proposal_blockers carries a real FK on proposal_id (ADR-0034),
  * so any test that adds a proposal-blocker edge must first materialise
  * the referenced proposal row. The proposals table is created by
- * initQueue (minimal shape, sufficient for the FK target).
+ * migrateQueueSchema (minimal shape, sufficient for the FK target).
  */
 const seedProposals = async (
   q: QueueModule,
@@ -56,7 +56,7 @@ const seedProposals = async (
 ): Promise<void> => {
   const now = Date.now()
   for (const id of ids) {
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `INSERT OR IGNORE INTO proposals (id, created_at, updated_at)
             VALUES (?, ?, ?)`,
       args: [id, now, now],
@@ -103,7 +103,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
 
     // After: task is gone, no stale edge rows remain.
     expect(await q.getTask(task.id)).toBeNull()
-    const leftover = await q.getClient().execute({
+    const leftover = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_proposal_blockers WHERE task_id = ?`,
       args: [task.id],
     })
@@ -127,7 +127,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     })
 
     expect(await q.getTask(task.id)).toBeNull()
-    const leftover = await q.getClient().execute({
+    const leftover = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_proposal_blockers WHERE task_id = ?`,
       args: [task.id],
     })
@@ -159,7 +159,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
 
     // waiter still exists and its task_blockers row has been removed.
     expect(await q.getTask(waiter.id)).not.toBeNull()
-    const leftover = await q.getClient().execute({
+    const leftover = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
       args: [blocker.id],
     })
@@ -187,7 +187,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     // Dependencies still exist and their blocker rows are gone.
     expect(await q.getTask(dep1.id)).not.toBeNull()
     expect(await q.getTask(dep2.id)).not.toBeNull()
-    const leftover = await q.getClient().execute({
+    const leftover = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
       args: [waiter.id],
     })
@@ -208,7 +208,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
 
     // Directly insert a sibling row that has fix_for_task_id = parent.id.
     // (enqueueTask doesn't expose fix_for_task_id; write it raw.)
-    const c = q.getClient()
+    const c = q.resolveQueueClient()
     const siblingId = 'mars-sibling01'
     await c.execute({
       sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, priority, created_at, updated_at, retry_count, claude_session_ids)
@@ -247,7 +247,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     await q.addProposalBlockers(target.id, ['prop-combined'])
 
     // Sibling fix_for pointer: another task points back at target.
-    const c = q.getClient()
+    const c = q.resolveQueueClient()
     const sibId = 'mars-sibling02'
     await c.execute({
       sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, priority, created_at, updated_at, retry_count, claude_session_ids)
@@ -266,14 +266,14 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     expect(result.fixForRefsCleared).toContain(sibId)
 
     // No task_blockers rows mention target on either side.
-    const tbLeft = await q.getClient().execute({
+    const tbLeft = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
       args: [target.id, target.id],
     })
     expect(Number((tbLeft.rows[0] as unknown as { n: number | bigint }).n)).toBe(0)
 
     // No task_proposal_blockers rows remain for target.
-    const tpbLeft = await q.getClient().execute({
+    const tpbLeft = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_proposal_blockers WHERE task_id = ?`,
       args: [target.id],
     })

@@ -31,7 +31,7 @@ const load = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = await import('../../queue')
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const actionQueue = await import('../../lib/action-queue')
   const drain = await import('../subscriber-drain')
   const subs = await import('../../../bus/subscribers')
@@ -61,7 +61,7 @@ describe('drainWithStall — ADR-0032', () => {
 
   it('blocks the cursor on a throwing handler and raises a stalled row after K failures, then recovers', async () => {
     const { q, actionQueue, drain, subs, pub } = await load(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     await actionQueue.initActionQueue()
     await subs.registerSubscriber(client, SUB, { replay: false })
@@ -105,7 +105,7 @@ describe('drainWithStall — ADR-0032', () => {
 
   it('a healthy subscriber advances its cursor and raises nothing', async () => {
     const { q, actionQueue, drain, subs, pub } = await load(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     await actionQueue.initActionQueue()
     await subs.registerSubscriber(client, SUB, { replay: false })

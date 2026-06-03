@@ -6,8 +6,8 @@ import { resolve } from 'node:path'
 import type { Client } from '@libsql/client'
 
 interface QueueModule {
-  initQueue: typeof import('../../queue').initQueue
-  getClient: typeof import('../../queue').getClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
 }
 
 interface ActionQueueModule {
@@ -41,7 +41,7 @@ const loadModules = async (repo: string) => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   await actionQueue.initActionQueue()
   const dismissals = (await import(
@@ -73,7 +73,7 @@ describe('reconcileTerminalTasks', () => {
 
   it('resolves open rows for terminal tasks and clears orphaned dismissals, leaving live tasks untouched', async () => {
     const { q, actionQueue, dismissals, reconcile } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     // Seed: 'done' task with an open action queue row.
     const doneTaskId = 'T-done'
@@ -138,7 +138,7 @@ describe('reconcileTerminalTasks', () => {
 
   it('is idempotent: a second call after everything is already clean is a no-op', async () => {
     const { q, actionQueue, reconcile } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
 
     const doneTaskId = 'T-done2'
     await insertTask(client, doneTaskId, 'done')

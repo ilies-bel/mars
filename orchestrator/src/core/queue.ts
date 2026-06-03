@@ -6,7 +6,7 @@ import type { Author, AuthorKind } from './author'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
 import { openLibsql } from './lib/libsql'
 import { buildEventInsert, publish, withWriteTx } from './lib/outbox'
-import type { TaskStore } from './lib/task-store'
+import type { DomainTaskStore as TaskStore } from './store/task-store'
 
 export type TaskStatus =
   | 'draft'
@@ -333,7 +333,14 @@ export const validatePriority = (value: number): void => {
 
 let clientSingleton: Client | null = null
 
-export const getClient = (): Client => {
+/**
+ * Seam-internal libsql client resolver for `.mars/mars.db` (ADR-0034: tasks
+ * and proposals share one file). NOT part of the public surface (ADR-0021):
+ * the only sanctioned importer is the TaskStore seam (`store/task-store.ts`),
+ * which threads it to callers via the injected store. No live module outside
+ * the store may import this — `getClient` is gone.
+ */
+export const resolveQueueClient = (): Client => {
   if (!clientSingleton) {
     const { queueDbPath } = resolveContext()
     clientSingleton = openLibsql({ url: `file:${queueDbPath}` })
@@ -341,8 +348,14 @@ export const getClient = (): Client => {
   return clientSingleton
 }
 
-export const initQueue = async (): Promise<void> => {
-  const c = getClient()
+/**
+ * Seam-internal, idempotent schema migration for queue.db (ADR-0021: the
+ * migration lives behind the store). The TaskStore drives this lazily and
+ * memoises it; queue's own domain functions call it defensively. NOT public
+ * — `initQueue` is gone.
+ */
+export const migrateQueueSchema = async (): Promise<void> => {
+  const c = resolveQueueClient()
   await c.execute(`
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
@@ -633,13 +646,13 @@ export const initQueue = async (): Promise<void> => {
   // Since proposals now lives in the SAME file as tasks (ADR-0034), the FK
   // target must exist before any insert into `task_proposal_blockers`. The
   // canonical creator is `initProposals` (proposals.ts), but it runs AFTER
-  // `initQueue` in `initDatabases`, and many call sites init only the queue
-  // (tests, ad-hoc utilities) — so we pre-create the proposals table here
+  // `migrateQueueSchema` in `initDatabases`, and many call sites init only the
+  // queue (tests, ad-hoc utilities) — so we pre-create the proposals table here
   // with the minimal `id PRIMARY KEY` shape needed to satisfy the FK.
   // `initProposals` keeps full ownership of column shape: its own
   // `CREATE TABLE IF NOT EXISTS proposals (...)` becomes a no-op, and the
   // additional columns it expects already exist (when initProposals follows
-  // initQueue in the standard path) OR get ALTERed in if a caller bypassed
+  // migrateQueueSchema in the standard path) OR get ALTERed in if a caller bypassed
   // initProposals entirely. The minimal stub here is forward-compatible.
   await c.execute(`
     CREATE TABLE IF NOT EXISTS proposals (
@@ -1138,8 +1151,8 @@ export const upsertTranscript = async (
   if (store) {
     await store.execute(stmt)
   } else {
-    await initQueue()
-    await getClient().execute(stmt)
+    await migrateQueueSchema()
+    await resolveQueueClient().execute(stmt)
   }
 }
 
@@ -1157,8 +1170,8 @@ export const getTranscript = async (
   // After PRD 436f14c7 slice 5, transcript data lives in trace_events.
   // Return the most recent step_ended event for this task that has either
   // a transcript or verifyOutput in its payload.
-  await initQueue()
-  const r = await getClient().execute({
+  await migrateQueueSchema()
+  const r = await resolveQueueClient().execute({
     sql: `SELECT timestamp, payload
             FROM trace_events
            WHERE kind = 'step_ended' AND task_id = ?
@@ -1371,7 +1384,7 @@ export const enqueueTask = async (
       `tags must be an array of non-empty strings; got ${JSON.stringify(opts.tags)}`,
     )
   }
-  await initQueue()
+  await migrateQueueSchema()
   const id = `mars-${randomUUID().slice(0, 8)}`
   const now = new Date().toISOString()
   const status: TaskStatus = opts?.skipTriage ? 'queued' : 'draft'
@@ -1411,7 +1424,7 @@ export const enqueueTask = async (
     ? JSON.stringify(spec.subDeliverable)
     : null
   const tagsJson = JSON.stringify(tags)
-  await getClient().execute({
+  await resolveQueueClient().execute({
     sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, files_json, verify_cmd, done_criteria_json, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
@@ -1439,7 +1452,7 @@ export const enqueueTask = async (
       now,
     ],
   })
-  const r = await getClient().execute({
+  const r = await resolveQueueClient().execute({
     sql: `SELECT * FROM tasks WHERE id = ?`,
     args: [id],
   })
@@ -1479,7 +1492,7 @@ export async function setTaskStatus(
   extras?: { error?: string; result?: unknown; dropReason?: string },
 ): Promise<void> {
   const now = new Date().toISOString()
-  await withWriteTx(getClient(), async (tx) => {
+  await withWriteTx(resolveQueueClient(), async (tx) => {
     await tx.execute({
       sql: 'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
       args: [newStatus, now, taskId],
@@ -1539,7 +1552,7 @@ export const updateTask = async (
   if (patch.status !== undefined) {
     const before = store
       ? await store.query({ sql: `SELECT status FROM tasks WHERE id = ?`, args: [id] })
-      : await getClient().execute({ sql: `SELECT status FROM tasks WHERE id = ?`, args: [id] })
+      : await resolveQueueClient().execute({ sql: `SELECT status FROM tasks WHERE id = ?`, args: [id] })
     previousStatus =
       before.rows.length > 0
         ? ((before.rows[0] as unknown as { status: string }).status ?? null)
@@ -1688,7 +1701,7 @@ export const updateTask = async (
         patch.claudeSessionId as string,
       ],
     }
-    await withWriteTx(getClient(), async (tx) => {
+    await withWriteTx(resolveQueueClient(), async (tx) => {
       await tx.execute(updateStmt)
       await tx.execute(sessionIdStmt)
       // Event INSERTs share the same transaction: if any throws the whole
@@ -1703,7 +1716,7 @@ export const updateTask = async (
     // Common path: wrap state write and event inserts in a single write
     // transaction.  withWriteTx retries on SQLITE_BUSY so a transient lock
     // contention doesn't drop the event.
-    await withWriteTx(getClient(), async (tx) => {
+    await withWriteTx(resolveQueueClient(), async (tx) => {
       await tx.execute(updateStmt)
       for (const stmt of eventStmts) await tx.execute(stmt)
     })
@@ -1722,7 +1735,7 @@ export const updateTask = async (
           sql: `SELECT DISTINCT task_id FROM task_blockers WHERE blocker_task_id = ?`,
           args: [id],
         })
-      : await getClient().execute({
+      : await resolveQueueClient().execute({
           sql: `SELECT DISTINCT task_id FROM task_blockers WHERE blocker_task_id = ?`,
           args: [id],
         })
@@ -1739,21 +1752,21 @@ export const getTask = async (id: string, store?: TaskStore): Promise<Task | nul
   if (store) {
     r = await store.query(stmt)
   } else {
-    await initQueue()
-    r = await getClient().execute(stmt)
+    await migrateQueueSchema()
+    r = await resolveQueueClient().execute(stmt)
   }
   if (r.rows.length === 0) return null
   return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
 }
 
 export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
-  await initQueue()
+  await migrateQueueSchema()
   const r = status
-    ? await getClient().execute({
+    ? await resolveQueueClient().execute({
         sql: `SELECT * FROM tasks WHERE status = ? ORDER BY priority DESC, created_at ASC`,
         args: [status],
       })
-    : await getClient().execute(
+    : await resolveQueueClient().execute(
         `SELECT * FROM tasks ORDER BY priority DESC, created_at ASC`,
       )
   return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
@@ -1764,8 +1777,8 @@ export const setTaskPriority = async (
   priority: number,
 ): Promise<Task> => {
   validatePriority(priority)
-  await initQueue()
-  const c = getClient()
+  await migrateQueueSchema()
+  const c = resolveQueueClient()
   const before = await c.execute({
     sql: `SELECT status FROM tasks WHERE id = ?`,
     args: [id],
@@ -1792,8 +1805,8 @@ export const setTaskPriority = async (
 }
 
 export const deleteTask = async (id: string): Promise<void> => {
-  await initQueue()
-  await getClient().execute({
+  await migrateQueueSchema()
+  await resolveQueueClient().execute({
     sql: `DELETE FROM tasks WHERE id = ?`,
     args: [id],
   })
@@ -1833,8 +1846,8 @@ export interface DropTaskResult {
  * Action-queue rows + dismissal permanently stale.
  */
 export const dropTask = async (id: string): Promise<DropTaskResult> => {
-  await initQueue()
-  const c = getClient()
+  await migrateQueueSchema()
+  const c = resolveQueueClient()
 
   return withWriteTx(c, async (tx) => {
     const before = await tx.execute({
@@ -1953,11 +1966,11 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
 }
 
 export const insertReflectionTask = async (corpusSize: number): Promise<string> => {
-  await initQueue()
+  await migrateQueueSchema()
   const id = `reflect-${randomUUID().slice(0, 8)}`
   const now = new Date().toISOString()
   const prompt = `mars reflect run over ${corpusSize} task(s) at ${now}`
-  await getClient().execute({
+  await resolveQueueClient().execute({
     sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at) VALUES (?, ?, 'done', ?, ?, ?)`,
     args: [id, prompt, id, now, now],
   })
@@ -1969,8 +1982,8 @@ export const addBlockers = async (
   blockerIds: readonly string[],
 ): Promise<void> => {
   if (blockerIds.length === 0) return
-  await initQueue()
-  const c = getClient()
+  await migrateQueueSchema()
+  const c = resolveQueueClient()
 
   const taskRow = await c.execute({
     sql: `SELECT 1 FROM tasks WHERE id = ?`,
@@ -2025,8 +2038,8 @@ export const addPendingReviewBlockers = async (
   blockerIds: readonly string[],
 ): Promise<void> => {
   if (blockerIds.length === 0) return
-  await initQueue()
-  const c = getClient()
+  await migrateQueueSchema()
+  const c = resolveQueueClient()
 
   const taskRow = await c.execute({
     sql: `SELECT 1 FROM tasks WHERE id = ?`,
@@ -2069,8 +2082,8 @@ export const removeBlocker = async (
   taskId: string,
   blockerId: string,
 ): Promise<{ removed: boolean }> => {
-  await initQueue()
-  const r = await getClient().execute({
+  await migrateQueueSchema()
+  const r = await resolveQueueClient().execute({
     sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
     args: [taskId, blockerId],
   })
@@ -2078,8 +2091,8 @@ export const removeBlocker = async (
 }
 
 export const clearBlockers = async (taskId: string): Promise<void> => {
-  await initQueue()
-  await getClient().execute({
+  await migrateQueueSchema()
+  await resolveQueueClient().execute({
     sql: `DELETE FROM task_blockers WHERE task_id = ?`,
     args: [taskId],
   })
@@ -2103,8 +2116,8 @@ export const addProposalBlockers = async (
   proposalIds: readonly string[],
 ): Promise<void> => {
   if (proposalIds.length === 0) return
-  await initQueue()
-  const c = getClient()
+  await migrateQueueSchema()
+  const c = resolveQueueClient()
 
   const taskRow = await c.execute({
     sql: `SELECT 1 FROM tasks WHERE id = ?`,
@@ -2139,8 +2152,8 @@ export const addProposalBlockers = async (
 export const listProposalBlockers = async (
   taskId: string,
 ): Promise<string[]> => {
-  await initQueue()
-  const r = await getClient().execute({
+  await migrateQueueSchema()
+  const r = await resolveQueueClient().execute({
     sql: `SELECT proposal_id AS id
             FROM task_proposal_blockers
            WHERE task_id = ?
@@ -2158,8 +2171,8 @@ export const removeProposalBlocker = async (
   taskId: string,
   proposalId: string,
 ): Promise<{ removed: boolean }> => {
-  await initQueue()
-  const r = await getClient().execute({
+  await migrateQueueSchema()
+  const r = await resolveQueueClient().execute({
     sql: `DELETE FROM task_proposal_blockers WHERE task_id = ? AND proposal_id = ?`,
     args: [taskId, proposalId],
   })
@@ -2176,8 +2189,8 @@ export const removeProposalBlocker = async (
 export const listTasksBlockedByProposal = async (
   proposalId: string,
 ): Promise<string[]> => {
-  await initQueue()
-  const r = await getClient().execute({
+  await migrateQueueSchema()
+  const r = await resolveQueueClient().execute({
     sql: `SELECT task_id AS id
             FROM task_proposal_blockers
            WHERE proposal_id = ?
@@ -2213,8 +2226,8 @@ export const transferProposalBlockerToTask = async (
   proposalId: string,
   newBlockerTaskId: string,
 ): Promise<{ transferred: string[] }> => {
-  await initQueue()
-  const c = getClient()
+  await migrateQueueSchema()
+  const c = resolveQueueClient()
   const dependents = await listTasksBlockedByProposal(proposalId)
   if (dependents.length === 0) return { transferred: [] }
   const blockerRow = await c.execute({
@@ -2270,8 +2283,8 @@ export interface UnblockTaskResult {
 export const unblockTask = async (
   taskId: string,
 ): Promise<UnblockTaskResult> => {
-  await initQueue()
-  const c = getClient()
+  await migrateQueueSchema()
+  const c = resolveQueueClient()
   const before = await c.execute({
     sql: `SELECT status FROM tasks WHERE id = ?`,
     args: [taskId],
@@ -2335,8 +2348,8 @@ export const listSiblings = async (
   excludeTaskId: string,
 ): Promise<string[]> => {
   if (originId === excludeTaskId) return []
-  await initQueue()
-  const r = await getClient().execute({
+  await migrateQueueSchema()
+  const r = await resolveQueueClient().execute({
     sql: `SELECT id FROM tasks
             WHERE origin_id = ? AND id != ?
             ORDER BY created_at ASC`,
@@ -2354,8 +2367,8 @@ export const listSiblings = async (
 export const listTasksForProposal = async (
   proposalId: string,
 ): Promise<Array<{ id: string; status: string }>> => {
-  await initQueue()
-  const r = await getClient().execute({
+  await migrateQueueSchema()
+  const r = await resolveQueueClient().execute({
     sql: `SELECT id, status FROM tasks
             WHERE origin_id = ?
             ORDER BY created_at ASC`,
@@ -2368,10 +2381,10 @@ export const listTasksForProposal = async (
 }
 
 export const listBlockers = async (taskId: string): Promise<string[]> => {
-  await initQueue()
+  await migrateQueueSchema()
   // Only confirmed-or-pending-review rows gate dispatch; rejected rows are
   // historical/audit and must not appear here.
-  const r = await getClient().execute({
+  const r = await resolveQueueClient().execute({
     sql: `SELECT b.blocker_task_id AS id
             FROM task_blockers b
             JOIN tasks t ON t.id = b.blocker_task_id
@@ -2396,8 +2409,8 @@ export const hasIncompleteBlockers = async (taskId: string, store?: TaskStore): 
   if (store) {
     r = await store.query(stmt)
   } else {
-    await initQueue()
-    r = await getClient().execute(stmt)
+    await migrateQueueSchema()
+    r = await resolveQueueClient().execute(stmt)
   }
   return r.rows.length > 0
 }
@@ -2409,8 +2422,8 @@ export const hasIncompleteBlockers = async (taskId: string, store?: TaskStore): 
  * Order: confirmed first, then pending-review, then by createdAt ascending.
  */
 export const listAllBlockers = async (taskId: string): Promise<Blocker[]> => {
-  await initQueue()
-  const c = getClient()
+  await migrateQueueSchema()
+  const c = resolveQueueClient()
   const taskRows = await c.execute({
     sql: `SELECT blocker_task_id AS cause_id, state, created_at
             FROM task_blockers
@@ -2479,9 +2492,9 @@ export const listAllBlockers = async (taskId: string): Promise<Blocker[]> => {
 export const promoteDraftToTriaging = async (
   taskId: string,
 ): Promise<Task | null> => {
-  await initQueue()
+  await migrateQueueSchema()
   const now = new Date().toISOString()
-  const upd = await getClient().execute({
+  const upd = await resolveQueueClient().execute({
     // updated_at first — exempt from STATUS_WRITE arch guard (conditional WHERE).
     sql: `UPDATE tasks
              SET updated_at = ?, status = 'triaging'
@@ -2490,7 +2503,7 @@ export const promoteDraftToTriaging = async (
     args: [now, taskId],
   })
   if (upd.rowsAffected === 0) return null
-  const r = await getClient().execute({
+  const r = await resolveQueueClient().execute({
     sql: `SELECT * FROM tasks WHERE id = ?`,
     args: [taskId],
   })
@@ -2501,7 +2514,7 @@ export const promoteDraftToTriaging = async (
 export const promoteDraftToQueued = async (
   taskId: string,
 ): Promise<Task | null> => {
-  await initQueue()
+  await migrateQueueSchema()
   const now = new Date().toISOString()
   // PRD 2be831da: 'queued' requires zero confirmed-or-pending-review rows;
   // rejected rows are historical and must not gate the promote.
@@ -2510,7 +2523,7 @@ export const promoteDraftToQueued = async (
   // so a no-op promote emits nothing. Emitting task.queued lets the
   // Invalidator evict any stale failure row for a task that is live again
   // (ADR-0030).
-  const upd = await withWriteTx(getClient(), async (tx) => {
+  const upd = await withWriteTx(resolveQueueClient(), async (tx) => {
     const res = await tx.execute({
       // updated_at first — exempt from STATUS_WRITE arch guard (conditional
       // NOT EXISTS guard cannot be expressed through setTaskStatus).
@@ -2532,7 +2545,7 @@ export const promoteDraftToQueued = async (
     return res
   })
   if (upd.rowsAffected === 0) return null
-  const r = await getClient().execute({
+  const r = await resolveQueueClient().execute({
     sql: `SELECT * FROM tasks WHERE id = ?`,
     args: [taskId],
   })

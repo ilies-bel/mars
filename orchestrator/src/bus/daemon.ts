@@ -1,5 +1,5 @@
 import { WebSocketServer, type WebSocket } from 'ws';
-import { getClient } from '../core/queue.js';
+import { getCompositionRootClient } from '../core/store/task-store.js';
 import { isEventName, type EventName } from './events.js';
 import { log } from './log.js';
 
@@ -62,7 +62,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   const pollIntervalMs = opts.pollIntervalMs ?? 50;
   const batchSize = opts.batchSize ?? 500;
 
-  const client = getClient();
+  const client = getCompositionRootClient();
 
   let cursor = 0;
   if (!opts.fromStart) {

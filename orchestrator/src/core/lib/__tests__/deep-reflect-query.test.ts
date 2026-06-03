@@ -7,8 +7,8 @@ import { execFileSync } from 'node:child_process'
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   updateTask: typeof import('../../queue').updateTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   upsertTranscript: typeof import('../../queue').upsertTranscript
   capConversationJson: typeof import('../../queue').capConversationJson
 }
@@ -31,7 +31,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const dq = (await import('../deep-reflect-query')) as unknown as DeepQueryModule
   return { q, dq }
 }
@@ -62,7 +62,7 @@ describe('listDeepReflectArcCandidates', () => {
     const noTranscript = await q.enqueueTask('no transcript task', undefined, {
       skipTriage: true,
     })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = ? WHERE id = ?`,
       args: ['done', noTranscript.id],
     })
@@ -90,7 +90,7 @@ describe('listDeepReflectArcCandidates', () => {
     const withTx = await q.enqueueTask('task with transcript', undefined, {
       skipTriage: true,
     })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = ? WHERE id = ?`,
       args: ['done', withTx.id],
     })
@@ -100,7 +100,7 @@ describe('listDeepReflectArcCandidates', () => {
     const noTx = await q.enqueueTask('ad-hoc task no transcript', undefined, {
       skipTriage: true,
     })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = ? WHERE id = ?`,
       args: ['done', noTx.id],
     })
@@ -118,7 +118,7 @@ describe('listDeepReflectArcCandidates', () => {
     const { q, dq } = await loadModules(repo)
     for (let i = 0; i < 5; i++) {
       const t = await q.enqueueTask(`task ${i}`, undefined, { skipTriage: true })
-      await q.getClient().execute({
+      await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = ? WHERE id = ?`,
         args: ['done', t.id],
       })

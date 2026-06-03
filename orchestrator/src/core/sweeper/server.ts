@@ -1,6 +1,6 @@
 import type { FixRecipeContext } from '../lib/fix-recipes'
 import { getRetryBudget } from '../lib/retry-budget'
-import { getClient, initQueue } from '../queue'
+import { getDefaultTaskStore } from '../store/task-store'
 import { countFixTaskAttempts, upsertFixTask } from '../queue-fix-tasks'
 
 export interface SweepCandidate {
@@ -33,8 +33,8 @@ export type SweepOutcome =
 export const findInFlightSelfHealBySignature = async (
   failureSignature: string,
 ): Promise<string | null> => {
-  await initQueue()
-  const r = await getClient().execute({
+  const store = await getDefaultTaskStore()
+  const r = await store.query({
     sql: `SELECT id FROM tasks
            WHERE failure_signature = ?
              AND fix_for_task_id IS NOT NULL
@@ -64,7 +64,6 @@ export const sweepOne = async (
   candidate: SweepCandidate,
   log: (msg: string) => void = (msg) => console.log(msg),
 ): Promise<SweepOutcome> => {
-  await initQueue()
   const budget = getRetryBudget(candidate.failureSignature)
   const attempts = await countFixTaskAttempts(
     candidate.taskId,

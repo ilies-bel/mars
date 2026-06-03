@@ -37,7 +37,7 @@ const loadDeps = async (repo: string) => {
   const storeModule = await import('../task-store')
   const queueModule = await import('../../queue')
   // Initialise the queue so tables exist before we exercise domain methods.
-  await queueModule.initQueue()
+  await queueModule.migrateQueueSchema()
   return { storeModule, queueModule }
 }
 
@@ -57,7 +57,7 @@ describe('createTaskStore', () => {
 
   it('enqueueTask → getTask round-trip returns the expected row', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
-    const store = storeModule.createTaskStore(queueModule.getClient())
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
 
     const task = await store.enqueueTask('hello world', undefined, {
       skipTriage: true,
@@ -73,7 +73,7 @@ describe('createTaskStore', () => {
 
   it('listTasks returns all queued tasks', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
-    const store = storeModule.createTaskStore(queueModule.getClient())
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
 
     await store.enqueueTask('task-one', undefined, { skipTriage: true })
     await store.enqueueTask('task-two', undefined, { skipTriage: true })
@@ -87,7 +87,7 @@ describe('createTaskStore', () => {
 
   it('exposes every expected domain method', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
-    const store = storeModule.createTaskStore(queueModule.getClient())
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
 
     const expectedMethods = [
       'getTask',
@@ -144,13 +144,13 @@ describe('createRunMigrations', () => {
 
   it('runner initialises the queue and is memoised across calls', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
-    const runner = storeModule.createRunMigrations(queueModule.getClient())
+    const runner = storeModule.createRunMigrations(queueModule.resolveQueueClient())
 
     // First call drives the migration.
     await runner()
 
     // Second call must return the same memoised promise — a fresh module
-    // would have run initQueue again. We verify memoisation by checking that
+    // would have run migrateQueueSchema again. We verify memoisation by checking that
     // a task can be enqueued (tables exist) after both calls.
     await runner()
 
@@ -175,7 +175,7 @@ describe('query, execute, and atomic escape hatches', () => {
 
   it('execute runs a write and query reads it back', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
-    const store = storeModule.createTaskStore(queueModule.getClient())
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
 
     await store.execute('CREATE TABLE greet (msg TEXT)')
     await store.execute('INSERT INTO greet VALUES (?)', ['hello'])
@@ -188,7 +188,7 @@ describe('query, execute, and atomic escape hatches', () => {
 
   it('atomic commits the callback changes when it returns', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
-    const store = storeModule.createTaskStore(queueModule.getClient())
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
 
     await store.execute('CREATE TABLE counter (n INTEGER)')
     await store.execute('INSERT INTO counter VALUES (?)', [0])
@@ -203,7 +203,7 @@ describe('query, execute, and atomic escape hatches', () => {
 
   it('atomic rolls back on throw, leaving database unchanged', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
-    const store = storeModule.createTaskStore(queueModule.getClient())
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
 
     await store.execute('CREATE TABLE counter (n INTEGER)')
     await store.execute('INSERT INTO counter VALUES (?)', [42])
@@ -222,7 +222,7 @@ describe('query, execute, and atomic escape hatches', () => {
 
   it('atomic rejects nesting with a clear error', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
-    const store = storeModule.createTaskStore(queueModule.getClient())
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
 
     await expect(
       store.atomic(async () => {
@@ -234,7 +234,7 @@ describe('query, execute, and atomic escape hatches', () => {
 
   it('retained Scope reference throws after callback settles', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
-    const store = storeModule.createTaskStore(queueModule.getClient())
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
 
     await store.execute('CREATE TABLE t (x TEXT)')
 

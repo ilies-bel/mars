@@ -1,5 +1,16 @@
-import type { Client } from '@libsql/client'
-import { getDefaultQueueClient } from './task-store'
+import type { InStatement, ResultSet } from '@libsql/client'
+import { getDefaultTaskStore } from '../store/task-store'
+
+/**
+ * Minimal statement-runner the invariant checks depend on. Satisfied by the
+ * TaskStore (`store.query`/`store.execute`), the {@link Scope} passed inside an
+ * `atomic` callback, and a raw libsql client/transaction — so callers can run
+ * the probe in the same transaction that inserts the edge without the raw
+ * handle crossing the seam.
+ */
+export interface StatementRunner {
+  execute(stmt: InStatement): Promise<ResultSet>
+}
 
 /**
  * Two invariants share this module because they both gate `task_blockers`:
@@ -44,14 +55,15 @@ import { getDefaultQueueClient } from './task-store'
 
 export interface BlockerInvariantOptions {
   /**
-   * Optional client/transaction handle to count against. When provided, the
+   * Optional statement runner (a TaskStore `Scope` inside an `atomic`
+   * callback, or the store itself) to count against. When provided, the
    * caller is responsible for ensuring the count happens in the same
    * transaction as the status write — that closes the obvious race where
    * the edge is inserted, the count runs, then the edge is rolled back.
    *
-   * When omitted, the count runs against the default queue client.
+   * When omitted, the count runs against the default TaskStore.
    */
-  client?: Pick<Client, 'execute'>
+  client?: StatementRunner
 }
 
 /**
@@ -62,7 +74,7 @@ export const countBlockerEdges = async (
   taskId: string,
   opts: BlockerInvariantOptions = {},
 ): Promise<number> => {
-  const c = opts.client ?? (await getDefaultQueueClient())
+  const c = opts.client ?? (await getDefaultTaskStore())
   const r = await c.execute({
     sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
     args: [taskId],
@@ -162,7 +174,7 @@ export class RecoveryTaskBlockerError extends Error {
  * (this helper is for the leaf-node probe only, not row existence).
  */
 const probeRecoveryMarker = async (
-  client: Pick<Client, 'execute'>,
+  client: StatementRunner,
   taskId: string,
 ): Promise<RecoveryTaskProbe | null> => {
   const r = await client.execute({
@@ -192,7 +204,7 @@ export const assertNotRecoveryEdge = async (
   blockerTaskId: string,
   opts: BlockerInvariantOptions = {},
 ): Promise<void> => {
-  const c = opts.client ?? (await getDefaultQueueClient())
+  const c = opts.client ?? (await getDefaultTaskStore())
   const task = await probeRecoveryMarker(c, taskId)
   if (task && isRecoveryTask(task)) {
     throw new RecoveryTaskBlockerError(taskId, 'task')
@@ -226,7 +238,7 @@ export interface RecoveryEdgeViolation {
 export const scanRecoveryBlockerEdges = async (
   opts: BlockerInvariantOptions = {},
 ): Promise<RecoveryEdgeViolation[]> => {
-  const c = opts.client ?? (await getDefaultQueueClient())
+  const c = opts.client ?? (await getDefaultTaskStore())
   const r = await c.execute({
     sql: `SELECT b.task_id AS task_id,
                  b.blocker_task_id AS blocker_task_id,

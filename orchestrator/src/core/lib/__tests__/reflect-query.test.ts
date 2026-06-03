@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openLibsql } from '../libsql'
-import { createLibsqlTaskStore, type TaskStore } from '../task-store'
+import { createTaskStore, type DomainTaskStore as TaskStore } from '../../store/task-store'
 import { loadRecentTaskCorpus } from '../reflect-query'
 
 const tmpDbPath = (): string => {
@@ -40,7 +40,7 @@ const makeStore = async (): Promise<TaskStore> => {
   const client = openLibsql({ url: `file:${tmpDbPath()}` })
   await client.execute(TASKS_DDL)
   await client.execute(TRACE_EVENTS_DDL)
-  return createLibsqlTaskStore(client)
+  return createTaskStore(client)
 }
 
 const insertTask = async (

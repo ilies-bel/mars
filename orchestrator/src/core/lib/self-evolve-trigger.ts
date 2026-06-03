@@ -13,7 +13,7 @@ import { detectKpiDrift, type KpiSnapshot as DriftSnapshot, type KpiEntry } from
 import { findOpenReflectionDraftForKpi, createProposal } from '../proposals.js'
 import { loadDaemonConfig } from '../daemon/config.js'
 import type { KpiSnapshot as PersistedSnapshot } from './kpi-snapshots.js'
-import { type TaskStore, getDefaultTaskStore } from './task-store.js'
+import { type DomainTaskStore as TaskStore, getDefaultTaskStore } from '../store/task-store.js'
 
 export type SkipReason = 'disabled' | 'low-confidence' | 'duplicate' | 'below-threshold'
 

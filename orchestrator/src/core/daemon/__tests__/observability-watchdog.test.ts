@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 interface QueueModule {
-  initQueue: typeof import('../../queue').initQueue
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
 interface ActionQueueModule {
@@ -33,7 +33,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   const watchdog = (await import('../observability-watchdog')) as unknown as WatchdogModule
   return { q, actionQueue, watchdog }

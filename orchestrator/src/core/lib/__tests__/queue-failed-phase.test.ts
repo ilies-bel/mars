@@ -8,7 +8,7 @@ interface Queue {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
   updateTask: typeof import('../../queue').updateTask
-  initQueue: typeof import('../../queue').initQueue
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
 const setupRepo = (): string => {
@@ -22,7 +22,7 @@ const loadQueue = async (repo: string): Promise<Queue> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../../queue')
-  await mod.initQueue()
+  await mod.migrateQueueSchema()
   return mod as unknown as Queue
 }
 
@@ -96,9 +96,9 @@ describe('tasks.failed_phase column', () => {
   it('migration is idempotent on a pre-existing tasks table with rows', async () => {
     // Acceptance criterion: migration runs idempotently on an existing
     // queue database without data loss. Simulate a row created before
-    // the failed_phase column existed, then re-run initQueue and verify
+    // the failed_phase column existed, then re-run migrateQueueSchema and verify
     // (a) the column is added, (b) the pre-existing row survives, and
-    // (c) re-running initQueue a second time does not error and does
+    // (c) re-running migrateQueueSchema a second time does not error and does
     // not wipe the row.
     const q = await loadQueue(repo)
     const seeded = await q.enqueueTask('legacy row', undefined, {
@@ -106,11 +106,11 @@ describe('tasks.failed_phase column', () => {
     })
     // Initially failed_phase is NULL on a freshly enqueued row.
     expect((await q.getTask(seeded.id))?.failedPhase).toBeNull()
-    // Re-running initQueue must be a no-op for existing data — the
+    // Re-running migrateQueueSchema must be a no-op for existing data — the
     // ALTER TABLE guard (`if (!names.has('failed_phase'))`) keeps it
     // from re-adding the column.
-    await q.initQueue()
-    await q.initQueue()
+    await q.migrateQueueSchema()
+    await q.migrateQueueSchema()
     const stillThere = await q.getTask(seeded.id)
     expect(stillThere?.id).toBe(seeded.id)
     expect(stillThere?.prompt).toBe('legacy row')

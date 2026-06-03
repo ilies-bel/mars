@@ -7,8 +7,8 @@ import { execFileSync } from 'node:child_process'
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   addBlockers: typeof import('../../queue').addBlockers
   updateTask: typeof import('../../queue').updateTask
 }
@@ -30,7 +30,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const rr = (await import(
     '../reconcile-running'
   )) as unknown as ReconcileRunningModule
@@ -54,7 +54,7 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     const t = await q.enqueueTask('some work', undefined, { skipTriage: true })
 
     // Simulate the task being in-flight when the daemon died
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'running', branch = ?, worktree_path = ? WHERE id = ?`,
       args: [`task/${t.id}`, `/tmp/nonexistent-worktree-${t.id}`, t.id],
     })
@@ -71,7 +71,7 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     const { q, rr } = await loadModules(repo)
     const t = await q.enqueueTask('some work', undefined, { skipTriage: true })
 
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'running', retry_count = 1 WHERE id = ?`,
       args: [t.id],
     })
@@ -87,7 +87,7 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     const t = await q.enqueueTask('some work', undefined, { skipTriage: true })
 
     // Simulate all in-flight fields a running task might have set
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks
               SET status = 'running',
                   branch = ?,
@@ -135,7 +135,7 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     // has an actual registration to tear down.
     execFileSync('git', ['worktree', 'add', '-b', branch, worktreePath, 'HEAD'], { cwd: repo })
 
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'running', branch = ?, worktree_path = ? WHERE id = ?`,
       args: [branch, worktreePath, t.id],
     })
@@ -161,7 +161,7 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     await q.addBlockers(dependent.id, [blocker.id])
 
     // Simulate: dependent was running when daemon died
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'running' WHERE id = ?`,
       args: [dependent.id],
     })
@@ -191,7 +191,7 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     await q.updateTask(blocker.id, { status: 'done' })
 
     // Simulate: dependent was running when daemon died
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'running' WHERE id = ?`,
       args: [dependent.id],
     })
@@ -218,7 +218,7 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     const t1 = await q.enqueueTask('work 1', undefined, { skipTriage: true })
     const t2 = await q.enqueueTask('work 2', undefined, { skipTriage: true })
 
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'running' WHERE id IN (?, ?)`,
       args: [t1.id, t2.id],
     })

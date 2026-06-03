@@ -1,4 +1,4 @@
-import { getClient, initQueue } from '../queue'
+import { getDefaultTaskStore } from '../store/task-store'
 
 /**
  * Structured verdict recorded by a diagnose Chore against a stuck task.
@@ -45,9 +45,8 @@ let initialised = false
 
 const initDiagnoses = async (): Promise<void> => {
   if (initialised) return
-  await initQueue()
-  const c = getClient()
-  await c.execute(`
+  const store = await getDefaultTaskStore()
+  await store.execute(`
     CREATE TABLE IF NOT EXISTS diagnoses (
       task_id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -116,9 +115,9 @@ export const setDiagnosis = async (
   }
 
   await initDiagnoses()
-  const c = getClient()
+  const store = await getDefaultTaskStore()
   const now = new Date().toISOString()
-  await c.execute({
+  await store.execute({
     sql: `INSERT INTO diagnoses (
             task_id, kind,
             evidence, involved_files_json, fix_direction,
@@ -164,8 +163,8 @@ const parseFiles = (raw: unknown): readonly string[] => {
  */
 export const getDiagnosis = async (taskId: string): Promise<StoredDiagnosis> => {
   await initDiagnoses()
-  const c = getClient()
-  const r = await c.execute({
+  const store = await getDefaultTaskStore()
+  const r = await store.query({
     sql: `SELECT kind, evidence, involved_files_json, fix_direction,
                  what_checked, why_unscoped, recorded_at
             FROM diagnoses WHERE task_id = ?`,

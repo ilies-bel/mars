@@ -15,7 +15,7 @@ interface Queue {
   removeBlocker: typeof import('../../queue').removeBlocker
   hasIncompleteBlockers: typeof import('../../queue').hasIncompleteBlockers
   promoteDraftToQueued: typeof import('../../queue').promoteDraftToQueued
-  initQueue: typeof import('../../queue').initQueue
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
 const setupRepo = (): string => {
@@ -30,7 +30,7 @@ const loadQueue = async (repo: string): Promise<Queue> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../../queue')
-  await mod.initQueue()
+  await mod.migrateQueueSchema()
   return mod as unknown as Queue
 }
 

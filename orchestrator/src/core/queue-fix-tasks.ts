@@ -25,7 +25,7 @@ import {
   markTaskFailed,
   raiseRetryBudgetExhaustedActionQueue,
 } from './queue-retry'
-import { getDefaultTaskStore, type TaskStore } from './lib/task-store'
+import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
 
 const truncate = (s: string, max: number): string =>
   s.length <= max ? s : `${s.slice(0, max)}…`

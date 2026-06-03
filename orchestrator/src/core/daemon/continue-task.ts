@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { getTask, updateTask } from '../queue'
-import { getDefaultTaskStore } from '../lib/task-store'
+import { getDefaultTaskStore } from '../store/task-store'
 import { coreRestartTask } from './restart-task'
 import { createQueueWorkflowStore } from '../../workflows/queue-workflow-store'
 

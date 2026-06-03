@@ -24,8 +24,8 @@ interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   updateTask: typeof import('../../queue').updateTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
 interface ScnModule {
@@ -58,7 +58,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const scn = (await import(
     '../sibling-context-note'
   )) as unknown as ScnModule
@@ -74,7 +74,7 @@ describe('tryShortCircuitOnSiblingContextNote', () => {
     vi.resetModules()
     process.env.MARS_REPO = templateRepo
     const q = (await import('../../queue')) as unknown as QueueModule
-    await q.initQueue()
+    await q.migrateQueueSchema()
     delete process.env.MARS_REPO
     vi.resetModules()
   })
@@ -117,7 +117,7 @@ describe('tryShortCircuitOnSiblingContextNote', () => {
       status: 'running',
     })
 
-    const taskCountBefore = await q.getClient().execute({
+    const taskCountBefore = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks`,
       args: [],
     })
@@ -151,7 +151,7 @@ describe('tryShortCircuitOnSiblingContextNote', () => {
       expect(shortCircuitLogs[0]).toContain(parent.id)
 
       // No new child task was queued.
-      const taskCountAfter = await q.getClient().execute({
+      const taskCountAfter = await q.resolveQueueClient().execute({
         sql: `SELECT COUNT(*) AS n FROM tasks`,
         args: [],
       })

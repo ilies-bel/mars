@@ -1,4 +1,4 @@
-import { getDefaultTaskStore, type TaskStore } from './task-store'
+import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store'
 import type { TaskSignalRow } from './reflect-signals'
 import { cacheWeightedTokens } from './kpi-compute.js'
 

@@ -6,8 +6,8 @@ import { resolve } from 'node:path'
 
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   upsertTranscript: typeof import('../../queue').upsertTranscript
 }
 
@@ -31,7 +31,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const ot = (await import('../origin-timeline')) as unknown as OriginTimelineModule
   return { q, ot }
 }
@@ -42,7 +42,7 @@ const setStatus = async (
   status: string,
   updatedAt?: string,
 ): Promise<void> => {
-  await q.getClient().execute({
+  await q.resolveQueueClient().execute({
     sql: `UPDATE tasks SET status = ?${updatedAt ? ', updated_at = ?' : ''} WHERE id = ?`,
     args: updatedAt ? [status, updatedAt, taskId] : [status, taskId],
   })
@@ -57,7 +57,7 @@ const addFixTask = async (
   // Insert a fix task manually so we can control origin_id and fix_for_task_id
   const id = `mars-fix-${Math.random().toString(36).slice(2, 10)}`
   const now = new Date().toISOString()
-  await q.getClient().execute({
+  await q.resolveQueueClient().execute({
     sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id, fix_for_task_id, kind)
           VALUES (?, ?, 'queued', ?, ?, ?, ?, 'fix')`,
     args: [id, prompt, now, now, originTaskId, fixForTaskId],
@@ -127,13 +127,13 @@ describe('pickTopOrigin', () => {
 
     // Two origins each with score=1 (span=1, retry=0, verify=0)
     const older = await q.enqueueTask('older origin', undefined, { skipTriage: true })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
       args: ['2025-01-01T10:00:00.000Z', older.id],
     })
 
     const newer = await q.enqueueTask('newer origin', undefined, { skipTriage: true })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
       args: ['2025-06-01T10:00:00.000Z', newer.id],
     })
@@ -148,13 +148,13 @@ describe('pickTopOrigin', () => {
     const { q, ot } = await loadModules(repo)
 
     const t1 = await q.enqueueTask('task alpha', undefined, { skipTriage: true })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
       args: ['2025-03-15T08:00:00.000Z', t1.id],
     })
 
     const t2 = await q.enqueueTask('task beta', undefined, { skipTriage: true })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
       args: ['2025-03-15T12:00:00.000Z', t2.id],
     })

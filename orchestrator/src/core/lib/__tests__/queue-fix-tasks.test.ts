@@ -23,8 +23,8 @@ interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   updateTask: typeof import('../../queue').updateTask
   getTask: typeof import('../../queue').getTask
-  getClient: typeof import('../../queue').getClient
-  initQueue: typeof import('../../queue').initQueue
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   unblockTask: typeof import('../../queue').unblockTask
 }
 
@@ -51,7 +51,7 @@ const setupRepo = (): string => {
 /**
  * Pre-migrated database snapshots, captured once in `beforeAll` and
  * cloned into each test's repo via `copyFileSync`. Running the full
- * `initQueue` (and actionQueue) migration set from scratch on every `it`
+ * `migrateQueueSchema` (and actionQueue) migration set from scratch on every `it`
  * (24+ tests) used to push individual tests close to or past vitest's
  * default 5s `testTimeout` — observed as `'upsertFixTask creates a
  * queued task' timed out at 5000ms` in isolation. Hoisting the
@@ -59,7 +59,7 @@ const setupRepo = (): string => {
  *   - copy two small SQLite files,
  *   - vi.resetModules() (still required: the queue module holds a
  *     singleton DB client we want a fresh handle for each test),
- *   - re-enter initQueue/initActionQueue, which now short-circuits every
+ *   - re-enter migrateQueueSchema/initActionQueue, which now short-circuits every
  *     ALTER guard and only runs idempotent CREATE INDEX IF NOT EXISTS
  *     against pre-migrated tables.
  */
@@ -86,7 +86,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const ft = (await import('../../queue-fix-tasks')) as unknown as FixTasksModule
   const br = (await import(
     '../../blocker-resolution'
@@ -122,13 +122,13 @@ describe('queue-fix-tasks', () => {
 
   beforeAll(async () => {
     // Build a fully-migrated template repo once. Every per-test repo
-    // copies these files instead of re-running `initQueue` and
+    // copies these files instead of re-running `migrateQueueSchema` and
     // `initActionQueue` from a blank DB.
     templateRepo = setupRepo()
     vi.resetModules()
     process.env.MARS_REPO = templateRepo
     const q = (await import('../../queue')) as unknown as QueueModule
-    await q.initQueue()
+    await q.migrateQueueSchema()
     // initActionQueue lazily seeds state.db; touch it now so the template
     // also carries the actionQueue schema for tests that exercise it.
     const actionQueue = (await import('../action-queue')) as unknown as {
@@ -183,7 +183,7 @@ describe('queue-fix-tasks', () => {
     expect(fix?.failureSignature).toBe('sig1')
     expect(fix?.author?.kind).toBe('agent')
 
-    const blockers = await q.getClient().execute({
+    const blockers = await q.resolveQueueClient().execute({
       sql: `SELECT task_id, blocker_task_id FROM task_blockers WHERE task_id = ?`,
       args: [t.id],
     })
@@ -228,7 +228,7 @@ describe('queue-fix-tasks', () => {
     expect(b.created).toBe(false)
     expect(b.fixTaskId).toBe(a.fixTaskId)
 
-    const r = await q.getClient().execute({
+    const r = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
       args: [t.id, 'sig-dup'],
     })
@@ -269,7 +269,7 @@ describe('queue-fix-tasks', () => {
     // Simulate a prior recovery attempt having already incremented retryCount to 1.
     // With budget=0, retryCount=1 → 1 > 0 = true → mark failed (budget reached).
     const now = new Date().toISOString()
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET retry_count = 1, updated_at = ? WHERE id = ?`,
       args: [now, t.id],
     })
@@ -284,7 +284,7 @@ describe('queue-fix-tasks', () => {
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('failed')
 
-    const fixTasks = await q.getClient().execute({
+    const fixTasks = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
       args: [t.id],
     })
@@ -312,7 +312,7 @@ describe('queue-fix-tasks', () => {
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
 
-    const fixTasks = await q.getClient().execute({
+    const fixTasks = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
       args: [t.id, sig],
     })
@@ -365,11 +365,11 @@ describe('queue-fix-tasks', () => {
     })
     // Manually wire t2 to the same fix task to simulate a shared blocker.
     const now = new Date().toISOString()
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
       args: [t2.id, f1.fixTaskId, now],
     })
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked', retry_count = 1, updated_at = ? WHERE id = ?`,
       args: [now, t2.id],
     })
@@ -425,7 +425,7 @@ describe('queue-fix-tasks', () => {
     expect(r2.fixTaskId).toBe(r1.fixTaskId)
 
     // Both sources are blocked on the same fix-task.
-    const blockers = await q.getClient().execute({
+    const blockers = await q.resolveQueueClient().execute({
       sql: `SELECT task_id FROM task_blockers WHERE blocker_task_id = ? ORDER BY task_id`,
       args: [r1.fixTaskId],
     })
@@ -522,7 +522,7 @@ describe('queue-fix-tasks', () => {
     )
     expect(reloaded?.dropReason).toBeNull()
 
-    const remainingBlockers = await q.getClient().execute({
+    const remainingBlockers = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
       args: [t.id],
     })
@@ -638,7 +638,7 @@ describe('queue-fix-tasks', () => {
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('failed')
 
-    const remaining = await q.getClient().execute({
+    const remaining = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
       args: [t.id],
     })
@@ -709,7 +709,7 @@ describe('queue-fix-tasks', () => {
     expect(origin?.status).toBe('blocked')
 
     // No new fix-task was enqueued for the failed recovery.
-    const descendants = await q.getClient().execute({
+    const descendants = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
       args: [recoveryId],
     })
@@ -743,14 +743,14 @@ describe('queue-fix-tasks', () => {
     // Original task is marked failed with no task_blockers edge.
     const origin = await q.getTask(t.id)
     expect(origin?.status).toBe('failed')
-    const blockers = await q.getClient().execute({
+    const blockers = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
       args: [t.id],
     })
     expect(Number((blockers.rows[0] as unknown as { n: number }).n)).toBe(0)
 
     // No investigator (or any other) task was created beyond the source.
-    const all = await q.getClient().execute({
+    const all = await q.resolveQueueClient().execute({
       sql: `SELECT id FROM tasks`,
       args: [],
     })
@@ -792,7 +792,7 @@ describe('queue-fix-tasks', () => {
     expect(r2.fixTaskId).not.toBe(r1.fixTaskId)
     await q.updateTask(r2.fixTaskId!, { status: 'done' })
 
-    const fixCountBefore = await q.getClient().execute({
+    const fixCountBefore = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
       args: [t.id, sig],
     })
@@ -812,7 +812,7 @@ describe('queue-fix-tasks', () => {
     expect(r3.failureSignature).toBe(sig)
     expect(r3.actionQueueItemId).toBeTruthy()
 
-    const fixCountAfter = await q.getClient().execute({
+    const fixCountAfter = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
       args: [t.id, sig],
     })
@@ -925,7 +925,7 @@ describe('queue-fix-tasks', () => {
     expect(r5.actionQueueItemId).toBe(r3.actionQueueItemId)
 
     // No new task rows beyond the original two fix-tasks.
-    const fixCount = await q.getClient().execute({
+    const fixCount = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
       args: [t.id, sig],
     })
@@ -1011,7 +1011,7 @@ describe('queue-fix-tasks', () => {
     })
     expect(r.created).toBe(true)
 
-    const rows = await q.getClient().execute({
+    const rows = await q.resolveQueueClient().execute({
       sql: `SELECT parent_task_id, failure_signature, fix_task_id, created_at
               FROM self_heal_attempts
              WHERE parent_task_id = ?
@@ -1056,7 +1056,7 @@ describe('queue-fix-tasks', () => {
       }),
     ).rejects.toThrow(/no-such-task/)
 
-    const rows = await q.getClient().execute({
+    const rows = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM self_heal_attempts
              WHERE failure_signature = ?`,
       args: ['sig-fail'],

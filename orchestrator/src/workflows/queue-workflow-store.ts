@@ -6,7 +6,7 @@ import type {
   StepStatus,
   WorkflowStore,
 } from '@mars/workflow'
-import { getClient } from '../core/queue'
+import { getCompositionRootClient } from '../core/store/task-store'
 
 /**
  * `WorkflowStore` adapter over the orchestrator's `.mars/queue.db`.
@@ -112,12 +112,12 @@ const rowToStep = (row: StepRow): StepRecord => ({
  * lazily on first method call (a single guarded `CREATE TABLE IF NOT EXISTS`
  * pass) so construction stays synchronous and cheap.
  *
- * @param client Defaults to the queue's shared singleton (`getClient()`), so
- *   the engine's run/step state lands in the same `.mars/queue.db`. Tests
- *   inject an in-memory client.
+ * @param client Defaults to the composition-root libsql client
+ *   (`getCompositionRootClient()`), so the engine's run/step state lands in
+ *   the same `.mars/mars.db`. Tests inject an in-memory client.
  */
 export const createQueueWorkflowStore = (
-  client: Client = getClient(),
+  client: Client = getCompositionRootClient(),
 ): WorkflowStore => {
   let initialised = false
   const ensureSchema = async (): Promise<void> => {

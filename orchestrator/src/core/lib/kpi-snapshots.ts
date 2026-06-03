@@ -6,7 +6,7 @@ import {
   computeRecoverySuccessRate,
   type KpiWindow,
 } from './kpi-compute.js'
-import { getDefaultTaskStore, type TaskStore } from './task-store.js'
+import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store.js'
 
 /**
  * One persisted row in the kpi_snapshots table. Columns for KPIs not yet

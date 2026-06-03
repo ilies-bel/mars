@@ -21,8 +21,8 @@ import type { Client } from '@libsql/client'
 import type { EventName, EventPayload } from '../../../bus/events.js'
 
 interface QueueModule {
-  initQueue: typeof import('../../queue').initQueue
-  getClient: typeof import('../../queue').getClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
 }
 
 interface ActionQueueModule {
@@ -63,7 +63,7 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const actionQueue = (await import(
     '../../lib/action-queue'
   )) as unknown as ActionQueueModule
@@ -131,7 +131,7 @@ describe('invalidator policy — discrete lifecycle events', () => {
 
   it('task.completed: closes all open rows AND clears the dismissal entity row', async () => {
     const { q, actionQueue, dismissals, ad, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-completed'
 
     const itemId = await raiseOpenItemFor(actionQueue, taskId)
@@ -151,7 +151,7 @@ describe('invalidator policy — discrete lifecycle events', () => {
 
   it('task.dropped: closes all open rows AND clears the dismissal entity row', async () => {
     const { q, actionQueue, dismissals, ad, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-dropped'
 
     const itemId = await raiseOpenItemFor(actionQueue, taskId)
@@ -174,7 +174,7 @@ describe('invalidator policy — discrete lifecycle events', () => {
 
   it('task.failed: leaves the actionable row open and preserves the dismissal row (ADR-0028)', async () => {
     const { q, actionQueue, dismissals, ad, pub } = await loadModules(repo)
-    const client = q.getClient()
+    const client = q.resolveQueueClient()
     const taskId = 'T-failed'
 
     const itemId = await raiseOpenItemFor(actionQueue, taskId)

@@ -26,7 +26,7 @@ import { constants as fsConstants, createReadStream } from 'node:fs'
 import { homedir } from 'node:os'
 import { resolve as resolvePath } from 'node:path'
 import { createInterface } from 'node:readline'
-import { getDefaultTaskStore } from './task-store'
+import { getDefaultTaskStore } from '../store/task-store'
 import { parseClaudeSessionIds } from './claude-session-ids'
 
 /**

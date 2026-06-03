@@ -16,7 +16,7 @@ const loadQueue = async (repo: string) => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../../queue')
-  await mod.initQueue()
+  await mod.migrateQueueSchema()
   return mod
 }
 
@@ -32,10 +32,10 @@ describe('queue.origin_id migration', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('initQueue is idempotent: running twice does not duplicate the column', async () => {
+  it('migrateQueueSchema is idempotent: running twice does not duplicate the column', async () => {
     const q = await loadQueue(repo)
-    await q.initQueue()
-    await q.initQueue()
+    await q.migrateQueueSchema()
+    await q.migrateQueueSchema()
 
     const dbPath = resolve(repo, '.mars/mars.db')
     const direct = createClient({ url: `file:${dbPath}` })
@@ -72,7 +72,7 @@ describe('queue.origin_id migration', () => {
 
   it('backfills origin_id on legacy rows (column added on stale DB → origin_id = id)', async () => {
     // Simulate a pre-migration DB by creating tasks WITHOUT origin_id and
-    // dropping the column before initQueue runs the migration.
+    // dropping the column before migrateQueueSchema runs the migration.
     const dbPath = resolve(repo, '.mars/mars.db')
     const direct = createClient({ url: `file:${dbPath}` })
     const now = new Date().toISOString()
@@ -90,7 +90,7 @@ describe('queue.origin_id migration', () => {
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
       args: ['legacy01', 'old', 'queued', now, now],
     })
-    // Now run initQueue which should migrate + backfill.
+    // Now run migrateQueueSchema which should migrate + backfill.
     const q = await loadQueue(repo)
     void q
     const r = await direct.execute({

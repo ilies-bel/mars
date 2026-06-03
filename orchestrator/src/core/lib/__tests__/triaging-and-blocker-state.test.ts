@@ -35,8 +35,8 @@ describe('Triaging status + Blocker state schema', () => {
   })
 
   it('initialises the tasks schema with no `actionable` column and no `reason` column', async () => {
-    const { initQueue } = await import('../../queue')
-    await initQueue()
+    const { migrateQueueSchema } = await import('../../queue')
+    await migrateQueueSchema()
 
     const c = createClient({ url: `file:${repo}/.mars/mars.db` })
     try {
@@ -59,10 +59,10 @@ describe('Triaging status + Blocker state schema', () => {
   })
 
   it('persists a freshly-promoted Task with status=triaging', async () => {
-    const { initQueue, getClient } = await import('../../queue')
-    await initQueue()
+    const { migrateQueueSchema, resolveQueueClient } = await import('../../queue')
+    await migrateQueueSchema()
     const now = new Date().toISOString()
-    const c = getClient()
+    const c = resolveQueueClient()
     await c.execute({
       sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
             VALUES (?, ?, 'triaging', ?, 0, 'task', 0, 'coder', '[]', ?, ?)`,
@@ -76,10 +76,10 @@ describe('Triaging status + Blocker state schema', () => {
   })
 
   it('defaults causal addBlockers writes to state=confirmed', async () => {
-    const { initQueue, addBlockers, getClient } = await import('../../queue')
-    await initQueue()
+    const { migrateQueueSchema, addBlockers, resolveQueueClient } = await import('../../queue')
+    await migrateQueueSchema()
     const now = new Date().toISOString()
-    const c = getClient()
+    const c = resolveQueueClient()
     await c.execute({
       sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
             VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', '[]', ?, ?)`,
@@ -98,12 +98,12 @@ describe('Triaging status + Blocker state schema', () => {
   })
 
   it('records pending-review state via addPendingReviewBlockers', async () => {
-    const { initQueue, addPendingReviewBlockers, getClient } = await import(
+    const { migrateQueueSchema, addPendingReviewBlockers, resolveQueueClient } = await import(
       '../../queue'
     )
-    await initQueue()
+    await migrateQueueSchema()
     const now = new Date().toISOString()
-    const c = getClient()
+    const c = resolveQueueClient()
     await c.execute({
       sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
             VALUES ('a', 'a', 'triaging', 'a', 0, 'task', 0, 'coder', '[]', ?, ?)`,
@@ -124,11 +124,11 @@ describe('Triaging status + Blocker state schema', () => {
   })
 
   it('rejected Blocker rows do NOT gate the dispatcher', async () => {
-    const { initQueue, addBlockers, listBlockers, hasIncompleteBlockers, getClient } =
+    const { migrateQueueSchema, addBlockers, listBlockers, hasIncompleteBlockers, resolveQueueClient } =
       await import('../../queue')
-    await initQueue()
+    await migrateQueueSchema()
     const now = new Date().toISOString()
-    const c = getClient()
+    const c = resolveQueueClient()
     await c.execute({
       sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
             VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', '[]', ?, ?)`,
@@ -154,12 +154,12 @@ describe('Triaging status + Blocker state schema', () => {
     // an actionable, queued task that still has an incomplete blocker must be
     // flipped to 'blocked', not left 'queued' — otherwise the unblock
     // machinery (which only scans status='blocked') never re-evaluates it.
-    const { initQueue, addBlockers, hasIncompleteBlockers, updateTask, getClient } =
+    const { migrateQueueSchema, addBlockers, hasIncompleteBlockers, updateTask, resolveQueueClient } =
       await import('../../queue')
     const { onBlockerTaskCompleted } = await import('../../blocker-resolution')
-    await initQueue()
+    await migrateQueueSchema()
     const now = new Date().toISOString()
-    const c = getClient()
+    const c = resolveQueueClient()
     await c.execute({
       sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
             VALUES ('dep', 'dependent', 'queued', 'dep', 0, 'task', 0, 'coder', '[]', ?, ?)`,
@@ -196,11 +196,11 @@ describe('Triaging status + Blocker state schema', () => {
   })
 
   it('returns task-cause and idea-cause Blocker rows uniformly from listAllBlockers', async () => {
-    const { initQueue, addBlockers, addProposalBlockers, listAllBlockers, getClient } =
+    const { migrateQueueSchema, addBlockers, addProposalBlockers, listAllBlockers, resolveQueueClient } =
       await import('../../queue')
-    await initQueue()
+    await migrateQueueSchema()
     const now = new Date().toISOString()
-    const c = getClient()
+    const c = resolveQueueClient()
     await c.execute({
       sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
             VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', '[]', ?, ?)`,
@@ -263,8 +263,8 @@ describe('Triaging status + Blocker state schema', () => {
     })
     q.close()
 
-    const { initQueue } = await import('../../queue')
-    await initQueue()
+    const { migrateQueueSchema } = await import('../../queue')
+    await migrateQueueSchema()
 
     const c = createClient({ url: queueDb })
     try {
@@ -280,10 +280,10 @@ describe('Triaging status + Blocker state schema', () => {
   })
 
   it('promoteDraftToTriaging advances a draft task into triaging', async () => {
-    const { initQueue, enqueueTask, promoteDraftToTriaging } = await import(
+    const { migrateQueueSchema, enqueueTask, promoteDraftToTriaging } = await import(
       '../../queue'
     )
-    await initQueue()
+    await migrateQueueSchema()
     const t = await enqueueTask('do a thing')
     expect(t.status).toBe('draft')
 
@@ -293,10 +293,10 @@ describe('Triaging status + Blocker state schema', () => {
   })
 
   it('promoteDraftToTriaging is a no-op when the task is not in draft', async () => {
-    const { initQueue, enqueueTask, promoteDraftToTriaging } = await import(
+    const { migrateQueueSchema, enqueueTask, promoteDraftToTriaging } = await import(
       '../../queue'
     )
-    await initQueue()
+    await migrateQueueSchema()
     const t = await enqueueTask('do another thing', undefined, { skipTriage: true })
     // Task lands in 'queued', not 'draft' — promote should return null.
     expect(t.status).toBe('queued')
@@ -305,9 +305,9 @@ describe('Triaging status + Blocker state schema', () => {
   })
 
   it('promoteDraftToQueued accepts a triaging task once blockers are clear', async () => {
-    const { initQueue, enqueueTask, promoteDraftToTriaging, promoteDraftToQueued } =
+    const { migrateQueueSchema, enqueueTask, promoteDraftToTriaging, promoteDraftToQueued } =
       await import('../../queue')
-    await initQueue()
+    await migrateQueueSchema()
     const t = await enqueueTask('do yet another thing')
     await promoteDraftToTriaging(t.id)
 

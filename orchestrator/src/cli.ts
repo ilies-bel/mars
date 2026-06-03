@@ -2066,7 +2066,7 @@ const main = async (): Promise<void> => {
         process.exit(1)
       }
 
-      const { getDefaultTaskStore } = await import('./core/lib/task-store')
+      const { getDefaultTaskStore } = await import('./core/store/task-store')
       const taskStore = await getDefaultTaskStore()
       const arc = await taskStore.arcStatus(proposal.id, { cwd: ctx.repoRoot })
 
@@ -2556,8 +2556,8 @@ const main = async (): Promise<void> => {
     } else {
       // Daemon is down — run reconcile standalone in this process.
       // Tables must exist before we read from them.
-      const { initQueue } = await import('./core/queue')
-      await initQueue()
+      const { runCompositionRootMigrations } = await import('./core/store/task-store')
+      await runCompositionRootMigrations()
       const { runStartupReconcile } = await import('./core/daemon/startup-reconcile')
       const { EventEmitter } = await import('node:events')
       const bus = new EventEmitter()
@@ -2954,7 +2954,7 @@ const main = async (): Promise<void> => {
     const sub = rest[0]
     if (sub === 'snapshot') {
       const { takeKpiSnapshot } = await import('./core/lib/kpi-snapshots.js')
-      const { getDefaultTaskStore } = await import('./core/lib/task-store.js')
+      const { getDefaultTaskStore } = await import('./core/store/task-store.js')
       const surface = await getDefaultTaskStore()
       const snapshot = await takeKpiSnapshot({
         surface,

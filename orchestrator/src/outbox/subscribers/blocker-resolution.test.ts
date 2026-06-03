@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 interface QueueModule {
-  initQueue: typeof import('../../core/queue').initQueue
+  migrateQueueSchema: typeof import('../../core/queue').migrateQueueSchema
   enqueueTask: typeof import('../../core/queue').enqueueTask
   addBlockers: typeof import('../../core/queue').addBlockers
   getTask: typeof import('../../core/queue').getTask
-  getClient: typeof import('../../core/queue').getClient
+  resolveQueueClient: typeof import('../../core/queue').resolveQueueClient
 }
 
 interface BlockerResolutionSubscriberModule {
@@ -46,7 +46,7 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../core/queue')) as unknown as QueueModule
-  await q.initQueue()
+  await q.migrateQueueSchema()
   const sub = (await import('./blocker-resolution')) as unknown as BlockerResolutionSubscriberModule
   const pub = (await import('../../bus/publisher')) as unknown as PublisherModule
   const subs = (await import('../../bus/subscribers')) as unknown as SubscribersModule
@@ -65,7 +65,7 @@ const blockTask = async (
   retryCount = 0,
 ): Promise<void> => {
   await q.addBlockers(taskId, [blockerTaskId])
-  await q.getClient().execute({
+  await q.resolveQueueClient().execute({
     sql: `UPDATE tasks SET status = 'blocked', retry_count = ? WHERE id = ?`,
     args: [retryCount, taskId],
   })
@@ -93,17 +93,17 @@ describe('blocker-resolution outbox subscriber', () => {
     const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
     await blockTask(q, dep.id, blocker.id)
     // Bypass updateTask auto-promote so only the subscriber can unblock.
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
       args: [blocker.id],
     })
 
-    await sub.ensureBlockerResolutionSubscriber(q.getClient())
-    await pub.publishWithRetry(q.getClient(), 'task.terminal', {
+    await sub.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
+    await pub.publishWithRetry(q.resolveQueueClient(), 'task.terminal', {
       taskId: blocker.id,
       reason: 'done',
     })
-    const { processed } = await sub.drainBlockerResolution(q.getClient())
+    const { processed } = await sub.drainBlockerResolution(q.resolveQueueClient())
 
     expect(processed).toBeGreaterThan(0)
     expect((await q.getTask(dep.id))?.status).toBe('queued')
@@ -119,26 +119,26 @@ describe('blocker-resolution outbox subscriber', () => {
     const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
     const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
     await blockTask(q, dep.id, blocker.id)
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
       args: [blocker.id],
     })
 
     // Register subscriber so cursor = current head (before the event).
-    await sub.ensureBlockerResolutionSubscriber(q.getClient())
+    await sub.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
 
     // Publish event (simulates blocker reaching done with event in outbox).
-    await pub.publishWithRetry(q.getClient(), 'task.terminal', {
+    await pub.publishWithRetry(q.resolveQueueClient(), 'task.terminal', {
       taskId: blocker.id,
       reason: 'done',
     })
 
     // Simulate daemon crash: do NOT drain now.
     // Re-register is a no-op — cursor is preserved across "restarts".
-    await sub.ensureBlockerResolutionSubscriber(q.getClient())
+    await sub.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
 
     // Drain on "restart" — event is replayed from the cursor position.
-    await sub.drainBlockerResolution(q.getClient())
+    await sub.drainBlockerResolution(q.resolveQueueClient())
 
     expect((await q.getTask(dep.id))?.status).toBe('queued')
   })
@@ -154,18 +154,18 @@ describe('blocker-resolution outbox subscriber', () => {
     // sibling is blocked waiting on origin
     await blockTask(q, sibling.id, origin.id)
     // origin is done (flipped by markOriginDoneFromRecovery)
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
       args: [origin.id],
     })
 
-    await sub.ensureBlockerResolutionSubscriber(q.getClient())
+    await sub.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
     // Publish origin's task.terminal event (as markOriginDoneFromRecovery does)
-    await pub.publishWithRetry(q.getClient(), 'task.terminal', {
+    await pub.publishWithRetry(q.resolveQueueClient(), 'task.terminal', {
       taskId: origin.id,
       reason: 'done',
     })
-    await sub.drainBlockerResolution(q.getClient())
+    await sub.drainBlockerResolution(q.resolveQueueClient())
 
     expect((await q.getTask(sibling.id))?.status).toBe('queued')
   })
@@ -177,12 +177,12 @@ describe('blocker-resolution outbox subscriber', () => {
     const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
     await blockTask(q, dep.id, blocker.id)
 
-    await sub.ensureBlockerResolutionSubscriber(q.getClient())
-    await pub.publishWithRetry(q.getClient(), 'task.terminal', {
+    await sub.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
+    await pub.publishWithRetry(q.resolveQueueClient(), 'task.terminal', {
       taskId: blocker.id,
       reason: 'failed',
     })
-    const { processed } = await sub.drainBlockerResolution(q.getClient())
+    const { processed } = await sub.drainBlockerResolution(q.resolveQueueClient())
 
     expect(processed).toBe(0)
     expect((await q.getTask(dep.id))?.status).toBe('blocked')
@@ -194,19 +194,19 @@ describe('blocker-resolution outbox subscriber', () => {
     const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
     const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
     await blockTask(q, dep.id, blocker.id)
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
       args: [blocker.id],
     })
 
-    await sub.ensureBlockerResolutionSubscriber(q.getClient())
-    await pub.publishWithRetry(q.getClient(), 'task.terminal', {
+    await sub.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
+    await pub.publishWithRetry(q.resolveQueueClient(), 'task.terminal', {
       taskId: blocker.id,
       reason: 'done',
     })
 
-    const first = await sub.drainBlockerResolution(q.getClient())
-    const second = await sub.drainBlockerResolution(q.getClient())
+    const first = await sub.drainBlockerResolution(q.resolveQueueClient())
+    const second = await sub.drainBlockerResolution(q.resolveQueueClient())
 
     expect(first.processed).toBeGreaterThan(0)
     expect(second.processed).toBe(0) // cursor already advanced; no pending events
@@ -220,22 +220,22 @@ describe('blocker-resolution outbox subscriber', () => {
     const a = await q.enqueueTask('a', undefined, { skipTriage: true })
     const b = await q.enqueueTask('b', undefined, { skipTriage: true })
     await q.addBlockers(dep.id, [a.id, b.id])
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked', retry_count = 0 WHERE id = ?`,
       args: [dep.id],
     })
     // Only a is done; b is still pending.
-    await q.getClient().execute({
+    await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
       args: [a.id],
     })
 
-    await sub.ensureBlockerResolutionSubscriber(q.getClient())
-    await pub.publishWithRetry(q.getClient(), 'task.terminal', {
+    await sub.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
+    await pub.publishWithRetry(q.resolveQueueClient(), 'task.terminal', {
       taskId: a.id,
       reason: 'done',
     })
-    await sub.drainBlockerResolution(q.getClient())
+    await sub.drainBlockerResolution(q.resolveQueueClient())
 
     // dep still has blocker b pending — must remain blocked
     expect((await q.getTask(dep.id))?.status).toBe('blocked')
