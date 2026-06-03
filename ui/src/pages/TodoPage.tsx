@@ -12,6 +12,7 @@ import {
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import {
   catalogActionsForDetail,
+  ID_LESS_OPS,
   resolveFailureReason,
   severityColor,
   summarizeTraceEvent,
@@ -181,8 +182,8 @@ const ActionBar = ({ item }: ActionBarProps) => {
 
   const mutation = useMutation({
     mutationFn: ({ action }: { action: ActionDescriptor }) => {
-      // Process-level ops (restart-daemon) carry no entity id.
-      const entityId = action.op === 'restart-daemon' ? undefined : item.entityId
+      // Process-level ops (restart-daemon, restart-all-daemon-killed) carry no entity id.
+      const entityId = ID_LESS_OPS.has(action.op) ? undefined : item.entityId
       return invokeAction(action.op, entityId)
     },
     onMutate: () => setErrorMsg(null),
@@ -542,8 +543,22 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
 
       <main className="flex-1 px-6 py-4">
         <dl className="flex flex-col gap-4 font-mono text-[12px]">
-          {item.kind === 'failed-task' ? (
+          {item.kind === 'failed-task' && item.entityId !== '__daemon-killed-batch__' ? (
             <CatalogReasonAndActions item={item} />
+          ) : item.kind === 'failed-task' ? (
+            // daemon-killed-batch sentinel: render the registry-derived reason
+            // from item.body and the batch action from item.actions (ActionBar).
+            // The batch op (restart-all-daemon-killed) is in ID_LESS_OPS so
+            // ActionBar's mutation sends it without an entity id.
+            <>
+              <div>
+                <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+                  Reason
+                </dt>
+                <dd className="text-fg">{item.body}</dd>
+              </div>
+              <ActionBar item={item} />
+            </>
           ) : (
             <ActionBar item={item} />
           )}
@@ -697,6 +712,10 @@ export const ActionQueuePage = () => {
   }, [])
 
   const handleRestart = useCallback((entityId: string) => {
+    // The daemon-killed-batch sentinel must never reach the per-entity restart
+    // op. Its onRestart prop is null (actions guard below), but this is a
+    // belt-and-suspenders defence.
+    if (entityId === '__daemon-killed-batch__') return
     restartMutation.mutate(entityId)
   }, [restartMutation])
 

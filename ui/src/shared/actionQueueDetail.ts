@@ -36,6 +36,14 @@ export const resolveFailureReason = (
 }
 
 /**
+ * Process-level daemon ops that carry no entity id — the daemon route is
+ * `/actions/:op` with no trailing `/:id` segment. The ActionBar mutation
+ * checks this set and omits the entityId so `proxyAction` builds the
+ * correct path.
+ */
+export const ID_LESS_OPS = new Set(['restart-daemon', 'restart-all-daemon-killed'])
+
+/**
  * Map a catalog action id to the existing UI action op (the verb the daemon's
  * `/actions/:op/:id` route handles). Returns null when the catalog action has
  * no UI binding — the renderer then falls back to a disabled button labelled
