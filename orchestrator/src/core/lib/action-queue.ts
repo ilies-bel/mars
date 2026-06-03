@@ -648,6 +648,8 @@ export const setActionQueueState = async (
     })
     if (pref.rows.length === 1) {
       resolvedId = (pref.rows[0] as unknown as { id: string }).id
+    } else if (pref.rows.length > 1) {
+      throw new Error(`ambiguous id ${idOrPrefix}`)
     }
   }
   if (!resolvedId) return
