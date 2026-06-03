@@ -2579,6 +2579,8 @@ const main = async (): Promise<void> => {
         console.log(`  orphaned-blocked re-queued: ${summary.orphanedBlockedRequeued}`)
       if (summary.runningRequeued > 0)
         console.log(`  stale-running re-queued: ${summary.runningRequeued}`)
+      if (summary.orphanSpansSwept > 0)
+        console.log(`  orphan spans swept: ${summary.orphanSpansSwept}`)
       if (summary.verifyingRequeued > 0)
         console.log(`  verifying re-queued: ${summary.verifyingRequeued}`)
       if (summary.verifyingFailed > 0)
@@ -2596,6 +2598,7 @@ const main = async (): Promise<void> => {
           summary.blockerDriftRepaired +
           summary.orphanedBlockedRequeued +
           summary.runningRequeued +
+          summary.orphanSpansSwept +
           summary.verifyingRequeued +
           summary.verifyingFailed +
           summary.mergingFinalized +
