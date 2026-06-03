@@ -833,6 +833,103 @@ export const initQueue = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_kpi_snapshots_taken_at ON kpi_snapshots(taken_at)`,
   )
+  // ── Normalized junction tables for JSON-blob columns ───────────────────
+  // These three tables replace the `claude_session_ids`, `files_json`, and
+  // `done_criteria_json` JSON blob columns on `tasks`.  They are created here
+  // (idempotent) and back-filled from the legacy columns once.  The legacy
+  // columns are kept for now so existing readers still work; a follow-up slice
+  // will flip the write/read paths and drop them.
+  //
+  // task_claude_sessions: ordered history of Claude session IDs across retries
+  // (replaces tasks.claude_session_ids JSON array and the legacy
+  // tasks.claude_session_id scalar).
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS task_claude_sessions (
+      task_id    TEXT    NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      session_id TEXT    NOT NULL,
+      position   INTEGER NOT NULL,
+      PRIMARY KEY (task_id, session_id)
+    )
+  `)
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_task_claude_sessions_task
+       ON task_claude_sessions(task_id, position)`,
+  )
+  // Back-fill from tasks.claude_session_ids (JSON array) for rows not yet
+  // represented in task_claude_sessions.  json_each expands the array; the
+  // INSERT OR IGNORE is idempotent on repeated startups.
+  await c.execute(`
+    INSERT OR IGNORE INTO task_claude_sessions (task_id, session_id, position)
+    SELECT t.id, je.value, je.key
+    FROM tasks t, json_each(
+      CASE
+        WHEN t.claude_session_ids IS NOT NULL
+          AND json_valid(t.claude_session_ids)
+          AND json_array_length(t.claude_session_ids) > 0
+        THEN t.claude_session_ids
+        WHEN t.claude_session_id IS NOT NULL
+        THEN json_array(t.claude_session_id)
+        ELSE '[]'
+      END
+    ) AS je
+    WHERE je.value IS NOT NULL AND je.value != ''
+  `)
+  // task_spec_files: ordered list of paths the coder should read first
+  // (replaces tasks.files_json JSON array).
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS task_spec_files (
+      task_id  TEXT    NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      path     TEXT    NOT NULL,
+      position INTEGER NOT NULL,
+      PRIMARY KEY (task_id, path)
+    )
+  `)
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_task_spec_files_task
+       ON task_spec_files(task_id, position)`,
+  )
+  await c.execute(`
+    INSERT OR IGNORE INTO task_spec_files (task_id, path, position)
+    SELECT t.id, je.value, je.key
+    FROM tasks t, json_each(
+      CASE
+        WHEN t.files_json IS NOT NULL
+          AND json_valid(t.files_json)
+          AND json_array_length(t.files_json) > 0
+        THEN t.files_json
+        ELSE '[]'
+      END
+    ) AS je
+    WHERE je.value IS NOT NULL AND je.value != ''
+  `)
+  // task_done_criteria: ordered list of completion criteria (replaces
+  // tasks.done_criteria_json JSON array).
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS task_done_criteria (
+      task_id   TEXT    NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      criterion TEXT    NOT NULL,
+      position  INTEGER NOT NULL,
+      PRIMARY KEY (task_id, criterion)
+    )
+  `)
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_task_done_criteria_task
+       ON task_done_criteria(task_id, position)`,
+  )
+  await c.execute(`
+    INSERT OR IGNORE INTO task_done_criteria (task_id, criterion, position)
+    SELECT t.id, je.value, je.key
+    FROM tasks t, json_each(
+      CASE
+        WHEN t.done_criteria_json IS NOT NULL
+          AND json_valid(t.done_criteria_json)
+          AND json_array_length(t.done_criteria_json) > 0
+        THEN t.done_criteria_json
+        ELSE '[]'
+      END
+    ) AS je
+    WHERE je.value IS NOT NULL AND je.value != ''
+  `)
   await migrateSignalsAndTranscriptsToTraceEvents(c)
 }
 
