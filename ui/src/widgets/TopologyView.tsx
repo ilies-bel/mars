@@ -45,7 +45,7 @@ import { chainForProposal, chainForTask, type ChainResult } from '@/shared/chain
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
   ACTIVE_ACCENT,
-  ADHOC_COMBO_ID,
+  UNATTACHED_COMBO_ID,
   buildG6Data,
   CANVAS_SURFACE,
   CLUSTER_STYLE,
@@ -239,7 +239,7 @@ export const TopologyView = ({
           shadowBlur: (d: ComboData) => (d.style?.collapsed === false ? 0 : 12),
           shadowOffsetY: 2,
           labelText: (d: ComboData) => String(d.data?.label ?? ''),
-          labelFill: PROPOSAL_TEXT,
+          labelFill: (d: ComboData) => (d.data?.synthetic ? CLUSTER_STYLE.Queued.dot : PROPOSAL_TEXT),
           labelFontSize: 11,
           labelFontWeight: 600,
           labelFontFamily: 'Inter, sans-serif',
@@ -764,9 +764,10 @@ export const TopologyView = ({
     if (prevClusterSigRef.current === sig) return
     prevClusterSigRef.current = sig
 
-    // Only update nodes that exist in the graph. Ad hoc nodes (no parentProposalId
-    // or unknown proposal) are now included in the graph under the ADHOC_COMBO_ID
-    // combo, so this guard correctly covers both proposal and ad hoc tasks.
+    // Only update nodes that exist in the graph. Unattached nodes (no
+    // parentProposalId or unknown proposal) are now included in the graph under
+    // the UNATTACHED_COMBO_ID combo, so this guard correctly covers both
+    // proposal and unattached tasks.
     const graphNodeIds = new Set(graph.getNodeData().map((n) => String(n.id)))
     const nodeUpdates = tasks
       .filter((t) => graphNodeIds.has(t.id))
@@ -781,18 +782,18 @@ export const TopologyView = ({
       data: { dom: dominant(rollupMap.get(p.id)!) },
     }))
 
-    // Also patch the Ad hoc combo if it's present in the graph.
-    if (graph.getComboData(ADHOC_COMBO_ID)) {
-      const adHocTasks = tasks.filter(
+    // Also patch the Unattached combo if it's present in the graph.
+    if (graph.getComboData(UNATTACHED_COMBO_ID)) {
+      const unattachedTasks = tasks.filter(
         (t) => t.parentProposalId == null || !proposalIdSet.has(t.parentProposalId),
       )
-      const adHocCounts: Record<string, number> = { Queued: 0, 'In progress': 0, Blocked: 0, Failed: 0 }
-      for (const t of adHocTasks) adHocCounts[t.cluster] = (adHocCounts[t.cluster] ?? 0) + 1
-      const adHocRollup = {
-        total: adHocTasks.length,
-        counts: adHocCounts as Parameters<typeof dominant>[0]['counts'],
+      const unattachedCounts: Record<string, number> = { Queued: 0, 'In progress': 0, Blocked: 0, Failed: 0 }
+      for (const t of unattachedTasks) unattachedCounts[t.cluster] = (unattachedCounts[t.cluster] ?? 0) + 1
+      const unattachedRollup = {
+        total: unattachedTasks.length,
+        counts: unattachedCounts as Parameters<typeof dominant>[0]['counts'],
       }
-      comboUpdates.push({ id: ADHOC_COMBO_ID, data: { dom: dominant(adHocRollup) } })
+      comboUpdates.push({ id: UNATTACHED_COMBO_ID, data: { dom: dominant(unattachedRollup) } })
     }
 
     graph.updateComboData(comboUpdates)

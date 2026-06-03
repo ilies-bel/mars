@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import { blockerKey, type ChainResult } from '@/shared/chainTrace'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
-  ADHOC_COMBO_ID,
+  UNATTACHED_COMBO_ID,
   buildG6Data,
   CLUSTER_STYLE,
   clusterSignature,
@@ -149,7 +149,7 @@ describe('buildG6Data', () => {
     expect(nodes[0]!.data).toMatchObject({ label: 'Do the thing', cluster: 'Queued', proposalId: 'p1' })
   })
 
-  it('includes ad hoc tasks (null parentProposalId) under the Ad hoc combo, not dropped', () => {
+  it('includes unattached tasks (null parentProposalId) under the Unattached combo, not dropped', () => {
     const tasks = [
       task({ id: 't1', cluster: 'Queued', parentProposalId: null }),
       task({ id: 't2', cluster: 'Queued', parentProposalId: 'p-missing' }),
@@ -158,12 +158,12 @@ describe('buildG6Data', () => {
     const { nodes, combos } = buildG6Data(tasks, [proposal('p1')])
     // All three tasks are now nodes (none dropped)
     expect(nodes.map((n) => n.id).sort()).toEqual(['t1', 't2', 't3'])
-    // Ad hoc tasks route to the synthetic combo
-    expect(nodes.find((n) => n.id === 't1')?.combo).toBe(ADHOC_COMBO_ID)
-    expect(nodes.find((n) => n.id === 't2')?.combo).toBe(ADHOC_COMBO_ID)
+    // Unattached tasks route to the synthetic combo
+    expect(nodes.find((n) => n.id === 't1')?.combo).toBe(UNATTACHED_COMBO_ID)
+    expect(nodes.find((n) => n.id === 't2')?.combo).toBe(UNATTACHED_COMBO_ID)
     expect(nodes.find((n) => n.id === 't3')?.combo).toBe('combo:p1')
-    // The Ad hoc combo is emitted
-    expect(combos.some((c) => c.id === ADHOC_COMBO_ID)).toBe(true)
+    // The Unattached combo is emitted
+    expect(combos.some((c) => c.id === UNATTACHED_COMBO_ID)).toBe(true)
   })
 
   it('keys blocker edges with blockerKey so the highlight map can match', () => {
@@ -199,36 +199,47 @@ describe('buildG6Data', () => {
   })
 })
 
-describe('buildG6Data – ad hoc tasks', () => {
-  it('emits the Ad hoc combo with correct label, count, and dom when ad hoc tasks exist', () => {
+describe('buildG6Data – unattached tasks', () => {
+  it('emits the Unattached combo with label "Unattached", correct count, and dom when unattached tasks exist', () => {
     const tasks = [
       task({ id: 'a1', cluster: 'Failed', parentProposalId: null }),
       task({ id: 'a2', cluster: 'Failed', parentProposalId: null }),
       task({ id: 'p1t', cluster: 'Queued', parentProposalId: 'p1' }),
     ]
     const { combos } = buildG6Data(tasks, [proposal('p1', 'Feature A')])
-    const adHoc = combos.find((c) => c.id === ADHOC_COMBO_ID)
-    expect(adHoc).toBeDefined()
-    expect(adHoc!.data).toMatchObject({ label: 'Ad hoc', count: 2, dom: 'Failed' })
-    expect(adHoc!.style?.collapsed).toBe(true)
+    const unattached = combos.find((c) => c.id === UNATTACHED_COMBO_ID)
+    expect(unattached).toBeDefined()
+    expect(unattached!.data).toMatchObject({ label: 'Unattached', count: 2, dom: 'Failed' })
+    expect(unattached!.style?.collapsed).toBe(true)
   })
 
-  it('assigns ad hoc tasks to ADHOC_COMBO_ID with proposalId "__adhoc__"', () => {
+  it('marks the Unattached combo with synthetic: true so TopologyView can apply neutral label styling', () => {
+    const tasks = [task({ id: 'a1', cluster: 'Failed', parentProposalId: null })]
+    const { combos } = buildG6Data(tasks, [])
+    const unattached = combos.find((c) => c.id === UNATTACHED_COMBO_ID)
+    expect(unattached!.data?.synthetic).toBe(true)
+    // Real proposal combos must NOT be marked synthetic
+    const proposalTasks = [task({ id: 'p1t', cluster: 'Queued', parentProposalId: 'p1' })]
+    const { combos: propCombos } = buildG6Data(proposalTasks, [proposal('p1', 'Feature A')])
+    expect(propCombos.find((c) => c.id === 'combo:p1')?.data?.synthetic).toBeFalsy()
+  })
+
+  it('assigns unattached tasks to UNATTACHED_COMBO_ID with proposalId "__unattached__"', () => {
     const tasks = [
       task({ id: 'a1', cluster: 'Queued', parentProposalId: null }),
       task({ id: 'p1t', cluster: 'Queued', parentProposalId: 'p1' }),
     ]
     const { nodes } = buildG6Data(tasks, [proposal('p1')])
-    const adHocNode = nodes.find((n) => n.id === 'a1')
-    expect(adHocNode?.combo).toBe(ADHOC_COMBO_ID)
-    expect(adHocNode?.data?.proposalId).toBe('__adhoc__')
+    const unattachedNode = nodes.find((n) => n.id === 'a1')
+    expect(unattachedNode?.combo).toBe(UNATTACHED_COMBO_ID)
+    expect(unattachedNode?.data?.proposalId).toBe('__unattached__')
     // Proposal task stays on its own combo with its own proposalId
     const propNode = nodes.find((n) => n.id === 'p1t')
     expect(propNode?.combo).toBe('combo:p1')
     expect(propNode?.data?.proposalId).toBe('p1')
   })
 
-  it('total node count equals all tasks (proposal + ad hoc), no tasks dropped', () => {
+  it('total node count equals all tasks (proposal + unattached), no tasks dropped', () => {
     const tasks = [
       task({ id: 'a1', cluster: 'Queued', parentProposalId: null }),
       task({ id: 'a2', cluster: 'Blocked', parentProposalId: 'unknown' }),
@@ -239,33 +250,33 @@ describe('buildG6Data – ad hoc tasks', () => {
     expect(nodes).toHaveLength(4)
   })
 
-  it('does NOT emit the Ad hoc combo when all tasks belong to proposals', () => {
+  it('does NOT emit the Unattached combo when all tasks belong to proposals', () => {
     const tasks = [
       task({ id: 'p1t', cluster: 'Queued', parentProposalId: 'p1' }),
       task({ id: 'p2t', cluster: 'Failed', parentProposalId: 'p1' }),
     ]
     const { combos } = buildG6Data(tasks, [proposal('p1')])
-    expect(combos.some((c) => c.id === ADHOC_COMBO_ID)).toBe(false)
+    expect(combos.some((c) => c.id === UNATTACHED_COMBO_ID)).toBe(false)
     expect(combos).toHaveLength(1)
   })
 
-  it('renders under the Ad hoc combo with no proposals emitted when ALL tasks are ad hoc', () => {
+  it('renders under the Unattached combo with no proposals emitted when ALL tasks are unattached', () => {
     const tasks = [
       task({ id: 'a1', cluster: 'Queued', parentProposalId: null }),
       task({ id: 'a2', cluster: 'Blocked', parentProposalId: null }),
     ]
     const { nodes, combos } = buildG6Data(tasks, [])
     expect(nodes).toHaveLength(2)
-    expect(nodes.every((n) => n.combo === ADHOC_COMBO_ID)).toBe(true)
+    expect(nodes.every((n) => n.combo === UNATTACHED_COMBO_ID)).toBe(true)
     expect(combos).toHaveLength(1)
-    expect(combos[0]!.id).toBe(ADHOC_COMBO_ID)
+    expect(combos[0]!.id).toBe(UNATTACHED_COMBO_ID)
   })
 
-  it('treats a task whose parentProposalId references an unknown proposal as ad hoc', () => {
+  it('treats a task whose parentProposalId references an unknown proposal as unattached', () => {
     const tasks = [task({ id: 'x', cluster: 'Queued', parentProposalId: 'not-a-real-proposal' })]
     const { nodes, combos } = buildG6Data(tasks, [])
-    expect(nodes[0]?.combo).toBe(ADHOC_COMBO_ID)
-    expect(combos.some((c) => c.id === ADHOC_COMBO_ID)).toBe(true)
+    expect(nodes[0]?.combo).toBe(UNATTACHED_COMBO_ID)
+    expect(combos.some((c) => c.id === UNATTACHED_COMBO_ID)).toBe(true)
   })
 
   it('draws a blocker edge from an ad hoc task to a proposal task (cross-boundary)', () => {
@@ -369,39 +380,39 @@ describe('computeStateMap', () => {
   })
 })
 
-describe('computeStateMap – ad hoc combo lighting', () => {
-  // Graph: ad hoc task 'x', proposal task 'y' (in p1), edge x→y
-  const adHocSnapshot = (): ElementSnapshot => ({
+describe('computeStateMap – unattached combo lighting', () => {
+  // Graph: unattached task 'x', proposal task 'y' (in p1), edge x→y
+  const unattachedSnapshot = (): ElementSnapshot => ({
     nodes: [
-      { id: 'x', combo: ADHOC_COMBO_ID, data: { cluster: 'Queued', proposalId: '__adhoc__' } },
+      { id: 'x', combo: UNATTACHED_COMBO_ID, data: { cluster: 'Queued', proposalId: '__unattached__' } },
       { id: 'y', combo: 'combo:p1', data: { cluster: 'Blocked', proposalId: 'p1' } },
     ],
     edges: [{ id: blockerKey('x', 'y'), source: 'x', target: 'y', data: { kind: 'blocker' } }],
     combos: [
-      { id: ADHOC_COMBO_ID, data: { proposalId: '__adhoc__' } },
+      { id: UNATTACHED_COMBO_ID, data: { proposalId: '__unattached__' } },
       { id: 'combo:p1', data: { proposalId: 'p1' } },
     ],
   })
   const crossEdgeId = blockerKey('x', 'y')
 
-  it('lights the ADHOC combo when a hover trace includes an ad hoc node', () => {
+  it('lights the Unattached combo when a hover trace includes an unattached node', () => {
     // chainForTask on 'x' will populate lit.nodes with 'x' (and 'y' downstream)
-    // but lit.proposals will NOT include '__adhoc__' because attachProvenance skips
+    // but lit.proposals will NOT include '__unattached__' because attachProvenance skips
     // null parentProposalId. The combo must still light via node-data derivation.
     const lit: ChainResult = { nodes: new Set(['x', 'y']), edges: new Set([crossEdgeId]), proposals: new Set(['p1']) }
-    const map = computeStateMap(adHocSnapshot(), { searchMatchIds: null, ghostedClusters: undefined, lit })
-    expect(map[ADHOC_COMBO_ID]).toEqual(['active'])
+    const map = computeStateMap(unattachedSnapshot(), { searchMatchIds: null, ghostedClusters: undefined, lit })
+    expect(map[UNATTACHED_COMBO_ID]).toEqual(['active'])
     expect(map['combo:p1']).toEqual(['active'])
     expect(map.x).toEqual(['active'])
     expect(map.y).toEqual(['active'])
     expect(map[crossEdgeId]).toEqual(['active'])
   })
 
-  it('does not light the ADHOC combo when no ad hoc node is in the lit set', () => {
+  it('does not light the Unattached combo when no unattached node is in the lit set', () => {
     // Only proposal task 'y' is lit
     const lit: ChainResult = { nodes: new Set(['y']), edges: new Set(), proposals: new Set(['p1']) }
-    const map = computeStateMap(adHocSnapshot(), { searchMatchIds: null, ghostedClusters: undefined, lit })
-    expect(map[ADHOC_COMBO_ID]).toEqual(['dim'])
+    const map = computeStateMap(unattachedSnapshot(), { searchMatchIds: null, ghostedClusters: undefined, lit })
+    expect(map[UNATTACHED_COMBO_ID]).toEqual(['dim'])
     expect(map.x).toEqual(['dim'])
   })
 })

@@ -122,17 +122,17 @@ const comboId = (proposalId: string): string => `combo:${proposalId}`
 export const proposalIdFromComboId = (id: string): string => id.replace(/^combo:/, '')
 
 /**
- * Stable id for the synthetic combo that collects ad hoc tasks — those with no
- * parentProposalId or a parentProposalId that does not match any known proposal.
- * Distinct from real proposal combos (which are `combo:<proposalId>`).
+ * Stable id for the synthetic combo that collects unattached tasks — those with
+ * no parentProposalId or a parentProposalId that does not match any known
+ * proposal. Distinct from real proposal combos (which are `combo:<proposalId>`).
  */
-export const ADHOC_COMBO_ID = 'combo:__adhoc__'
+export const UNATTACHED_COMBO_ID = 'combo:__unattached__'
 
 /**
  * Synthetic proposal id used as the combo's `proposalId` data field and as the
- * key for `lit.proposals` / `comboFilterDim` lookups on the ad hoc combo.
+ * key for `lit.proposals` / `comboFilterDim` lookups on the unattached combo.
  */
-const ADHOC_PROPOSAL_ID = proposalIdFromComboId(ADHOC_COMBO_ID) // '__adhoc__'
+const UNATTACHED_PROPOSAL_ID = proposalIdFromComboId(UNATTACHED_COMBO_ID) // '__unattached__'
 
 /** First non-empty line of a task's prompt, used as its node label. */
 const taskLabel = (t: ProgressTask): string => {
@@ -151,16 +151,17 @@ export interface G6GraphData {
  *
  *  - One COLLAPSED combo per proposal, carrying its plurality `dom` status and
  *    task `count` in `data`.
- *  - One synthetic COLLAPSED combo (`ADHOC_COMBO_ID`) for ad hoc tasks — those
- *    whose `parentProposalId` is null or does not match any known proposal. The
- *    combo is omitted when no ad hoc tasks exist, so proposal-only datasets are
- *    visually unchanged.
- *  - One task node per task, assigned to its proposal combo or to the ad hoc
+ *  - One synthetic COLLAPSED combo (`UNATTACHED_COMBO_ID`) for unattached tasks —
+ *    those whose `parentProposalId` is null or does not match any known proposal.
+ *    The combo is omitted when no unattached tasks exist, so proposal-only
+ *    datasets are visually unchanged. It carries `synthetic: true` in its data so
+ *    TopologyView can apply a neutral/iron label style (grey, not purple).
+ *  - One task node per task, assigned to its proposal combo or to the unattached
  *    combo. Every task is now in scope; no tasks are dropped.
  *  - One blocker edge per `blockedBy` entry whose endpoints are both in scope
  *    (i.e. in the task list), keyed with `blockerKey(blocker, task)` so the
  *    highlight map (which uses the same key) matches. Cross-boundary edges
- *    between ad hoc tasks and proposal tasks are included freely.
+ *    between unattached tasks and proposal tasks are included freely.
  */
 export const buildG6Data = (
   tasks: ReadonlyArray<ProgressTask>,
@@ -181,33 +182,40 @@ export const buildG6Data = (
     }
   })
 
-  // Emit the synthetic Ad hoc combo only when at least one ad hoc task exists,
-  // so proposal-only datasets are not affected.
-  const adHocTasks = tasks.filter(isAdHoc)
-  if (adHocTasks.length > 0) {
-    const adHocCounts = emptyCounts()
-    for (const t of adHocTasks) adHocCounts[t.cluster]++
-    const adHocRollup: Rollup = { total: adHocTasks.length, counts: adHocCounts }
+  // Emit the synthetic Unattached combo only when at least one unattached task
+  // exists, so proposal-only datasets are not affected. The `synthetic: true`
+  // flag lets TopologyView apply a neutral/iron label colour (grey, not purple).
+  const unattachedTasks = tasks.filter(isAdHoc)
+  if (unattachedTasks.length > 0) {
+    const unattachedCounts = emptyCounts()
+    for (const t of unattachedTasks) unattachedCounts[t.cluster]++
+    const unattachedRollup: Rollup = { total: unattachedTasks.length, counts: unattachedCounts }
     combos.push({
-      id: ADHOC_COMBO_ID,
-      data: { label: 'Ad hoc', proposalId: ADHOC_PROPOSAL_ID, count: adHocTasks.length, dom: dominant(adHocRollup) },
+      id: UNATTACHED_COMBO_ID,
+      data: {
+        label: 'Unattached',
+        proposalId: UNATTACHED_PROPOSAL_ID,
+        count: unattachedTasks.length,
+        dom: dominant(unattachedRollup),
+        synthetic: true,
+      },
       style: { collapsed: true },
     })
   }
 
   // Every task is now in scope — proposal tasks go to their proposal combo;
-  // ad hoc tasks go to the synthetic ADHOC combo.
+  // unattached tasks go to the synthetic Unattached combo.
   const taskIds = new Set(tasks.map((t) => t.id))
 
   const nodes: NodeData[] = tasks.map((t) => ({
     id: t.id,
-    combo: isAdHoc(t) ? ADHOC_COMBO_ID : comboId(t.parentProposalId as string),
+    combo: isAdHoc(t) ? UNATTACHED_COMBO_ID : comboId(t.parentProposalId as string),
     data: {
       label: taskLabel(t),
       cluster: t.cluster,
-      // Ad hoc tasks carry the synthetic proposal id so computeStateMap can
-      // derive ADHOC combo lighting from node membership.
-      proposalId: isAdHoc(t) ? ADHOC_PROPOSAL_ID : t.parentProposalId,
+      // Unattached tasks carry the synthetic proposal id so computeStateMap can
+      // derive Unattached combo lighting from node membership.
+      proposalId: isAdHoc(t) ? UNATTACHED_PROPOSAL_ID : t.parentProposalId,
     },
   }))
 
@@ -263,10 +271,11 @@ export const computeStateMap = (snapshot: ElementSnapshot, inputs: HighlightInpu
   const nodeById = new Map<string, NodeData>(snapshot.nodes.map((n) => [String(n.id), n]))
 
   // Derive lit proposal ids from chainTrace's proposals set PLUS each lit
-  // node's `data.proposalId`. The second source is needed for the synthetic ad
-  // hoc combo: chainTrace never adds `'__adhoc__'` to proposals (ad hoc tasks
-  // have a null parentProposalId, so attachProvenance skips them), but the ad
-  // hoc combo should still light when one of its tasks is hover-lit.
+  // node's `data.proposalId`. The second source is needed for the synthetic
+  // Unattached combo: chainTrace never adds `'__unattached__'` to proposals
+  // (unattached tasks have a null parentProposalId, so attachProvenance skips
+  // them), but the Unattached combo should still light when one of its tasks is
+  // hover-lit.
   const litProposalIds = new Set<string>(lit?.proposals ?? [])
   if (lit) {
     for (const n of snapshot.nodes) {
