@@ -1860,7 +1860,7 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
 
 export const insertReflectionTask = async (corpusSize: number): Promise<string> => {
   await initQueue()
-  const id = `reflect-${randomUUID().slice(0, 8)}`
+  const id = genId('reflection').toString()
   const now = new Date().toISOString()
   const prompt = `mars reflect run over ${corpusSize} task(s) at ${now}`
   await getClient().execute({
