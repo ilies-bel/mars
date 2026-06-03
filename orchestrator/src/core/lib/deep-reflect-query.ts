@@ -91,6 +91,35 @@ const loadTranscriptStream = async (
 // Arc-level (originId) reflection
 // ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * One closed Step span from the arc's trace_events, ordered by started_at.
+ *
+ * Non-LLM steps (setup, verify, merge, recovery-dispatch) carry no
+ * workerName / sessionId / transcript.
+ * LLM-backed steps (Coder, Fixer, Planner, Slicer) populate all four.
+ * Verify steps additionally surface verifyOutput.
+ */
+export interface ArcSpanEntry {
+  /** Approximated start time: ended_at − durationMs (ISO-8601). */
+  startedAt: string
+  /** Step name, e.g. 'generate-plan', 'setup-worktree', 'run-claude-code', 'verify', 'merge'. */
+  stepName: string
+  /** Worker name when LLM-backed (e.g. 'Planner', 'Slicer', 'Coder', 'Fixer'), null otherwise. */
+  workerName: string | null
+  /** Phase tag ('setup' | 'code' | 'verify' | 'merge'), null when not set. */
+  phase: string | null
+  /** Outcome of the step. */
+  outcome: 'completed' | 'failed' | 'killed'
+  /** Duration in milliseconds (−1 for spans closed by the orphan sweep). */
+  durationMs: number
+  /** Claude session id (LLM-backed only). */
+  sessionId: string | null
+  /** Serialised conversation transcript (LLM-backed, when reflection is enabled). */
+  transcript: string | null
+  /** Captured verify-command output (verify steps only). */
+  verifyOutput: string | null
+}
+
 export interface ArcTaskEntry {
   taskId: string
   status: string
@@ -134,6 +163,13 @@ export interface DeepReflectArc {
     eventCount: number
   }
   lastActivity: string
+  /**
+   * All closed Step spans for this arc, sorted by started_at (ascending).
+   * Planner/Slicer spans appear first (they ran before implementation tasks),
+   * followed by per-task setup → code → verify(s) → merge/recovery sequences.
+   * Multiple verify entries appear when verify retried (one entry per attempt).
+   */
+  stepTimeline: ArcSpanEntry[]
 }
 
 interface ArcTaskRow {
@@ -324,6 +360,60 @@ export const loadDeepReflectArc = async (
     return candidate > latest ? candidate : latest
   }, tasks[0]?.updatedAt ?? tasks[0]?.createdAt ?? '')
 
+  // ── Step timeline ─────────────────────────────────────────────────────────
+  // Query all closed Step spans for the arc's origin, ordered by end timestamp
+  // ascending. Since workflow steps run sequentially, end-time order matches
+  // started_at order. startedAt is approximated as (endedAt − durationMs).
+  const timelineRows = await store.query({
+    sql: `SELECT timestamp, phase, payload
+            FROM trace_events
+           WHERE origin_id = ? AND kind = 'step_ended'
+           ORDER BY timestamp ASC`,
+    args: [originId],
+  })
+
+  const stepTimeline: ArcSpanEntry[] = timelineRows.rows.map((row) => {
+    const r0 = row as unknown as { timestamp: string; phase: string | null; payload: string }
+    let payload: Record<string, unknown> = {}
+    try {
+      payload = JSON.parse(r0.payload) as Record<string, unknown>
+    } catch {
+      /* ignore malformed payload */
+    }
+
+    const stepName = typeof payload.stepName === 'string' ? payload.stepName : 'unknown'
+    const workerName = typeof payload.workerName === 'string' ? payload.workerName : null
+    const outcomeRaw = payload.outcome
+    const outcome: ArcSpanEntry['outcome'] =
+      outcomeRaw === 'completed' ? 'completed'
+      : outcomeRaw === 'killed' ? 'killed'
+      : 'failed'
+    const durationMs = typeof payload.durationMs === 'number' ? payload.durationMs : 0
+    const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : null
+    const transcript = typeof payload.transcript === 'string' ? payload.transcript : null
+    const verifyOutput = typeof payload.verifyOutput === 'string' ? payload.verifyOutput : null
+
+    // Derive start time: span ended at `timestamp`, ran for `durationMs` ms.
+    // When durationMs is ≤ 0 (orphan sweep fills −1), fall back to the end timestamp.
+    const endedMs = new Date(r0.timestamp).getTime()
+    const startedAt =
+      durationMs > 0
+        ? new Date(endedMs - durationMs).toISOString()
+        : r0.timestamp
+
+    return {
+      startedAt,
+      stepName,
+      workerName,
+      phase: r0.phase,
+      outcome,
+      durationMs,
+      sessionId,
+      transcript,
+      verifyOutput,
+    }
+  })
+
   return {
     originId,
     tasks,
@@ -331,6 +421,7 @@ export const loadDeepReflectArc = async (
     taskCount: tasks.length,
     totals,
     lastActivity,
+    stepTimeline,
   }
 }
 
