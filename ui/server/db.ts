@@ -12,30 +12,6 @@ export type TaskStatus =
   | 'dropped'
   | 'blocked'
 
-type ProposalSource = 'reflection' | 'human' | 'planner'
-
-/**
- * Minimal proposal representation used as a DAG node in the Topology view.
- * Only proposals with at least one in-scope task are returned.
- */
-export interface ProposalNode {
-  id: string
-  title: string
-  source: ProposalSource
-  status: string
-}
-
-export interface DraftFeature {
-  id: string
-  title: string
-  problem: string
-  solution: string
-  status: string
-  source: ProposalSource
-  createdAt: number
-  updatedAt: number
-  acceptanceCount: number
-}
 
 interface TaskRow {
   id: string
@@ -183,10 +159,6 @@ const rowToTask = (row: TaskRow): Task => {
   }
 }
 
-const normaliseSource = (raw: unknown): ProposalSource => {
-  if (raw === 'reflection' || raw === 'planner' || raw === 'human') return raw
-  return 'human'
-}
 
 export class TaskDb {
   private client: Client
@@ -524,55 +496,4 @@ export class StateDb {
     }
   }
 
-  async listDraftFeatures(): Promise<DraftFeature[]> {
-    const r = await this.client.execute(
-      `SELECT p.id, p.title, p.problem, p.solution, p.status, p.source,
-              p.created_at, p.updated_at,
-              (SELECT COUNT(*) FROM proposal_user_stories s WHERE s.proposal_id = p.id) AS acceptance_count
-       FROM proposals p
-       WHERE p.status = 'draft'
-       ORDER BY p.created_at DESC`,
-    )
-    return r.rows.map((row) => {
-      const r0 = row as unknown as Record<string, unknown>
-      return {
-        id: r0.id as string,
-        title: (r0.title as string | null) ?? '',
-        problem: (r0.problem as string | null) ?? '',
-        solution: (r0.solution as string | null) ?? '',
-        status: (r0.status as string | null) ?? 'draft',
-        source: normaliseSource(r0.source),
-        createdAt: Number(r0.created_at ?? 0),
-        updatedAt: Number(r0.updated_at ?? 0),
-        acceptanceCount: Number(r0.acceptance_count ?? 0),
-      }
-    })
-  }
-
-  /**
-   * Returns ProposalNode data for each of the given proposal IDs.
-   * IDs not found in the proposals table are silently omitted.
-   * Falls back to an empty array when the proposals table does not exist.
-   */
-  async listProposalsByIds(ids: string[]): Promise<ProposalNode[]> {
-    if (ids.length === 0) return []
-    const exists = await this.proposalsTableExists()
-    if (!exists) return []
-    const placeholders = ids.map(() => '?').join(', ')
-    const r = await this.client.execute({
-      sql: `SELECT id, title, status, source
-              FROM proposals
-             WHERE id IN (${placeholders})`,
-      args: ids,
-    })
-    return r.rows.map((row) => {
-      const r0 = row as unknown as Record<string, unknown>
-      return {
-        id: r0.id as string,
-        title: (r0.title as string | null) ?? '',
-        status: (r0.status as string | null) ?? 'draft',
-        source: normaliseSource(r0.source),
-      }
-    })
-  }
 }
