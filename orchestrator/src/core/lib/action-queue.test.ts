@@ -66,6 +66,12 @@ describe('action-queue', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
+  it('action queue item id is tagged with inbx- prefix (inbox-item kind)', async () => {
+    const actionQueue = await loadModule(repo)
+    const id = await actionQueue.raiseActionQueueItem(baseItem())
+    expect(id).toMatch(/^inbx-[a-f0-9]{8}$/)
+  })
+
   it('inserts a new item with seen_count=1, state=open, fingerprint=sha1(kind:signature)', async () => {
     const actionQueue = await loadModule(repo)
     const id = await actionQueue.raiseActionQueueItem(
