@@ -1,10 +1,10 @@
 import { type Client } from '@libsql/client'
-import { randomBytes } from 'node:crypto'
 import { resolveContext } from './context'
 import type { Author, AuthorKind } from './author'
 import { openLibsql } from './lib/libsql'
 import { publishWithRetry } from '../bus/publisher.js'
 import type { EventName, EventPayload } from '../bus/events.js'
+import { genId } from '../mars-id/index.js'
 
 export type ProposalSource = 'reflection' | 'human' | 'planner'
 
@@ -394,20 +394,7 @@ const migrateTaskSuggestions = async (c: Client): Promise<void> => {
   }
 }
 
-const slugify = (title: string): string => {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40)
-    .replace(/-+$/g, '')
-  return slug || 'proposal'
-}
-
-export const generateProposalId = (title: string): string => {
-  const prefix = randomBytes(4).toString('hex')
-  return `${prefix}-${slugify(title)}`
-}
+export const generateProposalId = (): string => genId('proposal').toString()
 
 const VALID_SOURCES: readonly ProposalSource[] = [
   'reflection',
@@ -483,7 +470,7 @@ export const createProposal = async (
 ): Promise<Proposal> => {
   await initProposals()
   const c = getClient()
-  const id = generateProposalId(title)
+  const id = generateProposalId()
   const now = Date.now()
   const source: ProposalSource =
     opts?.source !== undefined
