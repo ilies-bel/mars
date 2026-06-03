@@ -36,9 +36,12 @@ const ORCHESTRATOR_ROOT = resolve(__dirname, '..', '..', '..')
 const REPO_ROOT = resolve(ORCHESTRATOR_ROOT, '..')
 const INSTALL_DEV_SH = resolve(REPO_ROOT, 'install-dev.sh')
 
-// Only run these tests when the .claude/ plugin dir exists (i.e. in the
-// framework's own checkout, not in a sparse consumer clone).
-const PLUGIN_DIR = resolve(REPO_ROOT, '.claude')
+// Only run these tests when the .claude/.claude-plugin/ dir exists (i.e. in
+// the framework's own checkout, not in a sparse consumer clone).
+// The plugin root is .claude/.claude-plugin/ — not .claude/ itself — so the
+// Claude Code project-skills auto-discovery loader (.claude/skills/) finds no
+// skills and only the namespaced /mars:* entries are registered.
+const PLUGIN_DIR = resolve(REPO_ROOT, '.claude', '.claude-plugin')
 const canRun = existsSync(INSTALL_DEV_SH) && existsSync(PLUGIN_DIR)
 
 describe.skipIf(!canRun)('install-dev.sh — plugin activation', () => {
