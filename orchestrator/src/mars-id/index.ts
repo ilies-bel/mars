@@ -1,66 +1,74 @@
 /**
  * Mars id value object.
  *
- * A Mars id frames an entity with a 4-letter kind tag followed by an
- * 8-hex identity segment: `<tag>-<hex>`, e.g. `task-04830c8e` or
- * `prop-04830c8e`. The full tagged string is the canonical identity.
+ * A Mars id frames an entity (`task` or `proposal`) so an agent can read the
+ * kind directly from a pasted id. The bare hex is the canonical identity:
+ * equality is on the hex alone, the kind/slug are presentation framing.
  *
- * Two user-facing input shapes are accepted by `parseMarsId`:
- *   1. Full tagged form  — `<tag>-<hex>` (e.g. `task-04830c8e`)
- *   2. Hex prefix        — `<hex-prefix>` (1–8 hex chars, prefix-only lookup)
+ * Four user-facing input shapes are accepted by `parseMarsId`:
+ *   1. Full rendered form         — `mars-task-<hex>` or `mars-proposal-<hex>-<slug>`
+ *   2. Prefix without slug        — `mars-proposal-<hex>` (no trailing slug)
+ *   3. Bare hex                   — `<hex>` (8 chars, kind unknown)
+ *   4. Hex prefix (partial)       — `<hex-prefix>` (1–7 chars, partial lookup)
  *
- * Shape 1 carries the kind and parses to a `MarsId` (always-complete).
- * Shape 2 omits the kind and parses to a `MarsIdPrefix` (lookup token only).
+ * Shapes 1 and 2 carry the kind and parse to a `MarsId` (always-complete).
+ * Shapes 3 and 4 omit the kind and parse to a `MarsIdPrefix` (lookup shape).
  * The two types are distinct: a `MarsIdPrefix` cannot be rendered as a
- * final user-facing id.
+ * final user-facing id, so downstream call sites cannot accidentally
+ * concatenate a `mars-<kind>-` framing around a partial value.
  *
- * See `kinds.ts` for the full kind-tag registry and the `genId` helper.
+ * Nothing else in the codebase reads from this module yet — this slice
+ * exists so subsequent slices stop building `mars-<kind>-` prefixes by
+ * hand.
  */
 
-import { KIND_TAGS, type KindTag } from './kinds.js'
-
-// Re-export so consumers can import everything from this barrel.
-export { KIND_TAGS, type KindTag } from './kinds.js'
-export { genId } from './kinds.js'
-
-/** Build a reverse map: 4-letter tag string → KindTag key. */
-const TAG_TO_KIND: Record<string, KindTag> = Object.fromEntries(
-  (Object.entries(KIND_TAGS) as [KindTag, string][]).map(([k, v]) => [v, k]),
-)
+const KINDS = ['task', 'proposal'] as const
+export type MarsIdKind = (typeof KINDS)[number]
 
 const HEX_RE = /^[0-9a-f]+$/
 const FULL_HEX_LEN = 8
+const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+function isKind(value: string): value is MarsIdKind {
+  return (KINDS as readonly string[]).includes(value)
+}
 
 function isFullHex(value: string): boolean {
   return value.length === FULL_HEX_LEN && HEX_RE.test(value)
 }
 
 /**
- * A complete Mars id: a kind and the 8-hex identity.
- * Always-complete: every instance can be rendered to its user-facing form.
+ * A complete Mars id: a kind, the 8-hex identity, and (for proposals) an
+ * optional slug. Always-complete: every instance can be rendered to its
+ * user-facing form.
  */
 export class MarsId {
   private constructor(
-    readonly kind: KindTag,
+    readonly kind: MarsIdKind,
     readonly hex: string,
+    readonly slug?: string,
   ) {}
 
-  static create(kind: KindTag, hex: string): MarsId {
-    if (!(kind in KIND_TAGS)) {
+  static create(kind: MarsIdKind, hex: string, slug?: string): MarsId {
+    if (!isKind(kind)) {
       throw new Error(`MarsId: unknown kind '${kind}'`)
     }
     if (!isFullHex(hex)) {
       throw new Error(`MarsId: invalid hex '${hex}' (need ${FULL_HEX_LEN} hex chars)`)
     }
-    return new MarsId(kind, hex)
+    if (slug !== undefined && !SLUG_RE.test(slug)) {
+      throw new Error(`MarsId: invalid slug '${slug}'`)
+    }
+    return new MarsId(kind, hex, slug)
   }
 
-  /** User-facing rendered form: `<tag>-<hex>`, e.g. `prop-04830c8e`. */
+  /** User-facing rendered form. */
   toString(): string {
-    return `${KIND_TAGS[this.kind]}-${this.hex}`
+    const base = `mars-${this.kind}-${this.hex}`
+    return this.slug ? `${base}-${this.slug}` : base
   }
 
-  /** Equality is on the bare hex alone — kind is framing. */
+  /** Equality is on the bare hex alone — kind and slug are framing. */
   equals(other: MarsId): boolean {
     return this.hex === other.hex
   }
@@ -98,7 +106,7 @@ export class MarsIdPrefix {
 
   /**
    * Returns a diagnostic, non-id-shaped string. Deliberately not the
-   * `<tag>-` form so a prefix cannot be mistaken for a final id
+   * `mars-<kind>-` form so a prefix cannot be mistaken for a final id
    * via implicit string coercion.
    */
   toString(): string {
@@ -106,7 +114,12 @@ export class MarsIdPrefix {
   }
 }
 
-export type MarsIdParseErrorCode = 'EMPTY' | 'MALFORMED' | 'UNKNOWN_KIND' | 'INVALID_HEX'
+export type MarsIdParseErrorCode =
+  | 'EMPTY'
+  | 'MALFORMED'
+  | 'UNKNOWN_KIND'
+  | 'INVALID_HEX'
+  | 'INVALID_SLUG'
 
 export class MarsIdParseError extends Error {
   constructor(
@@ -124,17 +137,12 @@ export type ParsedMarsId =
   | { ok: true; kind: 'prefix'; value: MarsIdPrefix }
   | { ok: false; error: MarsIdParseError }
 
+const MARS_PREFIX = 'mars-'
+
 /**
  * Parse a user-facing Mars id input into either a complete `MarsId` or a
  * `MarsIdPrefix`. Returns a typed error on any malformed input — never a
  * partial value.
- *
- * Accepted shapes:
- *   - `<tag>-<hex>`   e.g. `task-04830c8e`    → MarsId
- *   - `<hex-prefix>`  e.g. `04830c8e` / `0483` → MarsIdPrefix (lookup token)
- *
- * All legacy shapes (mars-<kind>-<hex>, reflect-<hex>, <hex>-<slug>, etc.)
- * are rejected with a typed error — no legacy branches remain.
  */
 export function parseMarsId(input: string): ParsedMarsId {
   if (input.length === 0) {
@@ -144,40 +152,11 @@ export function parseMarsId(input: string): ParsedMarsId {
     }
   }
 
-  const dash = input.indexOf('-')
-
-  if (dash > 0) {
-    // Input contains a dash: treat as `<tag>-<hex>`.
-    const tag = input.slice(0, dash)
-    const hex = input.slice(dash + 1)
-
-    const kind = TAG_TO_KIND[tag]
-    if (kind === undefined) {
-      return {
-        ok: false,
-        error: new MarsIdParseError(
-          'UNKNOWN_KIND',
-          input,
-          `unknown kind tag '${tag}' in '${input}' (expected one of: ${Object.values(KIND_TAGS).join(', ')})`,
-        ),
-      }
-    }
-
-    if (!isFullHex(hex)) {
-      return {
-        ok: false,
-        error: new MarsIdParseError(
-          'INVALID_HEX',
-          input,
-          `invalid hex segment '${hex}' in '${input}'`,
-        ),
-      }
-    }
-
-    return { ok: true, kind: 'id', value: MarsId.create(kind, hex) }
+  if (input.startsWith(MARS_PREFIX)) {
+    return parseKindedForm(input)
   }
 
-  // No dash → must be all-hex chars (prefix lookup).
+  // No `mars-` framing → must be either a full bare hex or a hex prefix.
   if (!HEX_RE.test(input)) {
     return {
       ok: false,
@@ -198,6 +177,58 @@ export function parseMarsId(input: string): ParsedMarsId {
       ),
     }
   }
-
   return { ok: true, kind: 'prefix', value: MarsIdPrefix.create(input) }
+}
+
+function parseKindedForm(input: string): ParsedMarsId {
+  const rest = input.slice(MARS_PREFIX.length)
+
+  let matchedKind: MarsIdKind | null = null
+  let afterKind = ''
+  for (const k of KINDS) {
+    const tag = `${k}-`
+    if (rest.startsWith(tag)) {
+      matchedKind = k
+      afterKind = rest.slice(tag.length)
+      break
+    }
+  }
+  if (matchedKind === null) {
+    return {
+      ok: false,
+      error: new MarsIdParseError(
+        'UNKNOWN_KIND',
+        input,
+        `unknown kind in '${input}' (expected one of: ${KINDS.join(', ')})`,
+      ),
+    }
+  }
+
+  // `afterKind` is either `<hex>` or `<hex>-<slug>`.
+  const dashIdx = afterKind.indexOf('-')
+  const hex = dashIdx === -1 ? afterKind : afterKind.slice(0, dashIdx)
+  const slug = dashIdx === -1 ? undefined : afterKind.slice(dashIdx + 1)
+
+  if (!isFullHex(hex)) {
+    return {
+      ok: false,
+      error: new MarsIdParseError(
+        'INVALID_HEX',
+        input,
+        `invalid hex segment '${hex}' in '${input}'`,
+      ),
+    }
+  }
+  if (slug !== undefined && !SLUG_RE.test(slug)) {
+    return {
+      ok: false,
+      error: new MarsIdParseError(
+        'INVALID_SLUG',
+        input,
+        `invalid slug '${slug}' in '${input}'`,
+      ),
+    }
+  }
+
+  return { ok: true, kind: 'id', value: MarsId.create(matchedKind, hex, slug) }
 }

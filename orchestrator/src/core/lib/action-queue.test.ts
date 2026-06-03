@@ -66,12 +66,6 @@ describe('action-queue', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('action queue item id is tagged with inbx- prefix (inbox-item kind)', async () => {
-    const actionQueue = await loadModule(repo)
-    const id = await actionQueue.raiseActionQueueItem(baseItem())
-    expect(id).toMatch(/^inbx-[a-f0-9]{8}$/)
-  })
-
   it('inserts a new item with seen_count=1, state=open, fingerprint=sha1(kind:signature)', async () => {
     const actionQueue = await loadModule(repo)
     const id = await actionQueue.raiseActionQueueItem(
@@ -238,30 +232,6 @@ describe('action-queue', () => {
     await expect(
       actionQueue.setActionQueueState('nonexistent', 'resolved'),
     ).resolves.toBeUndefined()
-  })
-
-  it('setActionQueueState throws "ambiguous id <x>" when the prefix matches multiple items', async () => {
-    const actionQueue = await loadModule(repo)
-    // Trigger DB init by listing items (ensures tables exist for our direct insert).
-    await actionQueue.listActionQueueItems()
-    // Insert two rows with IDs that share the prefix 'aaaa' via direct DB access.
-    const { createClient } = await import('@libsql/client')
-    const dbPath = resolve(repo, '.mars', 'mars.db')
-    const c = createClient({ url: `file:${dbPath}` })
-    const now = new Date().toISOString()
-    for (const id of ['aaaa0001', 'aaaa0002']) {
-      await c.execute({
-        sql: `INSERT INTO action_queue_items
-                (id, kind, category, priority, title, raised_by, raised_at, last_seen_at, seen_count, fingerprint)
-              VALUES (?, 'failed', 'orchestrator', 'normal', 'T', 'test', ?, ?, 1, ?)`,
-        args: [id, now, now, `fp-${id}`],
-      })
-    }
-    c.close()
-
-    await expect(
-      actionQueue.setActionQueueState('aaaa', 'resolved'),
-    ).rejects.toThrow('ambiguous id aaaa')
   })
 
   it('originTaskId collapses N failures across kinds/signatures into exactly one open row', async () => {

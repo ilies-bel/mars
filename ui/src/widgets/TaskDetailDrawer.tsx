@@ -818,7 +818,6 @@ export const TaskDetailDrawer = ({
         </nav>
       ) : null}
 
-      <div className="flex-1 min-h-0 overflow-y-auto">
       {subgraph != null ? (
         <section
           data-testid="task-detail-subgraph"
@@ -910,7 +909,7 @@ export const TaskDetailDrawer = ({
       {state.kind === 'not-found' ? (
         <div
           data-testid="task-detail-not-found"
-          className="flex items-center justify-center p-6"
+          className="flex flex-1 items-center justify-center p-6"
         >
           <p className="max-w-[40ch] text-center font-mono text-sm text-iron">
             Task not found. It may have been purged.
@@ -921,12 +920,11 @@ export const TaskDetailDrawer = ({
       {state.kind === 'ready' ? (
         <div
           data-testid="task-detail-body"
-          className="p-4"
+          className="flex-1 overflow-y-auto p-4"
         >
           <TaskDetailBody task={state.task} onNavigate={navigate} currentId={currentId} />
         </div>
       ) : null}
-      </div>
     </aside>
     </>
   )

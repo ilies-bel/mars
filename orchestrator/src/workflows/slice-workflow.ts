@@ -11,11 +11,7 @@ import { buildEventInsert } from '../core/lib/outbox'
 import { Workers } from '../core/workers'
 import { parseClaudeJsonResult } from '../core/lib/claude-json'
 import { getRepoRoot, resolveContext } from '../core/context'
-import {
-  listActionQueueItems,
-  raiseActionQueueItem,
-  supersedeActionQueueItemsBySignature,
-} from '../core/lib/action-queue'
+import { listActionQueueItems, raiseActionQueueItem } from '../core/lib/action-queue'
 import { openTraceEventStore } from '../core/lib/trace-events-store'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 
@@ -399,162 +395,6 @@ export const applyActionQualityGuard = async (
     if (detectActionAntiPattern(rewritten) === null) {
       slice.prescriptiveAction = rewritten
     }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Action quality guard — Stage 2: LLM-judge escalation
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for the judge worker's structured response. Exported so tests can
- * construct fixture responses without re-declaring the shape.
- */
-export const judgeOutputSchema = z.object({
-  concrete: z.boolean(),
-  missing: z.array(z.string()),
-})
-
-/**
- * Build the prompt sent to the judge worker (Triager) when a slice's
- * prescriptiveAction passes the regex detector but may still be
- * borderline-vague. The rubric is embedded so the model evaluates the three
- * concrete-action criteria rather than making a subjective call.
- *
- * Exported for unit testing.
- */
-export const buildJudgePrompt = (
-  sliceTitle: string,
-  prescriptiveAction: string,
-): string =>
-  `Evaluate whether the following prescriptiveAction is concrete enough for a coder to implement without further clarification.
-
-Slice: "${sliceTitle}"
-
-prescriptiveAction:
-${prescriptiveAction}
-
-A concrete action must satisfy ALL three criteria:
-1. Names at least one exact symbol or file the coder must touch (a function, exported type, variable, SQL column, or file path with slashes)
-2. States what the coder must produce as a diff — specific changes, not vague directives
-3. Names a verification command or observable outcome the coder can use to confirm the work is done
-
-Return ONLY valid JSON with no surrounding prose:
-{"concrete": true, "missing": []}
-or
-{"concrete": false, "missing": ["<what is absent from criterion 1>", "<criterion 2>", ...]}
-
-For a concrete verdict: missing MUST be an empty array.
-For a non-concrete verdict: missing MUST list what is absent from the rubric above.`
-
-/**
- * Build the re-prompt sent to the Slicer worker after the judge determines
- * a slice's prescriptiveAction is non-concrete. The judge's missing[] list is
- * embedded verbatim so the Slicer can target each gap specifically.
- *
- * Exported for unit testing.
- */
-export const buildJudgeRepromptPrompt = (
-  sliceTitle: string,
-  currentAction: string,
-  missing: string[],
-): string =>
-  `The prescriptiveAction for slice "${sliceTitle}" was judged as insufficiently concrete.
-
-Missing from the action:
-${missing.map((m) => `- ${m}`).join('\n')}
-
-Current prescriptiveAction:
-${currentAction}
-
-Rewrite ONLY the prescriptiveAction to address each missing element:
-- Name at least one exact symbol or file path (with directory slashes) the coder must touch
-- State specifically what the diff should contain
-- Name a verification command or observable outcome
-
-Return only valid JSON: {"prescriptiveAction": "<rewritten action here>"}`
-
-/**
- * Returns true when an action passes the stage 1 regex detector but still
- * lacks at least one of the two concrete anchor types — a file-path token
- * (containing directory slashes) OR a backtick-quoted identifier. An action
- * that has BOTH anchors is classified as concrete and the judge is skipped;
- * an action that has ONLY one of them is borderline and warrants an LLM call.
- *
- * This check is purely deterministic — it runs before any LLM call so a
- * clearly-concrete action incurs zero judge calls.
- */
-const needsJudgeReview = (action: string): boolean => {
-  if (detectActionAntiPattern(action) !== null) return false
-  // Both anchors present → clearly concrete, no judge needed.
-  return !HAS_FILE_PATH.test(action) || !HAS_BACKTICK_IDENT.test(action)
-}
-
-/**
- * Stage 2 action-quality guard: LLM-judge escalation for borderline-vague
- * actions. Called after `applyActionQualityGuard` (stage 1 regex guard).
- *
- * For each slice whose prescriptiveAction passes stage 1 but has only one
- * concrete anchor (file path OR backtick identifier, not both), calls
- * `judge` to evaluate concreteness against the rubric. If the judge returns
- * non-concrete, calls `reprompt` exactly once with the judge's missing[] list,
- * then re-runs both stages on the new action. If the action is still vague
- * after this one retry, the slice is persisted as-is (the original action is
- * preserved) and `onVagueAfterRetry` is called so the reflection pass can
- * mine the signal.
- *
- * A slice whose action has BOTH a file path AND a backtick identifier incurs
- * zero judge calls. Non-fatal: errors from judge/reprompt are swallowed and
- * the original action is kept so the pipeline never blocks on a quality issue.
- *
- * Exported so tests can inject mock judge/reprompt without spawning a real
- * Claude worker.
- */
-export const applyJudgeEscalation = async (
-  slices: Array<{ title: string; prescriptiveAction: string }>,
-  judge: (
-    slice: { title: string; prescriptiveAction: string },
-  ) => Promise<{ concrete: boolean; missing: string[] } | null>,
-  reprompt: (
-    slice: { title: string; prescriptiveAction: string },
-    missing: string[],
-  ) => Promise<string | null>,
-  onVagueAfterRetry: (
-    slice: { title: string; prescriptiveAction: string },
-  ) => Promise<void>,
-): Promise<void> => {
-  for (const slice of slices) {
-    // Concrete actions (both file path AND backtick identifier) skip the judge.
-    if (!needsJudgeReview(slice.prescriptiveAction)) continue
-
-    const judgeResult = await judge({ ...slice }).catch(() => null)
-    // Null result (judge error) or concrete verdict: no escalation needed.
-    if (!judgeResult || judgeResult.concrete) continue
-
-    // Non-concrete: one reprompt seeded with the judge's missing[] list.
-    const newAction = await reprompt({ ...slice }, judgeResult.missing).catch(() => null)
-    if (newAction === null) {
-      await onVagueAfterRetry({ ...slice }).catch(() => {})
-      continue
-    }
-
-    // Re-run both stages on the new action.
-    if (detectActionAntiPattern(newAction) === null) {
-      // Stage 1 passes: check stage 2 with a second judge call.
-      const retryResult = await judge({
-        title: slice.title,
-        prescriptiveAction: newAction,
-      }).catch(() => null)
-      if (retryResult?.concrete) {
-        // Both stages pass: accept the rewrite and move on.
-        slice.prescriptiveAction = newAction
-        continue
-      }
-    }
-
-    // Still vague after the one retry: keep the original action and emit the
-    // signal so the reflection pass can detect the pattern.
-    await onVagueAfterRetry({ ...slice }).catch(() => {})
   }
 }
 
@@ -951,69 +791,6 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       }
     })
 
-    // Stage 2 action quality guard: LLM-judge escalation for borderline-vague
-    // actions that passed stage 1 but still lack sufficient concreteness.
-    // The judge uses the Triager (cheapest pinned worker model — Sonnet/medium)
-    // to evaluate the rubric. A non-concrete verdict triggers one slicer
-    // re-prompt seeded with the judge's missing[] list. After this one retry
-    // the slice is persisted regardless; a still-vague action emits a
-    // 'slice_action_vague_after_retry' trace event for the reflection pass.
-    // Non-fatal: all errors are swallowed.
-    await applyJudgeEscalation(
-      parsed.slices,
-      async (slice) => {
-        const jr = await runWorkerWithSpan({
-          worker: Workers.Triager,
-          prompt: buildJudgePrompt(slice.title, slice.prescriptiveAction),
-          runOptions: { cwd: getRepoRoot() },
-          traceStore,
-          stepName: 'judge-escalation',
-          workflowInstanceId: ctx.runId,
-          originId: inputData.proposalId,
-        }).catch(() => null)
-        if (!jr || jr.exitCode !== 0) return null
-        try {
-          return judgeOutputSchema.parse(parseClaudeJsonResult(jr.stdout))
-        } catch {
-          return null
-        }
-      },
-      async (slice, missing) => {
-        const rr = await runWorkerWithSpan({
-          worker: Workers.Slicer,
-          prompt: buildJudgeRepromptPrompt(
-            slice.title,
-            slice.prescriptiveAction,
-            missing,
-          ),
-          runOptions: { cwd: getRepoRoot() },
-          traceStore,
-          stepName: 'judge-escalation-reprompt',
-          workflowInstanceId: ctx.runId,
-          originId: inputData.proposalId,
-        }).catch(() => null)
-        if (!rr || rr.exitCode !== 0) return null
-        try {
-          return actionRepromptSchema.parse(parseClaudeJsonResult(rr.stdout))
-            .prescriptiveAction
-        } catch {
-          return null
-        }
-      },
-      async (slice) => {
-        await traceStore
-          ?.record({
-            kind: 'slice_action_vague_after_retry',
-            originId: inputData.proposalId,
-            payload: {
-              sliceTitle: slice.title,
-              finalAction: slice.prescriptiveAction,
-            },
-          })
-          .catch(() => {})
-      },
-    )
-
     // Validate dependency indices before any DB writes.
     for (let i = 0; i < total; i += 1) {
       for (const dep of parsed.slices[i].blockedBy) {
@@ -1376,13 +1153,10 @@ export const tryCompleteHitlSlice = async (
   if (actionQueueItem.state !== 'resolved' && actionQueueItem.state !== 'dismissed') return false
 
   // 4. Both conditions met — flip the HITL slice from 'blocked' to 'done'.
-  // Status write + lifecycle emit share one atomic batch (ADR-0030).
-  // NOTE: task.terminal{done} does NOT close this operator row — the
-  // alert-dismisser only handles origin-keyed rows, and this item is
-  // signature-only (no originTaskId). The gate in step 3 ensures the row
-  // is already resolved/dismissed, so the explicit close below is
-  // belt-and-suspenders cleanup (guards against any re-raise between the
-  // operator action and this point).
+  // Status write + lifecycle emit share one atomic batch (ADR-0030). The
+  // task.terminal{done} lets the Invalidator close any Action-queue row tied
+  // to this HITL slice; before this emit, a completed HITL slice stranded
+  // its own operator row (the measured hitl-slice staleness).
   const now = new Date().toISOString()
   await taskStore.batch(
     [
@@ -1404,16 +1178,6 @@ export const tryCompleteHitlSlice = async (
     ],
     'write',
   )
-  // Close any open operator rows for this signature. The gate above already
-  // ensures the operator row is resolved or dismissed, so this is ordinarily
-  // a no-op — but it closes any residual open row that was re-raised between
-  // the operator action and this completion point.
-  await supersedeActionQueueItemsBySignature(
-    'hitl-slice-needs-operator',
-    signature,
-    'origin-done',
-    'hitl-slice-completion',
-  ).catch(() => {})
   return true
 }
 

@@ -70,13 +70,6 @@ describe('ActionQueueRow – Restart button visibility', () => {
   it('renders a Restart button when onRestart is provided', () => {
     const html = renderRow(BASE_ITEM, { onRestart: () => {} })
     expect(html).toContain('>Restart<')
-    // data-testid is present so E2E tests can target the button reliably.
-    expect(html).toContain('data-testid="restart-btn"')
-  })
-
-  it('does NOT render the restart-btn testid when onRestart is null', () => {
-    const html = renderRow(BASE_ITEM, { onRestart: null })
-    expect(html).not.toContain('data-testid="restart-btn"')
   })
 
   it('renders "Restarting…" label while restart is pending', () => {

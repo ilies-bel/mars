@@ -5,7 +5,6 @@ import type { RecipeCatalog } from '../lib/recipes'
 import { buildOriginTree } from '../lib/origin-tree'
 import type { ActionQueueRow, DerivedActionQueueFilter } from './view/action-queue'
 import type { TerminalEvent } from './view/terminal-events'
-import type { Session } from './view/sessions'
 import {
   cursorAfter,
   TRACE_EVENT_KINDS,
@@ -16,11 +15,19 @@ import {
   type TraceEventStore,
 } from '../lib/trace-events-store'
 import { listKpis as defaultListKpis, type KpiRecord } from './kpi-store'
-import { readKpiSeries, type KpiSeries } from '../lib/kpi-snapshots'
 import type { RestartTaskError } from './restart-task'
 import type { ProgressTask, ProposalNode } from './view/progress'
-import type { TaskViewItem } from './view/tasks'
 import type { ViewStreamHub } from './view/stream-hub'
+
+/** Wire shape returned by GET /view/framework-update. */
+export interface FrameworkUpdateState {
+  installed: string
+  latest: string
+  available: boolean
+  /** ISO-8601 timestamp of the last successful check, or null before the first poll completes. */
+  checkedAt: string | null
+  releaseUrl: string | null
+}
 
 /** Wire shape returned by GET /view/todo for a single draft proposal. */
 export interface DraftFeature {
@@ -118,24 +125,11 @@ export interface HttpServerDeps {
    */
   listKpis?: () => Promise<KpiRecord[]>
   /**
-   * Return recent KPI time-series for sparkline rendering. When omitted,
-   * reads directly from kpi_snapshots via {@link readKpiSeries}.
-   */
-  listKpisSeries?: (limit: number) => Promise<KpiSeries>
-  /**
-   * Return the full task list enriched with cluster tag and blocker list.
+   * Return the full task list from the daemon's DomainTaskStore.
    * Served by `GET /view/tasks` so the read-only UI renders only what the
-   * daemon exposes — no direct DB access on the UI side. Every row carries
-   * `cluster` (null for terminal statuses) and `blockedBy` (empty array when
-   * the task has no blockers).
+   * daemon exposes — no direct DB access on the UI side.
    */
   viewTasks: () => Promise<{ tasks: unknown[] }>
-  /**
-   * Return the enriched view for a single task. Returns null when no task
-   * with the given id exists. Served by GET /view/tasks/:id so the UI can
-   * proxy a per-task fetch without reading the DB directly.
-   */
-  viewTaskById: (id: string) => Promise<{ task: TaskViewItem } | null>
   /**
    * Build the Progress-tab view: tasks with cluster tags + referenced proposals.
    * Called by GET /view/progress; the UI server proxies this endpoint rather
@@ -165,6 +159,13 @@ export interface HttpServerDeps {
    */
   todoDismiss: (kind: 'draft' | 'stale', id: string) => Promise<void>
   /**
+   * Return the framework update state from the poller cache (.mars/update.json).
+   * When the cache file does not exist yet (e.g. before the first poll
+   * completes), return a safe fallback where `available` is false and
+   * `checkedAt` / `releaseUrl` are null rather than 404.
+   */
+  viewFrameworkUpdate: () => Promise<FrameworkUpdateState>
+  /**
    * SSE hub for `GET /view/stream`. When provided, the stream endpoint
    * registers each connecting client here and delivers invalidation events
    * whenever the daemon mutates a store. Omitting this dep disables fan-out
@@ -188,13 +189,6 @@ export interface HttpServerDeps {
    * what the daemon exposes — no direct DB access on the UI side.
    */
   viewTerminalEvents: () => Promise<{ events: TerminalEvent[] }>
-  /**
-   * Return the session feed for a given agentName, derived from
-   * step_started / step_ended trace events. Served by
-   * `GET /view/sessions?agentName=<name>` so the read-only UI proxies
-   * this endpoint instead of opening the trace store directly.
-   */
-  viewSessions: (agentName: string) => Promise<{ sessions: Session[] }>
 }
 
 export interface HttpServerHandle {
@@ -427,20 +421,6 @@ export const startHttpServer = async (
       }
     }
 
-    // GET /kpis/series?limit=N — recent KPI time-series for sparklines.
-    // Returns per-column arrays of {takenAt, value} points ordered oldest-first.
-    // Default limit=90. Pure read; no draining gate.
-    if (req.method === 'GET' && req.url && /^\/kpis\/series(\?.*)?$/.test(req.url)) {
-      const parsedUrl = new URL(req.url, 'http://localhost')
-      const rawLimit = parseInt(parsedUrl.searchParams.get('limit') ?? '90', 10)
-      const limit = isNaN(rawLimit) || rawLimit < 1 ? 90 : rawLimit
-      const fn = deps.listKpisSeries ?? ((lim: number) => readKpiSeries({ limit: lim }))
-      fn(limit)
-        .then((series) => sendJson(res, 200, { series }))
-        .catch((err: unknown) => sendError(res, err))
-      return
-    }
-
     // GET /kpis — the four-KPI vector (ADR-0040, the harness-health KPI ADR
     // that was originally numbered 0038 on main while this branch held that
     // number for the recovery-tasks-are-leaf-nodes ADR — renumbered to 0040
@@ -461,27 +441,6 @@ export const startHttpServer = async (
       deps
         .viewTasks()
         .then((body) => sendJson(res, 200, body))
-        .catch((err: unknown) => sendError(res, err))
-      return
-    }
-
-    // GET /view/tasks/:id — single-task view from the daemon's DomainTaskStore.
-    // Returns 404 when no task with the given id exists. Pure read; no draining gate.
-    if (req.method === 'GET' && req.url && req.url.startsWith('/view/tasks/')) {
-      const id = decodeURIComponent(req.url.slice('/view/tasks/'.length))
-      if (!id) {
-        sendJson(res, 400, { ok: false, error: 'id is required' })
-        return
-      }
-      deps
-        .viewTaskById(id)
-        .then((result) => {
-          if (result === null) {
-            sendJson(res, 404, { ok: false, error: 'not_found', id })
-          } else {
-            sendJson(res, 200, result)
-          }
-        })
         .catch((err: unknown) => sendError(res, err))
       return
     }
@@ -526,6 +485,18 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/framework-update — returns the update-poller cache from
+    // .mars/update.json, or a safe fallback when the file does not exist yet.
+    // The daemon is the sole writer of this cache; nothing else calls GitHub.
+    // Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/framework-update') {
+      deps
+        .viewFrameworkUpdate()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/todo — draft proposals + open stale-worktree alerts for the
     // Todo tab. The daemon is the sole reader of its own DB; the UI server
     // proxies this endpoint instead of querying state.db directly. Pure read;
@@ -545,24 +516,6 @@ export const startHttpServer = async (
     if (req.method === 'GET' && req.url === '/view/terminal-events') {
       deps
         .viewTerminalEvents()
-        .then((body) => sendJson(res, 200, body))
-        .catch((err: unknown) => sendError(res, err))
-      return
-    }
-
-    // GET /view/sessions?agentName=<name> — session feed for a given worker,
-    // derived from step_started / step_ended trace events. The read-only UI
-    // proxies this endpoint instead of opening the trace store directly.
-    // Pure read; no draining gate.
-    if (req.method === 'GET' && req.url && req.url.startsWith('/view/sessions')) {
-      const parsed = new URL(req.url, 'http://localhost')
-      const agentName = parsed.searchParams.get('agentName')
-      if (!agentName) {
-        sendJson(res, 400, { error: 'agentName query parameter is required' })
-        return
-      }
-      deps
-        .viewSessions(agentName)
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return

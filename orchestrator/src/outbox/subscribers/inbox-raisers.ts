@@ -1,6 +1,5 @@
 import type { Client } from '@libsql/client';
-import { createHash } from 'node:crypto';
-import { genId } from '../../mars-id/index.js';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   processedOnce,
   ensureProcessedOnceSchema,
@@ -94,7 +93,7 @@ function taskBlockedInboxRaiser(client: Client): Subscriber {
           }
 
           // No open item yet — insert a fresh one.
-          const id = genId('inbox-item').toString();
+          const id = randomUUID().slice(0, 8);
           await tx.execute({
             sql: `INSERT INTO action_queue_items (
                    id, kind, category, priority, state,
@@ -128,7 +127,7 @@ function taskBlockedInboxRaiser(client: Client): Subscriber {
             sql: `INSERT INTO action_queue_history (
                    id, item_id, at, from_state, to_state, by, note
                  ) VALUES (?, ?, ?, NULL, 'open', ?, NULL)`,
-            args: [genId('inbox-history').toString(), id, now, raisedBy],
+            args: [randomUUID(), id, now, raisedBy],
           });
         },
       });

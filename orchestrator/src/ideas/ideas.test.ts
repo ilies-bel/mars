@@ -1,16 +1,16 @@
 /**
  * Tracer-bullet tests for the proposal scratchpad store.
  *
- * Proposal notes are stored with a bare hex primary key and a slug column
- * (slug is for DB readability only — it does NOT appear in the rendered id).
- * Every user-facing surface emits 'prop-<hex>' via the MarsId value object —
- * no call site outside the value object constructs the prefix by string
- * concatenation.
+ * Proposal notes are stored with a bare hex primary key and a slug column.
+ * Every user-facing surface emits 'mars-proposal-<hex>-<slug>' via the
+ * MarsId value object — no call site outside the value object
+ * constructs the prefix by string concatenation.
  *
- * Accepted input shapes for getProposalNote:
- *   1. Full tagged form   — prop-<hex>
- *   2. Bare hex           — <hex> (8 chars)
- *   3. Hex prefix         — <hex-prefix> (e.g. 4 chars)
+ * Four input shapes are accepted by getProposalNote:
+ *   1. Full rendered form   — mars-proposal-<hex>-<slug>
+ *   2. Prefix without slug  — mars-proposal-<hex>
+ *   3. Bare hex             — <hex> (8 chars)
+ *   4. Hex prefix           — <hex-prefix> (e.g. 4 chars)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
@@ -52,12 +52,19 @@ describe('proposal scratchpad store — add + list', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('a freshly added note appears in list output rendered as prop-<hex>', async () => {
+  it('a freshly added note appears in list output rendered as mars-proposal-<hex>-<slug>', async () => {
     const m = await loadModule(repo)
     await m.addProposalNote('My first proposal')
     const notes = await m.listProposalNotes()
     expect(notes).toHaveLength(1)
-    expect(notes[0].id).toMatch(/^prop-[0-9a-f]{8}$/)
+    expect(notes[0].id).toMatch(/^mars-proposal-[0-9a-f]{8}-[a-z0-9][a-z0-9-]*$/)
+  })
+
+  it('the rendered id contains a slug derived from the text', async () => {
+    const m = await loadModule(repo)
+    await m.addProposalNote('Hello World Proposal')
+    const notes = await m.listProposalNotes()
+    expect(notes[0].id).toMatch(/^mars-proposal-[0-9a-f]{8}-hello-world-proposal$/)
   })
 
   it('list returns notes ordered newest-first', async () => {
@@ -67,20 +74,20 @@ describe('proposal scratchpad store — add + list', () => {
     const notes = await m.listProposalNotes()
     expect(notes).toHaveLength(2)
     // Newest first — the second note has a higher createdAt
-    expect(notes[0].text).toBe('Second')
-    expect(notes[1].text).toBe('First')
+    expect(notes[0].id).toMatch(/second/)
+    expect(notes[1].id).toMatch(/first/)
   })
 
-  it('list emits the rendered prop- form, not bare hex', async () => {
+  it('list emits the rendered mars-proposal- form, not bare hex', async () => {
     const m = await loadModule(repo)
     await m.addProposalNote('Some proposal')
     const notes = await m.listProposalNotes()
-    expect(notes[0].id).toMatch(/^prop-/)
+    expect(notes[0].id).toMatch(/^mars-proposal-/)
     expect(notes[0].id).not.toMatch(/^[0-9a-f]{8}$/)
   })
 })
 
-describe('proposal scratchpad store — getProposalNote across all input shapes', () => {
+describe('proposal scratchpad store — getProposalNote across all four input shapes', () => {
   let repo: string
 
   beforeEach(() => {
@@ -92,7 +99,7 @@ describe('proposal scratchpad store — getProposalNote across all input shapes'
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('resolves the note by its full tagged form (prop-<hex>)', async () => {
+  it('resolves the note by its full rendered form (mars-proposal-<hex>-<slug>)', async () => {
     const m = await loadModule(repo)
     const added = await m.addProposalNote('Find me by full form')
     const found = await m.getProposalNote(added.id)
@@ -100,11 +107,21 @@ describe('proposal scratchpad store — getProposalNote across all input shapes'
     expect(found?.id).toBe(added.id)
   })
 
+  it('resolves the note by the prefix-without-slug form (mars-proposal-<hex>)', async () => {
+    const m = await loadModule(repo)
+    const added = await m.addProposalNote('Find me by prefix no slug')
+    // Extract the mars-proposal-<hex> part (first three segments)
+    const withoutSlug = added.id.split('-').slice(0, 3).join('-')
+    const found = await m.getProposalNote(withoutSlug)
+    expect(found).not.toBeNull()
+    expect(found?.id).toBe(added.id)
+  })
+
   it('resolves the note by bare hex (8-char hex, kind unknown)', async () => {
     const m = await loadModule(repo)
     const added = await m.addProposalNote('Find me by bare hex')
-    // Extract the hex segment: prop-<hex> → split('-') → index 1
-    const hex = added.id.split('-')[1]
+    // Extract the hex part: mars-proposal-<hex>-<slug> → split → hex is index 2
+    const hex = added.id.split('-')[2]
     expect(hex).toMatch(/^[0-9a-f]{8}$/)
     const found = await m.getProposalNote(hex)
     expect(found).not.toBeNull()
@@ -114,7 +131,7 @@ describe('proposal scratchpad store — getProposalNote across all input shapes'
   it('resolves the note by a 4-char hex prefix (short prefix lookup)', async () => {
     const m = await loadModule(repo)
     const added = await m.addProposalNote('Find me by short prefix')
-    const hex = added.id.split('-')[1]
+    const hex = added.id.split('-')[2]
     const shortPrefix = hex.slice(0, 4)
     const found = await m.getProposalNote(shortPrefix)
     expect(found).not.toBeNull()
@@ -134,11 +151,11 @@ describe('proposal scratchpad store — getProposalNote across all input shapes'
     expect(found).toBeNull()
   })
 
-  it('returned note has the rendered prop-<hex> form even when looked up by bare hex', async () => {
+  it('returned note has the rendered id form even when looked up by bare hex', async () => {
     const m = await loadModule(repo)
     const added = await m.addProposalNote('Render check')
-    const hex = added.id.split('-')[1]
+    const hex = added.id.split('-')[2]
     const found = await m.getProposalNote(hex)
-    expect(found?.id).toMatch(/^prop-[0-9a-f]{8}$/)
+    expect(found?.id).toMatch(/^mars-proposal-[0-9a-f]{8}-/)
   })
 })

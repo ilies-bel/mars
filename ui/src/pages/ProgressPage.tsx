@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useTodo } from '@/entities/todo/useTodo'
-import { useDoneFlash } from '@/hooks/useDoneFlash'
 import { useProgress } from '@/hooks/useProgress'
 import {
   readProgressStateFromUrl,
   writeProgressStateToUrl,
 } from '@/shared/progressUrlState'
 import type { Tab } from '@/shared/tabs'
-import { ActiveTasksPanel } from '@/widgets/ActiveTasksPanel'
 import { BoardView } from '@/widgets/BoardView'
 import {
   ALL_CLUSTER_TOGGLES,
@@ -16,9 +14,11 @@ import {
   type ClusterToggle,
 } from '@/widgets/ClusterToggleBar'
 import { Footer } from '@/widgets/Footer'
+import { Sidebar } from '@/widgets/Sidebar'
 import { TabStrip } from '@/widgets/TabStrip'
 import { TopologyView } from '@/widgets/TopologyView'
 import { KpiVector } from '@/widgets/KpiVector'
+import { TopStripe } from '@/widgets/TopStripe'
 
 export const ProgressPage = () => {
   // Initialise every filter dimension from the URL on first render.
@@ -27,15 +27,6 @@ export const ProgressPage = () => {
 
   const { byCluster, tasks, proposals, error, connected } = useProgress()
   const { drafts } = useTodo()
-  const { flashingTasks, flashingTaskIds } = useDoneFlash(tasks)
-
-  // Include flashing tasks in the topology view's task list so the graph keeps
-  // their nodes alive during the 3-second flash window (the graph rebuilds only
-  // when dataSignature changes, which is stable while flash tasks are present).
-  const tasksWithFlashing = useMemo(
-    () => [...(tasks ?? []), ...flashingTasks],
-    [tasks, flashingTasks],
-  )
   const [activeTab, setActiveTab] = useState<Tab>(initialUrlState.view)
   const [activeToggles, setActiveToggles] = useState<Set<ClusterToggle>>(
     initialUrlState.clusters,
@@ -101,19 +92,26 @@ export const ProgressPage = () => {
     ALL_CLUSTER_TOGGLES.filter((c) => !activeToggles.has(c)),
   )
 
+  const totalTasks = tasks?.length ?? 0
   const inProgressCount = byCluster['In progress'].length
   const blockedCount = byCluster.Blocked.length
   const failedCount = byCluster.Failed.length
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg">
+      <Sidebar
+        tasksCount={totalTasks}
+        triageCount={blockedCount}
+        connected={connected}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
-        <KpiVector
-          connected={connected}
+        <TopStripe
           inProgress={inProgressCount}
-          blocked={blockedCount}
-          failed={failedCount}
+          todo={blockedCount}
+          done={failedCount}
+          connected={connected}
         />
+        <KpiVector />
         <TabStrip active={activeTab} onSelect={setActiveTab} />
         <ClusterToggleBar active={activeToggles} onToggle={handleToggle} />
         {/* Text search — always visible */}
@@ -127,19 +125,45 @@ export const ProgressPage = () => {
             className="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-fg placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-border"
           />
         </div>
+        {/* Proposal filter — shown only when there are in-scope proposals */}
+        {proposals.length > 0 ? (
+          <div
+            className="flex items-center gap-2 border-b border-border px-4 py-2"
+            data-testid="proposal-filter"
+          >
+            <label
+              htmlFor="proposal-filter-select"
+              className="shrink-0 font-mono text-[11px] text-muted"
+            >
+              Proposal
+            </label>
+            <select
+              id="proposal-filter-select"
+              value={selectedProposalId ?? ''}
+              onChange={(e) => setSelectedProposalId(e.target.value || null)}
+              className="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-fg focus:outline-none focus:ring-1 focus:ring-border"
+            >
+              <option value="">All</option>
+              {proposals.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title.length > 60 ? `${p.title.slice(0, 59)}…` : p.title}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         {error && tasks === null ? (
           <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
             <ApiErrorPanel error={error.message} />
           </main>
         ) : activeTab === 'topology' ? (
           <TopologyView
-            tasks={tasksWithFlashing}
+            tasks={tasks ?? []}
             proposals={proposals}
             ghostedClusters={ghostedClusters}
             selectedProposalId={selectedProposalId}
             searchMatchIds={searchMatchIds}
             onSelectProposal={setSelectedProposalId}
-            flashingTaskIds={flashingTaskIds}
           />
         ) : (
           <BoardView
@@ -149,13 +173,10 @@ export const ProgressPage = () => {
             selectedProposalId={selectedProposalId}
             ghostedClusters={ghostedClusters}
             searchMatchIds={searchMatchIds}
-            flashingTasks={flashingTasks}
-            flashingTaskIds={flashingTaskIds}
           />
         )}
         <Footer />
       </div>
-      <ActiveTasksPanel tasks={byCluster['In progress']} />
     </div>
   )
 }

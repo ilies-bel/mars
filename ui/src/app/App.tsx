@@ -13,11 +13,12 @@ import {
 import type { RouteName } from '@/shared/routing'
 import { useTodo } from '@/entities/todo/useTodo'
 import { useProgress } from '@/hooks/useProgress'
-import { FocusedProjectProvider, useFocusedProject } from '@/shared/useFocusedProject'
-import { projectIdentity } from '@/shared/projectIdentity'
+import { FocusedProjectProvider } from '@/shared/useFocusedProject'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/TodoPage'
 import { EventsPage } from '@/pages/EventsPage'
+import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
+
 /** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
 const ROUTE_BASE: Record<RouteName, string> = {
   'action-queue': '#/action-queue',
@@ -36,7 +37,7 @@ const clearTaskHash = (closeHash: string): void => {
   window.location.hash = origin ? ROUTE_BASE[origin] : '#/progress'
 }
 
-export const AppInner = () => {
+const AppInner = () => {
   const hash = useHashRoute()
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
@@ -51,31 +52,9 @@ export const AppInner = () => {
     ? (drafts.find((d) => d.id === proposalId) ?? null)
     : null
   const route = resolvePageRoute(hash)
-
-  // Derive the focused project's signature color and drive --project-tint on
-  // the shell element.  NavBar and the top accent stripe consume it via
-  // var(--project-tint) so the operator always knows which project is active.
-  const { focusedProjectId, projects } = useFocusedProject()
-  const focusedProject =
-    focusedProjectId != null
-      ? (projects.find((p) => p.projectId === focusedProjectId) ?? null)
-      : null
-  const tint = focusedProject ? projectIdentity(focusedProject).color : null
-
   return (
-    <div
-      className="flex h-screen w-screen flex-col overflow-hidden bg-bg"
-      // CSS custom property drives all tint consumers (NavBar border, top stripe).
-      // Cast required: React's CSSProperties type doesn't include custom props.
-      style={tint != null ? ({ '--project-tint': tint } as React.CSSProperties) : undefined}
-      data-testid="app-shell"
-    >
-      {/* Thin accent stripe at the top — unmistakable project indicator */}
-      <div
-        aria-hidden="true"
-        className="h-[3px] w-full shrink-0"
-        style={{ backgroundColor: 'var(--project-tint, transparent)' }}
-      />
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
+      <FrameworkUpdateBanner />
       <NavBar hash={hash} />
       <div className="min-h-0 flex-1">
         {route === 'progress' ? (

@@ -88,7 +88,6 @@ export const launchUi = (opts: LaunchOptions): void => {
   const child = spawn(process.execPath, [launcher, ...args], {
     stdio: 'inherit',
     env: process.env,
-    detached: true,
   })
 
   const pidFile = getPidFilePath(opts.repo)

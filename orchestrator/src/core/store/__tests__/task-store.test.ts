@@ -157,7 +157,7 @@ describe('createRunMigrations', () => {
     const task = await queueModule.enqueueTask('memo-check', undefined, {
       skipTriage: true,
     })
-    expect(task.id).toMatch(/^task-/)
+    expect(task.id).toMatch(/^mars-/)
   })
 })
 

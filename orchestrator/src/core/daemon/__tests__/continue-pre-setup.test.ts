@@ -60,16 +60,16 @@ describe('continue degrades to restart for pre-setup failures', () => {
     expect(after?.error).toBeNull()
   })
 
-  // ── failedPhase 'setup' → setup-phase failure (install error) ───────────────
+  // ── failedPhase 'code' → non-resumable setup-time failure ─────────────────
 
-  it('re-queues from setup when failedPhase is setup', async () => {
+  it('re-queues from setup when failedPhase is code', async () => {
     const { queue, continueTask } = await loadModules(repo)
 
     const task = await queue.enqueueTask('test work', undefined, { skipTriage: true })
     await queue.updateTask(task.id, {
       status: 'failed',
       error: 'install step failed',
-      failedPhase: 'setup',
+      failedPhase: 'code',
     })
 
     const result = await continueTask.coreContinueTask(task.id)
@@ -79,68 +79,6 @@ describe('continue degrades to restart for pre-setup failures', () => {
     const after = await queue.getTask(task.id)
     expect(after?.status).toBe('queued')
     expect(after?.failedPhase).toBeNull()
-  })
-
-  // ── code-phase failure with worktree on disk → coder re-dispatched ────────
-
-  it('re-queues coder on existing worktree when failedPhase is code and worktree exists', async () => {
-    const { queue, continueTask } = await loadModules(repo)
-
-    const task = await queue.enqueueTask('test work', undefined, { skipTriage: true })
-    // Simulate a coder that was killed by context-budget (failedPhase: 'code')
-    // but left a worktree on disk (repo dir exists). The worktree is the repo
-    // itself so existsSync returns true.
-    await queue.updateTask(task.id, {
-      status: 'failed',
-      error: 'context-exhausted: coder hit the context token budget limit',
-      failedPhase: 'code',
-      failureReason: 'context-exhausted',
-      branch: `task/${task.id}`,
-      worktreePath: repo, // repo dir exists on disk
-    })
-
-    const result = await continueTask.coreContinueTask(task.id)
-
-    // Must NOT degrade to restart — the worktree is on disk.
-    expect(result.degradedToRestart).toBe(false)
-
-    const after = await queue.getTask(task.id)
-    // Re-queued for coder re-dispatch on same worktree.
-    expect(after?.status).toBe('queued')
-    // Branch and worktreePath preserved (not wiped).
-    expect(after?.branch).toBe(`task/${task.id}`)
-    expect(after?.worktreePath).toBe(repo)
-    // Assessment stored in recoveryPayload for the next coder run.
-    expect(after?.recoveryPayload).toBeTruthy()
-    const payload = JSON.parse(after!.recoveryPayload!)
-    expect(payload.type).toBe('code-resume')
-    expect(payload.assessment).toContain('Continuation context')
-    expect(payload.assessment).toContain('context-exhausted')
-  })
-
-  // ── code-phase failure without worktree on disk → degrade to restart ──────
-
-  it('degrades to restart when failedPhase is code but worktree is missing from disk', async () => {
-    const { queue, continueTask } = await loadModules(repo)
-
-    const task = await queue.enqueueTask('test work', undefined, { skipTriage: true })
-    await queue.updateTask(task.id, {
-      status: 'failed',
-      error: 'coder failed',
-      failedPhase: 'code',
-      branch: `task/${task.id}`,
-      worktreePath: '/nonexistent/worktree/path',
-    })
-
-    const result = await continueTask.coreContinueTask(task.id)
-
-    expect(result.degradedToRestart).toBe(true)
-    expect(result.note).toMatch(/missing from disk/)
-
-    const after = await queue.getTask(task.id)
-    expect(after?.status).toBe('queued')
-    expect(after?.branch).toBeNull()
-    expect(after?.worktreePath).toBeNull()
   })
 
   // ── Guard: only failed tasks can be continued ──────────────────────────────

@@ -203,48 +203,19 @@ describe('buildActionQueueView — failed-task row', () => {
     expect(rows[0]!.failureReasonCode).toBe('verify:typecheck')
   })
 
-  it('surfaces diagnosis from the diagnoses table via diagnosisLookup', async () => {
+  it('surfaces diagnosis from payload', async () => {
     const diagnosis = { text: 'Root cause: missing import', diagnosedAt: '2024-01-02T00:00:00.000Z' }
     const rows = await buildActionQueueView({
-      stateStore: makeStateStore([makeRow()]),
-      taskStore: makeTaskStore([makeTask()]),
-      errorKindRegistry: makeRegistry(),
-      repoRoot: '/nonexistent',
-      filter: 'open',
-      diagnosisLookup: async (_taskId) => diagnosis,
-    })
-
-    expect(rows[0]!.diagnosis).toEqual(diagnosis)
-  })
-
-  it('returns null diagnosis when diagnosisLookup is not provided', async () => {
-    const rows = await buildActionQueueView({
-      stateStore: makeStateStore([makeRow()]),
-      taskStore: makeTaskStore([makeTask()]),
-      errorKindRegistry: makeRegistry(),
-      repoRoot: '/nonexistent',
-      filter: 'open',
-    })
-
-    expect(rows[0]!.diagnosis).toBeNull()
-  })
-
-  it('ignores payload.diagnosis — does not surface stale copy from payload', async () => {
-    const stalePayloadDiagnosis = { text: 'stale payload copy', diagnosedAt: '2020-01-01T00:00:00.000Z' }
-    const tablesDiagnosis = { text: 'fresh table diagnosis', diagnosedAt: '2024-01-02T00:00:00.000Z' }
-    const rows = await buildActionQueueView({
       stateStore: makeStateStore([
-        makeRow({ payload: { taskId: 'task-1', diagnosis: stalePayloadDiagnosis } }),
+        makeRow({ payload: { taskId: 'task-1', diagnosis } }),
       ]),
       taskStore: makeTaskStore([makeTask()]),
       errorKindRegistry: makeRegistry(),
       repoRoot: '/nonexistent',
       filter: 'open',
-      diagnosisLookup: async (_taskId) => tablesDiagnosis,
     })
 
-    expect(rows[0]!.diagnosis).toEqual(tablesDiagnosis)
-    expect(rows[0]!.diagnosis).not.toEqual(stalePayloadDiagnosis)
+    expect(rows[0]!.diagnosis).toEqual(diagnosis)
   })
 })
 
@@ -629,8 +600,13 @@ describe('GET /view/action-queue via HTTP server', () => {
       todoDismiss: async () => {},
       viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
       viewTerminalEvents: async () => ({ events: [] }),
-      viewSessions: async () => ({ sessions: [] }),
-      viewTaskById: async () => null,
+      viewFrameworkUpdate: async () => ({
+        installed: '0.1.0',
+        latest: '0.1.0',
+        available: false,
+        checkedAt: null,
+        releaseUrl: null,
+      }),
       viewActionQueue: async (filter) => {
         // Return a predictable payload based on filter.
         const row: ActionQueueRow = {

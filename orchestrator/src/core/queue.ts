@@ -1,6 +1,5 @@
 import { type Client, type InStatement } from '@libsql/client'
 import { randomUUID } from 'node:crypto'
-import { genId } from '../mars-id'
 import { resolveContext } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
@@ -126,13 +125,11 @@ export const isTaskTag = (value: unknown): value is TaskTag =>
 /**
  * The phase that stamped a `'failed'` task. Set on the failure transition
  * by the implement workflow and consumed by `mars continue <id>` to decide
- * which step to resume from. `'setup'` is for true pre-coding failures
- * (e.g. install errors, worktree creation failures) where the task never
- * entered the coding step; such tasks must be restarted from scratch.
- * `'code'` is for failures that occurred during the actual coder run, which
- * may have left commits ahead of main and can potentially be continued.
+ * which step to resume from. `'code'` is reserved for failures that occur
+ * before any verifiable artefact exists (e.g. install errors): such tasks
+ * cannot be continued and must be restarted from scratch.
  */
-export type FailedPhase = 'setup' | 'code' | 'verify' | 'merge'
+export type FailedPhase = 'code' | 'verify' | 'merge'
 
 /**
  * Structured-task contract (gsd-executor-style). When a task ships with a
@@ -426,7 +423,6 @@ export const initQueue = async (): Promise<void> => {
     await c.execute(`ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`)
   }
   if (!names.has('fix_for_task_id')) {
-    // TEXT accepts any tagged id form, e.g. `task-<hex>` (the source task) or `fixt-<hex>`.
     await c.execute(`ALTER TABLE tasks ADD COLUMN fix_for_task_id TEXT`)
   }
   if (!names.has('failure_signature')) {
@@ -484,7 +480,6 @@ export const initQueue = async (): Promise<void> => {
   // back/forward-filled explicitly: backfill old rows below, populate new
   // rows in enqueueTask.
   if (!names.has('origin_id')) {
-    // TEXT accepts any tagged id form, e.g. `task-<hex>` or `fixt-<hex>`.
     await c.execute(`ALTER TABLE tasks ADD COLUMN origin_id TEXT`)
     await c.execute(`UPDATE tasks SET origin_id = id WHERE origin_id IS NULL`)
   }
@@ -1177,7 +1172,7 @@ const rowToTask = (row: Record<string, unknown>): Task => {
 }
 
 const coerceFailedPhase = (raw: unknown): FailedPhase | null => {
-  if (raw === 'setup' || raw === 'code' || raw === 'verify' || raw === 'merge') return raw
+  if (raw === 'code' || raw === 'verify' || raw === 'merge') return raw
   return null
 }
 
@@ -1280,7 +1275,7 @@ export const enqueueTask = async (
     )
   }
   await initQueue()
-  const id = genId('task').toString()
+  const id = `mars-${randomUUID().slice(0, 8)}`
   const now = new Date().toISOString()
   const status: TaskStatus = opts?.skipTriage ? 'queued' : 'draft'
   const authorKind = opts?.author?.kind ?? null
@@ -1862,7 +1857,7 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
 
 export const insertReflectionTask = async (corpusSize: number): Promise<string> => {
   await initQueue()
-  const id = genId('reflection').toString()
+  const id = `reflect-${randomUUID().slice(0, 8)}`
   const now = new Date().toISOString()
   const prompt = `mars reflect run over ${corpusSize} task(s) at ${now}`
   await getClient().execute({

@@ -25,7 +25,6 @@ export const TRACE_EVENT_KINDS = [
   'recovery_spawned',
   'task_failed',
   'tool_invoked',
-  'slice_action_vague_after_retry',
 ] as const
 
 export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]
@@ -111,7 +110,6 @@ export const deriveSeverity = (
   if (kind === 'step_ended' && payload.outcome === 'failed') return 'error'
   if (kind === 'step_ended' && payload.outcome === 'killed') return 'warn'
   if (kind === 'task_blocked' || kind === 'recovery_spawned') return 'warn'
-  if (kind === 'slice_action_vague_after_retry') return 'warn'
   if (kind === 'tool_invoked') {
     const exitCode = payload.exitCode
     if (typeof exitCode === 'number' && exitCode === 0) return 'info'

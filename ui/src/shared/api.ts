@@ -3,6 +3,7 @@ import {
   actionQueueResponseSchema,
   eventsResponseSchema,
   failureReasonsResponseSchema,
+  frameworkUpdateSchema,
   kpisResponseSchema,
   originsResponseSchema,
   progressResponseSchema,
@@ -13,6 +14,7 @@ import {
   type ActionQueueItem,
   type EventsResponse,
   type FailureReasonCatalogEntry,
+  type FrameworkUpdate,
   type Kpi,
   type OriginsResponse,
   type ProgressProposalNode,
@@ -112,6 +114,10 @@ export const fetchProgress = async (
 
 export const fetchTodo = async (projectId?: string): Promise<TodoPayload> => {
   return fetchJson(appendProject('/api/todo', projectId), todoResponseSchema)
+}
+
+export const fetchFrameworkUpdate = async (): Promise<FrameworkUpdate> => {
+  return fetchJson('/api/framework-update', frameworkUpdateSchema)
 }
 
 export const fetchActionQueue = async (projectId?: string): Promise<ActionQueueItem[]> => {
@@ -347,6 +353,7 @@ export type {
   DaemonHealth,
   EventsResponse,
   FailureReasonCatalogEntry,
+  FrameworkUpdate,
   Kpi,
   OriginsResponse,
   ProgressProposalNode,

@@ -2,20 +2,15 @@
  * Tests for the Claude Code plugin activate/deactivate module.
  *
  * Behaviour under test:
- *   - activatePlugin sets enabledPlugins["mars@mars"] = true
- *   - activatePlugin registers the plugin dir in extraKnownMarketplaces["mars"]
- *   - activatePlugin replaces an existing mars marketplace entry (update scenario)
- *   - activatePlugin is idempotent (no duplicate entries on double activation)
+ *   - activatePlugin registers the plugin dir in ~/.claude/settings.json
+ *   - activatePlugin replaces an existing mars plugin entry (update scenario)
  *   - activatePlugin preserves all other settings keys
- *   - activatePlugin preserves non-mars enabledPlugins entries
- *   - activatePlugin preserves non-mars extraKnownMarketplaces entries
- *   - deactivatePlugin removes enabledPlugins["mars@mars"]
- *   - deactivatePlugin removes extraKnownMarketplaces["mars"]
- *   - deactivatePlugin drops empty enabledPlugins/extraKnownMarketplaces keys
- *   - deactivatePlugin is a no-op when mars@mars is not registered
+ *   - activatePlugin preserves non-mars plugin entries
+ *   - deactivatePlugin removes the mars plugin entry
+ *   - deactivatePlugin is a no-op when no mars plugin is registered
+ *   - deactivatePlugin drops the plugins key when it becomes empty
  *   - deactivatePlugin preserves non-mars plugin entries
  *   - resolveActivePluginDir returns the registered mars plugin path
- *   - resolveActivePluginDir returns null when not activated
  */
 
 import { describe, it, expect } from 'vitest'
@@ -66,43 +61,18 @@ function makeDeps(
 
 const SETTINGS_PATH = '/home/user/.claude/settings.json'
 const PLUGIN_DIR = '/home/user/mars-framework/.claude'
-const OTHER_PLUGIN_DIR = '/home/user/other-plugin'
-const PLUGIN_KEY = 'mars@mars'
-const MARKETPLACE_KEY = 'mars'
+const OTHER_PLUGIN = '/home/user/other-plugin'
 
 // ---------------------------------------------------------------------------
-// activatePlugin — fresh install
+// activatePlugin
 // ---------------------------------------------------------------------------
 
 describe('activatePlugin — fresh install (no prior settings)', () => {
-  it('sets enabledPlugins["mars@mars"] = true', () => {
+  it('writes settings.plugins containing the plugin dir', () => {
     const deps = makeDeps()
     activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
 
-    const enabledPlugins = deps.store.enabledPlugins as Record<string, boolean>
-    expect(enabledPlugins[PLUGIN_KEY]).toBe(true)
-  })
-
-  it('registers the plugin dir in extraKnownMarketplaces["mars"].source.path', () => {
-    const deps = makeDeps()
-    activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
-
-    const marketplaces = deps.store.extraKnownMarketplaces as Record<
-      string,
-      { source: { source: string; path: string } }
-    >
-    expect(marketplaces[MARKETPLACE_KEY].source.path).toBe(PLUGIN_DIR)
-  })
-
-  it('sets extraKnownMarketplaces["mars"].source.source = "local"', () => {
-    const deps = makeDeps()
-    activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
-
-    const marketplaces = deps.store.extraKnownMarketplaces as Record<
-      string,
-      { source: { source: string; path: string } }
-    >
-    expect(marketplaces[MARKETPLACE_KEY].source.source).toBe('local')
+    expect(deps.store.plugins).toEqual([PLUGIN_DIR])
   })
 
   it('writes to the supplied settings path', () => {
@@ -121,132 +91,80 @@ describe('activatePlugin — fresh install (no prior settings)', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// activatePlugin — update scenario
-// ---------------------------------------------------------------------------
+describe('activatePlugin — when no plugins key exists', () => {
+  it('creates the plugins key with the single entry', () => {
+    const deps = makeDeps({ hooks: {} })
+    activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
+
+    expect(deps.store.plugins).toEqual([PLUGIN_DIR])
+    expect(deps.store.hooks).toEqual({})
+  })
+})
 
 describe('activatePlugin — update scenario (existing mars plugin)', () => {
-  it('replaces the prior marketplace path with the new one', () => {
+  it('replaces the prior mars plugin path with the new one', () => {
     const oldDir = '/old/mars-framework/.claude'
-    const deps = makeDeps({
-      enabledPlugins: { [PLUGIN_KEY]: true },
-      extraKnownMarketplaces: {
-        [MARKETPLACE_KEY]: { source: { source: 'local', path: oldDir } },
-      },
-    })
+    const deps = makeDeps({ plugins: [oldDir] }, [oldDir])
     activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
 
-    const marketplaces = deps.store.extraKnownMarketplaces as Record<
-      string,
-      { source: { path: string } }
-    >
-    expect(marketplaces[MARKETPLACE_KEY].source.path).toBe(PLUGIN_DIR)
+    expect(deps.store.plugins).not.toContain(oldDir)
+    expect(deps.store.plugins).toContain(PLUGIN_DIR)
   })
 
-  it('does not duplicate enabledPlugins entry when activated twice with the same path', () => {
-    const deps = makeDeps()
-    activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
+  it('does not duplicate the entry when activated twice with the same path', () => {
+    const deps = makeDeps({ plugins: [PLUGIN_DIR] }, [PLUGIN_DIR])
     activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
 
-    const pluginKeys = Object.keys(
-      deps.store.enabledPlugins as Record<string, boolean>,
-    ).filter((k) => k === PLUGIN_KEY)
-    expect(pluginKeys).toHaveLength(1)
+    expect((deps.store.plugins as string[]).filter((p) => p === PLUGIN_DIR)).toHaveLength(1)
+  })
+})
+
+describe('activatePlugin — preserves non-mars plugins', () => {
+  it('keeps existing non-mars plugins when adding the mars plugin', () => {
+    const deps = makeDeps({ plugins: [OTHER_PLUGIN] })
+    activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
+
+    expect(deps.store.plugins).toContain(OTHER_PLUGIN)
+    expect(deps.store.plugins).toContain(PLUGIN_DIR)
   })
 
-  it('does not duplicate extraKnownMarketplaces entry when activated twice', () => {
-    const deps = makeDeps()
-    activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
+  it('keeps non-mars plugins when replacing an existing mars plugin', () => {
+    const oldDir = '/old/.claude'
+    const deps = makeDeps({ plugins: [OTHER_PLUGIN, oldDir] }, [oldDir])
     activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
 
-    const marketplaceKeys = Object.keys(
-      deps.store.extraKnownMarketplaces as Record<string, unknown>,
-    ).filter((k) => k === MARKETPLACE_KEY)
-    expect(marketplaceKeys).toHaveLength(1)
+    expect(deps.store.plugins).toContain(OTHER_PLUGIN)
+    expect(deps.store.plugins).toContain(PLUGIN_DIR)
+    expect(deps.store.plugins).not.toContain(oldDir)
   })
 })
 
 // ---------------------------------------------------------------------------
-// activatePlugin — preserves non-mars entries
-// ---------------------------------------------------------------------------
-
-describe('activatePlugin — preserves non-mars entries', () => {
-  it('preserves non-mars enabledPlugins entries', () => {
-    const deps = makeDeps({ enabledPlugins: { 'other@marketplace': true } })
-    activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
-
-    const enabledPlugins = deps.store.enabledPlugins as Record<string, boolean>
-    expect(enabledPlugins['other@marketplace']).toBe(true)
-    expect(enabledPlugins[PLUGIN_KEY]).toBe(true)
-  })
-
-  it('preserves non-mars extraKnownMarketplaces entries', () => {
-    const deps = makeDeps({
-      extraKnownMarketplaces: {
-        'other-marketplace': { source: { source: 'github', repo: 'x/y' } },
-      },
-    })
-    activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
-
-    const marketplaces = deps.store.extraKnownMarketplaces as Record<string, unknown>
-    expect('other-marketplace' in marketplaces).toBe(true)
-    expect(MARKETPLACE_KEY in marketplaces).toBe(true)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// deactivatePlugin — removes the registered mars plugin
+// deactivatePlugin
 // ---------------------------------------------------------------------------
 
 describe('deactivatePlugin — removes the registered mars plugin', () => {
-  it('removes enabledPlugins["mars@mars"]', () => {
-    const deps = makeDeps({
-      enabledPlugins: { [PLUGIN_KEY]: true },
-      extraKnownMarketplaces: {
-        [MARKETPLACE_KEY]: { source: { source: 'local', path: PLUGIN_DIR } },
-      },
-    })
+  it('removes the mars plugin dir from settings.plugins', () => {
+    const deps = makeDeps({ plugins: [PLUGIN_DIR] }, [PLUGIN_DIR])
     deactivatePlugin(SETTINGS_PATH, deps)
 
-    const enabledPlugins = deps.store.enabledPlugins as Record<string, boolean> | undefined
-    expect(enabledPlugins?.[PLUGIN_KEY]).toBeUndefined()
+    expect(Array.isArray(deps.store.plugins)
+      ? (deps.store.plugins as string[]).includes(PLUGIN_DIR)
+      : false
+    ).toBe(false)
   })
 
-  it('removes extraKnownMarketplaces["mars"]', () => {
-    const deps = makeDeps({
-      enabledPlugins: { [PLUGIN_KEY]: true },
-      extraKnownMarketplaces: {
-        [MARKETPLACE_KEY]: { source: { source: 'local', path: PLUGIN_DIR } },
-      },
-    })
+  it('drops the plugins key entirely when array becomes empty', () => {
+    const deps = makeDeps({ plugins: [PLUGIN_DIR] }, [PLUGIN_DIR])
     deactivatePlugin(SETTINGS_PATH, deps)
 
-    const marketplaces = deps.store.extraKnownMarketplaces as Record<string, unknown> | undefined
-    expect(marketplaces?.[MARKETPLACE_KEY]).toBeUndefined()
-  })
-
-  it('drops the enabledPlugins key entirely when it becomes empty', () => {
-    const deps = makeDeps({ enabledPlugins: { [PLUGIN_KEY]: true } })
-    deactivatePlugin(SETTINGS_PATH, deps)
-
-    expect('enabledPlugins' in deps.store).toBe(false)
-  })
-
-  it('drops the extraKnownMarketplaces key entirely when it becomes empty', () => {
-    const deps = makeDeps({
-      enabledPlugins: { [PLUGIN_KEY]: true },
-      extraKnownMarketplaces: {
-        [MARKETPLACE_KEY]: { source: { source: 'local', path: PLUGIN_DIR } },
-      },
-    })
-    deactivatePlugin(SETTINGS_PATH, deps)
-
-    expect('extraKnownMarketplaces' in deps.store).toBe(false)
+    expect('plugins' in deps.store).toBe(false)
   })
 
   it('preserves other settings keys when removing the mars plugin', () => {
     const deps = makeDeps(
-      { enabledPlugins: { [PLUGIN_KEY]: true }, env: { FOO: 'bar' } },
+      { plugins: [PLUGIN_DIR], env: { FOO: 'bar' } },
+      [PLUGIN_DIR],
     )
     deactivatePlugin(SETTINGS_PATH, deps)
 
@@ -254,20 +172,9 @@ describe('deactivatePlugin — removes the registered mars plugin', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// deactivatePlugin — no-op when no mars plugin registered
-// ---------------------------------------------------------------------------
-
 describe('deactivatePlugin — no-op when no mars plugin registered', () => {
-  it('does not write settings when enabledPlugins key is absent', () => {
-    const deps = makeDeps({ env: { X: '1' } })
-    deactivatePlugin(SETTINGS_PATH, deps)
-
-    expect(deps.lastWrittenPath).toBeNull()
-  })
-
-  it('does not write settings when mars@mars key is absent from enabledPlugins', () => {
-    const deps = makeDeps({ enabledPlugins: { 'other@marketplace': true } })
+  it('does not write settings when no mars plugin exists', () => {
+    const deps = makeDeps({ plugins: [OTHER_PLUGIN] })
     const before = JSON.stringify(deps.store)
     deactivatePlugin(SETTINGS_PATH, deps)
 
@@ -275,61 +182,27 @@ describe('deactivatePlugin — no-op when no mars plugin registered', () => {
     expect(deps.lastWrittenPath).toBeNull()
   })
 
-  it('does not throw when settings file is empty', () => {
-    const deps = makeDeps({})
-    expect(() => deactivatePlugin(SETTINGS_PATH, deps)).not.toThrow()
+  it('does not write settings when plugins key is absent', () => {
+    const deps = makeDeps({ env: { X: '1' } })
+    deactivatePlugin(SETTINGS_PATH, deps)
+
+    expect(deps.lastWrittenPath).toBeNull()
   })
 })
 
-// ---------------------------------------------------------------------------
-// deactivatePlugin — preserves non-mars entries
-// ---------------------------------------------------------------------------
-
-describe('deactivatePlugin — preserves non-mars entries', () => {
-  it('keeps non-mars enabledPlugins entries after deactivation', () => {
-    const deps = makeDeps({
-      enabledPlugins: { [PLUGIN_KEY]: true, 'other@marketplace': true },
-    })
+describe('deactivatePlugin — preserves non-mars plugins', () => {
+  it('keeps non-mars plugins when removing the mars plugin', () => {
+    const deps = makeDeps({ plugins: [OTHER_PLUGIN, PLUGIN_DIR] }, [PLUGIN_DIR])
     deactivatePlugin(SETTINGS_PATH, deps)
 
-    const enabledPlugins = deps.store.enabledPlugins as Record<string, boolean>
-    expect(enabledPlugins['other@marketplace']).toBe(true)
+    expect(deps.store.plugins).toEqual([OTHER_PLUGIN])
   })
 
-  it('keeps the enabledPlugins key when non-mars entries remain', () => {
-    const deps = makeDeps({
-      enabledPlugins: { [PLUGIN_KEY]: true, 'other@marketplace': false },
-    })
+  it('keeps the plugins key when non-mars plugins remain', () => {
+    const deps = makeDeps({ plugins: [OTHER_PLUGIN, PLUGIN_DIR] }, [PLUGIN_DIR])
     deactivatePlugin(SETTINGS_PATH, deps)
 
-    expect('enabledPlugins' in deps.store).toBe(true)
-  })
-
-  it('keeps non-mars extraKnownMarketplaces entries after deactivation', () => {
-    const deps = makeDeps({
-      enabledPlugins: { [PLUGIN_KEY]: true },
-      extraKnownMarketplaces: {
-        [MARKETPLACE_KEY]: { source: { source: 'local', path: PLUGIN_DIR } },
-        'other-marketplace': { source: { source: 'github', repo: 'x/y' } },
-      },
-    })
-    deactivatePlugin(SETTINGS_PATH, deps)
-
-    const marketplaces = deps.store.extraKnownMarketplaces as Record<string, unknown>
-    expect('other-marketplace' in marketplaces).toBe(true)
-  })
-
-  it('keeps the extraKnownMarketplaces key when non-mars entries remain', () => {
-    const deps = makeDeps({
-      enabledPlugins: { [PLUGIN_KEY]: true },
-      extraKnownMarketplaces: {
-        [MARKETPLACE_KEY]: { source: { source: 'local', path: PLUGIN_DIR } },
-        'other-marketplace': { source: { source: 'github', repo: 'x/y' } },
-      },
-    })
-    deactivatePlugin(SETTINGS_PATH, deps)
-
-    expect('extraKnownMarketplaces' in deps.store).toBe(true)
+    expect('plugins' in deps.store).toBe(true)
   })
 })
 
@@ -338,70 +211,18 @@ describe('deactivatePlugin — preserves non-mars entries', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveActivePluginDir', () => {
-  it('returns the plugin dir from extraKnownMarketplaces when mars@mars is enabled', () => {
-    const deps = makeDeps({
-      enabledPlugins: { [PLUGIN_KEY]: true },
-      extraKnownMarketplaces: {
-        [MARKETPLACE_KEY]: { source: { source: 'local', path: PLUGIN_DIR } },
-      },
-    })
+  it('returns the registered mars plugin dir', () => {
+    const deps = makeDeps({ plugins: [PLUGIN_DIR] }, [PLUGIN_DIR])
     expect(resolveActivePluginDir(SETTINGS_PATH, deps)).toBe(PLUGIN_DIR)
   })
 
-  it('returns null when enabledPlugins key is absent', () => {
+  it('returns null when no mars plugin is registered', () => {
+    const deps = makeDeps({ plugins: [OTHER_PLUGIN] })
+    expect(resolveActivePluginDir(SETTINGS_PATH, deps)).toBeNull()
+  })
+
+  it('returns null when plugins key is absent', () => {
     const deps = makeDeps({})
-    expect(resolveActivePluginDir(SETTINGS_PATH, deps)).toBeNull()
-  })
-
-  it('returns null when mars@mars is not in enabledPlugins', () => {
-    const deps = makeDeps({ enabledPlugins: { 'other@marketplace': true } })
-    expect(resolveActivePluginDir(SETTINGS_PATH, deps)).toBeNull()
-  })
-
-  it('returns null when mars@mars is false', () => {
-    const deps = makeDeps({
-      enabledPlugins: { [PLUGIN_KEY]: false },
-      extraKnownMarketplaces: {
-        [MARKETPLACE_KEY]: { source: { source: 'local', path: PLUGIN_DIR } },
-      },
-    })
-    expect(resolveActivePluginDir(SETTINGS_PATH, deps)).toBeNull()
-  })
-
-  it('returns null when extraKnownMarketplaces is absent', () => {
-    const deps = makeDeps({ enabledPlugins: { [PLUGIN_KEY]: true } })
-    expect(resolveActivePluginDir(SETTINGS_PATH, deps)).toBeNull()
-  })
-
-  it('returns null when mars marketplace entry is absent', () => {
-    const deps = makeDeps({
-      enabledPlugins: { [PLUGIN_KEY]: true },
-      extraKnownMarketplaces: { 'other-marketplace': {} },
-    })
-    expect(resolveActivePluginDir(SETTINGS_PATH, deps)).toBeNull()
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Round-trip: activate then deactivate
-// ---------------------------------------------------------------------------
-
-describe('activate → deactivate round-trip', () => {
-  it('settings return to original state after activate then deactivate', () => {
-    const initial = { env: { FOO: 'bar' }, permissions: { allow: [] } }
-    const deps = makeDeps(initial)
-
-    activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
-    deactivatePlugin(SETTINGS_PATH, deps)
-
-    expect(deps.store).toEqual(initial)
-  })
-
-  it('resolveActivePluginDir returns null after deactivation', () => {
-    const deps = makeDeps()
-    activatePlugin(PLUGIN_DIR, SETTINGS_PATH, deps)
-    deactivatePlugin(SETTINGS_PATH, deps)
-
     expect(resolveActivePluginDir(SETTINGS_PATH, deps)).toBeNull()
   })
 })

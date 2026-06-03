@@ -101,20 +101,6 @@ html, body, #root {
 }
 .animate-mars-pulse { animation: mars-pulse 1.6s ease-in-out infinite; }
 
-/* Done flash — green confirmation burst then fade-out when a task completes */
-@keyframes mars-done-flash {
-  0%   { background-color: #4ade80; opacity: 1; }
-  18%  { background-color: #ffffff; opacity: 1; }
-  36%  { background-color: #4ade80; opacity: 1; }
-  65%  { background-color: #ffffff; opacity: 1; }
-  85%  { background-color: #ffffff; opacity: 0.6; }
-  100% { background-color: #ffffff; opacity: 0; }
-}
-.animate-mars-done-flash {
-  animation: mars-done-flash 3s ease-in-out forwards;
-  pointer-events: none;
-}
-
 /* ── Drawer entrance / exit animations ──────────────────────────────────────
  * Enter: slides in from the right over 260 ms (iOS drawer curve).
  * Exit:  slides back to the right over 180 ms (snappier than enter).

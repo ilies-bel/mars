@@ -427,7 +427,11 @@ Commands:
                                 --tag (repeatable, routing tags).
   statusline                    print a one-line Claude Code status segment.
                                 Reads stdin for session JSON (tolerated but
-                                optional). Exits 0 always.
+                                optional). Reads .mars/update.json for an
+                                update nudge — never hits the network. Appends
+                                "⚡ v<latest> available" only when
+                                available===true; silent otherwise. Exits 0
+                                always.
   where                         print resolved repo + state directory
   help                          show this message
   --version, -v                 print mars version and exit
@@ -1112,7 +1116,7 @@ const main = async (): Promise<void> => {
       const model = flags['--model']
       if (!name || !model) {
         console.error(
-          'usage: mars worker add <name> --model <model> [--effort high|medium|...] [--permission-mode default|bypassPermissions] [--tag <tag> ...]',
+          'usage: mars worker add <name> --model <model> [--effort high|medium|...] [--permission-mode default|bypassPermissions] [--max-messages <n>] [--tag <tag> ...]',
         )
         process.exit(1)
       }
@@ -1142,6 +1146,19 @@ const main = async (): Promise<void> => {
         process.exit(1)
       }
 
+      let maxMessages = 0
+      const maxRaw = flags['--max-messages']
+      if (maxRaw !== undefined) {
+        const n = Number(maxRaw)
+        if (!Number.isInteger(n) || n < 0) {
+          console.error(
+            `max-messages must be a non-negative integer; got '${maxRaw}'`,
+          )
+          process.exit(1)
+        }
+        maxMessages = n
+      }
+
       const tags = multiFlags['--tag']
 
       const { addWorkerToRegistry } = await import(
@@ -1161,6 +1178,7 @@ const main = async (): Promise<void> => {
         bare: false,
         disallowedTools: [],
         outputFormat: 'stream-json',
+        maxMessages,
         runtime: 'headless',
         ...(tags !== undefined && tags.length > 0 ? { tags } : {}),
       })
@@ -1293,36 +1311,7 @@ const main = async (): Promise<void> => {
         MARS_VERSION,
         deps,
       )
-      if (result.outcome === 'success') {
-        console.log(
-          `mars install: ${result.outcome} (${result.lock.files.length} files)`,
-        )
-        return
-      }
-      if (result.outcome === 'refused-already-installed') {
-        console.error(
-          'mars install: refused — this repo is already installed ' +
-            '(mars.lock already exists). Run `mars update` to update an ' +
-            'existing install.',
-        )
-        process.exit(1)
-      }
-      // refused-hybrid-collision
-      console.error(
-        'mars install: refused — one or more destination files already ' +
-          'exist in this repo (ADR-0007 — hybrid files refuse on existence).',
-      )
-      console.error('')
-      console.error('Colliding paths:')
-      for (const p of result.collidingPaths) {
-        console.error(`  ${p}`)
-      }
-      console.error('')
-      console.error(
-        'Back up and remove each of the files listed above, then re-run ' +
-          '`mars install`.',
-      )
-      process.exit(1)
+      console.log(`mars install: ${result.outcome} (${result.lock.files.length} files)`)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`mars install: ${msg}`)
@@ -1881,7 +1870,7 @@ const main = async (): Promise<void> => {
       for (const i of ideas) {
         const title = i.title.trim() || '(no title)'
         console.log(
-          `${i.id}\t${i.status}\tsource=${i.source}\t${title}`,
+          `${i.id.slice(0, 8)}\t${i.status}\tsource=${i.source}\t${title}`,
         )
       }
       return
@@ -3466,7 +3455,6 @@ const main = async (): Promise<void> => {
     const actionQueue = await import('./core/lib/action-queue')
     const dismissals = await import('./core/lib/action-queue-dismissals')
     type ActionQueueItem = import('./core/lib/action-queue').ActionQueueItem
-    type ActionQueueRow = import('./core/daemon/view/action-queue').ActionQueueRow
 
     const LEAN_PREVIEW = 3
 
@@ -3494,39 +3482,46 @@ const main = async (): Promise<void> => {
       return item.signature ?? item.id
     }
 
-    const printList = (rows: ActionQueueRow[]): void => {
-      if (rows.length === 0) {
+    const printList = (items: ActionQueueItem[]): void => {
+      if (items.length === 0) {
         console.log('action queue empty')
         return
       }
-      for (const row of rows) {
-        const flag = row.dismissed ? 'dismissed' : 'open'
+      for (const item of items) {
+        const flag =
+          item.state === 'dismissed' || item.state === 'resolved'
+            ? 'dismissed'
+            : 'open'
+        const priority =
+          item.priority === 'urgent' ? 'high' : item.priority
         console.log(
-          `${row.id.padEnd(13)}  ${flag.padEnd(9)}  ${row.priority.padEnd(6)}  ${row.kind.padEnd(36)}  ${row.title}`,
+          `${item.id}\t${flag}\t${priority}\t${item.kind}\t${item.title}`,
         )
       }
     }
 
-    const printLean = (rows: ActionQueueRow[]): void => {
-      if (rows.length === 0) {
+    const printLean = (items: ActionQueueItem[]): void => {
+      if (items.length === 0) {
         console.log('action queue empty')
         return
       }
       const counts: Record<string, number> = {}
-      for (const row of rows) {
-        counts[row.kind] = (counts[row.kind] ?? 0) + 1
+      for (const item of items) {
+        counts[item.kind] = (counts[item.kind] ?? 0) + 1
       }
       const parts = Object.entries(counts).map(([k, n]) => `${k}:${n}`)
-      console.log(`action queue ${rows.length} (${parts.join(', ')})`)
-      for (const row of rows.slice(0, LEAN_PREVIEW)) {
-        console.log(`  ${row.id}  ${row.title}`)
+      console.log(`action queue ${items.length} (${parts.join(', ')})`)
+      for (const item of items.slice(0, LEAN_PREVIEW)) {
+        console.log(`  ${item.id}  ${item.title}`)
       }
-      const overflow = rows.length - LEAN_PREVIEW
+      const overflow = items.length - LEAN_PREVIEW
       if (overflow > 0) console.log(`  ... +${overflow} more`)
     }
 
-    const printShow = (item: ActionQueueItem, dismissed: boolean): void => {
+    const printShow = (item: ActionQueueItem): void => {
       const entityId = extractEntityId(item)
+      const dismissed =
+        item.state === 'dismissed' || item.state === 'resolved'
       const priority = item.priority === 'urgent' ? 'high' : item.priority
       console.log(`id:        ${item.id}`)
       console.log(`kind:      ${item.kind}`)
@@ -3605,96 +3600,20 @@ const main = async (): Promise<void> => {
         console.error('usage: mars action-queue list [open|dismissed|all] [--lean]')
         process.exit(1)
       }
-      const viewFilter = filter as import('./core/daemon/view/action-queue').DerivedActionQueueFilter
-      const { buildActionQueueView } = await import('./core/daemon/view/action-queue')
-      const { listTasks: qListTasks, initQueue, getClient: getQueueClient } = await import('./core/queue')
-      const { listErrorKinds: listErrKinds } = await import('./core/lib/error-kinds')
-      const { getRepoRoot } = await import('./core/context')
-
-      await initQueue()
-
-      const stateStore = {
-        listOpenActionQueueItems: async () => {
-          const items = await actionQueue.listActionQueueItems('open')
-          return items.map((item) => ({
-            id: item.id,
-            kind: item.kind as string,
-            priority: item.priority as string,
-            title: item.title,
-            body: item.body,
-            payload: item.payload,
-            context: item.context,
-            raisedAt: item.raisedAt,
-            lastSeenAt: item.lastSeenAt,
-          }))
-        },
-        listActionQueueDismissals: async () => {
-          const dismissalList = await dismissals.listDismissals()
-          const map = new Map<string, string | null>()
-          for (const d of dismissalList) {
-            map.set(`${d.entityKind}:${d.entityId}`, d.note)
-          }
-          return map
-        },
-      }
-
-      const taskStore = {
-        listTasks: async () => {
-          const tasks = await qListTasks()
-          const c = getQueueClient()
-          const blockedByMap = new Map<string, string[]>()
-          const proposalMap = new Map<string, string | null>()
-          try {
-            const blockersResult = await c.execute(
-              `SELECT task_id, blocker_task_id FROM task_blockers`,
-            )
-            for (const row of blockersResult.rows) {
-              const r = row as unknown as { task_id: string; blocker_task_id: string }
-              const arr = blockedByMap.get(r.task_id) ?? []
-              arr.push(r.blocker_task_id)
-              blockedByMap.set(r.task_id, arr)
-            }
-          } catch {
-            // task_blockers may not exist on a fresh repo — empty map
-          }
-          try {
-            const proposalResult = await c.execute(
-              `SELECT id, parent_proposal_id FROM tasks WHERE parent_proposal_id IS NOT NULL`,
-            )
-            for (const row of proposalResult.rows) {
-              const r = row as unknown as { id: string; parent_proposal_id: string | null }
-              proposalMap.set(r.id, r.parent_proposal_id)
-            }
-          } catch {
-            // Tolerate missing column on legacy repos
-          }
-          return tasks.map((t) => ({
-            id: t.id,
-            status: t.status,
-            prompt: t.prompt,
-            blockedBy: blockedByMap.get(t.id) ?? [],
-            parentProposalId: proposalMap.get(t.id) ?? null,
-            failureSignature: t.failureSignature,
-            branch: t.branch,
-            updatedAt: t.updatedAt,
-          }))
-        },
-      }
-
-      const errorKinds = listErrKinds()
-      const errorKindRegistry = new Map(errorKinds.map((ek) => [ek.kind, ek]))
-
-      const rows = await buildActionQueueView({
-        stateStore,
-        taskStore,
-        errorKindRegistry,
-        repoRoot: getRepoRoot(),
-        filter: viewFilter,
-      })
+      // Map filter to the action_queue_items state vocabulary.
+      // 'open' → only state='open'; 'dismissed' → state='dismissed';
+      // 'all' → no state filter (acknowledged + open + dismissed).
+      const stateFilter =
+        filter === 'dismissed'
+          ? ('dismissed' as const)
+          : filter === 'all'
+            ? ('all' as const)
+            : ('open' as const)
+      const items = await actionQueue.listActionQueueItems(stateFilter)
       if (lean) {
-        printLean(rows)
+        printLean(items)
       } else {
-        printList(rows)
+        printList(items)
       }
       return
     }
@@ -3710,10 +3629,7 @@ const main = async (): Promise<void> => {
         console.error(`no action queue item matching ${id}`)
         process.exit(1)
       }
-      const showEntityKind = actionQueueKindToEntityKind(item.kind)
-      const showEntityId = extractEntityId(item)
-      const showDismissed = await dismissals.isEntityDismissed(showEntityKind, showEntityId)
-      printShow(item, showDismissed)
+      printShow(item)
       return
     }
 
