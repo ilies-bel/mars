@@ -913,7 +913,6 @@ export const implementWorkflow = defineWorkflow<
             bare: decl.bare,
             disallowedTools: decl.disallowedTools,
             outputFormat: decl.outputFormat,
-            maxMessages: decl.maxMessages,
             maxContextTokens: 0,
             runtime: decl.runtime,
             ...(decl.tags !== undefined ? { tags: decl.tags } : {}),
