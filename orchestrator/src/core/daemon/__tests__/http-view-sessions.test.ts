@@ -54,6 +54,7 @@ const makeDeps = (
   viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
   viewSessions: (agentName: string) => buildSessionsView(store, agentName),
+  viewTaskById: async () => null,
   ...overrides,
 })
 

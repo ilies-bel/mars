@@ -19,6 +19,7 @@ import { listKpis as defaultListKpis, type KpiRecord } from './kpi-store'
 import { readKpiSeries, type KpiSeries } from '../lib/kpi-snapshots'
 import type { RestartTaskError } from './restart-task'
 import type { ProgressTask, ProposalNode } from './view/progress'
+import type { TaskViewItem } from './view/tasks'
 import type { ViewStreamHub } from './view/stream-hub'
 
 /** Wire shape returned by GET /view/todo for a single draft proposal. */
@@ -129,6 +130,12 @@ export interface HttpServerDeps {
    * the task has no blockers).
    */
   viewTasks: () => Promise<{ tasks: unknown[] }>
+  /**
+   * Return the enriched view for a single task. Returns null when no task
+   * with the given id exists. Served by GET /view/tasks/:id so the UI can
+   * proxy a per-task fetch without reading the DB directly.
+   */
+  viewTaskById: (id: string) => Promise<{ task: TaskViewItem } | null>
   /**
    * Build the Progress-tab view: tasks with cluster tags + referenced proposals.
    * Called by GET /view/progress; the UI server proxies this endpoint rather
@@ -454,6 +461,27 @@ export const startHttpServer = async (
       deps
         .viewTasks()
         .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/tasks/:id — single-task view from the daemon's DomainTaskStore.
+    // Returns 404 when no task with the given id exists. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/tasks/')) {
+      const id = decodeURIComponent(req.url.slice('/view/tasks/'.length))
+      if (!id) {
+        sendJson(res, 400, { ok: false, error: 'id is required' })
+        return
+      }
+      deps
+        .viewTaskById(id)
+        .then((result) => {
+          if (result === null) {
+            sendJson(res, 404, { ok: false, error: 'not_found', id })
+          } else {
+            sendJson(res, 200, result)
+          }
+        })
         .catch((err: unknown) => sendError(res, err))
       return
     }

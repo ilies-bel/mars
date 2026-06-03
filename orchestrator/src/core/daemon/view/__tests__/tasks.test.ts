@@ -14,7 +14,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
-import { buildTasksView } from '../tasks.js'
+import { buildTasksView, buildTaskViewById } from '../tasks.js'
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -193,5 +193,47 @@ describe('buildTasksView', () => {
     const blocked = tasks.find((t) => t.id === 't-blocked')
     expect(blocked!.blockerTaskId).toBeTruthy()
     expect(['t-a', 't-b']).toContain(blocked!.blockerTaskId)
+  })
+})
+
+describe('buildTaskViewById', () => {
+  let client: Client
+  let dir: string
+
+  beforeEach(async () => {
+    const setup = await setupDb()
+    client = setup.client
+    dir = setup.dir
+  })
+
+  afterEach(() => {
+    client.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('returns null when no task with the given id exists', async () => {
+    const result = await buildTaskViewById(client, 'nonexistent')
+    expect(result).toBeNull()
+  })
+
+  it('returns { task } wrapping the matching TaskViewItem when id exists', async () => {
+    await insertTask(client, 't-queued', 'queued')
+    const result = await buildTaskViewById(client, 't-queued')
+    expect(result).not.toBeNull()
+    expect(result!.task.id).toBe('t-queued')
+    expect(result!.task.status).toBe('queued')
+  })
+
+  it('returned task deep-equals the matching element from buildTasksView', async () => {
+    await insertTask(client, 't-a', 'done')
+    await insertTask(client, 't-b', 'queued')
+    await addBlocker(client, 't-b', 't-a')
+
+    const { tasks } = await buildTasksView(client)
+    const fromList = tasks.find((t) => t.id === 't-b')
+
+    const result = await buildTaskViewById(client, 't-b')
+    expect(result).not.toBeNull()
+    expect(result!.task).toEqual(fromList)
   })
 })
