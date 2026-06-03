@@ -18,6 +18,15 @@ import { listKpis as defaultListKpis, type KpiRecord } from './kpi-store'
 import type { RestartTaskError } from './restart-task'
 import type { ProgressTask, ProposalNode } from './view/progress'
 import type { ViewStreamHub } from './view/stream-hub'
+import {
+  loadRecentTaskCorpus,
+  type ReflectCorpus,
+  type LoadCorpusOptions,
+} from '../lib/reflect-query'
+import {
+  listDeepReflectArcCandidates,
+  type ArcCandidate,
+} from '../lib/deep-reflect-query'
 
 /** Wire shape returned by GET /view/framework-update. */
 export interface FrameworkUpdateState {
@@ -189,6 +198,21 @@ export interface HttpServerDeps {
    * what the daemon exposes — no direct DB access on the UI side.
    */
   viewTerminalEvents: () => Promise<{ events: TerminalEvent[] }>
+  /**
+   * Return recent task corpus data for GET /view/reflect. Wraps
+   * {@link loadRecentTaskCorpus} from reflect-query.ts. When omitted, the
+   * built-in default is used. Accepts optional `limit` and `since` (ISO-8601)
+   * query parameters.
+   */
+  viewReflect?: (opts?: LoadCorpusOptions) => Promise<ReflectCorpus>
+  /**
+   * Return arc candidates ranked by failure count and token spend, for
+   * GET /view/arcs. Wraps {@link listDeepReflectArcCandidates} from
+   * deep-reflect-query.ts. When omitted, the built-in default is used.
+   * Accepts optional `limit` (number) and `withTranscriptOnly` (boolean,
+   * default true) query parameters.
+   */
+  viewArcs?: (opts?: { limit?: number; withTranscriptOnly?: boolean }) => Promise<ArcCandidate[]>
 }
 
 export interface HttpServerHandle {
@@ -505,6 +529,51 @@ export const startHttpServer = async (
       deps
         .viewTodo()
         .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/reflect?limit=N&since=ISO — recent task corpus data (entries +
+    // cost summary). Wraps loadRecentTaskCorpus from reflect-query.ts so the
+    // UI/daemon can surface what the CLI `mars reflect` reads. Pure read; no
+    // draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/reflect')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const opts: LoadCorpusOptions = {}
+      const limitRaw = parsed.searchParams.get('limit')
+      if (limitRaw !== null) {
+        const n = Number.parseInt(limitRaw, 10)
+        if (Number.isFinite(n) && n > 0) opts.limit = n
+      }
+      const since = parsed.searchParams.get('since')
+      if (since) opts.sinceIso = since
+      const fn = deps.viewReflect ?? loadRecentTaskCorpus
+      fn(opts)
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/arcs?limit=N&withTranscriptOnly=true|false — ranked arc
+    // candidates for deep reflection. Wraps listDeepReflectArcCandidates from
+    // deep-reflect-query.ts so the UI/daemon can surface what `mars arc reflect`
+    // would operate on. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/arcs')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const opts: { limit?: number; withTranscriptOnly?: boolean } = {}
+      const limitRaw = parsed.searchParams.get('limit')
+      if (limitRaw !== null) {
+        const n = Number.parseInt(limitRaw, 10)
+        if (Number.isFinite(n) && n > 0) opts.limit = n
+      }
+      const withTranscriptOnlyRaw = parsed.searchParams.get('withTranscriptOnly')
+      if (withTranscriptOnlyRaw !== null) {
+        opts.withTranscriptOnly =
+          withTranscriptOnlyRaw !== 'false' && withTranscriptOnlyRaw !== '0'
+      }
+      const fn = deps.viewArcs ?? listDeepReflectArcCandidates
+      fn(opts)
+        .then((candidates) => sendJson(res, 200, candidates))
         .catch((err: unknown) => sendError(res, err))
       return
     }
