@@ -1,5 +1,6 @@
 import { type Client, type InStatement } from '@libsql/client'
 import { randomUUID } from 'node:crypto'
+import { genId } from '../mars-id'
 import { resolveContext } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
@@ -1277,7 +1278,7 @@ export const enqueueTask = async (
     )
   }
   await initQueue()
-  const id = `mars-${randomUUID().slice(0, 8)}`
+  const id = genId('task').toString()
   const now = new Date().toISOString()
   const status: TaskStatus = opts?.skipTriage ? 'queued' : 'draft'
   const authorKind = opts?.author?.kind ?? null
