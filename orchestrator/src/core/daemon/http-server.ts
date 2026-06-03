@@ -16,6 +16,7 @@ import {
   type TraceEventStore,
 } from '../lib/trace-events-store'
 import { listKpis as defaultListKpis, type KpiRecord } from './kpi-store'
+import { readKpiSeries, type KpiSeries } from '../lib/kpi-snapshots'
 import type { RestartTaskError } from './restart-task'
 import type { ProgressTask, ProposalNode } from './view/progress'
 import type { ViewStreamHub } from './view/stream-hub'
@@ -115,6 +116,11 @@ export interface HttpServerDeps {
    * real persistence layer (proposal 9a2ab5f8) is wired in.
    */
   listKpis?: () => Promise<KpiRecord[]>
+  /**
+   * Return recent KPI time-series for sparkline rendering. When omitted,
+   * reads directly from kpi_snapshots via {@link readKpiSeries}.
+   */
+  listKpisSeries?: (limit: number) => Promise<KpiSeries>
   /**
    * Return the full task list enriched with cluster tag and blocker list.
    * Served by `GET /view/tasks` so the read-only UI renders only what the
@@ -412,6 +418,20 @@ export const startHttpServer = async (
           .catch((err: unknown) => sendError(res, err))
         return
       }
+    }
+
+    // GET /kpis/series?limit=N — recent KPI time-series for sparklines.
+    // Returns per-column arrays of {takenAt, value} points ordered oldest-first.
+    // Default limit=90. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && /^\/kpis\/series(\?.*)?$/.test(req.url)) {
+      const parsedUrl = new URL(req.url, 'http://localhost')
+      const rawLimit = parseInt(parsedUrl.searchParams.get('limit') ?? '90', 10)
+      const limit = isNaN(rawLimit) || rawLimit < 1 ? 90 : rawLimit
+      const fn = deps.listKpisSeries ?? ((lim: number) => readKpiSeries({ limit: lim }))
+      fn(limit)
+        .then((series) => sendJson(res, 200, { series }))
+        .catch((err: unknown) => sendError(res, err))
+      return
     }
 
     // GET /kpis — the four-KPI vector (ADR-0040, the harness-health KPI ADR

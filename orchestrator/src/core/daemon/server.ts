@@ -3043,6 +3043,28 @@ export const startDaemon = async (
   }, BLOCKER_RESOLUTION_DRAIN_MS)
   blockerResolutionDrain.unref()
 
+  // ── KPI snapshot cadence ──────────────────────────────────────────────────
+  // Takes a KPI snapshot once per hour (configurable via MARS_KPI_SNAPSHOT_MS).
+  // Snapshots accumulate in kpi_snapshots so the /kpis/series endpoint has
+  // points to return. Each tick writes independently; duplicate taken_at values
+  // are not possible because the timestamp is taken fresh at each tick.
+  // .unref() so the interval never keeps the process alive after shutdown.
+  const { takeKpiSnapshot } = await import('../lib/kpi-snapshots.js')
+  const KPI_SNAPSHOT_MS = Number(process.env.MARS_KPI_SNAPSHOT_MS ?? 60 * 60_000)
+  const kpiSnapshotTick = setInterval(() => {
+    void (async () => {
+      try {
+        const surface = await getDefaultTaskStore()
+        const snapshot = await takeKpiSnapshot({ surface, now: new Date().toISOString() })
+        log(`[kpi-snapshot] took snapshot ${snapshot.id} (sample_count=${snapshot.sample_count})`)
+        viewStreamHub.broadcast('kpis')
+      } catch (err) {
+        log(`[kpi-snapshot] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, KPI_SNAPSHOT_MS)
+  kpiSnapshotTick.unref()
+
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
@@ -3055,6 +3077,7 @@ export const startDaemon = async (
     clearInterval(alertDrain)
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)
+    clearInterval(kpiSnapshotTick)
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.

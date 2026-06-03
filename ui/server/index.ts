@@ -2,7 +2,7 @@ import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { openTraceEventStore } from '../../orchestrator/src/core/lib/trace-events-store.ts'
 import { loadProjectRegistry } from '../../orchestrator/src/registry/projects.ts'
-import { fetchKpis, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'
+import { fetchKpis, fetchKpiSeries, proxyAction, proxyGet, proxyPost, type KpiSeries } from './daemonHttp.ts'
 import { createProjectContextCache, type ProjectContextEntry } from './projectContext.ts'
 import { probeDaemonHealth } from './projectHealth.ts'
 import { resolveRepo, UnknownProjectError } from './repo.ts'
@@ -246,8 +246,18 @@ export const startServer = async (
 
         if (path === '/api/kpis') {
           try {
-            const kpis = await fetchKpis(ctx.stateDir)
-            return jsonResponse(200, { kpis })
+            const [kpis, series] = await Promise.all([
+              fetchKpis(ctx.stateDir),
+              fetchKpiSeries(ctx.stateDir),
+            ])
+            // Map each KPI key to its series column (cost_per_arc uses p50).
+            const kpisWithSeries = kpis.map((kpi) => {
+              const seriesKey = (kpi.key === 'cost_per_arc'
+                ? 'cost_per_arc_p50'
+                : kpi.key) as keyof KpiSeries
+              return { ...kpi, series: series[seriesKey] ?? [] }
+            })
+            return jsonResponse(200, { kpis: kpisWithSeries })
           } catch (err) {
             return jsonResponse(500, { error: (err as Error).message })
           }
