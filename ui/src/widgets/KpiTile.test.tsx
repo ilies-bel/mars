@@ -24,6 +24,19 @@ const kpi = (overrides: Partial<Kpi> & { key: Kpi['key'] }): Kpi => ({
   lowConfidence: overrides.lowConfidence ?? false,
 })
 
+const kpiWithSeries = (seriesValues: (number | null)[]): Kpi => ({
+  key: 'cost_per_arc',
+  currentValue: 1.5,
+  priorValue: 2.0,
+  delta: -0.5,
+  sampleCount: seriesValues.length,
+  lowConfidence: false,
+  series: seriesValues.map((value, i) => ({
+    takenAt: `2026-01-0${i + 1}T00:00:00Z`,
+    value,
+  })),
+})
+
 // ---------------------------------------------------------------------------
 // cost_per_arc — lower-is-better
 // ---------------------------------------------------------------------------
@@ -172,6 +185,49 @@ describe('KpiTile delta display', () => {
     expect(html).toContain('→')
     // delta of 0 renders without + prefix
     expect(html).toContain('0')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Sparkline rendering
+// ---------------------------------------------------------------------------
+
+describe('KpiTile sparkline', () => {
+  it('renders an SVG polyline when series has at least 2 non-null points', () => {
+    const html = renderToStaticMarkup(<KpiTile kpi={kpiWithSeries([2.0, 1.8, 1.5])} />)
+    expect(html).toContain('<polyline')
+    expect(html).toContain('points=')
+  })
+
+  it('renders no polyline when series is absent', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 1.5, delta: -0.5 })} />,
+    )
+    expect(html).not.toContain('<polyline')
+  })
+
+  it('renders no polyline when series has fewer than 2 non-null points', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpiWithSeries([null, 1.5])} />,
+    )
+    expect(html).not.toContain('<polyline')
+  })
+
+  it('renders no polyline when all series values are null', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpiWithSeries([null, null, null])} />,
+    )
+    expect(html).not.toContain('<polyline')
+  })
+
+  it('does not render a sparkline when kpi is low-confidence', () => {
+    const lowConfKpi: Kpi = {
+      ...kpiWithSeries([2.0, 1.8, 1.5]),
+      lowConfidence: true,
+    }
+    const html = renderToStaticMarkup(<KpiTile kpi={lowConfKpi} />)
+    expect(html).not.toContain('<polyline')
+    expect(html).toContain('insufficient samples')
   })
 })
 
