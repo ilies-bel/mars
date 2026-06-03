@@ -2679,6 +2679,13 @@ export const startDaemon = async (
   // Boot drain for the alert-dismisser outbox subscriber: register it (no
   // replay — chokepoint already reconciles history) and clear alerts for any
   // status changes published while the daemon was down.
+  //
+  // reconcileTerminalTasks is deliberately NOT part of the RECONCILERS
+  // startup registry (see ./reconciler.ts): it is an action-queue concern,
+  // takes a libsql Client rather than ReconcileDeps, and must run *here* —
+  // after ensureAlertDismisser and before drainAlertDismissals — not in the
+  // task-status recovery pass that runs earlier in boot. Folding it into the
+  // registry would change when it runs relative to the alert-dismisser drain.
   void (async () => {
     try {
       await ensureAlertDismisser(getClient())
