@@ -1,0 +1,300 @@
+/**
+ * In-process Command-seam tests (ADR-0023).
+ *
+ * These exercise commands through `runCommandInProcess` — NO spawned binary,
+ * NO process.exit. A temp-file-backed TaskStore (the real ADR-0021 store over a
+ * fresh `.mars/mars.db`) and a recording fake daemon-client are injected; each
+ * test asserts on the returned `CommandResult` (code/value) and the captured
+ * stdout/stderr lines.
+ *
+ * This is the payoff the seam was built for: the logic-heavy ladder-bearing
+ * commands (`task add`, `task priority`, `proposal …`, `glossary …`) are now
+ * testable without shelling out.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
+import {
+  runCommandInProcess,
+  makeFakeDaemon,
+  type InProcessOptions,
+} from '../test-adapter'
+import type { DomainTaskStore } from '../../core/store/task-store'
+import type { OrchestratorContext } from '../../core/context'
+import type { DaemonRequest } from '../../core/daemon/protocol'
+
+let repo: string
+
+const setupRepo = (): string => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'mars-cmd-seam-test-'))
+  execFileSync('git', ['init', '-q'], { cwd: dir })
+  mkdirSync(resolve(dir, '.mars'), { recursive: true })
+  return dir
+}
+
+/**
+ * Build a real temp-file store bound to `repo` and a context pointing at it.
+ * The store's domain methods resolve their client from MARS_REPO (set here),
+ * exactly as the composition root does in production.
+ */
+const loadStoreAndCtx = async (): Promise<{
+  store: DomainTaskStore
+  ctx: OrchestratorContext
+}> => {
+  vi.resetModules()
+  process.env.MARS_REPO = repo
+  const queueModule = await import('../../core/queue')
+  await queueModule.migrateQueueSchema()
+  const storeModule = await import('../../core/store/task-store')
+  const contextModule = await import('../../core/context')
+  return {
+    store: storeModule.createTaskStore(queueModule.resolveQueueClient()),
+    ctx: contextModule.resolveContext(repo),
+  }
+}
+
+const baseOpts = async (
+  daemonResponder?: (req: DaemonRequest) => unknown,
+): Promise<InProcessOptions> => {
+  const { store, ctx } = await loadStoreAndCtx()
+  return { store, ctx, daemon: makeFakeDaemon(daemonResponder) }
+}
+
+beforeEach(() => {
+  repo = setupRepo()
+})
+afterEach(() => {
+  delete process.env.MARS_REPO
+  rmSync(repo, { recursive: true, force: true })
+})
+
+describe('routing', () => {
+  it('routes a two-token leaf (`task add`) over the one-token group', async () => {
+    const fake = makeFakeDaemon((req) =>
+      req.op === 'add' ? { id: 'mars-task-abcd', status: 'queued' } : {},
+    )
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['task', 'add', 'do the thing'], {
+      store,
+      ctx,
+      daemon: fake,
+    })
+    expect(r.code).toBe(0)
+    expect(r.unknown).toBeUndefined()
+    expect(fake.calls[0]?.op).toBe('add')
+  })
+
+  it('falls back to the group fallback for a bare ladder command', async () => {
+    const r = await runCommandInProcess(['task'], await baseOpts())
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('usage: mars task <add|show|priority>')
+  })
+
+  it('returns unknown for a command not in the registry', async () => {
+    const r = await runCommandInProcess(['definitely-not-a-command'], await baseOpts())
+    expect(r.unknown).toBe(true)
+    expect(r.code).toBe(1)
+  })
+})
+
+describe('task add (daemon-routed)', () => {
+  it('forwards prompt + skipTriage to the daemon and prints the queued line', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-1234', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['task', 'add', 'ship the seam'], {
+      store,
+      ctx,
+      daemon: fake,
+    })
+    expect(r.code).toBe(0)
+    const addCall = fake.calls[0]
+    expect(addCall).toMatchObject({ op: 'add', prompt: 'ship the seam', skipTriage: true })
+    expect(r.out.join('\n')).toContain('queued mars-task-1234')
+  })
+
+  it('rejects an empty prompt with code 1 and a usage line', async () => {
+    const r = await runCommandInProcess(['task', 'add'], await baseOpts())
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('usage: mars task add')
+  })
+
+  it('rejects an out-of-range --priority before touching the daemon', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'x', '--priority', '9'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain("priority must be an integer in 0..3")
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('builds a structured spec from --files/--verify/--done/--type', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-9999', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      [
+        'task', 'add', 'structured',
+        '--files', 'a.ts',
+        '--done', 'compiles',
+        '--verify', 'npm test',
+        '--type', 'checkpoint',
+      ],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls[0]).toMatchObject({
+      op: 'add',
+      spec: {
+        files: ['a.ts'],
+        verifyCmd: 'npm test',
+        doneCriteria: ['compiles'],
+        taskType: 'checkpoint',
+      },
+    })
+  })
+})
+
+describe('task show / list (store-backed reads)', () => {
+  it('shows a task enqueued directly into the injected store', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const task = await store.enqueueTask('read me back', undefined, {
+      skipTriage: true,
+    })
+    const r = await runCommandInProcess(['task', 'show', task.id], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const text = r.out.join('\n')
+    expect(text).toContain(`id:         ${task.id}`)
+    expect(text).toContain('read me back')
+  })
+
+  it('reports a missing task with code 1', async () => {
+    const r = await runCommandInProcess(
+      ['task', 'show', 'mars-task-nope'],
+      await baseOpts(),
+    )
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('no task matching mars-task-nope')
+  })
+
+  it('lists tasks present in the injected store', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    await store.enqueueTask('alpha task', undefined, { skipTriage: true })
+    await store.enqueueTask('beta task', undefined, { skipTriage: true })
+    const r = await runCommandInProcess(['list'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const text = r.out.join('\n')
+    expect(text).toContain('alpha task')
+    expect(text).toContain('beta task')
+  })
+})
+
+describe('task priority (daemon-routed mutation)', () => {
+  it('validates the value locally, then forwards to the daemon', async () => {
+    const fake = makeFakeDaemon((req) =>
+      req.op === 'task.priority' ? { id: req.id, priority: req.priority } : {},
+    )
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'priority', 'mars-task-7', '2'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls[0]).toMatchObject({ op: 'task.priority', id: 'mars-task-7', priority: 2 })
+    expect(r.out.join('\n')).toContain('set priority of mars-task-7 to 2')
+  })
+
+  it('rejects a non-0..3 value with no daemon call', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'priority', 'mars-task-7', '5'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(fake.calls).toHaveLength(0)
+  })
+})
+
+describe('glossary (transport varies per-subcommand)', () => {
+  it('`glossary set` is daemon-routed', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['glossary', 'set', 'Seam', 'an injectable boundary'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls[0]).toMatchObject({
+      op: 'glossary-write',
+      kind: 'set',
+      term: 'Seam',
+      definition: 'an injectable boundary',
+    })
+    expect(r.out.join('\n')).toContain('glossary set dispatched: "Seam"')
+  })
+
+  it('`glossary list` is a local read (no daemon call)', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['glossary', 'list'], {
+      store,
+      ctx,
+      daemon: fake,
+    })
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.out.join('\n')).toContain('(no glossary terms')
+  })
+})
+
+describe('worker (store-dir-backed)', () => {
+  it('`worker add` writes the registry and `worker list` reads it back', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const add = await runCommandInProcess(
+      ['worker', 'add', 'SeamWorker', '--model', 'claude-sonnet-4-6'],
+      { store, ctx, daemon: makeFakeDaemon() },
+    )
+    expect(add.code).toBe(0)
+    expect(add.out.join('\n')).toContain('added worker SeamWorker')
+
+    const list = await runCommandInProcess(['worker', 'list'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(list.code).toBe(0)
+    expect(list.out.join('\n')).toContain('SeamWorker')
+  })
+
+  it('`worker` with an unknown subcommand returns code 2', async () => {
+    const r = await runCommandInProcess(['worker', 'bogus'], await baseOpts())
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('usage: mars worker')
+  })
+})
+
+describe('where (pure pass-through over ctx)', () => {
+  it('prints the resolved repo + state paths', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['where'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toContain(`repo:           ${ctx.repoRoot}`)
+  })
+})
