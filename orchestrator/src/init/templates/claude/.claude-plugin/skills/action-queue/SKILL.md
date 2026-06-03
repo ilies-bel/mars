@@ -146,9 +146,23 @@ The row clears when the proposal leaves `draft`.
 ## 3c — kind `failed-task`
 
 The row wraps a task in `failed`/`dropped` — self-heal exhausted its
-options. The `entityId` is the task id. Restart is the operator's primary
-action. Offer the terminal actions via **one** `AskUserQuestion`, with
-**Restart first**:
+options. The `entityId` is the task id.
+
+**First, diagnose.** Before offering any terminal action, invoke the
+diagnoser so the operator sees *what the task was trying to do* and *why
+it failed* — the same arc-walk a human would do by hand (origin →
+recovery, prompts, failure signatures, whether the fix already landed on
+`main`):
+
+```
+Skill({ skill: "mars:diagnose", args: "<entityId>" })
+```
+
+Let the diagnosis print in full. It is read-only and recommends but does
+not execute — its **Recommendation** line tells you which verb is likely
+right. THEN offer the terminal actions via **one** `AskUserQuestion`, with
+**Restart first** (lead with whichever verb the diagnosis recommended if
+it differs):
 
 - **Restart** — `mars restart <entityId>`. Wipes the worktree+branch and
   re-queues from setup (full pipeline re-run). The task transitions out
@@ -180,8 +194,12 @@ Stop after the dispatch.
 
 # What you do NOT do
 
-- Do not investigate the underlying issue yourself. The row's body and
-  `dag:` section already carry the context; the user reads it and decides.
+- Do not investigate the underlying issue *inline yourself*. For a
+  `failed-task` row, delegate the investigation to `/mars:diagnose` (Step
+  3c) — it owns the arc-walk and prints the structured diagnosis. You do
+  not re-derive it by hand, and you never edit/restart/purge based on your
+  own ad-hoc poking. For the other row kinds, the row's body and `dag:`
+  section already carry the context; the user reads it and decides.
 - Do not call `mars action-queue raise`. That writes the event-history log and is
   for self-heal and dispatched agents, not the human-facing router.
 - Do not bulk-act on multiple rows in one turn. One id per dispatch. If

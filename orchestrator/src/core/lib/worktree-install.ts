@@ -1,6 +1,7 @@
-import { stat, rm } from 'node:fs/promises'
+import { stat, rm, readFile } from 'node:fs/promises'
 import { resolve, relative } from 'node:path'
-import { type RunSubprocessResult } from './git'
+import { acquireLock, type RunSubprocessResult } from './git'
+import { getStateDir } from '../context'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 
 export const DEFAULT_INSTALL_TIMEOUT_MS = 8 * 60_000
@@ -119,6 +120,27 @@ export const installCommand = (
       return ['yarn', ['install', '--frozen-lockfile']]
     case 'bun':
       return ['bun', ['install', '--frozen-lockfile']]
+  }
+}
+
+/**
+ * The NON-frozen install command for a manager — the one that *rewrites*
+ * the lockfile to match the manifest. Used only by {@link repairInstallInPlace}
+ * to reconcile a drifted lockfile in place; the normal setup path is always
+ * frozen ({@link installCommand}) so concurrent worktrees stay reproducible.
+ */
+export const regenInstallCommand = (
+  manager: PackageManager,
+): readonly [string, readonly string[]] => {
+  switch (manager) {
+    case 'pnpm':
+      return ['pnpm', ['install', '--no-frozen-lockfile']]
+    case 'npm':
+      return ['npm', ['install']]
+    case 'yarn':
+      return ['yarn', ['install']]
+    case 'bun':
+      return ['bun', ['install']]
   }
 }
 
@@ -249,4 +271,168 @@ export const installWorktreeDeps = async ({
     }),
   )
   return { sites: results, totalDurationMs: Date.now() - start }
+}
+
+/** Process-wide lock serializing lockfile regeneration across all worktrees. */
+export const INSTALL_REGEN_LOCK_TIMEOUT_MS = 10 * 60_000
+
+/**
+ * Per-lock-path in-process mutex. The cross-process file lock (`acquireLock`)
+ * deliberately treats a lock held by the *current* process as reclaimable
+ * (its `isLockStale` returns true when `pid === process.pid`), so two
+ * concurrent regenerations inside the SAME daemon process would both acquire
+ * it. Concurrent worktree setups run in one daemon process, so we also need an
+ * intra-process gate. This promise-chain mutex serializes same-process callers;
+ * the file lock then serializes across separate daemon processes.
+ */
+const inProcessRegenChains = new Map<string, Promise<void>>()
+
+const withInProcessRegenLock = async <T>(
+  key: string,
+  fn: () => Promise<T>,
+): Promise<T> => {
+  const prior = inProcessRegenChains.get(key) ?? Promise.resolve()
+  let release: () => void = () => {}
+  const next = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  // Tail of the chain = wait for prior, then for this caller to release.
+  const tail = prior.then(() => next)
+  inProcessRegenChains.set(key, tail)
+  await prior
+  try {
+    return await fn()
+  } finally {
+    release()
+    // If no later caller chained on after us, drop the entry so the map
+    // doesn't grow unbounded across thousands of installs.
+    if (inProcessRegenChains.get(key) === tail) {
+      inProcessRegenChains.delete(key)
+    }
+  }
+}
+
+export interface RepairInstallInPlaceOptions {
+  /** The install site that failed its frozen install. */
+  site: InstallSite
+  runner?: InstallRunner
+  log?: (line: string) => void
+  timeoutMs?: number
+  traceCtx?: TraceCtx
+  /** Override the regen lock path (tests). Defaults to `<stateDir>/.install-regen.lock`. */
+  lockPath?: string
+  /** Override the regen lock timeout (tests). */
+  lockTimeoutMs?: number
+}
+
+export interface RepairInstallInPlaceResult {
+  /** Did the frozen install pass after regeneration? */
+  repaired: boolean
+  /** Did the lockfile contents actually change? Caller commits only when true. */
+  lockfileChanged: boolean
+  /** Absolute path to the lockfile that was (re)generated. */
+  lockfilePath: string
+  /** Combined stdout/stderr of the final frozen install (for the failure path). */
+  output: string
+}
+
+const readFileOrEmpty = async (path: string): Promise<string> => {
+  try {
+    return await readFile(path, 'utf8')
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Reconcile a drifted lockfile **in place**, inside the failing task's own
+ * worktree, instead of spawning a separate recovery task that regenerates
+ * the lockfile on its own branch and merges its own diff.
+ *
+ * Why in place: two concurrent recovery branches that each regenerate a
+ * shared lockfile produce non-mergeable diffs (a non-frozen install is
+ * non-deterministic across wall-clock / registry state), which then collide
+ * at the merge step. By repairing in the origin worktree there is exactly
+ * ONE branch carrying the lockfile change — the origin's — which continues
+ * through verify → merge normally. This is the structural fix for the
+ * recovery-merge lockfile-drift class.
+ *
+ * The regeneration is serialized process-wide via a file lock so two
+ * worktrees can never rewrite the same root/shared lockfile at once.
+ *
+ * Steps: acquire regen lock → clear node_modules → non-frozen install
+ * (rewrites the lockfile) → frozen install (proves the lockfile is now
+ * reproducible). `repaired` is true only when the final frozen install
+ * exits 0. The caller commits the lockfile (+ manifest) when
+ * `lockfileChanged` is true, then lets the workflow continue.
+ */
+export const repairInstallInPlace = async ({
+  site,
+  runner,
+  log,
+  timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
+  traceCtx,
+  lockPath,
+  lockTimeoutMs = INSTALL_REGEN_LOCK_TIMEOUT_MS,
+}: RepairInstallInPlaceOptions): Promise<RepairInstallInPlaceResult> => {
+  const effectiveRunner = runner ?? makeDefaultInstallRunner(traceCtx)
+  const lockfilePath = resolve(site.dir, site.lockfile)
+  const resolvedLockPath =
+    lockPath ?? resolve(getStateDir(), '.install-regen.lock')
+
+  const before = await readFileOrEmpty(lockfilePath)
+
+  // Serialize lockfile regeneration so concurrent origins cannot produce two
+  // divergent lockfiles for the same shared manifest. Two layers, keyed on the
+  // same lock path:
+  //   - an in-process mutex serializes callers in THIS daemon process (the
+  //     file lock alone does not, since it treats a same-pid lock as stale);
+  //   - the cross-process file lock serializes across separate daemon
+  //     processes (e.g. two repos, or a restarted daemon).
+  return withInProcessRegenLock(resolvedLockPath, async () => {
+    const release = await acquireLock(resolvedLockPath, lockTimeoutMs)
+    try {
+      // Clear node_modules so the regen install starts from a clean tree (and
+      // to dodge the same ENOTEMPTY cleanup race the frozen path guards
+      // against).
+      await rm(resolve(site.dir, 'node_modules'), {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 200,
+      })
+
+      const [regenCmd, regenArgs] = regenInstallCommand(site.manager)
+      log?.(
+        `[setup:install] ${site.manager} (${site.dir}) reconciling lockfile in place: ${regenCmd} ${regenArgs.join(' ')}`,
+      )
+      const regen = await effectiveRunner(regenCmd, regenArgs, site.dir, {
+        timeoutMs,
+      })
+      if (regen.exitCode !== 0) {
+        return {
+          repaired: false,
+          lockfileChanged: false,
+          lockfilePath,
+          output: `${regen.stdout}\n${regen.stderr}`,
+        }
+      }
+
+      // Prove the regenerated lockfile is reproducible: re-run the FROZEN
+      // install. If this passes, the drift is genuinely reconciled.
+      const [frozenCmd, frozenArgs] = installCommand(site.manager)
+      const frozen = await effectiveRunner(frozenCmd, frozenArgs, site.dir, {
+        timeoutMs,
+      })
+      const after = await readFileOrEmpty(lockfilePath)
+      return {
+        repaired: frozen.exitCode === 0,
+        lockfileChanged: after !== before,
+        lockfilePath,
+        output: `${frozen.stdout}\n${frozen.stderr}`,
+      }
+    } finally {
+      await release()
+    }
+  })
 }

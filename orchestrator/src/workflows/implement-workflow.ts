@@ -25,6 +25,7 @@ import {
 import { resolveContext } from '../core/context'
 import {
   installWorktreeDeps,
+  repairInstallInPlace,
   WorktreeInstallError,
 } from '../core/lib/worktree-install'
 import type { ClaudeEvent } from '../core/lib/claude-stream'
@@ -759,6 +760,81 @@ export const implementWorkflow = defineWorkflow<
         } catch (error: unknown) {
           const isInstallErr = error instanceof WorktreeInstallError
           const errorOutput = isInstallErr ? error.message : String(error)
+
+          // Repair-in-place FIRST. A frozen-install failure is an environment
+          // failure, not a code defect: the recovery agent's job is to make the
+          // workflow CONTINUE, not to re-implement the task on a separate branch
+          // and merge its own diff. Spawning a fix-task for this used to
+          // regenerate the shared lockfile on a SECOND branch; two such
+          // recoveries then produced non-mergeable lockfiles that collided at
+          // merge (the recovery-merge lockfile-drift class). So we reconcile the
+          // lockfile HERE, in the origin's own worktree, commit it on the
+          // origin's branch, and let setup continue. Only if the in-place repair
+          // fails do we fall through to the fix-task escalation.
+          if (isInstallErr) {
+            try {
+              const repair = await repairInstallInPlace({
+                site: error.site,
+                log: (line) => console.log(line),
+                traceCtx: buildCtx('setup'),
+              })
+              if (repair.repaired) {
+                if (repair.lockfileChanged) {
+                  // Commit the reconciled lockfile (+ manifest) on the origin's
+                  // own branch so the change lands exactly once, through this
+                  // task's normal verify → merge. The orchestrator does not
+                  // commit on an agent's behalf elsewhere, but this is an
+                  // orchestrator-owned environment repair, not agent work.
+                  for (const argv of [
+                    ['add', '-A'],
+                    [
+                      'commit',
+                      '-m',
+                      `chore(setup): reconcile ${error.site.lockfile} with manifest (in-place install repair)`,
+                    ],
+                  ]) {
+                    const c = await runTool(
+                      {
+                        tool: 'git',
+                        argv,
+                        cwd: ref.path,
+                        taskId: input.taskId,
+                        originId: workflowOriginId,
+                        phase: 'setup',
+                      },
+                      workflowTraceStore,
+                    )
+                    if (c.exitCode !== 0) {
+                      throw new Error(
+                        `git ${argv[0]} after lockfile repair exited ${c.exitCode}: ${c.stderr}`,
+                      )
+                    }
+                  }
+                  console.log(
+                    `[setup:install] task ${input.taskId} reconciled ${error.site.lockfile} in place and committed; continuing`,
+                  )
+                } else {
+                  console.log(
+                    `[setup:install] task ${input.taskId} install recovered in place (no lockfile change); continuing`,
+                  )
+                }
+                // Repaired in place: return the SetupResult directly from the
+                // step fn. The engine records setup-worktree as succeeded and
+                // the workflow continues into run-claude-code — no fix-task, no
+                // separate recovery branch.
+                return { path: ref.path, branch: ref.branch }
+              }
+              console.log(
+                `[setup:install] task ${input.taskId} in-place repair did not reconcile; escalating to fix-task`,
+              )
+            } catch (repairErr: unknown) {
+              console.error(
+                `[setup:install] task ${input.taskId} in-place repair errored; escalating to fix-task:`,
+                repairErr,
+              )
+            }
+          }
+
           const failSummary = errorOutput.slice(0, 1000)
           await updateTask(input.taskId, {
             status: 'failed',

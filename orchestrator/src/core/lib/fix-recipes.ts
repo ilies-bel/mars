@@ -110,6 +110,8 @@ const worktreeInstallFrozenLockfileRecipe: FixRecipe = {
     return [
       `The orchestrator's worktree setup ran the package manager install (pnpm/npm/yarn/bun) and it failed before any code step ran. Without node_modules the verify step cannot resolve types — that is exactly the TS2688 class of error this recipe addresses.`,
       '',
+      `NOTE: the orchestrator already attempted an automatic in-place lockfile regeneration (non-frozen install → frozen re-verify) in the origin worktree before this recovery was spawned, and it did NOT reconcile the failure. So a plain \`npm install\` / \`pnpm install\` almost certainly will NOT fix this on its own — the manifest itself is likely the problem (an unresolvable dependency, a version conflict, a missing/renamed package). Look for the REAL manifest issue, do not just re-run the install the orchestrator already ran.`,
+      '',
       ...renderReproSection(ctx.reproCommand),
       `Diagnose and fix the underlying drift. Common causes, in order of likelihood:`,
       ` (a) lockfile drift: \`package.json\` was edited without regenerating the lockfile — regenerate it (e.g. \`pnpm install\` without --frozen-lockfile, or \`npm install\`) and commit both \`package.json\` and the lockfile;`,
@@ -140,6 +142,8 @@ const worktreeInstallTimeoutRecipe: FixRecipe = {
     const status = ctx.statusOutput.length > 0 ? ctx.statusOutput : '(empty)'
     return [
       `The orchestrator's worktree setup ran the package manager install (pnpm/npm/yarn/bun) and it was killed by the wall-clock timeout (SIGKILL, exit 137). This usually means the install wedged — either a network stall, a registry outage, or a lockfile drift that caused the solver to spin.`,
+      '',
+      `NOTE: the orchestrator already attempted an automatic in-place lockfile regeneration in the origin worktree before this recovery was spawned, and it did NOT reconcile the failure (it likely wedged the same way). So simply re-running the install is unlikely to help — look for the REAL cause (a dependency that never resolves, a registry the runner can't reach, a manifest that makes the solver spin), do not just re-run the install the orchestrator already ran.`,
       '',
       ...renderReproSection(ctx.reproCommand),
       `Diagnose and fix the underlying cause. Common causes, in order of likelihood:`,
