@@ -111,7 +111,7 @@ export const startServer = async (
           }
           throw e
         }
-        const { ctx, db, hub } = pctx
+        const { ctx, hub } = pctx
 
         if (path === '/api/tasks') {
           const r = await proxyGet(ctx.stateDir, '/view/tasks')
@@ -128,15 +128,8 @@ export const startServer = async (
           if (!id) {
             return jsonResponse(400, { error: 'id is required' })
           }
-          try {
-            const task = await db.findTaskById(id)
-            if (!task) {
-              return jsonResponse(404, { error: 'not_found', id })
-            }
-            return jsonResponse(200, { task })
-          } catch (err) {
-            return jsonResponse(500, { error: (err as Error).message })
-          }
+          const r = await proxyGet(ctx.stateDir, `/view/tasks/${id}`)
+          return jsonResponse(r.status, r.body)
         }
 
         if (path === '/api/action-queue/action-queue') {

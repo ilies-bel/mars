@@ -100,3 +100,18 @@ export const buildTasksView = async (
 
   return { tasks }
 }
+
+/**
+ * Return the view payload for a single task. Uses the same enrichment as
+ * `buildTasksView`; the result is guaranteed to deep-equal the matching
+ * element in the full list. Returns null when no task with the given id
+ * exists.
+ */
+export const buildTaskViewById = async (
+  client: Client,
+  id: string,
+): Promise<{ task: TaskViewItem } | null> => {
+  const { tasks } = await buildTasksView(client)
+  const task = tasks.find((t) => t.id === id)
+  return task ? { task } : null
+}

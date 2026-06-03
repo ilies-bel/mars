@@ -2580,6 +2580,11 @@ export const startDaemon = async (
       const client = getClient()
       return buildTasksView(client)
     },
+    viewTaskById: async (id: string) => {
+      const { buildTaskViewById } = await import('./view/tasks.js')
+      const client = getClient()
+      return buildTaskViewById(client, id)
+    },
     viewProgress: async () => {
       const {
         buildProgressView,

@@ -68,6 +68,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
   viewSessions: async () => ({ sessions: [] }),
+  viewTaskById: async () => null,
   ...overrides,
 })
 
