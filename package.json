@@ -1,4 +1,5 @@
 {
+	"packageManager": "pnpm@10.28.2",
 	"scripts": {
 		"validate-manifest": "node scripts/check-manifest.mjs",
 		"test-scripts": "node scripts/check-manifest.test.mjs && node scripts/is-prerelease.test.mjs && node scripts/compute-next-tag.test.mjs && node scripts/inject-plugin-version.test.mjs",

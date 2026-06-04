@@ -20,17 +20,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: orchestrator/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: orchestrator/pnpm-lock.yaml
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
-      - run: npm run typecheck
+      - run: pnpm run typecheck
 
-      - run: npm test
+      - run: pnpm test
 
   ui:
     name: UI (typecheck + build)
@@ -41,21 +45,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: ui/pnpm-lock.yaml
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
-      - run: npm run typecheck
+      - run: pnpm run typecheck
 
-      - run: npm run build
+      - run: pnpm run build
 
   repo-hygiene:
     name: Repo hygiene
