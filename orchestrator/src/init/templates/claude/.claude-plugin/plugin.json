@@ -1,4 +1,18 @@
 {
   "name": "mars",
-  "description": "Mars Claude Code plugin — delivers mars:* skills, agents, hooks, and settings"
+  "version": "1.0.0",
+  "description": "Mars Claude Code plugin — delivers mars:* skills, agents, hooks, and settings",
+  "skills": [
+    "./.claude/skills/action-queue",
+    "./.claude/skills/alerts",
+    "./.claude/skills/chat",
+    "./.claude/skills/deep-reflect",
+    "./.claude/skills/diagnose",
+    "./.claude/skills/grill",
+    "./.claude/skills/proposals",
+    "./.claude/skills/reflect",
+    "./.claude/skills/task",
+    "./.claude/skills/to-prd",
+    "./.claude/skills/unblock"
+  ]
 }

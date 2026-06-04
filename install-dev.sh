@@ -58,20 +58,20 @@ chmod +x "$WRAPPER"
 
 echo "installed: $WRAPPER -> $ENTRY (via $TSX_BIN)"
 
-# Register the framework's .claude/.claude-plugin/ directory as a Claude Code
-# plugin in ~/.claude/settings.json so the mars:* skills become available in
-# Claude Code without writing anything into consumer repos.
+# Register the framework's .claude/ directory as a Claude Code plugin in
+# ~/.claude/settings.json so the mars:* skills become available in Claude Code
+# without writing anything into consumer repos.
 #
-# The plugin root is .claude/.claude-plugin/ (not .claude/ itself) so the
-# Claude Code project-skills loader — which auto-discovers .claude/skills/ —
-# does not find the same directory as the plugin loader, preventing every
-# mars:* skill from appearing twice (once namespaced, once bare).
+# The plugin root is .claude/ — the directory that contains both
+# .claude-plugin/ (plugin.json + marketplace.json manifests) and skills/
+# (the actual skill implementations). Claude Code reads plugin.json from
+# .claude/.claude-plugin/ to discover the declared skills under .claude/skills/.
 #
 # NOTE: This is a DEV-WRAPPER convenience step only. For CONSUMER repos the
 # plugin activation now happens inside `mars init` — consumers run
 # `mars init` in their target repo and get skills + dashboard hint in one
 # step. The dev wrapper has no `mars init` step, so it activates here instead.
-PLUGIN_DIR="$REPO_ROOT/.claude/.claude-plugin"
+PLUGIN_DIR="$REPO_ROOT/.claude"
 "$TSX_BIN" "$ENTRY" plugin activate "$PLUGIN_DIR"
 
 case ":$PATH:" in

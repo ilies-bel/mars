@@ -11,9 +11,13 @@
  * installed one.
  * On uninstall: `deactivatePlugin` removes the entry.
  *
- * The Mars plugin is identified by checking `plugin.json` in the candidate
- * directory for `"name": "mars"`. This works regardless of the install path
- * (dev checkout vs. prod binary location).
+ * The Mars plugin root is the `.claude/` directory, which contains both
+ * `.claude-plugin/` (holding `plugin.json` and `marketplace.json`) and
+ * `skills/` (holding the individual skill implementations). The plugin is
+ * identified by checking `<dir>/plugin.json` OR `<dir>/.claude-plugin/plugin.json`
+ * for `"name": "mars"`. This works regardless of the install path
+ * (dev checkout vs. prod binary location) and is backward-compatible with
+ * any prior installation that registered `.claude/.claude-plugin/` directly.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -34,7 +38,10 @@ export interface ClaudePluginDeps {
   writeSettings: (path: string, settings: Record<string, unknown>) => void
   /**
    * Return true when `dir` is the Mars plugin directory — i.e. when
-   * `<dir>/plugin.json` exists and has `"name": "mars"`.
+   * `<dir>/plugin.json` OR `<dir>/.claude-plugin/plugin.json` exists and
+   * has `"name": "mars"`. The two-path check lets the Mars plugin root be
+   * `.claude/` (recommended) while remaining backward-compatible with
+   * older installs that registered `.claude/.claude-plugin/` directly.
    */
   isMarsPlugin: (dir: string) => boolean
 }
@@ -56,14 +63,21 @@ export const realDeps: ClaudePluginDeps = {
     writeFileSync(path, JSON.stringify(settings, null, 2) + '\n', 'utf8')
   },
   isMarsPlugin: (dir: string): boolean => {
-    try {
-      const parsed = JSON.parse(
-        readFileSync(join(dir, 'plugin.json'), 'utf8'),
-      ) as { name?: string }
-      return parsed?.name === PLUGIN_NAME
-    } catch {
-      return false
+    const candidates = [
+      join(dir, 'plugin.json'),
+      join(dir, '.claude-plugin', 'plugin.json'),
+    ]
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(
+          readFileSync(candidate, 'utf8'),
+        ) as { name?: string }
+        if (parsed?.name === PLUGIN_NAME) return true
+      } catch {
+        // try next candidate
+      }
     }
+    return false
   },
 }
 

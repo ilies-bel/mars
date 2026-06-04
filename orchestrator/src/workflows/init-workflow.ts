@@ -371,12 +371,10 @@ export function tryActivatePlugin(
 const runActivatePlugin = (): void => {
   // init-workflow.ts lives at <frameworkRoot>/orchestrator/src/workflows/
   // walking up three directories reaches <frameworkRoot>.
-  // The plugin root is .claude/.claude-plugin/ (not .claude/ itself) so the
-  // Claude Code project-skills loader — which auto-discovers .claude/skills/ —
-  // does not find the same directory as the plugin loader, preventing every
-  // mars:* skill from appearing twice (once namespaced, once bare).
+  // The plugin root is .claude/ — the directory containing both
+  // .claude-plugin/ (manifests) and skills/ (skill implementations).
   const thisFile = fileURLToPath(import.meta.url)
-  const frameworkClaudeDir = join(dirname(dirname(dirname(thisFile))), '.claude', '.claude-plugin')
+  const frameworkClaudeDir = join(dirname(dirname(dirname(thisFile))), '.claude')
   const userSettingsPath = join(homedir(), '.claude', 'settings.json')
   tryActivatePlugin(frameworkClaudeDir, userSettingsPath, realDeps)
 }
