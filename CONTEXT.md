@@ -106,7 +106,7 @@ ProposalStatus terminal: the slicer has decomposed the proposal into N tracer-bu
 The only operator-visible action-queue state: a row whose entity (task or worktree) is currently stuck. The row is a pure projection of entity state — it appears when the entity becomes stuck and disappears when the entity transitions; there is no operator gesture that closes a row directly.
 
 **acknowledged (inbox)**:
-InboxState: operator has seen the item via 'mars inbox ack' but has not yet resolved or dismissed it.
+Retired state. The action queue is a projection of entity state with no operator-facing ack/resolve/dismiss gesture; a row leaves only when its entity transitions, so there is no acknowledged state to occupy.
 
 **resolved (inbox)**:
 InboxState terminal: the underlying problem was fixed. Set via 'mars inbox resolve [--root-cause <text>]'.
