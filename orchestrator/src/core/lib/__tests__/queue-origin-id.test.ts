@@ -60,14 +60,14 @@ describe('queue.origin_id migration', () => {
     expect((r.rows[0] as unknown as { origin_id: string }).origin_id).toBe(t.id)
   })
 
-  it('enqueueTask honours explicit originId option (idea-originated tasks)', async () => {
+  it('enqueueTask honours explicit originId option (proposal-originated tasks)', async () => {
     const q = await loadQueue(repo)
-    const ideaId = 'idea-abc-12345678'
-    const t = await q.enqueueTask('from idea', undefined, {
+    const proposalId = 'proposal-abc-12345678'
+    const t = await q.enqueueTask('from proposal', undefined, {
       skipTriage: true,
-      originId: ideaId,
+      originId: proposalId,
     })
-    expect(t.originId).toBe(ideaId)
+    expect(t.originId).toBe(proposalId)
   })
 
   it('backfills origin_id on legacy rows (column added on stale DB → origin_id = id)', async () => {

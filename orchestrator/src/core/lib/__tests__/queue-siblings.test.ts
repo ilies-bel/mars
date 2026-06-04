@@ -19,7 +19,7 @@ const loadQueue = async (repo: string) => {
   return mod
 }
 
-describe('queue.listSiblings / queue.listTasksForIdea', () => {
+describe('queue.listSiblings / queue.listTasksForProposal', () => {
   let repo: string
 
   beforeEach(() => {
@@ -73,7 +73,7 @@ describe('queue.listSiblings / queue.listTasksForIdea', () => {
     expect(siblings).toEqual([])
   })
 
-  it('listTasksForIdea returns every task whose origin_id matches the idea', async () => {
+  it('listTasksForProposal returns every task whose origin_id matches the proposal', async () => {
     const q = await loadQueue(repo)
     const ideaId = 'idea-prd-deadbeef'
     const a = await q.enqueueTask('slice 1', undefined, {
@@ -105,7 +105,7 @@ describe('queue.listSiblings / queue.listTasksForIdea', () => {
     }
   })
 
-  it('listTasksForProposal returns [] for an idea with no slices', async () => {
+  it('listTasksForProposal returns [] for a proposal with no slices', async () => {
     const q = await loadQueue(repo)
     const tasks = await q.listTasksForProposal('idea-empty-00000000')
     expect(tasks).toEqual([])

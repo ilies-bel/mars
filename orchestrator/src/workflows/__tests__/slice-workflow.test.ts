@@ -155,7 +155,7 @@ describe('slicerOutputSchema: readFirst + prescriptiveAction', () => {
 })
 
 describe('slicer prompt: readFirst and prescriptiveAction instructions', () => {
-  const sampleIdea = {
+  const sampleProposal = {
     id: 'idea-1',
     title: 'Some PRD',
     problem: '',
@@ -166,7 +166,7 @@ describe('slicer prompt: readFirst and prescriptiveAction instructions', () => {
   }
 
   it('documents readFirst as an ordered list of files to read before editing', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     expect(brief).toMatch(/readFirst\s+—/)
     expect(brief).toMatch(/ordered/i)
     // The brief must explain what readFirst is for (before editing)
@@ -174,7 +174,7 @@ describe('slicer prompt: readFirst and prescriptiveAction instructions', () => {
   })
 
   it('documents prescriptiveAction as naming exact identifiers and target state', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     expect(brief).toMatch(/prescriptiveAction\s+—/)
     expect(brief).toMatch(/exact/i)
     // Must mention identifiers or file paths explicitly
@@ -184,27 +184,27 @@ describe('slicer prompt: readFirst and prescriptiveAction instructions', () => {
   })
 
   it('no longer forbids file paths or module names in the output shape', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     // The old prohibition was in the whatToBuild description — it is now gone.
     expect(brief).not.toMatch(/NO file paths/i)
     expect(brief).not.toMatch(/NO module names/i)
   })
 
   it('explicitly instructs the slicer to use code-shaped language in prescriptiveAction', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     // The prescriptiveAction guidance must explicitly say to use code vocabulary.
     expect(brief).toMatch(/code.shaped|identifier|exact.+function|exact.+type/i)
   })
 
   it('includes readFirst and prescriptiveAction in the example JSON', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     expect(brief).toMatch(/"readFirst":/)
     expect(brief).toMatch(/"prescriptiveAction":/)
   })
 })
 
 describe('composeTaskPrompt: readFirst and prescriptiveAction sections', () => {
-  const idea = {
+  const proposal = {
     id: 'idea-brief',
     title: 'Better coder brief',
     problem: 'coders re-orient instead of code',
@@ -238,7 +238,7 @@ describe('composeTaskPrompt: readFirst and prescriptiveAction sections', () => {
         'orchestrator/src/core/workflows/__tests__/slice-workflow.test.ts',
       ],
     }
-    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    const prompt = composeTaskPrompt(proposal, slice, 1, 1)
     expect(prompt).toContain('## Read first')
     expect(prompt).toContain(
       '1. orchestrator/src/core/workflows/slice-workflow.ts',
@@ -252,7 +252,7 @@ describe('composeTaskPrompt: readFirst and prescriptiveAction sections', () => {
     const action =
       'In `slicerOutputSchema` (slice-workflow.ts:23–49), add `readFirst: z.array(z.string()).min(1)` after `blockedBy`.'
     const slice = { ...baseSlice, prescriptiveAction: action }
-    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    const prompt = composeTaskPrompt(proposal, slice, 1, 1)
     expect(prompt).toContain(action)
   })
 
@@ -263,7 +263,7 @@ describe('composeTaskPrompt: readFirst and prescriptiveAction sections', () => {
       modifies: ['src/bar.ts'],
       prescriptiveAction: 'Change doFoo() to doBar() in bar.ts.',
     }
-    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    const prompt = composeTaskPrompt(proposal, slice, 1, 1)
     const readFirstIdx = prompt.indexOf('## Read first')
     const filesIdx = prompt.indexOf('## Files')
     expect(readFirstIdx).toBeGreaterThan(-1)
@@ -273,7 +273,7 @@ describe('composeTaskPrompt: readFirst and prescriptiveAction sections', () => {
 })
 
 describe('slicing brief: structured-write constraint', () => {
-  const sampleIdea = {
+  const sampleProposal = {
     id: 'idea-1',
     title: 'Some PRD',
     problem: 'a problem',
@@ -284,7 +284,7 @@ describe('slicing brief: structured-write constraint', () => {
   }
 
   it('forbids a slice whose sole deliverable is a glossary or ADR change', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
 
     // The constraint is stated as explicit guidance to the slicer:
     // never emit a slice whose sole deliverable is a glossary/ADR change.
@@ -295,7 +295,7 @@ describe('slicing brief: structured-write constraint', () => {
   })
 
   it('frames such PRD content as an upstream process violation, not a branch to handle', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
 
     expect(brief).toMatch(/upstream\s+process\s+violation/i)
     // It is settled during grilling, before the PRD is promoted.
@@ -304,7 +304,7 @@ describe('slicing brief: structured-write constraint', () => {
   })
 
   it('names the codified "structured-write" concept so the constraint is keyed to settled vocabulary', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
 
     // The constraint must be expressed in the settled glossary term (ADR
     // 0019 / glossary "Structured-write"), not only as a generic
@@ -317,7 +317,7 @@ describe('slicing brief: structured-write constraint', () => {
 })
 
 describe('slicer prompt: anti-hallucination guidance', () => {
-  const sampleIdea = {
+  const sampleProposal = {
     id: 'idea-1',
     title: 'Some PRD',
     problem: '',
@@ -328,7 +328,7 @@ describe('slicer prompt: anti-hallucination guidance', () => {
   }
 
   it('replaces a single `files` array with explicit modifies / creates instructions', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     // The new schema names: both must be documented as separate output fields.
     expect(brief).toMatch(/modifies\s+—/)
     expect(brief).toMatch(/creates\s+—/)
@@ -338,20 +338,20 @@ describe('slicer prompt: anti-hallucination guidance', () => {
   })
 
   it('documents the NEW: prefix convention for paths under directories that do not yet exist', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     expect(brief).toMatch(/NEW:/)
     // The worked example must show the prefix on a real-looking path.
     expect(brief).toContain("'NEW: orchestrator/src/manifest/load.ts'")
   })
 
   it('requires verifyCmd to cd into the project subdirectory when relevant', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     expect(brief).toMatch(/cd\s+orchestrator\s+&&\s+npx vitest/)
     expect(brief).toMatch(/subdirectory/i)
   })
 
   it('does not redundantly redescribe vertical slices (TDD_WORKER_BRIEF carries that)', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     // The old multi-line "Vertical-slice rules" section is gone; only the
     // condensed one-liner remains.
     expect(brief).not.toMatch(/Vertical-slice rules/)
@@ -359,7 +359,7 @@ describe('slicer prompt: anti-hallucination guidance', () => {
   })
 
   it('shows the new modifies+creates+cd-prefixed verifyCmd in the example JSON', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     expect(brief).toMatch(/"modifies":\["src\/foo\.ts"\]/)
     expect(brief).toMatch(/"creates":\["src\/foo\.test\.ts"\]/)
     expect(brief).toMatch(/"verifyCmd":"cd src && npx vitest run foo\.test\.ts"/)
@@ -536,7 +536,7 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
   })
 })
 
-describe('runSlice failure compensation: a failed slice must not strand the idea', () => {
+describe('runSlice failure compensation: a failed slice must not strand the proposal', () => {
   let repo: string
 
   const setupRepo = (): string => {
@@ -580,37 +580,37 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
     ],
   }
 
-  // Seed a fresh idea in 'prd-ready' status (the precondition `generateStep`
+  // Seed a fresh proposal in 'prd-ready' status (the precondition `generateStep`
   // checks) and return its id.
-  const seedPrdReadyIdea = async (): Promise<string> => {
+  const seedPrdReadyProposal = async (): Promise<string> => {
     const proposals = await import('../../core/proposals')
     await proposals.initProposals()
-    const idea = await proposals.createProposal('t', {
+    const proposal = await proposals.createProposal('t', {
       problem: 'p',
       solution: 's',
     })
-    await proposals.addProposalUserStory(idea.id, 'as a user, I want X')
-    const promoted = await proposals.promoteProposal(idea.id)
+    await proposals.addProposalUserStory(proposal.id, 'as a user, I want X')
+    const promoted = await proposals.promoteProposal(proposal.id)
     expect(promoted.status).toBe('prd-ready')
-    return idea.id
+    return proposal.id
   }
 
-  const countTasksForIdea = async (ideaId: string): Promise<number> => {
+  const countTasksForProposal = async (proposalId: string): Promise<number> => {
     const queue = await vi.importActual<typeof import('../../core/queue')>(
       '../../core/queue',
     )
     await queue.migrateQueueSchema()
     const rows = await queue.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE parent_proposal_id = ?`,
-      args: [ideaId],
+      args: [proposalId],
     })
     return Number((rows.rows[0] as unknown as { n: number | bigint }).n ?? 0)
   }
 
-  it('leaves the idea at prd-ready when slicer parse fails (zero-slice / invalid output)', async () => {
+  it('leaves the proposal at prd-ready when slicer parse fails (zero-slice / invalid output)', async () => {
     // claude -p succeeds at the process level but emits something that is
     // NOT a valid slicerOutput JSON. parseSlicerOutput throws — that
-    // throw lands BEFORE Phase 4 flips the idea, so the idea must still
+    // throw lands BEFORE Phase 4 flips the proposal, so the proposal must still
     // be prd-ready and no tasks must have been inserted.
     vi.doMock('../../core/lib/git/claude', async () => {
       const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
@@ -628,25 +628,25 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const slice = await import('../slice-workflow')
-    await expect(slice.runSlice(ideaId)).rejects.toThrow()
+    await expect(slice.runSlice(proposalId)).rejects.toThrow()
 
     const proposals = await import('../../core/proposals')
-    const after = await proposals.getProposal(ideaId)
+    const after = await proposals.getProposal(proposalId)
     expect(after?.status).toBe('prd-ready')
-    expect(await countTasksForIdea(ideaId)).toBe(0)
+    expect(await countTasksForProposal(proposalId)).toBe(0)
   })
 
-  it('reverts the idea back to prd-ready and deletes inserted tasks when a failure fires AFTER Phase 4', async () => {
-    // Phase 4 is the LAST write that flips the idea to 'sliced'. A
+  it('reverts the proposal back to prd-ready and deletes inserted tasks when a failure fires AFTER Phase 4', async () => {
+    // Phase 4 is the LAST write that flips the proposal to 'sliced'. A
     // failure in Phase 5 (the proposal→task blocker transfer) used to
-    // leave the idea wedged at 'sliced' with zero surviving tasks
+    // leave the proposal wedged at 'sliced' with zero surviving tasks
     // because the catch block only deleted the tasks and re-threw.
     // We simulate that exact shape by stubbing the slicer to emit a
     // valid one-slice output AND forcing transferProposalBlockerToTask
-    // to throw — the catch must now revert the idea AND clean tasks.
+    // to throw — the catch must now revert the proposal AND clean tasks.
     vi.doMock('../../core/lib/git/claude', async () => {
       const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
         '../../core/lib/git/claude',
@@ -674,27 +674,27 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const slice = await import('../slice-workflow')
-    await expect(slice.runSlice(ideaId)).rejects.toThrow(
+    await expect(slice.runSlice(proposalId)).rejects.toThrow(
       /phase 5 injected failure/,
     )
 
     const proposals = await import('../../core/proposals')
-    const after = await proposals.getProposal(ideaId)
+    const after = await proposals.getProposal(proposalId)
     // The whole point of the compensating revert: a Phase 5 failure
-    // must not strand the idea at 'sliced'.
+    // must not strand the proposal at 'sliced'.
     expect(after?.status).toBe('prd-ready')
     // And no tasks must survive — the cleanup loop should have deleted
     // every row Phase 1 inserted.
-    expect(await countTasksForIdea(ideaId)).toBe(0)
+    expect(await countTasksForProposal(proposalId)).toBe(0)
   })
 
-  it('leaves the idea at prd-ready when claude -p exits non-zero (slicer outage)', async () => {
+  it('leaves the proposal at prd-ready when claude -p exits non-zero (slicer outage)', async () => {
     // A genuine slicer outage: claude exits non-zero before any DB
-    // write fires. The idea must remain prd-ready so the daemon's
-    // auto-slice loop (which only picks up prd-ready ideas) can
+    // write fires. The proposal must remain prd-ready so the daemon's
+    // auto-slice loop (which only picks up prd-ready proposals) can
     // retry once the slicer is healthy.
     vi.doMock('../../core/lib/git/claude', async () => {
       const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
@@ -712,24 +712,24 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const slice = await import('../slice-workflow')
-    await expect(slice.runSlice(ideaId)).rejects.toThrow()
+    await expect(slice.runSlice(proposalId)).rejects.toThrow()
 
     const proposals = await import('../../core/proposals')
-    const after = await proposals.getProposal(ideaId)
+    const after = await proposals.getProposal(proposalId)
     expect(after?.status).toBe('prd-ready')
-    expect(await countTasksForIdea(ideaId)).toBe(0)
+    expect(await countTasksForProposal(proposalId)).toBe(0)
   })
 
-  it('leaves the idea at prd-ready when generate-slices times out (exit 124)', async () => {
+  it('leaves the proposal at prd-ready when generate-slices times out (exit 124)', async () => {
     // Regression test for the original bug: `mars proposal slice 06e677fb`
     // failed when the slicer hit the 300s wall (claude -p exited 124),
     // yet the proposal's status was left as 'sliced' with zero tasks.
     //
     // The exitCode=124 throw fires OUTSIDE the try-catch block (before any
-    // Phase 1-4 DB write), so `ideaFlipped` is never set and no compensation
+    // Phase 1-4 DB write), so `proposalFlipped` is never set and no compensation
     // is needed. This test pins that: a timeout must NOT set the proposal to
     // 'sliced', and `mars proposal slice` must be re-runnable without a manual
     // `mars proposal set <id> status prd-ready` poke.
@@ -749,23 +749,23 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const slice = await import('../slice-workflow')
-    await expect(slice.runSlice(ideaId)).rejects.toThrow(/124/)
+    await expect(slice.runSlice(proposalId)).rejects.toThrow(/124/)
 
     const proposals = await import('../../core/proposals')
-    const after = await proposals.getProposal(ideaId)
+    const after = await proposals.getProposal(proposalId)
     // Must remain prd-ready — `mars proposal slice` must be directly re-runnable.
     expect(after?.status).toBe('prd-ready')
     // Zero tasks: no partial state was committed to the queue.
-    expect(await countTasksForIdea(ideaId)).toBe(0)
+    expect(await countTasksForProposal(proposalId)).toBe(0)
   })
 
-  it('on success: atomically flips idea to sliced AND inserts the expected slice tasks', async () => {
-    // The idea→sliced status transition must be atomic with successful
+  it('on success: atomically flips proposal to sliced AND inserts the expected slice tasks', async () => {
+    // The proposal→sliced status transition must be atomic with successful
     // slice-task creation. This test verifies the "happy path" invariant:
-    // a successful runSlice must produce BOTH idea.status='sliced' AND
+    // a successful runSlice must produce BOTH proposal.status='sliced' AND
     // the expected tasks in the queue — not one without the other.
     vi.doMock('../../core/lib/git/claude', async () => {
       const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
@@ -783,32 +783,32 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const slice = await import('../slice-workflow')
-    const result = await slice.runSlice(ideaId)
+    const result = await slice.runSlice(proposalId)
 
-    // Status flip: the idea must now be 'sliced'.
+    // Status flip: the proposal must now be 'sliced'.
     const proposals = await import('../../core/proposals')
-    const after = await proposals.getProposal(ideaId)
+    const after = await proposals.getProposal(proposalId)
     expect(after?.status).toBe('sliced')
 
     // Task creation: the returned taskIds must match what was inserted.
     expect(result.taskIds).toHaveLength(1)
-    expect(await countTasksForIdea(ideaId)).toBe(1)
+    expect(await countTasksForProposal(proposalId)).toBe(1)
 
     // The returned proposalId must match, and status must be the settled string.
-    expect(result.proposalId).toBe(ideaId)
+    expect(result.proposalId).toBe(proposalId)
     expect(result.status).toBe('sliced')
   })
 
   it('cleans up orphaned tasks from a previous crash before re-slicing', async () => {
     // Crash-recovery deduplication: a process crash between Phase 1
-    // (task inserts) and Phase 4 (status flip) leaves the idea prd-ready
+    // (task inserts) and Phase 4 (status flip) leaves the proposal prd-ready
     // with orphaned tasks from the crashed run. Without a pre-flight
     // cleanup, a retry would INSERT a second set of tasks on top of the
     // orphans, duplicating the queue work. The pre-flight must delete any
-    // tasks with parent_proposal_id = idea.id before Phase 1 runs, so a
+    // tasks with parent_proposal_id = proposal.id before Phase 1 runs, so a
     // retry lands exactly N tasks — not N orphans + N fresh ones.
     vi.doMock('../../core/lib/git/claude', async () => {
       const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
@@ -826,33 +826,33 @@ describe('runSlice failure compensation: a failed slice must not strand the idea
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     // Simulate the crash: manually insert an orphaned task that claims
-    // this idea as its parent (as if Phase 1 ran but the process died
+    // this proposal as its parent (as if Phase 1 ran but the process died
     // before Phase 4 could flip the status).
     const queue = await vi.importActual<typeof import('../../core/queue')>(
       '../../core/queue',
     )
     await queue.migrateQueueSchema()
     await queue.enqueueTask('orphaned task from crashed run', undefined, {
-      parentProposalId: ideaId,
+      parentProposalId: proposalId,
       sliceIndex: 1,
     })
-    expect(await countTasksForIdea(ideaId)).toBe(1) // orphan is there
+    expect(await countTasksForProposal(proposalId)).toBe(1) // orphan is there
 
     // Now re-run the slice — this is the retry after the crash.
     const slice = await import('../slice-workflow')
-    const result = await slice.runSlice(ideaId)
+    const result = await slice.runSlice(proposalId)
 
     // The retry must produce exactly the fresh slicer output (1 slice),
     // not 1 orphan + 1 new = 2. The orphan must have been cleaned up.
     expect(result.taskIds).toHaveLength(1)
-    expect(await countTasksForIdea(ideaId)).toBe(1)
+    expect(await countTasksForProposal(proposalId)).toBe(1)
 
-    // And the idea must now be sliced (not prd-ready).
+    // And the proposal must now be sliced (not prd-ready).
     const proposals = await import('../../core/proposals')
-    const after = await proposals.getProposal(ideaId)
+    const after = await proposals.getProposal(proposalId)
     expect(after?.status).toBe('sliced')
   })
 })
@@ -1050,17 +1050,17 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
   const envelope = (jsonResult: unknown): string =>
     JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
-  const seedPrdReadyIdea = async (): Promise<string> => {
+  const seedPrdReadyProposal = async (): Promise<string> => {
     const proposals = await import('../../core/proposals')
     await proposals.initProposals()
-    const idea = await proposals.createProposal('Remove legacy_data_col', {
+    const proposal = await proposals.createProposal('Remove legacy_data_col', {
       problem: 'p',
       solution: 's',
     })
-    await proposals.addProposalUserStory(idea.id, 'as a user, I want X')
-    const promoted = await proposals.promoteProposal(idea.id)
+    await proposals.addProposalUserStory(proposal.id, 'as a user, I want X')
+    const promoted = await proposals.promoteProposal(proposal.id)
     expect(promoted.status).toBe('prd-ready')
-    return idea.id
+    return proposal.id
   }
 
   // Mirrors the 8-slice / no-blockers shape that PRD
@@ -1157,10 +1157,10 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const slice = await import('../slice-workflow')
-    const result = await slice.runSlice(ideaId)
+    const result = await slice.runSlice(proposalId)
     expect(result.taskIds).toHaveLength(5)
     const [readmeId, parserId, storageId, aggregationId, dropId] = result.taskIds
 
@@ -1209,7 +1209,7 @@ describe('composeTaskPrompt: parent digest replaces full PRD dump', () => {
   // same multi-KB body), the prompt now carries a short, bounded digest:
   // parent goal in 1-2 sentences, this slice's blockers, and the PRD's
   // non-goals. The worker can act on the slice without any preparatory read.
-  const sampleIdea = {
+  const sampleProposal = {
     id: 'idea-xyz',
     title: 'Inline the PRD into slice prompts',
     problem: 'Coders cannot read the PRD from a worktree.',
@@ -1232,7 +1232,7 @@ describe('composeTaskPrompt: parent digest replaces full PRD dump', () => {
       'orchestrator/src/core/workflows/slice-workflow.ts',
     ] as string[],
     prescriptiveAction:
-      'In composeTaskPrompt (slice-workflow.ts), inline idea.title, idea.solution, and idea.outOfScope into the returned template string.',
+      'In composeTaskPrompt (slice-workflow.ts), inline proposal.title, proposal.solution, and proposal.outOfScope into the returned template string.',
     modifies: [] as string[],
     creates: [] as string[],
     verifyCmd: null,
@@ -1240,7 +1240,7 @@ describe('composeTaskPrompt: parent digest replaces full PRD dump', () => {
   }
 
   it('contains a parent digest section with goal, blockers, and non-goals labels', () => {
-    const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
+    const prompt = composeTaskPrompt(sampleProposal, sampleSlice, 1, 1)
     expect(prompt).toContain('## Parent digest')
     expect(prompt).toContain('**Goal:**')
     expect(prompt).toContain('**Blockers:**')
@@ -1248,44 +1248,44 @@ describe('composeTaskPrompt: parent digest replaces full PRD dump', () => {
   })
 
   it('digest goal derives from the PRD solution', () => {
-    const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
+    const prompt = composeTaskPrompt(sampleProposal, sampleSlice, 1, 1)
     // The solution is short — it fits inside the goal limit verbatim.
-    expect(prompt).toContain(sampleIdea.solution)
+    expect(prompt).toContain(sampleProposal.solution)
   })
 
   it('digest goal falls back to title when solution is empty', () => {
-    const noSolution = { ...sampleIdea, solution: '' }
+    const noSolution = { ...sampleProposal, solution: '' }
     const prompt = composeTaskPrompt(noSolution, sampleSlice, 1, 1)
-    expect(prompt).toContain(sampleIdea.title)
+    expect(prompt).toContain(sampleProposal.title)
   })
 
   it('digest shows (none) for blockers when the slice has no dependencies', () => {
-    const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
+    const prompt = composeTaskPrompt(sampleProposal, sampleSlice, 1, 1)
     // blockedBy is [] — the digest must say "(none)", not a blank line.
     expect(prompt).toMatch(/\*\*Blockers:\*\* \(none\)/)
   })
 
   it('digest shows slice indices when the slice has blockers', () => {
     const blockedSlice = { ...sampleSlice, blockedBy: [1, 3] }
-    const prompt = composeTaskPrompt(sampleIdea, blockedSlice, 2, 3)
+    const prompt = composeTaskPrompt(sampleProposal, blockedSlice, 2, 3)
     expect(prompt).toMatch(/\*\*Blockers:\*\*.*1.*3/)
   })
 
   it('digest non-goals derives from the PRD out-of-scope', () => {
-    const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
+    const prompt = composeTaskPrompt(sampleProposal, sampleSlice, 1, 1)
     // The outOfScope is short — it fits inside the non-goals limit verbatim.
-    expect(prompt).toContain(sampleIdea.outOfScope)
+    expect(prompt).toContain(sampleProposal.outOfScope)
   })
 
   it('digest shows (none) for non-goals when out-of-scope is empty', () => {
-    const noScope = { ...sampleIdea, outOfScope: '' }
+    const noScope = { ...sampleProposal, outOfScope: '' }
     const prompt = composeTaskPrompt(noScope, sampleSlice, 1, 1)
     expect(prompt).toMatch(/\*\*Non-goals:\*\* \(none\)/)
   })
 
   it('digest goal is truncated when solution exceeds the character limit', () => {
     const long = 'A '.repeat(200).trim() // 400 chars — well above DIGEST_GOAL_CHARS
-    const longIdea = { ...sampleIdea, solution: long }
+    const longIdea = { ...sampleProposal, solution: long }
     const prompt = composeTaskPrompt(longIdea, sampleSlice, 1, 1)
     // The full solution must NOT appear verbatim.
     expect(prompt).not.toContain(long)
@@ -1295,23 +1295,23 @@ describe('composeTaskPrompt: parent digest replaces full PRD dump', () => {
 
   it('digest non-goals is truncated when out-of-scope exceeds the character limit', () => {
     const long = 'B '.repeat(200).trim() // 400 chars — well above DIGEST_NON_GOALS_CHARS
-    const longIdea = { ...sampleIdea, outOfScope: long }
+    const longIdea = { ...sampleProposal, outOfScope: long }
     const prompt = composeTaskPrompt(longIdea, sampleSlice, 1, 1)
     expect(prompt).not.toContain(long)
     expect(prompt).toMatch(/\*\*Non-goals:\*\* .+/)
   })
 
   it('does NOT include full PRD body fields (notes, user stories) in the prompt', () => {
-    const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
+    const prompt = composeTaskPrompt(sampleProposal, sampleSlice, 1, 1)
     // Notes and user stories are NOT part of the digest.
-    expect(prompt).not.toContain(sampleIdea.notes)
-    for (const story of sampleIdea.userStories) {
+    expect(prompt).not.toContain(sampleProposal.notes)
+    for (const story of sampleProposal.userStories) {
       expect(prompt).not.toContain(story)
     }
   })
 
   it('does NOT instruct the implementor to run `mars proposal show` (worktree DB is empty)', () => {
-    const prompt = composeTaskPrompt(sampleIdea, sampleSlice, 1, 1)
+    const prompt = composeTaskPrompt(sampleProposal, sampleSlice, 1, 1)
     // Either form would silently fail from a worktree CWD; both are banned.
     expect(prompt).not.toMatch(/mars proposal show/i)
     expect(prompt).not.toMatch(/mars\s+--repo\s+\S+\s+proposal\s+show/i)
@@ -1398,7 +1398,7 @@ describe('describeSliceFailure', () => {
 })
 
 describe('composeTaskPrompt: Files section', () => {
-  const idea = {
+  const proposal = {
     id: 'idea-files',
     title: 'Render Files Section',
     problem: 'Coders must discover paths the slicer already named.',
@@ -1423,7 +1423,7 @@ describe('composeTaskPrompt: Files section', () => {
       verifyCmd: null,
       taskType: 'auto' as const,
     }
-    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    const prompt = composeTaskPrompt(proposal, slice, 1, 1)
     expect(prompt).toContain('## Files')
     expect(prompt).toContain('- src/foo.ts')
     expect(prompt).toContain('- src/bar.ts')
@@ -1444,7 +1444,7 @@ describe('composeTaskPrompt: Files section', () => {
       verifyCmd: null,
       taskType: 'auto' as const,
     }
-    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    const prompt = composeTaskPrompt(proposal, slice, 1, 1)
     expect(prompt).toContain('## Files')
     expect(prompt).toContain('- src/new.test.ts')
   })
@@ -1465,7 +1465,7 @@ describe('composeTaskPrompt: Files section', () => {
       verifyCmd: null,
       taskType: 'auto' as const,
     }
-    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    const prompt = composeTaskPrompt(proposal, slice, 1, 1)
     expect(prompt).toContain('## Files')
     expect(prompt).toContain('- NEW: orchestrator/src/manifest/load.ts')
   })
@@ -1486,8 +1486,8 @@ describe('composeTaskPrompt: Files section', () => {
       taskType: 'auto' as const,
     }
     // Must not throw and must not emit the section at all (HITL / empty-files case).
-    expect(() => composeTaskPrompt(idea, slice, 1, 1)).not.toThrow()
-    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    expect(() => composeTaskPrompt(proposal, slice, 1, 1)).not.toThrow()
+    const prompt = composeTaskPrompt(proposal, slice, 1, 1)
     expect(prompt).not.toContain('## Files')
   })
 
@@ -1507,7 +1507,7 @@ describe('composeTaskPrompt: Files section', () => {
       verifyCmd: null,
       taskType: 'auto' as const,
     }
-    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    const prompt = composeTaskPrompt(proposal, slice, 1, 1)
     expect(prompt).toContain('## Files')
     expect(prompt).toContain('- src/existing.ts')
     expect(prompt).toContain('- NEW: src/brand-new/load.ts')
@@ -1548,17 +1548,17 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
   const envelope = (jsonResult: unknown): string =>
     JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
-  const seedPrdReadyIdea = async (): Promise<string> => {
+  const seedPrdReadyProposal = async (): Promise<string> => {
     const proposals = await import('../../core/proposals')
     await proposals.initProposals()
-    const idea = await proposals.createProposal('3-slice sequential PRD', {
+    const proposal = await proposals.createProposal('3-slice sequential PRD', {
       problem: 'p',
       solution: 's',
     })
-    await proposals.addProposalUserStory(idea.id, 'as a user, I want X')
-    const promoted = await proposals.promoteProposal(idea.id)
+    await proposals.addProposalUserStory(proposal.id, 'as a user, I want X')
+    const promoted = await proposals.promoteProposal(proposal.id)
     expect(promoted.status).toBe('prd-ready')
-    return idea.id
+    return proposal.id
   }
 
   it('persists a task_blockers row for each consecutive pair when slices declare sequential blockedBy', async () => {
@@ -1625,10 +1625,10 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    const result = await sliceModule.runSlice(ideaId)
+    const result = await sliceModule.runSlice(proposalId)
     expect(result.taskIds).toHaveLength(3)
 
     const [task1Id, task2Id, task3Id] = result.taskIds
@@ -1744,10 +1744,10 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    const result = await sliceModule.runSlice(ideaId)
+    const result = await sliceModule.runSlice(proposalId)
     expect(result.taskIds).toHaveLength(3)
 
     const queue = await import('../../core/queue')
@@ -2101,7 +2101,7 @@ describe('slicerOutputSchema: kind and subDeliverable', () => {
 })
 
 describe('slicer prompt: kind and human-only verbs', () => {
-  const sampleIdea = {
+  const sampleProposal = {
     id: 'idea-1',
     title: 'Some PRD',
     problem: '',
@@ -2112,7 +2112,7 @@ describe('slicer prompt: kind and human-only verbs', () => {
   }
 
   it("enumerates at least four human-only verbs that trigger kind='hitl'", () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     // The brief must name human-only actions explicitly — at least these four.
     expect(brief).toMatch(/push|deploy/i)
     expect(brief).toMatch(/observe|monitor/i)
@@ -2121,25 +2121,25 @@ describe('slicer prompt: kind and human-only verbs', () => {
   })
 
   it("instructs the slicer to attach a subDeliverable when kind='hitl'", () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     expect(brief).toMatch(/subDeliverable/)
     // The requirement must be stated: hitl without subDeliverable is an error.
     expect(brief).toMatch(/MUST also emit a subDeliverable|MUST.*also.*emit.*subDeliverable/i)
   })
 
   it("forbids subDeliverable on coder slices", () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     expect(brief).toMatch(/coder slice MUST NOT|coder slices.*MUST NOT/i)
   })
 
   it('documents kind in the Output shape section', () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     // kind is listed as a named output field
     expect(brief).toMatch(/- kind\s+—/)
   })
 
   it("includes kind='coder' in the example JSON", () => {
-    const brief = buildSlicerPrompt(sampleIdea)
+    const brief = buildSlicerPrompt(sampleProposal)
     expect(brief).toMatch(/"kind":"coder"/)
   })
 })
@@ -2252,7 +2252,7 @@ describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Tas
   // the read-span budget on boilerplate. It now arrives once, as the
   // Worker's standing Session instructions, and never inside the per-Task
   // prompt.
-  const idea = {
+  const proposal = {
     id: 'idea-tdd',
     title: 'Move the TDD brief out of per-task prompts',
     problem: 'The brief is replayed verbatim on every retry.',
@@ -2289,7 +2289,7 @@ describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Tas
     'using test-driven development with vertical tracer bullets'
 
   it('composes a coder per-Task prompt with zero copies of the TDD philosophy', () => {
-    const prompt = composeTaskPrompt(idea, slice, 1, 1)
+    const prompt = composeTaskPrompt(proposal, slice, 1, 1)
     expect(prompt).not.toContain(TDD_WORKER_BRIEF)
     expect(prompt).not.toContain(TDD_SIGNATURE)
     expect(prompt).not.toContain('Anti-pattern: horizontal slices')
@@ -2306,8 +2306,8 @@ describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Tas
   })
 
   it('produces a byte-identical, brief-free per-Task prompt when a coder Task is retried', () => {
-    const original = composeTaskPrompt(idea, slice, 1, 1)
-    const retried = composeTaskPrompt(idea, slice, 1, 1)
+    const original = composeTaskPrompt(proposal, slice, 1, 1)
+    const retried = composeTaskPrompt(proposal, slice, 1, 1)
     expect(retried).toBe(original)
     expect(retried).not.toContain(TDD_WORKER_BRIEF)
 
@@ -2359,17 +2359,17 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
   const envelope = (jsonResult: unknown): string =>
     JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
-  const seedPrdReadyIdea = async (): Promise<string> => {
+  const seedPrdReadyProposal = async (): Promise<string> => {
     const proposals = await import('../../core/proposals')
     await proposals.initProposals()
-    const idea = await proposals.createProposal('Action queue drop test PRD', {
+    const proposal = await proposals.createProposal('Action queue drop test PRD', {
       problem: 'p',
       solution: 's',
     })
-    await proposals.addProposalUserStory(idea.id, 'as a user, I want X')
-    const promoted = await proposals.promoteProposal(idea.id)
+    await proposals.addProposalUserStory(proposal.id, 'as a user, I want X')
+    const promoted = await proposals.promoteProposal(proposal.id)
     expect(promoted.status).toBe('prd-ready')
-    return idea.id
+    return proposal.id
   }
 
   it('creates exactly one actionQueue item naming the PRD id and dropped count when drops > 0', async () => {
@@ -2428,10 +2428,10 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    const result = await sliceModule.runSlice(ideaId)
+    const result = await sliceModule.runSlice(proposalId)
 
     // Slice 2 is the only survivor — one task queued.
     expect(result.taskIds).toHaveLength(1)
@@ -2443,7 +2443,7 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
 
     expect(items).toHaveLength(1)
     // Body must identify the PRD id and the count of dropped slices.
-    expect(items[0].body).toContain(ideaId)
+    expect(items[0].body).toContain(proposalId)
     expect(items[0].body).toContain('1')
   })
 
@@ -2483,10 +2483,10 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    await sliceModule.runSlice(ideaId)
+    await sliceModule.runSlice(proposalId)
 
     const actionQueue = await import('../../core/lib/action-queue')
     await actionQueue.initActionQueue()
@@ -2531,17 +2531,17 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   const envelope = (jsonResult: unknown): string =>
     JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
-  const seedPrdReadyIdea = async (): Promise<string> => {
+  const seedPrdReadyProposal = async (): Promise<string> => {
     const proposals = await import('../../core/proposals')
     await proposals.initProposals()
-    const idea = await proposals.createProposal('HITL routing test PRD', {
+    const proposal = await proposals.createProposal('HITL routing test PRD', {
       problem: 'operator must release manually',
       solution: 'route hitl slices to operator actionQueue',
     })
-    await proposals.addProposalUserStory(idea.id, 'as an operator, I see what to do')
-    const promoted = await proposals.promoteProposal(idea.id)
+    await proposals.addProposalUserStory(proposal.id, 'as an operator, I see what to do')
+    const promoted = await proposals.promoteProposal(proposal.id)
     expect(promoted.status).toBe('prd-ready')
-    return idea.id
+    return proposal.id
   }
 
   const hitlSlicerOutput = {
@@ -2595,10 +2595,10 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    await sliceModule.runSlice(ideaId)
+    await sliceModule.runSlice(proposalId)
 
     const actionQueue = await import('../../core/lib/action-queue')
     await actionQueue.initActionQueue()
@@ -2626,10 +2626,10 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    await sliceModule.runSlice(ideaId)
+    await sliceModule.runSlice(proposalId)
 
     const actionQueue = await import('../../core/lib/action-queue')
     await actionQueue.initActionQueue()
@@ -2662,10 +2662,10 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    const result = await sliceModule.runSlice(ideaId)
+    const result = await sliceModule.runSlice(proposalId)
 
     // result.taskIds contains only the slice task ids (1 hitl slice → 1 id)
     expect(result.taskIds).toHaveLength(1)
@@ -2676,7 +2676,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     // hitl slice task + Coder sub-task = 2 tasks for this proposal
     const allTasks = await queue.resolveQueueClient().execute({
       sql: `SELECT id, status, prompt FROM tasks WHERE parent_proposal_id = ? ORDER BY created_at ASC`,
-      args: [ideaId],
+      args: [proposalId],
     })
     expect(allTasks.rows).toHaveLength(2)
 
@@ -2715,10 +2715,10 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    const result = await sliceModule.runSlice(ideaId)
+    const result = await sliceModule.runSlice(proposalId)
 
     const queue = await import('../../core/queue')
     await queue.migrateQueueSchema()
@@ -2769,10 +2769,10 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    const result = await sliceModule.runSlice(ideaId)
+    const result = await sliceModule.runSlice(proposalId)
 
     // One task only (the coder slice) — no sub-tasks created
     expect(result.taskIds).toHaveLength(1)
@@ -2781,7 +2781,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     await queue.migrateQueueSchema()
     const totalTasks = await queue.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE parent_proposal_id = ?`,
-      args: [ideaId],
+      args: [proposalId],
     })
     expect(
       Number(
@@ -2835,17 +2835,17 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   const envelope = (jsonResult: unknown): string =>
     JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
-  const seedPrdReadyIdea = async (): Promise<string> => {
+  const seedPrdReadyProposal = async (): Promise<string> => {
     const proposals = await import('../../core/proposals')
     await proposals.initProposals()
-    const idea = await proposals.createProposal('HITL completion test PRD', {
+    const proposal = await proposals.createProposal('HITL completion test PRD', {
       problem: 'operator must confirm manually',
       solution: 'route hitl slices to operator and complete when both conditions met',
     })
-    await proposals.addProposalUserStory(idea.id, 'as an operator, I confirm the step')
-    const promoted = await proposals.promoteProposal(idea.id)
+    await proposals.addProposalUserStory(proposal.id, 'as an operator, I confirm the step')
+    const promoted = await proposals.promoteProposal(proposal.id)
     expect(promoted.status).toBe('prd-ready')
-    return idea.id
+    return proposal.id
   }
 
   // Single HITL slice fixture reused across all tests in this describe block.
@@ -2935,10 +2935,10 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    const result = await sliceModule.runSlice(ideaId)
+    const result = await sliceModule.runSlice(proposalId)
     expect(result.taskIds).toHaveLength(1)
     const hitlSliceTaskId = result.taskIds[0]
 
@@ -2981,10 +2981,10 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    const result = await sliceModule.runSlice(ideaId)
+    const result = await sliceModule.runSlice(proposalId)
     expect(result.taskIds).toHaveLength(1)
     const hitlSliceTaskId = result.taskIds[0]
 
@@ -3026,10 +3026,10 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    const result = await sliceModule.runSlice(ideaId)
+    const result = await sliceModule.runSlice(proposalId)
     const hitlSliceTaskId = result.taskIds[0]
 
     const queue = await import('../../core/queue')
@@ -3078,10 +3078,10 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    const result = await sliceModule.runSlice(ideaId)
+    const result = await sliceModule.runSlice(proposalId)
     const hitlSliceTaskId = result.taskIds[0]
 
     const queue = await import('../../core/queue')
@@ -3130,10 +3130,10 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    const result = await sliceModule.runSlice(ideaId)
+    const result = await sliceModule.runSlice(proposalId)
     const hitlSliceTaskId = result.taskIds[0]
 
     const queue = await import('../../core/queue')
@@ -3196,10 +3196,10 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
       }
     })
     vi.resetModules()
-    const ideaId = await seedPrdReadyIdea()
+    const proposalId = await seedPrdReadyProposal()
 
     const sliceModule = await import('../slice-workflow')
-    const result = await sliceModule.runSlice(ideaId)
+    const result = await sliceModule.runSlice(proposalId)
     expect(result.taskIds).toHaveLength(1)
     const coderTaskId = result.taskIds[0]
 
