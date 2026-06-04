@@ -52,6 +52,7 @@ import {
   runCompositionRootMigrations,
 } from '../store/task-store'
 import { listTerminalEvents } from './view/terminal-events'
+import { buildSessionsView } from './view/sessions'
 import { listProposals, promoteProposal } from '../proposals'
 import type { DraftFeature, FrameworkUpdateState, StaleWorktreeAlert } from './http-server'
 import {
@@ -2435,6 +2436,7 @@ export const startDaemon = async (
 
       return { spans }
     },
+    viewSessions: (agentName: string) => buildSessionsView(traceStore, agentName),
     actionQueueAck: async (kind, id) => {
       const { dismissEntity } = await import('../lib/action-queue-dismissals')
       await dismissEntity(kind, id, { by: 'daemon', note: 'ack' })

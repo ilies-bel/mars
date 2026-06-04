@@ -1,6 +1,5 @@
 import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
-import { openTraceEventStore } from '../../orchestrator/src/core/lib/trace-events-store.ts'
 import { loadProjectRegistry } from '../../orchestrator/src/registry/projects.ts'
 import { fetchKpis, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'
 import { createProjectContextCache, type ProjectContextEntry } from './projectContext.ts'
@@ -288,102 +287,19 @@ export const startServer = async (
           })
         }
 
-        // GET /api/sessions?agentName=<name> — recent sessions for a Worker,
-        // keyed by the workerName field in step_started / step_ended trace events.
-        // A step_started with no matching step_ended (same workflowInstanceId +
-        // stepName) is a live running session; a step_ended is a finished session.
-        // Returns sessions in reverse-chronological order (newest first).
+        // GET /api/sessions?agentName=<name> — recent sessions for a Worker.
+        // Proxied from daemon GET /view/sessions?agentName=<name>; the daemon
+        // owns the trace-store query so schema drift is visible in one place.
         if (path === '/api/sessions' && req.method === 'GET') {
           const agentName = url.searchParams.get('agentName')
           if (!agentName) {
             return jsonResponse(400, { error: 'agentName query parameter is required' })
           }
-          try {
-            const store = await openTraceEventStore(ctx.queueDbPath)
-            try {
-              // Use a worker-name substring filter for both event kinds.
-              // The payload is stored as JSON.stringify(payload), so the worker
-              // name will appear as "workerName":"<name>" in the serialised form.
-              const workerFilter = `"workerName":"${agentName}"`
-              const [startedEvents, endedEvents] = await Promise.all([
-                store.query({ kind: ['step_started'], q: workerFilter, limit: 100 }),
-                store.query({ kind: ['step_ended'],   q: workerFilter, limit: 100 }),
-              ])
-
-              // Build a set of closed (workflowInstanceId, stepName) keys so that
-              // step_started events with a matching step_ended are not counted again
-              // as running. The null-byte separator avoids collisions between
-              // adjacent string values (same logic as sweepOrphanRunningSpans).
-              const closedKeys = new Set<string>()
-              for (const e of endedEvents) {
-                const wfId = e.payload.workflowInstanceId
-                const stepName = e.payload.stepName
-                if (typeof wfId === 'string' && typeof stepName === 'string') {
-                  closedKeys.add(`${wfId}\0${stepName}`)
-                }
-              }
-
-              const runningSessions = startedEvents
-                .filter((e) => {
-                  const wfId = e.payload.workflowInstanceId
-                  const stepName = e.payload.stepName
-                  if (typeof wfId !== 'string' || typeof stepName !== 'string') return false
-                  return !closedKeys.has(`${wfId}\0${stepName}`)
-                })
-                .map((e) => ({
-                  id: e.id,
-                  sessionId: typeof e.payload.sessionId === 'string'
-                    ? e.payload.sessionId
-                    : null,
-                  workerName: typeof e.payload.workerName === 'string'
-                    ? e.payload.workerName
-                    : agentName,
-                  stepName: typeof e.payload.stepName === 'string'
-                    ? e.payload.stepName
-                    : '',
-                  workflowInstanceId: typeof e.payload.workflowInstanceId === 'string'
-                    ? e.payload.workflowInstanceId
-                    : '',
-                  outcome: 'running',
-                  endedAt: e.timestamp,
-                  durationMs: null,
-                }))
-
-              const finishedSessions = endedEvents.map((e) => ({
-                id: e.id,
-                sessionId: typeof e.payload.sessionId === 'string'
-                  ? e.payload.sessionId
-                  : null,
-                workerName: typeof e.payload.workerName === 'string'
-                  ? e.payload.workerName
-                  : agentName,
-                stepName: typeof e.payload.stepName === 'string'
-                  ? e.payload.stepName
-                  : '',
-                workflowInstanceId: typeof e.payload.workflowInstanceId === 'string'
-                  ? e.payload.workflowInstanceId
-                  : '',
-                outcome: typeof e.payload.outcome === 'string'
-                  ? e.payload.outcome
-                  : 'failed',
-                endedAt: e.timestamp,
-                durationMs: typeof e.payload.durationMs === 'number'
-                  ? e.payload.durationMs
-                  : null,
-              }))
-
-              // Merge running + finished, sort newest-first, cap at 50.
-              const sessions = [...runningSessions, ...finishedSessions]
-                .sort((a, b) => b.endedAt.localeCompare(a.endedAt))
-                .slice(0, 50)
-
-              return jsonResponse(200, { sessions })
-            } finally {
-              await store.close()
-            }
-          } catch (err) {
-            return jsonResponse(500, { error: (err as Error).message })
-          }
+          const r = await proxyGet(
+            ctx.stateDir,
+            `/view/sessions?agentName=${encodeURIComponent(agentName)}`,
+          )
+          return jsonResponse(r.status, r.body)
         }
 
         // GET /api/step-spans?originId=<id> — step timeline for a task arc.

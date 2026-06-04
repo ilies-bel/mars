@@ -62,6 +62,7 @@ const makeDeps = (
   viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
   viewStepSpans: async () => ({ spans: [] }),
+  viewSessions: async () => ({ sessions: [] }),
   viewFrameworkUpdate: async () => ({
     installed: '0.1.0',
     latest: '0.1.0',
