@@ -103,7 +103,7 @@ ProposalStatus: a fully-shaped proposal that has passed validateProposalShaped()
 ProposalStatus terminal: the slicer has decomposed the proposal into N tracer-bullet tasks (each linked back via parent_proposal_id). The proposal row stays alive as the PRD reference.
 
 **open (inbox)**:
-InboxState initial: an inbox item that needs operator attention (stale-worktree alert, blocked task, failed task).
+The only operator-visible action-queue state: a row whose entity (task or worktree) is currently stuck. The row is a pure projection of entity state — it appears when the entity becomes stuck and disappears when the entity transitions; there is no operator gesture that closes a row directly.
 
 **acknowledged (inbox)**:
 InboxState: operator has seen the item via 'mars inbox ack' but has not yet resolved or dismissed it.
