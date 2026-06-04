@@ -66,7 +66,6 @@ import {
   type RecoverAllBlockedTasksResult,
 } from '../blocker-resolution'
 import {
-  supersedeActionQueueItemsForOrigin,
   supersedeObsoletePreflightDirtyMainRows,
 } from '../lib/action-queue'
 import {
@@ -1302,30 +1301,6 @@ export const startDaemon = async (
         }
       }
       if (after.status === 'done') {
-        // Auto-supersede the actionQueue row keyed to this origin task, if any.
-        // The operator no longer needs to ack/dismiss: the underlying
-        // stuck task has reached a terminal state on its own.
-        //
-        // NOTE: this is now redundant with the Invalidator, which closes
-        // the same row off the task.terminal{done} event updateTask emits
-        // in-tx. It is kept as an idempotent same-process fast path (the
-        // supersede only touches OPEN rows, so a double-close is a no-op)
-        // and because this block also drives the main-committer sweep and
-        // recovery→origin propagation below. Folding these into the
-        // Invalidator is deferred follow-up, not required for the
-        // staleness guarantee (ADR-0027/0030).
-        try {
-          const closed = await supersedeActionQueueItemsForOrigin(id, 'origin-done')
-          if (closed.length > 0) {
-            log(
-              `[actionQueue] superseded ${closed.length} item(s) for origin ${id} on done`,
-            )
-          }
-        } catch (err) {
-          log(
-            `[actionQueue] error superseding items for origin ${id}: ${(err as Error).message}`,
-          )
-        }
         // Slice F.2: when a `main-commiter` succeeds, any open `failed`
         // actionQueue rows raised by PREVIOUS committer attempts (for stale
         // hashes — i.e. a different broken state of main that has since
