@@ -9,10 +9,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "types": ["node"],
-    "paths": {
-      "@mars/workflow": ["../packages/workflow/src/index.ts"]
-    }
+    "types": ["node"]
   },
   "include": [
     "src/**/*"

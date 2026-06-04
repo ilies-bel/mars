@@ -17,6 +17,7 @@
     "dev": "tsx src/cli.ts",
     "cli": "tsx src/cli.ts",
     "build:binary": "tsx scripts/build-binary.ts",
+    "pretypecheck": "pnpm --dir ../packages/workflow run build || (ls ../packages/workflow/dist/index.d.ts > /dev/null 2>&1 && echo '[pretypecheck] workflow node_modules absent, using existing dist' || (echo '[pretypecheck] workflow dist missing — run: (cd ../packages/workflow && pnpm install && pnpm run build)' && exit 1))",
     "typecheck": "tsc --noEmit",
     "knip": "knip --no-exit-code"
   },
@@ -48,6 +49,6 @@
     "vitest": "^2.1.9"
   },
   "pnpm": {
-    "onlyBuiltDependencies": []
+    "onlyBuiltDependencies": ["@mars/workflow"]
   }
 }

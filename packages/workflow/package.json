@@ -19,6 +19,7 @@
   "scripts": {
     "build": "tsup",
     "build:watch": "tsup --watch",
+    "prepare": "tsup",
     "prepack": "tsup",
     "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
