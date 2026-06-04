@@ -451,6 +451,19 @@ export const migrateQueueSchema = async (): Promise<void> => {
   if (!names.has('recovery_payload')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN recovery_payload TEXT`)
   }
+  // branch, worktree_path, error were in the original CREATE TABLE but were
+  // never guarded by ALTER TABLE add-if-missing checks.  Legacy minimal test
+  // fixtures can omit them, so we add guards here so the FK-rebuild INSERT
+  // SELECT always finds these columns in the source table.
+  if (!names.has('branch')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN branch TEXT`)
+  }
+  if (!names.has('worktree_path')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN worktree_path TEXT`)
+  }
+  if (!names.has('error')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN error TEXT`)
+  }
   if (!names.has('retry_count')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`)
   }
@@ -824,6 +837,175 @@ export const migrateQueueSchema = async (): Promise<void> => {
     `CREATE INDEX IF NOT EXISTS idx_self_heal_attempts_parent_signature
        ON self_heal_attempts(parent_task_id, failure_signature)`,
   )
+  // ── Self-referential / *_task_id FK constraints via table-rebuild ─────────
+  // SQLite cannot add FK constraints to existing tables via ALTER TABLE. The
+  // standard pattern is CREATE new + INSERT SELECT + DROP + RENAME. We detect
+  // whether the rebuild has already run by checking PRAGMA foreign_key_list;
+  // once the FK is present the section is skipped on every subsequent startup.
+  //
+  // tasks rebuild adds:
+  //   fix_for_task_id    REFERENCES tasks(id)    (self-referential fix-task pointer)
+  //   parent_proposal_id REFERENCES proposals(id)
+  //   origin_id: FK intentionally omitted — origin_id can hold proposal IDs or
+  //     other non-task arc identifiers; REFERENCES tasks(id) would reject them.
+  // self_heal_attempts rebuild adds:
+  //   fix_task_id REFERENCES tasks(id) ON DELETE CASCADE
+  //
+  // Both rebuilds share one PRAGMA foreign_keys = OFF / ON bracket so the
+  // intermediate state (tables dropped but not yet renamed) is never observed
+  // with FK enforcement active.
+  {
+    const taskFkRows = await c.execute(`PRAGMA foreign_key_list(tasks)`)
+    const tasksNeedFkRebuild = !(
+      taskFkRows.rows as unknown as Array<{ from: string }>
+    ).some((r) => r.from === 'fix_for_task_id')
+
+    const healFkRows = await c.execute(
+      `PRAGMA foreign_key_list(self_heal_attempts)`,
+    )
+    const healNeedsFkRebuild = !(
+      healFkRows.rows as unknown as Array<{ from: string }>
+    ).some((r) => r.from === 'fix_task_id')
+
+    if (tasksNeedFkRebuild || healNeedsFkRebuild) {
+      await c.execute(`PRAGMA foreign_keys = OFF`)
+
+      if (tasksNeedFkRebuild) {
+        // Drop any incomplete prior rebuild attempt to ensure idempotency.
+        await c.execute(`DROP TABLE IF EXISTS tasks_new`)
+        await c.execute(`
+          CREATE TABLE tasks_new (
+            id                   TEXT    PRIMARY KEY,
+            prompt               TEXT    NOT NULL,
+            status               TEXT    NOT NULL,
+            plan_functional      TEXT,
+            plan_technical       TEXT,
+            branch               TEXT,
+            worktree_path        TEXT,
+            claude_session_id    TEXT,
+            claude_session_ids   TEXT    NOT NULL DEFAULT '[]',
+            error                TEXT,
+            drop_reason          TEXT,
+            retry_count          INTEGER NOT NULL DEFAULT 0,
+            author_kind          TEXT,
+            author_name          TEXT,
+            failure_reason       TEXT,
+            failure_reason_code  TEXT,
+            recovery_payload     TEXT,
+            fix_for_task_id      TEXT    REFERENCES tasks_new(id),
+            failure_signature    TEXT,
+            kind                 TEXT,
+            priority             INTEGER NOT NULL DEFAULT 0,
+            tag                  TEXT,
+            tags_json            TEXT,
+            -- origin_id intentionally has no FK: it can hold proposal IDs or other
+            -- non-task arc identifiers, so REFERENCES tasks(id) would reject valid data.
+            origin_id            TEXT,
+            parent_proposal_id   TEXT    REFERENCES proposals(id),
+            slice_index          INTEGER,
+            failed_phase         TEXT,
+            resume_from          TEXT,
+            files_json           TEXT,
+            verify_cmd           TEXT,
+            done_criteria_json   TEXT,
+            task_type            TEXT,
+            read_first_json      TEXT,
+            prescriptive_action  TEXT,
+            slice_kind           TEXT,
+            sub_deliverable_json TEXT,
+            integration_head_sha TEXT,
+            created_at           TEXT    NOT NULL,
+            updated_at           TEXT    NOT NULL
+          )
+        `)
+        await c.execute(`
+          INSERT INTO tasks_new (
+            id, prompt, status, plan_functional, plan_technical,
+            branch, worktree_path, claude_session_id, claude_session_ids,
+            error, drop_reason, retry_count, author_kind, author_name,
+            failure_reason, failure_reason_code, recovery_payload,
+            fix_for_task_id, failure_signature, kind, priority, tag, tags_json,
+            origin_id, parent_proposal_id, slice_index, failed_phase, resume_from,
+            files_json, verify_cmd, done_criteria_json, task_type, read_first_json,
+            prescriptive_action, slice_kind, sub_deliverable_json,
+            integration_head_sha, created_at, updated_at
+          )
+          SELECT
+            id, prompt, status, plan_functional, plan_technical,
+            branch, worktree_path, claude_session_id,
+            COALESCE(claude_session_ids, '[]'),
+            error, drop_reason, COALESCE(retry_count, 0),
+            author_kind, author_name, failure_reason, failure_reason_code,
+            recovery_payload, fix_for_task_id, failure_signature, kind,
+            COALESCE(priority, 0), tag, tags_json,
+            COALESCE(origin_id, id),
+            parent_proposal_id, slice_index, failed_phase, resume_from,
+            files_json, verify_cmd, done_criteria_json, task_type, read_first_json,
+            prescriptive_action, slice_kind, sub_deliverable_json,
+            integration_head_sha, created_at, updated_at
+          FROM tasks
+        `)
+        // Re-run the legacy origin_id backfill inside the rebuild to ensure
+        // every row self-assigns when origin_id is still absent.
+        await c.execute(
+          `UPDATE tasks_new SET origin_id = id WHERE origin_id IS NULL`,
+        )
+        await c.execute(`DROP TABLE tasks`)
+        await c.execute(`ALTER TABLE tasks_new RENAME TO tasks`)
+        // Recreate indexes dropped with the old table.
+        await c.execute(
+          `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created
+             ON tasks(priority DESC, created_at ASC)`,
+        )
+        await c.execute(
+          `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for
+             ON tasks(fix_for_task_id, failure_signature)`,
+        )
+        await c.execute(
+          `CREATE INDEX IF NOT EXISTS idx_tasks_kind ON tasks(kind)`,
+        )
+        await c.execute(
+          `CREATE INDEX IF NOT EXISTS idx_tasks_origin_id ON tasks(origin_id)`,
+        )
+        await c.execute(
+          `CREATE INDEX IF NOT EXISTS idx_tasks_parent_proposal_id
+             ON tasks(parent_proposal_id)`,
+        )
+      }
+
+      if (healNeedsFkRebuild) {
+        await c.execute(`DROP TABLE IF EXISTS self_heal_attempts_new`)
+        await c.execute(`
+          CREATE TABLE self_heal_attempts_new (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_task_id    TEXT    NOT NULL,
+            failure_signature TEXT    NOT NULL,
+            fix_task_id       TEXT    NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            created_at        TEXT    NOT NULL
+          )
+        `)
+        // Drop orphan rows whose fix_task_id no longer exists in tasks so the
+        // INSERT respects the FK constraint once enforcement is re-enabled.
+        await c.execute(`
+          INSERT INTO self_heal_attempts_new
+                (id, parent_task_id, failure_signature, fix_task_id, created_at)
+          SELECT id, parent_task_id, failure_signature, fix_task_id, created_at
+            FROM self_heal_attempts
+           WHERE fix_task_id IN (SELECT id FROM tasks)
+        `)
+        await c.execute(`DROP TABLE self_heal_attempts`)
+        await c.execute(
+          `ALTER TABLE self_heal_attempts_new RENAME TO self_heal_attempts`,
+        )
+        await c.execute(
+          `CREATE INDEX IF NOT EXISTS idx_self_heal_attempts_parent_signature
+             ON self_heal_attempts(parent_task_id, failure_signature)`,
+        )
+      }
+
+      await c.execute(`PRAGMA foreign_keys = ON`)
+    }
+  }
   await healBlobPrompts(c)
   // Wire-bus outbox: events published by library code land atomically with the
   // state writes they describe (same queue.db, same libsql transaction).

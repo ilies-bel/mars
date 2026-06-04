@@ -43,21 +43,116 @@ const isDiagnosisKind = (value: unknown): value is DiagnosisKind =>
 
 let initialised = false
 
+const parseFiles = (raw: unknown): readonly string[] => {
+  if (typeof raw !== 'string' || raw.length === 0) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((x): x is string => typeof x === 'string')
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Create the normalized diagnosis tables (diagnoses_root_cause,
+ * diagnoses_inconclusive, diagnosis_involved_files) and backfill from the
+ * legacy polymorphic diagnoses table if it still exists. The legacy table
+ * is dropped once data is safely copied so subsequent startups skip the
+ * migration entirely.
+ */
 const initDiagnoses = async (): Promise<void> => {
   if (initialised) return
   const store = await getDefaultTaskStore()
+
   await store.execute(`
-    CREATE TABLE IF NOT EXISTS diagnoses (
-      task_id TEXT PRIMARY KEY,
-      kind TEXT NOT NULL,
-      evidence TEXT,
-      involved_files_json TEXT,
-      fix_direction TEXT,
-      what_checked TEXT,
-      why_unscoped TEXT,
-      recorded_at TEXT NOT NULL
+    CREATE TABLE IF NOT EXISTS diagnoses_root_cause (
+      task_id       TEXT NOT NULL PRIMARY KEY,
+      evidence      TEXT NOT NULL,
+      fix_direction TEXT NOT NULL,
+      recorded_at   TEXT NOT NULL
     )
   `)
+  await store.execute(`
+    CREATE TABLE IF NOT EXISTS diagnoses_inconclusive (
+      task_id      TEXT NOT NULL PRIMARY KEY,
+      what_checked TEXT NOT NULL,
+      why_unscoped TEXT NOT NULL,
+      recorded_at  TEXT NOT NULL
+    )
+  `)
+  await store.execute(`
+    CREATE TABLE IF NOT EXISTS diagnosis_involved_files (
+      task_id  TEXT    NOT NULL,
+      position INTEGER NOT NULL,
+      path     TEXT    NOT NULL,
+      PRIMARY KEY (task_id, position)
+    )
+  `)
+
+  // One-time migration: backfill the legacy polymorphic diagnoses table into
+  // the normalized child tables, then drop it. Idempotent: once the legacy
+  // table is gone this block is a no-op on every subsequent startup.
+  const oldTable = await store.query(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='diagnoses'`,
+  )
+  if (oldTable.rows.length > 0) {
+    const rcRows = await store.query(`
+      SELECT task_id, evidence, involved_files_json, fix_direction, recorded_at
+        FROM diagnoses
+       WHERE kind = 'root-cause-found'
+    `)
+    for (const row of rcRows.rows) {
+      const r = row as unknown as {
+        task_id: string
+        evidence: string | null
+        involved_files_json: string | null
+        fix_direction: string | null
+        recorded_at: string
+      }
+      await store.execute({
+        sql: `INSERT OR IGNORE INTO diagnoses_root_cause
+                (task_id, evidence, fix_direction, recorded_at)
+              VALUES (?, ?, ?, ?)`,
+        args: [r.task_id, r.evidence ?? '', r.fix_direction ?? '', r.recorded_at],
+      })
+      const files = parseFiles(r.involved_files_json)
+      for (let i = 0; i < files.length; i++) {
+        await store.execute({
+          sql: `INSERT OR IGNORE INTO diagnosis_involved_files
+                  (task_id, position, path)
+                VALUES (?, ?, ?)`,
+          args: [r.task_id, i, files[i]],
+        })
+      }
+    }
+    const incRows = await store.query(`
+      SELECT task_id, what_checked, why_unscoped, recorded_at
+        FROM diagnoses
+       WHERE kind = 'inconclusive'
+    `)
+    for (const row of incRows.rows) {
+      const r = row as unknown as {
+        task_id: string
+        what_checked: string | null
+        why_unscoped: string | null
+        recorded_at: string
+      }
+      await store.execute({
+        sql: `INSERT OR IGNORE INTO diagnoses_inconclusive
+                (task_id, what_checked, why_unscoped, recorded_at)
+              VALUES (?, ?, ?, ?)`,
+        args: [
+          r.task_id,
+          r.what_checked ?? '',
+          r.why_unscoped ?? '',
+          r.recorded_at,
+        ],
+      })
+    }
+    await store.execute(`DROP TABLE diagnoses`)
+  }
+
   initialised = true
 }
 
@@ -87,7 +182,7 @@ export const setDiagnosis = async (
   }
 
   let evidence: string | null = null
-  let involvedFilesJson: string | null = null
+  let validatedFiles: string[] = []
   let fixDirection: string | null = null
   let whatChecked: string | null = null
   let whyUnscoped: string | null = null
@@ -98,14 +193,13 @@ export const setDiagnosis = async (
     if (!Array.isArray(verdict.involvedFiles)) {
       throw new Error('diagnose set: involved-files must be an array')
     }
-    const files = verdict.involvedFiles.filter(
+    validatedFiles = verdict.involvedFiles.filter(
       (f) => typeof f === 'string' && f.trim().length > 0,
     )
-    if (files.length === 0) {
+    if (validatedFiles.length === 0) {
       throw new Error('diagnose set: at least one involved file is required')
     }
     evidence = verdict.evidence.trim()
-    involvedFilesJson = JSON.stringify(files)
     fixDirection = verdict.fixDirection.trim()
   } else {
     requireNonEmpty(verdict.whatChecked, 'what-checked')
@@ -117,42 +211,44 @@ export const setDiagnosis = async (
   await initDiagnoses()
   const store = await getDefaultTaskStore()
   const now = new Date().toISOString()
-  await store.execute({
-    sql: `INSERT INTO diagnoses (
-            task_id, kind,
-            evidence, involved_files_json, fix_direction,
-            what_checked, why_unscoped,
-            recorded_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(task_id) DO UPDATE SET
-            kind = excluded.kind,
-            evidence = excluded.evidence,
-            involved_files_json = excluded.involved_files_json,
-            fix_direction = excluded.fix_direction,
-            what_checked = excluded.what_checked,
-            why_unscoped = excluded.why_unscoped,
-            recorded_at = excluded.recorded_at`,
-    args: [
-      taskId,
-      verdict.kind,
-      evidence,
-      involvedFilesJson,
-      fixDirection,
-      whatChecked,
-      whyUnscoped,
-      now,
-    ],
-  })
-}
 
-const parseFiles = (raw: unknown): readonly string[] => {
-  if (typeof raw !== 'string' || raw.length === 0) return []
-  try {
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((x): x is string => typeof x === 'string')
-  } catch {
-    return []
+  // Delete from all child tables first so an overwrite across verdict kinds
+  // leaves no stale rows (e.g. switching from root-cause to inconclusive).
+  await store.execute({
+    sql: `DELETE FROM diagnoses_root_cause WHERE task_id = ?`,
+    args: [taskId],
+  })
+  await store.execute({
+    sql: `DELETE FROM diagnoses_inconclusive WHERE task_id = ?`,
+    args: [taskId],
+  })
+  await store.execute({
+    sql: `DELETE FROM diagnosis_involved_files WHERE task_id = ?`,
+    args: [taskId],
+  })
+
+  if (verdict.kind === 'root-cause-found') {
+    await store.execute({
+      sql: `INSERT INTO diagnoses_root_cause
+              (task_id, evidence, fix_direction, recorded_at)
+            VALUES (?, ?, ?, ?)`,
+      args: [taskId, evidence!, fixDirection!, now],
+    })
+    for (let i = 0; i < validatedFiles.length; i++) {
+      await store.execute({
+        sql: `INSERT INTO diagnosis_involved_files
+                (task_id, position, path)
+              VALUES (?, ?, ?)`,
+        args: [taskId, i, validatedFiles[i]],
+      })
+    }
+  } else {
+    await store.execute({
+      sql: `INSERT INTO diagnoses_inconclusive
+              (task_id, what_checked, why_unscoped, recorded_at)
+            VALUES (?, ?, ?, ?)`,
+      args: [taskId, whatChecked!, whyUnscoped!, now],
+    })
   }
 }
 
@@ -164,36 +260,59 @@ const parseFiles = (raw: unknown): readonly string[] => {
 export const getDiagnosis = async (taskId: string): Promise<StoredDiagnosis> => {
   await initDiagnoses()
   const store = await getDefaultTaskStore()
-  const r = await store.query({
-    sql: `SELECT kind, evidence, involved_files_json, fix_direction,
-                 what_checked, why_unscoped, recorded_at
-            FROM diagnoses WHERE task_id = ?`,
+
+  const rcResult = await store.query({
+    sql: `SELECT evidence, fix_direction, recorded_at
+            FROM diagnoses_root_cause
+           WHERE task_id = ?`,
     args: [taskId],
   })
-  if (r.rows.length === 0) return { kind: 'no-verdict', taskId }
-  const row = r.rows[0] as unknown as Record<string, unknown>
-  const kind = row.kind as string
-  const recordedAt = (row.recorded_at as string) ?? ''
-  if (kind === 'root-cause-found') {
+  if (rcResult.rows.length > 0) {
+    const r = rcResult.rows[0] as unknown as {
+      evidence: string
+      fix_direction: string
+      recorded_at: string
+    }
+    const filesResult = await store.query({
+      sql: `SELECT path
+              FROM diagnosis_involved_files
+             WHERE task_id = ?
+             ORDER BY position`,
+      args: [taskId],
+    })
+    const involvedFiles = filesResult.rows.map(
+      (row) => (row as unknown as { path: string }).path,
+    )
     return {
-      kind,
+      kind: 'root-cause-found',
       taskId,
-      recordedAt,
-      evidence: (row.evidence as string) ?? '',
-      involvedFiles: parseFiles(row.involved_files_json),
-      fixDirection: (row.fix_direction as string) ?? '',
+      recordedAt: r.recorded_at,
+      evidence: r.evidence,
+      involvedFiles,
+      fixDirection: r.fix_direction,
     }
   }
-  if (kind === 'inconclusive') {
+
+  const incResult = await store.query({
+    sql: `SELECT what_checked, why_unscoped, recorded_at
+            FROM diagnoses_inconclusive
+           WHERE task_id = ?`,
+    args: [taskId],
+  })
+  if (incResult.rows.length > 0) {
+    const r = incResult.rows[0] as unknown as {
+      what_checked: string
+      why_unscoped: string
+      recorded_at: string
+    }
     return {
-      kind,
+      kind: 'inconclusive',
       taskId,
-      recordedAt,
-      whatChecked: (row.what_checked as string) ?? '',
-      whyUnscoped: (row.why_unscoped as string) ?? '',
+      recordedAt: r.recorded_at,
+      whatChecked: r.what_checked,
+      whyUnscoped: r.why_unscoped,
     }
   }
-  // Unknown kind on disk: surface as no-verdict so the branch logic falls
-  // through to the inconclusive path instead of acting on a half-row.
+
   return { kind: 'no-verdict', taskId }
 }
