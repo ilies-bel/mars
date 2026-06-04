@@ -109,7 +109,7 @@ The only operator-visible action-queue state: a row whose entity (task or worktr
 Retired state. The action queue is a projection of entity state with no operator-facing ack/resolve/dismiss gesture; a row leaves only when its entity transitions, so there is no acknowledged state to occupy.
 
 **resolved (inbox)**:
-InboxState terminal: the underlying problem was fixed. Set via 'mars inbox resolve [--root-cause <text>]'.
+Internal-only terminal state written by the Invalidator when an entity transition closes a row (e.g. resolveAllRowsForTask on task.completed). Never set by an operator — the action queue has no resolve verb.
 
 **Actionable state**:
 A task status the triage UI surfaces because the operator can still influence the task: queued, running, verifying, merging, blocked. Excludes terminal states (done, failed, dropped).
