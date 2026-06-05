@@ -2240,6 +2240,51 @@ export const addBlockers = async (
 }
 
 /**
+ * Follow-up task kind: distinguishes context-exhausted from exploration-loop
+ * follow-ups so each origin+kind pair has a unique dedup key.
+ */
+export type FollowUpKind = 'context-exhausted' | 'exploration-loop'
+
+/**
+ * Enqueue a follow-up task for `originTaskId` exactly ONCE, across restarts.
+ *
+ * Uses a deterministic `origin_id` (`followup:<originTaskId>:<kind>`) as a
+ * structured dedup key: if an open (non-terminal) follow-up for this
+ * origin+kind combination already exists in the DB, the enqueue is skipped
+ * and the existing task id is returned with `created: false`.
+ *
+ * When no open follow-up exists the task is created with `skipTriage: true`,
+ * a blocker edge from the follow-up back to `originTaskId` is added, and the
+ * result has `created: true`.
+ *
+ * This makes the "enqueue exactly one follow-up" comment in
+ * implement-workflow.ts TRUE per-origin across restarts, not just per-run.
+ */
+export const enqueueFollowUpOnce = async (
+  originTaskId: string,
+  kind: FollowUpKind,
+  prompt: string,
+): Promise<{ id: string; created: boolean }> => {
+  const followUpOriginId = `followup:${originTaskId}:${kind}`
+  await migrateQueueSchema()
+  const c = resolveQueueClient()
+  const existing = await c.execute({
+    sql: `SELECT id FROM tasks WHERE origin_id = ? AND status NOT IN ('done', 'failed', 'dropped') LIMIT 1`,
+    args: [followUpOriginId],
+  })
+  if (existing.rows.length > 0) {
+    const id = (existing.rows[0] as unknown as { id: string }).id
+    return { id, created: false }
+  }
+  const followUp = await enqueueTask(prompt, undefined, {
+    skipTriage: true,
+    originId: followUpOriginId,
+  })
+  await addBlockers(followUp.id, [originTaskId])
+  return { id: followUp.id, created: true }
+}
+
+/**
  * Write a batch of Linker candidate Blocker rows in `'pending-review'` state.
  * Mirrors {@link addBlockers} but stamps `state='pending-review'` so the
  * dispatcher still gates on the row even though it has not been confirmed.

@@ -30,6 +30,7 @@ import type { ClaudeEvent } from '../core/lib/claude-stream'
 import {
   enqueueTask,
   addBlockers,
+  enqueueFollowUpOnce,
   hasIncompleteBlockers,
   updateTask,
 } from '../core/queue'
@@ -1043,10 +1044,14 @@ export const implementWorkflow = defineWorkflow<
           `task is restarted or resolved, this follow-up will unblock automatically.`,
         ].join('\n')
         try {
-          const followUp = await enqueueTask(followUpPrompt, undefined, {
-            skipTriage: true,
-          })
-          await addBlockers(followUp.id, [input.taskId])
+          // enqueueFollowUpOnce deduplicates on origin_id=followup:<taskId>:context-exhausted
+          // so restarting the origin and context-exhausting again will NOT create a second
+          // follow-up — the existing open one is reused.
+          const { id: followUpId, created } = await enqueueFollowUpOnce(
+            input.taskId,
+            'context-exhausted',
+            followUpPrompt,
+          )
           await updateTask(
             input.taskId,
             {
@@ -1059,9 +1064,15 @@ export const implementWorkflow = defineWorkflow<
             },
             store,
           )
-          console.log(
-            `[ctx] task ${input.taskId}: context-exhausted abort; follow-up ${followUp.id} enqueued and blocked by this task`,
-          )
+          if (created) {
+            console.log(
+              `[ctx] task ${input.taskId}: context-exhausted abort; follow-up ${followUpId} enqueued and blocked by this task`,
+            )
+          } else {
+            console.log(
+              `[ctx] task ${input.taskId}: context-exhausted abort; existing follow-up ${followUpId} already open, skipping re-enqueue`,
+            )
+          }
           throw new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE(input.taskId))
         } catch (err) {
           if (err instanceof Error && isContextExhaustedAbortError(err)) throw err
@@ -1106,10 +1117,14 @@ export const implementWorkflow = defineWorkflow<
           `restarted or resolved, this follow-up will unblock automatically.`,
         ].join('\n')
         try {
-          const followUp = await enqueueTask(followUpPrompt, undefined, {
-            skipTriage: true,
-          })
-          await addBlockers(followUp.id, [input.taskId])
+          // enqueueFollowUpOnce deduplicates on origin_id=followup:<taskId>:exploration-loop
+          // so restarting the origin and hitting the ceiling again will NOT create a second
+          // follow-up — the existing open one is reused.
+          const { id: followUpId, created } = await enqueueFollowUpOnce(
+            input.taskId,
+            'exploration-loop',
+            followUpPrompt,
+          )
           await updateTask(
             input.taskId,
             {
@@ -1121,9 +1136,15 @@ export const implementWorkflow = defineWorkflow<
             },
             store,
           )
-          console.log(
-            `[span] task ${input.taskId}: exploration-loop abort; follow-up ${followUp.id} enqueued and blocked by this task`,
-          )
+          if (created) {
+            console.log(
+              `[span] task ${input.taskId}: exploration-loop abort; follow-up ${followUpId} enqueued and blocked by this task`,
+            )
+          } else {
+            console.log(
+              `[span] task ${input.taskId}: exploration-loop abort; existing follow-up ${followUpId} already open, skipping re-enqueue`,
+            )
+          }
           throw new Error(EXPLORATION_LOOP_ABORT_MESSAGE(input.taskId))
         } catch (err) {
           if (err instanceof Error && isExplorationLoopAbortError(err)) throw err
