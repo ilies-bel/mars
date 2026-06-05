@@ -762,3 +762,129 @@ describe('ADR-0049: fix task kind invariant enforcement', () => {
     db.close()
   })
 })
+
+describe('questions table: ON DELETE CASCADE migration + dropTask cleanup', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('migration rebuilds legacy questions table with ON DELETE CASCADE and removes orphaned rows', async () => {
+    const dbPath = `file:${repo}/.mars/mars.db`
+    const q = createClient({ url: dbPath })
+    const now = new Date().toISOString()
+
+    // Seed a minimal tasks table (migration will expand it, but this is enough
+    // for the questions FK check).
+    await q.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
+      fix_for_task_id TEXT, kind TEXT,
+      origin_id TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`)
+
+    // Seed a questions table WITHOUT ON DELETE CASCADE (legacy state).
+    await q.execute(`CREATE TABLE questions (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      question TEXT NOT NULL,
+      rationale TEXT,
+      category TEXT,
+      answer TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (task_id) REFERENCES tasks(id)
+    )`)
+
+    // A live task with a valid question.
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, created_at, updated_at)
+            VALUES ('live-task', 'do work', 'queued', 'live-task', 0, ?, ?)`,
+      args: [now, now],
+    })
+    await q.execute({
+      sql: `INSERT INTO questions (id, task_id, question, status, created_at)
+            VALUES ('q-live', 'live-task', 'what colour?', 'open', ?)`,
+      args: [now],
+    })
+
+    // Orphaned question: task_id references a task that no longer exists.
+    // Disable FK enforcement to simulate the real-world state where orphans
+    // accumulated before FK checking was turned on.
+    await q.execute(`PRAGMA foreign_keys = OFF`)
+    await q.execute({
+      sql: `INSERT INTO questions (id, task_id, question, status, created_at)
+            VALUES ('q-orphan', 'gone-task', 'orphan?', 'open', ?)`,
+      args: [now],
+    })
+    await q.execute(`PRAGMA foreign_keys = ON`)
+    q.close()
+
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
+
+    const db = createClient({ url: dbPath })
+
+    // Orphaned row must be removed.
+    const orphanCheck = await db.execute(
+      `SELECT id FROM questions WHERE id = 'q-orphan'`,
+    )
+    expect(orphanCheck.rows).toHaveLength(0)
+
+    // Valid row must survive.
+    const liveCheck = await db.execute(
+      `SELECT id FROM questions WHERE id = 'q-live'`,
+    )
+    expect(liveCheck.rows).toHaveLength(1)
+
+    // Rebuilt table must declare ON DELETE CASCADE.
+    const schemaRow = (
+      await db.execute(
+        `SELECT sql FROM sqlite_master WHERE type='table' AND name='questions'`,
+      )
+    ).rows[0] as unknown as { sql: string }
+    expect(schemaRow.sql).toContain('ON DELETE CASCADE')
+
+    db.close()
+  })
+
+  it('dropTask removes all questions rows for the dropped task', async () => {
+    const { enqueueTask, dropTask } = await import('../queue')
+    const now = new Date().toISOString()
+
+    // Create a real task via enqueueTask (triggers migrateQueueSchema internally).
+    const task = await enqueueTask('test task for questions cleanup', undefined, {
+      skipTriage: true,
+    })
+
+    // Insert a question row pointing at the new task.
+    const dbPath = `file:${repo}/.mars/mars.db`
+    const db = createClient({ url: dbPath })
+    await db.execute({
+      sql: `INSERT INTO questions (id, task_id, question, status, created_at)
+            VALUES ('q-drop-test', ?, 'will I be cleaned up?', 'open', ?)`,
+      args: [task.id, now],
+    })
+    db.close()
+
+    // Drop the task — must also delete its questions rows.
+    await dropTask(task.id)
+
+    // Verify the question row is gone.
+    const db2 = createClient({ url: dbPath })
+    const check = await db2.execute({
+      sql: `SELECT id FROM questions WHERE task_id = ?`,
+      args: [task.id],
+    })
+    expect(check.rows).toHaveLength(0)
+    db2.close()
+  })
+})

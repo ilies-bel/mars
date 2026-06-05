@@ -1212,6 +1212,74 @@ export const migrateQueueSchema = async (): Promise<void> => {
     ) AS je
     WHERE je.value IS NOT NULL AND je.value != ''
   `)
+  // ── questions: ensure table and ON DELETE CASCADE ─────────────────────────
+  // The questions table records coder clarification questions for a task.
+  // It was introduced on some live databases WITHOUT ON DELETE CASCADE on its
+  // task_id FK, which caused SQLITE_CONSTRAINT violations on 'mars list' when
+  // orphaned rows dangled after a task was purged. This block:
+  //   1. Creates the table fresh (with CASCADE) on new databases.
+  //   2. On existing databases that lack CASCADE: removes orphaned rows first,
+  //      then rebuilds the table with CASCADE using the standard SQLite
+  //      table-rebuild pattern (SQLite cannot ALTER a FK).
+  {
+    const qSqlRow = (
+      await c.execute(
+        `SELECT sql FROM sqlite_master WHERE type='table' AND name='questions'`,
+      )
+    ).rows[0] as unknown as { sql: string } | undefined
+
+    if (!qSqlRow) {
+      await c.execute(`
+        CREATE TABLE IF NOT EXISTS questions (
+          id         TEXT PRIMARY KEY,
+          task_id    TEXT NOT NULL,
+          question   TEXT NOT NULL,
+          rationale  TEXT,
+          category   TEXT,
+          answer     TEXT,
+          status     TEXT NOT NULL DEFAULT 'open',
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        )
+      `)
+      await c.execute(
+        `CREATE INDEX IF NOT EXISTS idx_questions_task ON questions(task_id)`,
+      )
+    } else if (!(qSqlRow.sql ?? '').includes('ON DELETE CASCADE')) {
+      await c.execute(`PRAGMA foreign_keys = OFF`)
+      // Remove orphaned rows before the copy so the FK in questions_new never
+      // fires against a gone parent (even with FK enforcement off, keeping the
+      // data clean is the right thing to do).
+      await c.execute(
+        `DELETE FROM questions WHERE task_id NOT IN (SELECT id FROM tasks)`,
+      )
+      await c.execute(`DROP TABLE IF EXISTS questions_new`)
+      await c.execute(`
+        CREATE TABLE questions_new (
+          id         TEXT PRIMARY KEY,
+          task_id    TEXT NOT NULL,
+          question   TEXT NOT NULL,
+          rationale  TEXT,
+          category   TEXT,
+          answer     TEXT,
+          status     TEXT NOT NULL DEFAULT 'open',
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        )
+      `)
+      await c.execute(`
+        INSERT INTO questions_new (id, task_id, question, rationale, category, answer, status, created_at)
+        SELECT id, task_id, question, rationale, category, answer, status, created_at
+        FROM questions
+      `)
+      await c.execute(`DROP TABLE questions`)
+      await c.execute(`ALTER TABLE questions_new RENAME TO questions`)
+      await c.execute(
+        `CREATE INDEX IF NOT EXISTS idx_questions_task ON questions(task_id)`,
+      )
+      await c.execute(`PRAGMA foreign_keys = ON`)
+    }
+  }
   await migrateSignalsAndTranscriptsToTraceEvents(c)
 }
 
@@ -2270,6 +2338,15 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
       sql: `DELETE FROM task_proposal_blockers WHERE task_id = ?`,
       args: [id],
     })
+    // questions has a FK on task_id → tasks(id). Remove its rows before the
+    // task row is deleted so the FK constraint never fires. The table may not
+    // yet exist on older DB snapshots that haven't been migrated; the execute
+    // is safe because migrateQueueSchema() runs at the top of dropTask and
+    // will have created the table before we reach this point.
+    await tx.execute({
+      sql: `DELETE FROM questions WHERE task_id = ?`,
+      args: [id],
+    })
 
     // Cascade-delete each fix/recovery task that pointed at the origin.
     // For each: release any tasks that were blocked on the fix task (e.g. other
@@ -2315,6 +2392,10 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
       })
       await tx.execute({
         sql: `DELETE FROM task_proposal_blockers WHERE task_id = ?`,
+        args: [fixId],
+      })
+      await tx.execute({
+        sql: `DELETE FROM questions WHERE task_id = ?`,
         args: [fixId],
       })
       await tx.execute({
