@@ -103,6 +103,46 @@ describe('drainWithStall — ADR-0032', () => {
     expect(await openStalledCount(client)).toBe(0)
   })
 
+  it('closes a stalled row when the event succeeds in a fresh drain with empty failureCounts (post-restart scenario)', async () => {
+    // Phase 1: raise a subscriber-stalled row via K consecutive failures.
+    const { q, actionQueue, drain, subs, pub } = await load(repo)
+    const client = q.resolveQueueClient()
+
+    await actionQueue.initActionQueue()
+    await subs.registerSubscriber(client, SUB, { replay: false })
+    await pub.publishWithRetry(client, 'task.queued', { taskId: 'X-3' })
+
+    for (let i = 0; i < drain.STALL_THRESHOLD; i++) {
+      await drain.drainWithStall({
+        client,
+        subscriberId: SUB,
+        handle: async (event: { type: string }): Promise<boolean> => {
+          if (event.type !== 'task.queued') return false
+          throw new Error('simulated failure')
+        },
+      })
+    }
+
+    expect(await openStalledCount(client)).toBe(1)
+
+    // Phase 2: simulate a daemon restart by resetting module state (clears the
+    // in-memory failureCounts Map), then drain successfully. The stalled row
+    // must be closed even though failureCounts is empty in the new process.
+    const reloaded = await load(repo)
+    const client2 = reloaded.q.resolveQueueClient()
+
+    await reloaded.drain.drainWithStall({
+      client: client2,
+      subscriberId: SUB,
+      handle: async (event: { type: string }): Promise<boolean> => {
+        if (event.type !== 'task.queued') return false
+        return true
+      },
+    })
+
+    expect(await openStalledCount(client2)).toBe(0)
+  })
+
   it('a healthy subscriber advances its cursor and raises nothing', async () => {
     const { q, actionQueue, drain, subs, pub } = await load(repo)
     const client = q.resolveQueueClient()

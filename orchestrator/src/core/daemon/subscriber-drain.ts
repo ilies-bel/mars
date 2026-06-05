@@ -116,17 +116,23 @@ export async function drainWithStall(
       }
       // Success — clear any stall counter and close a stalled row if one was
       // raised for this event (subscriber.unstalled recovery).
-      if (failureCounts.has(key)) {
-        failureCounts.delete(key)
-        await supersedeActionQueueItemsBySignature(
-          'subscriber-stalled',
-          stallSignature(subscriberId, event.id),
-          'subscriber-unstalled',
-          `subscriber:${subscriberId}`,
-        ).catch(() => {
-          // best-effort: failing to close the stalled row must not re-stall
-        })
-      }
+      // supersedeActionQueueItemsBySignature is called unconditionally because
+      // failureCounts is in-memory and is lost across daemon restarts. The
+      // most common fix for a real stall is a daemon restart (so the subscriber
+      // re-binds to corrected code), which clears failureCounts. Without this
+      // unconditional call, a persisted subscriber-stalled row opened in the
+      // previous process would never be closed by the restarted daemon even
+      // after the event processes successfully. The call is a no-op when no
+      // matching open row exists, so calling it on every success is safe.
+      failureCounts.delete(key)
+      await supersedeActionQueueItemsBySignature(
+        'subscriber-stalled',
+        stallSignature(subscriberId, event.id),
+        'subscriber-unstalled',
+        `subscriber:${subscriberId}`,
+      ).catch(() => {
+        // best-effort: failing to close the stalled row must not re-stall
+      })
     } catch (err) {
       const lastError = (err as Error).message
       const count = (failureCounts.get(key) ?? 0) + 1
