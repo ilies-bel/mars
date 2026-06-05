@@ -808,60 +808,167 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
     expect(readFileSync(resolve(repo, 'src.ts'), 'utf8')).toBe('const x = 2\n')
   })
 
-  it('returns merged:false aborted:true when integration advanced concurrently (CAS failure)', async () => {
-    // Simulate a CAS failure: after mergeBranch reads integrationSha but before
-    // it does update-ref, another process advances main. We cannot inject state
-    // between two sequential awaits, so instead we set up a scenario where the
-    // update-ref's expected-old-value is stale from the start.
+  it('retries and succeeds when integration advances by one non-overlapping commit (transient race)', async () => {
+    // Test (a): a single concurrent advance of main between the ancestry check
+    // and the CAS causes the CAS to fail. The retry loop re-rebases the task
+    // branch onto the new main tip and the CAS succeeds on the second attempt.
     //
-    // Strategy: advance main (integrationBranch) to a new commit AFTER creating
-    // the worktree but BEFORE calling mergeBranch. The rebase step inside mergeBranch
-    // will rebase task/ff-test onto the new main tip (producing a new taskSha). Then
-    // rev-parse integrationBranch returns the new main tip. So integrationSha in our
-    // code is correct. To force a CAS failure we need integrationBranch to advance
-    // BETWEEN steps 2 and 4 of the new implementation — that's a genuine race
-    // condition untestable without mocking. Instead, we verify the ancestry-check
-    // path: if integrationSha is NOT an ancestor of taskSha, we return aborted:true.
+    // We use the onBeforeFastForward seam to advance main in a deterministic
+    // window (after the ancestry check, before the CAS) on the first iteration
+    // only, then no-op on subsequent iterations.
+
+    // Create a linked worktree for main so we can commit to it cleanly while
+    // the main repo is checked out on developer/wip with a dirty README.md.
+    const mainWt = mkdtempSync(resolve(tmpdir(), 'mars-main-advance-'))
+    rmSync(mainWt, { recursive: true, force: true })
+    execFileSync('git', ['worktree', 'add', mainWt, 'main'], { cwd: repo })
+
+    let callCount = 0
+    const onBeforeFastForward = async () => {
+      if (callCount++ > 0) return
+      // Advance main by one commit that touches only concurrent.txt — no overlap
+      // with the task branch's src.ts change, so the re-rebase is conflict-free.
+      writeFileSync(resolve(mainWt, 'concurrent.txt'), 'concurrent change\n')
+      execFileSync('git', ['add', 'concurrent.txt'], { cwd: mainWt })
+      execFileSync('git', ['commit', '-q', '-m', 'concurrent advance'], { cwd: mainWt })
+    }
+
+    try {
+      const { mergeBranch } = await import('../git/merge')
+      const result = await mergeBranch({
+        branch: 'task/ff-test',
+        worktreePath: worktreeDir,
+        integrationBranch: 'main',
+        lockTimeoutMs: 5_000,
+        onBeforeFastForward,
+      })
+
+      expect(result.merged).toBe(true)
+      expect(result.aborted).toBe(false)
+      expect(result.retriesAttempted).toBeGreaterThanOrEqual(1)
+
+      // After a successful retry, main must equal the final rebased task tip.
+      const { execFile: execFileCb } = await import('node:child_process')
+      const { promisify } = await import('node:util')
+      const execP = promisify(execFileCb)
+      const mainTip = (await execP('git', ['rev-parse', 'main'], { cwd: repo })).stdout.trim()
+      const taskTip = (await execP('git', ['rev-parse', 'task/ff-test'], { cwd: repo })).stdout.trim()
+      expect(mainTip).toBe(taskTip)
+    } finally {
+      try { execFileSync('git', ['worktree', 'remove', '--force', mainWt], { cwd: repo }) } catch {}
+      rmSync(mainWt, { recursive: true, force: true })
+    }
+  })
+
+  it('aborts after exhausting retry budget when integration persistently advances', async () => {
+    // Test (b): main advances on EVERY call to onBeforeFastForward, so every
+    // CAS fails. After MAX_MERGE_ATTEMPTS (3) the loop returns aborted:true
+    // with the "integration moved during merge" lead line, and retriesAttempted
+    // equals MAX_MERGE_ATTEMPTS-1 (2).
     //
-    // We manufacture that scenario by pointing main at an unrelated orphan commit
-    // so that the ancestry invariant breaks. We do this after the rebase has run
-    // inside the worktree (by intercepting through a separate git update-ref call
-    // that moves main to a divergent SHA before mergeBranch's step 2 runs).
+    // We also assert computeFailureSignature maps the output to the existing
+    // merge:vcs-supervisor-aborted/not-fast-forward recipe so the routing is
+    // stable.
+
+    const mainWt = mkdtempSync(resolve(tmpdir(), 'mars-main-persist-'))
+    rmSync(mainWt, { recursive: true, force: true })
+    execFileSync('git', ['worktree', 'add', mainWt, 'main'], { cwd: repo })
+
+    let advanceCount = 0
+    const onBeforeFastForward = async () => {
+      // Advance main on every invocation — guarantees every CAS fails.
+      const i = advanceCount++
+      writeFileSync(resolve(mainWt, `advance-${i}.txt`), `advance ${i}\n`)
+      execFileSync('git', ['add', '.'], { cwd: mainWt })
+      execFileSync('git', ['commit', '-q', '-m', `advance ${i}`], { cwd: mainWt })
+    }
+
+    try {
+      const { mergeBranch } = await import('../git/merge')
+      const { computeFailureSignature } = await import('../failure-signature')
+      const result = await mergeBranch({
+        branch: 'task/ff-test',
+        worktreePath: worktreeDir,
+        integrationBranch: 'main',
+        lockTimeoutMs: 5_000,
+        onBeforeFastForward,
+      })
+
+      expect(result.merged).toBe(false)
+      expect(result.aborted).toBe(true)
+      // retriesAttempted = MAX_MERGE_ATTEMPTS - 1 (the last attempt fails
+      // without incrementing the counter since it returns directly).
+      expect(result.retriesAttempted).toBe(2)
+      expect(result.output).toMatch(/integration moved during merge/)
+
+      // Routing invariant: the output must still classify to not-fast-forward
+      // so the vcsAbortedNotFastForwardRecipe handles it — not a new recovery.
+      const sig = computeFailureSignature('merge:vcs-supervisor-aborted', result.output)
+      expect(sig).toBe('merge:vcs-supervisor-aborted/not-fast-forward')
+    } finally {
+      try { execFileSync('git', ['worktree', 'remove', '--force', mainWt], { cwd: repo }) } catch {}
+      rmSync(mainWt, { recursive: true, force: true })
+    }
+  })
+
+  it('aborts immediately with retriesAttempted=0 on a divergent (non-retryable) advance', async () => {
+    // Test (c): onBeforeFastForward points main at a DIVERGENT orphan SHA
+    // (not a descendant of the rebase base). The CAS failure handler detects
+    // the non-retryable advance and returns aborted:true without burning any
+    // retry budget, so retriesAttempted stays 0.
     //
-    // Since we can't inject between awaits, we skip the in-flight race and instead
-    // test the path directly: confirm that git update-ref with a wrong oldValue
-    // returns non-zero. This validates the CAS semantics that protect the merge.
+    // Also validates the raw CAS primitive: git update-ref with a wrong
+    // expected-old-value always returns non-zero.
+
     const { execFile: execFileCb } = await import('node:child_process')
     const { promisify } = await import('node:util')
     const execP = promisify(execFileCb)
 
-    // Create an unrelated commit on a temp branch and grab its SHA
-    execFileSync('git', ['checkout', '-q', '-b', 'tmp/orphan'], { cwd: repo })
-    writeFileSync(resolve(repo, 'orphan.txt'), 'orphan\n')
-    execFileSync('git', ['add', 'orphan.txt'], { cwd: repo })
-    execFileSync('git', ['commit', '-q', '-m', 'orphan'], { cwd: repo })
-    execFileSync('git', ['checkout', '-q', 'developer/wip'], { cwd: repo })
-    const orphanSha = (await execP('git', ['rev-parse', 'tmp/orphan'], { cwd: repo })).stdout.trim()
-    const mainSha = (await execP('git', ['rev-parse', 'main'], { cwd: repo })).stdout.trim()
-
-    // Confirm git update-ref CAS rejects a wrong expected-old-value (validates the primitive).
-    // Use orphanSha as the wrong expected-old-value: main is currently at mainSha,
-    // so claiming it is at orphanSha is always wrong.
-    let casError: unknown
-    try {
+    // Build an orphan commit using git plumbing — no checkout required.
+    // The empty-tree SHA is a git constant (SHA of an empty tree object).
+    const orphanSha = (
       await execP(
         'git',
-        ['update-ref', 'refs/heads/main', orphanSha, orphanSha],
+        ['commit-tree', '4b825dc642cb6eb9a060e54bf8d69288fbee4904', '-m', 'orphan'],
         { cwd: repo },
       )
+    ).stdout.trim()
+
+    // Validate the raw CAS primitive independently: update-ref with a wrong
+    // expected-old-value must fail (orphanSha !== current main).
+    const mainSha = (await execP('git', ['rev-parse', 'main'], { cwd: repo })).stdout.trim()
+    let casError: unknown
+    try {
+      await execP('git', ['update-ref', 'refs/heads/main', orphanSha, orphanSha], { cwd: repo })
     } catch (e) {
       casError = e
     }
-    // The CAS should have failed (wrong expected old value — main is at mainSha, not orphanSha)
     expect(casError).toBeDefined()
-    // main should not have moved
-    const mainShaAfter = (await execP('git', ['rev-parse', 'main'], { cwd: repo })).stdout.trim()
-    expect(mainShaAfter).toBe(mainSha)
+    expect((await execP('git', ['rev-parse', 'main'], { cwd: repo })).stdout.trim()).toBe(mainSha)
+
+    // Now test mergeBranch: onBeforeFastForward points main to the divergent
+    // orphan SHA on its first call. The CAS fails, the handler checks ancestry
+    // of the orphan from the rebase base (false), and aborts immediately.
+    let called = false
+    const onBeforeFastForward = async () => {
+      if (called) return
+      called = true
+      execFileSync('git', ['update-ref', 'refs/heads/main', orphanSha], { cwd: repo })
+    }
+
+    const { mergeBranch } = await import('../git/merge')
+    const result = await mergeBranch({
+      branch: 'task/ff-test',
+      worktreePath: worktreeDir,
+      integrationBranch: 'main',
+      lockTimeoutMs: 5_000,
+      onBeforeFastForward,
+    })
+
+    expect(result.merged).toBe(false)
+    expect(result.aborted).toBe(true)
+    // Non-retryable: no retry budget consumed.
+    expect(result.retriesAttempted).toBe(0)
   })
 })
 

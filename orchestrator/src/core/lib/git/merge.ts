@@ -155,6 +155,13 @@ export interface MergeArgs {
    * Claude session.
    */
   onVegaStart?: () => void | Promise<void>
+  /**
+   * TEST-ONLY seam: awaited immediately before the CAS `git update-ref` in
+   * each merge iteration. Lets tests deterministically inject a concurrent
+   * integration advance between the ancestry check and the fast-forward.
+   * Never set this in production code.
+   */
+  onBeforeFastForward?: () => void | Promise<void>
 }
 
 export interface MergeResult {
@@ -169,6 +176,11 @@ export interface MergeResult {
    * contained no session_id event.
    */
   vegaSessionId: string | null
+  /**
+   * Number of times the rebase+fast-forward was re-attempted due to a detected
+   * concurrent integration advance; 0 on first-try success or non-retryable abort.
+   */
+  retriesAttempted: number
 }
 
 let cachedSupervisorSpec: string | null = null
@@ -309,6 +321,16 @@ const isRebaseInProgress = async (
   }
 }
 
+// This is a merge-PRIMITIVE retry budget (inside one merge attempt under the
+// held .merge.lock), NOT a task-layer retry. It does not violate the ADR-0040
+// / CLAUDE.md "exactly one recovery attempt per origin failure" task-layer
+// invariant: that invariant governs how many recovery tasks the orchestrator
+// may spawn; this loop retries the rebase+fast-forward within a single
+// lock-held invocation and only falls through to aborted:true (which triggers
+// a recovery task) after the bounded budget is exhausted. NOT env-overridable
+// — matches the repo's no-retry-knob ethos.
+const MAX_MERGE_ATTEMPTS = 3 // 1 initial attempt + 2 retries
+
 export const mergeBranch = async ({
   branch,
   worktreePath,
@@ -316,6 +338,7 @@ export const mergeBranch = async ({
   lockTimeoutMs,
   onSupervisorEvent,
   onVegaStart,
+  onBeforeFastForward,
   traceCtx,
 }: MergeArgs): Promise<MergeResult> => {
   const mergeCtx: TraceCtx | undefined = traceCtx
@@ -330,138 +353,232 @@ export const mergeBranch = async ({
     let conflictResolved = false
     let vegaSessionId: string | null = null
     const supervisorConversation: ClaudeEvent[] = []
+    let retriesAttempted = 0
 
-    // Step 1: ensure the task branch is up-to-date with integration via rebase
-    // inside the worktree. After this, integration can fast-forward to it.
-    // The rebase is allowed to fail (conflict path); execProbe keeps the
-    // trace severity at warn instead of error for the expected-failure path.
-    const rebaseResult = await execProbe(
-      resolveGitBin(),
-      ['rebase', integrationBranch],
-      { cwd: worktreePath },
-      mergeCtx,
-    )
-    output += rebaseResult.stdout + rebaseResult.stderr
-    if (rebaseResult.exitCode !== 0) {
-      // Deterministic fast-forward has failed: we are about to hand the
-      // conflict to a live Vega (Claude) session. Signal the transition out of
-      // the idempotent `merging` phase before spawning, so the task shows as
-      // `vega-reconciling` for the full duration of the session.
-      await onVegaStart?.()
+    // finalTaskSha / finalIntegrationSha are written on CAS success inside the
+    // loop and consumed by Step 3 outside it. The loop always exits via break
+    // (success) or return (abort), so these are always set before Step 3 runs.
+    let finalTaskSha = ''
+    let finalIntegrationSha = ''
 
-      const preSha = (
-        await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() }, mergeCtx)
+    for (let attempt = 1; attempt <= MAX_MERGE_ATTEMPTS; attempt++) {
+      // Capture the integration tip BEFORE rebasing so we can later distinguish
+      // a retryable forward advance from a non-retryable divergent state when
+      // the ancestry check or CAS indicates integration has moved.
+      const rebaseBaseSha = (
+        await exec(resolveGitBin(), ['rev-parse', integrationBranch], { cwd: repoRoot() }, mergeCtx)
       ).stdout.trim()
 
-      const supervisorTimeoutMs = 30 * 60 * 1000
-      const sup = await invokeVcsSupervisor(
-        branch,
-        integrationBranch,
-        worktreePath,
-        supervisorTimeoutMs,
-        onSupervisorEvent,
-      )
-      supervisorConversation.push(...sup.conversation)
-      output += sup.stdout + sup.stderr
-
-      const stillInProgress = await isRebaseInProgress(worktreePath, mergeCtx)
-      const postSha = (
-        await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() }, mergeCtx)
-      ).stdout.trim()
-      const advanced = postSha !== preSha
-      const treeClean = await (async () => {
-        // `git diff --quiet` is a probe: exit 0 = clean, exit 1 = dirty.
-        const a = await execProbe(
-          resolveGitBin(),
-          ['diff', '--quiet'],
-          { cwd: worktreePath },
-          mergeCtx,
-        )
-        if (a.exitCode !== 0) return false
-        const b = await execProbe(
-          resolveGitBin(),
-          ['diff', '--cached', '--quiet'],
-          { cwd: worktreePath },
-          mergeCtx,
-        )
-        return b.exitCode === 0
-      })()
-
-      if (stillInProgress || !advanced || !treeClean) {
-        await execProbe(
-          resolveGitBin(),
-          ['rebase', '--abort'],
-          { cwd: worktreePath },
-          mergeCtx,
-        ).catch(() => {})
-        return {
-          merged: false,
-          conflictResolved: false,
-          aborted: true,
-          output: `vcs-supervisor outcome rejected by git tree (stillInProgress=${stillInProgress}, advanced=${advanced}, treeClean=${treeClean}); rebase aborted.\n${output}`,
-          supervisorConversation,
-          vegaSessionId: null,
-        }
-      }
-      conflictResolved = true
-      vegaSessionId = extractSessionIdFromConversation(supervisorConversation)
-    }
-
-    // Step 2: fast-forward integration to the (now-rebased) task branch via a
-    // working-tree-free ref update. Unlike `git checkout` + `git merge --ff-only`,
-    // `git update-ref` never touches any working tree, so it succeeds even when
-    // the main working tree has uncommitted tracked changes or is checked out on
-    // a different branch.
-    const taskSha = (
-      await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() }, mergeCtx)
-    ).stdout.trim()
-    const integrationSha = (
-      await exec(resolveGitBin(), ['rev-parse', integrationBranch], { cwd: repoRoot() }, mergeCtx)
-    ).stdout.trim()
-
-    // Confirm fast-forward is valid: integrationSha must be an ancestor of taskSha.
-    // `git merge-base --is-ancestor` exits 0 when true, 1 when false.
-    const ancestryProbe = await execProbe(
-      resolveGitBin(),
-      ['merge-base', '--is-ancestor', integrationSha, taskSha],
-      { cwd: repoRoot() },
-      mergeCtx,
-    )
-    const ancestryOk = ancestryProbe.exitCode === 0
-
-    if (!ancestryOk) {
-      return {
-        merged: false,
-        conflictResolved,
-        aborted: true,
-        output: `fast-forward into ${integrationBranch} not possible: ${integrationSha} is not an ancestor of ${taskSha}.\n${output}`,
-        supervisorConversation,
-        vegaSessionId,
-      }
-    }
-
-    // Bare ref update — does not touch any working tree, immune to dirty state.
-    // The CAS form `update-ref <ref> <new> <old>` is atomic and rejects if
-    // integrationBranch has been advanced concurrently (providing the same
-    // race-safety as the file lock, with an additional CAS layer).
-    try {
-      await exec(
+      // Step 1: ensure the task branch is up-to-date with integration via rebase
+      // inside the worktree. After this, integration can fast-forward to it.
+      // The rebase is allowed to fail (conflict path); execProbe keeps the
+      // trace severity at warn instead of error for the expected-failure path.
+      //
+      // On a retry after a concurrent-advance race, re-running `git rebase`
+      // replays the already-committed (including any Vega-reconciled) work onto
+      // the new integration tip cleanly. Vega is NOT re-invoked unless a
+      // genuinely NEW conflict appears in this iteration's rebase.
+      const rebaseResult = await execProbe(
         resolveGitBin(),
-        ['update-ref', `refs/heads/${integrationBranch}`, taskSha, integrationSha],
+        ['rebase', integrationBranch],
+        { cwd: worktreePath },
+        mergeCtx,
+      )
+      output += rebaseResult.stdout + rebaseResult.stderr
+      if (rebaseResult.exitCode !== 0) {
+        // Deterministic fast-forward has failed: we are about to hand the
+        // conflict to a live Vega (Claude) session. Signal the transition out of
+        // the idempotent `merging` phase before spawning, so the task shows as
+        // `vega-reconciling` for the full duration of the session.
+        await onVegaStart?.()
+
+        const preSha = (
+          await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() }, mergeCtx)
+        ).stdout.trim()
+
+        const supervisorTimeoutMs = 30 * 60 * 1000
+        const sup = await invokeVcsSupervisor(
+          branch,
+          integrationBranch,
+          worktreePath,
+          supervisorTimeoutMs,
+          onSupervisorEvent,
+        )
+        supervisorConversation.push(...sup.conversation)
+        output += sup.stdout + sup.stderr
+
+        const stillInProgress = await isRebaseInProgress(worktreePath, mergeCtx)
+        const postSha = (
+          await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() }, mergeCtx)
+        ).stdout.trim()
+        const advanced = postSha !== preSha
+        const treeClean = await (async () => {
+          // `git diff --quiet` is a probe: exit 0 = clean, exit 1 = dirty.
+          const a = await execProbe(
+            resolveGitBin(),
+            ['diff', '--quiet'],
+            { cwd: worktreePath },
+            mergeCtx,
+          )
+          if (a.exitCode !== 0) return false
+          const b = await execProbe(
+            resolveGitBin(),
+            ['diff', '--cached', '--quiet'],
+            { cwd: worktreePath },
+            mergeCtx,
+          )
+          return b.exitCode === 0
+        })()
+
+        if (stillInProgress || !advanced || !treeClean) {
+          await execProbe(
+            resolveGitBin(),
+            ['rebase', '--abort'],
+            { cwd: worktreePath },
+            mergeCtx,
+          ).catch(() => {})
+          return {
+            merged: false,
+            conflictResolved: false,
+            aborted: true,
+            output: `vcs-supervisor outcome rejected by git tree (stillInProgress=${stillInProgress}, advanced=${advanced}, treeClean=${treeClean}); rebase aborted.\n${output}`,
+            supervisorConversation,
+            vegaSessionId: null,
+            retriesAttempted,
+          }
+        }
+        conflictResolved = true
+        vegaSessionId = extractSessionIdFromConversation(supervisorConversation)
+      }
+
+      // Step 2: fast-forward integration to the (now-rebased) task branch via a
+      // working-tree-free ref update. Unlike `git checkout` + `git merge --ff-only`,
+      // `git update-ref` never touches any working tree, so it succeeds even when
+      // the main working tree has uncommitted tracked changes or is checked out on
+      // a different branch.
+      const taskSha = (
+        await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() }, mergeCtx)
+      ).stdout.trim()
+      const integrationSha = (
+        await exec(resolveGitBin(), ['rev-parse', integrationBranch], { cwd: repoRoot() }, mergeCtx)
+      ).stdout.trim()
+
+      // Confirm fast-forward is valid: integrationSha must be an ancestor of taskSha.
+      // `git merge-base --is-ancestor` exits 0 when true, 1 when false.
+      const ancestryProbe = await execProbe(
+        resolveGitBin(),
+        ['merge-base', '--is-ancestor', integrationSha, taskSha],
         { cwd: repoRoot() },
         mergeCtx,
       )
-    } catch (casError: unknown) {
-      const e = casError as { stdout?: string; stderr?: string; message?: string }
-      output += (e.stdout ?? '') + (e.stderr ?? '') + (e.message ?? '')
-      return {
-        merged: false,
-        conflictResolved,
-        aborted: true,
-        output: `integration moved during merge, retry needed: ${integrationBranch} advanced concurrently.\n${output}`,
-        supervisorConversation,
-        vegaSessionId,
+      const ancestryOk = ancestryProbe.exitCode === 0
+
+      if (!ancestryOk) {
+        // Distinguish a retryable forward advance (integration moved ahead of
+        // the tip we rebased onto, so re-rebasing is sufficient) from a
+        // non-retryable divergent state (force-push, orphan, etc.) which
+        // warrants an immediate abort without burning the retry budget.
+        const forwardAdvanceProbe =
+          attempt < MAX_MERGE_ATTEMPTS
+            ? await execProbe(
+                resolveGitBin(),
+                ['merge-base', '--is-ancestor', rebaseBaseSha, integrationSha],
+                { cwd: repoRoot() },
+                mergeCtx,
+              )
+            : { exitCode: 1 }
+        const isForwardAdvance = forwardAdvanceProbe.exitCode === 0
+
+        if (isForwardAdvance) {
+          retriesAttempted++
+          output += `\n[merge attempt ${attempt}/${MAX_MERGE_ATTEMPTS}] integration advanced ${rebaseBaseSha.slice(0, 9)}->${integrationSha.slice(0, 9)}; re-rebasing...`
+          await new Promise<void>(r => setTimeout(r, attempt * 150))
+          continue
+        }
+
+        return {
+          merged: false,
+          conflictResolved,
+          aborted: true,
+          output: `fast-forward into ${integrationBranch} not possible: ${integrationSha} is not an ancestor of ${taskSha}.\n${output}`,
+          supervisorConversation,
+          vegaSessionId,
+          retriesAttempted,
+        }
       }
+
+      // TEST-ONLY seam: awaited immediately before the CAS update-ref so tests
+      // can inject a concurrent integration advance in a deterministic window.
+      // Never set onBeforeFastForward in production code.
+      await onBeforeFastForward?.()
+
+      // Bare ref update — does not touch any working tree, immune to dirty state.
+      // The CAS form `update-ref <ref> <new> <old>` is atomic and rejects if
+      // integrationBranch has been advanced concurrently (providing the same
+      // race-safety as the file lock, with an additional CAS layer).
+      try {
+        await exec(
+          resolveGitBin(),
+          ['update-ref', `refs/heads/${integrationBranch}`, taskSha, integrationSha],
+          { cwd: repoRoot() },
+          mergeCtx,
+        )
+      } catch (casError: unknown) {
+        const e = casError as { stdout?: string; stderr?: string; message?: string }
+        output += (e.stdout ?? '') + (e.stderr ?? '') + (e.message ?? '')
+
+        // Determine whether the CAS failure is due to a retryable forward
+        // advance or a non-retryable divergent state (e.g. force-push, orphan).
+        // In normal operation CAS rejections represent forward advances; the
+        // divergent guard is a correctness belt-and-suspenders.
+        const currentIntegrationSha = (
+          await exec(resolveGitBin(), ['rev-parse', integrationBranch], { cwd: repoRoot() }, mergeCtx)
+        ).stdout.trim()
+        const casForwardProbe = await execProbe(
+          resolveGitBin(),
+          ['merge-base', '--is-ancestor', rebaseBaseSha, currentIntegrationSha],
+          { cwd: repoRoot() },
+          mergeCtx,
+        )
+        const isCasForwardAdvance = casForwardProbe.exitCode === 0
+
+        if (isCasForwardAdvance && attempt < MAX_MERGE_ATTEMPTS) {
+          // Retryable forward advance with remaining budget.
+          retriesAttempted++
+          output += `\n[merge attempt ${attempt}/${MAX_MERGE_ATTEMPTS}] CAS rejected: integration advanced ${rebaseBaseSha.slice(0, 9)}->${currentIntegrationSha.slice(0, 9)}; re-rebasing...`
+          await new Promise<void>(r => setTimeout(r, attempt * 150))
+          continue
+        }
+
+        if (isCasForwardAdvance) {
+          // Budget exhausted on a persistent forward advance.
+          return {
+            merged: false,
+            conflictResolved,
+            aborted: true,
+            output: `integration moved during merge, retry needed: ${integrationBranch} advanced concurrently.\n${output}`,
+            supervisorConversation,
+            vegaSessionId,
+            retriesAttempted,
+          }
+        }
+
+        // Non-retryable divergent state: abort immediately without burning budget.
+        return {
+          merged: false,
+          conflictResolved,
+          aborted: true,
+          output: `fast-forward into ${integrationBranch} not possible: ${currentIntegrationSha} is not an ancestor of ${taskSha}.\n${output}`,
+          supervisorConversation,
+          vegaSessionId,
+          retriesAttempted,
+        }
+      }
+
+      // CAS succeeded: store SHAs for the Step 3 re-sync and exit the retry loop.
+      finalTaskSha = taskSha
+      finalIntegrationSha = integrationSha
+      break
     }
 
     // Step 3: re-sync the merge target's checkout to the advanced ref.
@@ -479,12 +596,12 @@ export const mergeBranch = async ({
     //      checkout legitimately untouched — see the non-integration test), and
     //   2. the working tree + index are clean *relative to the OLD integration
     //      SHA* the checkout still reflects. We must compare against
-    //      integrationSha, NOT current HEAD: the ref already advanced, so a
+    //      finalIntegrationSha, NOT current HEAD: the ref already advanced, so a
     //      plain `git status` would report the just-merged files as "dirty"
     //      even on a pristine checkout and wrongly skip the re-sync.
-    // When clean, `git reset --hard <taskSha>` materialises the merged content
+    // When clean, `git reset --hard <finalTaskSha>` materialises the merged content
     // and leaves `git status` empty. When the operator has real uncommitted
-    // edits (a diff vs integrationSha) we leave the tree as-is rather than
+    // edits (a diff vs finalIntegrationSha) we leave the tree as-is rather than
     // clobber them — rare for the daemon's own checkout, and a dirty tree is
     // recoverable where lost edits are not. Failure here is non-fatal: the
     // merge already landed via the ref update; log and continue.
@@ -502,7 +619,7 @@ export const mergeBranch = async ({
         // <sha> exactly (no genuine local work), non-zero otherwise. Probe form.
         const diffProbe = await execProbe(
           resolveGitBin(),
-          ['diff', '--quiet', integrationSha],
+          ['diff', '--quiet', finalIntegrationSha],
           { cwd: repoRoot() },
           mergeCtx,
         )
@@ -510,13 +627,13 @@ export const mergeBranch = async ({
         if (cleanVsOldHead) {
           const reset = await exec(
             resolveGitBin(),
-            ['reset', '--hard', taskSha],
+            ['reset', '--hard', finalTaskSha],
             { cwd: repoRoot() },
             mergeCtx,
           )
           output += reset.stdout + reset.stderr
         } else {
-          output += `\n[mergeBranch] merge target checkout has local changes vs ${integrationSha.slice(0, 9)}; left as-is to avoid clobbering (HEAD ref advanced).`
+          output += `\n[mergeBranch] merge target checkout has local changes vs ${finalIntegrationSha.slice(0, 9)}; left as-is to avoid clobbering (HEAD ref advanced).`
         }
       }
     } catch (resyncError: unknown) {
@@ -531,6 +648,7 @@ export const mergeBranch = async ({
       output,
       supervisorConversation,
       vegaSessionId,
+      retriesAttempted,
     }
   } finally {
     await release()
