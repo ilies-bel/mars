@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { resolveStateClient } from '../store/state-client'
 import { buildEventInsert } from './outbox'
 import type { EventName, EventPayload } from './outbox'
+import { resolveOriginIdForTask } from './origin'
 
 /**
  * Emit an actionQueue lifecycle event to the queue.db events outbox.
@@ -386,8 +387,17 @@ export const raiseActionQueueItem = async (
 ): Promise<string> => {
   await initActionQueue()
   const c = stateClient()
-  const fingerprint = item.originTaskId
-    ? computeOriginFingerprint(item.originTaskId)
+
+  // Resolve through the arc root so fix-tasks and follow-up slices fold onto
+  // the same row as their origin.  Non-task origins (bare proposal ids,
+  // synthetic 'followup:' keys) pass through unchanged when no task row
+  // matches.  DB hiccups degrade to the raw id.
+  const resolvedOriginId = item.originTaskId
+    ? await resolveOriginIdForTask(item.originTaskId).catch(() => item.originTaskId!)
+    : null
+
+  const fingerprint = resolvedOriginId
+    ? computeOriginFingerprint(resolvedOriginId)
     : computeFingerprint(item.kind, item.signature)
   const now = new Date().toISOString()
 
@@ -450,7 +460,7 @@ export const raiseActionQueueItem = async (
       now,
       fingerprint,
       item.signature,
-      item.originTaskId ?? null,
+      resolvedOriginId ?? null,
     ],
   })
   await insertHistory(c, id, null, 'open', item.raisedBy, null)

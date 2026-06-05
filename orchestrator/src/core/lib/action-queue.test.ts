@@ -314,6 +314,64 @@ describe('action-queue', () => {
     expect(b).toBe(a)
   })
 
+  it('fix-task originTaskId resolves through origin_id — folds onto the arc-origin row', async () => {
+    // Load action-queue first; this also resets modules and sets MARS_REPO.
+    const actionQueue = await loadModule(repo)
+
+    // Ensure the tasks table exists and insert a fix task whose origin_id
+    // points to a different (origin) task.
+    const { migrateQueueSchema, resolveQueueClient } = await import('../queue') as {
+      migrateQueueSchema: () => Promise<void>
+      resolveQueueClient: () => import('@libsql/client').Client
+    }
+    await migrateQueueSchema()
+    const client = resolveQueueClient()
+    const originId = 'arc-origin-001'
+    const fixTaskId = 'fix-task-for-001'
+    const now = new Date().toISOString()
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at)
+            VALUES (?, ?, 'failed', ?, ?, ?)`,
+      args: [fixTaskId, 'fix something', originId, now, now],
+    })
+
+    // Raise with the fix-task id — should resolve to the arc origin.
+    const idA = await actionQueue.raiseActionQueueItem(
+      baseItem({ originTaskId: fixTaskId, occurrence: { attempt: 1 } }),
+    )
+    // Raise again with the origin id directly — should hit the same row.
+    const idB = await actionQueue.raiseActionQueueItem(
+      baseItem({ originTaskId: originId, occurrence: { attempt: 2 } }),
+    )
+
+    expect(idB).toBe(idA)
+    const open = await actionQueue.listActionQueueItems('open')
+    expect(open).toHaveLength(1)
+    expect(open[0].seenCount).toBe(2)
+    // The stored origin_task_id should be the arc root, not the fix task.
+    expect(open[0].originTaskId).toBe(originId)
+  })
+
+  it('bare proposalId with no matching task row passes through unchanged', async () => {
+    // resolveOriginIdForTask returns the id verbatim when no task row exists,
+    // so non-task origins (proposal ids, synthetic 'followup:' keys) should
+    // still dedup correctly and never throw.
+    const actionQueue = await loadModule(repo)
+    const proposalId = 'prop-no-task-row-xyz'
+
+    const idA = await actionQueue.raiseActionQueueItem(
+      baseItem({ originTaskId: proposalId }),
+    )
+    const idB = await actionQueue.raiseActionQueueItem(
+      baseItem({ originTaskId: proposalId }),
+    )
+
+    expect(idB).toBe(idA)
+    const open = await actionQueue.listActionQueueItems('open')
+    expect(open).toHaveLength(1)
+    expect(open[0].originTaskId).toBe(proposalId)
+  })
+
   describe('setRecoveryFindings (slice 3)', () => {
     it('overwrites the existing open row body in place without creating a new row, and re-runs overwrite the same row', async () => {
       const actionQueue = await loadModule(repo)
