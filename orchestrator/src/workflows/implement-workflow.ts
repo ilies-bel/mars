@@ -1059,8 +1059,7 @@ export const implementWorkflow = defineWorkflow<
               error: `context-exhausted: coder hit the context token budget limit`,
               failedPhase: 'code',
               failureReason: 'context-exhausted',
-              failureReasonCode: 'code:context-exhausted',
-              failureSignature: 'code:context-exhausted',
+              failureReasonCode: 'context-exhausted',
             },
             store,
           )
@@ -1086,9 +1085,8 @@ export const implementWorkflow = defineWorkflow<
               status: 'failed',
               error: `context-exhausted abort (follow-up failed: ${String(err).slice(0, 400)})`,
               failedPhase: 'code',
-              failureReasonCode: 'code:context-exhausted',
+              failureReasonCode: 'context-exhausted',
               failureReason: 'context-exhausted',
-              failureSignature: 'code:context-exhausted',
             },
             store,
           ).catch(() => {})

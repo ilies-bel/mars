@@ -17,7 +17,6 @@ interface RecordedCall {
   cmd: string
   args: readonly string[]
   cwd: string
-  env?: Record<string, string>
 }
 
 const ok = (): RunSubprocessResult => ({
@@ -276,23 +275,6 @@ describe('worktree-install', () => {
       })
       expect(lines).toHaveLength(1)
       expect(lines[0]).toMatch(/^\[setup:install\] pnpm \(\.\) exit=0 duration=/)
-    })
-
-    it('passes CI=true in the env so pnpm does not abort on missing TTY', async () => {
-      writeFileSync(resolve(workDir, 'pnpm-lock.yaml'), '')
-      const calls: RecordedCall[] = []
-      const runner = async (
-        cmd: string,
-        args: readonly string[],
-        cwd: string,
-        opts?: { timeoutMs?: number; env?: Record<string, string> },
-      ) => {
-        calls.push({ cmd, args, cwd, env: opts?.env })
-        return ok()
-      }
-      await installWorktreeDeps({ worktreeRoot: workDir, runner })
-      expect(calls).toHaveLength(1)
-      expect(calls[0].env?.CI).toBe('true')
     })
 
     it('retries once when install fails with ENOTEMPTY and succeeds on retry', async () => {

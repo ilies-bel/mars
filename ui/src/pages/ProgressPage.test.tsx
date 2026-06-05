@@ -120,3 +120,33 @@ describe('ProgressPage – search input', () => {
     expect(html).toMatch(/type="(?:text|search)"[^>]*data-testid="search-tasks"|data-testid="search-tasks"[^>]*type="(?:text|search)"/)
   })
 })
+
+// ---------------------------------------------------------------------------
+// SSE connection indicator: Progress tab must show live vs offline status
+// so users can tell whether updates are flowing from the daemon bus.
+// ---------------------------------------------------------------------------
+
+describe('ProgressPage – SSE connection indicator', () => {
+  it('shows the "live" indicator when the daemon bus is connected', () => {
+    // Default mock returns connected: true — should display "live"
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).toContain('>live<')
+    expect(html).not.toContain('>offline<')
+  })
+
+  it('shows the "offline" indicator when the daemon bus is disconnected', () => {
+    mockUseProgress.mockImplementation(() => ({ ...baseState([]), connected: false }))
+    try {
+      const html = renderToStaticMarkup(<ProgressPage />)
+      expect(html).toContain('>offline<')
+      expect(html).not.toContain('>live<')
+    } finally {
+      mockUseProgress.mockImplementation(() =>
+        baseState([
+          { id: 'p1', title: 'Feature Alpha', source: 'human', status: 'draft' },
+          { id: 'p2', title: 'Feature Beta', source: 'human', status: 'draft' },
+        ]),
+      )
+    }
+  })
+})

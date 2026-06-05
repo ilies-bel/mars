@@ -51,6 +51,12 @@ export interface ActionQueueRow {
   actions: { id: string; label: string; op: string }[]
   staleWorktreeDetail: StaleWorktreeDetail | null
   diagnosis: { text: string; diagnosedAt: string } | null
+  /**
+   * Failure-reason catalog code (`tasks.failure_reason_code` / actionQueue-row
+   * payload). Null on non-failed rows and on legacy rows landed before the
+   * typed code was introduced.
+   */
+  failureReasonCode: string | null
 }
 
 /** Raw actionQueue row shape as persisted in `action_queue_items`. */
@@ -341,6 +347,12 @@ export const buildActionQueueView = async ({
       }
     }
 
+    // Pull the failure-reason catalog code from the payload.
+    const failureReasonCode =
+      typeof row.payload.failureReasonCode === 'string'
+        ? row.payload.failureReasonCode
+        : null
+
     // For failed-task rows, derive title and body from the Failure kind registry
     // rather than from the persisted row strings — the registry provides warm,
     // human-readable copy keyed to the failure's actual cause.
@@ -376,6 +388,7 @@ export const buildActionQueueView = async ({
       actions,
       staleWorktreeDetail,
       diagnosis,
+      failureReasonCode,
     })
   }
 
@@ -438,6 +451,7 @@ export const buildActionQueueView = async ({
       actions: batchActions,
       staleWorktreeDetail: null,
       diagnosis: null,
+      failureReasonCode: null,
     })
   }
 

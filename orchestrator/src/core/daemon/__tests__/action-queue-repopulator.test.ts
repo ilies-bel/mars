@@ -420,6 +420,11 @@ describe('action-queue-repopulator outbox subscriber', () => {
     expect(row!.body).toBe(
       'The verify step failed because the code references a name that is not in scope (TS2304).',
     )
+    // ADR-0042: failureReasonCode now mirrors the resolved signature, and the
+    // action menu carries the Failure kind's ops (no separate catalog).
+    expect(row!.payload['failureReasonCode']).toBe(
+      'verify:typecheck/typecheck-cannot-find-name',
+    )
     expect(row!.payload['failureSignature']).toBe(
       'verify:typecheck/typecheck-cannot-find-name',
     )
@@ -448,6 +453,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     // Without a structured signature, resolveFailureKind synthesises an
     // unknown record (signature `unknown/unknown`) rather than re-grepping the
     // raw string into a coarse catalog code (the ADR-0042 bug fix).
+    expect(row!.payload['failureReasonCode']).toBe('unknown/unknown')
     expect(row!.title).toContain('The unknown step failed')
   })
 
@@ -470,6 +476,8 @@ describe('action-queue-repopulator outbox subscriber', () => {
     expect(row!.title).toBe('The unknown step failed — see the transcript')
     // Body is the verboseReason from unknownFailureKind.
     expect(row!.body).toContain('The unknown step failed')
+    // Payload's failureReasonCode mirrors the synthesised unknown signature.
+    expect(row!.payload['failureReasonCode']).toBe('unknown/unknown')
   })
 
   it('does not raise the structured row for a failed main-commiter recovery', async () => {
@@ -526,6 +534,8 @@ describe('action-queue-repopulator outbox subscriber', () => {
     // title and body from Failure kind registry
     expect(row!.title).toBe('The coder took too long')
     expect(row!.body).toContain('SIGKILL / exit 137')
+    // payload's failureReasonCode mirrors the resolved signature
+    expect(row!.payload['failureReasonCode']).toBe('code:timeout/install-timeout')
   })
 
   it('raises no row for a task.failed event when the task row does not exist (guard against orphaned rows)', async () => {

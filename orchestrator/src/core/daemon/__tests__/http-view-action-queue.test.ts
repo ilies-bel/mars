@@ -96,6 +96,7 @@ describe('buildActionQueueView — failed-task row', () => {
     expect(row.errorKind).toBe('failed-task')
     expect(row.staleWorktreeDetail).toBeNull()
     expect(row.diagnosis).toBeNull()
+    expect(row.failureReasonCode).toBeNull()
   })
 
   it('enriches DAG with blockers and blocking tasks', async () => {
@@ -127,6 +128,19 @@ describe('buildActionQueueView — failed-task row', () => {
     expect(dag.blocking).toHaveLength(1)
     expect(dag.blocking[0]!.id).toBe('dep-1')
     expect(dag.proposalId).toBe('prop-123')
+  })
+
+  it('includes failureReasonCode from payload', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({ payload: { taskId: 'task-1', failureReasonCode: 'verify:typecheck' } }),
+      ]),
+      taskStore: makeTaskStore([makeTask()]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    expect(rows[0]!.failureReasonCode).toBe('verify:typecheck')
   })
 
   it('surfaces diagnosis from payload', async () => {
@@ -534,6 +548,7 @@ describe('GET /view/action-queue via HTTP server', () => {
           actions: [],
           staleWorktreeDetail: null,
           diagnosis: null,
+          failureReasonCode: null,
         }
         // For filter=dismissed, return an empty array (no dismissed rows in stub).
         if (filter === 'dismissed') return []

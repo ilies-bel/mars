@@ -218,8 +218,13 @@ export const createProgressTaskStore = (client: Client): ProgressTaskStore => ({
              t.failure_signature, t.drop_reason,
              COALESCE(t.retry_count, 0) AS retry_count,
              t.parent_proposal_id,
-             t.files_json, t.read_first_json, t.prescriptive_action,
-             t.verify_cmd, t.done_criteria_json, t.task_type,
+             (SELECT json_group_array(path ORDER BY position)
+                FROM task_spec_files WHERE task_id = t.id) AS files_json,
+             t.read_first_json, t.prescriptive_action,
+             t.verify_cmd,
+             (SELECT json_group_array(criterion ORDER BY position)
+                FROM task_done_criteria WHERE task_id = t.id) AS done_criteria_json,
+             t.task_type,
              t.created_at, t.updated_at,
              (SELECT b.blocker_task_id FROM task_blockers b
                WHERE b.task_id = t.id ORDER BY b.created_at ASC LIMIT 1) AS blocker_task_id,

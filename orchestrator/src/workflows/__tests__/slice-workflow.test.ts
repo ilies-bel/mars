@@ -3224,6 +3224,35 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     })
     expect((coderRowAfter.rows[0] as unknown as { status: string }).status).toBe('queued')
   })
+
+  it('updateTask throws IllegalTransitionError when a done slice task is re-transitioned (lifecycle gate)', async () => {
+    // Contrived scenario: a slice task is seeded as 'done' (simulating a race
+    // or corruption) before the final-done write in tryCompleteHitlSlice
+    // would run. Routing writes through updateTask means any attempt to change
+    // the status of a task that is already in a terminal state surfaces as an
+    // IllegalTransitionError rather than silently succeeding as a raw SQL UPDATE
+    // would have.
+    vi.resetModules()
+
+    const queue = await import('../../core/queue')
+    await queue.migrateQueueSchema()
+
+    // Seed a task directly, then flip it to 'done' via direct SQL (mimicking
+    // the state the daemon would write after a successful Coder run).
+    const task = await queue.enqueueTask('contrived done-slice task', undefined, {
+      skipTriage: true,
+    })
+    await queue.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'done', updated_at = datetime('now') WHERE id = ?`,
+      args: [task.id],
+    })
+
+    // Any further status transition on a 'done' task must throw — the lifecycle
+    // gate that updateTask enforces but raw SQL bypassed.
+    await expect(
+      queue.updateTask(task.id, { status: 'queued' }),
+    ).rejects.toThrow(queue.IllegalTransitionError)
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -1073,18 +1073,6 @@ export const startDaemon = async (
   bus.on('task.blocked', () => { viewStreamHub.broadcast('tasks') })
   bus.on('task.unblocked', () => { viewStreamHub.broadcast('tasks') })
 
-  // Broadcast progress invalidations when proposal lifecycle events fire.
-  // Proposal mutations only affect the Progress tab (DAG + board proposal
-  // nodes), so we broadcast 'progress' only — not 'tasks', 'todo', or
-  // 'action-queue'. The UI SseInvalidator listens to the 'progress' channel
-  // and re-fetches /api/progress, which includes both tasks and proposals.
-  bus.on('proposal.added', () => { viewStreamHub.broadcast('progress') })
-  bus.on('proposal.updated', () => { viewStreamHub.broadcast('progress') })
-  bus.on('proposal.dismissed', () => { viewStreamHub.broadcast('progress') })
-  bus.on('proposal.promoted', () => { viewStreamHub.broadcast('progress') })
-  bus.on('proposal.sliced', () => { viewStreamHub.broadcast('progress') })
-  bus.on('proposal.deleted', () => { viewStreamHub.broadcast('progress') })
-
   // Post-task-completion KPI-drift trigger. Runs fire-and-forget so a trigger
   // failure never affects the task-completion path. Only active when
   // selfEvolve.autoTrigger=true (default: false). Never queues tasks.

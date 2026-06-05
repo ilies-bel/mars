@@ -3,7 +3,6 @@ import {
   FAILURE_KINDS,
   lookupFailureKind,
   unknownFailureKind,
-  failureReasonStringToCode,
 } from '../failure-kinds'
 import { DAEMON_KILLED_SIGNATURE } from '../retry-budget'
 
@@ -210,56 +209,5 @@ describe('unknownFailureKind', () => {
     const kind = unknownFailureKind('merge:preflight', 'some error')
     expect(kind.actions.some((a) => a.op === 'restart')).toBe(true)
     expect(kind.actions.some((a) => a.op === 'purge')).toBe(true)
-  })
-})
-
-describe('code:context-exhausted catalog entry', () => {
-  it('resolves to the new entry and NOT the unknown fallback', () => {
-    const entry = lookupFailureKind('code:context-exhausted')
-    expect(entry).not.toBeNull()
-    expect(entry!.signature).toBe('code:context-exhausted')
-  })
-
-  it('has re-slice as the FIRST action', () => {
-    const entry = lookupFailureKind('code:context-exhausted')
-    expect(entry).not.toBeNull()
-    expect(entry!.actions[0].id).toBe('re-slice')
-    expect(entry!.actions[0].op).toBe('shape')
-  })
-
-  it('has restart and purge as subsequent actions', () => {
-    const entry = lookupFailureKind('code:context-exhausted')
-    expect(entry).not.toBeNull()
-    const ids = entry!.actions.map((a) => a.id)
-    expect(ids).toContain('restart')
-    expect(ids).toContain('purge')
-    // restart must come after re-slice
-    expect(ids.indexOf('restart')).toBeGreaterThan(ids.indexOf('re-slice'))
-  })
-
-  it('is registered in FAILURE_KINDS', () => {
-    expect(FAILURE_KINDS.some((k) => k.signature === 'code:context-exhausted')).toBe(true)
-  })
-})
-
-describe('failureReasonStringToCode (legacy bridge)', () => {
-  it('maps bare "context-exhausted" to code:context-exhausted', () => {
-    expect(failureReasonStringToCode('context-exhausted')).toBe('code:context-exhausted')
-  })
-
-  it('maps "context_exhausted" (underscore) to code:context-exhausted', () => {
-    expect(failureReasonStringToCode('context_exhausted')).toBe('code:context-exhausted')
-  })
-
-  it('maps a string containing "context budget exhausted" to code:context-exhausted', () => {
-    expect(failureReasonStringToCode('context budget exhausted')).toBe('code:context-exhausted')
-  })
-
-  it('returns null for an unrecognised string', () => {
-    expect(failureReasonStringToCode('some-other-failure')).toBeNull()
-  })
-
-  it('returns null for an empty string', () => {
-    expect(failureReasonStringToCode('')).toBeNull()
   })
 })

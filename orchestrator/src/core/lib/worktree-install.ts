@@ -257,7 +257,7 @@ export type InstallRunner = (
   cmd: string,
   args: readonly string[],
   cwd: string,
-  opts?: { timeoutMs?: number; env?: Record<string, string> },
+  opts?: { timeoutMs?: number },
 ) => Promise<RunSubprocessResult>
 
 export interface InstallWorktreeDepsOptions {
@@ -281,7 +281,6 @@ const makeDefaultInstallRunner = (
       argv: [...args],
       cwd,
       timeoutMs: opts?.timeoutMs,
-      env: opts?.env,
       taskId: traceCtx?.taskId ?? null,
       originId: traceCtx?.originId ?? null,
       phase: traceCtx?.phase ?? 'setup',
@@ -326,7 +325,7 @@ export const installWorktreeDeps = async ({
         timeoutMs,
       )
       const t0 = Date.now()
-      let r = await effectiveRunner(cmd, args, site.dir, { timeoutMs, env: { CI: 'true' } })
+      let r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
 
       // Retry on transient ENOTEMPTY filesystem race (macOS npm ci cleanup race).
       // This occurs when a prior process holds file descriptors open in node_modules
@@ -355,7 +354,7 @@ export const installWorktreeDeps = async ({
           maxRetries: 5,
           retryDelay: 200,
         })
-        r = await effectiveRunner(cmd, args, site.dir, { timeoutMs, env: { CI: 'true' } })
+        r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
       }
 
       const durationMs = Date.now() - t0
@@ -513,7 +512,6 @@ export const repairInstallInPlace = async ({
       )
       const regen = await effectiveRunner(regenCmd, regenArgs, site.dir, {
         timeoutMs,
-        env: { CI: 'true' },
       })
       if (regen.exitCode !== 0) {
         return {
@@ -529,7 +527,6 @@ export const repairInstallInPlace = async ({
       const [frozenCmd, frozenArgs] = installCommand(site.manager)
       const frozen = await effectiveRunner(frozenCmd, frozenArgs, site.dir, {
         timeoutMs,
-        env: { CI: 'true' },
       })
       const after = await readFileOrEmpty(lockfilePath)
       return {

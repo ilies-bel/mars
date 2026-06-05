@@ -5,10 +5,9 @@ import { z } from 'zod'
 import { createQueueWorkflowStore } from './queue-workflow-store'
 import { getProposal, markProposalSliced } from '../core/proposals'
 import { getDefaultStateStore } from '../core/store/state-store'
-import { enqueueTask, setTaskStatus } from '../core/queue'
+import { enqueueTask, updateTask } from '../core/queue'
 import { assertNotRecoveryEdge } from '../core/lib/blocker-invariant'
 import { getDefaultTaskStore } from '../core/store/task-store'
-import { buildEventInsert } from '../core/lib/outbox'
 import { Workers } from '../core/workers'
 import { parseClaudeJsonResult } from '../core/lib/claude-json'
 import { getRepoRoot, resolveContext } from '../core/context'
@@ -76,7 +75,7 @@ export const slicerOutputSchema = z.object({
           // exists to curb path hallucination: a guessed path inside a
           // module that doesn't exist had been silently landing in `files`
           // and blocking slices. Both default to []; they are concatenated
-          // into the queue's `files_json` column at persist time so the
+          // at persist time into the task_spec_files junction table so the
           // implementor brief stays one flat list.
           modifies: z.array(z.string()).default([]),
           creates: z.array(z.string()).default([]),
@@ -116,10 +115,10 @@ type SliceSpec = z.infer<typeof slicerOutputSchema>['slices'][number]
 
 /**
  * Concatenate a slice's `modifies` + `creates` into the single flat
- * `files` list the queue persists into `tasks.files_json`. The slicer
+ * `files` list the queue persists into `task_spec_files`. The slicer
  * schema splits the two so the prompt can discipline path hallucination
  * separately for "edit this existing file" vs "create this new file";
- * downstream (the implementor brief, the `files_json` column, the rest
+ * downstream (the implementor brief, the spec.files array, the rest
  * of the orchestrator) still sees one array, so no other call site
  * needs to change shape. Exported for unit tests that round-trip a
  * slicer output through the persistence path.
@@ -1007,16 +1006,14 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
         const isHitl = parsed.slices[i].kind === 'hitl'
         const status =
           isHitl || parsed.slices[i].blockedBy.length > 0 ? 'blocked' : 'queued'
-        // Route through setTaskStatus so the status write and any lifecycle
-        // event land in the same transaction (ADR-0030). setTaskStatus emits
-        // task.queued for 'queued' and nothing for 'blocked' (no lifecycle
-        // event on the initial block of a brand-new slice).
-        await setTaskStatus(taskIds[i], status)
+        // Route through updateTask so the lifecycle gate (IllegalTransitionError)
+        // catches any illegal transition before the status write lands (ADR-0030).
+        await updateTask(taskIds[i], { status })
       }
       // Phase 3b: Coder sub-tasks enqueued for hitl slices have no blockers
       // and must be dispatched immediately — transition them to 'queued'.
       for (const subTaskId of subTaskIds) {
-        await setTaskStatus(subTaskId, 'queued')
+        await updateTask(subTaskId, { status: 'queued' })
       }
       // Defensive: never mark a proposal 'sliced' with zero tasks. The
       // slicerOutputSchema already enforces `slices.min(1)` and Phase 1
@@ -1154,31 +1151,11 @@ export const tryCompleteHitlSlice = async (
   if (actionQueueItem.state !== 'resolved' && actionQueueItem.state !== 'dismissed') return false
 
   // 4. Both conditions met — flip the HITL slice from 'blocked' to 'done'.
-  // Status write + lifecycle emit share one atomic batch (ADR-0030). The
-  // task.terminal{done} lets the Invalidator close any Action-queue row tied
-  // to this HITL slice; before this emit, a completed HITL slice stranded
-  // its own operator row (the measured hitl-slice staleness).
-  const now = new Date().toISOString()
-  await taskStore.batch(
-    [
-      {
-        // updated_at first — exempt from STATUS_WRITE arch guard. Events
-        // (task.completed, task.terminal) are emitted atomically in this
-        // same batch per ADR-0030, so the chokepoint invariant is met.
-        sql: `UPDATE tasks SET updated_at = ?, status = 'done' WHERE id = ?`,
-        args: [now, hitlSliceTaskId],
-      },
-      buildEventInsert('task.completed', {
-        taskId: hitlSliceTaskId,
-        result: { via: 'hitl-slice-completion' },
-      }),
-      buildEventInsert('task.terminal', {
-        taskId: hitlSliceTaskId,
-        reason: 'done',
-      }),
-    ],
-    'write',
-  )
+  // Route through updateTask so the lifecycle gate (IllegalTransitionError)
+  // catches any illegal transition and so the status write + lifecycle events
+  // (task.completed, task.terminal) land in the same atomic batch via
+  // store.batch (ADR-0030).
+  await updateTask(hitlSliceTaskId, { status: 'done' }, taskStore)
   return true
 }
 

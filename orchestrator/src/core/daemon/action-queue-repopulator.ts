@@ -160,6 +160,7 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
         taskId,
         eventType: event.type,
         failureSignature: fk.signature,
+        failureReasonCode: fk.signature,
         availableActions: fk.actions.map((a) => ({
           id: a.id,
           label: a.label,
