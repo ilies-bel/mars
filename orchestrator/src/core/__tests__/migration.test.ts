@@ -466,3 +466,212 @@ describe('migration: task_signals + task_transcripts → trace_events (PRD 436f1
     db.close()
   })
 })
+
+describe('DB-side CHECK constraints for enum state machines', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('rejects an invalid task status at the DB level after migration', async () => {
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
+
+    const c = createClient({ url: `file:${repo}/.mars/mars.db` })
+    const now = new Date().toISOString()
+
+    await expect(
+      c.execute({
+        sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at)
+              VALUES ('t1', 'test', 'not-a-status', 't1', ?, ?)`,
+        args: [now, now],
+      }),
+    ).rejects.toThrow()
+
+    c.close()
+  })
+
+  it('accepts all valid task status values after migration', async () => {
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
+
+    const c = createClient({ url: `file:${repo}/.mars/mars.db` })
+    const now = new Date().toISOString()
+
+    const validStatuses = [
+      'draft', 'triaging', 'queued', 'running', 'verifying',
+      'merging', 'vega-reconciling', 'done', 'failed', 'dropped', 'blocked',
+    ]
+
+    for (const status of validStatuses) {
+      await expect(
+        c.execute({
+          sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at)
+                VALUES (?, 'test', ?, ?, ?, ?)`,
+          args: [`t-${status}`, status, `t-${status}`, now, now],
+        }),
+      ).resolves.not.toThrow()
+    }
+
+    c.close()
+  })
+
+  it('rejects an invalid task_blockers state at the DB level after migration', async () => {
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
+
+    const c = createClient({ url: `file:${repo}/.mars/mars.db` })
+    const now = new Date().toISOString()
+
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at)
+            VALUES ('ta', 'test', 'queued', 'ta', ?, ?)`,
+      args: [now, now],
+    })
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at)
+            VALUES ('tb', 'test', 'queued', 'tb', ?, ?)`,
+      args: [now, now],
+    })
+
+    await expect(
+      c.execute({
+        sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
+              VALUES ('ta', 'tb', 'invalid-state', ?)`,
+        args: [now],
+      }),
+    ).rejects.toThrow()
+
+    c.close()
+  })
+
+  it('accepts all valid task_blockers state values after migration', async () => {
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
+
+    const c = createClient({ url: `file:${repo}/.mars/mars.db` })
+    const now = new Date().toISOString()
+
+    const validStates = ['confirmed', 'pending-review', 'rejected']
+
+    // Insert blocker tasks
+    for (let i = 0; i < validStates.length; i++) {
+      await c.execute({
+        sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at)
+              VALUES (?, 'test', 'queued', ?, ?, ?)`,
+        args: [`bt-${i}`, `bt-${i}`, now, now],
+      })
+      await c.execute({
+        sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at)
+              VALUES (?, 'test', 'blocked', ?, ?, ?)`,
+        args: [`tt-${i}`, `tt-${i}`, now, now],
+      })
+    }
+
+    for (let i = 0; i < validStates.length; i++) {
+      await expect(
+        c.execute({
+          sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
+                VALUES (?, ?, ?, ?)`,
+          args: [`tt-${i}`, `bt-${i}`, validStates[i], now],
+        }),
+      ).resolves.not.toThrow()
+    }
+
+    c.close()
+  })
+
+  it('adds tasks.status CHECK constraint to a legacy DB that already has the FK rebuild', async () => {
+    // Simulate a DB that was created with the FK rebuild but without CHECK constraints.
+    const dbUrl = `file:${repo}/.mars/mars.db`
+    const q = createClient({ url: dbUrl })
+    const now = new Date().toISOString()
+
+    // Create tasks table with FK but without CHECK (simulates post-FK-rebuild, pre-CHECK-rebuild state).
+    await q.execute(`
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        prompt TEXT NOT NULL,
+        status TEXT NOT NULL,
+        plan_functional TEXT,
+        plan_technical TEXT,
+        branch TEXT,
+        worktree_path TEXT,
+        claude_session_id TEXT,
+        claude_session_ids TEXT NOT NULL DEFAULT '[]',
+        error TEXT,
+        drop_reason TEXT,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        author_kind TEXT,
+        author_name TEXT,
+        failure_reason TEXT,
+        failure_reason_code TEXT,
+        recovery_payload TEXT,
+        fix_for_task_id TEXT REFERENCES tasks(id),
+        failure_signature TEXT,
+        kind TEXT,
+        priority INTEGER NOT NULL DEFAULT 0,
+        tag TEXT,
+        tags_json TEXT,
+        origin_id TEXT,
+        parent_proposal_id TEXT,
+        slice_index INTEGER,
+        failed_phase TEXT,
+        resume_from TEXT,
+        files_json TEXT,
+        verify_cmd TEXT,
+        done_criteria_json TEXT,
+        task_type TEXT,
+        read_first_json TEXT,
+        prescriptive_action TEXT,
+        slice_kind TEXT,
+        sub_deliverable_json TEXT,
+        integration_head_sha TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `)
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at)
+            VALUES ('legacy-t', 'do it', 'done', 'legacy-t', ?, ?)`,
+      args: [now, now],
+    })
+    q.close()
+
+    // Run migration
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
+
+    // Verify CHECK constraint was added
+    const c = createClient({ url: dbUrl })
+    const result = await c.execute(
+      `SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`,
+    )
+    const sql = (result.rows[0] as unknown as { sql: string }).sql
+    expect(sql).toContain('CHECK')
+
+    // Verify the existing data was preserved
+    const row = await c.execute(`SELECT id, status FROM tasks WHERE id = 'legacy-t'`)
+    expect(row.rows).toHaveLength(1)
+    expect((row.rows[0] as unknown as { status: string }).status).toBe('done')
+
+    // Invalid insert now rejected
+    await expect(
+      c.execute({
+        sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at)
+              VALUES ('t-bad', 'test', 'bad-status', 't-bad', ?, ?)`,
+        args: [now, now],
+      }),
+    ).rejects.toThrow()
+
+    c.close()
+  })
+})

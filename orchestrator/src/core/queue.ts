@@ -621,10 +621,11 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // PRD 436f14c7 slice 5 (see migrateSignalsAndTranscriptsToTraceEvents below).
   await c.execute(`
     CREATE TABLE IF NOT EXISTS task_blockers (
-      task_id TEXT NOT NULL,
+      task_id         TEXT NOT NULL,
       blocker_task_id TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'confirmed',
-      created_at TEXT NOT NULL,
+      state           TEXT NOT NULL DEFAULT 'confirmed'
+                           CHECK (state IN ('confirmed','pending-review','rejected')),
+      created_at      TEXT NOT NULL,
       PRIMARY KEY (task_id, blocker_task_id),
       FOREIGN KEY (task_id) REFERENCES tasks(id),
       FOREIGN KEY (blocker_task_id) REFERENCES tasks(id)
@@ -860,6 +861,17 @@ export const migrateQueueSchema = async (): Promise<void> => {
       taskFkRows.rows as unknown as Array<{ from: string }>
     ).some((r) => r.from === 'fix_for_task_id')
 
+    // Detect missing CHECK constraint on tasks.status. SQLite cannot add CHECK
+    // via ALTER TABLE, so we inspect the CREATE TABLE statement in sqlite_master.
+    const tasksSqlRow = (
+      await c.execute(
+        `SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`,
+      )
+    ).rows[0] as unknown as { sql: string } | undefined
+    const tasksNeedCheckRebuild = !(tasksSqlRow?.sql ?? '').includes(
+      'CHECK (status IN',
+    )
+
     const healFkRows = await c.execute(
       `PRAGMA foreign_key_list(self_heal_attempts)`,
     )
@@ -867,17 +879,18 @@ export const migrateQueueSchema = async (): Promise<void> => {
       healFkRows.rows as unknown as Array<{ from: string }>
     ).some((r) => r.from === 'fix_task_id')
 
-    if (tasksNeedFkRebuild || healNeedsFkRebuild) {
+    if (tasksNeedFkRebuild || tasksNeedCheckRebuild || healNeedsFkRebuild) {
       await c.execute(`PRAGMA foreign_keys = OFF`)
 
-      if (tasksNeedFkRebuild) {
+      if (tasksNeedFkRebuild || tasksNeedCheckRebuild) {
         // Drop any incomplete prior rebuild attempt to ensure idempotency.
         await c.execute(`DROP TABLE IF EXISTS tasks_new`)
         await c.execute(`
           CREATE TABLE tasks_new (
             id                   TEXT    PRIMARY KEY,
             prompt               TEXT    NOT NULL,
-            status               TEXT    NOT NULL,
+            status               TEXT    NOT NULL
+                                         CHECK (status IN ('draft','triaging','queued','running','verifying','merging','vega-reconciling','done','failed','dropped','blocked')),
             plan_functional      TEXT,
             plan_technical       TEXT,
             branch               TEXT,
@@ -1003,6 +1016,51 @@ export const migrateQueueSchema = async (): Promise<void> => {
         )
       }
 
+      await c.execute(`PRAGMA foreign_keys = ON`)
+    }
+  }
+  // ── task_blockers: add CHECK (state IN …) if missing ─────────────────────
+  // SQLite cannot add CHECK constraints via ALTER TABLE, so we use the table-
+  // rebuild pattern. Detection: query sqlite_master for the CREATE TABLE sql.
+  {
+    const tbSqlRow = (
+      await c.execute(
+        `SELECT sql FROM sqlite_master WHERE type='table' AND name='task_blockers'`,
+      )
+    ).rows[0] as unknown as { sql: string } | undefined
+    if (!(tbSqlRow?.sql ?? '').includes('CHECK (state IN')) {
+      await c.execute(`PRAGMA foreign_keys = OFF`)
+      await c.execute(`DROP TABLE IF EXISTS task_blockers_new`)
+      await c.execute(`
+        CREATE TABLE task_blockers_new (
+          task_id          TEXT NOT NULL,
+          blocker_task_id  TEXT NOT NULL,
+          state            TEXT NOT NULL DEFAULT 'confirmed'
+                                CHECK (state IN ('confirmed','pending-review','rejected')),
+          created_at       TEXT NOT NULL,
+          PRIMARY KEY (task_id, blocker_task_id),
+          FOREIGN KEY (task_id) REFERENCES tasks(id),
+          FOREIGN KEY (blocker_task_id) REFERENCES tasks(id)
+        )
+      `)
+      await c.execute(`
+        INSERT INTO task_blockers_new (task_id, blocker_task_id, state, created_at)
+        SELECT task_id, blocker_task_id, state, created_at FROM task_blockers
+      `)
+      await c.execute(`DROP TABLE task_blockers`)
+      await c.execute(`ALTER TABLE task_blockers_new RENAME TO task_blockers`)
+      await c.execute(
+        `CREATE INDEX IF NOT EXISTS idx_task_blockers_task
+           ON task_blockers(task_id)`,
+      )
+      await c.execute(
+        `CREATE INDEX IF NOT EXISTS idx_task_blockers_blocker
+           ON task_blockers(blocker_task_id)`,
+      )
+      await c.execute(
+        `CREATE INDEX IF NOT EXISTS idx_task_blockers_task_state
+           ON task_blockers(task_id, state)`,
+      )
       await c.execute(`PRAGMA foreign_keys = ON`)
     }
   }
