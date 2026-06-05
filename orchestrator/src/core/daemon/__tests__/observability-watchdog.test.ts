@@ -56,7 +56,7 @@ describe('checkObservabilityStoreSize', () => {
     const OVERSIZE = watchdog.OVERSIZE_THRESHOLD_BYTES + 1
 
     const itemId = await watchdog.checkObservabilityStoreSize(
-      '/fake/observability.duckdb',
+      '/fake/mars.db',
       async () => OVERSIZE,
     )
 
@@ -70,7 +70,7 @@ describe('checkObservabilityStoreSize', () => {
     const { actionQueue, watchdog } = await loadModules(repo)
 
     const itemId = await watchdog.checkObservabilityStoreSize(
-      '/fake/observability.duckdb',
+      '/fake/mars.db',
       async () => watchdog.OVERSIZE_THRESHOLD_BYTES - 1,
     )
 
@@ -85,11 +85,11 @@ describe('checkObservabilityStoreSize', () => {
     const measure = async (): Promise<number> => OVERSIZE
 
     const firstId = await watchdog.checkObservabilityStoreSize(
-      '/fake/observability.duckdb',
+      '/fake/mars.db',
       measure,
     )
     const secondId = await watchdog.checkObservabilityStoreSize(
-      '/fake/observability.duckdb',
+      '/fake/mars.db',
       measure,
     )
 
@@ -110,7 +110,7 @@ describe('checkObservabilityStoreSize', () => {
     const SIZE_BYTES = 600 * 1024 * 1024 // 600 MB
 
     await watchdog.checkObservabilityStoreSize(
-      '/fake/observability.duckdb',
+      '/fake/mars.db',
       async () => SIZE_BYTES,
     )
 
@@ -127,7 +127,7 @@ describe('checkObservabilityStoreSize', () => {
     const SIZE_BYTES = 550 * 1024 * 1024
 
     const itemId = await watchdog.checkObservabilityStoreSize(
-      '/fake/observability.duckdb',
+      '/fake/mars.db',
       async () => SIZE_BYTES,
     )
 
@@ -139,5 +139,19 @@ describe('checkObservabilityStoreSize', () => {
     expect(item!.payload).not.toHaveProperty('pruned')
     expect(item!.payload).not.toHaveProperty('retentionChangedTo')
     expect(item!.payload).not.toHaveProperty('prunedBytes')
+  })
+
+  it('measures trace_events size via real SQLite dbstat query — returns null for an empty db', async () => {
+    // Real-boundary test: exercises the actual measureStoreSizeBytes implementation
+    // against a real SQLite database (no injected stub). Confirms the dbstat query
+    // runs without error and correctly reports a tiny/empty table as under the threshold.
+    const { watchdog } = await loadModules(repo)
+    const stateDb = resolve(repo, '.mars', 'mars.db')
+
+    // migrateQueueSchema (called inside loadModules) creates trace_events via
+    // migrateSignalsAndTranscriptsToTraceEvents. The table exists but is empty,
+    // so dbstat reports 0 bytes — well under the 500 MB threshold.
+    const itemId = await watchdog.checkObservabilityStoreSize(stateDb)
+    expect(itemId).toBeNull()
   })
 })

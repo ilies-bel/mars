@@ -2786,9 +2786,9 @@ export const startDaemon = async (
   staleSweep.unref()
 
   // ── Observability store size watchdog ─────────────────────────────────────
-  // Periodically checks the observability store (observability.duckdb) file
-  // size. When the store exceeds 500 MB a single open action-queue item is raised so
-  // the operator notices a runaway daemon or telemetry-capture bug.
+  // Periodically checks the trace_events footprint inside mars.db. When the
+  // table exceeds 500 MB a single open action-queue item is raised so the
+  // operator notices a runaway daemon or telemetry-capture bug.
   // Re-detecting the oversize condition bumps the existing item rather than
   // spawning a sibling. NEVER prunes the store or alters retention.
   // .unref() so the interval never prevents a clean shutdown.
@@ -2800,7 +2800,7 @@ export const startDaemon = async (
     void (async () => {
       try {
         const itemId = await checkObservabilityStoreSize(
-          resolveContext().observabilityDbPath,
+          resolveContext().stateDbPath,
         )
         if (itemId) {
           log(
