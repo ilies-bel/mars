@@ -76,7 +76,7 @@ export const slicerOutputSchema = z.object({
           // exists to curb path hallucination: a guessed path inside a
           // module that doesn't exist had been silently landing in `files`
           // and blocking slices. Both default to []; they are concatenated
-          // at persist time into the task_spec_files junction table so the
+          // into the queue's `files_json` column at persist time so the
           // implementor brief stays one flat list.
           modifies: z.array(z.string()).default([]),
           creates: z.array(z.string()).default([]),
@@ -116,10 +116,10 @@ type SliceSpec = z.infer<typeof slicerOutputSchema>['slices'][number]
 
 /**
  * Concatenate a slice's `modifies` + `creates` into the single flat
- * `files` list the queue persists into `task_spec_files`. The slicer
+ * `files` list the queue persists into `tasks.files_json`. The slicer
  * schema splits the two so the prompt can discipline path hallucination
  * separately for "edit this existing file" vs "create this new file";
- * downstream (the implementor brief, the spec.files array, the rest
+ * downstream (the implementor brief, the `files_json` column, the rest
  * of the orchestrator) still sees one array, so no other call site
  * needs to change shape. Exported for unit tests that round-trip a
  * slicer output through the persistence path.

@@ -109,89 +109,6 @@ export const detectInstallSites = async (
   return found
 }
 
-/**
- * Build any local `file:` / `workspace:` workspace dependency that ships a
- * built `dist/` (i.e. declares a `build` script) BEFORE the site is installed.
- *
- * Why this is required: a `file:` dependency such as `@mars/workflow`
- * (`"@mars/workflow": "file:../packages/workflow"`) is packed by pnpm at
- * install time from whatever files match the package's `files` whitelist
- * (here `["dist"]`). In a freshly-created worktree the workspace package's
- * `dist/` has not been built yet, so pnpm materialises a `dist`-less copy into
- * the store. TypeScript then follows `node_modules/@mars/workflow` → that
- * `dist`-less copy → `TS2307 Cannot find module '@mars/workflow'`, and every
- * task fails `verify:typecheck`. Building `dist/` first means the subsequent
- * `pnpm install` packs a copy that carries the type declarations.
- *
- * Only same-worktree workspace packages are built; registry deps and `file:`
- * targets that escape the worktree root are ignored. A package with no `build`
- * script is skipped (nothing to build). The dep's OWN deps are installed first
- * (it carries its own lockfile) so its build toolchain — e.g. `tsup` — is on
- * PATH; building before that install would fail with `tsup: command not found`.
- * Install or build failures THROW — a workspace package that cannot build
- * would only fail typecheck later, more obscurely.
- */
-const buildWorkspaceDepsForSite = async (
-  site: InstallSite,
-  worktreeRoot: string,
-  runner: InstallRunner,
-  log: ((line: string) => void) | undefined,
-  timeoutMs: number,
-): Promise<void> => {
-  if (site.manager !== 'pnpm') return // only pnpm `file:`/`workspace:` links here
-  let manifest: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
-  try {
-    manifest = JSON.parse(await readFile(resolve(site.dir, 'package.json'), 'utf8'))
-  } catch {
-    return
-  }
-  const deps = { ...manifest.dependencies, ...manifest.devDependencies }
-  const built = new Set<string>()
-  for (const spec of Object.values(deps)) {
-    const m = /^(?:file:|link:|workspace:)(.+)$/.exec(spec)
-    if (!m) continue
-    const depDir = resolve(site.dir, m[1].replace(/^workspace:/, ''))
-    // Stay inside the worktree; ignore deps that escape the checkout.
-    const rootWithSep = worktreeRoot.endsWith('/') ? worktreeRoot : `${worktreeRoot}/`
-    if (depDir !== worktreeRoot && !depDir.startsWith(rootWithSep)) continue
-    if (built.has(depDir)) continue
-    let depManifest: { scripts?: Record<string, string> }
-    try {
-      depManifest = JSON.parse(await readFile(resolve(depDir, 'package.json'), 'utf8'))
-    } catch {
-      continue
-    }
-    if (!depManifest.scripts?.build) continue
-    built.add(depDir)
-    const rel = relative(worktreeRoot, depDir) || '.'
-
-    // Install the dep's own deps first so its build toolchain (tsup, tsc, …)
-    // is available. The package carries its own lockfile, so a frozen install
-    // is reproducible; fall back to a plain install if no lockfile is present.
-    const depHasLockfile = await fileExists(resolve(depDir, 'pnpm-lock.yaml'))
-    const depInstallArgs = depHasLockfile
-      ? ['install', '--frozen-lockfile']
-      : ['install']
-    log?.(`[setup:install] installing workspace dep (${rel}) deps before build`)
-    const installRes = await runner('pnpm', depInstallArgs, depDir, { timeoutMs })
-    if (installRes.exitCode !== 0) {
-      throw new Error(
-        `[setup:install] workspace dep install failed (${rel}): pnpm ${depInstallArgs.join(' ')} exited ${installRes.exitCode}\n` +
-          `stderr (truncated):\n${installRes.stderr.slice(0, 1000)}`,
-      )
-    }
-
-    log?.(`[setup:install] building workspace dep (${rel}) before install so its dist is packed`)
-    const r = await runner('pnpm', ['run', 'build'], depDir, { timeoutMs })
-    if (r.exitCode !== 0) {
-      throw new Error(
-        `[setup:install] workspace dep build failed (${rel}): pnpm run build exited ${r.exitCode}\n` +
-          `stderr (truncated):\n${r.stderr.slice(0, 1000)}`,
-      )
-    }
-  }
-}
-
 export const installCommand = (
   manager: PackageManager,
 ): readonly [string, readonly string[]] => {
@@ -304,18 +221,6 @@ export const installWorktreeDeps = async ({
     sites.map(async (site) => {
       const [cmd, args] = installCommand(site.manager)
       const rel = relative(worktreeRoot, site.dir) || '.'
-      // Build any local workspace `file:`/`workspace:` deps (e.g.
-      // `@mars/workflow`) BEFORE installing, so pnpm packs a copy that
-      // carries the built `dist/` (and its type declarations). Without this,
-      // a fresh worktree gets a dist-less copy and every task fails
-      // `verify:typecheck` with TS2307.
-      await buildWorkspaceDepsForSite(
-        site,
-        worktreeRoot,
-        effectiveRunner,
-        log,
-        timeoutMs,
-      )
       const t0 = Date.now()
       let r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
 
