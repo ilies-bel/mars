@@ -193,6 +193,13 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
           'The setup step could not install dependencies because a required peer dependency is missing from the manifest.',
         actions: DEFAULT_ACTIONS,
       },
+      {
+        signature: 'setup:install/unclassified',
+        warmTitle: 'The coding environment could not be set up',
+        verboseReason:
+          'The setup step could not install dependencies; the error did not match any known pattern. See the transcript for details.',
+        actions: DEFAULT_ACTIONS,
+      },
 
       // ── code:no-edits-made ───────────────────────────────────────────────
       {
@@ -209,6 +216,13 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         warmTitle: 'The coder stopped mid-task',
         verboseReason:
           'The verify step found no commits ahead of the integration branch; the coder made changes but did not commit them.',
+        actions: DEFAULT_ACTIONS,
+      },
+      {
+        signature: 'verify:has-diff/unclassified',
+        warmTitle: 'The coder did not produce any changes',
+        verboseReason:
+          'The verify step could not confirm that file changes were produced. The coder may have encountered an error or misunderstood the task.',
         actions: DEFAULT_ACTIONS,
       },
 
@@ -357,7 +371,9 @@ export const failingStepFromSignature = (sig: string | null): string => {
 /**
  * Synthesise a FailureKind for a signature that is not in the registry.
  *
- * `warmTitle` names the failing step so the operator knows where to look.
+ * `warmTitle` is a plain-English group label derived from the failing step's
+ * family prefix — the raw step id (e.g. `verify:has-diff`, `unknown`) must NOT
+ * appear in user-facing fields; it belongs in transcripts and traces only.
  * `verboseReason` opens with the first non-blank line of the captured error
  * output so the operator has an immediate hint without opening the transcript.
  */
@@ -366,12 +382,28 @@ export const unknownFailureKind = (
   capturedError: string,
 ): FailureKind => {
   const errorHead = firstNonBlankLine(capturedError)
+
+  // Map the step family to a plain-English label. Raw step ids must not appear
+  // in warmTitle or verboseReason — the technical id belongs in details/traces.
+  let groupLabel: string
+  if (failingStep.startsWith('verify:')) {
+    groupLabel = 'A verification check did not pass'
+  } else if (failingStep.startsWith('setup:')) {
+    groupLabel = 'The coding environment could not be set up'
+  } else if (failingStep.startsWith('code:')) {
+    groupLabel = 'The coder did not complete successfully'
+  } else if (failingStep.startsWith('merge:')) {
+    groupLabel = 'The changes could not be merged'
+  } else {
+    groupLabel = 'A pipeline step did not complete'
+  }
+
   return {
     signature: `${failingStep}/unknown`,
-    warmTitle: `The ${failingStep} step failed — see the transcript`,
+    warmTitle: groupLabel,
     verboseReason: errorHead.length > 0
       ? errorHead
-      : `The ${failingStep} step failed with an unrecognised error.`,
+      : `${groupLabel}. See the transcript for details.`,
     recipe: null,
     actions: [
       { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },

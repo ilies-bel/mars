@@ -106,7 +106,8 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
   })
 
   it('falls back to unknownFailureKind title for an unregistered signature', async () => {
-    // 'verify:test/unclassified' is not in the registry
+    // 'verify:test/unclassified' is not in the registry; the fallback maps
+    // verify:* steps to a plain-English verification title (no raw step id).
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([
@@ -116,7 +117,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('The verify:test step failed — see the transcript')
+    expect(rows[0]!.title).toBe('A verification check did not pass')
   })
 
   it('non-failed-task rows (stale-worktree) still use the persisted title/body', async () => {

@@ -170,22 +170,9 @@ describe('lookupFailureKind', () => {
 })
 
 describe('unknownFailureKind', () => {
-  it('renders the step name in the warmTitle', () => {
-    const kind = unknownFailureKind('setup:install', 'EACCES: permission denied')
-    expect(kind.warmTitle).toBe('The setup:install step failed — see the transcript')
-  })
-
   it('opens verboseReason with the first non-blank line of the error', () => {
     const kind = unknownFailureKind('setup:install', 'EACCES: permission denied')
     expect(kind.verboseReason).toMatch(/^EACCES: permission denied/)
-  })
-
-  it('renders the step name in the title for a different step', () => {
-    const kind = unknownFailureKind('verify:typecheck', 'TS9999: something new')
-    expect(kind.warmTitle).toBe(
-      'The verify:typecheck step failed — see the transcript',
-    )
-    expect(kind.verboseReason).toMatch(/^TS9999: something new/)
   })
 
   it('strips leading blank lines from capturedError before using it', () => {
@@ -199,15 +186,95 @@ describe('unknownFailureKind', () => {
   it('uses a fallback verboseReason when capturedError is entirely blank', () => {
     const kind = unknownFailureKind('setup:install', '   \n\n  ')
     expect(kind.verboseReason.length).toBeGreaterThan(0)
-    // Title still correctly names the step
-    expect(kind.warmTitle).toBe(
-      'The setup:install step failed — see the transcript',
-    )
   })
 
   it('includes default actions', () => {
     const kind = unknownFailureKind('merge:preflight', 'some error')
     expect(kind.actions.some((a) => a.op === 'restart')).toBe(true)
     expect(kind.actions.some((a) => a.op === 'purge')).toBe(true)
+  })
+})
+
+describe('unknownFailureKind — plain-English fallback (no raw step ids, no jargon)', () => {
+  it('warmTitle for verify:has-diff does not contain the raw step id', () => {
+    const kind = unknownFailureKind('verify:has-diff', '')
+    expect(kind.warmTitle).not.toContain('verify:has-diff')
+  })
+
+  it('warmTitle for "unknown" step does not contain the word "unknown"', () => {
+    const kind = unknownFailureKind('unknown', '')
+    expect(kind.warmTitle).not.toMatch(/\bunknown\b/i)
+  })
+
+  it('verboseReason fallback does not contain raw step ids', () => {
+    const kind = unknownFailureKind('verify:has-diff', '')
+    expect(kind.verboseReason).not.toContain('verify:has-diff')
+  })
+
+  it('verboseReason fallback does not contain "unrecognised"', () => {
+    const kind = unknownFailureKind('verify:has-diff', '')
+    expect(kind.verboseReason).not.toContain('unrecognised')
+  })
+
+  it('verboseReason fallback for null-signature path does not say "unrecognised"', () => {
+    const kind = unknownFailureKind('unknown', '')
+    expect(kind.verboseReason).not.toContain('unrecognised')
+    expect(kind.verboseReason).not.toMatch(/\bunknown\b/i)
+  })
+
+  it('verify:* step maps to a verification-themed warm title', () => {
+    const kind = unknownFailureKind('verify:lint', '')
+    expect(kind.warmTitle).toMatch(/verification|check/i)
+    expect(kind.warmTitle).not.toContain('verify:lint')
+  })
+
+  it('setup:* step maps to an environment-setup warm title', () => {
+    const kind = unknownFailureKind('setup:install', '')
+    expect(kind.warmTitle).toMatch(/environment|set up/i)
+    expect(kind.warmTitle).not.toContain('setup:install')
+  })
+
+  it('code:* step maps to a coder warm title', () => {
+    const kind = unknownFailureKind('code:timeout', '')
+    expect(kind.warmTitle).toMatch(/coder/i)
+    expect(kind.warmTitle).not.toContain('code:timeout')
+  })
+
+  it('merge:* step maps to a merge warm title', () => {
+    const kind = unknownFailureKind('merge:preflight', '')
+    expect(kind.warmTitle).toMatch(/merge|changes/i)
+    expect(kind.warmTitle).not.toContain('merge:preflight')
+  })
+
+  it('unrecognised step prefix yields a generic pipeline title', () => {
+    const kind = unknownFailureKind('xyzzy:warp', '')
+    expect(kind.warmTitle.length).toBeGreaterThan(0)
+    expect(kind.warmTitle).not.toContain('xyzzy:warp')
+  })
+})
+
+describe('new catalog entries for previously-unmatched signatures', () => {
+  it('setup:install/unclassified is registered with a plain-English warm title', () => {
+    const entry = lookupFailureKind('setup:install/unclassified')
+    expect(entry).not.toBeNull()
+    expect(entry!.warmTitle).toBe('The coding environment could not be set up')
+  })
+
+  it('setup:install/unclassified verboseReason does not say "unrecognised"', () => {
+    const entry = lookupFailureKind('setup:install/unclassified')
+    expect(entry).not.toBeNull()
+    expect(entry!.verboseReason).not.toContain('unrecognised')
+  })
+
+  it('verify:has-diff/unclassified is registered with a plain-English warm title', () => {
+    const entry = lookupFailureKind('verify:has-diff/unclassified')
+    expect(entry).not.toBeNull()
+    expect(entry!.warmTitle).not.toContain('verify:has-diff')
+  })
+
+  it('verify:has-diff/unclassified verboseReason does not say "unrecognised"', () => {
+    const entry = lookupFailureKind('verify:has-diff/unclassified')
+    expect(entry).not.toBeNull()
+    expect(entry!.verboseReason).not.toContain('unrecognised')
   })
 })

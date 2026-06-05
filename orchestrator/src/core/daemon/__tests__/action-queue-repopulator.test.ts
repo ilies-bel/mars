@@ -453,8 +453,9 @@ describe('action-queue-repopulator outbox subscriber', () => {
     // Without a structured signature, resolveFailureKind synthesises an
     // unknown record (signature `unknown/unknown`) rather than re-grepping the
     // raw string into a coarse catalog code (the ADR-0042 bug fix).
+    // The fallback emits plain-English text — no raw step ids.
     expect(row!.payload['failureReasonCode']).toBe('unknown/unknown')
-    expect(row!.title).toContain('The unknown step failed')
+    expect(row!.title).toContain('A pipeline step did not complete')
   })
 
   it('uses unknownFailureKind title/body when failureSignature and reason code are both absent', async () => {
@@ -473,9 +474,10 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
     // No failureSignature → unknownFailureKind('unknown', ...) provides title.
-    expect(row!.title).toBe('The unknown step failed — see the transcript')
+    // The fallback emits plain-English text — no raw step ids ('unknown').
+    expect(row!.title).toBe('A pipeline step did not complete')
     // Body is the verboseReason from unknownFailureKind.
-    expect(row!.body).toContain('The unknown step failed')
+    expect(row!.body).toContain('A pipeline step did not complete')
     // Payload's failureReasonCode mirrors the synthesised unknown signature.
     expect(row!.payload['failureReasonCode']).toBe('unknown/unknown')
   })
@@ -678,7 +680,10 @@ describe('action-queue-repopulator outbox subscriber', () => {
     expect(row!.title).toBe('The coding environment could not be set up')
   })
 
-  it("task with unregistered signature 'verify:test/unclassified' produces title 'The verify:test step failed — see the transcript'", async () => {
+  it("task with unregistered signature 'verify:test/unclassified' produces a plain-English verification title", async () => {
+    // verify:test/unclassified is intentionally not in the registry (each test
+    // failure has a unique root cause). The fallback maps verify:* steps to a
+    // human-readable title with no raw step id.
     const { q, actionQueue, rep, pub } = await loadModules(repo)
     const client = q.resolveQueueClient()
     const taskId = 'T-verify-test-unclassified'
@@ -695,6 +700,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    expect(row!.title).toBe('The verify:test step failed — see the transcript')
+    expect(row!.title).toBe('A verification check did not pass')
+    expect(row!.title).not.toContain('verify:test')
   })
 })
