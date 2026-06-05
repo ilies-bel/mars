@@ -410,6 +410,7 @@ const spawnFresh = async (
         fixTaskId,
         failureSignature: VERIFY_MAIN_DIRTY_CODE,
         failingStep: `${input.dispatchPhase}:main-dirty`,
+        originId: input.sourceOriginId,
       }),
     ],
     'write',
@@ -441,6 +442,7 @@ const spawnFresh = async (
     fixTaskId,
     failureSignature: VERIFY_MAIN_DIRTY_CODE,
     failingStep: `${input.dispatchPhase}:main-dirty`,
+    originId: input.sourceOriginId,
   })
 
   return { fixTaskId, spawned: true, attachedToStatus: null }

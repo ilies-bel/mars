@@ -25,6 +25,14 @@ export const EventMap = {
     fixTaskId: z.string().nullable(),
     failureSignature: z.string(),
     failingStep: z.string(),
+    /**
+     * The arc origin id for the blocked task. When present, the inbox-raiser
+     * keys the action-queue row on this value (origin-fingerprint dedup) so
+     * all slices of the same arc collapse onto a single inbox row.
+     * Optional for backward compatibility — emit sites that cannot cheaply
+     * resolve the origin omit this field; the subscriber falls back to taskId.
+     */
+    originId: z.string().optional(),
   }),
   'task.unblocked': z.object({
     taskId: z.string(),

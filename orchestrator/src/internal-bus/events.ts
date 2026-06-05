@@ -4,6 +4,8 @@ export interface InternalEvents {
     fixTaskId: string | null
     failureSignature: string
     failingStep: string
+    /** Arc origin id — see events.ts for full semantics. Optional for backward compat. */
+    originId?: string
   }
   'task.unblocked': {
     taskId: string

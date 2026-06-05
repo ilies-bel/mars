@@ -211,6 +211,7 @@ export const upsertFixTask = async (
           fixTaskId: existingId,
           failureSignature: input.failureSignature,
           failingStep: input.failingStep,
+          originId: source.originId,
         }),
       ],
       'write',
@@ -220,6 +221,7 @@ export const upsertFixTask = async (
       fixTaskId: existingId,
       failureSignature: input.failureSignature,
       failingStep: input.failingStep,
+      originId: source.originId,
     })
     return { fixTaskId: existingId, created: false }
   }
@@ -302,6 +304,7 @@ export const upsertFixTask = async (
         fixTaskId,
         failureSignature: input.failureSignature,
         failingStep: input.failingStep,
+        originId: source.originId,
       }),
     ],
     'write',
@@ -312,6 +315,7 @@ export const upsertFixTask = async (
     fixTaskId,
     failureSignature: input.failureSignature,
     failingStep: input.failingStep,
+    originId: source.originId,
   })
 
   return { fixTaskId, created: true }
@@ -402,6 +406,7 @@ export const attachToExistingFixTask = async (
         fixTaskId: input.fixTaskId,
         failureSignature: input.failureReasonCode ?? 'verify:main-dirty',
         failingStep: 'dispatch:main-dirty',
+        originId: source.originId,
       }),
     ],
     'write',
@@ -411,6 +416,7 @@ export const attachToExistingFixTask = async (
     fixTaskId: input.fixTaskId,
     failureSignature: input.failureReasonCode ?? 'verify:main-dirty',
     failingStep: 'dispatch:main-dirty',
+    originId: source.originId,
   })
 }
 

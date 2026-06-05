@@ -61,8 +61,13 @@ function taskBlockedInboxRaiser(client: Client): Subscriber {
         fixTaskId: string | null;
         failureSignature: string;
         failingStep: string;
+        /** Present on events from upsertFixTask / attachToExistingFixTask / spawnOrAttachMainCommitter. */
+        originId?: string;
       };
-      const fingerprint = originFingerprint(p.taskId);
+      // Key on the true arc origin when available; fall back to the blocked
+      // task's own id for events emitted before this field was threaded in.
+      const arcOriginId = p.originId ?? p.taskId;
+      const fingerprint = originFingerprint(arcOriginId);
       const now = new Date().toISOString();
       const raisedBy = 'outbox:inbox-raiser:task.blocked';
 
@@ -119,8 +124,8 @@ function taskBlockedInboxRaiser(client: Client): Subscriber {
               now,
               now,
               fingerprint,
-              p.taskId,
-              p.taskId,
+              arcOriginId,
+              arcOriginId,
             ],
           });
           await tx.execute({

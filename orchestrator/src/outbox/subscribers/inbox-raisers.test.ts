@@ -86,7 +86,7 @@ async function makeClient(dir: string): Promise<Client> {
 function blockedEvent(
   eventId: number,
   taskId: string,
-  opts?: { failureSignature?: string; failingStep?: string },
+  opts?: { failureSignature?: string; failingStep?: string; originId?: string },
 ): BusEvent {
   return {
     id: eventId,
@@ -96,6 +96,7 @@ function blockedEvent(
       fixTaskId: null,
       failureSignature: opts?.failureSignature ?? `sig-${taskId}`,
       failingStep: opts?.failingStep ?? 'verify',
+      ...(opts?.originId !== undefined ? { originId: opts.originId } : {}),
     },
     ts: 1_000,
   };
@@ -269,5 +270,52 @@ describe('inbox-raiser:task.blocked subscriber', () => {
     await subscriber.handler(blockedEvent(21, 'task-hotel'));
 
     expect(await openRowCount(client)).toBe(2);
+  });
+
+  // ── Arc-origin threading (finding #6 of lineage audit) ────────────────
+  // A blocked slice (id != originId) must produce a row keyed on the arc
+  // origin so all slices of the same arc collapse onto a single inbox item.
+
+  it('a blocked slice (id != originId) yields a row fingerprinted on origin:<originId>, collapsing onto the arc', async () => {
+    const [subscriber] = buildInboxRaiserSubscribers(client);
+
+    // First slice of the arc blocked — originId points to the arc root.
+    await subscriber.handler(
+      blockedEvent(50, 'slice-1', { originId: 'origin-india' }),
+    );
+    expect(await openRowCount(client)).toBe(1);
+
+    const row1 = await openRowForTask(client, 'origin-india');
+    expect(row1).not.toBeNull();
+    expect(row1!.originTaskId).toBe('origin-india');
+    expect(row1!.seenCount).toBe(1);
+
+    // Second slice of the same arc blocked — different taskId, same originId.
+    // Must collapse onto the existing row, not create a second one.
+    await subscriber.handler(
+      blockedEvent(51, 'slice-2', { originId: 'origin-india' }),
+    );
+    expect(await openRowCount(client)).toBe(1);
+
+    const row2 = await openRowForTask(client, 'origin-india');
+    expect(row2!.originTaskId).toBe('origin-india');
+    expect(row2!.seenCount).toBe(2);
+  });
+
+  it('a blocked slice (id != originId) does NOT produce a row keyed on the slice id', async () => {
+    const [subscriber] = buildInboxRaiserSubscribers(client);
+
+    await subscriber.handler(
+      blockedEvent(60, 'slice-juliet', { originId: 'origin-juliet' }),
+    );
+
+    // No row should be keyed on the slice's own id.
+    const rowForSlice = await openRowForTask(client, 'slice-juliet');
+    expect(rowForSlice).toBeNull();
+
+    // The row must be keyed on the arc origin instead.
+    const rowForOrigin = await openRowForTask(client, 'origin-juliet');
+    expect(rowForOrigin).not.toBeNull();
+    expect(rowForOrigin!.originTaskId).toBe('origin-juliet');
   });
 });
