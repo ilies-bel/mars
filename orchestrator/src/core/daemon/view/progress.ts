@@ -54,6 +54,12 @@ export interface ProgressTask {
   blockedBy: string[]
   parentProposalId: string | null
   spec: ProgressTaskSpec | null
+  /** Stable arc-origin id — groups related tasks (origin + fix/diagnose) in the Topology view. */
+  originId: string | null
+  /** Id of the task this row is fixing. Non-null iff kind='fix'. */
+  fixForTaskId: string | null
+  /** Task role: 'task' | 'fix' | 'diagnose' | null for legacy rows. */
+  kind: string | null
   createdAt: string
   updatedAt: string
 }
@@ -80,6 +86,9 @@ export interface ProgressTaskRow {
   verifyCmd: string | null
   doneCriteriaJson: string | null
   taskType: string | null
+  originId: string | null
+  fixForTaskId: string | null
+  kind: string | null
   createdAt: string
   updatedAt: string
 }
@@ -189,6 +198,9 @@ export const buildProgressView = async (
       blockedBy: row.blockedBy,
       parentProposalId: row.parentProposalId,
       spec,
+      originId: row.originId,
+      fixForTaskId: row.fixForTaskId,
+      kind: row.kind,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     })
@@ -225,6 +237,7 @@ export const createProgressTaskStore = (client: Client): ProgressTaskStore => ({
              (SELECT json_group_array(criterion ORDER BY position)
                 FROM task_done_criteria WHERE task_id = t.id) AS done_criteria_json,
              t.task_type,
+             t.origin_id, t.fix_for_task_id, t.kind,
              t.created_at, t.updated_at,
              (SELECT b.blocker_task_id FROM task_blockers b
                WHERE b.task_id = t.id ORDER BY b.created_at ASC LIMIT 1) AS blocker_task_id,
@@ -256,6 +269,9 @@ export const createProgressTaskStore = (client: Client): ProgressTaskStore => ({
         verifyCmd: (ro.verify_cmd as string | null) ?? null,
         doneCriteriaJson: (ro.done_criteria_json as string | null) ?? null,
         taskType: (ro.task_type as string | null) ?? null,
+        originId: (ro.origin_id as string | null) ?? null,
+        fixForTaskId: (ro.fix_for_task_id as string | null) ?? null,
+        kind: (ro.kind as string | null) ?? null,
         createdAt: ro.created_at as string,
         updatedAt: ro.updated_at as string,
       }

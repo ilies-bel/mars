@@ -74,6 +74,21 @@ export const taskSchema = z.object({
    */
   parentProposalId: z.string().nullable().optional(),
   spec: taskSpecSchema.optional().nullable(),
+  /**
+   * Stable arc-origin id — groups this task with its fix/diagnose siblings in
+   * the Topology view. Null for legacy rows that predate arc tracking.
+   */
+  originId: z.string().nullable().optional(),
+  /**
+   * Id of the task this row is fixing. Non-null iff kind='fix'.
+   * Drives the fix-edge in the arc topology graph.
+   */
+  fixForTaskId: z.string().nullable().optional(),
+  /**
+   * Task role: 'task' | 'fix' | 'diagnose'. Null for legacy rows.
+   * Used to distinguish the arc origin from its recovery tasks.
+   */
+  kind: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
