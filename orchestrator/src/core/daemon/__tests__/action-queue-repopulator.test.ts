@@ -95,6 +95,8 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const taskId = 'T-raise-evict'
 
     await rep.ensureActionQueueRepopulator(client)
+    // Insert a task row so getTask returns non-null (task exists in 'failed' state).
+    await insertTaskRow(client, { id: taskId })
 
     // ── Phase 1: task.failed → one open row
     await publish(pub, client, 'task.failed', { taskId, error: 'boom' })
@@ -119,6 +121,8 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const taskId = 'T-idempotent'
 
     await rep.ensureActionQueueRepopulator(client)
+    // Task row must exist so getTask returns non-null and the row is raised.
+    await insertTaskRow(client, { id: taskId })
     await publish(pub, client, 'task.failed', { taskId, error: 'boom' })
 
     // First drain: raises the row
@@ -176,6 +180,8 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const taskId = 'T-failed-then-blocked'
 
     await rep.ensureActionQueueRepopulator(client)
+    // Task row must exist so getTask returns non-null and the row is raised.
+    await insertTaskRow(client, { id: taskId })
 
     // Phase 1: task.failed → one open row
     await publish(pub, client, 'task.failed', { taskId, error: 'verify failed' })
@@ -261,6 +267,8 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const taskId = 'T-completed'
 
     await rep.ensureActionQueueRepopulator(client)
+    // Task row must exist so getTask returns non-null and the initial row is raised.
+    await insertTaskRow(client, { id: taskId })
     await publish(pub, client, 'task.failed', { taskId, error: 'oops' })
     const { processed: p1 } = await rep.drainActionQueueRepopulations(client)
     expect(p1).toBe(1)
@@ -520,22 +528,58 @@ describe('action-queue-repopulator outbox subscriber', () => {
     expect(row!.body).toContain('SIGKILL / exit 137')
   })
 
-  it('never emits the legacy "without a specific recovery plan" fallback', async () => {
+  it('raises no row for a task.failed event when the task row does not exist (guard against orphaned rows)', async () => {
+    // When getTask returns null the task has been purged/deleted. Raising a
+    // row for a non-existent task would create an orphaned action-queue item
+    // that can never be closed — the Invalidator already ran its close pass
+    // before this event was processed. The repopulator must skip raising.
     const { q, actionQueue, rep, pub } = await loadModules(repo)
     const client = q.resolveQueueClient()
-    const taskId = 'T-legacy-template-check'
+    const taskId = 'T-no-task-row'
 
     await rep.ensureActionQueueRepopulator(client)
-    // No task row inserted at all; getTask returns null and we still render
-    // the `unknown` catalog entry rather than the old hardcoded template.
+    // No task row inserted; getTask returns null.
     await publish(pub, client, 'task.failed', { taskId, error: 'boom' })
-    await rep.drainActionQueueRepopulations(client)
+    // processed=1 because the event is consumed (cursor advances), but no
+    // row is raised — returning early counts as handling the event.
+    const { processed } = await rep.drainActionQueueRepopulations(client)
+    expect(processed).toBe(1)
 
     const openItems = await actionQueue.listActionQueueItems('open')
-    const row = openItems.find((i) => i.payload['taskId'] === taskId)
-    expect(row).toBeDefined()
-    expect(row!.body).not.toContain('without a specific recovery plan')
-    expect(row!.body).not.toContain('Inspect the full log with')
+    expect(openItems.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
+  })
+
+  it('does not raise a failed row when the task has been purged before the repopulator drains (race fix)', async () => {
+    // Regression: mars unblock → mars purge can leave a permanent zombie
+    // 'failed' action-queue row. The event sequence is:
+    //   task.failed (4477) → task.terminal{purged} (4480) → action-queue.raised (4481)
+    // The Invalidator's close pass (driven by 4480) runs BEFORE the row exists
+    // (4481), so the row is never closed. This test verifies the fix: if the
+    // task row has been deleted (purged) by the time the repopulator processes
+    // task.failed, no row is raised at all.
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-purged-before-drain'
+
+    await rep.ensureActionQueueRepopulator(client)
+
+    // Step 1: Insert the task row (simulating a task in failed state)
+    await insertTaskRow(client, { id: taskId, error: 'verify failed' })
+
+    // Step 2: Publish task.failed but do NOT drain the repopulator yet
+    await publish(pub, client, 'task.failed', { taskId, error: 'verify failed' })
+
+    // Step 3: Simulate purge — delete the task row exactly as dropTask does
+    await client.execute({ sql: 'DELETE FROM tasks WHERE id = ?', args: [taskId] })
+
+    // Step 4: Drain the repopulator (processes task.failed, but task is gone)
+    const { processed } = await rep.drainActionQueueRepopulations(client)
+    expect(processed).toBe(1) // event is consumed; cursor advances
+
+    // No open row: task was purged before the repopulator ran, so raising
+    // a row that can never be closed is correctly skipped.
+    const openItems = await actionQueue.listActionQueueItems('open')
+    expect(openItems.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
   })
 
   it('auto-closes slices-dropped row when the proposal is promoted', async () => {

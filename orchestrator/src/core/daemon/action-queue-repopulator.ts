@@ -118,6 +118,14 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
     // metadata that decides whether F.2's aggregated writer owns this row.
     const task = await getTask(taskId)
 
+    // Race guard (purge-before-drain): only dropTask deletes task rows, so
+    // task === null means the task was purged before this subscriber turn ran.
+    // Raising a row for a deleted task creates an orphaned action-queue item
+    // that can never be closed — the Invalidator already ran its close pass
+    // for this task (driven by task.terminal{purged}) before this repopulator
+    // drained, and its cursor will not revisit that close event. Skip.
+    if (task === null) return
+
     // F.2 override: failed `main-commiter` recoveries are handled by
     // `raiseAggregatedMainCommiterFailureRow`, which writes a cohort-listing
     // body keyed on the committer's task id. Bail BEFORE raising so the
