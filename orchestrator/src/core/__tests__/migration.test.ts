@@ -888,3 +888,136 @@ describe('questions table: ON DELETE CASCADE migration + dropTask cleanup', () =
     db2.close()
   })
 })
+
+describe('ADR-0050: follow-up arc inheritance — migration of synthetic origin_ids', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('re-points synthetic followup: origin_id at the real arc origin', async () => {
+    const dbPath = `file:${repo}/.mars/mars.db`
+    const q = createClient({ url: dbPath })
+    const now = new Date().toISOString()
+
+    // Seed a minimal tasks table (without followup_dedup_key — simulates pre-migration state).
+    await q.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
+      origin_id TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`)
+    // The origin task (self-arc).
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, created_at, updated_at)
+            VALUES ('task-origin', 'original work', 'done', 'task-origin', 0, ?, ?)`,
+      args: [now, now],
+    })
+    // A follow-up row carrying a synthetic dedup key in origin_id.
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, created_at, updated_at)
+            VALUES ('task-followup', 'context-exhausted follow-up', 'queued',
+                    'followup:task-origin:context-exhausted', 0, ?, ?)`,
+      args: [now, now],
+    })
+    q.close()
+
+    // Run migration.
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
+
+    const db = createClient({ url: dbPath })
+    const row = await db.execute(
+      `SELECT origin_id, followup_dedup_key FROM tasks WHERE id = 'task-followup'`,
+    )
+    expect(row.rows).toHaveLength(1)
+    const r = row.rows[0] as Record<string, unknown>
+    // origin_id is re-pointed at the real arc origin.
+    expect(r.origin_id).toBe('task-origin')
+    // The synthetic key moves to the dedicated dedup column.
+    expect(r.followup_dedup_key).toBe('followup:task-origin:context-exhausted')
+    db.close()
+  })
+
+  it('handles a follow-up whose originTaskId is itself an arc member', async () => {
+    const dbPath = `file:${repo}/.mars/mars.db`
+    const q = createClient({ url: dbPath })
+    const now = new Date().toISOString()
+
+    await q.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
+      origin_id TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`)
+    // Arc root.
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, created_at, updated_at)
+            VALUES ('arc-root', 'arc root', 'done', 'arc-root', 0, ?, ?)`,
+      args: [now, now],
+    })
+    // Arc member — origin_id points at arc-root.
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, created_at, updated_at)
+            VALUES ('arc-member', 'arc member', 'failed', 'arc-root', 0, ?, ?)`,
+      args: [now, now],
+    })
+    // Follow-up of arc-member with synthetic origin_id.
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, created_at, updated_at)
+            VALUES ('task-followup2', 'follow-up of arc-member', 'queued',
+                    'followup:arc-member:context-exhausted', 0, ?, ?)`,
+      args: [now, now],
+    })
+    q.close()
+
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
+
+    const db = createClient({ url: dbPath })
+    const row = await db.execute(
+      `SELECT origin_id, followup_dedup_key FROM tasks WHERE id = 'task-followup2'`,
+    )
+    const r = row.rows[0] as Record<string, unknown>
+    // The follow-up inherits arc-root's origin_id (not arc-member's own id).
+    expect(r.origin_id).toBe('arc-root')
+    expect(r.followup_dedup_key).toBe('followup:arc-member:context-exhausted')
+    db.close()
+  })
+
+  it('leaves non-synthetic origin_ids and non-follow-up rows untouched', async () => {
+    const dbPath = `file:${repo}/.mars/mars.db`
+    const q = createClient({ url: dbPath })
+    const now = new Date().toISOString()
+
+    await q.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
+      origin_id TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`)
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, created_at, updated_at)
+            VALUES ('task-normal', 'normal task', 'queued', 'task-normal', 0, ?, ?)`,
+      args: [now, now],
+    })
+    q.close()
+
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
+
+    const db = createClient({ url: dbPath })
+    const row = await db.execute(
+      `SELECT origin_id, followup_dedup_key FROM tasks WHERE id = 'task-normal'`,
+    )
+    const r = row.rows[0] as Record<string, unknown>
+    expect(r.origin_id).toBe('task-normal')
+    expect(r.followup_dedup_key).toBeNull()
+    db.close()
+  })
+})

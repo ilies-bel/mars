@@ -47,13 +47,15 @@ describe('enqueueFollowUpOnce — context-exhausted dedup', () => {
     expect(result.created).toBe(true)
     expect(result.id).toMatch(/^mars-/)
 
-    // Confirm exactly one follow-up row exists with the dedup origin_id
+    // Confirm exactly one follow-up row exists with the dedup key in followup_dedup_key
     const c = q.resolveQueueClient()
     const rows = await c.execute({
-      sql: `SELECT id, origin_id, status FROM tasks WHERE origin_id = ?`,
+      sql: `SELECT id, origin_id, followup_dedup_key, status FROM tasks WHERE followup_dedup_key = ?`,
       args: [`followup:${origin.id}:context-exhausted`],
     })
     expect(rows.rows).toHaveLength(1)
+    // Follow-up inherits the origin's arc (origin_id = origin.id, not the synthetic key)
+    expect((rows.rows[0] as Record<string, unknown>).origin_id).toBe(origin.id)
   })
 
   it('returns the existing follow-up on a second call (simulates origin restart)', async () => {
@@ -72,7 +74,7 @@ describe('enqueueFollowUpOnce — context-exhausted dedup', () => {
     // Still exactly one follow-up in DB
     const c = q.resolveQueueClient()
     const rows = await c.execute({
-      sql: `SELECT id FROM tasks WHERE origin_id = ?`,
+      sql: `SELECT id FROM tasks WHERE followup_dedup_key = ?`,
       args: [`followup:${origin.id}:context-exhausted`],
     })
     expect(rows.rows).toHaveLength(1)
@@ -95,7 +97,7 @@ describe('enqueueFollowUpOnce — context-exhausted dedup', () => {
     // Exactly one follow-up in DB
     const c = q.resolveQueueClient()
     const rows = await c.execute({
-      sql: `SELECT id FROM tasks WHERE origin_id = ?`,
+      sql: `SELECT id FROM tasks WHERE followup_dedup_key = ?`,
       args: [`followup:${origin.id}:context-exhausted`],
     })
     expect(rows.rows).toHaveLength(1)
@@ -148,7 +150,7 @@ describe('enqueueFollowUpOnce — exploration-loop dedup', () => {
     // Still exactly one follow-up in DB
     const c = q.resolveQueueClient()
     const rows = await c.execute({
-      sql: `SELECT id FROM tasks WHERE origin_id = ?`,
+      sql: `SELECT id FROM tasks WHERE followup_dedup_key = ?`,
       args: [`followup:${origin.id}:exploration-loop`],
     })
     expect(rows.rows).toHaveLength(1)
@@ -190,6 +192,66 @@ describe('enqueueFollowUpOnce — context-exhausted and exploration-loop are ind
     expect(ce.created).toBe(true)
     expect(el.created).toBe(true)
     expect(ce.id).not.toBe(el.id)
+  })
+})
+
+describe('enqueueFollowUpOnce — arc inheritance (ADR-0050)', () => {
+  let repo: string
+  let q: QueueModule
+
+  beforeEach(async () => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+    q = await import('../queue') as unknown as QueueModule
+    await q.migrateQueueSchema()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('follow-up origin_id equals the origin task id (inherits arc)', async () => {
+    const origin = await q.enqueueTask('root task', undefined, { skipTriage: true })
+    const result = await q.enqueueFollowUpOnce(origin.id, 'context-exhausted', 'follow-up prompt')
+    expect(result.created).toBe(true)
+    const c = q.resolveQueueClient()
+    const row = await c.execute({
+      sql: `SELECT origin_id, followup_dedup_key FROM tasks WHERE id = ?`,
+      args: [result.id],
+    })
+    const r = row.rows[0] as Record<string, unknown>
+    // The follow-up joins the origin's arc, not a synthetic one-task arc.
+    expect(r.origin_id).toBe(origin.id)
+    expect(r.followup_dedup_key).toBe(`followup:${origin.id}:context-exhausted`)
+  })
+
+  it('follow-up of an arc member inherits the arc root origin_id', async () => {
+    const arcRoot = await q.enqueueTask('arc root', undefined, { skipTriage: true })
+    // arcRoot.id is also its origin_id (self-arc). Create a member that shares the root.
+    const arcMember = await q.enqueueTask('arc member', undefined, {
+      skipTriage: true,
+      originId: arcRoot.id,
+    })
+    const result = await q.enqueueFollowUpOnce(arcMember.id, 'context-exhausted', 'follow-up')
+    expect(result.created).toBe(true)
+    const c = q.resolveQueueClient()
+    const row = await c.execute({
+      sql: `SELECT origin_id FROM tasks WHERE id = ?`,
+      args: [result.id],
+    })
+    // arcMember.originId = arcRoot.id → follow-up also gets arcRoot.id
+    expect((row.rows[0] as Record<string, unknown>).origin_id).toBe(arcRoot.id)
+  })
+
+  it('dedup still works after implementing arc inheritance', async () => {
+    const origin = await q.enqueueTask('root task', undefined, { skipTriage: true })
+    const first = await q.enqueueFollowUpOnce(origin.id, 'context-exhausted', 'follow-up')
+    expect(first.created).toBe(true)
+    const second = await q.enqueueFollowUpOnce(origin.id, 'context-exhausted', 'follow-up')
+    expect(second.created).toBe(false)
+    expect(second.id).toBe(first.id)
   })
 })
 

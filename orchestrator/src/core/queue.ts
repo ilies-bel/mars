@@ -612,6 +612,14 @@ export const migrateQueueSchema = async (): Promise<void> => {
   if (!names.has('integration_head_sha')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN integration_head_sha TEXT`)
   }
+  // followup_dedup_key: the once-only dedup key for context-exhausted /
+  // exploration-loop follow-up tasks, in the form 'followup:<originTaskId>:<kind>'.
+  // This column replaces the old approach of stuffing the dedup key into origin_id,
+  // allowing origin_id to carry genuine arc identity instead (ADR-0050). NULL on
+  // every non-follow-up row.
+  if (!names.has('followup_dedup_key')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN followup_dedup_key TEXT`)
+  }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
   )
@@ -621,10 +629,42 @@ export const migrateQueueSchema = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_origin_id ON tasks(origin_id)`,
   )
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_tasks_followup_dedup_key ON tasks(followup_dedup_key)`,
+  )
   await c.execute(`DROP INDEX IF EXISTS idx_tasks_parent_idea_id`)
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_parent_proposal_id ON tasks(parent_proposal_id)`,
   )
+  // ADR-0050: migrate existing rows whose origin_id holds a synthetic
+  // 'followup:<originTaskId>:<kind>' dedup key. Re-point origin_id at the
+  // real arc origin (the originTaskId's own resolved origin_id) and move the
+  // synthetic key into the dedicated followup_dedup_key column.
+  const syntheticRows = await c.execute(
+    `SELECT id, origin_id FROM tasks WHERE origin_id LIKE 'followup:%'`,
+  )
+  for (const rawRow of syntheticRows.rows) {
+    const row = rawRow as unknown as { id: string; origin_id: string }
+    // Parse 'followup:<originTaskId>:<kind>'
+    const withoutPrefix = row.origin_id.slice('followup:'.length)
+    const colonIdx = withoutPrefix.indexOf(':')
+    if (colonIdx === -1) continue // malformed synthetic key — skip
+    const originTaskId = withoutPrefix.slice(0, colonIdx)
+    // Resolve the real origin_id of originTaskId.
+    const originRow = await c.execute({
+      sql: `SELECT origin_id, id FROM tasks WHERE id = ?`,
+      args: [originTaskId],
+    })
+    const resolvedOriginId =
+      originRow.rows.length > 0
+        ? ((originRow.rows[0] as unknown as { origin_id: string | null; id: string })
+            .origin_id ?? originTaskId)
+        : originTaskId
+    await c.execute({
+      sql: `UPDATE tasks SET origin_id = ?, followup_dedup_key = ? WHERE id = ?`,
+      args: [resolvedOriginId, row.origin_id, row.id],
+    })
+  }
   // task_signals table intentionally omitted: migrated to trace_events in
   // PRD 436f14c7 slice 5 (see migrateSignalsAndTranscriptsToTraceEvents below).
   await c.execute(`
@@ -935,6 +975,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             slice_kind           TEXT,
             sub_deliverable_json TEXT,
             integration_head_sha TEXT,
+            followup_dedup_key   TEXT,
             created_at           TEXT    NOT NULL,
             updated_at           TEXT    NOT NULL
           )
@@ -949,7 +990,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             origin_id, parent_proposal_id, slice_index, failed_phase, resume_from,
             files_json, verify_cmd, done_criteria_json, task_type, read_first_json,
             prescriptive_action, slice_kind, sub_deliverable_json,
-            integration_head_sha, created_at, updated_at
+            integration_head_sha, followup_dedup_key, created_at, updated_at
           )
           SELECT
             id, prompt, status, plan_functional, plan_technical,
@@ -963,7 +1004,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             parent_proposal_id, slice_index, failed_phase, resume_from,
             files_json, verify_cmd, done_criteria_json, task_type, read_first_json,
             prescriptive_action, slice_kind, sub_deliverable_json,
-            integration_head_sha, created_at, updated_at
+            integration_head_sha, followup_dedup_key, created_at, updated_at
           FROM tasks
         `)
         // Re-run the legacy origin_id backfill inside the rebuild to ensure
@@ -991,6 +1032,10 @@ export const migrateQueueSchema = async (): Promise<void> => {
         await c.execute(
           `CREATE INDEX IF NOT EXISTS idx_tasks_parent_proposal_id
              ON tasks(parent_proposal_id)`,
+        )
+        await c.execute(
+          `CREATE INDEX IF NOT EXISTS idx_tasks_followup_dedup_key
+             ON tasks(followup_dedup_key)`,
         )
       }
 
@@ -2488,37 +2533,56 @@ export type FollowUpKind = 'context-exhausted' | 'exploration-loop'
 /**
  * Enqueue a follow-up task for `originTaskId` exactly ONCE, across restarts.
  *
- * Uses a deterministic `origin_id` (`followup:<originTaskId>:<kind>`) as a
- * structured dedup key: if an open (non-terminal) follow-up for this
- * origin+kind combination already exists in the DB, the enqueue is skipped
- * and the existing task id is returned with `created: false`.
+ * Deduplicates via a dedicated `followup_dedup_key` column (value:
+ * `followup:<originTaskId>:<kind>`): if an open (non-terminal) follow-up for
+ * this origin+kind combination already exists in the DB, the enqueue is
+ * skipped and the existing task id is returned with `created: false`.
+ *
+ * Arc membership (ADR-0050): the follow-up's `origin_id` is set to the
+ * RESOLVED `origin_id` of `originTaskId` (i.e. the arc root), not to a
+ * synthetic dedup string. This ensures the follow-up is reachable from the
+ * same arc as the task it continues.
  *
  * When no open follow-up exists the task is created with `skipTriage: true`,
  * a blocker edge from the follow-up back to `originTaskId` is added, and the
  * result has `created: true`.
- *
- * This makes the "enqueue exactly one follow-up" comment in
- * implement-workflow.ts TRUE per-origin across restarts, not just per-run.
  */
 export const enqueueFollowUpOnce = async (
   originTaskId: string,
   kind: FollowUpKind,
   prompt: string,
 ): Promise<{ id: string; created: boolean }> => {
-  const followUpOriginId = `followup:${originTaskId}:${kind}`
+  const dedupKey = `followup:${originTaskId}:${kind}`
   await migrateQueueSchema()
   const c = resolveQueueClient()
+  // Dedup: if an open (non-terminal) follow-up with this dedup key exists, reuse it.
   const existing = await c.execute({
-    sql: `SELECT id FROM tasks WHERE origin_id = ? AND status NOT IN ('done', 'failed', 'dropped') LIMIT 1`,
-    args: [followUpOriginId],
+    sql: `SELECT id FROM tasks WHERE followup_dedup_key = ? AND status NOT IN ('done', 'failed', 'dropped') LIMIT 1`,
+    args: [dedupKey],
   })
   if (existing.rows.length > 0) {
     const id = (existing.rows[0] as unknown as { id: string }).id
     return { id, created: false }
   }
+  // Inherit the arc: resolve the origin task's actual origin_id so the follow-up
+  // joins the same arc as the task it continues (ADR-0050).
+  const originRow = await c.execute({
+    sql: `SELECT origin_id, id FROM tasks WHERE id = ?`,
+    args: [originTaskId],
+  })
+  const resolvedOriginId =
+    originRow.rows.length > 0
+      ? ((originRow.rows[0] as unknown as { origin_id: string | null; id: string })
+          .origin_id ?? originTaskId)
+      : originTaskId
   const followUp = await enqueueTask(prompt, undefined, {
     skipTriage: true,
-    originId: followUpOriginId,
+    originId: resolvedOriginId,
+  })
+  // Stamp the dedup key onto the newly created follow-up row.
+  await c.execute({
+    sql: `UPDATE tasks SET followup_dedup_key = ? WHERE id = ?`,
+    args: [dedupKey, followUp.id],
   })
   await addBlockers(followUp.id, [originTaskId])
   return { id: followUp.id, created: true }

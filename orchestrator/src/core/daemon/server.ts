@@ -1120,6 +1120,17 @@ export const startDaemon = async (
     if (priority !== undefined) opts.priority = priority
     if (tags !== undefined) opts.tags = tags
     if (spec) opts.spec = spec
+    // Arc inheritance (ADR-0050): when a task has exactly one blocker it is
+    // almost always a continuation of that blocker's work (the canonical coder
+    // follow-up pattern: `mars task add "..." --blocked-by $TASK_ID`). Inherit
+    // the blocker's resolved origin_id so the new task joins the same arc.
+    // Multiple blockers are left as self-arc (the target arc is ambiguous).
+    if (blockerIds && blockerIds.length === 1) {
+      const blocker = await getTask(blockerIds[0])
+      if (blocker) {
+        opts.originId = blocker.originId
+      }
+    }
     const task = await enqueueTask(
       prompt,
       plan ?? undefined,

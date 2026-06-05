@@ -1044,8 +1044,9 @@ export const implementWorkflow = defineWorkflow<
           `task is restarted or resolved, this follow-up will unblock automatically.`,
         ].join('\n')
         try {
-          // enqueueFollowUpOnce deduplicates on origin_id=followup:<taskId>:context-exhausted
-          // so restarting the origin and context-exhausting again will NOT create a second
+          // enqueueFollowUpOnce deduplicates on followup_dedup_key='followup:<taskId>:context-exhausted'
+          // (ADR-0050: origin_id now carries the real arc origin, not the dedup key).
+          // Restarting the origin and context-exhausting again will NOT create a second
           // follow-up — the existing open one is reused.
           const { id: followUpId, created } = await enqueueFollowUpOnce(
             input.taskId,
@@ -1115,8 +1116,9 @@ export const implementWorkflow = defineWorkflow<
           `restarted or resolved, this follow-up will unblock automatically.`,
         ].join('\n')
         try {
-          // enqueueFollowUpOnce deduplicates on origin_id=followup:<taskId>:exploration-loop
-          // so restarting the origin and hitting the ceiling again will NOT create a second
+          // enqueueFollowUpOnce deduplicates on followup_dedup_key='followup:<taskId>:exploration-loop'
+          // (ADR-0050: origin_id now carries the real arc origin, not the dedup key).
+          // Restarting the origin and hitting the ceiling again will NOT create a second
           // follow-up — the existing open one is reused.
           const { id: followUpId, created } = await enqueueFollowUpOnce(
             input.taskId,
