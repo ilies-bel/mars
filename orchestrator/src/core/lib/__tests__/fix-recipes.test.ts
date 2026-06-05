@@ -627,6 +627,35 @@ describe('fix-recipes', () => {
       expect(promptWithout).not.toContain('add the nudge link in TodoPage.tsx')
       expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
     })
+
+    it('uses merge-base-scoped diff ($BASE..HEAD) instead of raw integration..HEAD to avoid stale-baseline reversions', () => {
+      const recipe = getRecipe(
+        'merge:vcs-supervisor-aborted/not-fast-forward',
+      )
+      const prompt = recipe.buildPrompt(ctx)
+      expect(prompt).toContain('merge-base')
+      expect(prompt).toContain('$BASE..HEAD')
+      // The failing-worktree form `git -C <targetPath> diff main..HEAD` that
+      // silently reverted newer main commits must not appear in the capture step.
+      // (The guard step `git diff main..HEAD --stat` without -C is permitted.)
+      expect(prompt).not.toContain(
+        `git -C ${ctx.targetPath} diff ${ctx.integrationBranch}..HEAD`,
+      )
+    })
+
+    it('orders the commit-immediately step before the iterate step (step numbering updated for guard)', () => {
+      const recipe = getRecipe(
+        'merge:vcs-supervisor-aborted/not-fast-forward',
+      )
+      const prompt = recipe.buildPrompt(ctx)
+      // Guard step must appear between apply and commit.
+      const guardIdx = prompt.indexOf('stale-baseline lift')
+      const commitIdx = prompt.search(/\*\*Commit immediately\*\*/i)
+      const iterateIdx = prompt.search(/may you iterate/i)
+      expect(guardIdx).toBeGreaterThan(0)
+      expect(commitIdx).toBeGreaterThan(guardIdx)
+      expect(iterateIdx).toBeGreaterThan(commitIdx)
+    })
   })
 
   describe('verify:typecheck/typecheck-excess-property recipe', () => {
@@ -1473,6 +1502,79 @@ describe('verify:test/test-no-suite-found recipe', () => {
     const promptWithout = recipe.buildPrompt(ctx)
     expect(promptWithout).not.toContain('add agent registry with writer entry')
   })
+})
+
+describe('lift-diff stale-baseline guard (all five lift-diff / re-land recipe sites)', () => {
+  // Regression guard for the incident where a recovery task lifted
+  // `integration..HEAD` from a stale worktree baseline and silently reverted
+  // two newer main commits (merge-retry fix + Progress-tab SSE re-land).
+  // All five recipes that emit a `git diff <integration>..HEAD > patch` step
+  // must now use merge-base-scoped diffs and include an explicit no-spurious-
+  // revert guard.
+  const signatures = [
+    'merge:vcs-supervisor-aborted/not-fast-forward',
+    'verify:test/test-assertion-error',
+    'verify:test/test-libsql-no-such-table',
+    'verify:test/test-no-suite-found',
+    'verify:test/test-libsql-not-an-error',
+  ] as const
+  const ctx = {
+    targetPath: '/tmp/worktrees/task-abc',
+    statusOutput: '',
+    targetBranch: 'task/abc',
+    integrationBranch: 'main',
+    originalPrompt: '',
+  }
+
+  for (const sig of signatures) {
+    describe(sig, () => {
+      it('instructs computing merge-base to scope the diff to task-only commits, not stale baseline content', () => {
+        const recipe = getRecipe(sig)
+        const prompt = recipe.buildPrompt(ctx)
+        // Must mention merge-base so the diff is scoped to the task's own commits.
+        expect(prompt).toContain('merge-base')
+        // Must use $BASE..HEAD for the capture step.
+        expect(prompt).toContain('$BASE..HEAD')
+        // The failing-worktree form `git -C <targetPath> diff main..HEAD` that
+        // caused the stale-baseline reversion incident must NOT appear.
+        // Note: `git diff main..HEAD` (no -C) IS allowed — that is the guard
+        // step that runs in the recovery worktree after applying the patch.
+        expect(prompt).not.toContain(
+          `git -C ${ctx.targetPath} diff ${ctx.integrationBranch}..HEAD`,
+        )
+      })
+
+      it('includes the no-spurious-revert guard and STOP instruction before the commit step', () => {
+        const recipe = getRecipe(sig)
+        const prompt = recipe.buildPrompt(ctx)
+        // Must instruct the agent to check for spurious reversions.
+        expect(prompt).toContain('stale-baseline lift')
+        // Must name the specific failure mode: reverting files the task never touched.
+        expect(prompt).toMatch(/files.*task.*never touched|files.*never touched/i)
+        // Must require an explicit STOP — agent must not silently commit.
+        expect(prompt).toMatch(/STOP.*do not commit|STOP: do not commit/i)
+      })
+
+      it('requires the recovery branch to be based on current integration before lifting', () => {
+        const recipe = getRecipe(sig)
+        const prompt = recipe.buildPrompt(ctx)
+        // Must instruct the agent to verify via merge-base --is-ancestor.
+        expect(prompt).toContain(
+          `git merge-base --is-ancestor ${ctx.integrationBranch} HEAD`,
+        )
+      })
+
+      it('instructs computing BASE from the failing worktree merge-base, not the recovery worktree', () => {
+        const recipe = getRecipe(sig)
+        const prompt = recipe.buildPrompt(ctx)
+        // The merge-base must be computed against the FAILING worktree (via -C)
+        // so it reflects that branch's own divergence point.
+        expect(prompt).toContain(
+          `git -C ${ctx.targetPath} merge-base ${ctx.integrationBranch} HEAD`,
+        )
+      })
+    })
+  }
 })
 
 describe('verify:test/test-libsql-not-an-error recipe', () => {
