@@ -124,13 +124,20 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /Not possible to fast-forward/i,
   },
   {
-    // SIGKILL from the wall-clock timeout (exit 137) or an explicit SIGKILL
-    // surfaced in the error text. Must be checked before install-frozen-lockfile
-    // because WorktreeInstallError embeds the install command (which contains
-    // "frozen-lockfile") in its first line — without this guard, a timed-out
-    // install would be misclassified as a lockfile-drift failure.
+    // Signal-killed install (no manifest fault). Covers:
+    //   - SIGKILL from the wall-clock timeout (exit 137) or an explicit SIGKILL
+    //     surfaced in the error text;
+    //   - SIGINT abort (exit 130, e.g. parent daemon restart, Ctrl-C);
+    //   - pnpm-style abort (exit 254 — pnpm raises this when a lifecycle script
+    //     is aborted or a child is killed; the stderr is typically empty).
+    // Must be checked before install-frozen-lockfile because the install error
+    // text embeds the install command (which contains "frozen-lockfile") — without
+    // this guard, a signal-killed install would be misclassified as a lockfile-drift
+    // failure and the recovery agent would chase a non-existent manifest issue.
+    // Match both error-string formats: WorktreeInstallError's "exited with N" and
+    // the workspace-dep install path's bare "exited N".
     errorClass: 'install-timeout',
-    match: /exited with 137|SIGKILL|exit code 137/i,
+    match: /exited (?:with )?(?:137|130|254)\b|SIGKILL|SIGINT|exit code (?:137|130|254)\b/i,
   },
   {
     errorClass: 'install-frozen-lockfile',

@@ -152,6 +152,50 @@ describe('classifyError', () => {
       UNCLASSIFIED_ERROR_CLASS,
     )
   })
+
+  it('classifies a signal-killed workspace-dep install (exit 254) as install-timeout, not install-frozen-lockfile', () => {
+    // Reproduces the misclassification that caused this recovery task to be
+    // misdirected: the workspace-dep install path in worktree-install.ts emits
+    // 'exited 254' (no 'with'). 254 with empty stderr is a signal-kill
+    // signature (pnpm-style abort / SIGINT to a child). It must NOT route
+    // to install-frozen-lockfile (which blames the manifest).
+    const errMsg =
+      '[setup:install] workspace dep install failed (packages/workflow): ' +
+      'pnpm install --frozen-lockfile exited 254\nstderr (truncated):\n'
+    expect(classifyError(errMsg)).toBe('install-timeout')
+  })
+
+  it('classifies a SIGINT-killed workspace-dep install (exit 130) as install-timeout', () => {
+    const errMsg =
+      '[setup:install] workspace dep install failed (packages/workflow): ' +
+      'pnpm install --frozen-lockfile exited 130\nstderr (truncated):\n'
+    expect(classifyError(errMsg)).toBe('install-timeout')
+  })
+
+  it('classifies a SIGKILL-killed workspace-dep install (exit 137, bare "exited 137" without "with") as install-timeout', () => {
+    // The workspace-dep install error format omits "with" — without the loosened
+    // regex, this would fall through to install-frozen-lockfile.
+    const errMsg =
+      '[setup:install] workspace dep install failed (packages/workflow): ' +
+      'pnpm install --frozen-lockfile exited 137\nstderr (truncated):\n'
+    expect(classifyError(errMsg)).toBe('install-timeout')
+  })
+
+  it('still classifies WorktreeInstallError "exited with 137" as install-timeout (regression guard)', () => {
+    const errMsg =
+      'pnpm install --frozen-lockfile (cwd=/some/dir) exited with 137\n' +
+      'stderr (truncated):\n'
+    expect(classifyError(errMsg)).toBe('install-timeout')
+  })
+
+  it('classifies a true manifest-drift failure (non-signal exit) as install-frozen-lockfile', () => {
+    // A genuine frozen-lockfile mismatch returns exit 1 with a real stderr
+    // message — this must still route to the manifest-blame recipe.
+    const errMsg =
+      'pnpm install --frozen-lockfile exited with 1\nstderr (truncated):\n' +
+      'ERR_PNPM_OUTDATED_LOCKFILE Cannot install with "frozen-lockfile" because pnpm-lock.yaml is not up to date with package.json'
+    expect(classifyError(errMsg)).toBe('install-frozen-lockfile')
+  })
 })
 
 describe('matchFull rules are checked against full output', () => {
