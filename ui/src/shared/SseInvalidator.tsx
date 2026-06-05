@@ -9,7 +9,16 @@ export const SseInvalidator = () => {
 
   useEffect(() => {
     const es = new EventSource(eventsUrl())
-    es.addEventListener('hello', () => setSseConnected(true))
+    // On every connect (including reconnects after a drop), mark the channel
+    // live and invalidate all views so any events missed during the outage
+    // are caught immediately on the next fetch.
+    es.addEventListener('hello', () => {
+      setSseConnected(true)
+      void qc.invalidateQueries({ queryKey: ['tasks'] })
+      void qc.invalidateQueries({ queryKey: ['progress'] })
+      void qc.invalidateQueries({ queryKey: ['todo'] })
+      void qc.invalidateQueries({ queryKey: ['action-queue'] })
+    })
 
     // Coalesce rapid task-change events: many tasks may update in quick
     // succession (e.g. orchestrator dispatching a batch).  Rather than
@@ -46,10 +55,23 @@ export const SseInvalidator = () => {
       }, 150)
     })
 
+    // 'progress' events fire when proposal lifecycle events occur (added,
+    // promoted, sliced, dismissed).  These only affect the Progress tab, so
+    // we invalidate the 'progress' query key only — not 'tasks' or 'todo'.
+    let progressDebounce: ReturnType<typeof setTimeout> | null = null
+    es.addEventListener('progress', () => {
+      if (progressDebounce !== null) clearTimeout(progressDebounce)
+      progressDebounce = setTimeout(() => {
+        progressDebounce = null
+        void qc.invalidateQueries({ queryKey: ['progress'] })
+      }, 150)
+    })
+
     es.onerror = () => setSseConnected(false)
     return () => {
       if (tasksDebounce !== null) clearTimeout(tasksDebounce)
       if (todoDebounce !== null) clearTimeout(todoDebounce)
+      if (progressDebounce !== null) clearTimeout(progressDebounce)
       es.close()
       setSseConnected(false)
     }

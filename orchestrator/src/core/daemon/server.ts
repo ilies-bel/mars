@@ -1073,6 +1073,14 @@ export const startDaemon = async (
   bus.on('task.blocked', () => { viewStreamHub.broadcast('tasks') })
   bus.on('task.unblocked', () => { viewStreamHub.broadcast('tasks') })
 
+  // Proposal lifecycle events update the Progress-tab DAG in place.
+  bus.on('proposal.added',     () => { viewStreamHub.broadcast('progress') })
+  bus.on('proposal.updated',   () => { viewStreamHub.broadcast('progress') })
+  bus.on('proposal.dismissed', () => { viewStreamHub.broadcast('progress') })
+  bus.on('proposal.promoted',  () => { viewStreamHub.broadcast('progress') })
+  bus.on('proposal.sliced',    () => { viewStreamHub.broadcast('progress') })
+  bus.on('proposal.deleted',   () => { viewStreamHub.broadcast('progress') })
+
   // Post-task-completion KPI-drift trigger. Runs fire-and-forget so a trigger
   // failure never affects the task-completion path. Only active when
   // selfEvolve.autoTrigger=true (default: false). Never queues tasks.
