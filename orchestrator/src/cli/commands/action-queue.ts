@@ -294,6 +294,36 @@ const actionQueueWatch: Command = {
   },
 }
 
+const actionQueueReconcile: Command = {
+  path: 'action-queue reconcile',
+  summary: 'one-time pass: close every open action queue item for terminal tasks',
+  usage: 'usage: mars action-queue reconcile',
+  run: async (_args, deps) => {
+    const { migrateQueueSchema } = await import('../../core/queue')
+    await migrateQueueSchema()
+    const { resolveStateClient } = await import('../../core/store/state-client')
+    const { reconcileTerminalTasks } = await import(
+      '../../core/daemon/lifecycle-reconcile'
+    )
+    const client = resolveStateClient()
+    const { rowsResolved, dismissalsCleared } =
+      await reconcileTerminalTasks(client)
+    if (rowsResolved === 0 && dismissalsCleared === 0) {
+      deps.out('nothing to reconcile — action queue is consistent')
+    } else {
+      if (rowsResolved > 0)
+        deps.out(
+          `closed ${rowsResolved} action queue item${rowsResolved === 1 ? '' : 's'}`,
+        )
+      if (dismissalsCleared > 0)
+        deps.out(
+          `cleared ${dismissalsCleared} orphaned dismissal${dismissalsCleared === 1 ? '' : 's'}`,
+        )
+    }
+    return { code: 0 }
+  },
+}
+
 export const actionQueueCommands: readonly Command[] = [
   actionQueueList,
   actionQueueShow,
@@ -303,5 +333,6 @@ export const actionQueueCommands: readonly Command[] = [
   actionQueueUndismiss,
   actionQueueRaise,
   actionQueueWatch,
+  actionQueueReconcile,
   actionQueueDefault,
 ]
