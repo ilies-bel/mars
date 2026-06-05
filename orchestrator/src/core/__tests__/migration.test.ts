@@ -675,3 +675,90 @@ describe('DB-side CHECK constraints for enum state machines', () => {
     c.close()
   })
 })
+
+describe('ADR-0049: fix task kind invariant enforcement', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('assertTaskKindInvariant rejects kind="fix" with null fix_for_task_id', async () => {
+    const { assertTaskKindInvariant } = await import('../queue')
+    expect(() => assertTaskKindInvariant('fix', null)).toThrow(
+      `task kind 'fix' requires a non-null fix-for pointer; got null`,
+    )
+  })
+
+  it('assertTaskKindInvariant accepts kind="fix" with a non-null fix_for_task_id', async () => {
+    const { assertTaskKindInvariant } = await import('../queue')
+    expect(() => assertTaskKindInvariant('fix', 'origin-task-id')).not.toThrow()
+  })
+
+  it('migration drops pre-existing orphan fix rows (kind="fix", fix_for_task_id IS NULL)', async () => {
+    const dbPath = `file:${repo}/.mars/mars.db`
+    const q = createClient({ url: dbPath })
+    const now = new Date().toISOString()
+
+    // Seed a tasks table that already has the kind column.
+    await q.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
+      fix_for_task_id TEXT, kind TEXT,
+      origin_id TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`)
+
+    // A well-formed fix row (has an origin pointer) — must survive migration.
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, retry_count, created_at, updated_at)
+            VALUES ('origin', 'original work', 'done', NULL, 'task', 'origin', 0, ?, ?)`,
+      args: [now, now],
+    })
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, retry_count, created_at, updated_at)
+            VALUES ('fix-good', 'fix work', 'queued', 'origin', 'fix', 'origin', 0, ?, ?)`,
+      args: [now, now],
+    })
+
+    // Orphan fix row: kind='fix' but fix_for_task_id IS NULL — must be deleted.
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, retry_count, created_at, updated_at)
+            VALUES ('fix-orphan', 'orphan fix', 'queued', NULL, 'fix', 'fix-orphan', 0, ?, ?)`,
+      args: [now, now],
+    })
+    q.close()
+
+    // Run migration.
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
+
+    const db = createClient({ url: dbPath })
+
+    // Orphan fix row must be gone.
+    const orphanCheck = await db.execute(
+      `SELECT id FROM tasks WHERE id = 'fix-orphan'`,
+    )
+    expect(orphanCheck.rows).toHaveLength(0)
+
+    // Well-formed fix row must survive.
+    const goodFixCheck = await db.execute(
+      `SELECT id FROM tasks WHERE id = 'fix-good'`,
+    )
+    expect(goodFixCheck.rows).toHaveLength(1)
+
+    // Origin row must survive.
+    const originCheck = await db.execute(
+      `SELECT id FROM tasks WHERE id = 'origin'`,
+    )
+    expect(originCheck.rows).toHaveLength(1)
+
+    db.close()
+  })
+})

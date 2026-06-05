@@ -491,6 +491,14 @@ export const migrateQueueSchema = async (): Promise<void> => {
         WHERE kind IS NULL AND fix_for_task_id IS NULL`,
     )
   }
+  // ADR-0049: purge pre-existing orphan fix rows — kind='fix' with a NULL
+  // origin pointer. These violate the by-construction invariant introduced by
+  // ADR-0049. The upsertFixTask path now always writes kind='fix' explicitly
+  // and assertTaskKindInvariant guards the enqueueTask path; this idempotent
+  // DELETE removes any surviving legacy anomalies so the invariant holds.
+  await c.execute(
+    `DELETE FROM tasks WHERE kind = 'fix' AND fix_for_task_id IS NULL`,
+  )
   if (!names.has('priority')) {
     // CHECK constraint cannot be added via ALTER TABLE in SQLite; the
     // application-level validatePriority() guards inserts/updates instead.

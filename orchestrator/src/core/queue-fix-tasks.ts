@@ -247,13 +247,17 @@ export const upsertFixTask = async (
   await s.batch(
     [
       {
+        // ADR-0049: kind='fix' is written by construction so the row is never
+        // an orphan from birth. assertTaskKindInvariant enforces this same
+        // constraint at the enqueueTask path; upsertFixTask mirrors it here.
         sql: `INSERT INTO tasks (
               id, prompt, status,
               author_kind, author_name,
               fix_for_task_id, failure_signature,
+              kind,
               retry_count, origin_id, priority,
               created_at, updated_at
-            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 'fix', 0, ?, ?, ?, ?)`,
         args: [
           fixTaskId,
           prompt,
