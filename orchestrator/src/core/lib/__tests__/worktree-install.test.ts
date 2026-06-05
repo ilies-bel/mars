@@ -172,6 +172,99 @@ describe('worktree-install', () => {
       }
     })
 
+    it('installs then builds a local file: workspace dep BEFORE installing the site (so dist is packed)', async () => {
+      // Site = orchestrator with a pnpm lockfile and a file: dep on a sibling
+      // workspace package that has a build script. The dep's own deps install
+      // first (so its build tool is on PATH), then it builds, and only THEN
+      // does the orchestrator site install — so pnpm packs the built dist.
+      mkdirSync(resolve(workDir, 'orchestrator'))
+      writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'orchestrator', 'package.json'),
+        JSON.stringify({
+          name: 'orch',
+          dependencies: { '@mars/workflow': 'file:../packages/workflow' },
+        }),
+      )
+      mkdirSync(resolve(workDir, 'packages', 'workflow'), { recursive: true })
+      writeFileSync(resolve(workDir, 'packages', 'workflow', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'packages', 'workflow', 'package.json'),
+        JSON.stringify({ name: '@mars/workflow', scripts: { build: 'tsup' } }),
+      )
+
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+      await installWorktreeDeps({ worktreeRoot: workDir, runner })
+
+      const wfDir = resolve(workDir, 'packages', 'workflow')
+      const depInstallIdx = calls.findIndex(
+        (c) => c.cwd === wfDir && c.args[0] === 'install',
+      )
+      const depBuildIdx = calls.findIndex(
+        (c) => c.cwd === wfDir && c.args[0] === 'run' && c.args[1] === 'build',
+      )
+      const orchInstallIdx = calls.findIndex(
+        (c) => c.cwd === resolve(workDir, 'orchestrator') && c.args[0] === 'install',
+      )
+      expect(depInstallIdx).toBeGreaterThanOrEqual(0)
+      expect(depBuildIdx).toBeGreaterThanOrEqual(0)
+      expect(orchInstallIdx).toBeGreaterThanOrEqual(0)
+      expect(depInstallIdx).toBeLessThan(depBuildIdx) // install dep deps before building
+      expect(depBuildIdx).toBeLessThan(orchInstallIdx) // build dep before installing consumer
+    })
+
+    it('does not build deps that escape the worktree or lack a build script', async () => {
+      mkdirSync(resolve(workDir, 'orchestrator'))
+      writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'orchestrator', 'package.json'),
+        JSON.stringify({
+          name: 'orch',
+          dependencies: {
+            zod: '^4.0.0', // registry dep — ignored
+            outside: 'file:../../elsewhere', // escapes the worktree — ignored
+          },
+        }),
+      )
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+      await installWorktreeDeps({ worktreeRoot: workDir, runner })
+      expect(calls.some((c) => c.args[0] === 'run' && c.args[1] === 'build')).toBe(false)
+      expect(calls).toHaveLength(1)
+      expect(calls[0].args[0]).toBe('install')
+    })
+
+    it('throws when a workspace dep build fails (it would only fail typecheck later otherwise)', async () => {
+      mkdirSync(resolve(workDir, 'orchestrator'))
+      writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'orchestrator', 'package.json'),
+        JSON.stringify({
+          name: 'orch',
+          dependencies: { '@mars/workflow': 'file:../packages/workflow' },
+        }),
+      )
+      mkdirSync(resolve(workDir, 'packages', 'workflow'), { recursive: true })
+      writeFileSync(resolve(workDir, 'packages', 'workflow', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'packages', 'workflow', 'package.json'),
+        JSON.stringify({ name: '@mars/workflow', scripts: { build: 'tsup' } }),
+      )
+      // dep install succeeds; the build (pnpm run build) fails.
+      const runner = async (cmd: string, args: readonly string[]) =>
+        cmd === 'pnpm' && args[0] === 'run' ? fail('tsup exploded\n') : ok()
+      await expect(
+        installWorktreeDeps({ worktreeRoot: workDir, runner }),
+      ).rejects.toThrow(/workspace dep build failed/)
+    })
+
     it('logs duration per site for visibility into the setup phase', async () => {
       writeFileSync(resolve(workDir, 'pnpm-lock.yaml'), '')
       const lines: string[] = []
