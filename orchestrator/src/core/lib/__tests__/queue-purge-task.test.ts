@@ -196,9 +196,9 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     ).toBe(0)
   })
 
-  // ── fix_for_task_id sibling nulling ───────────────────────────────────────
+  // ── fix_for_task_id cascade deletion (ADR-0049) ───────────────────────────
 
-  it('nulls fix_for_task_id on siblings that point at the deleted task', async () => {
+  it('cascade-deletes fix tasks that point at the deleted origin (ADR-0049)', async () => {
     const q = await loadQueue(repo)
     // Parent task: the target of purge.
     const parent = await q.enqueueTask('parent task', undefined, {
@@ -206,7 +206,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     })
     await q.updateTask(parent.id, { status: 'failed', error: 'test' })
 
-    // Directly insert a sibling row that has fix_for_task_id = parent.id.
+    // Directly insert a fix row that has fix_for_task_id = parent.id.
     // (enqueueTask doesn't expose fix_for_task_id; write it raw.)
     const c = q.resolveQueueClient()
     const siblingId = 'mars-sibling01'
@@ -217,12 +217,11 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     })
 
     const result = await q.dropTask(parent.id)
-    expect(result.fixForRefsCleared).toContain(siblingId)
+    // ADR-0049: cascade-deleted, not null-ed.
+    expect(result.cascadedFixTaskIds).toContain(siblingId)
 
-    // Sibling still exists, pointer cleared to NULL.
-    const sibling = await q.getTask(siblingId)
-    expect(sibling).not.toBeNull()
-    expect(sibling?.fixForTaskId).toBeNull()
+    // Fix task row is GONE — not surviving with a null pointer.
+    expect(await q.getTask(siblingId)).toBeNull()
   })
 
   // ── combined: all edge types at once ─────────────────────────────────────
@@ -262,8 +261,8 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     // Edge counts.
     expect(result.edgesRemoved.incoming).toBe(1)
     expect(result.edgesRemoved.outgoing).toBe(1)
-    // fix_for pointers.
-    expect(result.fixForRefsCleared).toContain(sibId)
+    // ADR-0049: fix task is cascade-deleted.
+    expect(result.cascadedFixTaskIds).toContain(sibId)
 
     // No task_blockers rows mention target on either side.
     const tbLeft = await q.resolveQueueClient().execute({
@@ -279,8 +278,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     })
     expect(Number((tpbLeft.rows[0] as unknown as { n: number | bigint }).n)).toBe(0)
 
-    // Sibling's pointer cleared; row survives.
-    const sibling = await q.getTask(sibId)
-    expect(sibling?.fixForTaskId).toBeNull()
+    // Fix task row is GONE — cascade-deleted with the origin (ADR-0049).
+    expect(await q.getTask(sibId)).toBeNull()
   })
 })

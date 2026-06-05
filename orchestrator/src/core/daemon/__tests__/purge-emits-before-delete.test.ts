@@ -141,4 +141,83 @@ describe('corePurgeTask — task.dropped emitted before DELETE', () => {
     const item = await actionQueue.getActionQueueItem(itemId)
     expect(item!.state).toBe('resolved')
   })
+
+  it('cascade-deletes the fix task when purging an origin, both rows gone and both task.dropped events emitted', async () => {
+    // Acceptance criterion (ADR-0049): purging an origin with a recovery arc
+    // must delete BOTH the origin and its fix task. Neither row survives. Both
+    // task.dropped events are emitted before the DELETEs so the Invalidator can
+    // clear their Action-queue rows without a 500.
+    const { q, actionQueue, ad, pt } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    // Seed a failed origin task.
+    const origin = await q.enqueueTask('origin with recovery', undefined, { skipTriage: true })
+    await q.updateTask(origin.id, { status: 'failed', error: 'test failure' })
+
+    // Directly insert a fix task pointing at the origin.
+    const fixId = 'mars-casc-fix01'
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, priority, created_at, updated_at, retry_count, claude_session_ids)
+            VALUES (?, ?, 'queued', ?, 'fix', ?, 0, datetime('now'), datetime('now'), 0, '[]')`,
+      args: [fixId, 'recovery for origin', origin.id, origin.id],
+    })
+
+    // Raise an Action-queue item for both origin and fix task so we can confirm
+    // drainAlertDismissals clears both.
+    const originItemId = await actionQueue.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Task ${origin.id} failed`,
+      body: 'stuck',
+      payload: {},
+      context: { task_id: origin.id },
+      raisedBy: 'orchestrator:test',
+      signature: `sig-origin-${origin.id}`,
+      originTaskId: origin.id,
+    })
+    const fixItemId = await actionQueue.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Task ${fixId} failed`,
+      body: 'fix stuck',
+      payload: {},
+      context: { task_id: fixId },
+      raisedBy: 'orchestrator:test',
+      signature: `sig-fix-${fixId}`,
+      originTaskId: fixId,
+    })
+
+    // Register subscriber AFTER seeding so pre-purge events are behind the cursor.
+    await ad.ensureAlertDismisser(client)
+
+    // Purge the origin with force=true (no branch exists, git branch -D fails silently).
+    const result = await pt.corePurgeTask(origin.id, true, 'main', repo)
+
+    // Both rows must be gone.
+    expect(await (q as unknown as { getTask: (id: string) => Promise<unknown> }).getTask(origin.id)).toBeNull()
+    expect(await (q as unknown as { getTask: (id: string) => Promise<unknown> }).getTask(fixId)).toBeNull()
+
+    // cascadedFixTaskIds must include the fix task.
+    expect((result as unknown as { cascadedFixTaskIds: string[] }).cascadedFixTaskIds).toContain(fixId)
+
+    // Both task.dropped events must exist in the events table.
+    const droppedEvts = await client.execute({
+      sql: `SELECT json_extract(payload, '$.taskId') AS tid
+            FROM events WHERE type = 'task.dropped'
+            AND json_extract(payload, '$.taskId') IN (?, ?)`,
+      args: [origin.id, fixId],
+    })
+    const droppedIds = droppedEvts.rows.map((r) => (r as unknown as { tid: string }).tid)
+    expect(droppedIds).toContain(origin.id)
+    expect(droppedIds).toContain(fixId)
+
+    // After draining, both Action-queue items must be resolved.
+    await ad.drainAlertDismissals(client)
+    const originItem = await actionQueue.getActionQueueItem(originItemId)
+    const fixItem = await actionQueue.getActionQueueItem(fixItemId)
+    expect(originItem!.state).toBe('resolved')
+    expect(fixItem!.state).toBe('resolved')
+  })
 })

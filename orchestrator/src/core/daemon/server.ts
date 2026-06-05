@@ -1528,7 +1528,7 @@ export const startDaemon = async (
     log(
       `[drop] ${id} (was ${result.previousStatus}; force=${force}, ` +
         `incoming=${result.edgesRemoved.incoming}, outgoing=${result.edgesRemoved.outgoing}, ` +
-        `fixForRefs=${result.fixForRefsCleared.length}, worktree=${worktreeRemoved}, branch=${branchDeleteResult})`,
+        `cascadedFix=${result.cascadedFixTaskIds.length}, worktree=${worktreeRemoved}, branch=${branchDeleteResult})`,
     )
     if (liveInFlight) {
       // The worker still holds an inFlight slot; force-clearing it here lets

@@ -1,7 +1,13 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { promisify } from 'node:util'
-import { getTask, dropTask, type DropTaskResult } from '../queue'
+import {
+  getTask,
+  dropTask,
+  resolveQueueClient,
+  migrateQueueSchema,
+  type DropTaskResult,
+} from '../queue'
 import {
   listUniqueCommitsAhead,
   type OrphanCommit,
@@ -74,6 +80,23 @@ export const corePurgeTask = async (
     await removeWorktree({ path: task.worktreePath, branch }, true).catch(() => {})
   }
   await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
+
+  // Clean up git artifacts for every cascade fix task before the DB drop.
+  // dropTask will delete the fix task rows atomically; we handle the on-disk
+  // cleanup here, mirroring the worktree+branch -D treatment above (ADR-0049).
+  await migrateQueueSchema()
+  const fixRefRows = await resolveQueueClient().execute({
+    sql: `SELECT id, worktree_path, branch FROM tasks WHERE fix_for_task_id = ?`,
+    args: [id],
+  })
+  for (const row of fixRefRows.rows) {
+    const r = row as unknown as { id: string; worktree_path: string | null; branch: string | null }
+    const fixBranch = r.branch ?? `task/${r.id}`
+    if (r.worktree_path && existsSync(r.worktree_path)) {
+      await removeWorktree({ path: r.worktree_path, branch: fixBranch }, true).catch(() => {})
+    }
+    await exec('git', ['branch', '-D', fixBranch], { cwd: repoRoot }).catch(() => {})
+  }
 
   return dropTask(id)
 }

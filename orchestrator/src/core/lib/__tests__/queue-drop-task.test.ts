@@ -70,13 +70,11 @@ describe('dropTask (universal deletion)', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('drops a queued task that is referenced by a queued recovery (clears fix_for_task_id on the dependent row)', async () => {
-    // Reproduces the symptom from the task brief:
+  it('drops a queued task that is referenced by a queued recovery (cascade-deletes the fix task)', async () => {
+    // Reproduces the symptom from the task brief (ADR-0049):
     //   parent task in queued/failed, child fix task in queued status with
-    //   fix_for_task_id -> parent. `mars purge <parent>` fails with FK error
-    //   (in the relaxed-fk world here, the conceptual dangling-pointer
-    //   problem). `dropTask(parent)` should null out the child's pointer
-    //   instead of erroring.
+    //   fix_for_task_id -> parent. `mars purge <parent>` must cascade-delete
+    //   the fix task atomically — no orphaned recovery row, no 500 on purge.
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft, rc } = await loadModules(repo)
     const cleanup = registerTestRecipe(rc, 'sig-drop')
@@ -105,7 +103,8 @@ describe('dropTask (universal deletion)', () => {
 
     expect(result.taskId).toBe(parent.id)
     expect(result.previousStatus).toBe('blocked')
-    expect(result.fixForRefsCleared).toEqual([r.fixTaskId])
+    // ADR-0049: fix task is cascade-deleted, not null-ed.
+    expect(result.cascadedFixTaskIds).toEqual([r.fixTaskId])
     // The parent had one incoming task_blockers edge (the fix task waits
     // on... no, the fix task is the blocker; the parent has an *outgoing*
     // edge as task_id -> blocker_task_id=fix). Either way both should be 1.
@@ -116,10 +115,8 @@ describe('dropTask (universal deletion)', () => {
     // Parent row is gone.
     expect(await q.getTask(parent.id)).toBeNull()
 
-    // Child row survives, with fix_for_task_id nulled out.
-    const child = await q.getTask(r.fixTaskId)
-    expect(child).not.toBeNull()
-    expect(child?.fixForTaskId).toBeNull()
+    // Fix task row is ALSO gone (cascade-deleted, ADR-0049).
+    expect(await q.getTask(r.fixTaskId)).toBeNull()
 
     // No leftover task_blockers edges mentioning the dropped id.
     const leftover = await q.resolveQueueClient().execute({
@@ -139,7 +136,7 @@ describe('dropTask (universal deletion)', () => {
     expect(result.taskId).toBe(t.id)
     expect(result.previousStatus).toBe('queued')
     expect(result.edgesRemoved).toEqual({ incoming: 0, outgoing: 0 })
-    expect(result.fixForRefsCleared).toEqual([])
+    expect(result.cascadedFixTaskIds).toEqual([])
     expect(await q.getTask(t.id)).toBeNull()
   })
 

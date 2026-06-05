@@ -374,7 +374,7 @@ const drop: Command = {
       taskId: string
       previousStatus: string
       edgesRemoved: { incoming: number; outgoing: number }
-      fixForRefsCleared: string[]
+      cascadedFixTaskIds: string[]
       worktreeRemoved: boolean
       branchDeleted: boolean
     }
@@ -384,8 +384,8 @@ const drop: Command = {
       `branch=${data.branchDeleted ? 'deleted' : 'absent'}`,
       `edges=${data.edgesRemoved.incoming}in/${data.edgesRemoved.outgoing}out`,
     ]
-    if (data.fixForRefsCleared.length > 0) {
-      parts.push(`fixForRefs cleared on: ${data.fixForRefsCleared.join(', ')}`)
+    if (data.cascadedFixTaskIds.length > 0) {
+      parts.push(`cascaded fix tasks: ${data.cascadedFixTaskIds.join(', ')}`)
     }
     deps.out(parts.join('; '))
     return { code: 0 }

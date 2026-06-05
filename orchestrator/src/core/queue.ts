@@ -2134,27 +2134,28 @@ export interface DropTaskResult {
    */
   edgesRemoved: { incoming: number; outgoing: number }
   /**
-   * Ids of tasks whose `fix_for_task_id` pointed at the dropped row.
-   * Cleared to NULL alongside the delete so the pointer doesn't dangle.
-   * The pointed-at column is not declared as a FK, but readers conflate
-   * a non-null pointer with "still has a parent" — null is the honest
-   * post-drop state.
+   * Ids of fix/recovery tasks (kind='fix', fix_for_task_id = dropped id)
+   * that were cascade-deleted atomically with the origin. These tasks are
+   * GONE — not null-ed — by the time dropTask returns (ADR-0049).
    */
-  fixForRefsCleared: string[]
+  cascadedFixTaskIds: string[]
 }
 
 /**
  * Database-level drop. Works regardless of status — clears every
- * task_blockers row mentioning <id> on either side, nulls out any
- * `fix_for_task_id` pointer that referred to <id>, and deletes the
- * task row. Caller is responsible for cancelling any in-flight workflow
- * and removing the worktree+branch on disk before invoking this.
+ * task_blockers row mentioning <id> on either side, cascade-deletes every
+ * fix/recovery task whose `fix_for_task_id` points at <id> (ADR-0049), and
+ * deletes the task row. Caller is responsible for cancelling any in-flight
+ * workflow and removing the worktree+branch on disk before invoking this.
  *
  * Emits `task.dropped` (then `task.terminal{purged}`) BEFORE `DELETE FROM
  * tasks`, all within a single `withWriteTx` call. The event and the deletion
  * share one atomic commit so the Invalidator (ADR-0030) can still resolve the
  * taskId — a post-delete emit would race the subscriber cursor read and leave
  * Action-queue rows + dismissal permanently stale.
+ *
+ * Cascade fix tasks receive the same pre-delete event pair so their own
+ * Action-queue rows are invalidated atomically (ADR-0049).
  */
 export const dropTask = async (id: string): Promise<DropTaskResult> => {
   await migrateQueueSchema()
@@ -2185,11 +2186,14 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
       (outgoing.rows[0] as unknown as { n: number | bigint }).n,
     )
 
-    const refRows = await tx.execute({
+    // Cascade: collect every fix/recovery task whose fix_for_task_id points
+    // at the origin being dropped. These are deleted atomically in the same
+    // transaction (ADR-0049: purge cascades the whole recovery arc).
+    const fixRefRows = await tx.execute({
       sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
       args: [id],
     })
-    const fixForRefsCleared = refRows.rows.map(
+    const cascadedFixTaskIds = fixRefRows.rows.map(
       (row) => (row as unknown as { id: string }).id,
     )
 
@@ -2197,6 +2201,13 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
     // and the Invalidator's cursor can still resolve the taskId (ADR-0030).
     await publish(tx, 'task.dropped', { taskId: id, dropReason: 'purged' })
     await publish(tx, 'task.terminal', { taskId: id, reason: 'purged' })
+
+    // Emit pre-delete events for every cascade fix task so their Action-queue
+    // rows are invalidated before their rows disappear (ADR-0030 / ADR-0049).
+    for (const fixId of cascadedFixTaskIds) {
+      await publish(tx, 'task.dropped', { taskId: fixId, dropReason: 'purged' })
+      await publish(tx, 'task.terminal', { taskId: fixId, reason: 'purged' })
+    }
 
     // Release dependents: tasks blocked on <id> that have no other non-terminal
     // blocker must flip to 'queued'. This must run BEFORE the bulk DELETE below
@@ -2251,17 +2262,59 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
       sql: `DELETE FROM task_proposal_blockers WHERE task_id = ?`,
       args: [id],
     })
-    if (fixForRefsCleared.length > 0) {
-      // fix_for_task_id is not declared as a FK, but a dangling pointer
-      // confuses readers that conflate a non-null value with "parent
-      // exists". Set NULL is the honest post-drop state; the row's
-      // `kind = 'fix'` invariant is checked only on inserts, so legacy
-      // rows surviving a parent drop stay queryable without error.
+
+    // Cascade-delete each fix/recovery task that pointed at the origin.
+    // For each: release any tasks that were blocked on the fix task (e.g. other
+    // origins sharing a shared recipe fix task), clean up its edges and proposal
+    // blockers, then delete its row. ADR-0049: fix tasks never outlive their
+    // origin.
+    for (const fixId of cascadedFixTaskIds) {
+      // Release tasks blocked on this fix task (unblock them if all other
+      // blockers are terminal — mirrors the dependent-release loop above).
+      const fixDepRows = await tx.execute({
+        sql: `SELECT task_id FROM task_blockers WHERE blocker_task_id = ?`,
+        args: [fixId],
+      })
+      for (const row of fixDepRows.rows) {
+        const depId = (row as unknown as { task_id: string }).task_id
+        // Skip the origin being dropped — its row disappears below anyway.
+        if (depId === id) continue
+        await tx.execute({
+          sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+          args: [depId, fixId],
+        })
+        const upd = await tx.execute({
+          sql: `UPDATE tasks
+                   SET updated_at = ?, status = 'queued'
+                 WHERE id = ? AND status = 'blocked'
+                   AND NOT EXISTS (
+                     SELECT 1
+                       FROM task_blockers b
+                       JOIN tasks t2 ON t2.id = b.blocker_task_id
+                      WHERE b.task_id = ?
+                        AND t2.status NOT IN ('done', 'failed')
+                        AND b.state IN ('confirmed', 'pending-review')
+                   )`,
+          args: [releaseNow, depId, depId],
+        })
+        if ((upd.rowsAffected ?? 0) > 0) {
+          await publish(tx, 'task.unblocked', { taskId: depId, blockerTaskId: fixId })
+        }
+      }
       await tx.execute({
-        sql: `UPDATE tasks SET fix_for_task_id = NULL, updated_at = ? WHERE fix_for_task_id = ?`,
-        args: [new Date().toISOString(), id],
+        sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
+        args: [fixId, fixId],
+      })
+      await tx.execute({
+        sql: `DELETE FROM task_proposal_blockers WHERE task_id = ?`,
+        args: [fixId],
+      })
+      await tx.execute({
+        sql: `DELETE FROM tasks WHERE id = ?`,
+        args: [fixId],
       })
     }
+
     await tx.execute({
       sql: `DELETE FROM tasks WHERE id = ?`,
       args: [id],
@@ -2271,7 +2324,7 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
       taskId: id,
       previousStatus,
       edgesRemoved: { incoming: incomingCount, outgoing: outgoingCount },
-      fixForRefsCleared,
+      cascadedFixTaskIds,
     }
   })
 }
