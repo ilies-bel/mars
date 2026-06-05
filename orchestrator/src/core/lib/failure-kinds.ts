@@ -232,6 +232,29 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
 
+      // ── code:context-exhausted ───────────────────────────────────────────
+      // The coder was killed by the context-budget ceiling (exitCode 138,
+      // stderr "context budget exhausted"). The task is too large to complete
+      // in one pass — a verbatim restart will exhaust again. Primary recovery
+      // action is re-slice / narrow scope; restart is secondary.
+      //
+      // NOTE: no cliHint for re-slice because no task-level re-slice CLI verb
+      // exists yet. A task-level `mars reslice <id>` verb is a follow-up.
+      {
+        signature: 'code:context-exhausted',
+        warmTitle: 'The coder ran out of context window before finishing',
+        verboseReason:
+          'The coder ran out of context window (token budget) before finishing. The task is likely too large to complete in one pass; consider splitting it into smaller tasks.',
+        actions: [
+          // Re-slice is first: restarting verbatim will exhaust again.
+          // op: 'shape' = guidance-only (no daemon verb); cliHint is null
+          // until a task-level re-slice verb is implemented.
+          { id: 're-slice', label: 'Re-slice into smaller tasks', op: 'shape' as const },
+          { id: 'restart', label: 'Restart from scratch', op: 'restart' as const },
+          { id: 'purge', label: 'Drop permanently', op: 'purge' as const, needsConfirm: true },
+        ],
+      },
+
       // ── verify:typecheck ─────────────────────────────────────────────────
       // One entry per registered typecheck-* error-class slug in
       // failure-signature.ts, plus a generic unclassified fallback.
@@ -402,4 +425,28 @@ export const resolveFailureKind = (
     return unknownFailureKind(failingStepFromSignature(signature), capturedError)
   }
   return unknownFailureKind('unknown', capturedError)
+}
+
+/**
+ * Legacy free-text bridge: maps a bare `failureReasonCode` string (as stamped
+ * by older workflow write-paths before the `code:` prefix convention was
+ * introduced) to the canonical catalog signature.
+ *
+ * Returns `null` when the string does not match any known legacy code — the
+ * caller should treat `null` as an unrecognised code and fall through to the
+ * `unknown` path.
+ *
+ * Rules are ordered from most-specific to least-specific to avoid a generic
+ * substring swallowing a more precise match.
+ */
+export const failureReasonStringToCode = (reasonStr: string): string | null => {
+  // context-exhausted: bare code, underscore variant, or full stderr phrase
+  if (
+    reasonStr.includes('context-exhausted') ||
+    reasonStr.includes('context_exhausted') ||
+    reasonStr.includes('context budget exhausted')
+  ) {
+    return 'code:context-exhausted'
+  }
+  return null
 }
