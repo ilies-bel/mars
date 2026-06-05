@@ -12,6 +12,7 @@ import {
   raiseActionQueueItem,
   listActionQueueItems,
   getActionQueueItem,
+  setActionQueueState,
   type ActionQueueItem,
 } from '../../core/lib/action-queue'
 import {
@@ -161,7 +162,7 @@ const actionQueueShow: Command = {
 
 const makeAckResolve = (verb: 'ack' | 'resolve'): Command => ({
   path: `action-queue ${verb}`,
-  summary: `${verb} an action queue item (dismiss its entity)`,
+  summary: `${verb} an action queue item`,
   usage: `usage: mars action-queue ${verb} <id>`,
   run: async (args, deps) => {
     const id = args.positional.filter((a) => a !== '--lean')[0]
@@ -174,10 +175,17 @@ const makeAckResolve = (verb: 'ack' | 'resolve'): Command => ({
       deps.err(`no action queue item matching ${id}`)
       return { code: 1 }
     }
-    const entityKind = actionQueueKindToEntityKind(item.kind)
-    const entityId = extractEntityId(item)
-    const note = verb === 'ack' ? 'ack' : 'resolved'
-    await dismissEntity(entityKind, entityId, { note })
+    if (verb === 'resolve') {
+      // Hard-close the action_queue_items row so state/resolved_at/resolution
+      // are persisted. dismissEntity only wrote to action_queue_dismissals and
+      // left the row state = 'open' — a silent no-op for task.dropped rows that
+      // have no eviction event to close them automatically.
+      await setActionQueueState(item.id, 'resolved', { note: 'operator-resolved' })
+    } else {
+      const entityKind = actionQueueKindToEntityKind(item.kind)
+      const entityId = extractEntityId(item)
+      await dismissEntity(entityKind, entityId, { note: 'ack' })
+    }
     deps.out(`${verb} ${item.id}`)
     return { code: 0 }
   },
