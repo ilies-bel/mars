@@ -53,7 +53,7 @@ import {
   EDGE_BLOCK,
   PROPOSAL_STROKE,
   PROPOSAL_TEXT,
-  proposalIdFromComboId,
+  arcKeyFromComboId,
 } from './topologyGraphModel'
 import type { Cluster } from '@/shared/schemas'
 
@@ -64,7 +64,7 @@ import type { Cluster } from '@/shared/schemas'
 export interface TopologyViewProps {
   tasks: ProgressTask[]
   proposals: ProgressProposalNode[]
-  /** Toolbar cluster toggles: cluster names + 'Proposal' whose nodes dim. */
+  /** Toolbar cluster toggles: cluster names + 'Arc' whose combos dim. */
   ghostedClusters?: Set<string>
   /** Toolbar proposal dropdown. Non-null → drill into that proposal. */
   selectedProposalId?: string | null
@@ -275,7 +275,7 @@ export const TopologyView = ({
       applyHighlight()
     }
     const hoverProposal = (comboId: string): void => {
-      litRef.current = chainForProposal({ tasks: propsRef.current.tasks }, proposalIdFromComboId(comboId))
+      litRef.current = chainForProposal({ tasks: propsRef.current.tasks }, arcKeyFromComboId(comboId))
       applyHighlight()
     }
     const clearHover = (): void => {
@@ -620,7 +620,7 @@ export const TopologyView = ({
         busyRef.current = false
         // report drill-in state up
         const open = openComboIdRef.current
-        onSelectProposalRef.current?.(open ? proposalIdFromComboId(open) : null)
+        onSelectProposalRef.current?.(open ? arcKeyFromComboId(open) : null)
         const next = pendingSwapRef.current
         pendingSwapRef.current = null
         if (next != null && next !== openComboIdRef.current) void toggleCombo(next)

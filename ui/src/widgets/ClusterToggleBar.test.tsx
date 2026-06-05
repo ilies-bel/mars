@@ -7,11 +7,11 @@ import {
 } from './ClusterToggleBar'
 
 describe('ClusterToggleBar – four controls', () => {
-  it('renders a Proposal toggle', () => {
+  it('renders an Arc toggle', () => {
     const html = renderToStaticMarkup(
       <ClusterToggleBar active={new Set(ALL_CLUSTER_TOGGLES)} onToggle={() => undefined} />,
     )
-    expect(html).toContain('data-testid="toggle-proposal"')
+    expect(html).toContain('data-testid="toggle-arc"')
   })
 
   it('renders an In-progress toggle', () => {
@@ -46,7 +46,7 @@ describe('ClusterToggleBar – default on state', () => {
   })
 
   it('ALL_CLUSTER_TOGGLES contains exactly the four expected clusters', () => {
-    expect(ALL_CLUSTER_TOGGLES).toContain('Proposal')
+    expect(ALL_CLUSTER_TOGGLES).toContain('Arc')
     expect(ALL_CLUSTER_TOGGLES).toContain('In progress')
     expect(ALL_CLUSTER_TOGGLES).toContain('Blocked')
     expect(ALL_CLUSTER_TOGGLES).toContain('Failed')
@@ -56,7 +56,7 @@ describe('ClusterToggleBar – default on state', () => {
 
 describe('ClusterToggleBar – off state', () => {
   it('marks a turned-off cluster as aria-checked=false', () => {
-    const active = new Set<ClusterToggle>(['Proposal', 'In progress', 'Blocked'])
+    const active = new Set<ClusterToggle>(['Arc', 'In progress', 'Blocked'])
     const html = renderToStaticMarkup(
       <ClusterToggleBar active={active} onToggle={() => undefined} />,
     )

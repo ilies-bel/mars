@@ -26,7 +26,7 @@ describe('decodeProgressState', () => {
     expect(state.query).toBe('')
     expect(state.proposal).toBeNull()
     expect([...state.clusters].sort()).toEqual(
-      ['Blocked', 'Failed', 'In progress', 'Proposal'],
+      ['Arc', 'Blocked', 'Failed', 'In progress'],
     )
   })
 
@@ -67,15 +67,15 @@ describe('decodeProgressState', () => {
   it('defaults clusters to all-active when param is absent', () => {
     const state = decodeProgressState('#/progress')
     expect(state.clusters.size).toBe(4)
-    expect(state.clusters.has('Proposal')).toBe(true)
+    expect(state.clusters.has('Arc')).toBe(true)
     expect(state.clusters.has('In progress')).toBe(true)
     expect(state.clusters.has('Blocked')).toBe(true)
     expect(state.clusters.has('Failed')).toBe(true)
   })
 
   it('decodes a partial cluster list', () => {
-    const state = decodeProgressState('#/progress?clusters=Proposal,Blocked')
-    expect(state.clusters.has('Proposal')).toBe(true)
+    const state = decodeProgressState('#/progress?clusters=Arc,Blocked')
+    expect(state.clusters.has('Arc')).toBe(true)
     expect(state.clusters.has('Blocked')).toBe(true)
     expect(state.clusters.has('In progress')).toBe(false)
     expect(state.clusters.has('Failed')).toBe(false)
@@ -85,7 +85,7 @@ describe('decodeProgressState', () => {
     const state = decodeProgressState('#/progress?clusters=In%20progress,Failed')
     expect(state.clusters.has('In progress')).toBe(true)
     expect(state.clusters.has('Failed')).toBe(true)
-    expect(state.clusters.has('Proposal')).toBe(false)
+    expect(state.clusters.has('Arc')).toBe(false)
     expect(state.clusters.has('Blocked')).toBe(false)
   })
 
@@ -95,9 +95,9 @@ describe('decodeProgressState', () => {
   })
 
   it('silently ignores unrecognised cluster names', () => {
-    const state = decodeProgressState('#/progress?clusters=Proposal,bogus')
+    const state = decodeProgressState('#/progress?clusters=Arc,bogus')
     expect(state.clusters.size).toBe(1)
-    expect(state.clusters.has('Proposal')).toBe(true)
+    expect(state.clusters.has('Arc')).toBe(true)
   })
 
   it('silently ignores the legacy recency param', () => {
@@ -156,11 +156,11 @@ describe('encodeProgressState', () => {
   it('encodes a partial cluster set', () => {
     const state: ProgressUrlState = {
       ...defaultProgressUrlState(),
-      clusters: new Set(['Proposal', 'Blocked'] as const),
+      clusters: new Set(['Arc', 'Blocked'] as const),
     }
     const encoded = encodeProgressState(state)
     expect(encoded).toContain('clusters=')
-    expect(encoded).toContain('Proposal')
+    expect(encoded).toContain('Arc')
     expect(encoded).toContain('Blocked')
     expect(encoded).not.toContain('Failed')
     expect(encoded).not.toContain('In%20progress')
@@ -222,10 +222,10 @@ describe('encode → decode round-trip', () => {
   it('restores partial cluster toggles', () => {
     const state: ProgressUrlState = {
       ...defaultProgressUrlState(),
-      clusters: new Set(['Proposal', 'In progress'] as const),
+      clusters: new Set(['Arc', 'In progress'] as const),
     }
     const restored = decodeProgressState(`#/progress${encodeProgressState(state)}`)
-    expect(restored.clusters.has('Proposal')).toBe(true)
+    expect(restored.clusters.has('Arc')).toBe(true)
     expect(restored.clusters.has('In progress')).toBe(true)
     expect(restored.clusters.has('Blocked')).toBe(false)
     expect(restored.clusters.has('Failed')).toBe(false)
@@ -245,14 +245,14 @@ describe('encode → decode round-trip', () => {
       view: 'board',
       query: 'test search',
       proposal: 'p-abc',
-      clusters: new Set(['Proposal', 'In progress'] as const),
+      clusters: new Set(['Arc', 'In progress'] as const),
     }
     const hash = `#/progress${encodeProgressState(state)}`
     const restored = decodeProgressState(hash)
     expect(restored.view).toBe('board')
     expect(restored.query).toBe('test search')
     expect(restored.proposal).toBe('p-abc')
-    expect(restored.clusters.has('Proposal')).toBe(true)
+    expect(restored.clusters.has('Arc')).toBe(true)
     expect(restored.clusters.has('In progress')).toBe(true)
     expect(restored.clusters.has('Blocked')).toBe(false)
     expect(restored.clusters.has('Failed')).toBe(false)

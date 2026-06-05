@@ -116,10 +116,10 @@ export const dominant = (r: Rollup): Cluster => {
   return best
 }
 
-const comboId = (proposalId: string): string => `combo:${proposalId}`
+const comboId = (arcKey: string): string => `combo:${arcKey}`
 
-/** Strip the `combo:` prefix back to the bare proposal id. */
-export const proposalIdFromComboId = (id: string): string => id.replace(/^combo:/, '')
+/** Strip the `combo:` prefix back to the bare arc key (proposal id, origin id, or task id). */
+export const arcKeyFromComboId = (id: string): string => id.replace(/^combo:/, '')
 
 /** First non-empty line of a task's prompt, used as its node label. */
 const taskLabel = (t: ProgressTask): string => {
@@ -136,46 +136,94 @@ export interface G6GraphData {
 /**
  * Build the G6 GraphData for the cloud overview.
  *
- *  - One COLLAPSED combo per proposal, carrying its plurality `dom` status and
- *    task `count` in `data`.
- *  - One task node per task that has a `parentProposalId` matching a known
- *    proposal — assigned to that combo. (Orphan tasks with no in-scope proposal
- *    are dropped: the cloud is a proposal-centric overview.)
- *  - One blocker edge per `blockedBy` entry whose endpoints are both in scope,
- *    keyed with `blockerKey(blocker, task)` so the highlight map (which uses the
- *    same key) matches.
+ * **Arc-aware grouping** (findings #11/#13/#14/#15/#16):
+ *
+ *  - One COLLAPSED combo per ARC. An arc is determined by an arc key:
+ *      `parentProposalId ?? originId ?? id`
+ *    Proposal-backed arcs use the proposal title; non-proposal arcs use the
+ *    origin task's prompt. Standalone tasks get a solo combo. No task is
+ *    silently dropped.
+ *  - One task node per task, always assigned to its arc combo.
+ *  - Blocker edges keyed with `blockerKey(blocker, task)` so the highlight map
+ *    matches.
+ *  - Recovery edges (`kind:'recovery'`) from `fixForTaskId` → fix task,
+ *    emitted whenever both endpoints are in scope. Mirrors the server-side
+ *    `nestRecoveriesUnderParents` logic in `origin-tree.ts`.
  */
 export const buildG6Data = (
   tasks: ReadonlyArray<ProgressTask>,
   proposals: ReadonlyArray<ProgressProposalNode>,
 ): G6GraphData => {
-  const rollup = rollupByProposal(tasks, proposals)
-  const proposalIds = new Set(proposals.map((p) => p.id))
+  const proposalMap = new Map(proposals.map((p) => [p.id, p]))
 
-  const combos: ComboData[] = proposals.map((p) => {
-    const r = rollup.get(p.id) ?? { total: 0, counts: emptyCounts() }
-    return {
-      id: comboId(p.id),
-      data: { label: p.title, proposalId: p.id, count: r.total, dom: dominant(r) },
-      style: { collapsed: true },
+  /** Arc key for a task: the key that groups it with its arc siblings. */
+  const taskArcKey = (t: ProgressTask): string =>
+    t.parentProposalId ?? t.originId ?? t.id
+
+  // Group tasks by arc key
+  const arcGroups = new Map<string, ProgressTask[]>()
+  for (const t of tasks) {
+    const key = taskArcKey(t)
+    const group = arcGroups.get(key)
+    if (group) group.push(t)
+    else arcGroups.set(key, [t])
+  }
+
+  // Build one combo per arc
+  const combos: ComboData[] = []
+  for (const [arcKey, arcTasks] of arcGroups) {
+    const proposal = proposalMap.get(arcKey)
+    // Label: proposal title if available, otherwise the origin task's first prompt line.
+    const rootTask = arcTasks.find((t) => t.id === arcKey)
+    const firstTask = rootTask ?? arcTasks[0]
+    const label = proposal
+      ? proposal.title
+      : (firstTask!.prompt.split('\n')[0]?.trim() || arcKey)
+
+    // Compute arc cluster rollup inline
+    const counts = emptyCounts()
+    let total = 0
+    for (const t of arcTasks) {
+      counts[t.cluster]++
+      total++
     }
-  })
 
-  const inScopeTasks = tasks.filter((t) => t.parentProposalId != null && proposalIds.has(t.parentProposalId))
-  const taskIds = new Set(inScopeTasks.map((t) => t.id))
+    combos.push({
+      id: comboId(arcKey),
+      data: {
+        label,
+        arcKey,
+        proposalId: proposal?.id ?? null,
+        count: total,
+        dom: dominant({ total, counts }),
+      },
+      style: { collapsed: true },
+    })
+  }
 
-  const nodes: NodeData[] = inScopeTasks.map((t) => ({
+  const taskIds = new Set(tasks.map((t) => t.id))
+
+  const nodes: NodeData[] = tasks.map((t) => ({
     id: t.id,
-    combo: comboId(t.parentProposalId as string),
-    data: { label: taskLabel(t), cluster: t.cluster, proposalId: t.parentProposalId },
+    combo: comboId(taskArcKey(t)),
+    data: { label: taskLabel(t), cluster: t.cluster, proposalId: t.parentProposalId ?? null },
   }))
 
   const edges: EdgeData[] = []
-  for (const t of inScopeTasks) {
+  for (const t of tasks) {
+    // Blocker edges — both endpoints must be in scope (otherwise edge dangles)
     for (const b of t.blockedBy ?? []) {
-      // both endpoints must be in scope (otherwise the edge dangles)
-      if (!taskIds.has(b) || !taskIds.has(t.id)) continue
+      if (!taskIds.has(b)) continue
       edges.push({ id: blockerKey(b, t.id), source: b, target: t.id, data: { kind: 'blocker' } })
+    }
+    // Recovery edges — mirrors nestRecoveriesUnderParents from origin-tree.ts
+    if (t.fixForTaskId != null && taskIds.has(t.fixForTaskId)) {
+      edges.push({
+        id: `recovery:${t.id}`,
+        source: t.fixForTaskId,
+        target: t.id,
+        data: { kind: 'recovery' },
+      })
     }
   }
 
@@ -226,9 +274,9 @@ export const computeStateMap = (snapshot: ElementSnapshot, inputs: HighlightInpu
     if (gc != null && gc.has(String(cluster))) return true
     return false
   }
-  const comboFilterDim = (proposalId: string): boolean => {
-    if (search != null && !search.has(proposalId)) return true
-    if (gc != null && gc.has('Proposal')) return true
+  const comboFilterDim = (arcKey: string): boolean => {
+    if (search != null && !search.has(arcKey)) return true
+    if (gc != null && gc.has('Arc')) return true
     return false
   }
   const resolve = (litMember: boolean, filtered: boolean): string[] =>
@@ -249,8 +297,8 @@ export const computeStateMap = (snapshot: ElementSnapshot, inputs: HighlightInpu
   }
   for (const c of snapshot.combos) {
     const id = String(c.id)
-    const pid = String(c.data?.proposalId ?? proposalIdFromComboId(id))
-    map[id] = resolve(lit?.proposals.has(pid) ?? false, comboFilterDim(pid))
+    const key = String(c.data?.arcKey ?? arcKeyFromComboId(id))
+    map[id] = resolve(lit?.proposals.has(key) ?? false, comboFilterDim(key))
   }
   return map
 }
@@ -267,7 +315,10 @@ export const dataSignature = (
   proposals: ReadonlyArray<ProgressProposalNode>,
 ): string => {
   const taskSig = tasks
-    .map((t) => `${t.id}|${t.cluster}|${t.parentProposalId ?? ''}|${(t.blockedBy ?? []).join(',')}`)
+    .map(
+      (t) =>
+        `${t.id}|${t.cluster}|${t.parentProposalId ?? ''}|${t.originId ?? ''}|${t.fixForTaskId ?? ''}|${t.kind ?? ''}|${(t.blockedBy ?? []).join(',')}`,
+    )
     .join(';')
   const propSig = proposals.map((p) => `${p.id}|${p.title}`).join(';')
   return `${tasks.length}/${proposals.length}#${taskSig}#${propSig}`

@@ -2,14 +2,17 @@
  * ClusterToggleBar – four toggle chips that control which clusters are visible
  * on the Progress tab (both the DAG topology view and the board column view).
  *
+ * The 'Arc' chip controls visibility of arc combos (proposal-backed arcs,
+ * origin arcs, and solo tasks). The other three chips control task clusters.
+ *
  * The component is controlled: the parent owns `active` (the set of currently-on
  * clusters) and handles state updates via `onToggle`.
  */
 
-export type ClusterToggle = 'Proposal' | 'In progress' | 'Blocked' | 'Failed'
+export type ClusterToggle = 'Arc' | 'In progress' | 'Blocked' | 'Failed'
 
 export const ALL_CLUSTER_TOGGLES: readonly ClusterToggle[] = [
-  'Proposal',
+  'Arc',
   'In progress',
   'Blocked',
   'Failed',

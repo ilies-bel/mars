@@ -3,13 +3,13 @@ import { describe, expect, it } from 'bun:test'
 import { blockerKey, type ChainResult } from '@/shared/chainTrace'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
+  arcKeyFromComboId,
   buildG6Data,
   CLUSTER_STYLE,
   computeStateMap,
   dataSignature,
   dominant,
   type ElementSnapshot,
-  proposalIdFromComboId,
   rollupByProposal,
   type Rollup,
 } from './topologyGraphModel'
@@ -114,13 +114,13 @@ describe('CLUSTER_STYLE', () => {
   })
 })
 
-describe('proposalIdFromComboId', () => {
+describe('arcKeyFromComboId', () => {
   it('strips the combo: prefix', () => {
-    expect(proposalIdFromComboId('combo:p1')).toBe('p1')
+    expect(arcKeyFromComboId('combo:p1')).toBe('p1')
   })
 
   it('leaves a bare id untouched', () => {
-    expect(proposalIdFromComboId('p1')).toBe('p1')
+    expect(arcKeyFromComboId('p1')).toBe('p1')
   })
 })
 
@@ -146,14 +146,70 @@ describe('buildG6Data', () => {
     expect(nodes[0]!.data).toMatchObject({ label: 'Do the thing', cluster: 'Queued', proposalId: 'p1' })
   })
 
-  it('drops orphan tasks (no in-scope proposal)', () => {
+  it('renders all tasks as nodes — no task is silently dropped', () => {
     const tasks = [
       task({ id: 't1', cluster: 'Queued', parentProposalId: null }),
       task({ id: 't2', cluster: 'Queued', parentProposalId: 'p-missing' }),
       task({ id: 't3', cluster: 'Queued', parentProposalId: 'p1' }),
     ]
-    const { nodes } = buildG6Data(tasks, [proposal('p1')])
-    expect(nodes.map((n) => n.id)).toEqual(['t3'])
+    const { nodes, combos } = buildG6Data(tasks, [proposal('p1')])
+    expect(nodes.map((n) => n.id).sort()).toEqual(['t1', 't2', 't3'])
+    // t1 → solo combo keyed on 't1'; t2 → combo keyed on 'p-missing'; t3 → proposal combo p1
+    expect(combos).toHaveLength(3)
+  })
+
+  it('groups tasks sharing the same originId into one arc combo', () => {
+    const tasks = [
+      task({ id: 'origin', cluster: 'In progress', originId: 'origin' }),
+      task({ id: 'slice1', cluster: 'Queued', originId: 'origin' }),
+      task({ id: 'slice2', cluster: 'Blocked', originId: 'origin' }),
+    ]
+    const { nodes, combos } = buildG6Data(tasks, [])
+    expect(combos).toHaveLength(1)
+    expect(combos[0]!.id).toBe('combo:origin')
+    expect(combos[0]!.data).toMatchObject({ arcKey: 'origin', count: 3 })
+    expect(nodes).toHaveLength(3)
+    expect(nodes.every((n) => n.combo === 'combo:origin')).toBe(true)
+  })
+
+  it('uses the origin task prompt as the arc combo label for non-proposal arcs', () => {
+    const tasks = [
+      task({ id: 'origin', cluster: 'In progress', originId: 'origin', prompt: 'Build the widget\ndetails here' }),
+      task({ id: 'slice1', cluster: 'Queued', originId: 'origin' }),
+    ]
+    const { combos } = buildG6Data(tasks, [])
+    expect(combos[0]!.data?.label).toBe('Build the widget')
+  })
+
+  it('emits a recovery edge (kind=recovery) for fix tasks pointing source=fixForTaskId, target=fix', () => {
+    const tasks = [
+      task({ id: 'origin', cluster: 'Failed' }),
+      task({ id: 'fix1', cluster: 'Queued', kind: 'fix', fixForTaskId: 'origin', originId: 'origin' }),
+    ]
+    const { edges } = buildG6Data(tasks, [])
+    const recoveryEdge = edges.find((e) => e.data?.kind === 'recovery')
+    expect(recoveryEdge).toBeDefined()
+    expect(recoveryEdge?.source).toBe('origin')
+    expect(recoveryEdge?.target).toBe('fix1')
+    expect(recoveryEdge?.id).toBe('recovery:fix1')
+  })
+
+  it('does not emit a recovery edge when the fixForTaskId target is not in scope', () => {
+    const tasks = [
+      task({ id: 'fix1', cluster: 'Queued', kind: 'fix', fixForTaskId: 'ghost', originId: 'ghost' }),
+    ]
+    const { edges } = buildG6Data(tasks, [])
+    expect(edges.filter((e) => e.data?.kind === 'recovery')).toHaveLength(0)
+  })
+
+  it('groups fix task into the same arc combo as its origin via originId', () => {
+    const tasks = [
+      task({ id: 'origin', cluster: 'Failed', originId: 'origin' }),
+      task({ id: 'fix1', cluster: 'Queued', kind: 'fix', fixForTaskId: 'origin', originId: 'origin' }),
+    ]
+    const { combos, nodes } = buildG6Data(tasks, [])
+    expect(combos).toHaveLength(1)
+    expect(nodes.every((n) => n.combo === 'combo:origin')).toBe(true)
   })
 
   it('keys blocker edges with blockerKey so the highlight map can match', () => {
@@ -197,7 +253,7 @@ describe('computeStateMap', () => {
       { id: 'b', combo: 'combo:p1', data: { cluster: 'Blocked', proposalId: 'p1' } },
     ],
     edges: [{ id: blockerKey('a', 'b'), source: 'a', target: 'b', data: { kind: 'blocker' } }],
-    combos: [{ id: 'combo:p1', data: { proposalId: 'p1' } }],
+    combos: [{ id: 'combo:p1', data: { arcKey: 'p1', proposalId: 'p1' } }],
   })
   const edgeId = blockerKey('a', 'b')
 
@@ -219,10 +275,10 @@ describe('computeStateMap', () => {
     expect(map.b).toEqual(['dim'])
   })
 
-  it('dims nodes whose cluster is ghosted, and the proposal combo when "Proposal" is ghosted', () => {
+  it('dims nodes whose cluster is ghosted, and the arc combo when "Arc" is ghosted', () => {
     const map = computeStateMap(snapshot(), {
       searchMatchIds: null,
-      ghostedClusters: new Set(['Blocked', 'Proposal']),
+      ghostedClusters: new Set(['Blocked', 'Arc']),
       lit: null,
     })
     expect(map.a).toEqual([])
@@ -289,6 +345,18 @@ describe('dataSignature', () => {
   it('changes when a proposal title changes', () => {
     const before = dataSignature([], [proposal('p1', 'Old')])
     const after = dataSignature([], [proposal('p1', 'New')])
+    expect(before).not.toBe(after)
+  })
+
+  it('changes when originId is set', () => {
+    const before = dataSignature([task({ id: 't1', cluster: 'Queued' })], [])
+    const after = dataSignature([task({ id: 't1', cluster: 'Queued', originId: 'origin' })], [])
+    expect(before).not.toBe(after)
+  })
+
+  it('changes when fixForTaskId is set (recovery relationship appears)', () => {
+    const before = dataSignature([task({ id: 't1', cluster: 'Queued' })], [])
+    const after = dataSignature([task({ id: 't1', cluster: 'Queued', fixForTaskId: 'x' })], [])
     expect(before).not.toBe(after)
   })
 })
