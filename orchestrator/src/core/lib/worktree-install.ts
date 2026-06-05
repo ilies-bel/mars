@@ -257,7 +257,7 @@ export type InstallRunner = (
   cmd: string,
   args: readonly string[],
   cwd: string,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; env?: Record<string, string> },
 ) => Promise<RunSubprocessResult>
 
 export interface InstallWorktreeDepsOptions {
@@ -281,6 +281,7 @@ const makeDefaultInstallRunner = (
       argv: [...args],
       cwd,
       timeoutMs: opts?.timeoutMs,
+      env: opts?.env,
       taskId: traceCtx?.taskId ?? null,
       originId: traceCtx?.originId ?? null,
       phase: traceCtx?.phase ?? 'setup',

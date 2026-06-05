@@ -6,6 +6,7 @@ import { createQueueWorkflowStore } from './queue-workflow-store'
 import { getProposal, markProposalSliced } from '../core/proposals'
 import { getDefaultStateStore } from '../core/store/state-store'
 import { enqueueTask, updateTask } from '../core/queue'
+import { buildEventInsert } from '../core/lib/outbox'
 import { assertNotRecoveryEdge } from '../core/lib/blocker-invariant'
 import { getDefaultTaskStore } from '../core/store/task-store'
 import { Workers } from '../core/workers'
@@ -813,23 +814,52 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     // prd-ready with orphaned tasks in the queue. Without this cleanup,
     // a retry would insert a fresh set of tasks on top of the orphans,
     // creating duplicates. Delete any tasks that claim this proposal as
-    // parent before starting Phase 1 so retries are idempotent.
-    await taskStore
-      .execute({
-        sql: `DELETE FROM task_blockers WHERE task_id IN (
-                SELECT id FROM tasks WHERE parent_proposal_id = ?
-              ) OR blocker_task_id IN (
-                SELECT id FROM tasks WHERE parent_proposal_id = ?
-              )`,
-        args: [proposal.id, proposal.id],
-      })
-      .catch(() => {})
-    await taskStore
-      .execute({
-        sql: `DELETE FROM tasks WHERE parent_proposal_id = ?`,
+    // parent before starting Phase 1 so retries are idempotent. The
+    // bulk-delete emits task.dropped + task.terminal{purged} into the outbox
+    // in the SAME transaction as the row removal so the Invalidator
+    // (ADR-0030) can still resolve each taskId and clear any open
+    // action-queue rows after the row is gone.
+    const orphanRows = await taskStore
+      .query({
+        sql: `SELECT id FROM tasks WHERE parent_proposal_id = ?`,
         args: [proposal.id],
       })
-      .catch(() => {})
+      .catch(() => null)
+    const orphanIds = orphanRows
+      ? orphanRows.rows.map((r) => (r as unknown as { id: string }).id)
+      : []
+    if (orphanIds.length > 0) {
+      await taskStore
+        .atomic(async (scope) => {
+          for (const orphanId of orphanIds) {
+            await scope.execute(
+              buildEventInsert('task.dropped', {
+                taskId: orphanId,
+                dropReason: 'slicer-preflight',
+              }),
+            )
+            await scope.execute(
+              buildEventInsert('task.terminal', {
+                taskId: orphanId,
+                reason: 'purged',
+              }),
+            )
+          }
+          await scope.execute({
+            sql: `DELETE FROM task_blockers WHERE task_id IN (
+                    SELECT id FROM tasks WHERE parent_proposal_id = ?
+                  ) OR blocker_task_id IN (
+                    SELECT id FROM tasks WHERE parent_proposal_id = ?
+                  )`,
+            args: [proposal.id, proposal.id],
+          })
+          await scope.execute({
+            sql: `DELETE FROM tasks WHERE parent_proposal_id = ?`,
+            args: [proposal.id],
+          })
+        })
+        .catch(() => {})
+    }
 
     // Inform the operator when the pre-flight dropped at least one slice.
     // Non-fatal: a failure here must not prevent the surviving slices from
@@ -1057,14 +1087,34 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       }
     } catch (error: unknown) {
       // Clean up slice tasks AND any Coder sub-tasks created for hitl slices.
+      // Each row-removal emits task.dropped + task.terminal{purged} into the
+      // outbox in the SAME transaction as the DELETE so the Invalidator
+      // (ADR-0030) can still resolve the taskId and supersede any open
+      // action-queue rows after the row is gone. Best-effort — a cleanup
+      // failure must not mask the original cause.
       for (const id of [...taskIds, ...subTaskIds]) {
         await taskStore
-          .execute({ sql: `DELETE FROM tasks WHERE id = ?`, args: [id] })
-          .catch(() => {})
-        await taskStore
-          .execute({
-            sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
-            args: [id, id],
+          .atomic(async (scope) => {
+            await scope.execute(
+              buildEventInsert('task.dropped', {
+                taskId: id,
+                dropReason: 'slicer-rollback',
+              }),
+            )
+            await scope.execute(
+              buildEventInsert('task.terminal', {
+                taskId: id,
+                reason: 'purged',
+              }),
+            )
+            await scope.execute({
+              sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
+              args: [id, id],
+            })
+            await scope.execute({
+              sql: `DELETE FROM tasks WHERE id = ?`,
+              args: [id],
+            })
           })
           .catch(() => {})
       }
