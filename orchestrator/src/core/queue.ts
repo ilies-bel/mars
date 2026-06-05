@@ -1050,9 +1050,11 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // ── Normalized junction tables for JSON-blob columns ───────────────────
   // These three tables replace the `claude_session_ids`, `files_json`, and
   // `done_criteria_json` JSON blob columns on `tasks`.  They are created here
-  // (idempotent) and back-filled from the legacy columns once.  The legacy
-  // columns are kept for now so existing readers still work; a follow-up slice
-  // will flip the write/read paths and drop them.
+  // (idempotent) and back-filled from the legacy columns once.  New writes go
+  // exclusively to these tables; all read paths (TASK_SEL, progress.ts) read
+  // from them via correlated subqueries.  The legacy columns are retained in
+  // the schema for backward-compat with any tooling that reads them directly,
+  // but they are no longer written by the application.
   //
   // task_claude_sessions: ordered history of Claude session IDs across retries
   // (replaces tasks.claude_session_ids JSON array and the legacy
@@ -1422,6 +1424,41 @@ const coerceToString = (value: unknown, label: string): string => {
   )
 }
 
+/**
+ * Canonical SELECT for a single task or a filtered task list.  Reads the
+ * three normalised junction-table columns (claude_session_ids, files_json,
+ * done_criteria_json) via correlated subqueries so that rowToTask /
+ * rowToTaskSpec see the same column names as before.  Append a WHERE or
+ * ORDER BY clause directly after the template literal.
+ *
+ * Usage:
+ *   `${TASK_SEL} WHERE t.id = ?`
+ *   `${TASK_SEL} WHERE t.status = ? ORDER BY t.priority DESC, t.created_at ASC`
+ *   `${TASK_SEL} ORDER BY t.created_at`
+ */
+const TASK_SEL = `
+SELECT
+  t.id, t.prompt, t.status, t.plan_functional, t.plan_technical,
+  t.branch, t.worktree_path, t.claude_session_id,
+  COALESCE(
+    (SELECT json_group_array(session_id ORDER BY position)
+       FROM task_claude_sessions WHERE task_id = t.id),
+    '[]'
+  ) AS claude_session_ids,
+  t.error, t.drop_reason, t.retry_count, t.author_kind, t.author_name,
+  t.failure_reason, t.failure_reason_code, t.recovery_payload,
+  t.fix_for_task_id, t.failure_signature, t.kind, t.priority, t.tag,
+  t.tags_json, t.origin_id, t.parent_proposal_id, t.slice_index,
+  t.failed_phase, t.resume_from,
+  (SELECT json_group_array(path ORDER BY position)
+     FROM task_spec_files WHERE task_id = t.id) AS files_json,
+  t.verify_cmd,
+  (SELECT json_group_array(criterion ORDER BY position)
+     FROM task_done_criteria WHERE task_id = t.id) AS done_criteria_json,
+  t.task_type, t.read_first_json, t.prescriptive_action, t.slice_kind,
+  t.sub_deliverable_json, t.integration_head_sha, t.created_at, t.updated_at
+FROM tasks t`
+
 const rowToTask = (row: Record<string, unknown>): Task => {
   const functional = (row.plan_functional as string | null) ?? null
   const technical = (row.plan_technical as string | null) ?? null
@@ -1612,9 +1649,7 @@ export const enqueueTask = async (
       `spec.taskType must be one of ${TASK_TYPES.join(', ')}; got '${String(spec.taskType)}'`,
     )
   }
-  const filesJson = spec ? JSON.stringify(spec.files) : null
   const verifyCmd = spec ? spec.verifyCmd : null
-  const doneCriteriaJson = spec ? JSON.stringify(spec.doneCriteria) : null
   const taskType = spec ? spec.taskType : null
   const readFirstJson = spec ? JSON.stringify(spec.readFirst ?? []) : null
   const prescriptiveAction = spec ? (spec.prescriptiveAction ?? null) : null
@@ -1625,8 +1660,9 @@ export const enqueueTask = async (
     ? JSON.stringify(spec.subDeliverable)
     : null
   const tagsJson = JSON.stringify(tags)
-  await resolveQueueClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, files_json, verify_cmd, done_criteria_json, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  const qc = resolveQueueClient()
+  await qc.execute({
+    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       promptText,
@@ -1641,9 +1677,7 @@ export const enqueueTask = async (
       sliceIndex,
       tagsJson,
       kind,
-      filesJson,
       verifyCmd,
-      doneCriteriaJson,
       taskType,
       readFirstJson,
       prescriptiveAction,
@@ -1653,8 +1687,26 @@ export const enqueueTask = async (
       now,
     ],
   })
+  // Write spec.files to task_spec_files junction table.
+  if (spec?.files && spec.files.length > 0) {
+    for (let i = 0; i < spec.files.length; i++) {
+      await qc.execute({
+        sql: `INSERT OR IGNORE INTO task_spec_files (task_id, path, position) VALUES (?, ?, ?)`,
+        args: [id, spec.files[i], i],
+      })
+    }
+  }
+  // Write spec.doneCriteria to task_done_criteria junction table.
+  if (spec?.doneCriteria && spec.doneCriteria.length > 0) {
+    for (let i = 0; i < spec.doneCriteria.length; i++) {
+      await qc.execute({
+        sql: `INSERT OR IGNORE INTO task_done_criteria (task_id, criterion, position) VALUES (?, ?, ?)`,
+        args: [id, spec.doneCriteria[i], i],
+      })
+    }
+  }
   const r = await resolveQueueClient().execute({
-    sql: `SELECT * FROM tasks WHERE id = ?`,
+    sql: `${TASK_SEL} WHERE t.id = ?`,
     args: [id],
   })
   return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
@@ -1886,33 +1938,21 @@ export const updateTask = async (
   }
 
   if (appendSessionId) {
-    // Atomically (a) apply the field updates, (b) append the new session id
-    // to claude_session_ids if it isn't already present, and (c) insert the
+    // Atomically (a) apply the field updates, (b) insert the new session id
+    // into task_claude_sessions (OR IGNORE deduplicates), and (c) insert the
     // outbox event row.  All three writes share one write transaction so a
     // crash between any two leaves the DB consistent (either everything
     // committed or nothing).
     //
-    // Note: TaskStore.atomic() lands in a subsequent slice; until then the
-    // session-id path still uses the raw client transaction via withWriteTx.
+    // Position is MAX(position)+1 for this task, or 0 for the first session.
     const sessionIdStmt: InStatement = {
-      sql: `UPDATE tasks
-               SET claude_session_ids =
-                     json_insert(
-                       claude_session_ids,
-                       '$[#]',
-                       ?
-                     )
-             WHERE id = ?
-               AND NOT EXISTS (
-                 SELECT 1
-                   FROM json_each(claude_session_ids)
-                  WHERE value = ?
-               )`,
-      args: [
-        patch.claudeSessionId as string,
-        id,
-        patch.claudeSessionId as string,
-      ],
+      sql: `INSERT OR IGNORE INTO task_claude_sessions (task_id, session_id, position)
+            SELECT ?, ?,
+              COALESCE(
+                (SELECT MAX(position) + 1 FROM task_claude_sessions WHERE task_id = ?),
+                0
+              )`,
+      args: [id, patch.claudeSessionId as string, id],
     }
     await withWriteTx(resolveQueueClient(), async (tx) => {
       await tx.execute(updateStmt)
@@ -1960,7 +2000,7 @@ export const updateTask = async (
 }
 
 export const getTask = async (id: string, store?: TaskStore): Promise<Task | null> => {
-  const stmt = { sql: `SELECT * FROM tasks WHERE id = ?`, args: [id] }
+  const stmt = { sql: `${TASK_SEL} WHERE t.id = ?`, args: [id] }
   let r
   if (store) {
     r = await store.query(stmt)
@@ -1976,11 +2016,11 @@ export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
   await migrateQueueSchema()
   const r = status
     ? await resolveQueueClient().execute({
-        sql: `SELECT * FROM tasks WHERE status = ? ORDER BY priority DESC, created_at ASC`,
+        sql: `${TASK_SEL} WHERE t.status = ? ORDER BY t.priority DESC, t.created_at ASC`,
         args: [status],
       })
     : await resolveQueueClient().execute(
-        `SELECT * FROM tasks ORDER BY priority DESC, created_at ASC`,
+        `${TASK_SEL} ORDER BY t.priority DESC, t.created_at ASC`,
       )
   return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
 }
@@ -2011,7 +2051,7 @@ export const setTaskPriority = async (
     args: [priority, now, id],
   })
   const r = await c.execute({
-    sql: `SELECT * FROM tasks WHERE id = ?`,
+    sql: `${TASK_SEL} WHERE t.id = ?`,
     args: [id],
   })
   return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
