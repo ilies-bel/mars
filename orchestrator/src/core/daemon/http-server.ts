@@ -28,6 +28,7 @@ import {
   listDeepReflectArcCandidates,
   type ArcCandidate,
 } from '../lib/deep-reflect-query'
+import type { Alert } from '../lib/alert'
 
 /** Wire shape for a single step span, returned by GET /view/step-spans. */
 export interface StepSpan {
@@ -170,11 +171,16 @@ export interface HttpServerDeps {
    */
   viewProgress: () => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[] }>
   /**
-   * Dismiss a draft proposal from the Todo tab (sets proposal.status='dismissed').
-   * The action queue is a pure projection; stale-worktree rows are not operator-dismissible.
-   * Backed by `POST /view/todo/dismiss` with `{ kind: 'draft', id }`.
+   * Build the full arc-rooted Alert list (failed arcs + open stale worktrees).
+   * Backs `GET /alerts`. The Alert read aggregate is a PURE derivation over arc
+   * state (ADR-0054); this handler never writes to any store.
    */
-  todoDismiss: (id: string) => Promise<void>
+  viewAlerts: () => Promise<Alert[]>
+  /**
+   * Build the single arc-rooted Alert for `arcId`, or null when no Alert
+   * applies to that arc. Backs `GET /alerts/:arcId`. Pure read (ADR-0054).
+   */
+  viewAlert: (arcId: string) => Promise<Alert | null>
   /**
    * Return the framework update state from the poller cache (.mars/update.json).
    * When the cache file does not exist yet (e.g. before the first poll
@@ -398,6 +404,8 @@ const handleEventsRequest = async (
  *   GET  /recipes                → the resolved recovery-recipe catalog
  *   GET  /events?...             → unified trace events (taskId, kind, etc.)
  *   GET  /origins/:taskId        → the origin tree for a task
+ *   GET  /alerts                 → the arc-rooted Alert list (read aggregate)
+ *   GET  /alerts/:arcId          → the single arc-rooted Alert (or 404)
  *   POST /actions/restart/:id    → re-queue a failed/daemon-killed task
  *   POST /actions/unblock/:id    → phantom-recover a blocked task
  *   POST /actions/purge/:id      → drop a task + worktree
@@ -672,40 +680,42 @@ export const startHttpServer = async (
       return
     }
 
-    // POST /view/todo/dismiss — dismiss a draft proposal from the Todo tab.
-    // UI-state write (proposal.status='dismissed'), NOT gated by isAcceptingWork().
-    // Accepted body: { kind: 'draft', id: string }
-    // Note: stale-worktree rows are now purely projection-driven and are not
-    // dismissible via an operator verb.
-    if (req.method === 'POST' && req.url === '/view/todo/dismiss') {
-      let rawBody = ''
-      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
-      req.on('end', () => {
-        let parsed: unknown
-        try {
-          parsed = JSON.parse(rawBody)
-        } catch {
-          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
-          return
-        }
-        const body = parsed as Record<string, unknown>
-        const kind = body.kind
-        const id = body.id
-        if (kind !== 'draft') {
-          sendJson(res, 400, {
-            ok: false,
-            error: `kind must be 'draft'; got: ${String(kind)}`,
+    // GET /alerts/:arcId — the single arc-rooted Alert for one arc, or 404 when
+    // no Alert applies. The Alert read aggregate is a PURE derivation over arc
+    // state (ADR-0054); this handler never writes. Checked before the bare
+    // `/alerts` so the `:arcId` form matches first.
+    {
+      const alertMatch =
+        req.method === 'GET' && req.url
+          ? req.url.match(/^\/alerts\/([^/?]+)(?:\?.*)?$/)
+          : null
+      if (alertMatch && alertMatch[1]) {
+        const arcId = decodeURIComponent(alertMatch[1])
+        deps
+          .viewAlert(arcId)
+          .then((alert) => {
+            if (alert === null) {
+              sendJson(res, 404, {
+                ok: false,
+                error: `no alert for arc ${arcId}`,
+                errorCode: 'NOT_FOUND',
+              })
+              return
+            }
+            sendJson(res, 200, alert)
           })
-          return
-        }
-        if (typeof id !== 'string' || id.length === 0) {
-          sendJson(res, 400, { ok: false, error: 'id must be a non-empty string' })
-          return
-        }
-        deps.todoDismiss(id)
-          .then(() => sendJson(res, 200, { ok: true }))
           .catch((err: unknown) => sendError(res, err))
-      })
+        return
+      }
+    }
+
+    // GET /alerts — the full arc-rooted Alert list (failed arcs + open stale
+    // worktrees). Pure derivation over arc state (ADR-0054); no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/alerts')) {
+      deps
+        .viewAlerts()
+        .then((alerts) => sendJson(res, 200, alerts))
+        .catch((err: unknown) => sendError(res, err))
       return
     }
 

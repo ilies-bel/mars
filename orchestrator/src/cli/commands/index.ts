@@ -15,6 +15,7 @@ import { glossaryCommands } from './glossary'
 import { adrCommands } from './adr'
 import { daemonCommands } from './daemon'
 import { actionQueueCommands } from './action-queue'
+import { alertCommands } from './alert'
 import { diagnoseCommands } from './diagnose'
 import { miscCommands } from './misc'
 import { reflectCommands } from './reflect'
@@ -29,6 +30,7 @@ export const allCommands: readonly Command[] = [
   ...adrCommands,
   ...daemonCommands,
   ...actionQueueCommands,
+  ...alertCommands,
   ...diagnoseCommands,
   ...miscCommands,
   ...reflectCommands,

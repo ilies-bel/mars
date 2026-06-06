@@ -456,11 +456,12 @@ describe('GET /view/action-queue via HTTP server', () => {
       traceStore: nullTraceStore,
       viewTasks: async () => ({ tasks: [] }),
       viewProgress: async () => ({ tasks: [], proposals: [] }),
-      todoDismiss: async () => {},
       viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
       viewTerminalEvents: async () => ({ events: [] }),
       viewStepSpans: async () => ({ spans: [] }),
   viewSessions: async () => ({ sessions: [] }),
+  viewAlerts: async () => [],
+  viewAlert: async () => null,
       viewFrameworkUpdate: async () => ({
         installed: '0.1.0',
         latest: '0.1.0',

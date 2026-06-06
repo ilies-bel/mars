@@ -1,0 +1,189 @@
+/**
+ * Tests for the Alert read aggregate (ADR-0054).
+ *
+ * Covers:
+ *   - buildAlert for an arc-failed alert (goal → reason → technical hierarchy),
+ *   - buildAlert for a stale-worktree alert,
+ *   - the no-persistence guarantee: buildAlert is a pure function that never
+ *     touches any store, and the list/show use-cases read only through their
+ *     injected sources (no write path is ever invoked).
+ */
+
+import { describe, expect, it, vi } from 'vitest'
+import {
+  buildAlert,
+  listAlerts,
+  showAlert,
+  type AlertSources,
+  type FailedArcRecord,
+  type StaleWorktreeRecord,
+} from './alert'
+import { resolveFailureKind } from './failure-kinds'
+import type { FailureKind } from './failure-kinds'
+
+describe('buildAlert', () => {
+  it('builds an arc-failed alert with a goal → reason → technical hierarchy', () => {
+    // A registered signature resolves to its warm FailureKind copy.
+    const fk = resolveFailureKind('verify:has-diff/no-commits-ahead', '')
+    const alert = buildAlert('mars-abc12345', fk, 'Error: nothing committed', {
+      goal: 'Rebuild the merge gate so dirty trees are rejected',
+      traceTail: 'Error: nothing committed',
+      descendants: [{ id: 'fix-9f8e', status: 'failed' }],
+    })
+
+    expect(alert.kind).toBe('arc-failed')
+    expect(alert.arcId).toBe('mars-abc12345')
+    expect(alert.goal).toBe('Rebuild the merge gate so dirty trees are rejected')
+    // reason is the warm verboseReason from the registry.
+    expect(alert.reason).toBe(fk.verboseReason)
+    // technical carries the raw signal: signature + trace tail + chain.
+    expect(alert.technical).toContain('signature: verify:has-diff/no-commits-ahead')
+    expect(alert.technical).toContain('Error: nothing committed')
+    expect(alert.technical).toContain('recovery chain: fix-9f8e (failed)')
+  })
+
+  it('falls back to warmTitle when verboseReason is empty', () => {
+    const fk: FailureKind = {
+      signature: 'verify:custom/empty-reason',
+      warmTitle: 'A check did not pass',
+      verboseReason: '   ',
+      recipe: null,
+      actions: [],
+    }
+    const alert = buildAlert('mars-empty001', fk, '', {
+      goal: 'g',
+      traceTail: '',
+      descendants: [],
+    })
+    expect(alert.reason).toBe('A check did not pass')
+  })
+
+  it('builds a stale-worktree alert (kind from the signature prefix)', () => {
+    const fk: FailureKind = {
+      signature: 'stale-worktree/leftover',
+      warmTitle: 'A leftover worktree is taking up space',
+      verboseReason: 'A worktree from a terminal task is still on disk.',
+      recipe: null,
+      actions: [],
+    }
+    const alert = buildAlert('mars-stale999', fk, '', {
+      goal: 'Add the alert read aggregate',
+      traceTail: '',
+      descendants: [],
+    })
+
+    expect(alert.kind).toBe('stale-worktree')
+    expect(alert.arcId).toBe('mars-stale999')
+    expect(alert.reason).toBe('A worktree from a terminal task is still on disk.')
+    // No trace, no descendants → technical is just the signature line.
+    expect(alert.technical).toBe('signature: stale-worktree/leftover')
+  })
+
+  it('collapses a multi-line goal to a single readable line', () => {
+    const fk = resolveFailureKind('verify:has-diff/no-commits-ahead', '')
+    const alert = buildAlert('mars-multiline', fk, '', {
+      goal: 'line one\n  line two\n\n  line three',
+      traceTail: '',
+      descendants: [],
+    })
+    expect(alert.goal).toBe('line one line two line three')
+  })
+
+  it('is pure: does not mutate its inputs and is deterministic', () => {
+    const fk = resolveFailureKind('verify:has-diff/no-commits-ahead', 'boom')
+    const input = {
+      goal: 'goal',
+      traceTail: 'boom',
+      descendants: [{ id: 'fix-1', status: 'failed' }],
+    }
+    const frozenDescendants = Object.freeze([...input.descendants])
+    const first = buildAlert('arc-1', fk, 'boom', {
+      ...input,
+      descendants: frozenDescendants,
+    })
+    const second = buildAlert('arc-1', fk, 'boom', {
+      ...input,
+      descendants: frozenDescendants,
+    })
+    // Same inputs → identical output (deterministic, no hidden state).
+    expect(second).toEqual(first)
+    // Inputs are untouched.
+    expect(frozenDescendants).toEqual([{ id: 'fix-1', status: 'failed' }])
+  })
+})
+
+describe('listAlerts / showAlert', () => {
+  const failedArc: FailedArcRecord = {
+    arcId: 'mars-failed01',
+    goal: 'Cut the operator dismiss endpoint',
+    failureSignature: 'verify:typecheck/typecheck-cannot-find-name',
+    capturedError: 'TS2304: Cannot find name foo',
+    traceTail: 'TS2304: Cannot find name foo',
+    descendants: [{ id: 'fix-aaaa', status: 'failed' }],
+  }
+
+  const staleRecord: StaleWorktreeRecord = {
+    taskId: 'mars-failed01',
+    prompt: 'leftover work',
+    status: 'absent (no matching task)',
+    ageHours: 26,
+  }
+
+  it('lists alerts for failed arcs and stale worktrees', async () => {
+    const sources: AlertSources = {
+      listFailedArcs: vi.fn(async () => [failedArc]),
+      listStaleWorktrees: vi.fn(async () => [staleRecord]),
+    }
+    const alerts = await listAlerts(sources)
+
+    expect(alerts).toHaveLength(2)
+    const arcAlert = alerts.find((a) => a.kind === 'arc-failed')
+    const staleAlert = alerts.find((a) => a.kind === 'stale-worktree')
+    expect(arcAlert?.arcId).toBe('mars-failed01')
+    expect(arcAlert?.goal).toBe('Cut the operator dismiss endpoint')
+    expect(arcAlert?.technical).toContain(
+      'signature: verify:typecheck/typecheck-cannot-find-name',
+    )
+    expect(staleAlert).toBeTruthy()
+    // Both read sources were consulted; nothing else.
+    expect(sources.listFailedArcs).toHaveBeenCalledTimes(1)
+    expect(sources.listStaleWorktrees).toHaveBeenCalledTimes(1)
+  })
+
+  it('showAlert returns the matching arc alert, or null on a miss', async () => {
+    const sources: AlertSources = {
+      listFailedArcs: async () => [failedArc],
+      listStaleWorktrees: async () => [],
+    }
+    const hit = await showAlert('mars-failed01', sources)
+    expect(hit?.arcId).toBe('mars-failed01')
+    expect(hit?.kind).toBe('arc-failed')
+
+    const miss = await showAlert('mars-does-not-exist', sources)
+    expect(miss).toBeNull()
+  })
+
+  it('no-persistence guarantee: never writes to action_queue_items', async () => {
+    // Spy on the action-queue write path. The Alert aggregate is a pure read
+    // derivation (ADR-0054) — building / listing / showing an alert must never
+    // raise or mutate an action_queue_items row.
+    const actionQueue = await import('./action-queue')
+    const raiseSpy = vi.spyOn(actionQueue, 'raiseActionQueueItem')
+
+    const sources: AlertSources = {
+      listFailedArcs: async () => [failedArc],
+      listStaleWorktrees: async () => [staleRecord],
+    }
+    buildAlert(
+      'arc-x',
+      resolveFailureKind('verify:has-diff/no-commits-ahead', ''),
+      'tail',
+      { goal: 'g', traceTail: 'tail', descendants: [] },
+    )
+    await listAlerts(sources)
+    await showAlert('mars-failed01', sources)
+
+    expect(raiseSpy).not.toHaveBeenCalled()
+    raiseSpy.mockRestore()
+  })
+})

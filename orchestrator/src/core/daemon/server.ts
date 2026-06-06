@@ -2050,6 +2050,107 @@ export const startDaemon = async (
   const recipeCatalog = await loadRecipeCatalog(resolveContext().stateDir, {
     onWarn: (msg) => log(msg),
   })
+
+  // Build the pure-read AlertSources for the /alerts endpoints (ADR-0054). The
+  // Alert read aggregate derives entirely from arc state: a failed arc is one
+  // whose every task is terminal and none reached 'done' (arcStatus ===
+  // 'arc-failed'); each arc's failing signal comes from the terminal task that
+  // never succeeded. Stale-worktree alerts come from the open stale-worktree
+  // action-queue rows. Nothing here writes — every call recomputes from the DB.
+  const buildAlertSources = async () => {
+    const { listTasks: qListTasks } = await import('../queue')
+    const { getDefaultDomainTaskStore } = await import('../store/task-store')
+    const { resolveOriginIdForTask } = await import('../lib/origin')
+    await runCompositionRootMigrations()
+    return {
+      listFailedArcs: async () => {
+        const tasks = await qListTasks()
+        const store = getDefaultDomainTaskStore()
+        // Group tasks by their resolved arc (origin_id).
+        const byArc = new Map<string, typeof tasks>()
+        for (const t of tasks) {
+          const arcId = await resolveOriginIdForTask(t.id)
+          const bucket = byArc.get(arcId) ?? []
+          bucket.push(t)
+          byArc.set(arcId, bucket)
+        }
+        const records = []
+        for (const [arcId, arcTasks] of byArc) {
+          const rollup = await store.arcStatus(arcId)
+          if (rollup.status !== 'arc-failed') continue
+          const origin = arcTasks.find((t) => t.id === arcId) ?? arcTasks[0]!
+          // Pick the terminal task carrying the failure signal: prefer a
+          // 'failed' task with a structured signature, else any failed/dropped.
+          const failing =
+            arcTasks.find(
+              (t) => t.status === 'failed' && t.failureSignature !== null,
+            ) ??
+            arcTasks.find((t) => t.status === 'failed') ??
+            arcTasks.find((t) => t.status === 'dropped') ??
+            origin
+          const capturedError = failing.error ?? ''
+          const descendants = arcTasks
+            .filter((t) => t.id !== arcId)
+            .map((t) => ({ id: t.id, status: t.status }))
+          records.push({
+            arcId,
+            goal: origin.prompt,
+            failureSignature: failing.failureSignature,
+            capturedError,
+            traceTail: capturedError,
+            descendants,
+          })
+        }
+        return records
+      },
+      listStaleWorktrees: async () => {
+        const client = getCompositionRootClient()
+        const records: {
+          taskId: string
+          prompt: string
+          status: string
+          ageHours: number
+        }[] = []
+        try {
+          const r = await client.execute(
+            `SELECT context, payload
+               FROM action_queue_items
+              WHERE kind = 'stale-worktree' AND state = 'open'
+              ORDER BY raised_at DESC`,
+          )
+          for (const row of r.rows) {
+            const r0 = row as unknown as Record<string, unknown>
+            let ctx: Record<string, unknown> = {}
+            let pld: Record<string, unknown> = {}
+            try {
+              const p = JSON.parse(r0.context as string)
+              if (p && typeof p === 'object') ctx = p as Record<string, unknown>
+            } catch {
+              /* ignore */
+            }
+            try {
+              const p = JSON.parse(r0.payload as string)
+              if (p && typeof p === 'object') pld = p as Record<string, unknown>
+            } catch {
+              /* ignore */
+            }
+            const taskId = typeof ctx.taskId === 'string' ? ctx.taskId : null
+            if (!taskId) continue
+            records.push({
+              taskId,
+              prompt: typeof pld.prompt === 'string' ? pld.prompt : '',
+              status: typeof pld.status === 'string' ? pld.status : 'unknown',
+              ageHours: typeof pld.ageHours === 'number' ? pld.ageHours : 0,
+            })
+          }
+        } catch {
+          /* action_queue_items table may not exist on a fresh repo */
+        }
+        return records
+      },
+    }
+  }
+
   const httpHandle = await startHttpServer({
     restartTask: async (id) => {
       await coreRestart(id, new Set(['failed']), makeWorkflowStore())
@@ -2541,9 +2642,13 @@ export const startDaemon = async (
       return { spans }
     },
     viewSessions: (agentName: string) => buildSessionsView(traceStore, agentName),
-    todoDismiss: async (id) => {
-      const { rejectProposal } = await import('../proposals')
-      await rejectProposal(id)
+    viewAlerts: async () => {
+      const { listAlerts } = await import('../lib/alert')
+      return listAlerts(await buildAlertSources())
+    },
+    viewAlert: async (arcId) => {
+      const { showAlert } = await import('../lib/alert')
+      return showAlert(arcId, await buildAlertSources())
     },
     viewStreamHub,
     viewActionQueue: async (filter) => {
