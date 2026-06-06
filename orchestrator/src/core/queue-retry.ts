@@ -75,8 +75,8 @@ export const markTaskFailed = async (
   // blocker-resolution module cycle. Best-effort: a cascade failure
   // must not mask the original markTaskFailed success.
   try {
-    const { onBlockerTaskFailed } = await import('./blocker-resolution')
-    await onBlockerTaskFailed(taskId)
+    const { Arc } = await import('./arc')
+    await Arc.blockByTaskFailure(taskId)
   } catch {
     // best-effort
   }

@@ -22,7 +22,7 @@ import {
 } from '../queue'
 import { listProposals } from '../proposals'
 import { sweepOrphanRunningSpans } from '../lib/trace-events-store'
-import { recoverAllBlockedTasks } from '../blocker-resolution'
+import { Arc } from '../arc'
 import type { Reconciler } from './reconciler'
 
 /**
@@ -80,7 +80,7 @@ const orphanedBlockedScan: Reconciler = {
   name: 'orphaned-blocked-scan',
   async run({ log, bus }) {
     try {
-      const { outcomes } = await recoverAllBlockedTasks()
+      const { outcomes } = await Arc.recoverAllBlocked()
       const requeued = outcomes.filter((o) => o.outcome === 'queued')
       for (const o of requeued) {
         log(`[reconcile] task ${o.taskId} orphaned-blocked; re-queued`)

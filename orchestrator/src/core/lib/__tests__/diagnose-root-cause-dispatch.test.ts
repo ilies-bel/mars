@@ -59,7 +59,7 @@ interface FollowupModule {
 }
 
 interface BlockerModule {
-  onBlockerTaskCompleted: typeof import('../../blocker-resolution').onBlockerTaskCompleted
+  onBlockerTaskCompleted: typeof import('../../arc').Arc['unblockByCompletion']
 }
 
 interface FixTasksModule {
@@ -94,9 +94,10 @@ const loadModules = async (repo: string) => {
   const followup = (await import(
     '../diagnose-followup'
   )) as unknown as FollowupModule
-  const br = (await import(
-    '../../blocker-resolution'
-  )) as unknown as BlockerModule
+  const { Arc } = await import('../../arc')
+  const br: BlockerModule = {
+    onBlockerTaskCompleted: (id) => Arc.unblockByCompletion(id),
+  }
   const ft = (await import(
     '../../queue-fix-tasks'
   )) as unknown as FixTasksModule

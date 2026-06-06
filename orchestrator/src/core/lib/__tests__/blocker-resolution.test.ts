@@ -13,12 +13,19 @@ interface QueueModule {
   addBlockers: typeof import('../../queue').addBlockers
 }
 
+type ArcStatic = typeof import('../../arc').Arc
+type ArcInstance = ArcStatic['prototype']
+
 interface BlockerModule {
-  onBlockerTaskCompleted: typeof import('../../blocker-resolution').onBlockerTaskCompleted
-  onBlockerTaskFailed: typeof import('../../blocker-resolution').onBlockerTaskFailed
-  markOriginDoneFromRecovery: typeof import('../../blocker-resolution').markOriginDoneFromRecovery
-  recoverBlockedTask: typeof import('../../blocker-resolution').recoverBlockedTask
-  recoverAllBlockedTasks: typeof import('../../blocker-resolution').recoverAllBlockedTasks
+  onBlockerTaskCompleted: ArcStatic['unblockByCompletion']
+  onBlockerTaskFailed: ArcStatic['blockByTaskFailure']
+  markOriginDoneFromRecovery: (
+    originTaskId: string,
+  ) => ReturnType<ArcInstance['propagateRecoveryDone']>
+  recoverBlockedTask: (
+    taskId: string,
+  ) => ReturnType<ArcInstance['recoverBlocked']>
+  recoverAllBlockedTasks: ArcStatic['recoverAllBlocked']
 }
 
 interface ActionQueueModule {
@@ -82,9 +89,18 @@ const loadModules = async (
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.migrateQueueSchema()
-  const br = (await import(
-    '../../blocker-resolution'
-  )) as unknown as BlockerModule
+  const { Arc } = await import('../../arc')
+  // Adapter: the six writers relocated into the Arc aggregate (ADR-0052).
+  // The historic free-function names map onto Arc static/instance methods so
+  // the test bodies below exercise the relocated logic unchanged.
+  const br: BlockerModule = {
+    onBlockerTaskCompleted: (id) => Arc.unblockByCompletion(id),
+    onBlockerTaskFailed: (id) => Arc.blockByTaskFailure(id),
+    markOriginDoneFromRecovery: (originTaskId) =>
+      Arc.load(originTaskId).propagateRecoveryDone(),
+    recoverBlockedTask: (id) => Arc.load(id).recoverBlocked(),
+    recoverAllBlockedTasks: () => Arc.recoverAllBlocked(),
+  }
   const actionQueue = (await import('../action-queue')) as unknown as ActionQueueModule
   return { q, br, actionQueue }
 }
@@ -536,9 +552,15 @@ describe('blocker-resolution (task_blockers)', () => {
       process.env.MARS_REPO = repoPath
       const q = (await import('../../queue')) as unknown as QueueModule
       await q.migrateQueueSchema()
-      const br = (await import(
-        '../../blocker-resolution'
-      )) as unknown as BlockerModule
+      const { Arc } = await import('../../arc')
+      const br: BlockerModule = {
+        onBlockerTaskCompleted: (id) => Arc.unblockByCompletion(id),
+        onBlockerTaskFailed: (id) => Arc.blockByTaskFailure(id),
+        markOriginDoneFromRecovery: (originTaskId) =>
+          Arc.load(originTaskId).propagateRecoveryDone(),
+        recoverBlockedTask: (id) => Arc.load(id).recoverBlocked(),
+        recoverAllBlockedTasks: () => Arc.recoverAllBlocked(),
+      }
       const d = (await import('../diagnose')) as unknown as DiagnoseModule
       const actionQueue = (await import('../action-queue')) as unknown as ActionQueueListModule
       return { q, br, d, actionQueue }

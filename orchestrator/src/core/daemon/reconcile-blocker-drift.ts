@@ -9,7 +9,7 @@
  * This module is the catch-all safety net. It runs early in daemon startup —
  * before the reconcile loop re-seeds the dispatch queue — so the dispatcher
  * never encounters incorrectly-queued rows during the boot burst. Promotion
- * paths (onBlockerTaskCompleted, promoteDraftToQueued) already gate on this
+ * paths (Arc.unblockByCompletion, promoteDraftToQueued) already gate on this
  * invariant; this sweep repairs any drift that slipped through (e.g. due to
  * a crash between the blocker check and the status write, or a code bug in a
  * non-standard promotion path).

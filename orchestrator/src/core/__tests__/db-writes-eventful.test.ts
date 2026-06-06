@@ -45,10 +45,13 @@ const ALLOWLIST = [
   // via buildEventInsert(). The recovery-spawn logic moved here out of
   // queue-fix-tasks.ts, which is now a thin delegating wrapper with no status
   // write of its own.
+  // core/arc.ts also owns the blocker-resolution status writes (ADR-0052):
+  // unblockByCompletion / blockByTaskFailure / cascadeCancellation /
+  // recoverAllBlocked (static) + recoverBlocked / propagateRecoveryDone
+  // (instance) relocated out of core/blocker-resolution.ts, which is now a
+  // helpers-only module with no `tasks.status` write of its own and has left
+  // this allowlist.
   'core/arc.ts',
-  // queue-retry.ts: status writes routed through setTaskStatus (queue.ts);
-  // only extra-column updates and terminal-event publishes remain there.
-  'core/blocker-resolution.ts',
   'core/lib/main-dirty.ts',
   // main-dirty-action-queue.ts: releaseMainCommitterDependents flips blocked
   // tasks back to queued inside a transaction that also calls publish().

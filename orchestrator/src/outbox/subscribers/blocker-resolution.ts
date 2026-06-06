@@ -1,7 +1,7 @@
 import type { Client } from '@libsql/client'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
-import { onBlockerTaskCompleted } from '../../core/blocker-resolution.js'
+import { Arc } from '../../core/arc.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 
 /**
@@ -53,7 +53,7 @@ export async function drainBlockerResolution(
       const payload = event.payload as { taskId: string; reason: string }
       if (payload.reason !== 'done') return false
 
-      const result = await onBlockerTaskCompleted(payload.taskId)
+      const result = await Arc.unblockByCompletion(payload.taskId)
       return result.outcomes.some((o) => o.outcome === 'queued' || o.outcome === 'failed')
     },
   })

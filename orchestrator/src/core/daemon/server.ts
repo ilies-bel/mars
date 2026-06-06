@@ -57,14 +57,9 @@ import { listProposals, promoteProposal } from '../proposals'
 import type { DraftFeature, FrameworkUpdateState, StaleWorktreeAlert } from './http-server'
 import {
   CANCELLED_FAILURE_REASON,
-  markOriginDoneFromRecovery,
-  onBlockerTaskCancelled,
-  onBlockerTaskCompleted,
-  onBlockerTaskFailed,
-  recoverAllBlockedTasks,
-  recoverBlockedTask,
   type RecoverAllBlockedTasksResult,
 } from '../blocker-resolution'
+import { Arc } from '../arc'
 import {
   supersedeObsoletePreflightDirtyMainRows,
   supersedeOrphanedHitlActionQueueRows,
@@ -1221,7 +1216,7 @@ export const startDaemon = async (
     // the edges we just removed (all remaining blockers are done / gone),
     // flip it to 'queued' immediately so it dispatches without a restart.
     try {
-      const recovery = await recoverBlockedTask(id)
+      const recovery = await Arc.load(id).recoverBlocked()
       if (recovery.outcome === 'queued') {
         log(
           `[blocker-recovery] ${id} queued after blocker edge removal (removed: ${removed.join(', ')})`,
@@ -1245,14 +1240,14 @@ export const startDaemon = async (
 
   const handleRecover = async (id?: string): Promise<RecoverAllBlockedTasksResult> => {
     if (id) {
-      const outcome = await recoverBlockedTask(id)
+      const outcome = await Arc.load(id).recoverBlocked()
       if (outcome.outcome === 'queued' && acceptingWork && !tracker.isInFlight(id)) {
         tracker.enqueuePending(id, 'implement')
         void drain()
       }
       return { outcomes: [outcome] }
     }
-    const result = await recoverAllBlockedTasks()
+    const result = await Arc.recoverAllBlocked()
     for (const o of result.outcomes) {
       if (o.outcome === 'queued' && acceptingWork && !tracker.isInFlight(o.taskId)) {
         tracker.enqueuePending(o.taskId, 'implement')
@@ -1280,7 +1275,7 @@ export const startDaemon = async (
         // dispatch into a broken tree. Helper is idempotent and
         // covers every failure mode (not just fix-task failure).
         try {
-          const blocked = await onBlockerTaskFailed(id)
+          const blocked = await Arc.blockByTaskFailure(id)
           for (const o of blocked.outcomes) {
             if (o.outcome === 'blocked') {
               log(
@@ -1337,7 +1332,7 @@ export const startDaemon = async (
         // helper raises one actionQueue item per cascaded dependent so the
         // operator can see why the chain died.
         try {
-          const cascade = await onBlockerTaskCancelled(id)
+          const cascade = await Arc.cascadeCancellation(id)
           for (const o of cascade.outcomes) {
             if (o.outcome === 'failed') {
               log(
@@ -1384,9 +1379,9 @@ export const startDaemon = async (
         // origin, and propagate the unblock to its dependents.
         if (after.kind === 'fix' && after.fixForTaskId !== null) {
           try {
-            const propagation = await markOriginDoneFromRecovery(
+            const propagation = await Arc.load(
               after.fixForTaskId,
-            )
+            ).propagateRecoveryDone()
             if (propagation.originFlipped) {
               log(
                 `[propagate] recovery ${id} flipped origin ${propagation.originTaskId} to done; closed ${propagation.actionQueueItemsClosed} actionQueue item(s)`,
@@ -1444,7 +1439,7 @@ export const startDaemon = async (
           return
         }
         try {
-          const blockerResolved = await onBlockerTaskCompleted(id)
+          const blockerResolved = await Arc.unblockByCompletion(id)
           for (const o of blockerResolved.outcomes) {
             if (o.outcome === 'queued') {
               log(

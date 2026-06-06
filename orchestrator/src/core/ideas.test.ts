@@ -38,7 +38,7 @@ interface ProposalsModule {
 }
 
 interface BlockerResolutionModule {
-  onBlockerTaskCompleted: typeof import('./blocker-resolution').onBlockerTaskCompleted
+  onBlockerTaskCompleted: typeof import('./arc').Arc['unblockByCompletion']
 }
 
 const setupRepo = (): string => {
@@ -61,9 +61,10 @@ const loadModules = async (
   await q.migrateQueueSchema()
   const p = (await import('./proposals')) as unknown as ProposalsModule
   await p.initProposals()
-  const br = (await import(
-    './blocker-resolution'
-  )) as unknown as BlockerResolutionModule
+  const { Arc } = await import('./arc')
+  const br: BlockerResolutionModule = {
+    onBlockerTaskCompleted: (id) => Arc.unblockByCompletion(id),
+  }
   return { q, br, p }
 }
 

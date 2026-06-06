@@ -272,7 +272,7 @@ export async function computeAutonomousCompletionRate(
  * ADR-0035 there is at most one recovery attempt per origin failure.
  *
  * Success = recovery Task reached done AND its origin Task also reached done.
- * When a fix task reaches done, the daemon's markOriginDoneFromRecovery
+ * When a fix task reaches done, the daemon's Arc.propagateRecoveryDone
  * propagation flips the origin row to done — so checking origin.status='done'
  * is the correct success condition.
  *

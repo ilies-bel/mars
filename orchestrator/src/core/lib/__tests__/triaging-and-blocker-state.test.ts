@@ -156,7 +156,7 @@ describe('Triaging status + Blocker state schema', () => {
     // machinery (which only scans status='blocked') never re-evaluates it.
     const { migrateQueueSchema, addBlockers, hasIncompleteBlockers, updateTask, resolveQueueClient } =
       await import('../../queue')
-    const { onBlockerTaskCompleted } = await import('../../blocker-resolution')
+    const { Arc } = await import('../../arc')
     await migrateQueueSchema()
     const now = new Date().toISOString()
     const c = resolveQueueClient()
@@ -183,9 +183,9 @@ describe('Triaging status + Blocker state schema', () => {
       'blocked',
     )
 
-    // Blocker completes → onBlockerTaskCompleted re-queues the dependent.
+    // Blocker completes → Arc.unblockByCompletion re-queues the dependent.
     await updateTask('blk', { status: 'done' })
-    await onBlockerTaskCompleted('blk')
+    await Arc.unblockByCompletion('blk')
 
     const requeued = await c.execute({
       sql: `SELECT status FROM tasks WHERE id = 'dep'`,

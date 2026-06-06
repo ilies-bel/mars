@@ -38,7 +38,7 @@ interface RecipesModule {
 }
 
 interface BlockerModule {
-  onBlockerTaskCompleted: typeof import('../../blocker-resolution').onBlockerTaskCompleted
+  onBlockerTaskCompleted: typeof import('../../arc').Arc['unblockByCompletion']
 }
 
 const setupRepo = (): string => {
@@ -88,9 +88,10 @@ const loadModules = async (
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.migrateQueueSchema()
   const ft = (await import('../../queue-fix-tasks')) as unknown as FixTasksModule
-  const br = (await import(
-    '../../blocker-resolution'
-  )) as unknown as BlockerModule
+  const { Arc } = await import('../../arc')
+  const br: BlockerModule = {
+    onBlockerTaskCompleted: (id) => Arc.unblockByCompletion(id),
+  }
   const rc = (await import('../fix-recipes')) as unknown as RecipesModule
   return { q, ft, br, rc }
 }
