@@ -235,6 +235,57 @@ describe('performSelfUpdate — download failure', () => {
   })
 })
 
+describe('performSelfUpdate — atomic swap failure', () => {
+  it('throws SWAP_FAILED when writeFile rejects (cannot stage new binary)', async () => {
+    const deps = makeDeps({
+      writeFile: vi.fn(async () => {
+        throw new Error('ENOSPC: no space left on device')
+      }),
+    })
+
+    await expect(performSelfUpdate(deps)).rejects.toMatchObject({
+      name: 'SelfUpdateError',
+      code: SELF_UPDATE_ERRORS.SWAP_FAILED,
+    })
+  })
+
+  it('does NOT call rename or restartDaemon when writeFile fails', async () => {
+    const deps = makeDeps({
+      writeFile: vi.fn(async () => {
+        throw new Error('ENOSPC: no space left on device')
+      }),
+    })
+
+    await expect(performSelfUpdate(deps)).rejects.toThrow()
+    expect(deps.rename).not.toHaveBeenCalled()
+    expect(deps.restartDaemon).not.toHaveBeenCalled()
+  })
+
+  it('throws SWAP_FAILED when rename rejects during binary swap', async () => {
+    const deps = makeDeps({
+      rename: vi.fn(async () => {
+        throw new Error('EPERM: operation not permitted')
+      }),
+    })
+
+    await expect(performSelfUpdate(deps)).rejects.toMatchObject({
+      name: 'SelfUpdateError',
+      code: SELF_UPDATE_ERRORS.SWAP_FAILED,
+    })
+  })
+
+  it('does NOT call restartDaemon when rename fails', async () => {
+    const deps = makeDeps({
+      rename: vi.fn(async () => {
+        throw new Error('EPERM: operation not permitted')
+      }),
+    })
+
+    await expect(performSelfUpdate(deps)).rejects.toThrow()
+    expect(deps.restartDaemon).not.toHaveBeenCalled()
+  })
+})
+
 describe('performSelfUpdate — happy path', () => {
   it('writes the new binary, swaps it atomically, and re-execs', async () => {
     const deps = makeDeps()

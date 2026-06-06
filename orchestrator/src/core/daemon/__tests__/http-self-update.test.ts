@@ -162,6 +162,56 @@ describe('POST /actions/self-update', () => {
     }
   })
 
+  it('returns 500 when selfUpdate throws SWAP_FAILED', async () => {
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(
+      makeDeps({
+        selfUpdate: async () => {
+          throw new SelfUpdateError(
+            SELF_UPDATE_ERRORS.SWAP_FAILED,
+            'EPERM: operation not permitted',
+          )
+        },
+      }),
+    )
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/actions/self-update`, {
+        method: 'POST',
+      })
+      expect(res.status).toBe(500)
+      const body = (await res.json()) as { ok: boolean; errorCode: string }
+      expect(body.ok).toBe(false)
+      expect(body.errorCode).toBe(SELF_UPDATE_ERRORS.SWAP_FAILED)
+    } finally {
+      await close()
+    }
+  })
+
+  it('returns 409 when selfUpdate throws NO_UPDATE_AVAILABLE', async () => {
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(
+      makeDeps({
+        selfUpdate: async () => {
+          throw new SelfUpdateError(
+            SELF_UPDATE_ERRORS.NO_UPDATE_AVAILABLE,
+            'already up to date',
+          )
+        },
+      }),
+    )
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/actions/self-update`, {
+        method: 'POST',
+      })
+      expect(res.status).toBe(409)
+      const body = (await res.json()) as { ok: boolean; errorCode: string }
+      expect(body.ok).toBe(false)
+      expect(body.errorCode).toBe(SELF_UPDATE_ERRORS.NO_UPDATE_AVAILABLE)
+    } finally {
+      await close()
+    }
+  })
+
   it('returns 503 when the daemon is draining (isAcceptingWork = false)', async () => {
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(
