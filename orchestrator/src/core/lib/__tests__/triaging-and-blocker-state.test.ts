@@ -64,8 +64,8 @@ describe('Triaging status + Blocker state schema', () => {
     const now = new Date().toISOString()
     const c = resolveQueueClient()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
-            VALUES (?, ?, 'triaging', ?, 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+            VALUES (?, ?, 'triaging', ?, 0, 'task', 0, 'coder', ?, ?)`,
       args: ['t-triaging', 'do thing', 't-triaging', now, now],
     })
     const r = await c.execute({
@@ -81,13 +81,13 @@ describe('Triaging status + Blocker state schema', () => {
     const now = new Date().toISOString()
     const c = resolveQueueClient()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
-            VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+            VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
-            VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+            VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await addBlockers('a', ['b'])
@@ -105,13 +105,13 @@ describe('Triaging status + Blocker state schema', () => {
     const now = new Date().toISOString()
     const c = resolveQueueClient()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
-            VALUES ('a', 'a', 'triaging', 'a', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+            VALUES ('a', 'a', 'triaging', 'a', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
-            VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+            VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await addPendingReviewBlockers('a', ['b'])
@@ -130,13 +130,13 @@ describe('Triaging status + Blocker state schema', () => {
     const now = new Date().toISOString()
     const c = resolveQueueClient()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
-            VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+            VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
-            VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+            VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await addBlockers('a', ['b'])
@@ -161,13 +161,13 @@ describe('Triaging status + Blocker state schema', () => {
     const now = new Date().toISOString()
     const c = resolveQueueClient()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
-            VALUES ('dep', 'dependent', 'queued', 'dep', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+            VALUES ('dep', 'dependent', 'queued', 'dep', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
-            VALUES ('blk', 'blocker', 'queued', 'blk', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+            VALUES ('blk', 'blocker', 'queued', 'blk', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await addBlockers('dep', ['blk'])
@@ -202,13 +202,13 @@ describe('Triaging status + Blocker state schema', () => {
     const now = new Date().toISOString()
     const c = resolveQueueClient()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
-            VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+            VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, claude_session_ids, created_at, updated_at)
-            VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', '[]', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+            VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await addBlockers('a', ['b'])
