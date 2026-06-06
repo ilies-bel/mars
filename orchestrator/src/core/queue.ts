@@ -496,6 +496,36 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // ADR-0049. The upsertFixTask path now always writes kind='fix' explicitly
   // and assertTaskKindInvariant guards the enqueueTask path; this idempotent
   // DELETE removes any surviving legacy anomalies so the invariant holds.
+  //
+  // First drop any task_blockers edges that reference these orphan fix rows.
+  // task_blockers.{task_id,blocker_task_id} → tasks(id) are NO ACTION FKs, so
+  // with foreign_keys=ON the DELETE below would fail with SQLITE_CONSTRAINT
+  // while a child edge still points at a row being deleted. Legacy data has
+  // had recovery (`fix`) tasks wired in as blockers (an ADR-0040 leaf-guard
+  // violation), so such edges do exist; clearing them first lets the purge
+  // proceed without leaving dangling references (which a foreign_keys=OFF
+  // bracket would silently allow).
+  //
+  // `task_blockers` is created later in this same migration (see below), so on
+  // a fresh DB it does not yet exist here — and a fresh DB has no orphan edges
+  // to clear anyway. Guard the cleanup on the table being present so the
+  // ordering holds for both fresh installs and legacy DBs.
+  const hasTaskBlockers = (
+    await c.execute(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='task_blockers'`,
+    )
+  ).rows.length > 0
+  if (hasTaskBlockers) {
+    await c.execute(
+      `DELETE FROM task_blockers
+        WHERE blocker_task_id IN (
+          SELECT id FROM tasks WHERE kind = 'fix' AND fix_for_task_id IS NULL
+        )
+        OR task_id IN (
+          SELECT id FROM tasks WHERE kind = 'fix' AND fix_for_task_id IS NULL
+        )`,
+    )
+  }
   await c.execute(
     `DELETE FROM tasks WHERE kind = 'fix' AND fix_for_task_id IS NULL`,
   )
