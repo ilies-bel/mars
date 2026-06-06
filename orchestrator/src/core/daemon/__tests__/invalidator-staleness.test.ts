@@ -16,7 +16,6 @@ import type { Client } from '@libsql/client'
 interface Loaded {
   q: typeof import('../../queue')
   actionQueue: typeof import('../../lib/action-queue')
-  dismissals: typeof import('../../lib/action-queue-dismissals')
   ad: typeof import('../alert-dismisser')
 }
 
@@ -33,9 +32,8 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   const q = await import('../../queue')
   await q.migrateQueueSchema()
   const actionQueue = await import('../../lib/action-queue')
-  const dismissals = await import('../../lib/action-queue-dismissals')
   const ad = await import('../alert-dismisser')
-  return { q, actionQueue, dismissals, ad }
+  return { q, actionQueue, ad }
 }
 
 const raiseOpenItemFor = async (
@@ -78,14 +76,13 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('purge emits the terminal event BEFORE deleting the task, and the Invalidator clears the row + dismissal', async () => {
-    const { q, actionQueue, dismissals, ad } = await loadModules(repo)
+  it('purge emits the terminal event BEFORE deleting the task, and the Invalidator clears the row', async () => {
+    const { q, actionQueue, ad } = await loadModules(repo)
     const client = q.resolveQueueClient()
     const taskId = 'P-1'
 
     await insertTask(client, taskId, 'failed')
     const itemId = await raiseOpenItemFor(actionQueue, taskId)
-    await dismissals.dismissEntity('task', taskId, { by: 'op' })
 
     await ad.ensureAlertDismisser(client)
 
@@ -108,7 +105,6 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
     const { processed } = await ad.drainAlertDismissals(client)
     expect(processed).toBeGreaterThan(0)
     expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
-    expect(await dismissals.isEntityDismissed('task', taskId)).toBe(false)
   })
 
   it('clears rows for a task that ended while the daemon was DOWN (events replayed on first drain)', async () => {

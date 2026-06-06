@@ -170,26 +170,11 @@ export interface HttpServerDeps {
    */
   viewProgress: () => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[] }>
   /**
-   * Acknowledge an actionQueue row for the given entity: marks it as seen without
-   * hiding it from the open filter. Backed by `POST /view/action-queue/ack`.
+   * Dismiss a draft proposal from the Todo tab (sets proposal.status='dismissed').
+   * The action queue is a pure projection; stale-worktree rows are not operator-dismissible.
+   * Backed by `POST /view/todo/dismiss` with `{ kind: 'draft', id }`.
    */
-  actionQueueAck: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
-  /**
-   * Resolve an actionQueue row for the given entity: hides it from the open filter
-   * and marks it as operator-resolved. Backed by `POST /view/action-queue/resolve`.
-   */
-  actionQueueResolve: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
-  /**
-   * Dismiss an actionQueue row for the given entity: hides it until the entity's
-   * state changes. Backed by `POST /view/action-queue/dismiss`.
-   */
-  actionQueueDismiss: (kind: 'task' | 'worktree' | 'proposal', id: string) => Promise<void>
-  /**
-   * Dismiss a Todo-tab item: mark a draft proposal as dismissed, or record a
-   * stale-worktree dismissal so the sweep skips it on subsequent passes.
-   * Backed by `POST /view/todo/dismiss`.
-   */
-  todoDismiss: (kind: 'draft' | 'stale', id: string) => Promise<void>
+  todoDismiss: (id: string) => Promise<void>
   /**
    * Return the framework update state from the poller cache (.mars/update.json).
    * When the cache file does not exist yet (e.g. before the first poll
@@ -672,15 +657,14 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /view/action-queue?filter=open|dismissed|all — the full derived actionQueue view.
-    // The daemon builds this from its own database and is the sole source of
-    // truth; the read-only UI proxies this endpoint instead of re-deriving it.
-    // Pure read; no draining gate.
+    // GET /view/action-queue?filter=open|all — the full derived actionQueue view.
+    // The action queue is a pure projection of entity state; the Invalidator is
+    // the sole row-closer. Pure read; no draining gate.
     if (req.method === 'GET' && req.url && req.url.startsWith('/view/action-queue')) {
       const parsed = new URL(req.url, 'http://localhost')
       const filterRaw = parsed.searchParams.get('filter')
       const filter: DerivedActionQueueFilter =
-        filterRaw === 'dismissed' || filterRaw === 'all' ? filterRaw : 'open'
+        filterRaw === 'all' ? filterRaw : 'open'
       deps
         .viewActionQueue(filter)
         .then((rows) => sendJson(res, 200, rows))
@@ -688,56 +672,11 @@ export const startHttpServer = async (
       return
     }
 
-    // POST /view/action-queue/{ack,resolve,dismiss} — actionQueue mutation verbs. These
-    // are UI-state writes (operator opinion), not work-dispatch actions, so
-    // they are NOT gated by isAcceptingWork(). Accepted body:
-    //   { kind: 'task' | 'worktree' | 'proposal', entityId: string }
-    {
-      const actionQueueVerbMatch =
-        req.method === 'POST' && req.url
-          ? req.url.match(/^\/view\/action-queue\/(ack|resolve|dismiss)$/)
-          : null
-      if (actionQueueVerbMatch && actionQueueVerbMatch[1]) {
-        const verb = actionQueueVerbMatch[1] as 'ack' | 'resolve' | 'dismiss'
-        let rawBody: string = ''
-        req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
-        req.on('end', () => {
-          let parsed: unknown
-          try {
-            parsed = JSON.parse(rawBody)
-          } catch {
-            sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
-            return
-          }
-          const body = parsed as Record<string, unknown>
-          const kind = body.kind
-          const entityId = body.entityId
-          if (kind !== 'task' && kind !== 'worktree' && kind !== 'proposal') {
-            sendJson(res, 400, {
-              ok: false,
-              error: `kind must be 'task', 'worktree', or 'proposal'; got: ${String(kind)}`,
-            })
-            return
-          }
-          if (typeof entityId !== 'string' || entityId.length === 0) {
-            sendJson(res, 400, { ok: false, error: 'entityId must be a non-empty string' })
-            return
-          }
-          const handler =
-            verb === 'ack' ? deps.actionQueueAck
-            : verb === 'resolve' ? deps.actionQueueResolve
-            : deps.actionQueueDismiss
-          handler(kind, entityId)
-            .then(() => sendJson(res, 200, { ok: true }))
-            .catch((err: unknown) => sendError(res, err))
-        })
-        return
-      }
-    }
-
-    // POST /view/todo/dismiss — dismiss a Todo-tab item (draft proposal or
-    // stale worktree). UI-state write, NOT gated by isAcceptingWork().
-    // Accepted body: { kind: 'draft' | 'stale', id: string }
+    // POST /view/todo/dismiss — dismiss a draft proposal from the Todo tab.
+    // UI-state write (proposal.status='dismissed'), NOT gated by isAcceptingWork().
+    // Accepted body: { kind: 'draft', id: string }
+    // Note: stale-worktree rows are now purely projection-driven and are not
+    // dismissible via an operator verb.
     if (req.method === 'POST' && req.url === '/view/todo/dismiss') {
       let rawBody = ''
       req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
@@ -752,10 +691,10 @@ export const startHttpServer = async (
         const body = parsed as Record<string, unknown>
         const kind = body.kind
         const id = body.id
-        if (kind !== 'draft' && kind !== 'stale') {
+        if (kind !== 'draft') {
           sendJson(res, 400, {
             ok: false,
-            error: `kind must be 'draft' or 'stale'; got: ${String(kind)}`,
+            error: `kind must be 'draft'; got: ${String(kind)}`,
           })
           return
         }
@@ -763,7 +702,7 @@ export const startHttpServer = async (
           sendJson(res, 400, { ok: false, error: 'id must be a non-empty string' })
           return
         }
-        deps.todoDismiss(kind, id)
+        deps.todoDismiss(id)
           .then(() => sendJson(res, 200, { ok: true }))
           .catch((err: unknown) => sendError(res, err))
       })

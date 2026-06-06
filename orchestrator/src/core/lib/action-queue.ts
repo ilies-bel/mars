@@ -4,7 +4,6 @@ import { resolveStateClient } from '../store/state-client'
 import { buildEventInsert } from './outbox'
 import type { EventName, EventPayload } from './outbox'
 import { resolveOriginIdForTask } from './origin'
-import { listDismissals } from './action-queue-dismissals'
 
 /**
  * Emit an actionQueue lifecycle event to the queue.db events outbox.
@@ -32,7 +31,7 @@ async function emitActionQueueBusEvent<T extends EventName>(
 
 export type ActionQueueCategory = 'orchestrator' | 'reflector' | 'daemon' | 'user'
 export type ActionQueuePriority = 'urgent' | 'high' | 'normal' | 'low'
-export type ActionQueueState = 'open' | 'acknowledged' | 'resolved' | 'dismissed'
+export type ActionQueueState = 'open' | 'resolved'
 
 export const ACTION_QUEUE_KINDS = [
   'failed',
@@ -94,7 +93,7 @@ export interface RaiseActionQueueItem {
 }
 
 export interface ActionQueueResolution {
-  state: 'resolved' | 'dismissed'
+  state: 'resolved'
   note: string | null
   rootCause: string | null
   resolvedBy: string | null
@@ -263,14 +262,8 @@ const toPriority = (raw: unknown): ActionQueuePriority => {
 }
 
 const toState = (raw: unknown): ActionQueueState => {
-  if (
-    raw === 'open' ||
-    raw === 'acknowledged' ||
-    raw === 'resolved' ||
-    raw === 'dismissed'
-  ) {
-    return raw
-  }
+  if (raw === 'open') return 'open'
+  if (raw === 'resolved' || raw === 'acknowledged' || raw === 'dismissed') return 'resolved'
   return 'open'
 }
 
@@ -288,13 +281,12 @@ const loadHistory = async (
   return r.rows.map((row) => {
     const r2 = row as unknown as Record<string, unknown>
     const fromRaw = (r2.from_state as string | null) ?? null
-    const fromState =
-      fromRaw === 'open' ||
-      fromRaw === 'acknowledged' ||
-      fromRaw === 'resolved' ||
-      fromRaw === 'dismissed'
-        ? (fromRaw as ActionQueueState)
-        : null
+    const fromState: ActionQueueState | null =
+      fromRaw === 'open'
+        ? 'open'
+        : fromRaw === 'resolved' || fromRaw === 'acknowledged' || fromRaw === 'dismissed'
+          ? 'resolved'
+          : null
     return {
       at: (r2.at as string | null) ?? '',
       fromState,
@@ -339,7 +331,7 @@ const rowToActionQueueItem = (
   const rootCause = (row.root_cause as string | null) ?? null
   const resolvedBy = (row.resolved_by as string | null) ?? null
   const resolutionDetails: ActionQueueResolution | null =
-    state === 'resolved' || state === 'dismissed'
+    state === 'resolved'
       ? {
           state,
           note: resolutionNote,
@@ -601,36 +593,6 @@ export interface ListActionQueueOptions {
   kind?: ActionQueueKind
 }
 
-/**
- * Map an ActionQueueKind to the dismissal entity kind used in
- * action_queue_dismissals. Exported so callers (CLI verbs, tests) and
- * listActionQueueItems can share the same mapping.
- */
-export const actionQueueKindToEntityKind = (
-  kind: string,
-): 'task' | 'worktree' | 'proposal' => {
-  if (kind === 'stale-worktree') return 'worktree'
-  if (kind === 'draft-proposal') return 'proposal'
-  return 'task'
-}
-
-/**
- * Extract the dismissal entity id from an ActionQueueItem. Exported so CLI
- * verbs and listActionQueueItems can share the same extraction logic, ensuring
- * the entity key written at dismiss time matches the key checked at read time.
- */
-export const entityIdForItem = (item: ActionQueueItem): string => {
-  if (item.kind === 'stale-worktree') {
-    if (typeof item.context.taskId === 'string') return item.context.taskId
-  }
-  if (item.kind === 'draft-proposal') {
-    if (typeof item.payload.proposalId === 'string') return item.payload.proposalId
-  }
-  if (typeof item.payload.taskId === 'string') return item.payload.taskId
-  if (typeof item.payload.originTaskId === 'string') return item.payload.originTaskId
-  return item.signature ?? item.id
-}
-
 export const listActionQueueItems = async (
   state: ActionQueueState | 'all' = 'open',
   opts: ListActionQueueOptions = {},
@@ -662,51 +624,11 @@ export const listActionQueueItems = async (
     return items
   }
 
-  // For 'open' and 'dismissed', honor the operator's entity dismissals from
-  // action_queue_dismissals (ADR-0027). Ack-noted entries (note = 'ack') are
-  // intentionally excluded from the hidden set — they remain visible as open.
-  if (state === 'open' || state === 'dismissed') {
-    const dismissals = await listDismissals()
-    const dismissedSet = new Set(
-      dismissals
-        .filter((d) => d.note !== 'ack')
-        .map((d) => `${d.entityKind}:${d.entityId}`),
-    )
-
-    if (state === 'open') {
-      const items = await fetchByState('open')
-      if (dismissedSet.size === 0) return items
-      return items.filter(
-        (item) =>
-          !dismissedSet.has(
-            `${actionQueueKindToEntityKind(item.kind)}:${entityIdForItem(item)}`,
-          ),
-      )
-    }
-
-    // 'dismissed': state='dismissed' DB rows PLUS state='open' rows whose entity
-    // is present in action_queue_dismissals (entity-dismissed items). This
-    // ensures operator dismissals on synthetic/long-lived items like
-    // observability-store-oversize and subscriber-stalled are visible under
-    // `list dismissed` even though their DB state is still 'open'.
-    const byState = await fetchByState('dismissed')
-    if (dismissedSet.size === 0) return byState
-    const openItems = await fetchByState('open')
-    const entityDismissed = openItems.filter((item) =>
-      dismissedSet.has(
-        `${actionQueueKindToEntityKind(item.kind)}:${entityIdForItem(item)}`,
-      ),
-    )
-    return [...byState, ...entityDismissed].sort((a, b) =>
-      b.raisedAt.localeCompare(a.raisedAt),
-    )
-  }
-
   return fetchByState(state)
 }
 
 const isTerminal = (state: ActionQueueState): boolean =>
-  state === 'resolved' || state === 'dismissed'
+  state === 'resolved'
 
 export const setActionQueueState = async (
   idOrPrefix: string,
@@ -973,47 +895,6 @@ export const supersedeObsoletePreflightDirtyMainRows = async (
 }
 
 /**
- * Record an operator dismissal for a stale-worktree alert. Inserts into
- * `stale_worktree_dismissals` (creating the table on first use) so the sweep
- * skips the worktree on subsequent passes. No-op when the row already exists.
- */
-export const dismissStaleWorktree = async (taskId: string): Promise<void> => {
-  await initActionQueue()
-  const c = stateClient()
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS stale_worktree_dismissals (
-      task_id TEXT PRIMARY KEY,
-      dismissed_at INTEGER NOT NULL
-    )
-  `)
-  await c.execute({
-    sql: `INSERT OR IGNORE INTO stale_worktree_dismissals (task_id, dismissed_at) VALUES (?, ?)`,
-    args: [taskId, Date.now()],
-  })
-}
-
-/**
- * Delete the stale-worktree dismissal row for a task so a future
- * stale-worktree alert can re-fire cleanly if the task becomes stale again.
- * No-op when no row exists.
- */
-export const clearStaleWorktreeDismissal = async (
-  taskId: string,
-): Promise<void> => {
-  await initActionQueue()
-  const c = stateClient()
-  // The table may not exist yet (first run before any dismissal).
-  try {
-    await c.execute({
-      sql: `DELETE FROM stale_worktree_dismissals WHERE task_id = ?`,
-      args: [taskId],
-    })
-  } catch {
-    // Table doesn't exist yet — nothing to clear.
-  }
-}
-
-/**
  * Auto-clear all open actionQueue alerts for a task and remove its
  * stale-worktree dismissal row whenever the task's status changes.
  * Called by `updateTask` in queue.ts on every real status transition.
@@ -1049,7 +930,6 @@ export const dismissAlertsOnStatusChange = async (
     })
     ids.push(id)
   }
-  await clearStaleWorktreeDismissal(taskId)
   return ids
 }
 

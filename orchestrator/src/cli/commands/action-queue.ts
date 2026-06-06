@@ -1,14 +1,15 @@
 /**
- * `action-queue` command group: `list` (default), `show`, `ack`, `resolve`,
- * `dismiss`, `undismiss`, `raise` (JSON on stdin/file), and `watch`.
+ * `action-queue` command group: `list` (default), `show`, `raise`
+ * (JSON on stdin/file), `watch`, and `reconcile`.
  *
  * `list`, `show`, and the bare `action-queue` alias read through the daemon's
  * `GET /view/action-queue` endpoint so the CLI and UI always render the same
  * derived view (`buildActionQueueView`). If the daemon is not running, both
  * commands fail fast — there is no fallback to the raw DB path.
  *
- * Mutation verbs (ack/resolve/dismiss/undismiss/raise/watch/reconcile) continue
- * to use the direct DB path unchanged.
+ * The action queue is a pure projection of entity state. Rows open and close
+ * driven solely by entity (task/worktree/proposal) transitions — there are no
+ * operator close verbs.
  *
  * --lean is a boolean flag that lands in positionals after routing.
  */
@@ -18,17 +19,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   raiseActionQueueItem,
-  getActionQueueItem,
-  setActionQueueState,
-  actionQueueKindToEntityKind,
-  entityIdForItem,
-  type ActionQueueItem,
 } from '../../core/lib/action-queue'
-import {
-  dismissEntity,
-  undismissEntity,
-} from '../../core/lib/action-queue-dismissals'
-import { resolveAuthor, formatAuthor } from '../../core/author'
 import { actionQueueRaiseSchema } from '../action-queue-raise-schema'
 import type { Command } from '../command'
 import { errorMessage } from './shared'
@@ -78,15 +69,15 @@ const fetchActionQueueView = async (
 
 const actionQueueList: Command = {
   path: 'action-queue list',
-  summary: 'list action queue items [open|dismissed|all] [--lean]',
-  usage: 'usage: mars action-queue list [open|dismissed|all] [--lean]',
+  summary: 'list action queue items [open|all] [--lean]',
+  usage: 'usage: mars action-queue list [open|all] [--lean]',
   run: async (args, deps) => {
     const lean = args.positional.includes('--lean')
     const rest = args.positional.filter((a) => a !== '--lean')
     const filter = rest[0] ?? 'open'
-    const allowed = new Set(['open', 'dismissed', 'all'])
+    const allowed = new Set(['open', 'all'])
     if (!allowed.has(filter)) {
-      deps.err('usage: mars action-queue list [open|dismissed|all] [--lean]')
+      deps.err('usage: mars action-queue list [open|all] [--lean]')
       return { code: 1 }
     }
     const port = await readDaemonPort(deps.ctx.stateDir)
@@ -116,8 +107,7 @@ const actionQueueList: Command = {
       if (overflow > 0) deps.out(`  ... +${overflow} more`)
     } else {
       for (const row of rows) {
-        const flag = row.dismissed ? 'dismissed' : 'open'
-        deps.out(`${row.id}\t${flag}\t${row.priority}\t${row.kind}\t${row.title}`)
+        deps.out(`${row.id}\t${row.priority}\t${row.kind}\t${row.title}`)
       }
     }
     return { code: 0 }
@@ -131,7 +121,7 @@ const actionQueueList: Command = {
 const actionQueueDefault: Command = {
   path: 'action-queue',
   summary: 'list open action queue items (alias for `list open`)',
-  usage: 'usage: mars action-queue [list [open|dismissed|all]] [--lean] | ...',
+  usage: 'usage: mars action-queue [list [open|all]] [--lean] | ...',
   run: (args, deps) => actionQueueList.run(args, deps),
 }
 
@@ -169,93 +159,10 @@ const actionQueueShow: Command = {
     deps.out(`kind:      ${row.kind}`)
     deps.out(`entity:    ${row.entityId}`)
     deps.out(`priority:  ${row.priority}`)
-    deps.out(`dismissed: ${row.dismissed}`)
     deps.out(`at:        ${row.at}`)
     deps.out(`dag:       ${JSON.stringify(row.dag)}`)
     deps.out('')
     deps.out(row.body)
-    return { code: 0 }
-  },
-}
-
-const makeAckResolve = (verb: 'ack' | 'resolve'): Command => ({
-  path: `action-queue ${verb}`,
-  summary: `${verb} an action queue item`,
-  usage: `usage: mars action-queue ${verb} <id>`,
-  run: async (args, deps) => {
-    const id = args.positional.filter((a) => a !== '--lean')[0]
-    if (!id) {
-      deps.err(`usage: mars action-queue ${verb} <id>`)
-      return { code: 1 }
-    }
-    const item = await getActionQueueItem(id)
-    if (!item) {
-      deps.err(`no action queue item matching ${id}`)
-      return { code: 1 }
-    }
-    if (verb === 'resolve') {
-      // Hard-close the action_queue_items row so state/resolved_at/resolution
-      // are persisted. dismissEntity only wrote to action_queue_dismissals and
-      // left the row state = 'open' — a silent no-op for task.dropped rows that
-      // have no eviction event to close them automatically.
-      await setActionQueueState(item.id, 'resolved', { note: 'operator-resolved' })
-    } else {
-      const entityKind = actionQueueKindToEntityKind(item.kind)
-      const entityId = entityIdForItem(item)
-      await dismissEntity(entityKind, entityId, { note: 'ack' })
-    }
-    deps.out(`${verb} ${item.id}`)
-    return { code: 0 }
-  },
-})
-
-const actionQueueDismiss: Command = {
-  path: 'action-queue dismiss',
-  summary: 'dismiss an action queue item',
-  usage: 'usage: mars action-queue dismiss <id> [--note <text>]',
-  run: async (args, deps) => {
-    const id = args.positional.filter((a) => a !== '--lean')[0]
-    if (!id) {
-      deps.err('usage: mars action-queue dismiss <id>')
-      return { code: 1 }
-    }
-    const item = await getActionQueueItem(id)
-    if (!item) {
-      deps.err(`no action queue item matching ${id}`)
-      return { code: 1 }
-    }
-    const entityKind = actionQueueKindToEntityKind(item.kind)
-    const entityId = entityIdForItem(item)
-    const by = formatAuthor(resolveAuthor(args.flags['--author']))
-    const note = args.flags['--note']
-    await dismissEntity(entityKind, entityId, {
-      by,
-      ...(note !== undefined ? { note } : {}),
-    })
-    deps.out(`dismiss ${item.id}`)
-    return { code: 0 }
-  },
-}
-
-const actionQueueUndismiss: Command = {
-  path: 'action-queue undismiss',
-  summary: 'undismiss an action queue item',
-  usage: 'usage: mars action-queue undismiss <id>',
-  run: async (args, deps) => {
-    const id = args.positional.filter((a) => a !== '--lean')[0]
-    if (!id) {
-      deps.err('usage: mars action-queue undismiss <id>')
-      return { code: 1 }
-    }
-    const item = await getActionQueueItem(id)
-    if (!item) {
-      deps.err(`no action queue item matching ${id}`)
-      return { code: 1 }
-    }
-    const entityKind = actionQueueKindToEntityKind(item.kind)
-    const entityId = entityIdForItem(item)
-    const removed = await undismissEntity(entityKind, entityId)
-    deps.out(removed ? `undismiss ${item.id}` : `${item.id} was not dismissed`)
     return { code: 0 }
   },
 }
@@ -332,19 +239,13 @@ const actionQueueReconcile: Command = {
       '../../core/daemon/lifecycle-reconcile'
     )
     const client = resolveStateClient()
-    const { rowsResolved, dismissalsCleared } =
-      await reconcileTerminalTasks(client)
-    if (rowsResolved === 0 && dismissalsCleared === 0) {
+    const { rowsResolved } = await reconcileTerminalTasks(client)
+    if (rowsResolved === 0) {
       deps.out('nothing to reconcile — action queue is consistent')
     } else {
-      if (rowsResolved > 0)
-        deps.out(
-          `closed ${rowsResolved} action queue item${rowsResolved === 1 ? '' : 's'}`,
-        )
-      if (dismissalsCleared > 0)
-        deps.out(
-          `cleared ${dismissalsCleared} orphaned dismissal${dismissalsCleared === 1 ? '' : 's'}`,
-        )
+      deps.out(
+        `closed ${rowsResolved} action queue item${rowsResolved === 1 ? '' : 's'}`,
+      )
     }
     return { code: 0 }
   },
@@ -353,10 +254,6 @@ const actionQueueReconcile: Command = {
 export const actionQueueCommands: readonly Command[] = [
   actionQueueList,
   actionQueueShow,
-  makeAckResolve('ack'),
-  makeAckResolve('resolve'),
-  actionQueueDismiss,
-  actionQueueUndismiss,
   actionQueueRaise,
   actionQueueWatch,
   actionQueueReconcile,

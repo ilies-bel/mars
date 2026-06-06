@@ -16,10 +16,6 @@ interface ActionQueueModule {
   getActionQueueItem: typeof import('../../lib/action-queue').getActionQueueItem
 }
 
-interface DismissalsModule {
-  dismissEntity: typeof import('../../lib/action-queue-dismissals').dismissEntity
-}
-
 interface ReconcileModule {
   reconcileTerminalTasks: typeof import('../lifecycle-reconcile').reconcileTerminalTasks
 }
@@ -34,8 +30,8 @@ const setupRepo = (): string => {
 /**
  * Load every module against the same temp repo. `MARS_REPO` makes
  * `resolveContext()` resolve `stateDbPath`/`queueDbPath` to one
- * `.mars/mars.db`, so the tasks table, action_queue_items, and
- * action_queue_dismissals all share a single libsql client.
+ * `.mars/mars.db`, so the tasks table and action_queue_items share a
+ * single libsql client.
  */
 const loadModules = async (repo: string) => {
   vi.resetModules()
@@ -44,11 +40,8 @@ const loadModules = async (repo: string) => {
   await q.migrateQueueSchema()
   const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
   await actionQueue.initActionQueue()
-  const dismissals = (await import(
-    '../../lib/action-queue-dismissals'
-  )) as unknown as DismissalsModule
   const reconcile = (await import('../lifecycle-reconcile')) as unknown as ReconcileModule
-  return { q, actionQueue, dismissals, reconcile }
+  return { q, actionQueue, reconcile }
 }
 
 const insertTask = async (client: Client, id: string, status: string): Promise<void> => {
@@ -71,8 +64,8 @@ describe('reconcileTerminalTasks', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('resolves open rows for terminal tasks and clears orphaned dismissals, leaving live tasks untouched', async () => {
-    const { q, actionQueue, dismissals, reconcile } = await loadModules(repo)
+  it('resolves open rows for terminal tasks, leaving live tasks untouched', async () => {
+    const { q, actionQueue, reconcile } = await loadModules(repo)
     const client = q.resolveQueueClient()
 
     // Seed: 'done' task with an open action queue row.
@@ -91,10 +84,6 @@ describe('reconcileTerminalTasks', () => {
       originTaskId: doneTaskId,
     })
 
-    // Seed: deleted task with a lingering dismissal (absent from tasks table).
-    const deletedTaskId = 'T-deleted'
-    await dismissals.dismissEntity('task', deletedTaskId, { by: 'op' })
-
     // Seed: live 'queued' task with an open action queue row — must be untouched.
     const queuedTaskId = 'T-queued'
     await insertTask(client, queuedTaskId, 'queued')
@@ -111,20 +100,12 @@ describe('reconcileTerminalTasks', () => {
       originTaskId: queuedTaskId,
     })
 
-    const { rowsResolved, dismissalsCleared } = await reconcile.reconcileTerminalTasks(client)
+    const { rowsResolved } = await reconcile.reconcileTerminalTasks(client)
 
     // Done task's action queue row must be resolved.
     const doneItem = await actionQueue.getActionQueueItem(doneItemId)
     expect(doneItem).not.toBeNull()
     expect(doneItem!.state).toBe('resolved')
-
-    // Orphaned dismissal for the deleted task must be gone.
-    const orphanCheck = await client.execute({
-      sql: `SELECT 1 FROM action_queue_dismissals
-             WHERE entity_kind = 'task' AND entity_id = ? LIMIT 1`,
-      args: [deletedTaskId],
-    })
-    expect(orphanCheck.rows).toHaveLength(0)
 
     // Live queued task's row must remain open.
     const queuedItem = await actionQueue.getActionQueueItem(queuedItemId)
@@ -133,7 +114,6 @@ describe('reconcileTerminalTasks', () => {
 
     // Return counts must reflect what was processed.
     expect(rowsResolved).toBe(1)
-    expect(dismissalsCleared).toBe(1)
   })
 
   it('is idempotent: a second call after everything is already clean is a no-op', async () => {
@@ -161,6 +141,5 @@ describe('reconcileTerminalTasks', () => {
     expect(first.rowsResolved).toBe(1)
     // After the first pass the row is resolved, so the second pass finds nothing.
     expect(second.rowsResolved).toBe(0)
-    expect(second.dismissalsCleared).toBe(0)
   })
 })

@@ -22,8 +22,6 @@ interface ActionQueueItemBody {
     descendants: Array<{ id: string; status: string; summary: string }>
     proposalId: string | null
   } | null
-  dismissed: boolean
-  ackState: 'ack' | 'resolved' | 'dismissed' | null
   errorKind: string
   actions: Array<{ id: string; label: string; op: string }>
   staleWorktreeDetail: {
@@ -186,8 +184,6 @@ describe('GET /api/action-queue/action-queue (persisted view)', () => {
     expect(row?.priority).toBe('high')
     expect(row?.title).toBe('Task t-failed failed')
     expect(row?.body).toBe('Some failure body')
-    expect(row?.dismissed).toBe(false)
-    expect(row?.ackState).toBeNull()
     // errorKind preserved from persisted kind
     expect(row?.errorKind).toBe('failed-task')
     expect(row?.actions).toEqual([])
@@ -447,91 +443,6 @@ describe('GET /api/action-queue/action-queue (persisted view)', () => {
     expect(row?.priority).toBe('high')
   })
 
-  it('hides dismissed rows from the open filter and shows them under dismissed filter', async () => {
-    const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertActionQueueItem(c, {
-      id: 'dis-row-1',
-      kind: 'failed',
-      priority: 'high',
-      payload: { taskId: 't-to-dismiss' },
-    })
-    c.close()
-
-    // Dismiss via the ack/dismiss API using kind:entityId format
-    const dismissRes = await fetch(`${baseUrl}/api/action-queue/dismiss`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: 'failed-task:t-to-dismiss' }),
-    })
-    expect(dismissRes.status).toBe(200)
-
-    // Should not appear in open filter
-    const open = await fetchQueue()
-    expect(open.find((r) => r.id === 'dis-row-1')).toBeUndefined()
-
-    // Should appear under dismissed filter
-    const dismissed = await fetchQueue('dismissed')
-    const row = dismissed.find((r) => r.id === 'dis-row-1')
-    expect(row).toBeDefined()
-    expect(row?.dismissed).toBe(true)
-    expect(row?.ackState).toBe('dismissed')
-
-    // Should appear under all filter
-    const all = await fetchQueue('all')
-    expect(all.find((r) => r.id === 'dis-row-1')).toBeDefined()
-  })
-
-  it('ack keeps row visible in open filter; resolve hides it — round trip', async () => {
-    const c = createClient({ url: `file:${dbPath(repo)}` })
-    await insertActionQueueItem(c, {
-      id: 'ack-row-1',
-      kind: 'failed',
-      priority: 'high',
-      payload: { taskId: 't-ack' },
-    })
-    c.close()
-
-    // Baseline: appears in open filter with no ackState
-    const before = await fetchQueue()
-    const row0 = before.find((r) => r.id === 'ack-row-1')
-    expect(row0).toBeDefined()
-    expect(row0?.ackState).toBeNull()
-    expect(row0?.dismissed).toBe(false)
-
-    // Ack
-    const ackRes = await fetch(`${baseUrl}/api/action-queue/ack`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: 'failed-task:t-ack' }),
-    })
-    expect(ackRes.status).toBe(200)
-
-    // After ack: still shows in open filter, but ackState='ack'
-    const afterAck = await fetchQueue()
-    const rowAck = afterAck.find((r) => r.id === 'ack-row-1')
-    expect(rowAck).toBeDefined()
-    expect(rowAck?.ackState).toBe('ack')
-    expect(rowAck?.dismissed).toBe(false)
-
-    // Resolve
-    const resolveRes = await fetch(`${baseUrl}/api/action-queue/resolve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: 'failed-task:t-ack' }),
-    })
-    expect(resolveRes.status).toBe(200)
-
-    // After resolve: hidden from open filter
-    const afterResolve = await fetchQueue()
-    expect(afterResolve.find((r) => r.id === 'ack-row-1')).toBeUndefined()
-
-    // But visible under all with resolved ackState
-    const allRows = await fetchQueue('all')
-    const rowResolved = allRows.find((r) => r.id === 'ack-row-1')
-    expect(rowResolved?.ackState).toBe('resolved')
-    expect(rowResolved?.dismissed).toBe(true)
-  })
-
   it('returns 200 with empty array when action_queue_items table does not exist', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
     await c.execute(`DROP TABLE IF EXISTS action_queue_items`)
@@ -556,10 +467,6 @@ describe('GET /api/action-queue/action-queue (persisted view)', () => {
 
     const body = await fetchQueue()
     expect(body.find((r) => r.id === 'closed-row')).toBeUndefined()
-
-    // Also not in dismissed filter (action_queue_dismissals is empty)
-    const dismissed = await fetchQueue('dismissed')
-    expect(dismissed.find((r) => r.id === 'closed-row')).toBeUndefined()
   })
 
   it('produces a daemon-killed-batch synthetic row when ≥2 daemon-killed rows are open', async () => {
@@ -635,8 +542,6 @@ describe('actionQueueResponseSchema resilience', () => {
     body: '',
     at: new Date().toISOString(),
     dag: null,
-    dismissed: false,
-    ackState: null,
     errorKind: 'daemon-killed',
     actions: [],
   }

@@ -48,9 +48,6 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),
   viewProgress: async () => ({ tasks: [], proposals: [] }),
-  actionQueueAck: async () => {},
-  actionQueueResolve: async () => {},
-  actionQueueDismiss: async () => {},
   todoDismiss: async () => {},
   viewActionQueue: async () => [],
   viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
@@ -85,14 +82,14 @@ describe('POST /view/todo/dismiss', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('dispatches to todoDismiss with kind=draft and id', async () => {
+  it('dispatches to todoDismiss with the draft id', async () => {
     const { httpServer } = await loadModules(repo)
-    const calls: Array<{ kind: string; id: string }> = []
+    const calls: string[] = []
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        todoDismiss: async (kind, id) => {
-          calls.push({ kind, id })
+        todoDismiss: async (id) => {
+          calls.push(id)
         },
       }),
     )
@@ -107,41 +104,13 @@ describe('POST /view/todo/dismiss', () => {
       expect(res.status).toBe(200)
       const body = (await res.json()) as { ok: boolean }
       expect(body.ok).toBe(true)
-      expect(calls).toEqual([{ kind: 'draft', id: 'proposal-abc' }])
+      expect(calls).toEqual(['proposal-abc'])
     } finally {
       await close()
     }
   })
 
-  it('dispatches to todoDismiss with kind=stale and id', async () => {
-    const { httpServer } = await loadModules(repo)
-    const calls: Array<{ kind: string; id: string }> = []
-
-    const { port, close } = await httpServer.startHttpServer(
-      makeDeps({
-        todoDismiss: async (kind, id) => {
-          calls.push({ kind, id })
-        },
-      }),
-    )
-
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/todo/dismiss`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'stale', id: 'mars-xyz789' }),
-      })
-
-      expect(res.status).toBe(200)
-      const body = (await res.json()) as { ok: boolean }
-      expect(body.ok).toBe(true)
-      expect(calls).toEqual([{ kind: 'stale', id: 'mars-xyz789' }])
-    } finally {
-      await close()
-    }
-  })
-
-  it('returns 400 for an unknown kind', async () => {
+  it('returns 400 for a non-draft kind', async () => {
     const { httpServer } = await loadModules(repo)
 
     const { port, close } = await httpServer.startHttpServer(makeDeps())

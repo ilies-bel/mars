@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { dismissEntity as DismissEntityFn } from './action-queue-dismissals'
 import {
   RECOVERY_FAILED_ACTION_QUEUE_KIND,
   UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
@@ -29,11 +28,6 @@ interface ActionQueueModule {
   supersedeObsoletePreflightDirtyMainRows: typeof import('./action-queue').supersedeObsoletePreflightDirtyMainRows
 }
 
-interface DismissalsModule {
-  dismissEntity: typeof DismissEntityFn
-  undismissEntity: typeof import('./action-queue-dismissals').undismissEntity
-}
-
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-actionQueue-test-'))
   execFileSync('git', ['init', '-q'], { cwd: repo })
@@ -46,15 +40,6 @@ const loadModule = async (repo: string): Promise<ActionQueueModule> => {
   process.env.MARS_REPO = repo
   return (await import('./action-queue')) as unknown as ActionQueueModule
 }
-
-/**
- * Load the action-queue-dismissals module in the SAME module-cache context
- * as a previously loaded ActionQueueModule (i.e. after loadModule has already
- * called vi.resetModules() and set MARS_REPO). Dynamic import is used so the
- * two modules share the same libsql client / DB file.
- */
-const loadDismissalsModule = async (): Promise<DismissalsModule> =>
-  (await import('./action-queue-dismissals')) as unknown as DismissalsModule
 
 const baseItem = (overrides: Partial<Parameters<ActionQueueModule['raiseActionQueueItem']>[0]> = {}) => ({
   kind: 'failed' as const,
@@ -147,23 +132,18 @@ describe('action-queue', () => {
   it('listActionQueueItems filters by state and supports "all"', async () => {
     const actionQueue = await loadModule(repo)
     const a = await actionQueue.raiseActionQueueItem(baseItem({ signature: 'a' }))
-    const b = await actionQueue.raiseActionQueueItem(baseItem({ signature: 'b' }))
+    await actionQueue.raiseActionQueueItem(baseItem({ signature: 'b' }))
     await actionQueue.raiseActionQueueItem(baseItem({ signature: 'c' }))
 
     await actionQueue.setActionQueueState(a, 'resolved', { resolution: 'fixed' })
-    await actionQueue.setActionQueueState(b, 'dismissed')
 
     const open = await actionQueue.listActionQueueItems('open')
-    expect(open).toHaveLength(1)
-    expect(open[0].state).toBe('open')
+    expect(open).toHaveLength(2)
+    expect(open.every((i) => i.state === 'open')).toBe(true)
 
     const resolved = await actionQueue.listActionQueueItems('resolved')
     expect(resolved).toHaveLength(1)
     expect(resolved[0].id).toBe(a)
-
-    const dismissed = await actionQueue.listActionQueueItems('dismissed')
-    expect(dismissed).toHaveLength(1)
-    expect(dismissed[0].id).toBe(b)
 
     const all = await actionQueue.listActionQueueItems('all')
     expect(all).toHaveLength(3)
@@ -215,15 +195,6 @@ describe('action-queue', () => {
     expect(item!.resolutionNote).toBe('manual cleanup ran')
     expect(item!.rootCause).toBe('stale lock from crashed daemon')
     expect(item!.resolvedAt).not.toBeNull()
-  })
-
-  it('setActionQueueState acknowledged does not set resolved_at', async () => {
-    const actionQueue = await loadModule(repo)
-    const id = await actionQueue.raiseActionQueueItem(baseItem())
-    await actionQueue.setActionQueueState(id, 'acknowledged')
-    const item = await actionQueue.getActionQueueItem(id)
-    expect(item!.state).toBe('acknowledged')
-    expect(item!.resolvedAt).toBeNull()
   })
 
   it('setActionQueueState is idempotent on the same terminal state', async () => {
@@ -865,177 +836,6 @@ describe('action-queue', () => {
       const item = await actionQueue.getActionQueueItem(id, async () => null)
       expect(item!.liveTaskStatus).toBeNull()
     })
-  })
-})
-
-describe('entity-dismissal read path (option a)', () => {
-  let repo: string
-
-  beforeEach(() => {
-    repo = setupRepo()
-  })
-
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
-  it('entity-dismissed synthetic item is absent from listActionQueueItems("open")', async () => {
-    const actionQueue = await loadModule(repo)
-    const dismissals = await loadDismissalsModule()
-
-    // Raise a synthetic observability-store-oversize item (no payload.taskId).
-    const id = await actionQueue.raiseActionQueueItem({
-      kind: 'observability-store-oversize',
-      category: 'daemon',
-      priority: 'high',
-      title: 'Observability store oversize',
-      body: 'trace_events table exceeds 500 MB',
-      payload: { sizeBytes: 600_000_000 },
-      context: {},
-      raisedBy: 'daemon:observability-watchdog',
-      signature: 'observability-store-oversize',
-    })
-
-    // Before dismissal: item is open.
-    const before = await actionQueue.listActionQueueItems('open')
-    expect(before.some((i) => i.id === id)).toBe(true)
-
-    // Dismiss the entity (entityKind='task', entityId=signature).
-    await dismissals.dismissEntity('task', 'observability-store-oversize')
-
-    // After dismissal: item must NOT appear in 'open'.
-    const after = await actionQueue.listActionQueueItems('open')
-    expect(after.some((i) => i.id === id)).toBe(false)
-  })
-
-  it('entity-dismissed synthetic item is present in listActionQueueItems("dismissed")', async () => {
-    const actionQueue = await loadModule(repo)
-    const dismissals = await loadDismissalsModule()
-
-    const id = await actionQueue.raiseActionQueueItem({
-      kind: 'observability-store-oversize',
-      category: 'daemon',
-      priority: 'high',
-      title: 'Observability store oversize',
-      body: 'trace_events table exceeds 500 MB',
-      payload: { sizeBytes: 600_000_000 },
-      context: {},
-      raisedBy: 'daemon:observability-watchdog',
-      signature: 'observability-store-oversize',
-    })
-
-    await dismissals.dismissEntity('task', 'observability-store-oversize')
-
-    const dismissed = await actionQueue.listActionQueueItems('dismissed')
-    expect(dismissed.some((i) => i.id === id)).toBe(true)
-  })
-
-  it('ack-noted entity dismissal does not hide the item from listActionQueueItems("open")', async () => {
-    const actionQueue = await loadModule(repo)
-    const dismissals = await loadDismissalsModule()
-
-    const id = await actionQueue.raiseActionQueueItem({
-      kind: 'subscriber-stalled',
-      category: 'daemon',
-      priority: 'high',
-      title: 'Subscriber stalled',
-      body: 'Handler blocked on event',
-      payload: {},
-      context: {},
-      raisedBy: 'daemon:drain',
-      signature: 'stall-sig-1',
-    })
-
-    // Ack (note='ack') — must NOT hide from 'open'.
-    await dismissals.dismissEntity('task', 'stall-sig-1', { note: 'ack' })
-
-    const open = await actionQueue.listActionQueueItems('open')
-    expect(open.some((i) => i.id === id)).toBe(true)
-  })
-
-  it('undismiss re-exposes the item in listActionQueueItems("open")', async () => {
-    const actionQueue = await loadModule(repo)
-    const dismissals = await loadDismissalsModule()
-
-    const id = await actionQueue.raiseActionQueueItem({
-      kind: 'observability-store-oversize',
-      category: 'daemon',
-      priority: 'high',
-      title: 'Observability store oversize',
-      body: 'trace_events table exceeds 500 MB',
-      payload: {},
-      context: {},
-      raisedBy: 'daemon:observability-watchdog',
-      signature: 'obs-store-sig-2',
-    })
-
-    await dismissals.dismissEntity('task', 'obs-store-sig-2')
-    const hiddenOpen = await actionQueue.listActionQueueItems('open')
-    expect(hiddenOpen.some((i) => i.id === id)).toBe(false)
-
-    await dismissals.undismissEntity('task', 'obs-store-sig-2')
-    const reshownOpen = await actionQueue.listActionQueueItems('open')
-    expect(reshownOpen.some((i) => i.id === id)).toBe(true)
-  })
-
-  it('entity-dismissal of a task-keyed item (payload.taskId) also honors the filter', async () => {
-    const actionQueue = await loadModule(repo)
-    const dismissals = await loadDismissalsModule()
-
-    const taskId = 'mars-df4a60ef'
-    const id = await actionQueue.raiseActionQueueItem({
-      kind: 'failed',
-      category: 'orchestrator',
-      priority: 'normal',
-      title: 'Task failed',
-      body: 'Something broke',
-      payload: { taskId },
-      context: {},
-      raisedBy: 'orchestrator',
-      signature: 'sig-failed-1',
-    })
-
-    // The entity for a 'failed' item with payload.taskId is ('task', taskId).
-    await dismissals.dismissEntity('task', taskId)
-
-    const open = await actionQueue.listActionQueueItems('open')
-    expect(open.some((i) => i.id === id)).toBe(false)
-
-    const dismissed = await actionQueue.listActionQueueItems('dismissed')
-    expect(dismissed.some((i) => i.id === id)).toBe(true)
-  })
-
-  it('task.failed NO-OP: dismissing a failed task does not close its row (state stays open in DB)', async () => {
-    // This confirms the Invalidator's task.failed NO-OP is not regressed —
-    // the row is hidden from 'open' list by entity dismissal, but its DB
-    // state remains 'open' (no setActionQueueState call from the CLI).
-    const actionQueue = await loadModule(repo)
-    const dismissals = await loadDismissalsModule()
-
-    const taskId = 'failed-task-noop'
-    const id = await actionQueue.raiseActionQueueItem({
-      kind: 'failed',
-      category: 'orchestrator',
-      priority: 'normal',
-      title: 'Task failed',
-      body: 'Coder exited non-zero',
-      payload: { taskId },
-      context: {},
-      raisedBy: 'orchestrator',
-      signature: 'sig-noop',
-    })
-
-    await dismissals.dismissEntity('task', taskId)
-
-    // Not visible in 'open' (entity-dismissed).
-    const open = await actionQueue.listActionQueueItems('open')
-    expect(open.some((i) => i.id === id)).toBe(false)
-
-    // But DB state is still 'open' — getActionQueueItem reflects raw DB.
-    const raw = await actionQueue.getActionQueueItem(id)
-    expect(raw).not.toBeNull()
-    expect(raw!.state).toBe('open')
   })
 })
 

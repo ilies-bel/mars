@@ -1,12 +1,10 @@
 /**
- * Regression tests for `action-queue resolve` on task.dropped-derived rows.
+ * Tests for the `setActionQueueState(..., 'resolved', ...)` write path on
+ * task.dropped-derived rows — the sole row-closer (driven by the Invalidator).
  *
- * Before the fix, `action-queue resolve <id>` only wrote to
- * `action_queue_dismissals` and left `action_queue_items.state = 'open'`.
- * For task.dropped rows there is no eviction event to auto-close them, so they
- * stayed open until the next daemon restart. These tests verify that
- * `setActionQueueState` (the corrected resolve path) persists the row closure
- * and that a subsequent `reconcileTerminalTasks` pass does not re-open it.
+ * For task.dropped rows there is no eviction event to auto-close them, so the
+ * 'resolved' write must persist the row closure on `action_queue_items.state`,
+ * and a subsequent `reconcileTerminalTasks` pass must not re-open it.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -76,7 +74,7 @@ const insertDroppedTask = async (client: Client, taskId: string): Promise<void> 
   })
 }
 
-describe('action-queue resolve — task.dropped-derived rows', () => {
+describe('setActionQueueState resolved — task.dropped-derived rows', () => {
   let repo: string
 
   beforeEach(() => {
@@ -116,8 +114,8 @@ describe('action-queue resolve — task.dropped-derived rows', () => {
     expect(row!.resolvedAt).toBeNull()
     expect(row!.resolution).toBeNull()
 
-    // Resolve via the corrected CLI path
-    await actionQueue.setActionQueueState(row!.id, 'resolved', { note: 'operator-resolved' })
+    // Close the row via the Invalidator's resolve write path
+    await actionQueue.setActionQueueState(row!.id, 'resolved', { note: 'invalidator-resolved' })
 
     const resolved = await actionQueue.getActionQueueItem(row!.id)
     expect(resolved?.state).toBe('resolved')
@@ -149,8 +147,8 @@ describe('action-queue resolve — task.dropped-derived rows', () => {
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row, 'open row must exist after raise').toBeDefined()
 
-    // Operator explicitly resolves the row (the fixed CLI path)
-    await actionQueue.setActionQueueState(row!.id, 'resolved', { note: 'operator-resolved' })
+    // The Invalidator closes the row via the resolve write path
+    await actionQueue.setActionQueueState(row!.id, 'resolved', { note: 'invalidator-resolved' })
 
     // Simulate a daemon restart: reconcileTerminalTasks runs on startup.
     // The row is already resolved — reconcile must not touch it.

@@ -18,7 +18,7 @@ import {
 import { derivedRowActions } from '../../lib/derived-row-actions'
 
 export type DerivedActionQueueKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
-export type DerivedActionQueueFilter = 'open' | 'dismissed' | 'all'
+export type DerivedActionQueueFilter = 'open' | 'all'
 
 export interface StaleWorktreeDetail {
   prompt: string | null
@@ -45,8 +45,6 @@ export interface ActionQueueRow {
     descendants: { id: string; status: string; summary: string }[]
     proposalId: string | null
   } | null
-  dismissed: boolean
-  ackState: 'ack' | 'resolved' | 'dismissed' | null
   errorKind: string
   actions: { id: string; label: string; op: string }[]
   staleWorktreeDetail: StaleWorktreeDetail | null
@@ -76,11 +74,7 @@ export interface PersistedActionQueueRow {
   context: Record<string, unknown>
   raisedAt: string
   lastSeenAt: string
-  /**
-   * The item's dedup signature, used as the entity-id fallback for
-   * dismissal-map lookups so the view computes the same entity key that the
-   * CLI wrote when the operator ran `mars action-queue dismiss <id>`.
-   */
+  /** The item's dedup signature, used as the entity-id fallback. */
   signature?: string | null
 }
 
@@ -112,14 +106,12 @@ export interface TaskForActionQueue {
 }
 
 /**
- * State-store dependency: reads open actionQueue items and operator dismissals.
- * In the daemon this is backed by the in-process actionQueue / action-queue-dismissals
- * modules; in tests it can be stubbed.
+ * State-store dependency: reads open actionQueue items.
+ * In the daemon this is backed by the in-process actionQueue module;
+ * in tests it can be stubbed.
  */
 export interface ActionQueueStateStore {
   listOpenActionQueueItems(): Promise<PersistedActionQueueRow[]>
-  /** Map key: `"<entityKind>:<entityId>"`. Value: note ('ack'|'resolved'|'dismissed'|null). */
-  listActionQueueDismissals(): Promise<Map<string, string | null>>
 }
 
 /**
@@ -149,10 +141,9 @@ export const buildActionQueueView = async ({
   stateStore,
   taskStore,
   repoRoot,
-  filter,
+  filter: _filter,
 }: BuildActionQueueViewParams): Promise<ActionQueueRow[]> => {
   const persistedRows = await stateStore.listOpenActionQueueItems()
-  const dismissalMap = await stateStore.listActionQueueDismissals()
 
   const allTasks = await taskStore.listTasks()
   const taskById = new Map(allTasks.map((t) => [t.id, t]))
@@ -183,19 +174,7 @@ export const buildActionQueueView = async ({
     return 'failed-task'
   }
 
-  // Map a UI kind to the dismissal entity kind.
-  const toEntityKind = (
-    uiKind: DerivedActionQueueKind,
-  ): 'task' | 'worktree' | 'proposal' =>
-    uiKind === 'stale-worktree'
-      ? 'worktree'
-      : uiKind === 'draft-proposal'
-        ? 'proposal'
-        : 'task'
-
   // Extract the entity id (task id, worktree id, or proposal id) from a row.
-  // The fallback chain must match entityIdForItem() in core/lib/action-queue.ts
-  // so the entity key checked here equals the key written by the CLI dismiss verb.
   const extractEntityId = (row: PersistedActionQueueRow): string => {
     if (row.kind === 'stale-worktree') {
       if (typeof row.context.taskId === 'string') return row.context.taskId
@@ -212,7 +191,6 @@ export const buildActionQueueView = async ({
     if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
     // Synthetic / non-task-keyed items (e.g. observability-store-oversize,
     // subscriber-stalled) carry a dedup signature but no task id in payload.
-    // Use signature first so the dismissal key matches what the CLI wrote.
     return row.signature ?? row.id
   }
 
@@ -225,14 +203,6 @@ export const buildActionQueueView = async ({
   // 'failed' maps to 'failed-task' for backwards compat with the action registry.
   const toErrorKind = (k: string): string =>
     k === 'failed' ? 'failed-task' : k
-
-  const noteToAckState = (
-    note: string | null,
-  ): 'ack' | 'resolved' | 'dismissed' => {
-    if (note === 'ack') return 'ack'
-    if (note === 'resolved') return 'resolved'
-    return 'dismissed'
-  }
 
   const toNode = (id: string) => {
     const t = taskById.get(id)
@@ -252,13 +222,6 @@ export const buildActionQueueView = async ({
   for (const row of persistedRows) {
     const uiKind = toUiKind(row.kind)
     const entityId = extractEntityId(row)
-    const entityKind = toEntityKind(uiKind)
-    const dismissalKey = `${entityKind}:${entityId}`
-    const ackState: 'ack' | 'resolved' | 'dismissed' | null =
-      dismissalMap.has(dismissalKey)
-        ? noteToAckState(dismissalMap.get(dismissalKey) ?? null)
-        : null
-    const dismissed = ackState === 'resolved' || ackState === 'dismissed'
     const errorKind = toErrorKind(row.kind)
 
     // For failed-task rows, actions come from the FailureKind registry so
@@ -425,8 +388,6 @@ export const buildActionQueueView = async ({
       body,
       at: row.lastSeenAt,
       dag,
-      dismissed,
-      ackState,
       errorKind,
       actions,
       staleWorktreeDetail,
@@ -441,12 +402,10 @@ export const buildActionQueueView = async ({
     normal: 1,
     low: 2,
   }
-  const filtered =
-    filter === 'all'
-      ? rows
-      : filter === 'dismissed'
-        ? rows.filter((r) => r.dismissed)
-        : rows.filter((r) => !r.dismissed)
+  // Under the pure-projection model every row in persistedRows is already
+  // open (the Invalidator is the sole row-closer). 'open' and 'all' therefore
+  // return the same set; both are accepted for API compatibility.
+  const filtered = rows.slice()
 
   filtered.sort((a, b) => {
     const pr = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
@@ -489,8 +448,6 @@ export const buildActionQueueView = async ({
       body: batchBody,
       at: newest.at,
       dag: null,
-      dismissed: false,
-      ackState: null,
       errorKind: 'daemon-killed-batch',
       actions: batchActions,
       staleWorktreeDetail: null,

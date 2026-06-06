@@ -56,10 +56,8 @@ const makeTask = (
 
 const makeStateStore = (
   rows: PersistedActionQueueRow[] = [],
-  dismissals: Map<string, string | null> = new Map(),
 ): ActionQueueStateStore => ({
   listOpenActionQueueItems: async () => rows,
-  listActionQueueDismissals: async () => dismissals,
 })
 
 const makeTaskStore = (

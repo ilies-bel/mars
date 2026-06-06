@@ -8,7 +8,7 @@
  *   (b) list --lean formats in summary mode,
  *   (c) list fails fast with a clear error when the daemon is not running,
  *   (d) show finds a row by exact id, entity id, or prefix,
- *   (e) show prints the id/kind/entity/priority/dismissed/at/dag header,
+ *   (e) show prints the id/kind/entity/priority/at/dag header,
  *   (f) show fails fast when the daemon is not running.
  *
  * `fetch` is stubbed globally (vi.stubGlobal). The http.port file is written
@@ -69,8 +69,6 @@ const makeRow = (
   body: `Body for ${overrides.id}`,
   at: '2026-01-01T00:00:00.000Z',
   dag: null,
-  dismissed: false,
-  ackState: null,
   errorKind: 'unknown',
   actions: [],
   staleWorktreeDetail: null,
@@ -96,8 +94,8 @@ afterEach(() => {
 describe('action-queue list', () => {
   it('fetches from daemon and formats rows tab-separated', async () => {
     const rows: ActionQueueRow[] = [
-      makeRow({ id: 'aq-abc', priority: 'high', kind: 'failed-task', title: 'Task A', dismissed: false }),
-      makeRow({ id: 'aq-def', priority: 'low', kind: 'draft-proposal', title: 'Prop B', dismissed: false }),
+      makeRow({ id: 'aq-abc', priority: 'high', kind: 'failed-task', title: 'Task A' }),
+      makeRow({ id: 'aq-def', priority: 'low', kind: 'draft-proposal', title: 'Prop B' }),
     ]
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
@@ -109,41 +107,8 @@ describe('action-queue list', () => {
     const r = await runCommandInProcess(['action-queue', 'list', 'open'], opts)
 
     expect(r.code).toBe(0)
-    expect(r.out).toContain('aq-abc\topen\thigh\tfailed-task\tTask A')
-    expect(r.out).toContain('aq-def\topen\tlow\tdraft-proposal\tProp B')
-  })
-
-  it('marks dismissed rows with dismissed flag', async () => {
-    const rows: ActionQueueRow[] = [
-      makeRow({ id: 'aq-xyz', dismissed: true }),
-    ]
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => rows,
-    }))
-    writeDaemonPort(repo, FAKE_PORT)
-    const opts = await loadOpts(repo)
-
-    const r = await runCommandInProcess(['action-queue', 'list', 'dismissed'], opts)
-
-    expect(r.code).toBe(0)
-    expect(r.out[0]).toContain('\tdismissed\t')
-  })
-
-  it('passes the filter query param to the daemon', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => [],
-    })
-    vi.stubGlobal('fetch', mockFetch)
-    writeDaemonPort(repo, FAKE_PORT)
-    const opts = await loadOpts(repo)
-
-    await runCommandInProcess(['action-queue', 'list', 'dismissed'], opts)
-
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('filter=dismissed'),
-    )
+    expect(r.out).toContain('aq-abc\thigh\tfailed-task\tTask A')
+    expect(r.out).toContain('aq-def\tlow\tdraft-proposal\tProp B')
   })
 
   it('passes filter=all when asked', async () => {
@@ -283,7 +248,6 @@ describe('action-queue show', () => {
         title: 'Show me',
         body: 'Detailed body text',
         at: '2026-03-01T12:00:00.000Z',
-        dismissed: false,
         dag,
       }),
     ]
@@ -303,7 +267,6 @@ describe('action-queue show', () => {
     expect(out).toContain('kind:      failed-task')
     expect(out).toContain('entity:    mars-task-001')
     expect(out).toContain('priority:  high')
-    expect(out).toContain('dismissed: false')
     expect(out).toContain('at:        2026-03-01T12:00:00.000Z')
     expect(out).toContain('dag:       ')
     expect(out).toContain('mars-xyz')   // dag content serialised
@@ -344,16 +307,16 @@ describe('action-queue show', () => {
     expect(r.out.join('\n')).toContain('id:        aq-prefix-abc123')
   })
 
-  it('fetches with filter=all so dismissed rows are findable', async () => {
+  it('fetches with filter=all so every row is findable', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => [makeRow({ id: 'aq-dis-1', dismissed: true })],
+      json: async () => [makeRow({ id: 'aq-any-1' })],
     })
     vi.stubGlobal('fetch', mockFetch)
     writeDaemonPort(repo, FAKE_PORT)
     const opts = await loadOpts(repo)
 
-    const r = await runCommandInProcess(['action-queue', 'show', 'aq-dis-1'], opts)
+    const r = await runCommandInProcess(['action-queue', 'show', 'aq-any-1'], opts)
 
     expect(r.code).toBe(0)
     expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('filter=all'))

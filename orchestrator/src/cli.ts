@@ -244,15 +244,14 @@ Commands:
   action-queue                         alias for 'action-queue list open'
   action-queue list [state] [--kind <kind>] [--lean]
                                 list action queue items. state one of:
-                                open|acknowledged|resolved|dismissed|all
-                                (default: open). --kind filters by item
-                                kind, e.g. recovery-failed, no-recipe.
-                                Draft proposals (status='draft') surface
-                                alongside action queue rows for state=open|all
-                                with kind='draft(<source>)'; dismissed
-                                drafts surface for state=dismissed. Use
-                                'mars proposal ...' for the draft lifecycle.
-                                --kind suppresses draft rows. --lean
+                                open|all (default: open). --kind filters
+                                by item kind, e.g. recovery-failed,
+                                no-recipe. Draft proposals (status='draft')
+                                surface alongside action queue rows for
+                                state=open|all with kind='draft(<source>)'.
+                                Use 'mars proposal ...' for the draft
+                                lifecycle. --kind suppresses draft rows.
+                                --lean
                                 prints a compact summary (counts per
                                 priority, then up to 3 oldest blockers
                                 and 3 oldest drafts with section
@@ -261,11 +260,6 @@ Commands:
                                 other terse summaries.
   action-queue show <id>               full detail for an action queue item (accepts a
                                 full id or a unique 8-char prefix)
-  action-queue ack <id>                mark an action queue item acknowledged
-  action-queue resolve <id> [--note <text>] [--root-cause <text>]
-                                mark an action queue item resolved
-  action-queue dismiss <id> [--note <text>]
-                                mark an action queue item dismissed
   action-queue raise --from <-|path>   file an action queue item from a JSON document
                                 (stdin when path is '-'). Replaces the
                                 deprecated pattern of writing one-shot

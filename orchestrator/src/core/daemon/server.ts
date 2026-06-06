@@ -2470,32 +2470,14 @@ export const startDaemon = async (
       return { spans }
     },
     viewSessions: (agentName: string) => buildSessionsView(traceStore, agentName),
-    actionQueueAck: async (kind, id) => {
-      const { dismissEntity } = await import('../lib/action-queue-dismissals')
-      await dismissEntity(kind, id, { by: 'daemon', note: 'ack' })
-    },
-    actionQueueResolve: async (kind, id) => {
-      const { dismissEntity } = await import('../lib/action-queue-dismissals')
-      await dismissEntity(kind, id, { by: 'daemon', note: 'resolved' })
-    },
-    actionQueueDismiss: async (kind, id) => {
-      const { dismissEntity } = await import('../lib/action-queue-dismissals')
-      await dismissEntity(kind, id, { by: 'daemon' })
-    },
-    todoDismiss: async (kind, id) => {
-      if (kind === 'draft') {
-        const { rejectProposal } = await import('../proposals')
-        await rejectProposal(id)
-      } else {
-        const { dismissStaleWorktree } = await import('../lib/action-queue')
-        await dismissStaleWorktree(id)
-      }
+    todoDismiss: async (id) => {
+      const { rejectProposal } = await import('../proposals')
+      await rejectProposal(id)
     },
     viewStreamHub,
     viewActionQueue: async (filter) => {
       const { buildActionQueueView } = await import('./view/action-queue')
       const { listActionQueueItems } = await import('../lib/action-queue')
-      const { listDismissals } = await import('../lib/action-queue-dismissals')
       const { listTasks: qListTasks } = await import('../queue')
       const getQueueClient = getCompositionRootClient
       const { getRepoRoot } = await import('../context')
@@ -2505,10 +2487,6 @@ export const startDaemon = async (
       // Build the state store adapter.
       const stateStore = {
         listOpenActionQueueItems: async () => {
-          // Use 'all' and filter to state='open' so entity-dismissed items
-          // (state still 'open' in DB) are included. buildActionQueueView
-          // then computes dismissed:true from the dismissal map so `list open`
-          // hides them while `list dismissed` and `show` report them correctly.
           const items = (await listActionQueueItems('all')).filter(
             (item) => item.state === 'open',
           )
@@ -2524,14 +2502,6 @@ export const startDaemon = async (
             lastSeenAt: item.lastSeenAt,
             signature: item.signature,
           }))
-        },
-        listActionQueueDismissals: async () => {
-          const dismissals = await listDismissals()
-          const map = new Map<string, string | null>()
-          for (const d of dismissals) {
-            map.set(`${d.entityKind}:${d.entityId}`, d.note)
-          }
-          return map
         },
       }
 
@@ -2710,8 +2680,8 @@ export const startDaemon = async (
   void (async () => {
     try {
       await ensureAlertDismisser(getCompositionRootClient())
-      const { rowsResolved, dismissalsCleared } = await reconcileTerminalTasks(getCompositionRootClient())
-      log(`[lifecycle-reconcile] resolved=${rowsResolved} dismissalsCleared=${dismissalsCleared}`)
+      const { rowsResolved } = await reconcileTerminalTasks(getCompositionRootClient())
+      log(`[lifecycle-reconcile] resolved=${rowsResolved}`)
       const { processed } = await drainAlertDismissals(getCompositionRootClient(), log)
       if (processed > 0)
         log(`[alert-dismisser] cleared alerts for ${processed} status change(s) on boot`)

@@ -60,10 +60,8 @@ const makeTask = (overrides: Partial<TaskForActionQueue> = {}): TaskForActionQue
 
 const makeStateStore = (
   rows: PersistedActionQueueRow[] = [],
-  dismissals: Map<string, string | null> = new Map(),
 ): ActionQueueStateStore => ({
   listOpenActionQueueItems: async () => rows,
-  listActionQueueDismissals: async () => dismissals,
 })
 
 const makeTaskStore = (tasks: TaskForActionQueue[] = []): ActionQueueTaskStore => ({
@@ -92,8 +90,6 @@ describe('buildActionQueueView — failed-task row', () => {
     // The fallback emits plain-English text — no raw step ids.
     expect(row.title).toBe('A pipeline step did not complete')
     expect(row.body).toContain('A pipeline step did not complete')
-    expect(row.dismissed).toBe(false)
-    expect(row.ackState).toBeNull()
     expect(row.errorKind).toBe('failed-task')
     expect(row.staleWorktreeDetail).toBeNull()
     expect(row.diagnosis).toBeNull()
@@ -428,65 +424,6 @@ describe('buildActionQueueView — daemon-killed-batch', () => {
     expect(batchRow.priority).toBe('high')
     expect(batchRow.title).toContain('2')
     expect(batchRow.actions[0]!.op).toBe('restart-all-daemon-killed')
-    expect(batchRow.dismissed).toBe(false)
-    expect(batchRow.ackState).toBeNull()
-  })
-})
-
-// ── filter parameter ─────────────────────────────────────────────────────────
-
-describe('buildActionQueueView — filter', () => {
-  const dismissalMap = new Map([['task:task-1', 'resolved'], ['task:task-2', null]])
-
-  const twoRows: PersistedActionQueueRow[] = [
-    makeRow({ id: 'row-1', payload: { taskId: 'task-1' } }),
-    makeRow({ id: 'row-2', payload: { taskId: 'task-2' } }),
-  ]
-  const twoTasks: TaskForActionQueue[] = [
-    makeTask({ id: 'task-1' }),
-    makeTask({ id: 'task-2' }),
-  ]
-
-  it('filter=open returns only non-dismissed rows', async () => {
-    const rows = await buildActionQueueView({
-      stateStore: makeStateStore(twoRows, dismissalMap),
-      taskStore: makeTaskStore(twoTasks),
-      repoRoot: '/nonexistent',
-      filter: 'open',
-    })
-    // task-1 is resolved (dismissed=true) → hidden
-    // task-2 is dismissed (dismissed=true) → hidden
-    // Both are hidden — 0 visible rows
-    expect(rows.every((r) => !r.dismissed)).toBe(true)
-    expect(rows.find((r) => r.entityId === 'task-1')).toBeUndefined()
-  })
-
-  it('filter=dismissed returns only dismissed rows', async () => {
-    const rows = await buildActionQueueView({
-      stateStore: makeStateStore(twoRows, dismissalMap),
-      taskStore: makeTaskStore(twoTasks),
-      repoRoot: '/nonexistent',
-      filter: 'dismissed',
-    })
-    expect(rows.length).toBeGreaterThan(0)
-    expect(rows.every((r) => r.dismissed)).toBe(true)
-  })
-
-  it('filter=all returns all rows regardless of dismissed state', async () => {
-    // Use a mix: one open, one dismissed
-    const mixedDismissals = new Map([['task:task-1', 'resolved']])
-    const rows = await buildActionQueueView({
-      stateStore: makeStateStore(twoRows, mixedDismissals),
-      taskStore: makeTaskStore(twoTasks),
-      repoRoot: '/nonexistent',
-      filter: 'all',
-    })
-    // Both rows returned — one dismissed, one not
-    expect(rows).toHaveLength(2)
-    const dismissed = rows.filter((r) => r.dismissed)
-    const open = rows.filter((r) => !r.dismissed)
-    expect(dismissed).toHaveLength(1)
-    expect(open).toHaveLength(1)
   })
 })
 
@@ -519,9 +456,6 @@ describe('GET /view/action-queue via HTTP server', () => {
       traceStore: nullTraceStore,
       viewTasks: async () => ({ tasks: [] }),
       viewProgress: async () => ({ tasks: [], proposals: [] }),
-      actionQueueAck: async () => {},
-      actionQueueResolve: async () => {},
-      actionQueueDismiss: async () => {},
       todoDismiss: async () => {},
       viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
       viewTerminalEvents: async () => ({ events: [] }),
@@ -546,17 +480,12 @@ describe('GET /view/action-queue via HTTP server', () => {
           body: 'body',
           at: '2024-01-01T00:00:00.000Z',
           dag: null,
-          dismissed: filter === 'dismissed',
-          ackState: null,
           errorKind: 'failed-task',
           actions: [],
           staleWorktreeDetail: null,
           diagnosis: null,
           failureReasonCode: null,
         }
-        // For filter=dismissed, return an empty array (no dismissed rows in stub).
-        if (filter === 'dismissed') return []
-        if (filter === 'all') return [row]
         return [row]
       },
     })
@@ -575,16 +504,6 @@ describe('GET /view/action-queue via HTTP server', () => {
     expect(Array.isArray(body)).toBe(true)
     expect(body[0]!.id).toBe('test-row')
     expect(body[0]!.title).toContain('filter=open')
-  })
-
-  it('passes filter=dismissed param to viewActionQueue', async () => {
-    const url = `http://127.0.0.1:${httpServer!.port}/view/action-queue?filter=dismissed`
-    const res = await fetch(url)
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as ActionQueueRow[]
-    expect(Array.isArray(body)).toBe(true)
-    // Stub returns [] for dismissed.
-    expect(body).toHaveLength(0)
   })
 
   it('passes filter=all param to viewActionQueue', async () => {

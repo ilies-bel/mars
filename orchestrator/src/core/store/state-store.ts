@@ -1,19 +1,19 @@
 /**
  * StateStore — the deep seam over `.mars/mars.db` (state side: proposals,
- * proposal-notes, action-queue items + dismissals). ADR-0021.
+ * proposal-notes, action-queue items). ADR-0021.
  *
  * Mirror of {@link DomainTaskStore}: typed domain methods (delegating to the
- * proposals / proposal-notes / action-queue / dismissals modules) are the
- * front door, and the generic `query` / `execute` / `atomic` side door is the
- * escape hatch. The libsql Transaction never crosses the seam — `atomic`
- * inverts control and passes a revocable {@link Scope}.
+ * proposals / proposal-notes / action-queue modules) are the front door, and
+ * the generic `query` / `execute` / `atomic` side door is the escape hatch.
+ * The libsql Transaction never crosses the seam — `atomic` inverts control
+ * and passes a revocable {@link Scope}.
  *
  * Per ADR-0034 `tasks` and `proposals` share one physical file (`mars.db`), so
  * the StateStore and the TaskStore are backed by the same libsql client; the
  * two facades exist to keep the *domain vocabularies* separate, not the files.
- * The three previously-duplicated private `getClient()` singletons
- * (proposals.ts, action-queue-dismissals.ts, ideas/idea-store.ts) collapse
- * into {@link resolveStateClient} here.
+ * The two previously-duplicated private `getClient()` singletons
+ * (proposals.ts, ideas/idea-store.ts) collapse into {@link resolveStateClient}
+ * here.
  *
  * Cross-DB note: proposals and action-queue rows emit lifecycle events into
  * the queue.db events outbox. That ability is preserved — those modules
@@ -59,29 +59,18 @@ import {
   getProposalNote,
   type ProposalNote,
 } from '../../ideas/idea-store'
-import {
-  initActionQueueDismissals,
-  dismissEntity,
-  undismissEntity,
-  isEntityDismissed,
-  listDismissals,
-  clearDismissalForEntity,
-  type ActionQueueDismissal,
-  type DismissalEntityKind,
-} from '../lib/action-queue-dismissals'
 
 export type { Scope } from './task-store'
 export { resolveStateClient } from './state-client'
 
 /**
- * Idempotent state.db schema migration. Runs the per-table init for proposals,
- * proposal-notes, and action-queue dismissals. ADR-0021: the migration lives
- * behind the store; callers stop hand-sequencing the inits.
+ * Idempotent state.db schema migration. Runs the per-table init for proposals
+ * and proposal-notes. ADR-0021: the migration lives behind the store; callers
+ * stop hand-sequencing the inits.
  */
 export const migrateStateSchema = async (): Promise<void> => {
   await initProposals()
   await initProposalNotes()
-  await initActionQueueDismissals()
 }
 
 const toStatement = (
@@ -96,9 +85,9 @@ const toStatement = (
 
 /**
  * Typed domain interface over mars.db (state side). Every method mirrors the
- * corresponding proposals / proposal-notes / dismissals export. The generic
- * SQL escape hatches (`query`, `execute`, `atomic`) are available on every
- * store created with a non-null client.
+ * corresponding proposals / proposal-notes export. The generic SQL escape
+ * hatches (`query`, `execute`, `atomic`) are available on every store created
+ * with a non-null client.
  */
 export interface DomainStateStore {
   // ── Proposals ────────────────────────────────────────────────────────────
@@ -140,26 +129,6 @@ export interface DomainStateStore {
   addProposalNote(text: string): Promise<ProposalNote>
   listProposalNotes(): Promise<ProposalNote[]>
   getProposalNote(input: string): Promise<ProposalNote | null>
-
-  // ── Action-queue dismissals ──────────────────────────────────────────────
-  dismissEntity(
-    entityKind: DismissalEntityKind,
-    entityId: string,
-    opts?: { by?: string; note?: string },
-  ): Promise<void>
-  undismissEntity(
-    entityKind: DismissalEntityKind,
-    entityId: string,
-  ): Promise<boolean>
-  isEntityDismissed(
-    entityKind: DismissalEntityKind,
-    entityId: string,
-  ): Promise<boolean>
-  listDismissals(): Promise<ActionQueueDismissal[]>
-  clearDismissalForEntity(
-    entityKind: DismissalEntityKind,
-    entityId: string,
-  ): Promise<void>
 
   // ── Generic SQL escape hatches ───────────────────────────────────────────
   query(stmt: InStatement | string, params?: InValue[]): Promise<ResultSet>
@@ -213,17 +182,6 @@ export const createStateStore = (client: Client | null): DomainStateStore => {
     addProposalNote: (text) => addProposalNote(text),
     listProposalNotes: () => listProposalNotes(),
     getProposalNote: (input) => getProposalNote(input),
-
-    // ── Action-queue dismissals ──────────────────────────────────────────────
-    dismissEntity: (entityKind, entityId, opts) =>
-      dismissEntity(entityKind, entityId, opts),
-    undismissEntity: (entityKind, entityId) =>
-      undismissEntity(entityKind, entityId),
-    isEntityDismissed: (entityKind, entityId) =>
-      isEntityDismissed(entityKind, entityId),
-    listDismissals: () => listDismissals(),
-    clearDismissalForEntity: (entityKind, entityId) =>
-      clearDismissalForEntity(entityKind, entityId),
 
     // ── Generic SQL escape hatches ───────────────────────────────────────────
 

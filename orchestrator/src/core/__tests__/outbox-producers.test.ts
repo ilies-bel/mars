@@ -280,47 +280,5 @@ describe('outbox producers', () => {
       })
     })
 
-    it('emits actionQueue.resolved when item transitions to dismissed', async () => {
-      const { q, actionQueue } = await loadMods(repo)
-      const id = await actionQueue.raiseActionQueueItem({
-        kind: 'failed',
-        category: 'orchestrator',
-        priority: 'normal',
-        title: 'Test',
-        body: '',
-        payload: {},
-        context: {},
-        raisedBy: 'test',
-        signature: 'sig-dismiss-test',
-      })
-      await actionQueue.setActionQueueState(id, 'dismissed', { by: 'operator' })
-
-      const events = await getEvents(q, 'action-queue.resolved')
-      expect(events).toHaveLength(1)
-      expect(events[0].payload).toMatchObject({
-        itemId: id,
-        fromState: 'open',
-        toState: 'dismissed',
-      })
-    })
-
-    it('does NOT emit actionQueue.resolved on a non-terminal transition (acknowledged)', async () => {
-      const { q, actionQueue } = await loadMods(repo)
-      const id = await actionQueue.raiseActionQueueItem({
-        kind: 'failed',
-        category: 'orchestrator',
-        priority: 'normal',
-        title: 'Test',
-        body: '',
-        payload: {},
-        context: {},
-        raisedBy: 'test',
-        signature: 'sig-ack-test',
-      })
-      await actionQueue.setActionQueueState(id, 'acknowledged')
-
-      const events = await getEvents(q, 'action-queue.resolved')
-      expect(events).toHaveLength(0)
-    })
   })
 })

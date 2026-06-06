@@ -16,11 +16,6 @@ interface ActionQueueModule {
   getActionQueueItem: typeof import('../../lib/action-queue').getActionQueueItem
 }
 
-interface DismissalsModule {
-  dismissEntity: typeof import('../../lib/action-queue-dismissals').dismissEntity
-  isEntityDismissed: typeof import('../../lib/action-queue-dismissals').isEntityDismissed
-}
-
 interface AlertDismisserModule {
   ALERT_DISMISSER_SUBSCRIBER: typeof import('../alert-dismisser').ALERT_DISMISSER_SUBSCRIBER
   ensureAlertDismisser: typeof import('../alert-dismisser').ensureAlertDismisser
@@ -38,7 +33,6 @@ interface SubscribersModule {
 interface Loaded {
   q: QueueModule
   actionQueue: ActionQueueModule
-  dismissals: DismissalsModule
   ad: AlertDismisserModule
   pub: PublisherModule
   subs: SubscribersModule
@@ -54,8 +48,8 @@ const setupRepo = (): string => {
 /**
  * Load every module against the same temp repo. `MARS_REPO` makes
  * `resolveContext()` resolve `stateDbPath`/`queueDbPath` to one
- * `.mars/mars.db`, so the events table (migrateQueueSchema), action_queue_items, and
- * action_queue_dismissals all share a single libsql client.
+ * `.mars/mars.db`, so the events table (migrateQueueSchema) and
+ * action_queue_items share a single libsql client.
  */
 const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
@@ -63,15 +57,12 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.migrateQueueSchema()
   const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
-  const dismissals = (await import(
-    '../../lib/action-queue-dismissals'
-  )) as unknown as DismissalsModule
   const ad = (await import('../alert-dismisser')) as unknown as AlertDismisserModule
   const pub = (await import('../../../bus/publisher')) as unknown as PublisherModule
   const subs = (await import(
     '../../../bus/subscribers'
   )) as unknown as SubscribersModule
-  return { q, actionQueue, dismissals, ad, pub, subs }
+  return { q, actionQueue, ad, pub, subs }
 }
 
 /** Raise a single open, origin-keyed actionQueue item for `taskId`. */
@@ -101,17 +92,6 @@ const publish = async <T extends EventName>(
   await pub.publishWithRetry(client, type, payload)
 }
 
-const dismissalExists = async (
-  client: Client,
-  entityId: string,
-): Promise<boolean> => {
-  const r = await client.execute({
-    sql: `SELECT 1 FROM action_queue_dismissals WHERE entity_kind = 'task' AND entity_id = ? LIMIT 1`,
-    args: [entityId],
-  })
-  return r.rows.length > 0
-}
-
 describe('alert-dismisser outbox subscriber', () => {
   let repo: string
 
@@ -124,14 +104,12 @@ describe('alert-dismisser outbox subscriber', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('clears an open alert and the dismissal row on a task.terminal{done} event', async () => {
-    const { q, actionQueue, dismissals, ad, pub } = await loadModules(repo)
+  it('flips an open alert to resolved on a task.terminal{done} event', async () => {
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
     const client = q.resolveQueueClient()
     const taskId = 'T-done'
 
     const itemId = await raiseOpenItemFor(actionQueue, taskId)
-    await dismissals.dismissEntity('task', taskId, { by: 'op' })
-    expect(await dismissalExists(client, taskId)).toBe(true)
 
     // Register first (replay: false starts the cursor at the current head),
     // then publish — mirrors the daemon, where the subscriber is registered
@@ -145,17 +123,14 @@ describe('alert-dismisser outbox subscriber', () => {
     const item = await actionQueue.getActionQueueItem(itemId)
     expect(item).not.toBeNull()
     expect(item!.state).toBe('resolved')
-    expect(await dismissalExists(client, taskId)).toBe(false)
-    expect(await dismissals.isEntityDismissed('task', taskId)).toBe(false)
   })
 
   it('KEEPS an open alert on task.terminal{failed} (ADR-0028: failed needs a human)', async () => {
-    const { q, actionQueue, dismissals, ad, pub } = await loadModules(repo)
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
     const client = q.resolveQueueClient()
     const taskId = 'T-failed'
 
     const itemId = await raiseOpenItemFor(actionQueue, taskId)
-    await dismissals.dismissEntity('task', taskId, { by: 'op' })
 
     await ad.ensureAlertDismisser(client)
     // Both the discrete failure event and the terminal{failed} event must
@@ -166,10 +141,9 @@ describe('alert-dismisser outbox subscriber', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     // Neither event is a closing trigger, so nothing is processed and the
-    // operator's row + dismissal survive.
+    // operator's row survives.
     expect(processed).toBe(0)
     expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
-    expect(await dismissalExists(client, taskId)).toBe(true)
   })
 
   it('clears open alerts on task.terminal{done}, task.terminal{purged}, and task.unblocked', async () => {

@@ -3145,7 +3145,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     const subTaskId = await findSubTaskId(hitlSliceTaskId)
     await markTaskDone(subTaskId)
     const actionQueueItemId = await findHitlActionQueueItemId()
-    await actionQueue.setActionQueueState(actionQueueItemId, 'dismissed') // dismissed counts too
+    await actionQueue.setActionQueueState(actionQueueItemId, 'resolved')
 
     // Single call completes the slice.
     expect(await sliceModule.tryCompleteHitlSlice(hitlSliceTaskId)).toBe(true)

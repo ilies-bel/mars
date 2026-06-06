@@ -1194,14 +1194,14 @@ export const tryCompleteHitlSlice = async (
   )
   if (!allDone) return false
 
-  // 3. The operator actionQueue item must be resolved or dismissed.
+  // 3. The operator actionQueue item must be resolved.
   //    The item's signature encodes the proposal id and 1-based slice index,
   //    matching exactly what raiseActionQueueItem sets when slicing.
   const signature = `${taskRow.origin_id}:hitl:${taskRow.slice_index}`
   const hitlItems = await listActionQueueItems('all', { kind: 'hitl-slice-needs-operator' })
   const actionQueueItem = hitlItems.find((item) => item.signature === signature)
   if (!actionQueueItem) return false
-  if (actionQueueItem.state !== 'resolved' && actionQueueItem.state !== 'dismissed') return false
+  if (actionQueueItem.state !== 'resolved') return false
 
   // 4. Both conditions met — flip the HITL slice from 'blocked' to 'done'.
   // Route through updateTask so the lifecycle gate (IllegalTransitionError)
