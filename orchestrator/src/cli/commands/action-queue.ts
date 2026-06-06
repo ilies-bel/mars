@@ -2,15 +2,22 @@
  * `action-queue` command group: `list` (default), `show`, `ack`, `resolve`,
  * `dismiss`, `undismiss`, `raise` (JSON on stdin/file), and `watch`.
  *
- * The action queue is the single human-facing work surface; these leaves read
- * and mutate it through the `core/lib/action-queue` modules. `--lean` is a
- * boolean flag that lands in positionals after routing.
+ * `list`, `show`, and the bare `action-queue` alias read through the daemon's
+ * `GET /view/action-queue` endpoint so the CLI and UI always render the same
+ * derived view (`buildActionQueueView`). If the daemon is not running, both
+ * commands fail fast — there is no fallback to the raw DB path.
+ *
+ * Mutation verbs (ack/resolve/dismiss/undismiss/raise/watch/reconcile) continue
+ * to use the direct DB path unchanged.
+ *
+ * --lean is a boolean flag that lands in positionals after routing.
  */
 
 import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import {
   raiseActionQueueItem,
-  listActionQueueItems,
   getActionQueueItem,
   setActionQueueState,
   type ActionQueueItem,
@@ -21,10 +28,14 @@ import {
 } from '../../core/lib/action-queue-dismissals'
 import { resolveAuthor, formatAuthor } from '../../core/author'
 import { actionQueueRaiseSchema } from '../action-queue-raise-schema'
-import type { Command, CommandDeps } from '../command'
+import type { Command } from '../command'
 import { errorMessage } from './shared'
+import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
 
 const LEAN_PREVIEW = 3
+
+const NO_DAEMON_MSG =
+  'action queue: daemon not running — run `mars daemon start` (the action queue view is served by the daemon)'
 
 const actionQueueKindToEntityKind = (
   kind: string,
@@ -48,59 +59,41 @@ const extractEntityId = (item: ActionQueueItem): string => {
   return item.signature ?? item.id
 }
 
-const printList = (deps: CommandDeps, items: ActionQueueItem[]): void => {
-  if (items.length === 0) {
-    deps.out('action queue empty')
-    return
-  }
-  for (const item of items) {
-    const flag =
-      item.state === 'dismissed' || item.state === 'resolved'
-        ? 'dismissed'
-        : 'open'
-    const priority = item.priority === 'urgent' ? 'high' : item.priority
-    deps.out(`${item.id}\t${flag}\t${priority}\t${item.kind}\t${item.title}`)
-  }
-}
-
-const printLean = (deps: CommandDeps, items: ActionQueueItem[]): void => {
-  if (items.length === 0) {
-    deps.out('action queue empty')
-    return
-  }
-  const counts: Record<string, number> = {}
-  for (const item of items) {
-    counts[item.kind] = (counts[item.kind] ?? 0) + 1
-  }
-  const parts = Object.entries(counts).map(([k, n]) => `${k}:${n}`)
-  deps.out(`action queue ${items.length} (${parts.join(', ')})`)
-  for (const item of items.slice(0, LEAN_PREVIEW)) {
-    deps.out(`  ${item.id}  ${item.title}`)
-  }
-  const overflow = items.length - LEAN_PREVIEW
-  if (overflow > 0) deps.out(`  ... +${overflow} more`)
-}
-
-const printShow = (deps: CommandDeps, item: ActionQueueItem): void => {
-  const entityId = extractEntityId(item)
-  const dismissed = item.state === 'dismissed' || item.state === 'resolved'
-  const priority = item.priority === 'urgent' ? 'high' : item.priority
-  deps.out(`id:        ${item.id}`)
-  deps.out(`kind:      ${item.kind}`)
-  deps.out(`entity:    ${entityId}`)
-  deps.out(`priority:  ${priority}`)
-  deps.out(`dismissed: ${dismissed}`)
-  deps.out(`at:        ${item.lastSeenAt ?? item.raisedAt}`)
-  deps.out('')
-  deps.out(item.body)
-}
-
 const readStdin = async (): Promise<string> => {
   const chunks: Buffer[] = []
   for await (const chunk of process.stdin) {
     chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
   }
   return Buffer.concat(chunks).toString('utf8')
+}
+
+/**
+ * Read the daemon's HTTP port from the port file published by `listen(0)`.
+ * Returns null when the file is absent or contains a non-integer value.
+ */
+const readDaemonPort = async (stateDir: string): Promise<number | null> => {
+  try {
+    const raw = (await readFile(join(stateDir, 'http.port'), 'utf8')).trim()
+    const port = Number(raw)
+    return Number.isInteger(port) && port > 0 ? port : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Fetch the action queue view from the daemon's derived-view endpoint.
+ * Throws when the daemon is unreachable or returns a non-2xx response.
+ */
+const fetchActionQueueView = async (
+  port: number,
+  filter: string,
+): Promise<ActionQueueRow[]> => {
+  const res = await fetch(
+    `http://127.0.0.1:${port}/view/action-queue?filter=${encodeURIComponent(filter)}`,
+  )
+  if (!res.ok) throw new Error(`daemon returned ${res.status}`)
+  return (await res.json()) as ActionQueueRow[]
 }
 
 const actionQueueList: Command = {
@@ -116,15 +109,37 @@ const actionQueueList: Command = {
       deps.err('usage: mars action-queue list [open|dismissed|all] [--lean]')
       return { code: 1 }
     }
-    const stateFilter =
-      filter === 'dismissed'
-        ? ('dismissed' as const)
-        : filter === 'all'
-          ? ('all' as const)
-          : ('open' as const)
-    const items = await listActionQueueItems(stateFilter)
-    if (lean) printLean(deps, items)
-    else printList(deps, items)
+    const port = await readDaemonPort(deps.ctx.stateDir)
+    if (port === null) {
+      deps.err(NO_DAEMON_MSG)
+      return { code: 1 }
+    }
+    let rows: ActionQueueRow[]
+    try {
+      rows = await fetchActionQueueView(port, filter)
+    } catch {
+      deps.err(NO_DAEMON_MSG)
+      return { code: 1 }
+    }
+    if (rows.length === 0) {
+      deps.out('action queue empty')
+      return { code: 0 }
+    }
+    if (lean) {
+      const counts: Record<string, number> = {}
+      for (const row of rows) counts[row.kind] = (counts[row.kind] ?? 0) + 1
+      const parts = Object.entries(counts).map(([k, n]) => `${k}:${n}`)
+      deps.out(`action queue ${rows.length} (${parts.join(', ')})`)
+      for (const row of rows.slice(0, LEAN_PREVIEW))
+        deps.out(`  ${row.id}  ${row.title}`)
+      const overflow = rows.length - LEAN_PREVIEW
+      if (overflow > 0) deps.out(`  ... +${overflow} more`)
+    } else {
+      for (const row of rows) {
+        const flag = row.dismissed ? 'dismissed' : 'open'
+        deps.out(`${row.id}\t${flag}\t${row.priority}\t${row.kind}\t${row.title}`)
+      }
+    }
     return { code: 0 }
   },
 }
@@ -150,12 +165,34 @@ const actionQueueShow: Command = {
       deps.err('usage: mars action-queue show <id>')
       return { code: 1 }
     }
-    const item = await getActionQueueItem(id)
-    if (!item) {
+    const port = await readDaemonPort(deps.ctx.stateDir)
+    if (port === null) {
+      deps.err(NO_DAEMON_MSG)
+      return { code: 1 }
+    }
+    let rows: ActionQueueRow[]
+    try {
+      rows = await fetchActionQueueView(port, 'all')
+    } catch {
+      deps.err(NO_DAEMON_MSG)
+      return { code: 1 }
+    }
+    const row =
+      rows.find((r) => r.id === id || r.entityId === id) ??
+      rows.find((r) => r.id.startsWith(id) || r.entityId.startsWith(id))
+    if (!row) {
       deps.err(`no action queue item matching ${id}`)
       return { code: 1 }
     }
-    printShow(deps, item)
+    deps.out(`id:        ${row.id}`)
+    deps.out(`kind:      ${row.kind}`)
+    deps.out(`entity:    ${row.entityId}`)
+    deps.out(`priority:  ${row.priority}`)
+    deps.out(`dismissed: ${row.dismissed}`)
+    deps.out(`at:        ${row.at}`)
+    deps.out(`dag:       ${JSON.stringify(row.dag)}`)
+    deps.out('')
+    deps.out(row.body)
     return { code: 0 }
   },
 }
