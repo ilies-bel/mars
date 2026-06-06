@@ -24,9 +24,7 @@ There are exactly four row kinds:
 Each row's `id` is a stable composite `kind:entityId` (e.g.
 `failed-task:mars-abc12345`, `stale-worktree:mars-abc12345`,
 `draft-proposal:p-xyz`). The row has no identity of its own — it *is* the
-entity's current state. The only persistent operator opinion is a
-**dismissal** (`mars action-queue dismiss <id>`), which hides a row until the
-entity's state changes, at which point it auto-clears.
+entity's current state.
 
 # Step 1 — Resolve the target
 
@@ -44,7 +42,7 @@ entity id, or an entity-id prefix):
 - **No hit** → tell the user the id didn't match and stop. Do not fall
   through to listing — the user named something specific.
 
-## 1b — Argument is a filter (`open`, `dismissed`, `all`)
+## 1b — Argument is a filter (`open`, `all`)
 
 Run `mars action-queue list <filter>` and present the result per Step 2.
 Default when no argument is given is `open`.
@@ -56,8 +54,7 @@ Run `mars action-queue list open` and present the result per Step 2.
 # Step 2 — Present the list
 
 Run the listing command from 1b/1c. Each line is tab-separated:
-`id  state  priority  kind  title`, where `state` is `open` or
-`dismissed`.
+`id  state  priority  kind  title`, where `state` is `open`.
 
 If there are **no rows**, print exactly one line and stop:
 
@@ -169,8 +166,6 @@ it differs):
   of `failed`, which clears the action queue row automatically. **Always invoke
   `mars restart`** rather than reimplementing the restart inline.
 - **Purge** — `mars purge <entityId>`. Drop the task permanently.
-- **Dismiss** — `mars action-queue dismiss <id>`. Hide the row until the task's
-  status changes again (e.g. you've handled it out of band).
 - **Skip** — do nothing and stop.
 
 Run the chosen verb via Bash; print whatever the CLI reports verbatim.
@@ -186,7 +181,6 @@ The row wraps a leftover worktree dir whose task is terminal/absent. The
   Delete the leftover worktree. The row clears once the dir is gone.
 - **Inspect** — `git -C .mars/worktrees/<entityId> status`. Look before
   removing.
-- **Dismiss** — `mars action-queue dismiss <id>`. Hide the row for now.
 - **Skip** — do nothing and stop.
 
 Run the chosen verb via Bash; print whatever the CLI reports verbatim.

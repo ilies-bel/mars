@@ -35,7 +35,7 @@ entity id, or an entity-id prefix):
 - **No hit** → tell the user the id didn't match and stop. Do not fall through
   to listing — the user named something specific.
 
-## 1b — Argument is a filter (`open`, `acknowledged`, `resolved`, `dismissed`, `all`)
+## 1b — Argument is a filter (`open`, `all`)
 
 Run `mars action-queue list <filter>` and present the result per Step 2.
 Default when no argument is given is `open`.
@@ -105,8 +105,6 @@ options. The `entityId` is the task id. Offer terminal actions via **one**
   `failed`, which clears the action queue row automatically. **Always invoke
   `mars restart`** rather than reimplementing the restart inline.
 - **Purge** — `mars purge <entityId>`. Drop the task permanently.
-- **Dismiss** — `mars action-queue dismiss <id>`. Hide the row until the
-  task's status changes again (e.g. you've handled it out of band).
 - **Skip** — do nothing and stop.
 
 Run the chosen verb via Bash; print whatever the CLI reports verbatim.
@@ -122,7 +120,6 @@ The row wraps a leftover worktree dir whose task is terminal/absent. The
   Delete the leftover worktree. The row clears once the dir is gone.
 - **Inspect** — `git -C .mars/worktrees/<entityId> status`. Look before
   removing.
-- **Dismiss** — `mars action-queue dismiss <id>`. Hide the row for now.
 - **Skip** — do nothing and stop.
 
 Run the chosen verb via Bash; print whatever the CLI reports verbatim.

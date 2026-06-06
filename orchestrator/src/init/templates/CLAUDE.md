@@ -71,7 +71,8 @@ orchestrator stopped on after exhausting retries (kind
 `task-blocked`), and draft proposals waiting to be shaped (kind
 `draft-proposal`) — appears as an action queue message. Pick one via
 `mars action-queue list` or `/mars:action-queue`; the action queue dispatches to the right
-resolver (`/mars:unblock`, `/mars:grill`, or ack/resolve/dismiss).
+resolver (`/mars:unblock`, `/mars:grill`, or
+terminal restart/purge — the queue is a pure projection, no operator gesture closes a row).
 
 ## Glossary and ADRs
 
