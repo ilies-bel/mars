@@ -52,7 +52,12 @@ const ALLOWLIST = [
   // helpers-only module with no `tasks.status` write of its own and has left
   // this allowlist.
   'core/arc.ts',
-  'core/lib/main-dirty.ts',
+  // core/lib/main-dirty.ts: the fresh main-commiter spawn (spawnFresh) moved
+  // into Arc.spawnMainCommitterRecovery and the attach branch already delegates
+  // to Arc.attachToRecovery (ADR-0052). main-dirty.ts now holds ZERO task-table
+  // writes (no INSERT/UPDATE/DELETE on `tasks`, no publish/buildEventInsert), so
+  // it is no longer a writer and has left this allowlist — the status write +
+  // task.blocked emit it used to own now live in core/arc.ts.
   // main-dirty-action-queue.ts: releaseMainCommitterDependents flips blocked
   // tasks back to queued inside a transaction that also calls publish().
   'core/daemon/main-dirty-action-queue.ts',

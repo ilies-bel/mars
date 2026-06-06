@@ -47,6 +47,14 @@ import {
 import { getRecipe, type FixRecipeContext } from './lib/fix-recipes'
 import { buildEventInsert, publish, withWriteTx } from './lib/outbox'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
+import {
+  MAIN_COMMITER_RECIPE,
+  SOURCE_ERROR_SUMMARY,
+  VERIFY_MAIN_DIRTY_CODE,
+  serialiseMainCommiterPayload,
+  type MainCommiterPayload,
+} from './lib/main-dirty'
+import type { TraceEventStore } from './lib/trace-events-store'
 import { internalBus } from '../internal-bus'
 import { getRetryBudget, markTaskFailed } from './queue-retry'
 import { computeFailureSignature } from './lib/failure-signature'
@@ -987,6 +995,160 @@ export class Arc {
       failingStep: 'dispatch:main-dirty',
       originId: source.originId,
     })
+  }
+
+  /**
+   * Fresh `main-commiter` recovery spawn (ADR-0052 sole-writer). Relocated
+   * bit-for-bit from `main-dirty.ts:spawnFresh`. When dirty-main detection finds
+   * no active committer at the current hash, this inserts a brand-new recovery
+   * (fix) task, parks the source behind it, and records the dirty-main payload.
+   *
+   * The four batched statements run in one atomic `s.batch([...], 'write')`
+   * commit (ADR-0030):
+   *   1. INSERT the `kind='fix'` committer row (priority 3,
+   *      author='main-commiter-spawn', `recovery_payload` = the serialised
+   *      {@link MainCommiterPayload});
+   *   2. INSERT OR IGNORE the origin → recovery `task_blockers` edge
+   *      (`state='confirmed'`) — the F.1 ADR-0040 leaf-node exemption mirror;
+   *   3. UPDATE the source to `status='blocked'`, overwriting
+   *      `error`/`failure_reason`/`failure_reason_code = VERIFY_MAIN_DIRTY_CODE`
+   *      (updated_at first — exempt from the STATUS_WRITE arch guard);
+   *   4. the durable `task.blocked` outbox event.
+   *
+   * PARITY (preserved bit-for-bit):
+   *   - a single `now` timestamp threaded through every statement;
+   *   - a fresh `randomUUID().slice(0, 8)` fix-task id per call;
+   *   - `recovery_payload` IS written (unlike {@link Arc.spawnRecovery}, which
+   *     leaves it NULL — the two writers coexist);
+   *   - NO `self_heal_attempts` ledger append (intentional, slice F.2 — the
+   *     hash-based dedup, not the per-(parent,signature) cap, owns committer
+   *     identity);
+   *   - the `recovery_spawned` trace emit and the `internalBus().emit` stay
+   *     OUTSIDE the batch (best-effort wake hints).
+   *
+   * F.1 EXEMPTION (ADR-0040): the origin → recovery `task_blockers` edge is
+   * written DIRECTLY in the batch, NOT through `addBlocker`/`assertNotRecoveryEdge`
+   * — this is the canonical origin → recovery edge writer, the same documented
+   * bypass that {@link Arc.spawnRecovery} carries.
+   */
+  async spawnMainCommitterRecovery(input: {
+    sourceTaskId: string
+    dirtyMainHash: string | null
+    integrationBranch: string
+    dispatchPhase: 'dispatch' | 'verify'
+    recipePrompt: string
+    sourceOriginId: string
+    traceStore: TraceEventStore
+  }): Promise<{ fixTaskId: string }> {
+    const s = this.store
+    const fixTaskId = randomUUID().slice(0, 8)
+    const now = new Date().toISOString()
+    const payload: MainCommiterPayload = {
+      recipe: MAIN_COMMITER_RECIPE,
+      // Empty string when hash compute failed — keeps the payload shape stable
+      // and signals "no dedup possible" to anyone reading.
+      dirtyMainHash: input.dirtyMainHash ?? '',
+      integrationBranch: input.integrationBranch,
+    }
+    await s.batch(
+      [
+        {
+          sql: `INSERT INTO tasks (
+                id, prompt, status, kind,
+                author_kind, author_name,
+                fix_for_task_id, failure_signature,
+                failure_reason, failure_reason_code,
+                retry_count, origin_id, priority,
+                recovery_payload,
+                created_at, updated_at
+              ) VALUES (?, ?, 'queued', 'fix', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+          args: [
+            fixTaskId,
+            input.recipePrompt,
+            'agent',
+            'main-commiter-spawn',
+            input.sourceTaskId,
+            VERIFY_MAIN_DIRTY_CODE,
+            VERIFY_MAIN_DIRTY_CODE,
+            VERIFY_MAIN_DIRTY_CODE,
+            input.sourceOriginId,
+            // Max priority: every queued task is blocked behind this.
+            3,
+            serialiseMainCommiterPayload(payload),
+            now,
+            now,
+          ],
+        },
+        {
+          // F.1 exemption: this is the canonical origin → recovery edge
+          // mirror of `upsertFixTask`. The recovery side cannot grow further
+          // edges (recovery-of-recovery is rejected by
+          // `handleTaskFailureWithFixTask`), so the leaf invariant holds.
+          sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at)
+              VALUES (?, ?, 'confirmed', ?)`,
+          args: [input.sourceTaskId, fixTaskId, now],
+        },
+        {
+          // updated_at first — exempt from STATUS_WRITE arch guard. Events are
+          // emitted atomically in this same batch per ADR-0030.
+          sql: `UPDATE tasks
+                 SET updated_at = ?,
+                     status = 'blocked',
+                     error = ?,
+                     failure_reason = ?,
+                     failure_reason_code = ?
+               WHERE id = ?`,
+          args: [
+            now,
+            SOURCE_ERROR_SUMMARY(input.integrationBranch, input.dispatchPhase),
+            VERIFY_MAIN_DIRTY_CODE,
+            VERIFY_MAIN_DIRTY_CODE,
+            input.sourceTaskId,
+          ],
+        },
+        // Durable task.blocked in the same atomic batch (ADR-0030); the
+        // internalBus().emit below stays only as an in-process wake-hint.
+        buildEventInsert('task.blocked', {
+          taskId: input.sourceTaskId,
+          fixTaskId,
+          failureSignature: VERIFY_MAIN_DIRTY_CODE,
+          failingStep: `${input.dispatchPhase}:main-dirty`,
+          originId: input.sourceOriginId,
+        }),
+      ],
+      'write',
+    )
+
+    // Emit the canonical recovery_spawned trace event (kind already in the
+    // vocabulary since slice B) so the trace surface reflects the new
+    // recovery exactly like every other recipe-driven spawn.
+    await input.traceStore
+      .record({
+        kind: 'recovery_spawned',
+        taskId: fixTaskId,
+        originId: input.sourceOriginId,
+        phase: input.dispatchPhase === 'verify' ? 'verify' : 'setup',
+        payload: {
+          recipe: MAIN_COMMITER_RECIPE,
+          sourceTaskId: input.sourceTaskId,
+          dirtyMainHash: input.dirtyMainHash,
+          integrationBranch: input.integrationBranch,
+          dispatchPhase: input.dispatchPhase,
+        },
+      })
+      .catch(() => {
+        // Trace emission is best-effort; never fail a recovery spawn on it.
+      })
+
+    internalBus().emit('task.blocked', {
+      taskId: input.sourceTaskId,
+      fixTaskId,
+      failureSignature: VERIFY_MAIN_DIRTY_CODE,
+      failingStep: `${input.dispatchPhase}:main-dirty`,
+      originId: input.sourceOriginId,
+    })
+
+    return { fixTaskId }
   }
 
   /**

@@ -25,12 +25,11 @@
  * slice K; pessimistically reporting clean here is the documented
  * fallback now.
  */
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { runTool, type TraceCtx } from './run-tool'
 import { attachToExistingFixTask } from '../queue-fix-tasks'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store'
-import { buildEventInsert } from './outbox'
-import { internalBus } from '../../internal-bus'
+import { Arc } from '../arc'
 import type { TraceEventStore } from './trace-events-store'
 
 export interface CheckIntegrationBranchDirtyInput {
@@ -336,7 +335,7 @@ export const findActiveMainCommitter = async (
  * parks on a `main-commiter`. Kept short — the bulk of the context is on
  * the recovery task itself.
  */
-const SOURCE_ERROR_SUMMARY = (
+export const SOURCE_ERROR_SUMMARY = (
   integrationBranch: string,
   dispatchPhase: 'dispatch' | 'verify',
 ): string =>
@@ -409,7 +408,20 @@ export const spawnOrAttachMainCommitter = async (
     // Without a hash we cannot dedup; still safe to spawn a fresh committer
     // — the next task that hits the same broken state without a hash will
     // simply spawn its own (no worse than the legacy behavior).
-    return await spawnFresh(input, null)
+    const arc = Arc.load(
+      input.sourceOriginId,
+      input.store ?? (await getDefaultTaskStore()),
+    )
+    const { fixTaskId } = await arc.spawnMainCommitterRecovery({
+      sourceTaskId: input.sourceTaskId,
+      dirtyMainHash: null,
+      integrationBranch: input.integrationBranch,
+      dispatchPhase: input.dispatchPhase,
+      recipePrompt: input.recipePrompt,
+      sourceOriginId: input.sourceOriginId,
+      traceStore: input.traceStore,
+    })
+    return { fixTaskId, spawned: true, attachedToStatus: null }
   }
 
   const s = input.store ?? (await getDefaultTaskStore())
@@ -446,120 +458,15 @@ export const spawnOrAttachMainCommitter = async (
     }
   }
 
-  return await spawnFresh(input, input.detection.hash)
-}
-
-const spawnFresh = async (
-  input: SpawnOrAttachInput,
-  dirtyMainHash: string | null,
-): Promise<MainCommitterResolution> => {
-  const s = input.store ?? (await getDefaultTaskStore())
-  const fixTaskId = randomUUID().slice(0, 8)
-  const now = new Date().toISOString()
-  const payload: MainCommiterPayload = {
-    recipe: MAIN_COMMITER_RECIPE,
-    // Empty string when hash compute failed — keeps the payload shape stable
-    // and signals "no dedup possible" to anyone reading.
-    dirtyMainHash: dirtyMainHash ?? '',
+  const arc = Arc.load(input.sourceOriginId, s)
+  const { fixTaskId } = await arc.spawnMainCommitterRecovery({
+    sourceTaskId: input.sourceTaskId,
+    dirtyMainHash: input.detection.hash,
     integrationBranch: input.integrationBranch,
-  }
-  await s.batch(
-    [
-      {
-        sql: `INSERT INTO tasks (
-                id, prompt, status, kind,
-                author_kind, author_name,
-                fix_for_task_id, failure_signature,
-                failure_reason, failure_reason_code,
-                retry_count, origin_id, priority,
-                recovery_payload,
-                created_at, updated_at
-              ) VALUES (?, ?, 'queued', 'fix', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
-        args: [
-          fixTaskId,
-          input.recipePrompt,
-          'agent',
-          'main-commiter-spawn',
-          input.sourceTaskId,
-          VERIFY_MAIN_DIRTY_CODE,
-          VERIFY_MAIN_DIRTY_CODE,
-          VERIFY_MAIN_DIRTY_CODE,
-          input.sourceOriginId,
-          // Max priority: every queued task is blocked behind this.
-          3,
-          serialiseMainCommiterPayload(payload),
-          now,
-          now,
-        ],
-      },
-      {
-        // F.1 exemption: this is the canonical origin → recovery edge
-        // mirror of `upsertFixTask`. The recovery side cannot grow further
-        // edges (recovery-of-recovery is rejected by
-        // `handleTaskFailureWithFixTask`), so the leaf invariant holds.
-        sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at)
-              VALUES (?, ?, 'confirmed', ?)`,
-        args: [input.sourceTaskId, fixTaskId, now],
-      },
-      {
-        // updated_at first — exempt from STATUS_WRITE arch guard. Events are
-        // emitted atomically in this same batch per ADR-0030.
-        sql: `UPDATE tasks
-                 SET updated_at = ?,
-                     status = 'blocked',
-                     error = ?,
-                     failure_reason = ?,
-                     failure_reason_code = ?
-               WHERE id = ?`,
-        args: [
-          now,
-          SOURCE_ERROR_SUMMARY(input.integrationBranch, input.dispatchPhase),
-          VERIFY_MAIN_DIRTY_CODE,
-          VERIFY_MAIN_DIRTY_CODE,
-          input.sourceTaskId,
-        ],
-      },
-      // Durable task.blocked in the same atomic batch (ADR-0030); the
-      // internalBus().emit below stays only as an in-process wake-hint.
-      buildEventInsert('task.blocked', {
-        taskId: input.sourceTaskId,
-        fixTaskId,
-        failureSignature: VERIFY_MAIN_DIRTY_CODE,
-        failingStep: `${input.dispatchPhase}:main-dirty`,
-        originId: input.sourceOriginId,
-      }),
-    ],
-    'write',
-  )
-
-  // Emit the canonical recovery_spawned trace event (kind already in the
-  // vocabulary since slice B) so the trace surface reflects the new
-  // recovery exactly like every other recipe-driven spawn.
-  await input.traceStore
-    .record({
-      kind: 'recovery_spawned',
-      taskId: fixTaskId,
-      originId: input.sourceOriginId,
-      phase: input.dispatchPhase === 'verify' ? 'verify' : 'setup',
-      payload: {
-        recipe: MAIN_COMMITER_RECIPE,
-        sourceTaskId: input.sourceTaskId,
-        dirtyMainHash,
-        integrationBranch: input.integrationBranch,
-        dispatchPhase: input.dispatchPhase,
-      },
-    })
-    .catch(() => {
-      // Trace emission is best-effort; never fail a recovery spawn on it.
-    })
-
-  internalBus().emit('task.blocked', {
-    taskId: input.sourceTaskId,
-    fixTaskId,
-    failureSignature: VERIFY_MAIN_DIRTY_CODE,
-    failingStep: `${input.dispatchPhase}:main-dirty`,
-    originId: input.sourceOriginId,
+    dispatchPhase: input.dispatchPhase,
+    recipePrompt: input.recipePrompt,
+    sourceOriginId: input.sourceOriginId,
+    traceStore: input.traceStore,
   })
-
   return { fixTaskId, spawned: true, attachedToStatus: null }
 }
