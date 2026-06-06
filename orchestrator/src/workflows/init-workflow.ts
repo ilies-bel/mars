@@ -14,6 +14,7 @@ import {
   type SupervisorSpec,
 } from '../init/detect-stack'
 import { loadInitConfig } from '../init/init-config'
+import { WIZARD_DEFAULTS, type WizardChoices } from '../init/wizard'
 import {
   renderSupervisor,
   minimalRenderInput,
@@ -23,6 +24,7 @@ import {
   planClaudeConflicts,
   scaffoldClaudeConfig,
 } from '../init/scaffold'
+import { planWorkflowCopies, scaffoldWorkflows } from '../init/scaffold-workflows'
 import { enrichRootClaudeMd, type ProjectLayoutEntry } from '../init/project-layout'
 import { writeSlimInit, writePerFolderClaudeMds, purgeStaleSupervisorMds, type VerifyStepEntry } from '../init/writer'
 import { writeDetectionReport } from '../init/write-detection-report'
@@ -143,29 +145,55 @@ const ensureBaseline = (stack: {
 type DetectedStack = z.infer<typeof stackSchema>
 type RenderedSupervisor = z.infer<typeof renderedSupervisorSchema>
 
-const runDetectStack = async (configPath?: string): Promise<DetectedStack> => {
+/**
+ * Apply the wizard's `supervisors` choice as an allow-list over the detected
+ * supervisor set. An empty list (the default) keeps every detected supervisor.
+ * Names that match nothing are ignored; `ensureBaseline` still backfills the
+ * baseline supervisor when the filter empties the set entirely.
+ */
+const applySupervisorFilter = (
+  supervisors: SupervisorSpec[],
+  keep: readonly string[],
+): SupervisorSpec[] => {
+  if (keep.length === 0) return supervisors
+  const allow = new Set(keep)
+  const filtered = supervisors.filter((s) => allow.has(s.name))
+  return filtered
+}
+
+const runDetectStack = async (
+  configPath?: string,
+  wizard?: WizardChoices,
+): Promise<DetectedStack> => {
   const ctx = resolveContext()
   const detected = configPath
     ? loadInitConfig(configPath, ctx.repoRoot)
     : detectStack(ctx.repoRoot)
+  const keep = wizard?.supervisors ?? WIZARD_DEFAULTS.supervisors
   return {
     languages: detected.languages,
     frameworks: detected.frameworks,
     infra: detected.infra,
     mobile: detected.mobile,
     specialized: detected.specialized,
-    supervisors: ensureBaseline(detected),
+    supervisors: ensureBaseline({
+      supervisors: applySupervisorFilter(detected.supervisors, keep),
+    }),
   }
 }
 
 const runRenderSupervisors = async (
   stack: DetectedStack,
+  scaffoldMode: WizardChoices['scaffoldMode'] = WIZARD_DEFAULTS.scaffoldMode,
 ): Promise<RenderedSupervisor[]> => {
     const renderOne = (spec: SupervisorSpec): RenderedSupervisor => {
       const renderInput = minimalRenderInput(spec)
       const content = renderSupervisor(renderInput)
       const issue = validateSupervisor(content, spec)
-      const verify = verifyDefaultsFor(spec.name)
+      // 'minimal' scaffold mode omits the default verify-step contract; 'full'
+      // (the default) keeps today's behaviour of seeding verify defaults.
+      const verify =
+        scaffoldMode === 'minimal' ? undefined : verifyDefaultsFor(spec.name)
       if (issue) {
         const fallback = renderSupervisor(minimalRenderInput(spec))
         const fallbackIssue = validateSupervisor(fallback, spec)
@@ -278,6 +306,45 @@ const runScaffoldClaude = async (
 }
 
 /**
+ * Scaffold the user-owned workflow templates into `.mars/workflows/*.js`
+ * (ADR-0056) and record the written paths in the init manifest (ADR-0057's
+ * ownership ledger). Runs AFTER scaffold-claude and BEFORE init-databases.
+ *
+ * `mars init` never clobbers a pre-existing workflow file: `scaffoldWorkflows`
+ * runs with `force: false`, so on a fresh repo every template lands, and on a
+ * repo whose workflows the consumer has edited nothing is overwritten. Only the
+ * files actually written this run are appended to the manifest; previously
+ * scaffolded (and possibly hand-edited) workflows already in the manifest are
+ * preserved so `mars update` can still recognise them as owned.
+ */
+const runScaffoldWorkflows = async (written: string[]): Promise<string[]> => {
+  const ctx = resolveContext()
+  const result = scaffoldWorkflows({ repoRoot: ctx.repoRoot, force: false })
+  // `scaffoldWorkflows` with force:false never reports a conflict (user-owned
+  // files are silently skipped, not treated as errors); narrow defensively.
+  const justWritten = result.status === 'ok' ? result.written : []
+
+  // Owned-workflow ledger: union the manifest with every workflow path we know
+  // about this run — the ones just written plus any already on disk that match
+  // a bundled template (so a re-init does not drop an existing entry just
+  // because the file was skipped as pre-existing).
+  const onDiskOwned = planWorkflowCopies(ctx.repoRoot)
+    .filter((c) => existsSync(c.dest))
+    .map((c) => c.rel)
+  const manifestAdds = Array.from(new Set([...justWritten, ...onDiskOwned]))
+  if (manifestAdds.length > 0) {
+    const existing = readInitManifest(ctx.stateDir)
+    const existingSet = new Set(existing)
+    const toAdd = manifestAdds.filter((p) => !existingSet.has(p))
+    if (toAdd.length > 0) {
+      writeInitManifest(ctx.stateDir, [...existing, ...toAdd])
+    }
+  }
+
+  return [...written, ...justWritten]
+}
+
+/**
  * Materialise `.mars/queue.db` + `.mars/state.db` (tasks, ideas, actionQueue) so a
  * freshly scaffolded repo is usable without waiting for the first daemon
  * write to lazily create them. All three init paths are idempotent via
@@ -379,8 +446,17 @@ const runActivatePlugin = (): void => {
   tryActivatePlugin(frameworkClaudeDir, userSettingsPath, realDeps)
 }
 
+// Mirrors WizardChoices exactly (supervisors is readonly there) so a resolved
+// WizardChoices feeds the workflow input without a structural-type mismatch.
+const wizardChoicesSchema = z.object({
+  supervisors: z.array(z.string()).readonly(),
+  registerProject: z.boolean(),
+  scaffoldMode: z.enum(['full', 'minimal']),
+})
+
 const initInputSchema = z.object({
   configPath: z.string().optional(),
+  wizardChoices: wizardChoicesSchema.optional(),
 })
 
 type InitInput = z.infer<typeof initInputSchema>
@@ -389,27 +465,30 @@ interface InitWorkflowOutput {
   written: string[]
 }
 
-// Eight linear steps, threaded by native control flow. The step NAMES
+// Linear steps, threaded by native control flow. The step NAMES
 // ('detect-stack', 'render-supervisors', 'write-slim-init', 'scaffold-claude',
-// 'init-databases', 'seed-failure-reasons', 'seed-recipes', 'activate-plugin')
+// 'scaffold-workflows', 'init-databases', 'seed-recipes', 'activate-plugin')
 // are load-bearing trace-view labels. Disk side effects (verify.json,
-// per-folder + root CLAUDE.md, the init manifest, the failure-reason and
-// recipe override seeds) and DB side effects (queue.db/state.db) are
-// preserved verbatim. Failures THROW; the engine records the step failed.
-// 'activate-plugin' is best-effort: it never throws regardless of outcome.
+// per-folder + root CLAUDE.md, the .mars/workflows/*.js scaffold, the init
+// manifest, and the recipe override seeds) and DB side effects
+// (queue.db/state.db) are preserved verbatim. Failures THROW; the engine
+// records the step failed. 'activate-plugin' is best-effort: it never throws
+// regardless of outcome.
 export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
   id: 'init',
   inputSchema: initInputSchema,
   fn: async (ctx: WorkflowCtx, input: InitInput): Promise<InitWorkflowOutput> => {
+    const wizard = input.wizardChoices ?? WIZARD_DEFAULTS
     const stack = await ctx.step('detect-stack', () =>
-      runDetectStack(input.configPath),
+      runDetectStack(input.configPath, wizard),
     )
     const rendered = await ctx.step('render-supervisors', () =>
-      runRenderSupervisors(stack),
+      runRenderSupervisors(stack, wizard.scaffoldMode),
     )
     const w1 = await ctx.step('write-slim-init', () => runWriteSlimInit(rendered))
     const w2 = await ctx.step('scaffold-claude', () => runScaffoldClaude(rendered, w1))
-    const w3 = await ctx.step('init-databases', () => runInitDatabases(w2))
+    const w2b = await ctx.step('scaffold-workflows', () => runScaffoldWorkflows(w2))
+    const w3 = await ctx.step('init-databases', () => runInitDatabases(w2b))
     const written = await ctx.step('seed-recipes', () => runSeedRecipes(w3))
     await ctx.step('activate-plugin', runActivatePlugin)
     return { written }
@@ -427,6 +506,16 @@ export interface RunInitOptions {
    * a root packaging manifest nesting over per-package manifests).
    */
   configPath?: string
+  /**
+   * Resolved wizard answers (ADR-0058). Produced by the wizard controller from
+   * the TTY wizard OR fully non-interactively from flags + config + defaults.
+   * When omitted, {@link WIZARD_DEFAULTS} apply, so an old caller that does not
+   * pass this gets exactly today's behaviour. Threaded into detect-stack
+   * (supervisor allow-list), render-supervisors (scaffold mode), and project
+   * registration (`registerProject`). Plugin activation is intentionally NOT a
+   * wizard choice — it stays automatic.
+   */
+  wizardChoices?: WizardChoices
 }
 
 export interface RunInitResult {
@@ -519,9 +608,13 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
     }
   }
 
+  const wizard = opts.wizardChoices ?? WIZARD_DEFAULTS
   const result = await runWorkflow(
     initWorkflow,
-    opts.configPath ? { configPath: opts.configPath } : {},
+    {
+      ...(opts.configPath ? { configPath: opts.configPath } : {}),
+      wizardChoices: wizard,
+    },
     { store: createQueueWorkflowStore() },
   )
 
@@ -531,13 +624,17 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
   }
   // Auto-register this repo in the global project registry so the UI can
   // show tasks without requiring a manual 'mars project add'. Idempotent:
-  // safe to call on re-init.
-  try {
-    ensureProjectRegistered({ repoRoot: ctx.repoRoot })
-  } catch (err) {
-    process.stderr.write(
-      `[mars init] warning: failed to register project in registry: ${(err as Error).message}\n`,
-    )
+  // safe to call on re-init. Gated by the wizard's `registerProject` choice
+  // (default true), so a non-interactive `--register-project=false` / config
+  // opt-out is honoured.
+  if (wizard.registerProject) {
+    try {
+      ensureProjectRegistered({ repoRoot: ctx.repoRoot })
+    } catch (err) {
+      process.stderr.write(
+        `[mars init] warning: failed to register project in registry: ${(err as Error).message}\n`,
+      )
+    }
   }
 
   return {

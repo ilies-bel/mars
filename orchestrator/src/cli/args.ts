@@ -59,6 +59,11 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--name',
   '--path',
   '--config',
+  // mars init wizard non-interactive parity (ADR-0058). One value flag per
+  // string/enum WizardPrompt in src/init/wizard.ts; the parity build-guard
+  // (init/__tests__/wizard-parity.test.ts) fails if a prompt lacks its flag.
+  '--supervisors',
+  '--scaffold-mode',
 ])
 
 /**
@@ -80,6 +85,12 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--force-orphans',
   '--yes',
   '-y',
+  // mars init single-entry wizard routing (ADR-0058). `--wizard` forces the
+  // wizard even on a non-TTY; `--wizard-off` skips it on a TTY. Boolean
+  // WizardPrompts (e.g. project registration) also live here.
+  '--wizard',
+  '--wizard-off',
+  '--register-project',
   '--help',
   '-h',
   '--version',

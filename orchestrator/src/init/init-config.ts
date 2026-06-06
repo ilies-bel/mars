@@ -6,6 +6,7 @@ import {
   type SupervisorKind,
   type SupervisorSpec,
 } from './detect-stack'
+import { WIZARD_PROMPTS } from './wizard'
 
 /**
  * Declarative `mars init -f <config>` support.
@@ -378,3 +379,67 @@ export const loadInitConfig = (
 /** Used only by the verbose detection-report path for nice relative dirs. */
 export const relScope = (repoRoot: string, dir: string): string =>
   relative(repoRoot, resolve(repoRoot, dir)) || '.'
+
+/**
+ * The set of TOML keys (under the optional top-level `[wizard]` table) that map
+ * to a {@link WizardPrompt.configKey}. Derived from the single wizard table so
+ * adding a prompt automatically widens the accepted config surface — the parity
+ * build-guard then enforces that every prompt's configKey appears here.
+ */
+export const WIZARD_CONFIG_KEYS: ReadonlySet<string> = new Set(
+  WIZARD_PROMPTS.map((p) => p.configKey),
+)
+
+/**
+ * Parse the optional `[wizard]` table from a `mars init -f <config>` TOML file
+ * into a flat map keyed by {@link WizardPrompt.configKey}. Missing keys are
+ * simply absent (the wizard controller applies defaults), so existing config
+ * files with no `[wizard]` table parse to `{}` and stay valid (backward-
+ * compatible). Unknown keys inside `[wizard]` are rejected so typos surface
+ * instead of silently taking the default.
+ *
+ * Returns `{}` when the file or table is absent. Throws InitConfigError on a
+ * structural problem (non-table `[wizard]`, unknown key).
+ */
+export const loadInitWizardConfig = (
+  configPath: string,
+  repoRoot: string,
+): Partial<Record<string, unknown>> => {
+  const abs = resolve(repoRoot, configPath)
+
+  let text: string
+  try {
+    text = readFileSync(abs, 'utf8')
+  } catch (err) {
+    throw new InitConfigError(abs, `cannot read file: ${(err as Error).message}`)
+  }
+
+  let parsed: unknown
+  try {
+    parsed = parseToml(text)
+  } catch (err) {
+    throw new InitConfigError(abs, `TOML parse error: ${(err as Error).message}`)
+  }
+
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new InitConfigError(abs, 'top level must be a table')
+  }
+
+  const wizardRaw = (parsed as Record<string, unknown>).wizard
+  if (wizardRaw === undefined) return {}
+  if (typeof wizardRaw !== 'object' || wizardRaw === null || Array.isArray(wizardRaw)) {
+    throw new InitConfigError(abs, '`[wizard]` must be a table')
+  }
+
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(wizardRaw as Record<string, unknown>)) {
+    if (!WIZARD_CONFIG_KEYS.has(key)) {
+      throw new InitConfigError(
+        abs,
+        `[wizard] has unknown key "${key}"; known: ${[...WIZARD_CONFIG_KEYS].sort().join(', ')}`,
+      )
+    }
+    out[key] = value
+  }
+  return out
+}

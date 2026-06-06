@@ -14,20 +14,66 @@ import { errorMessage } from './shared'
 const init: Command = {
   path: 'init',
   summary: 'detect tech stack and generate supervisors',
-  usage: 'usage: mars init [--force] [--dry-run] [--verbose] [-f|--config <path>]',
+  usage:
+    'usage: mars init [--force] [--dry-run] [--verbose] [--yes] [--wizard] [--wizard-off] [-f|--config <path>]',
   run: async (args, deps) => {
     const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
     const force = boolFlags.has('--force')
     const dryRun = boolFlags.has('--dry-run')
     const verbose = boolFlags.has('--verbose')
+    const yes = boolFlags.has('--yes') || boolFlags.has('-y')
+    const wizardForced = boolFlags.has('--wizard')
+    const wizardOff = boolFlags.has('--wizard-off')
     const configPath = args.flags['--config']
+
+    // Single-entry routing (ADR-0058). `mars init` is ONE command; whether it
+    // runs the TTY wizard or a fully non-interactive path is decided here:
+    //   - run the wizard when explicitly forced (`--wizard`), or on a TTY when
+    //     neither `--yes` nor `--wizard-off` (nor an explicit config) opts out;
+    //   - otherwise (no TTY, `--yes`, `--wizard-off`, or `-f <config>`) resolve
+    //     choices non-interactively from flags + config + defaults — no prompt.
+    const isTTY = Boolean(process.stdin.isTTY)
+    const runWizardPath =
+      wizardForced || (isTTY && !yes && !wizardOff && configPath === undefined)
+
+    const { runInitWizard } = await import('../../init/wizard-controller')
+    const { loadInitWizardConfig } = await import('../../init/init-config')
+
+    // Surface the value-bearing wizard flags to the controller. Boolean wizard
+    // prompts read their flag from `args.positional` (the shared parser routes
+    // bare `--flag` there); `--register-project` present = true.
+    const wizardFlags: Record<string, string | boolean> = {}
+    for (const [k, v] of Object.entries(args.flags)) wizardFlags[k] = v
+    if (boolFlags.has('--register-project')) wizardFlags['--register-project'] = true
+
+    const wizardConfig = configPath
+      ? loadInitWizardConfig(configPath, deps.ctx.repoRoot)
+      : undefined
+
+    // The controller only ever reads stdin when it is truly interactive: the
+    // routing decision (`runWizardPath`) must AND with a real terminal so a
+    // forced `--wizard` on a non-TTY cleanly falls back to flags/config/
+    // defaults instead of blocking on stdin (no CI hang).
+    const wizardChoices = await runInitWizard({
+      isTTY: runWizardPath && isTTY,
+      flags: wizardFlags,
+      ...(wizardConfig ? { config: wizardConfig } : {}),
+      force,
+    })
+
     let result: Awaited<
       ReturnType<typeof import('../../workflows/init-workflow').runInit>
     >
     try {
       result = (await deps.daemon.sendRequest({
         op: 'init',
-        opts: { force, dryRun, verbose, ...(configPath ? { configPath } : {}) },
+        opts: {
+          force,
+          dryRun,
+          verbose,
+          ...(configPath ? { configPath } : {}),
+          wizardChoices,
+        },
       })) as typeof result
     } catch (err: unknown) {
       const e = err as Error & { code?: string }
