@@ -16,6 +16,7 @@ import {
 } from '../lib/trace-events-store'
 import { listKpis as defaultListKpis, type KpiRecord } from './kpi-store'
 import type { RestartTaskError } from './restart-task'
+import { SelfUpdateError, SELF_UPDATE_ERRORS } from './self-update'
 import type { ProgressTask, ProposalNode } from './view/progress'
 import type { ViewStreamHub } from './view/stream-hub'
 import {
@@ -50,6 +51,12 @@ export interface FrameworkUpdateState {
   /** ISO-8601 timestamp of the last successful check, or null before the first poll completes. */
   checkedAt: string | null
   releaseUrl: string | null
+  /**
+   * True when the running mars is a compiled prod binary that can be replaced
+   * in-place by the self-update endpoint. False for dev (tsx wrapper) installs
+   * where the Update-now button should be disabled.
+   */
+  selfUpdatable: boolean
 }
 
 /** Wire shape returned by GET /view/todo for a single draft proposal. */
@@ -122,6 +129,14 @@ export interface HttpServerDeps {
   restartAllDaemonKilled: () => Promise<string[]>
   /** Returns `true` while the daemon is accepting work (draining → `false`). */
   isAcceptingWork: () => boolean
+  /** Returns the number of tasks currently dispatched and in flight. Used by the self-update drain gate. */
+  inFlightCount: () => number
+  /**
+   * Execute a daemon self-update: download the latest release binary, verify
+   * sha256, atomically swap it for the current binary, and re-exec the daemon.
+   * Throws {@link SelfUpdateError} on every non-happy path.
+   */
+  selfUpdate: () => Promise<void>
   /**
    * Resolved recovery-recipe catalog (built-in seed + `.mars/recipes/`
    * overrides), loaded once at daemon start. Served verbatim by
@@ -278,6 +293,20 @@ const sendError = (
     } else {
       sendJson(res, 409, { ok: false, error: err.message, errorCode: 'WRONG_STATUS' })
     }
+    return
+  }
+  if (err instanceof SelfUpdateError) {
+    const status =
+      err.code === SELF_UPDATE_ERRORS.DEV_INSTALL ||
+      err.code === SELF_UPDATE_ERRORS.SHA256_MISMATCH
+        ? 422
+        : err.code === SELF_UPDATE_ERRORS.TASKS_IN_FLIGHT ||
+            err.code === SELF_UPDATE_ERRORS.NO_UPDATE_AVAILABLE
+          ? 409
+          : err.code === SELF_UPDATE_ERRORS.DOWNLOAD_FAILED
+            ? 502
+            : 500
+    sendJson(res, status, { ok: false, error: err.message, errorCode: err.code })
     return
   }
   const message = err instanceof Error ? err.message : String(err)
@@ -770,6 +799,17 @@ export const startHttpServer = async (
       deps
         .restartAllDaemonKilled()
         .then((restarted) => sendJson(res, 200, { ok: true, restarted }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /actions/self-update — replace the running binary with the latest
+    // release, then re-exec the daemon. Gated on prod binary + no in-flight
+    // tasks (in addition to the isAcceptingWork drain check above).
+    if (req.url === '/actions/self-update') {
+      deps
+        .selfUpdate()
+        .then(() => sendJson(res, 200, { ok: true, status: 'started' }))
         .catch((err: unknown) => sendError(res, err))
       return
     }

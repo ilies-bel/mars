@@ -25,6 +25,8 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
+  inFlightCount: () => 0,
+  selfUpdate: async () => {},
   recipeCatalog: nullRecipeCatalog,
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),
@@ -44,6 +46,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
     available: false,
     checkedAt: null,
     releaseUrl: null,
+    selfUpdatable: false,
   }),
   ...overrides,
 })
@@ -74,6 +77,7 @@ describe('GET /view/framework-update', () => {
       available: true,
       checkedAt: '2026-05-30T12:00:00.000Z',
       releaseUrl: 'https://github.com/ilies-bel/mars/releases/tag/v1.0.0',
+    selfUpdatable: false,
     }
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(

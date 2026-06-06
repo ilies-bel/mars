@@ -513,6 +513,8 @@ describe('GET /view/action-queue via HTTP server', () => {
       restartDaemon: async () => {},
       restartAllDaemonKilled: async () => [],
       isAcceptingWork: () => true,
+  inFlightCount: () => 0,
+  selfUpdate: async () => {},
       recipeCatalog,
       traceStore: nullTraceStore,
       viewTasks: async () => ({ tasks: [] }),
@@ -531,6 +533,7 @@ describe('GET /view/action-queue via HTTP server', () => {
         available: false,
         checkedAt: null,
         releaseUrl: null,
+    selfUpdatable: false,
       }),
       viewActionQueue: async (filter) => {
         // Return a predictable payload based on filter.

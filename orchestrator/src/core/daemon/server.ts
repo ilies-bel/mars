@@ -2358,6 +2358,45 @@ export const startDaemon = async (
       return restarted
     },
     isAcceptingWork: () => acceptingWork,
+    inFlightCount: () => tracker.inFlightCount(),
+    selfUpdate: async () => {
+      const { performSelfUpdate, makeSelfUpdateDeps } = await import('./self-update')
+      const cacheFile = resolvePath(resolveContext().stateDir, 'update.json')
+      const { classifyInstallRoute } = await import('./install-route')
+      await performSelfUpdate(
+        makeSelfUpdateDeps({
+          readUpdateCache: async () => {
+            try {
+              const raw = await readFile(cacheFile, 'utf8')
+              const parsed = JSON.parse(raw) as { latest?: unknown; available?: unknown }
+              if (
+                typeof parsed.latest === 'string' &&
+                typeof parsed.available === 'boolean'
+              ) {
+                return { latest: parsed.latest, available: parsed.available }
+              }
+              return null
+            } catch {
+              return null
+            }
+          },
+          inFlightCount: () => tracker.inFlightCount(),
+          installRoute: classifyInstallRoute,
+          restartDaemon: async () => {
+            const { spawn } = await import('node:child_process')
+            const { resolveLaunchCommand } = await import('./paths')
+            const { command, baseArgs } = resolveLaunchCommand()
+            const child = spawn(command, [...baseArgs, 'daemon', 'start'], {
+              detached: true,
+              stdio: 'ignore',
+            })
+            child.unref()
+            log('self-update complete; spawned replacement daemon, draining self')
+            setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
+          },
+        }),
+      )
+    },
     recipeCatalog,
     traceStore,
     viewTasks: () =>
@@ -2621,9 +2660,12 @@ export const startDaemon = async (
     },
     viewFrameworkUpdate: async (): Promise<FrameworkUpdateState> => {
       const cacheFile = resolvePath(resolveContext().stateDir, 'update.json')
+      const { classifyInstallRoute: classify } = await import('./install-route')
+      const selfUpdatable = classify() === 'prod'
       try {
         const raw = await readFile(cacheFile, 'utf8')
-        return JSON.parse(raw) as FrameworkUpdateState
+        const cached = JSON.parse(raw) as Omit<FrameworkUpdateState, 'selfUpdatable'>
+        return { ...cached, selfUpdatable }
       } catch {
         return {
           installed: MARS_VERSION,
@@ -2631,6 +2673,7 @@ export const startDaemon = async (
           available: false,
           checkedAt: null,
           releaseUrl: null,
+          selfUpdatable,
         }
       }
     },

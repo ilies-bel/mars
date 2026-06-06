@@ -41,6 +41,8 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartDaemon: async () => {},
   restartAllDaemonKilled: async () => [],
   isAcceptingWork: () => true,
+  inFlightCount: () => 0,
+  selfUpdate: async () => {},
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,
   viewTasks: async () => ({ tasks: [] }),
@@ -60,6 +62,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
     available: false,
     checkedAt: null,
     releaseUrl: null,
+    selfUpdatable: false,
   }),
   ...overrides,
 })
