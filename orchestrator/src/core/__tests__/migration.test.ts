@@ -591,11 +591,14 @@ describe('DB-side CHECK constraints for enum state machines', () => {
 
   it('adds tasks.status CHECK constraint to a legacy DB that already has the FK rebuild', async () => {
     // Simulate a DB that was created with the FK rebuild but without CHECK constraints.
+    // This also tests the forward migration that drops the three legacy JSON columns
+    // (files_json, done_criteria_json, claude_session_ids) after backfilling junction tables.
     const dbUrl = `file:${repo}/.mars/mars.db`
     const q = createClient({ url: dbUrl })
     const now = new Date().toISOString()
 
     // Create tasks table with FK but without CHECK (simulates post-FK-rebuild, pre-CHECK-rebuild state).
+    // Includes the three legacy JSON columns that the migration must now drop.
     await q.execute(`
       CREATE TABLE tasks (
         id TEXT PRIMARY KEY,
@@ -639,9 +642,10 @@ describe('DB-side CHECK constraints for enum state machines', () => {
         updated_at TEXT NOT NULL
       )
     `)
+    // Seed a row with data in the legacy JSON columns to verify backfill-before-drop.
     await q.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at)
-            VALUES ('legacy-t', 'do it', 'done', 'legacy-t', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, files_json, done_criteria_json, claude_session_ids, claude_session_id, created_at, updated_at)
+            VALUES ('legacy-t', 'do it', 'done', 'legacy-t', '["src/a.ts"]', '["tests pass"]', '["sess-abc"]', 'sess-abc', ?, ?)`,
       args: [now, now],
     })
     q.close()
@@ -658,10 +662,39 @@ describe('DB-side CHECK constraints for enum state machines', () => {
     const sql = (result.rows[0] as unknown as { sql: string }).sql
     expect(sql).toContain('CHECK')
 
-    // Verify the existing data was preserved
+    // Verify the three legacy columns are now ABSENT from the tasks table.
+    const pragma = await c.execute(`PRAGMA table_info(tasks)`)
+    const colNames = new Set(
+      pragma.rows.map((r) => (r as unknown as { name: string }).name),
+    )
+    expect(colNames.has('claude_session_ids')).toBe(false)
+    expect(colNames.has('files_json')).toBe(false)
+    expect(colNames.has('done_criteria_json')).toBe(false)
+
+    // Verify the existing data was preserved and the row is still accessible.
     const row = await c.execute(`SELECT id, status FROM tasks WHERE id = 'legacy-t'`)
     expect(row.rows).toHaveLength(1)
     expect((row.rows[0] as unknown as { status: string }).status).toBe('done')
+
+    // Verify that legacy column data was backfilled into junction tables before drop.
+    const files = await c.execute(
+      `SELECT path FROM task_spec_files WHERE task_id = 'legacy-t' ORDER BY position`,
+    )
+    expect(files.rows.map((r) => (r as unknown as { path: string }).path)).toEqual(['src/a.ts'])
+
+    const criteria = await c.execute(
+      `SELECT criterion FROM task_done_criteria WHERE task_id = 'legacy-t' ORDER BY position`,
+    )
+    expect(
+      criteria.rows.map((r) => (r as unknown as { criterion: string }).criterion),
+    ).toEqual(['tests pass'])
+
+    const sessions = await c.execute(
+      `SELECT session_id FROM task_claude_sessions WHERE task_id = 'legacy-t' ORDER BY position`,
+    )
+    expect(
+      sessions.rows.map((r) => (r as unknown as { session_id: string }).session_id),
+    ).toEqual(['sess-abc'])
 
     // Invalid insert now rejected
     await expect(
@@ -671,6 +704,75 @@ describe('DB-side CHECK constraints for enum state machines', () => {
         args: [now, now],
       }),
     ).rejects.toThrow()
+
+    c.close()
+  })
+
+  it('drops legacy columns from a DB that already has the FK+CHECK rebuild (no FK rebuild needed)', async () => {
+    // This tests the separate DROP COLUMN migration path for DBs where the FK
+    // rebuild already fired (so tasksNeedFkRebuild=false) but legacy columns still exist.
+    const dbUrl = `file:${repo}/.mars/mars.db`
+    const q = createClient({ url: dbUrl })
+    const now = new Date().toISOString()
+
+    // Create tasks table WITH CHECK constraint (so FK rebuild won't fire),
+    // but still has the three legacy JSON columns.
+    await q.execute(`
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        prompt TEXT NOT NULL,
+        status TEXT NOT NULL
+          CHECK (status IN ('draft','triaging','queued','running','verifying','merging','vega-reconciling','done','failed','dropped','blocked')),
+        claude_session_id TEXT,
+        claude_session_ids TEXT NOT NULL DEFAULT '[]',
+        files_json TEXT,
+        done_criteria_json TEXT,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        origin_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `)
+    await q.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, files_json, done_criteria_json, claude_session_ids, claude_session_id, created_at, updated_at)
+            VALUES ('t1', 'task', 'done', 't1', '["lib/x.ts"]', '["done"]', '["s1"]', 's1', ?, ?)`,
+      args: [now, now],
+    })
+    q.close()
+
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
+
+    const c = createClient({ url: dbUrl })
+
+    // Legacy columns must be absent.
+    const pragma = await c.execute(`PRAGMA table_info(tasks)`)
+    const colNames = new Set(
+      pragma.rows.map((r) => (r as unknown as { name: string }).name),
+    )
+    expect(colNames.has('claude_session_ids')).toBe(false)
+    expect(colNames.has('files_json')).toBe(false)
+    expect(colNames.has('done_criteria_json')).toBe(false)
+
+    // Data must be in junction tables.
+    const files = await c.execute(
+      `SELECT path FROM task_spec_files WHERE task_id = 't1' ORDER BY position`,
+    )
+    expect(files.rows.map((r) => (r as unknown as { path: string }).path)).toEqual(['lib/x.ts'])
+
+    const criteria = await c.execute(
+      `SELECT criterion FROM task_done_criteria WHERE task_id = 't1' ORDER BY position`,
+    )
+    expect(
+      criteria.rows.map((r) => (r as unknown as { criterion: string }).criterion),
+    ).toEqual(['done'])
+
+    const sessions = await c.execute(
+      `SELECT session_id FROM task_claude_sessions WHERE task_id = 't1' ORDER BY position`,
+    )
+    expect(
+      sessions.rows.map((r) => (r as unknown as { session_id: string }).session_id),
+    ).toEqual(['s1'])
 
     c.close()
   })

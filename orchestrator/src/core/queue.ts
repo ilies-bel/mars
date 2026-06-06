@@ -404,22 +404,9 @@ export const migrateQueueSchema = async (): Promise<void> => {
   if (!names.has('claude_session_id')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN claude_session_id TEXT`)
   }
-  // claude_session_ids: append-only JSON-array history of Claude session
-  // IDs across retries. The legacy `claude_session_id` column is kept as
-  // the latest pointer (see Task.claudeSessionId). Backfill from any
-  // pre-existing latest pointer so the history is consistent with the
-  // mirrored field on day one.
-  if (!names.has('claude_session_ids')) {
-    await c.execute(
-      `ALTER TABLE tasks ADD COLUMN claude_session_ids TEXT NOT NULL DEFAULT '[]'`,
-    )
-    await c.execute(
-      `UPDATE tasks
-          SET claude_session_ids = json_array(claude_session_id)
-        WHERE claude_session_id IS NOT NULL
-          AND (claude_session_ids = '[]' OR claude_session_ids IS NULL)`,
-    )
-  }
+  // claude_session_ids was a legacy JSON-array column; it is now replaced by
+  // the task_claude_sessions junction table. The ADD COLUMN migration has been
+  // removed; the DROP COLUMN migration runs in the junction-tables section below.
   if (!names.has('author_kind')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN author_kind TEXT`)
   }
@@ -597,18 +584,12 @@ export const migrateQueueSchema = async (): Promise<void> => {
   if (!names.has('resume_from')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN resume_from TEXT`)
   }
-  // Structured-task spec sidecar columns. NULL on legacy rows; populated by
-  // the slicer and by `mars task add` when --files/--verify/--done is
-  // passed. The composePrompt path renders the spec on top of `prompt` so
-  // the implementor agent receives a typed brief. See {@link TaskSpec}.
-  if (!names.has('files_json')) {
-    await c.execute(`ALTER TABLE tasks ADD COLUMN files_json TEXT`)
-  }
+  // Structured-task spec sidecar columns. The files_json and done_criteria_json
+  // columns have been replaced by task_spec_files and task_done_criteria junction
+  // tables respectively; their ADD COLUMN migrations are removed and the DROP
+  // COLUMN migration runs in the junction-tables section below.
   if (!names.has('verify_cmd')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN verify_cmd TEXT`)
-  }
-  if (!names.has('done_criteria_json')) {
-    await c.execute(`ALTER TABLE tasks ADD COLUMN done_criteria_json TEXT`)
   }
   if (!names.has('task_type')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN task_type TEXT`)
@@ -961,6 +942,105 @@ export const migrateQueueSchema = async (): Promise<void> => {
       await c.execute(`PRAGMA foreign_keys = OFF`)
 
       if (tasksNeedFkRebuild || tasksNeedCheckRebuild) {
+        // Backfill junction tables from any legacy JSON columns that exist on the
+        // current tasks table BEFORE we drop-and-rebuild it, so no row loses its
+        // files/doneCriteria/sessionIds data when those columns are omitted from
+        // tasks_new. The CREATE TABLE IF NOT EXISTS calls are idempotent.
+        if (names.has('claude_session_ids') || names.has('claude_session_id')) {
+          await c.execute(`
+            CREATE TABLE IF NOT EXISTS task_claude_sessions (
+              task_id    TEXT    NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+              session_id TEXT    NOT NULL,
+              position   INTEGER NOT NULL,
+              PRIMARY KEY (task_id, session_id)
+            )
+          `)
+          await c.execute(
+            `CREATE INDEX IF NOT EXISTS idx_task_claude_sessions_task
+               ON task_claude_sessions(task_id, position)`,
+          )
+          if (names.has('claude_session_ids')) {
+            await c.execute(`
+              INSERT OR IGNORE INTO task_claude_sessions (task_id, session_id, position)
+              SELECT t.id, je.value, je.key
+              FROM tasks t, json_each(
+                CASE
+                  WHEN t.claude_session_ids IS NOT NULL
+                    AND json_valid(t.claude_session_ids)
+                    AND json_array_length(t.claude_session_ids) > 0
+                  THEN t.claude_session_ids
+                  WHEN t.claude_session_id IS NOT NULL
+                  THEN json_array(t.claude_session_id)
+                  ELSE '[]'
+                END
+              ) AS je
+              WHERE je.value IS NOT NULL AND je.value != ''
+            `)
+          } else {
+            await c.execute(`
+              INSERT OR IGNORE INTO task_claude_sessions (task_id, session_id, position)
+              SELECT t.id, t.claude_session_id, 0
+              FROM tasks t
+              WHERE t.claude_session_id IS NOT NULL AND t.claude_session_id != ''
+            `)
+          }
+        }
+        if (names.has('files_json')) {
+          await c.execute(`
+            CREATE TABLE IF NOT EXISTS task_spec_files (
+              task_id  TEXT    NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+              path     TEXT    NOT NULL,
+              position INTEGER NOT NULL,
+              PRIMARY KEY (task_id, path)
+            )
+          `)
+          await c.execute(
+            `CREATE INDEX IF NOT EXISTS idx_task_spec_files_task
+               ON task_spec_files(task_id, position)`,
+          )
+          await c.execute(`
+            INSERT OR IGNORE INTO task_spec_files (task_id, path, position)
+            SELECT t.id, je.value, je.key
+            FROM tasks t, json_each(
+              CASE
+                WHEN t.files_json IS NOT NULL
+                  AND json_valid(t.files_json)
+                  AND json_array_length(t.files_json) > 0
+                THEN t.files_json
+                ELSE '[]'
+              END
+            ) AS je
+            WHERE je.value IS NOT NULL AND je.value != ''
+          `)
+        }
+        if (names.has('done_criteria_json')) {
+          await c.execute(`
+            CREATE TABLE IF NOT EXISTS task_done_criteria (
+              task_id   TEXT    NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+              criterion TEXT    NOT NULL,
+              position  INTEGER NOT NULL,
+              PRIMARY KEY (task_id, criterion)
+            )
+          `)
+          await c.execute(
+            `CREATE INDEX IF NOT EXISTS idx_task_done_criteria_task
+               ON task_done_criteria(task_id, position)`,
+          )
+          await c.execute(`
+            INSERT OR IGNORE INTO task_done_criteria (task_id, criterion, position)
+            SELECT t.id, je.value, je.key
+            FROM tasks t, json_each(
+              CASE
+                WHEN t.done_criteria_json IS NOT NULL
+                  AND json_valid(t.done_criteria_json)
+                  AND json_array_length(t.done_criteria_json) > 0
+                THEN t.done_criteria_json
+                ELSE '[]'
+              END
+            ) AS je
+            WHERE je.value IS NOT NULL AND je.value != ''
+          `)
+        }
         // Drop any incomplete prior rebuild attempt to ensure idempotency.
         await c.execute(`DROP TABLE IF EXISTS tasks_new`)
         await c.execute(`
@@ -974,7 +1054,6 @@ export const migrateQueueSchema = async (): Promise<void> => {
             branch               TEXT,
             worktree_path        TEXT,
             claude_session_id    TEXT,
-            claude_session_ids   TEXT    NOT NULL DEFAULT '[]',
             error                TEXT,
             drop_reason          TEXT,
             retry_count          INTEGER NOT NULL DEFAULT 0,
@@ -996,9 +1075,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             slice_index          INTEGER,
             failed_phase         TEXT,
             resume_from          TEXT,
-            files_json           TEXT,
             verify_cmd           TEXT,
-            done_criteria_json   TEXT,
             task_type            TEXT,
             read_first_json      TEXT,
             prescriptive_action  TEXT,
@@ -1013,26 +1090,25 @@ export const migrateQueueSchema = async (): Promise<void> => {
         await c.execute(`
           INSERT INTO tasks_new (
             id, prompt, status, plan_functional, plan_technical,
-            branch, worktree_path, claude_session_id, claude_session_ids,
+            branch, worktree_path, claude_session_id,
             error, drop_reason, retry_count, author_kind, author_name,
             failure_reason, failure_reason_code, recovery_payload,
             fix_for_task_id, failure_signature, kind, priority, tag, tags_json,
             origin_id, parent_proposal_id, slice_index, failed_phase, resume_from,
-            files_json, verify_cmd, done_criteria_json, task_type, read_first_json,
+            verify_cmd, task_type, read_first_json,
             prescriptive_action, slice_kind, sub_deliverable_json,
             integration_head_sha, followup_dedup_key, created_at, updated_at
           )
           SELECT
             id, prompt, status, plan_functional, plan_technical,
             branch, worktree_path, claude_session_id,
-            COALESCE(claude_session_ids, '[]'),
             error, drop_reason, COALESCE(retry_count, 0),
             author_kind, author_name, failure_reason, failure_reason_code,
             recovery_payload, fix_for_task_id, failure_signature, kind,
             COALESCE(priority, 0), tag, tags_json,
             COALESCE(origin_id, id),
             parent_proposal_id, slice_index, failed_phase, resume_from,
-            files_json, verify_cmd, done_criteria_json, task_type, read_first_json,
+            verify_cmd, task_type, read_first_json,
             prescriptive_action, slice_kind, sub_deliverable_json,
             integration_head_sha, followup_dedup_key, created_at, updated_at
           FROM tasks
@@ -1193,9 +1269,8 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // `done_criteria_json` JSON blob columns on `tasks`.  They are created here
   // (idempotent) and back-filled from the legacy columns once.  New writes go
   // exclusively to these tables; all read paths (TASK_SEL, progress.ts) read
-  // from them via correlated subqueries.  The legacy columns are retained in
-  // the schema for backward-compat with any tooling that reads them directly,
-  // but they are no longer written by the application.
+  // from them via correlated subqueries.  The legacy columns are then dropped
+  // (hard cut — no fallback remains).
   //
   // task_claude_sessions: ordered history of Claude session IDs across retries
   // (replaces tasks.claude_session_ids JSON array and the legacy
@@ -1212,25 +1287,6 @@ export const migrateQueueSchema = async (): Promise<void> => {
     `CREATE INDEX IF NOT EXISTS idx_task_claude_sessions_task
        ON task_claude_sessions(task_id, position)`,
   )
-  // Back-fill from tasks.claude_session_ids (JSON array) for rows not yet
-  // represented in task_claude_sessions.  json_each expands the array; the
-  // INSERT OR IGNORE is idempotent on repeated startups.
-  await c.execute(`
-    INSERT OR IGNORE INTO task_claude_sessions (task_id, session_id, position)
-    SELECT t.id, je.value, je.key
-    FROM tasks t, json_each(
-      CASE
-        WHEN t.claude_session_ids IS NOT NULL
-          AND json_valid(t.claude_session_ids)
-          AND json_array_length(t.claude_session_ids) > 0
-        THEN t.claude_session_ids
-        WHEN t.claude_session_id IS NOT NULL
-        THEN json_array(t.claude_session_id)
-        ELSE '[]'
-      END
-    ) AS je
-    WHERE je.value IS NOT NULL AND je.value != ''
-  `)
   // task_spec_files: ordered list of paths the coder should read first
   // (replaces tasks.files_json JSON array).
   await c.execute(`
@@ -1245,20 +1301,6 @@ export const migrateQueueSchema = async (): Promise<void> => {
     `CREATE INDEX IF NOT EXISTS idx_task_spec_files_task
        ON task_spec_files(task_id, position)`,
   )
-  await c.execute(`
-    INSERT OR IGNORE INTO task_spec_files (task_id, path, position)
-    SELECT t.id, je.value, je.key
-    FROM tasks t, json_each(
-      CASE
-        WHEN t.files_json IS NOT NULL
-          AND json_valid(t.files_json)
-          AND json_array_length(t.files_json) > 0
-        THEN t.files_json
-        ELSE '[]'
-      END
-    ) AS je
-    WHERE je.value IS NOT NULL AND je.value != ''
-  `)
   // task_done_criteria: ordered list of completion criteria (replaces
   // tasks.done_criteria_json JSON array).
   await c.execute(`
@@ -1273,20 +1315,87 @@ export const migrateQueueSchema = async (): Promise<void> => {
     `CREATE INDEX IF NOT EXISTS idx_task_done_criteria_task
        ON task_done_criteria(task_id, position)`,
   )
-  await c.execute(`
-    INSERT OR IGNORE INTO task_done_criteria (task_id, criterion, position)
-    SELECT t.id, je.value, je.key
-    FROM tasks t, json_each(
-      CASE
-        WHEN t.done_criteria_json IS NOT NULL
-          AND json_valid(t.done_criteria_json)
-          AND json_array_length(t.done_criteria_json) > 0
-        THEN t.done_criteria_json
-        ELSE '[]'
-      END
-    ) AS je
-    WHERE je.value IS NOT NULL AND je.value != ''
-  `)
+  // Re-check column presence after any FK/CHECK rebuild that may have already
+  // removed some of the legacy columns from the schema.
+  {
+    const freshColsRows = await c.execute(`PRAGMA table_info(tasks)`)
+    const freshNames = new Set(
+      freshColsRows.rows.map((r) => (r as unknown as { name: string }).name),
+    )
+    // Back-fill from any remaining legacy columns before dropping them.
+    // The backfill is guarded per-column so we never reference a missing column.
+    if (freshNames.has('claude_session_ids')) {
+      await c.execute(`
+        INSERT OR IGNORE INTO task_claude_sessions (task_id, session_id, position)
+        SELECT t.id, je.value, je.key
+        FROM tasks t, json_each(
+          CASE
+            WHEN t.claude_session_ids IS NOT NULL
+              AND json_valid(t.claude_session_ids)
+              AND json_array_length(t.claude_session_ids) > 0
+            THEN t.claude_session_ids
+            WHEN t.claude_session_id IS NOT NULL
+            THEN json_array(t.claude_session_id)
+            ELSE '[]'
+          END
+        ) AS je
+        WHERE je.value IS NOT NULL AND je.value != ''
+      `)
+    } else if (freshNames.has('claude_session_id')) {
+      // claude_session_ids was already dropped (or never existed); seed from scalar.
+      await c.execute(`
+        INSERT OR IGNORE INTO task_claude_sessions (task_id, session_id, position)
+        SELECT t.id, t.claude_session_id, 0
+        FROM tasks t
+        WHERE t.claude_session_id IS NOT NULL AND t.claude_session_id != ''
+      `)
+    }
+    if (freshNames.has('files_json')) {
+      await c.execute(`
+        INSERT OR IGNORE INTO task_spec_files (task_id, path, position)
+        SELECT t.id, je.value, je.key
+        FROM tasks t, json_each(
+          CASE
+            WHEN t.files_json IS NOT NULL
+              AND json_valid(t.files_json)
+              AND json_array_length(t.files_json) > 0
+            THEN t.files_json
+            ELSE '[]'
+          END
+        ) AS je
+        WHERE je.value IS NOT NULL AND je.value != ''
+      `)
+    }
+    if (freshNames.has('done_criteria_json')) {
+      await c.execute(`
+        INSERT OR IGNORE INTO task_done_criteria (task_id, criterion, position)
+        SELECT t.id, je.value, je.key
+        FROM tasks t, json_each(
+          CASE
+            WHEN t.done_criteria_json IS NOT NULL
+              AND json_valid(t.done_criteria_json)
+              AND json_array_length(t.done_criteria_json) > 0
+            THEN t.done_criteria_json
+            ELSE '[]'
+          END
+        ) AS je
+        WHERE je.value IS NOT NULL AND je.value != ''
+      `)
+    }
+    // Hard-cut: drop the three legacy columns now that data is safely in the
+    // junction tables. Guards prevent errors when the columns are already absent
+    // (e.g. fresh DB, or a DB that went through the FK rebuild that already
+    // excluded them from tasks_new).
+    if (freshNames.has('claude_session_ids')) {
+      await c.execute(`ALTER TABLE tasks DROP COLUMN claude_session_ids`)
+    }
+    if (freshNames.has('files_json')) {
+      await c.execute(`ALTER TABLE tasks DROP COLUMN files_json`)
+    }
+    if (freshNames.has('done_criteria_json')) {
+      await c.execute(`ALTER TABLE tasks DROP COLUMN done_criteria_json`)
+    }
+  }
   // ── questions: ensure table and ON DELETE CASCADE ─────────────────────────
   // The questions table records coder clarification questions for a task.
   // It was introduced on some live databases WITHOUT ON DELETE CASCADE on its

@@ -95,7 +95,13 @@ const loadTaskRow = async (
 ): Promise<TaskRowForTranscript | null> => {
   const store = await getDefaultTaskStore()
   const r = await store.query({
-    sql: `SELECT worktree_path, claude_session_ids FROM tasks WHERE id = ?`,
+    sql: `SELECT t.worktree_path,
+  COALESCE(
+    (SELECT json_group_array(session_id ORDER BY position)
+       FROM task_claude_sessions WHERE task_id = t.id),
+    '[]'
+  ) AS claude_session_ids
+FROM tasks t WHERE t.id = ?`,
     args: [taskId],
   })
   if (r.rows.length === 0) return null

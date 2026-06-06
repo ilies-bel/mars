@@ -54,10 +54,17 @@ const setSessionIds = async (
   taskId: string,
   ids: string[],
 ): Promise<void> => {
+  // Write directly to the junction table (legacy tasks.claude_session_ids column is dropped).
   await q.resolveQueueClient().execute({
-    sql: `UPDATE tasks SET claude_session_ids = ? WHERE id = ?`,
-    args: [JSON.stringify(ids), taskId],
+    sql: `DELETE FROM task_claude_sessions WHERE task_id = ?`,
+    args: [taskId],
   })
+  for (let i = 0; i < ids.length; i++) {
+    await q.resolveQueueClient().execute({
+      sql: `INSERT OR IGNORE INTO task_claude_sessions (task_id, session_id, position) VALUES (?, ?, ?)`,
+      args: [taskId, ids[i], i],
+    })
+  }
 }
 
 const setWorktreePath = async (

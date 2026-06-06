@@ -3,21 +3,18 @@
  *
  * These tests verify that spec.files, spec.doneCriteria, and claudeSessionIds
  * are stored in the normalized junction tables (task_spec_files,
- * task_done_criteria, task_claude_sessions) and can be read back even when the
- * legacy JSON columns (files_json, done_criteria_json, claude_session_ids) on
- * the tasks table are NULL.
+ * task_done_criteria, task_claude_sessions) and can be read back through the
+ * public API.
  *
- * Each test is intentionally adversarial: it enqueues / updates a task, then
- * NULLs out the legacy column directly, and asserts the value is still
- * returned. Under the old (legacy-column) read path the assertion fails; under
- * the normalized (junction-table) read path it passes.
+ * The legacy JSON columns (files_json, done_criteria_json, claude_session_ids)
+ * have been dropped from the tasks table; all reads now go exclusively through
+ * the junction tables via TASK_SEL correlated subqueries.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { createClient } from '@libsql/client'
 
 interface Queue {
   enqueueTask: typeof import('../../queue').enqueueTask
@@ -53,21 +50,15 @@ describe('junction-table read path: session IDs', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('reads claudeSessionIds from task_claude_sessions even when tasks.claude_session_ids is cleared', async () => {
+  it('reads claudeSessionIds from task_claude_sessions junction table', async () => {
     const q = await loadQueue(repo)
     const t = await q.enqueueTask('sessions task', undefined, { skipTriage: true })
 
     await q.updateTask(t.id, { claudeSessionId: 'sess-x' })
     await q.updateTask(t.id, { claudeSessionId: 'sess-y' })
 
-    // Simulate the new state where the legacy JSON column is not written.
-    const db = createClient({ url: `file:${repo}/.mars/mars.db` })
-    await db.execute({
-      sql: `UPDATE tasks SET claude_session_ids = '[]' WHERE id = ?`,
-      args: [t.id],
-    })
-    db.close()
-
+    // The legacy tasks.claude_session_ids column is dropped; data lives only
+    // in the junction table. Verify the public interface still returns it.
     const fetched = await q.getTask(t.id)
     expect(fetched?.claudeSessionIds).toEqual(['sess-x', 'sess-y'])
   })
@@ -85,7 +76,7 @@ describe('junction-table read path: spec files', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('reads spec.files from task_spec_files even when tasks.files_json is cleared', async () => {
+  it('reads spec.files from task_spec_files junction table', async () => {
     const q = await loadQueue(repo)
     const t = await q.enqueueTask('files task', undefined, {
       spec: {
@@ -96,14 +87,8 @@ describe('junction-table read path: spec files', () => {
       },
     })
 
-    // Null out the legacy column.
-    const db = createClient({ url: `file:${repo}/.mars/mars.db` })
-    await db.execute({
-      sql: `UPDATE tasks SET files_json = NULL WHERE id = ?`,
-      args: [t.id],
-    })
-    db.close()
-
+    // The legacy tasks.files_json column is dropped; data lives only
+    // in the junction table. Verify the public interface still returns it.
     const fetched = await q.getTask(t.id)
     expect(fetched?.spec?.files).toEqual(['src/a.ts', 'src/b.ts'])
   })
@@ -121,7 +106,7 @@ describe('junction-table read path: done criteria', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('reads spec.doneCriteria from task_done_criteria even when tasks.done_criteria_json is cleared', async () => {
+  it('reads spec.doneCriteria from task_done_criteria junction table', async () => {
     const q = await loadQueue(repo)
     const t = await q.enqueueTask('criteria task', undefined, {
       spec: {
@@ -132,14 +117,8 @@ describe('junction-table read path: done criteria', () => {
       },
     })
 
-    // Null out the legacy column.
-    const db = createClient({ url: `file:${repo}/.mars/mars.db` })
-    await db.execute({
-      sql: `UPDATE tasks SET done_criteria_json = NULL WHERE id = ?`,
-      args: [t.id],
-    })
-    db.close()
-
+    // The legacy tasks.done_criteria_json column is dropped; data lives only
+    // in the junction table. Verify the public interface still returns it.
     const fetched = await q.getTask(t.id)
     expect(fetched?.spec?.doneCriteria).toEqual(['all tests pass', 'type-checks clean'])
   })
