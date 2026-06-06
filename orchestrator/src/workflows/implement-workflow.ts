@@ -1313,6 +1313,7 @@ export const implementWorkflow = defineWorkflow<
           const verifyTopCtx = resolveContext()
           const detection = await checkIntegrationBranchDirty({
             repoRoot: verifyTopCtx.repoRoot,
+            integrationBranch: input.integrationBranch,
             traceCtx: buildCtx('verify'),
           })
           if (detection.dirty) {
@@ -1329,25 +1330,37 @@ export const implementWorkflow = defineWorkflow<
                 traceStore: workflowTraceStore,
                 store,
               })
+              if (resolution.attachedToStatus === 'done') {
+                // A previous committer already handled this dirty state; do
+                // not throw (the source task is not blocked — attaching to a
+                // done committer would create a phantom blocker). Fall through
+                // to standard verify. If main is still truly dirty, verify
+                // will fail on its own terms.
+                console.log(
+                  `[main-dirty] verify-time: task ${input.taskId} found done committer at same hash; falling through to standard verify`,
+                )
+              } else {
+                console.log(
+                  `[main-dirty] verify-time: task ${input.taskId} parked blocked on main-commiter ${resolution.fixTaskId} (${
+                    resolution.spawned
+                      ? 'spawned fresh'
+                      : `attached to existing committer in status=${resolution.attachedToStatus}`
+                  })`,
+                )
+                // Throw to abort the verify step. The detection-throw is
+                // suppressed by `isMainDirtyVerifyError` in the daemon so the
+                // misleading `task.completed status=failed` emit is skipped —
+                // the source task is already `blocked` with a real
+                // task_blockers edge.
+                throw new Error(
+                  `task ${input.taskId} verify:main-dirty: ${MAIN_DIRTY_VERIFY_MESSAGE}`,
+                )
+              }
+            } else {
               console.log(
-                `[main-dirty] verify-time: task ${input.taskId} parked blocked on main-commiter ${resolution.fixTaskId} (${
-                  resolution.spawned
-                    ? 'spawned fresh'
-                    : `attached to existing committer in status=${resolution.attachedToStatus}`
-                })`,
-              )
-              // Throw to abort the verify step. The detection-throw is
-              // suppressed by `isMainDirtyVerifyError` in the daemon so the
-              // misleading `task.completed status=failed` emit is skipped —
-              // the source task is already `blocked` with a real
-              // task_blockers edge.
-              throw new Error(
-                `task ${input.taskId} verify:main-dirty: ${MAIN_DIRTY_VERIFY_MESSAGE}`,
+                `[main-dirty] verify-time: integration branch is dirty but recipe '${MAIN_COMMITER_RECIPE}' is missing from the catalog; falling through to standard verify`,
               )
             }
-            console.log(
-              `[main-dirty] verify-time: integration branch is dirty but recipe '${MAIN_COMMITER_RECIPE}' is missing from the catalog; falling through to standard verify`,
-            )
           }
         } catch (err) {
           if (err instanceof Error && err.message.includes('verify:main-dirty')) {

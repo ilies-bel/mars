@@ -14,6 +14,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -56,6 +57,7 @@ describe('checkIntegrationBranchDirty', () => {
     const { checkIntegrationBranchDirty } = await import('../main-dirty')
     const r = await checkIntegrationBranchDirty({
       repoRoot: repo,
+      integrationBranch: 'main',
       traceCtx: { store: nullTraceStore, phase: 'setup' },
     })
     expect(r.dirty).toBe(false)
@@ -68,6 +70,7 @@ describe('checkIntegrationBranchDirty', () => {
     dirtyRepo(repo)
     const r1 = await checkIntegrationBranchDirty({
       repoRoot: repo,
+      integrationBranch: 'main',
       traceCtx: { store: nullTraceStore, phase: 'setup' },
     })
     expect(r1.dirty).toBe(true)
@@ -76,26 +79,102 @@ describe('checkIntegrationBranchDirty', () => {
     // Re-running on the same state must produce the same hash.
     const r2 = await checkIntegrationBranchDirty({
       repoRoot: repo,
+      integrationBranch: 'main',
       traceCtx: { store: nullTraceStore, phase: 'verify' },
     })
     expect(r2.hash).toBe(r1.hash)
   })
 
-  it('produces different hashes for different diffs', async () => {
+  it('produces different hashes for different dirty file sets', async () => {
+    // The hash is sha256(headSha + statusOutput), so different file names
+    // in the dirty set → different statusOutput → different hash.
     const { checkIntegrationBranchDirty } = await import('../main-dirty')
-    dirtyRepo(repo, 'one\n')
+    writeFileSync(resolve(repo, 'file-a.txt'), 'content\n')
     const r1 = await checkIntegrationBranchDirty({
       repoRoot: repo,
+      integrationBranch: 'main',
       traceCtx: { store: nullTraceStore, phase: 'setup' },
     })
-    dirtyRepo(repo, 'two\n')
+    unlinkSync(resolve(repo, 'file-a.txt'))
+    writeFileSync(resolve(repo, 'file-b.txt'), 'content\n')
     const r2 = await checkIntegrationBranchDirty({
       repoRoot: repo,
+      integrationBranch: 'main',
       traceCtx: { store: nullTraceStore, phase: 'setup' },
     })
     expect(r1.dirty).toBe(true)
     expect(r2.dirty).toBe(true)
     expect(r1.hash).not.toBe(r2.hash)
+  })
+
+  it('gives untracked-only dirty states distinct hashes per their file set', async () => {
+    // Previously sha256(git diff HEAD) was '' for all untracked-only states,
+    // causing every such state to collide on the same dedup key. Now the hash
+    // is sha256(headSha + statusOutput), so different untracked files → distinct
+    // hashes, and identical untracked files → same hash (correct dedup).
+    const { checkIntegrationBranchDirty } = await import('../main-dirty')
+
+    // State A: one untracked file.
+    writeFileSync(resolve(repo, 'untracked-a.txt'), 'stuff\n')
+    const ra = await checkIntegrationBranchDirty({
+      repoRoot: repo,
+      integrationBranch: 'main',
+      traceCtx: { store: nullTraceStore, phase: 'setup' },
+    })
+    expect(ra.dirty).toBe(true)
+    expect(ra.hash).toMatch(/^[0-9a-f]{64}$/)
+
+    // State B: different untracked file → different hash.
+    unlinkSync(resolve(repo, 'untracked-a.txt'))
+    writeFileSync(resolve(repo, 'untracked-b.txt'), 'stuff\n')
+    const rb = await checkIntegrationBranchDirty({
+      repoRoot: repo,
+      integrationBranch: 'main',
+      traceCtx: { store: nullTraceStore, phase: 'setup' },
+    })
+    expect(rb.hash).not.toBe(ra.hash)
+
+    // State A again (same file) → same hash (stable dedup).
+    unlinkSync(resolve(repo, 'untracked-b.txt'))
+    writeFileSync(resolve(repo, 'untracked-a.txt'), 'stuff\n')
+    const ra2 = await checkIntegrationBranchDirty({
+      repoRoot: repo,
+      integrationBranch: 'main',
+      traceCtx: { store: nullTraceStore, phase: 'setup' },
+    })
+    expect(ra2.hash).toBe(ra.hash)
+  })
+
+  it('returns dirty:false and emits a warning when repoRoot is on a non-integration branch', async () => {
+    // Regression guard: a crashed merge step can leave the primary repo
+    // checked out on a task branch. Without this guard, git status on the
+    // task branch reads as "dirty main" and drives a committer respawn loop.
+    const { checkIntegrationBranchDirty } = await import('../main-dirty')
+    // Create and switch to a task branch.
+    execFileSync('git', ['checkout', '-b', 'task/some-work'], { cwd: repo })
+    // Make the repo dirty so it would report dirty:true without the guard.
+    dirtyRepo(repo)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const r = await checkIntegrationBranchDirty({
+        repoRoot: repo,
+        integrationBranch: 'main',
+        traceCtx: { store: nullTraceStore, phase: 'setup' },
+      })
+      expect(r.dirty).toBe(false)
+      expect(r.hash).toBeNull()
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('task/some-work'),
+      )
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('skipping dirty-main probe'),
+      )
+    } finally {
+      warnSpy.mockRestore()
+      // Return to main so teardown can clean up.
+      execFileSync('git', ['checkout', 'main'], { cwd: repo })
+    }
   })
 })
 
@@ -318,7 +397,11 @@ describe('spawnOrAttachMainCommitter', () => {
     expect(second.fixTaskId).not.toBe(first.fixTaskId)
   })
 
-  it('respawns after a committer reaches DONE (its hash is historical)', async () => {
+  it('does NOT respawn when a committer at the same hash has already reached DONE', async () => {
+    // Regression test for the 1325-committer loop: a done committer must
+    // suppress re-spawn for the same (headSha, dirtyFiles) state. Without
+    // this fix, every dispatch tick after the committer finished would find
+    // no "active" committer and spawn a fresh one.
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
     const src1 = await queue.enqueueTask('source-1', undefined, {
@@ -354,6 +437,86 @@ describe('spawnOrAttachMainCommitter', () => {
       sourceOriginId: src2.id,
       traceStore: nullTraceStore,
     })
+    // Must NOT spawn a fresh committer — done committer suppresses re-spawn.
+    expect(second.spawned).toBe(false)
+    expect(second.fixTaskId).toBe(first.fixTaskId)
+    expect(second.attachedToStatus).toBe('done')
+
+    // src2 must NOT be blocked on the done committer (attaching to a done
+    // task would create a phantom blocker that can never resolve).
+    const src2After = await queue.getTask(src2.id)
+    expect(src2After?.status).not.toBe('blocked')
+    const c = queue.resolveQueueClient()
+    const poisonEdge = await c.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+      args: [src2.id, first.fixTaskId],
+    })
+    expect(Number((poisonEdge.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
+  it('allows a fresh committer when HEAD advances (even with the same dirty file set)', async () => {
+    // The hash includes headSha, so a new commit on the integration branch
+    // changes the key and unblocks a fresh spawn even if the dirty files are
+    // the same names. This ensures the committer is always working against
+    // the current HEAD, not a stale one.
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const src1 = await queue.enqueueTask('source-1', undefined, {
+      skipTriage: true,
+    })
+
+    const { checkIntegrationBranchDirty, spawnOrAttachMainCommitter } = await import('../main-dirty')
+
+    // Dirty the repo with an untracked file.
+    writeFileSync(resolve(repo, 'dirty.txt'), 'initial\n')
+
+    const detection1 = await checkIntegrationBranchDirty({
+      repoRoot: repo,
+      integrationBranch: 'main',
+      traceCtx: { store: nullTraceStore, phase: 'setup' },
+    })
+    expect(detection1.dirty).toBe(true)
+
+    const first = await spawnOrAttachMainCommitter({
+      sourceTaskId: src1.id,
+      detection: detection1,
+      integrationBranch: 'main',
+      dispatchPhase: 'dispatch',
+      recipePrompt: 'p',
+      sourceOriginId: src1.id,
+      traceStore: nullTraceStore,
+    })
+    expect(first.spawned).toBe(true)
+    await queue.updateTask(first.fixTaskId, { status: 'done' })
+
+    // Advance HEAD: commit another file while dirty.txt remains untracked.
+    writeFileSync(resolve(repo, 'advance.txt'), 'advance\n')
+    execFileSync('git', ['add', 'advance.txt'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'advance HEAD'], { cwd: repo })
+
+    // Get detection for the new HEAD — hash changes even though dirty.txt is still present.
+    const detection2 = await checkIntegrationBranchDirty({
+      repoRoot: repo,
+      integrationBranch: 'main',
+      traceCtx: { store: nullTraceStore, phase: 'setup' },
+    })
+    expect(detection2.dirty).toBe(true)
+    // Different HEAD sha → different hash.
+    expect(detection2.hash).not.toBe(detection1.hash)
+
+    const src2 = await queue.enqueueTask('source-2', undefined, {
+      skipTriage: true,
+    })
+    const second = await spawnOrAttachMainCommitter({
+      sourceTaskId: src2.id,
+      detection: detection2,
+      integrationBranch: 'main',
+      dispatchPhase: 'dispatch',
+      recipePrompt: 'p',
+      sourceOriginId: src2.id,
+      traceStore: nullTraceStore,
+    })
+    // New HEAD → new hash → fresh spawn allowed.
     expect(second.spawned).toBe(true)
     expect(second.fixTaskId).not.toBe(first.fixTaskId)
   })

@@ -48,6 +48,7 @@ export const runMainDirtyDispatchCheck = async (
   const originId = await resolveOriginIdForTask(task.id).catch(() => task.id)
   const detection = await checkIntegrationBranchDirty({
     repoRoot,
+    integrationBranch,
     traceCtx: {
       taskId: task.id,
       originId,
