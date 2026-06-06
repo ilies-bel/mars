@@ -299,6 +299,7 @@ describe('action-queue show', () => {
     expect(r.code).toBe(0)
     const out = r.out.join('\n')
     expect(out).toContain('id:        aq-show-001')
+    expect(out).toContain('title:     Show me')
     expect(out).toContain('kind:      failed-task')
     expect(out).toContain('entity:    mars-task-001')
     expect(out).toContain('priority:  high')

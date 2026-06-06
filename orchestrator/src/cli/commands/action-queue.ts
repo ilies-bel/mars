@@ -185,6 +185,7 @@ const actionQueueShow: Command = {
       return { code: 1 }
     }
     deps.out(`id:        ${row.id}`)
+    deps.out(`title:     ${row.title}`)
     deps.out(`kind:      ${row.kind}`)
     deps.out(`entity:    ${row.entityId}`)
     deps.out(`priority:  ${row.priority}`)
