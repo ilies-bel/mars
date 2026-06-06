@@ -113,7 +113,30 @@ const isMainCommiterRecovery = (
  */
 async function applyActionQueueMutation(event: BusEvent): Promise<void> {
   if (TASK_RAISE_EVENTS.has(event.type)) {
-    const { taskId } = event.payload as { taskId: string }
+    const { taskId } = event.payload as { taskId: string; dropReason?: string }
+
+    // Purge-drop guard: dropTask emits task.dropped{dropReason:'purged'} +
+    // task.terminal{purged} before deleting the task row. The Invalidator
+    // (alert-dismisser) closes all open rows when it drains task.dropped.
+    // If the Invalidator drains task.dropped and task.terminal BEFORE this
+    // subscriber processes task.dropped, a raise here would create an orphaned
+    // action-queue row that the Invalidator will never revisit (its cursor has
+    // already passed those events). Fix: treat purge-drops as an evict-only
+    // operation — supersede any still-open rows and return without raising.
+    // Idempotent: if the Invalidator already closed the rows, supersede is a
+    // silent no-op.
+    if (event.type === 'task.dropped') {
+      const { dropReason } = event.payload as { taskId: string; dropReason: string }
+      if (dropReason === 'purged') {
+        await supersedeActionQueueItemsForOrigin(
+          taskId,
+          'origin-purged',
+          `action-queue-repopulator:${event.type}`,
+        )
+        return
+      }
+    }
+
     // Load the task to read its structured failure signature and the recovery
     // metadata that decides whether F.2's aggregated writer owns this row.
     const task = await getTask(taskId)

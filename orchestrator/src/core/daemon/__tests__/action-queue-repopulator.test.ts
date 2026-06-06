@@ -14,6 +14,7 @@ interface QueueModule {
 interface ActionQueueModule {
   listActionQueueItems: typeof import('../../lib/action-queue').listActionQueueItems
   raiseActionQueueItem: typeof import('../../lib/action-queue').raiseActionQueueItem
+  supersedeActionQueueItemsForOrigin: typeof import('../../lib/action-queue').supersedeActionQueueItemsForOrigin
 }
 
 interface RepopulatorModule {
@@ -702,5 +703,100 @@ describe('action-queue-repopulator outbox subscriber', () => {
     expect(row).toBeDefined()
     expect(row!.title).toBe('A verification check did not pass')
     expect(row!.title).not.toContain('verify:test')
+  })
+
+  // ── Purge-drop orphan guard ───────────────────────────────────────────────
+
+  it('does not raise a row for task.dropped{dropReason:purged} even when task row still exists', async () => {
+    // Core fix: dropTask publishes task.dropped{purged} BEFORE deleting the
+    // task row. The old code checked `if (task === null) return`, which only
+    // catches the delete-before-drain case. When drain is fast and the task
+    // row still exists, a raise would create an orphaned row that the
+    // Invalidator (which drains on the same event) will never revisit.
+    // Fix: purge-drops are treated as evict-only — no raise, ever.
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-purge-no-raise'
+
+    await rep.ensureActionQueueRepopulator(client)
+    // Task row still exists (as it would when dropTask publishes the event).
+    await insertTaskRow(client, { id: taskId })
+
+    await publish(pub, client, 'task.dropped', { taskId, dropReason: 'purged' })
+    const { processed } = await rep.drainActionQueueRepopulations(client)
+    expect(processed).toBe(1) // event consumed; cursor advances
+
+    const openItems = await actionQueue.listActionQueueItems('open')
+    expect(openItems.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
+  })
+
+  it('leaves no open row when Invalidator closes rows first, then repopulator drains task.dropped{purged} (reversed drain order)', async () => {
+    // Regression: the race that caused orphan rows in production.
+    // Timeline (before fix):
+    //   1. dropTask emits task.dropped{purged} + task.terminal{purged}
+    //   2. Invalidator drains both events → closes all open rows for task
+    //   3. Repopulator drains task.dropped{purged} — task row still exists
+    //   4. getTask() returns non-null → raiseActionQueueItem called → orphan row!
+    //      (Invalidator won't revisit; cursor already past both events.)
+    // After fix: step 3 evicts (supersedes) rather than raises → no orphan.
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-reversed-drain-orphan'
+
+    await rep.ensureActionQueueRepopulator(client)
+    await insertTaskRow(client, { id: taskId })
+
+    // Step 1: a prior failure had already raised a row for this task.
+    await actionQueue.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'high',
+      title: 'A pipeline step did not complete',
+      body: 'test body',
+      payload: { taskId },
+      context: {},
+      raisedBy: 'test',
+      signature: taskId,
+      originTaskId: taskId,
+    })
+    const openBefore = await actionQueue.listActionQueueItems('open')
+    expect(openBefore.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(1)
+
+    // Step 2: simulate the Invalidator running first — it supersedes all open
+    // rows keyed to this origin (as resolveAllRowsForTask / supersedeActionQueueItemsForOrigin
+    // does on task.dropped).
+    await actionQueue.supersedeActionQueueItemsForOrigin(taskId, 'origin-purged', 'test-invalidator')
+
+    const openAfterInvalidator = await actionQueue.listActionQueueItems('open')
+    expect(openAfterInvalidator.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
+
+    // Step 3: repopulator drains task.dropped{purged} — task row still exists,
+    // which is the exact condition that triggered the orphan bug before the fix.
+    await publish(pub, client, 'task.dropped', { taskId, dropReason: 'purged' })
+    const { processed } = await rep.drainActionQueueRepopulations(client)
+    expect(processed).toBe(1)
+
+    // No new open row — the purge-drop guard evicts rather than raises.
+    const openAfterRepopulator = await actionQueue.listActionQueueItems('open')
+    expect(openAfterRepopulator.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
+  })
+
+  it('still raises a row for task.dropped with non-purge dropReason (user-skipped drops need attention)', async () => {
+    // Regression guard: ensure the purge-drop guard does NOT suppress
+    // task.dropped events for other drop reasons (e.g. 'user skipped').
+    // Those drops are operator-driven and do warrant an action-queue row.
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-user-skipped-still-raises'
+
+    await rep.ensureActionQueueRepopulator(client)
+    await insertTaskRow(client, { id: taskId })
+
+    await publish(pub, client, 'task.dropped', { taskId, dropReason: 'user skipped' })
+    const { processed } = await rep.drainActionQueueRepopulations(client)
+    expect(processed).toBe(1)
+
+    const openItems = await actionQueue.listActionQueueItems('open')
+    expect(openItems.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(1)
   })
 })
