@@ -1042,6 +1042,9 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       }
       // Phase 3b: Coder sub-tasks enqueued for hitl slices have no blockers
       // and must be dispatched immediately — transition them to 'queued'.
+      // Routes through updateTask (not raw SQL) so the lifecycle gate
+      // (IllegalTransitionError) catches any attempted re-transition from a
+      // terminal status before the write lands (ADR-0030).
       for (const subTaskId of subTaskIds) {
         await updateTask(subTaskId, { status: 'queued' })
       }
