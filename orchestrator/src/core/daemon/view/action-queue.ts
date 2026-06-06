@@ -57,6 +57,12 @@ export interface ActionQueueRow {
    * typed code was introduced.
    */
   failureReasonCode: string | null
+  /**
+   * When this row represents a fix/recovery task, the id of the origin task it
+   * was spawned to fix. Null/absent for origin tasks or non-task rows.
+   * Drives the "Fix for: <origin>" navigable link in the UI.
+   */
+  fixForTaskId?: string | null
 }
 
 /** Raw actionQueue row shape as persisted in `action_queue_items`. */
@@ -96,6 +102,13 @@ export interface TaskForActionQueue {
   lastErrorOutput?: string | null
   branch: string | null
   updatedAt: string
+  /**
+   * When this task is a fix/recovery task, the id of the origin task it was
+   * spawned to fix. Null for origin tasks. Drives arc-keyed DAG rendering:
+   * origin rows carry the fix task in `dag.descendants`; fix rows carry this
+   * id in `fixForTaskId` so the UI can link back.
+   */
+  fixForTaskId?: string | null
 }
 
 /**
@@ -149,6 +162,17 @@ export const buildActionQueueView = async ({
       const arr = blockingMap.get(blkId) ?? []
       arr.push(t.id)
       blockingMap.set(blkId, arr)
+    }
+  }
+
+  // fixForTaskMap: origin task id → list of fix/recovery task ids that point at it.
+  // Drives dag.descendants enrichment so each arc row shows its recovery chain.
+  const fixForTaskMap = new Map<string, string[]>()
+  for (const t of allTasks) {
+    if (t.fixForTaskId) {
+      const arr = fixForTaskMap.get(t.fixForTaskId) ?? []
+      arr.push(t.id)
+      fixForTaskMap.set(t.fixForTaskId, arr)
     }
   }
 
@@ -265,10 +289,12 @@ export const buildActionQueueView = async ({
       if (task) {
         const blockers = task.blockedBy.map(toNode)
         const blocking = (blockingMap.get(entityId) ?? []).map(toNode)
+        // Enrich descendants with fix/recovery tasks that point at this origin.
+        const descendants = (fixForTaskMap.get(entityId) ?? []).map(toNode)
         dag = {
           blockers,
           blocking,
-          descendants: [],
+          descendants,
           proposalId: task.parentProposalId,
         }
       }
@@ -384,6 +410,12 @@ export const buildActionQueueView = async ({
       body = fk.verboseReason
     }
 
+    // Propagate fixForTaskId so the UI can render an "origin" link on recovery rows.
+    const fixForTaskId =
+      uiKind === 'failed-task'
+        ? (taskById.get(entityId)?.fixForTaskId ?? null)
+        : null
+
     rows.push({
       id: row.id,
       kind: uiKind,
@@ -400,6 +432,7 @@ export const buildActionQueueView = async ({
       staleWorktreeDetail,
       diagnosis,
       failureReasonCode,
+      fixForTaskId,
     })
   }
 

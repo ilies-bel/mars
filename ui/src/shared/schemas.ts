@@ -201,6 +201,12 @@ const actionQueueBaseSchema = z.object({
    * rows landed before the signature was written everywhere.
    */
   failureReasonCode: z.string().nullable().optional(),
+  /**
+   * When this row represents a fix/recovery task, the id of the origin task it
+   * was spawned to fix. Null/absent for origin tasks or non-failed rows.
+   * Drives the "Fix for: <origin>" navigable link in the failure card.
+   */
+  fixForTaskId: z.string().nullable().optional(),
 })
 
 // Detail block carried by every 'stale-worktree' row — absent on all other kinds.

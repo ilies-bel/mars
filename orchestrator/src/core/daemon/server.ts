@@ -2576,6 +2576,7 @@ export const startDaemon = async (
             failureSignature: t.failureSignature,
             branch: t.branch,
             updatedAt: t.updatedAt,
+            fixForTaskId: t.fixForTaskId ?? null,
           }))
         },
       }

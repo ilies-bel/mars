@@ -370,3 +370,80 @@ describe('buildActionQueueView — draft-proposal row (no regression)', () => {
     expect(dpRow!.actions.some((a) => a.op === 'shape')).toBe(true)
   })
 })
+
+// ── dag.descendants enrichment (arc-keyed render, finding #4) ─────────────────
+
+describe('buildActionQueueView — dag.descendants enrichment', () => {
+  it('populates descendants with fix tasks that point at the failed origin', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({ payload: { taskId: 'origin-task' } }),
+      ]),
+      taskStore: makeTaskStore([
+        makeTask({ id: 'origin-task', status: 'failed', failureSignature: 'verify:test/unclassified' }),
+        makeTask({ id: 'fix-task-1', status: 'queued', fixForTaskId: 'origin-task', prompt: 'Fix the failing tests in the worktree' }),
+      ]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    const originRow = rows.find((r) => r.entityId === 'origin-task')
+    expect(originRow).toBeDefined()
+    expect(originRow!.dag).not.toBeNull()
+    expect(originRow!.dag!.descendants).toHaveLength(1)
+    expect(originRow!.dag!.descendants[0]!.id).toBe('fix-task-1')
+    expect(originRow!.dag!.descendants[0]!.status).toBe('queued')
+  })
+
+  it('descendants summary is derived from the fix task prompt', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({ payload: { taskId: 'origin-task' } }),
+      ]),
+      taskStore: makeTaskStore([
+        makeTask({ id: 'origin-task', status: 'failed', failureSignature: 'verify:test/unclassified' }),
+        makeTask({ id: 'fix-task-1', status: 'queued', fixForTaskId: 'origin-task', prompt: 'Fix the failing tests in the worktree' }),
+      ]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    const originRow = rows.find((r) => r.entityId === 'origin-task')
+    expect(originRow!.dag!.descendants[0]!.summary).toBe('Fix the failing tests in the worktree')
+  })
+
+  it('sets fixForTaskId on a recovery task row', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({ id: 'row-fix', payload: { taskId: 'fix-task-1' } }),
+      ]),
+      taskStore: makeTaskStore([
+        makeTask({ id: 'origin-task', status: 'failed' }),
+        makeTask({ id: 'fix-task-1', status: 'failed', fixForTaskId: 'origin-task', failureSignature: 'verify:test/unclassified' }),
+      ]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    const fixRow = rows.find((r) => r.entityId === 'fix-task-1')
+    expect(fixRow).toBeDefined()
+    expect(fixRow!.fixForTaskId).toBe('origin-task')
+  })
+
+  it('fixForTaskId is null for a non-recovery origin task', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({ payload: { taskId: 'origin-task' } }),
+      ]),
+      taskStore: makeTaskStore([
+        makeTask({ id: 'origin-task', status: 'failed', failureSignature: 'verify:test/unclassified' }),
+      ]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    const originRow = rows.find((r) => r.entityId === 'origin-task')
+    expect(originRow).toBeDefined()
+    expect(originRow!.fixForTaskId ?? null).toBeNull()
+  })
+})

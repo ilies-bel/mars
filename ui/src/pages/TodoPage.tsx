@@ -129,9 +129,11 @@ export const ActionQueueRow = memo(({
 interface DagListProps {
   label: string
   nodes: DagNode[]
+  /** When provided, each node renders as a clickable link opening that task's detail. */
+  onNodeClick?: (id: string) => void
 }
 
-const DagList = ({ label, nodes }: DagListProps) => {
+const DagList = ({ label, nodes, onNodeClick }: DagListProps) => {
   if (nodes.length === 0) return null
   return (
     <div>
@@ -142,7 +144,17 @@ const DagList = ({ label, nodes }: DagListProps) => {
         <ul className="flex flex-col gap-1">
           {nodes.map((n) => (
             <li key={n.id} className="text-fg">
-              <span className="text-iron">{n.id}</span>{' '}
+              {onNodeClick ? (
+                <button
+                  type="button"
+                  onClick={() => onNodeClick(n.id)}
+                  className="text-iron underline decoration-iron/40 hover:decoration-iron"
+                >
+                  {n.id}
+                </button>
+              ) : (
+                <span className="text-iron">{n.id}</span>
+              )}{' '}
               <span className="text-iron/60">({n.status})</span> {n.summary}
             </li>
           ))}
@@ -393,9 +405,14 @@ const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
   const isRealFailedTask =
     item.kind === 'failed-task' && item.entityId !== '__daemon-killed-batch__'
 
+  const openTask = (id: string) => {
+    window.location.hash = taskHash(id, 'action-queue')
+  }
+
   return (
     <div className="flex h-full flex-col overflow-auto">
       <header className="border-b border-iron/30 px-6 py-4">
+        {/* Headline: original task id, kind badge, priority */}
         <div className="flex items-baseline gap-3">
           <span className="break-all font-mono text-[11px] uppercase text-iron">
             {item.entityId}
@@ -423,9 +440,7 @@ const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
           <button
             type="button"
             data-testid="aq-open-task-detail"
-            onClick={() => {
-              window.location.hash = taskHash(item.entityId, 'action-queue')
-            }}
+            onClick={() => openTask(item.entityId)}
             className="mt-3 border border-iron/40 px-3 py-1.5 font-mono text-[10px] uppercase text-fg transition-colors hover:bg-iron/20"
           >
             Open task detail
@@ -536,9 +551,11 @@ const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 label="Waited on by (blocking)"
                 nodes={item.dag.blocking}
               />
+              {/* Recovery descendants: clickable so operator can drill into the fix task */}
               <DagList
                 label="Recovery descendants"
                 nodes={item.dag.descendants}
+                onNodeClick={isRealFailedTask ? openTask : undefined}
               />
             </>
           )}
