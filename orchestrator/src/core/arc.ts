@@ -26,12 +26,14 @@ import {
   assertTaskKindInvariant,
   migrateQueueSchema,
   getTask,
+  updateTask,
   MAX_PRIORITY,
   type Task,
   type TaskPlan,
   type TaskStatus,
   type TaskKind,
   type TaskTag,
+  type FollowUpKind,
   type EnqueueTaskOptions,
   type DropTaskResult,
 } from './queue'
@@ -255,6 +257,119 @@ export class Arc {
       args: [id],
     })
     return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+  }
+
+  /**
+   * The single status-transition funnel (ADR-0052). Routes every task status
+   * change through {@link updateTask} — the transition primitive that survives
+   * *inside* the aggregate. `updateTask` performs the `UPDATE tasks SET status`
+   * + matching outbox event (and the `task.terminal` pair for terminal
+   * statuses) in one atomic write, guarding terminal immutability via
+   * {@link IllegalTransitionError}.
+   *
+   * `extras` mirrors the historic `setTaskStatus` extras shape so callers that
+   * carried an `error`/`dropReason` payload map cleanly onto `updateTask`'s
+   * patch columns:
+   *   - `error`     → `patch.error`     (rides the `task.failed` payload),
+   *   - `dropReason`→ `patch.failureReason` (rides the `task.dropped` payload).
+   * `result` is accepted for shape-compatibility but is not a persisted column;
+   * `updateTask` emits `task.completed` with `result: null` (unchanged).
+   */
+  async transition(
+    taskId: string,
+    to: TaskStatus,
+    extras?: { error?: string; result?: unknown; dropReason?: string },
+  ): Promise<void> {
+    await updateTask(taskId, {
+      status: to,
+      ...(extras?.error !== undefined ? { error: extras.error } : {}),
+      ...(extras?.dropReason !== undefined
+        ? { failureReason: extras.dropReason }
+        : {}),
+    })
+  }
+
+  /**
+   * Continuation (follow-up) write funnel (ADR-0052). Enqueues a follow-up task
+   * for `originTaskId` exactly ONCE, across restarts.
+   *
+   * Deduplicates via the dedicated `followup_dedup_key` column (value:
+   * `followup:<originTaskId>:<kind>`): if an open (non-terminal) follow-up for
+   * this origin+kind combination already exists, the enqueue is skipped and the
+   * existing task id is returned with `created: false`.
+   *
+   * Arc membership (ADR-0050): the follow-up's `origin_id` is set to the
+   * RESOLVED `origin_id` of `originTaskId` (i.e. the arc root), not to a
+   * synthetic dedup string, so the follow-up is reachable from the same arc as
+   * the task it continues. Creation routes through {@link Arc.createOrigin}
+   * (via the queue wrapper) and the blocker edge through {@link Arc.addBlocker}.
+   */
+  async addContinuation(
+    originTaskId: string,
+    kind: FollowUpKind,
+    prompt: string,
+  ): Promise<{ id: string; created: boolean }> {
+    const dedupKey = `followup:${originTaskId}:${kind}`
+    await migrateQueueSchema()
+    const s = this.store
+    // Dedup: if an open (non-terminal) follow-up with this dedup key exists,
+    // reuse it.
+    const existing = await s.execute({
+      sql: `SELECT id FROM tasks WHERE followup_dedup_key = ? AND status NOT IN ('done', 'failed', 'dropped') LIMIT 1`,
+      args: [dedupKey],
+    })
+    if (existing.rows.length > 0) {
+      const id = (existing.rows[0] as unknown as { id: string }).id
+      return { id, created: false }
+    }
+    // Inherit the arc: resolve the origin task's actual origin_id so the
+    // follow-up joins the same arc as the task it continues (ADR-0050).
+    const originRow = await s.execute({
+      sql: `SELECT origin_id, id FROM tasks WHERE id = ?`,
+      args: [originTaskId],
+    })
+    const resolvedOriginId =
+      originRow.rows.length > 0
+        ? ((
+            originRow.rows[0] as unknown as {
+              origin_id: string | null
+              id: string
+            }
+          ).origin_id ?? originTaskId)
+        : originTaskId
+    const followUp = await Arc.createOrigin(
+      {
+        prompt,
+        opts: { skipTriage: true, originId: resolvedOriginId },
+      },
+      s,
+    )
+    // Stamp the dedup key onto the newly created follow-up row.
+    await s.execute({
+      sql: `UPDATE tasks SET followup_dedup_key = ? WHERE id = ?`,
+      args: [dedupKey, followUp.id],
+    })
+    await this.addBlocker(followUp.id, [originTaskId])
+    return { id: followUp.id, created: true }
+  }
+
+  /**
+   * Reflection-task insert (ADR-0052). Writes a single self-arc reflection row
+   * (`origin_id = self`, status `'done'`) capturing a `mars reflect` run over
+   * `corpusSize` task(s). Returns the new task id. Routed through the Arc
+   * aggregate so the reflect arc is created by the same write funnel as every
+   * other origin; the `origin_id = self` semantics are preserved.
+   */
+  async insertReflection(corpusSize: number): Promise<string> {
+    await migrateQueueSchema()
+    const id = `reflect-${randomUUID().slice(0, 8)}`
+    const now = new Date().toISOString()
+    const prompt = `mars reflect run over ${corpusSize} task(s) at ${now}`
+    await this.store.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at) VALUES (?, ?, 'done', ?, ?, ?)`,
+      args: [id, prompt, id, now, now],
+    })
+    return id
   }
 
   /**

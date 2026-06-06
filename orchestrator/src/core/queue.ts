@@ -2342,16 +2342,15 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
   return Arc.load(id).drop()
 }
 
+/**
+ * Insert a self-arc reflection task. Thin wrapper over
+ * {@link Arc.insertReflection} (ADR-0052): the `INSERT INTO tasks`
+ * (`origin_id = self`, status `'done'`) lives on the Arc aggregate now.
+ * Signature kept byte-identical for the task-store facade and existing call
+ * sites (`mars reflect`).
+ */
 export const insertReflectionTask = async (corpusSize: number): Promise<string> => {
-  await migrateQueueSchema()
-  const id = `reflect-${randomUUID().slice(0, 8)}`
-  const now = new Date().toISOString()
-  const prompt = `mars reflect run over ${corpusSize} task(s) at ${now}`
-  await resolveQueueClient().execute({
-    sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at) VALUES (?, ?, 'done', ?, ?, ?)`,
-    args: [id, prompt, id, now, now],
-  })
-  return id
+  return Arc.load('reflect').insertReflection(corpusSize)
 }
 
 /**
@@ -2391,45 +2390,19 @@ export type FollowUpKind = 'context-exhausted' | 'exploration-loop'
  * a blocker edge from the follow-up back to `originTaskId` is added, and the
  * result has `created: true`.
  */
+/**
+ * Enqueue a follow-up task for `originTaskId` exactly ONCE, across restarts.
+ * Thin wrapper over {@link Arc.addContinuation} (ADR-0052): the
+ * `followup_dedup_key` dedup, arc-inheritance resolution, origin creation, and
+ * blocker-edge wiring all live on the Arc aggregate now. Signature kept
+ * byte-identical for existing call sites (`implement-workflow.ts`).
+ */
 export const enqueueFollowUpOnce = async (
   originTaskId: string,
   kind: FollowUpKind,
   prompt: string,
 ): Promise<{ id: string; created: boolean }> => {
-  const dedupKey = `followup:${originTaskId}:${kind}`
-  await migrateQueueSchema()
-  const c = resolveQueueClient()
-  // Dedup: if an open (non-terminal) follow-up with this dedup key exists, reuse it.
-  const existing = await c.execute({
-    sql: `SELECT id FROM tasks WHERE followup_dedup_key = ? AND status NOT IN ('done', 'failed', 'dropped') LIMIT 1`,
-    args: [dedupKey],
-  })
-  if (existing.rows.length > 0) {
-    const id = (existing.rows[0] as unknown as { id: string }).id
-    return { id, created: false }
-  }
-  // Inherit the arc: resolve the origin task's actual origin_id so the follow-up
-  // joins the same arc as the task it continues (ADR-0050).
-  const originRow = await c.execute({
-    sql: `SELECT origin_id, id FROM tasks WHERE id = ?`,
-    args: [originTaskId],
-  })
-  const resolvedOriginId =
-    originRow.rows.length > 0
-      ? ((originRow.rows[0] as unknown as { origin_id: string | null; id: string })
-          .origin_id ?? originTaskId)
-      : originTaskId
-  const followUp = await enqueueTask(prompt, undefined, {
-    skipTriage: true,
-    originId: resolvedOriginId,
-  })
-  // Stamp the dedup key onto the newly created follow-up row.
-  await c.execute({
-    sql: `UPDATE tasks SET followup_dedup_key = ? WHERE id = ?`,
-    args: [dedupKey, followUp.id],
-  })
-  await addBlockers(followUp.id, [originTaskId])
-  return { id: followUp.id, created: true }
+  return Arc.load(originTaskId).addContinuation(originTaskId, kind, prompt)
 }
 
 /**

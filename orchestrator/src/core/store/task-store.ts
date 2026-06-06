@@ -35,15 +35,10 @@ import {
   migrateQueueSchema,
   getTask as queueGetTask,
   listTasks as queueListTasks,
-  enqueueTask as queueEnqueueTask,
   updateTask as queueUpdateTask,
-  dropTask as queueDropTask,
   deleteTask as queueDeleteTask,
   setTaskPriority as queueSetTaskPriority,
-  insertReflectionTask as queueInsertReflectionTask,
-  addBlockers as queueAddBlockers,
   addPendingReviewBlockers as queueAddPendingReviewBlockers,
-  removeBlocker as queueRemoveBlocker,
   clearBlockers as queueClearBlockers,
   listBlockers as queueListBlockers,
   hasIncompleteBlockers as queueHasIncompleteBlockers,
@@ -71,6 +66,7 @@ import type {
   UpsertTranscriptInput,
   TaskTranscriptRow,
 } from '../queue'
+import { Arc } from '../arc'
 
 const execFileAsync = promisify(execFile)
 
@@ -301,24 +297,40 @@ export const createTaskStore = (client: Client | null): DomainTaskStore => {
     return client
   }
 
-  return {
+  // The facade is inverted onto the Arc aggregate (ADR-0052): domain methods
+  // that have an arc-shaped write funnel route through {@link Arc} directly,
+  // bound to THIS store's client (so a `:memory:`/file-URL test store hits its
+  // own DB). Read-only and non-arc methods stay thin pass-throughs to queue.ts.
+  // `store` is captured here so the Arc factories receive the same seam.
+  const store: DomainTaskStore = {
     // ── Core task CRUD ─────────────────────────────────────────────────────
     getTask: (id) => queueGetTask(id),
     listTasks: (status) => queueListTasks(status),
-    enqueueTask: (prompt, plan, opts) => queueEnqueueTask(prompt, plan, opts),
+    // Arc.createOrigin is the origin write funnel; pass `store` so persistence
+    // routes through this seam rather than the process-wide default.
+    enqueueTask: (prompt, plan, opts) =>
+      Arc.createOrigin({ prompt, plan, opts }, store),
+    // updateTask is the transition primitive *inside* the aggregate (ADR-0052):
+    // Arc.transition wraps it. The facade keeps delegating to the primitive so
+    // non-status PATCH columns (branch, worktreePath, sessionId, …) and the
+    // rich atomic event set (terminal pairs, blocked, under_investigation) are
+    // preserved; a status-only patch is exactly Arc.transition's funnel.
     updateTask: (id, patch) => queueUpdateTask(id, patch),
-    dropTask: (id) => queueDropTask(id),
+    dropTask: (id) => Arc.load(id, store).drop(),
     deleteTask: (id) => queueDeleteTask(id),
     setTaskPriority: (id, priority) => queueSetTaskPriority(id, priority),
-    insertReflectionTask: (corpusSize) => queueInsertReflectionTask(corpusSize),
+    insertReflectionTask: (corpusSize) =>
+      Arc.load('reflect', store).insertReflection(corpusSize),
     promoteDraftToQueued: (taskId) => queuePromoteDraftToQueued(taskId),
     unblockTask: (taskId) => queueUnblockTask(taskId),
 
     // ── Blocker management ─────────────────────────────────────────────────
-    addBlockers: (taskId, blockerIds) => queueAddBlockers(taskId, blockerIds),
+    addBlockers: (taskId, blockerIds) =>
+      Arc.load(taskId, store).addBlocker(taskId, blockerIds),
     addPendingReviewBlockers: (taskId, blockerIds) =>
       queueAddPendingReviewBlockers(taskId, blockerIds),
-    removeBlocker: (taskId, blockerId) => queueRemoveBlocker(taskId, blockerId),
+    removeBlocker: (taskId, blockerId) =>
+      Arc.load(taskId, store).removeBlocker(taskId, blockerId),
     clearBlockers: (taskId) => queueClearBlockers(taskId),
     listBlockers: (taskId) => queueListBlockers(taskId),
     hasIncompleteBlockers: (taskId) => queueHasIncompleteBlockers(taskId),
@@ -439,6 +451,8 @@ export const createTaskStore = (client: Client | null): DomainTaskStore => {
       }
     },
   }
+
+  return store
 }
 
 let cachedDefaultStore: DomainTaskStore | null = null
