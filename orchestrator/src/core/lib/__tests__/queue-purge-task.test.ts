@@ -26,7 +26,6 @@ interface QueueModule {
   addProposalBlockers: typeof import('../../queue').addProposalBlockers
   listProposalBlockers: typeof import('../../queue').listProposalBlockers
   dropTask: typeof import('../../queue').dropTask
-  deleteTask: typeof import('../../queue').deleteTask
 }
 
 const setupRepo = (): string => {

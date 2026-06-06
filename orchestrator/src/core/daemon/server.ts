@@ -15,7 +15,6 @@ import { dirname, resolve as resolvePath } from 'node:path'
 import { resolveContext } from '../context'
 import {
   addBlockers,
-  deleteTask,
   dropTask,
   enqueueTask,
   getTask,
@@ -1167,7 +1166,15 @@ export const startDaemon = async (
       try {
         await addBlockers(task.id, blockerIds)
       } catch (err) {
-        await deleteTask(task.id).catch(() => {})
+        // ADR-0052 (Arc = sole writer): route the error-recovery cleanup
+        // through the Arc aggregate's atomic drop (pre-delete task.dropped/
+        // task.terminal emit, cascade fix-task delete, dependent re-queue,
+        // task_proposal_blockers + questions + task_blockers cleanup) instead
+        // of the deleted bare `DELETE FROM tasks`. Best-effort: a not-found
+        // throw is swallowed, mirroring the prior `.catch(() => {})`.
+        try {
+          await Arc.load(task.id).drop()
+        } catch {}
         throw err
       }
     }

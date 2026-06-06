@@ -36,7 +36,6 @@ import {
   getTask as queueGetTask,
   listTasks as queueListTasks,
   updateTask as queueUpdateTask,
-  deleteTask as queueDeleteTask,
   setTaskPriority as queueSetTaskPriority,
   addPendingReviewBlockers as queueAddPendingReviewBlockers,
   clearBlockers as queueClearBlockers,
@@ -157,7 +156,6 @@ export interface DomainTaskStore {
   ): Promise<Task>
   updateTask(id: string, patch: UpdateTaskPatch): Promise<void>
   dropTask(id: string): Promise<DropTaskResult>
-  deleteTask(id: string): Promise<void>
   setTaskPriority(id: string, priority: number): Promise<Task>
   insertReflectionTask(corpusSize: number): Promise<string>
   promoteDraftToQueued(taskId: string): Promise<Task | null>
@@ -317,7 +315,6 @@ export const createTaskStore = (client: Client | null): DomainTaskStore => {
     // preserved; a status-only patch is exactly Arc.transition's funnel.
     updateTask: (id, patch) => queueUpdateTask(id, patch),
     dropTask: (id) => Arc.load(id, store).drop(),
-    deleteTask: (id) => queueDeleteTask(id),
     setTaskPriority: (id, priority) => queueSetTaskPriority(id, priority),
     insertReflectionTask: (corpusSize) =>
       Arc.load('reflect', store).insertReflection(corpusSize),

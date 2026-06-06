@@ -95,7 +95,6 @@ describe('createTaskStore', () => {
       'enqueueTask',
       'updateTask',
       'dropTask',
-      'deleteTask',
       'setTaskPriority',
       'insertReflectionTask',
       'promoteDraftToQueued',

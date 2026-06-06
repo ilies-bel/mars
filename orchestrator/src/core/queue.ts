@@ -2240,14 +2240,6 @@ export const setTaskPriority = async (
   return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
 }
 
-export const deleteTask = async (id: string): Promise<void> => {
-  await migrateQueueSchema()
-  await resolveQueueClient().execute({
-    sql: `DELETE FROM tasks WHERE id = ?`,
-    args: [id],
-  })
-}
-
 export interface DropTaskResult {
   taskId: string
   previousStatus: TaskStatus
