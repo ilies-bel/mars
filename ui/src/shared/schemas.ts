@@ -452,6 +452,7 @@ export const frameworkUpdateSchema = z.object({
   available: z.boolean(),
   checkedAt: z.string().nullable(),
   releaseUrl: z.string().nullable(),
+  selfUpdatable: z.boolean(),
 })
 
 export type FrameworkUpdate = z.infer<typeof frameworkUpdateSchema>

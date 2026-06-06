@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import { useMutation } from '@tanstack/react-query'
 import { useFrameworkUpdate } from '@/entities/frameworkUpdate/useFrameworkUpdate'
+import { triggerSelfUpdate } from '@/shared/api'
 
 const STORAGE_KEY = 'mars-update-dismissed'
 
@@ -19,6 +21,10 @@ interface BannerInnerProps {
   installed: string
   latest: string
   releaseUrl: string | null
+  selfUpdatable: boolean
+  onUpdate: () => void
+  isUpdating: boolean
+  updateError: string | null
   onDismiss: () => void
 }
 
@@ -30,6 +36,10 @@ export const FrameworkUpdateBannerInner = ({
   installed,
   latest,
   releaseUrl,
+  selfUpdatable,
+  onUpdate,
+  isUpdating,
+  updateError,
   onDismiss,
 }: BannerInnerProps) => (
   <div
@@ -50,18 +60,27 @@ export const FrameworkUpdateBannerInner = ({
           Release notes
         </a>
       ) : null}
-      {/*
-       * TODO: Wire up the self-update action once the self-update task lands.
-       * The daemon endpoint (POST /view/framework-update/apply) and the
-       * ui/server/index.ts proxy route need to be added by that task.
-       */}
+      {updateError ? (
+        <span className="text-xs text-red-500">{updateError}</span>
+      ) : null}
       <button
         type="button"
-        disabled
-        className="cursor-not-allowed rounded px-2 py-0.5 opacity-40 ring-1 ring-iron/40"
-        title="Self-update not yet implemented — see self-update task"
+        onClick={onUpdate}
+        disabled={!selfUpdatable || isUpdating}
+        title={
+          !selfUpdatable
+            ? 'dev install — git pull & rebuild'
+            : isUpdating
+              ? 'Update in progress…'
+              : undefined
+        }
+        className={
+          !selfUpdatable || isUpdating
+            ? 'cursor-not-allowed rounded px-2 py-0.5 opacity-40 ring-1 ring-iron/40'
+            : 'rounded px-2 py-0.5 ring-1 ring-iron/40 hover:bg-iron/10'
+        }
       >
-        Update now
+        {isUpdating ? 'Updating…' : 'Update now'}
       </button>
       <button
         type="button"
@@ -82,8 +101,9 @@ export const FrameworkUpdateBannerInner = ({
  *   `/view/framework-update` endpoint.
  * - Dismissal is keyed to the `latest` version string: dismissing v1.2.0 will
  *   not suppress a future v1.3.0 banner.
- * - The "Update now" button is present but inert — its action is wired by the
- *   self-update task (see TODO in FrameworkUpdateBannerInner).
+ * - The "Update now" button triggers `POST /actions/self-update` on the daemon
+ *   (proxied via `/api/actions`). It is disabled with a hint on dev installs
+ *   where `selfUpdatable` is false.
  */
 export const FrameworkUpdateBanner = () => {
   const { update } = useFrameworkUpdate()
@@ -95,6 +115,8 @@ export const FrameworkUpdateBanner = () => {
     }
   })
 
+  const mutation = useMutation({ mutationFn: triggerSelfUpdate })
+
   if (!update || !shouldShowBanner(update.available, update.latest, dismissedVersion)) {
     return null
   }
@@ -104,6 +126,10 @@ export const FrameworkUpdateBanner = () => {
       installed={update.installed}
       latest={update.latest}
       releaseUrl={update.releaseUrl}
+      selfUpdatable={update.selfUpdatable}
+      onUpdate={() => mutation.mutate()}
+      isUpdating={mutation.isPending}
+      updateError={mutation.error ? (mutation.error as Error).message : null}
       onDismiss={() => {
         try {
           localStorage.setItem(STORAGE_KEY, update.latest)

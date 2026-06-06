@@ -210,6 +210,12 @@ export const invokeAction = async (
   }
 }
 
+/**
+ * Trigger the daemon's self-update action. Throws when the daemon rejects the
+ * request (e.g. dev install, daemon unreachable, or update already in progress).
+ */
+export const triggerSelfUpdate = (): Promise<void> => invokeAction('self-update')
+
 export const eventsUrl = (): string => `${BASE}/events`
 
 export interface EventsFilter {

@@ -17,6 +17,7 @@ import {
   fetchTasks,
   fetchTodo,
   startProject,
+  triggerSelfUpdate,
 } from './api'
 
 // ---------------------------------------------------------------------------
@@ -657,5 +658,46 @@ describe('ApiError kind — fetchTasks classifies errors correctly', () => {
       expect(err).toBeInstanceOf(ApiError)
       expect((err as ApiError).message).toContain('405')
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// triggerSelfUpdate (POST /api/actions with op: self-update)
+// ---------------------------------------------------------------------------
+
+describe('triggerSelfUpdate', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('POSTs to /api/actions with op: self-update', async () => {
+    fetchSpy.mockResolvedValue(new Response(null, { status: 200 }))
+    await triggerSelfUpdate()
+    const calledUrl: string = (fetchSpy.mock.calls[0] as unknown[])[0] as string
+    expect(calledUrl).toContain('/api/actions')
+    const options = (fetchSpy.mock.calls[0] as unknown[])[1] as RequestInit
+    expect(options.method).toBe('POST')
+    const body = JSON.parse(options.body as string) as { op: string }
+    expect(body.op).toBe('self-update')
+  })
+
+  it('resolves when the daemon accepts the request', async () => {
+    fetchSpy.mockResolvedValue(new Response(null, { status: 200 }))
+    await expect(triggerSelfUpdate()).resolves.toBeUndefined()
+  })
+
+  it('throws a descriptive error on a non-2xx response', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ error: 'not a prod install' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    await expect(triggerSelfUpdate()).rejects.toThrow('self-update failed')
   })
 })
