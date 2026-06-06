@@ -6,6 +6,7 @@ import type { Author, AuthorKind } from './author'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
 import { openLibsql } from './lib/libsql'
 import { buildEventInsert, publish, withWriteTx } from './lib/outbox'
+import { Arc } from './arc'
 import type { DomainTaskStore as TaskStore } from './store/task-store'
 
 export type TaskStatus =
@@ -1738,7 +1739,7 @@ const healBlobPrompts = async (c: Client): Promise<void> => {
   }
 }
 
-const coerceToString = (value: unknown, label: string): string => {
+export const coerceToString = (value: unknown, label: string): string => {
   if (typeof value === 'string') return value
   if (value instanceof Uint8Array) return new TextDecoder('utf-8').decode(value)
   if (value instanceof ArrayBuffer) {
@@ -1762,7 +1763,7 @@ const coerceToString = (value: unknown, label: string): string => {
  *   `${TASK_SEL} WHERE t.status = ? ORDER BY t.priority DESC, t.created_at ASC`
  *   `${TASK_SEL} ORDER BY t.created_at`
  */
-const TASK_SEL = `
+export const TASK_SEL = `
 SELECT
   t.id, t.prompt, t.status, t.plan_functional, t.plan_technical,
   t.branch, t.worktree_path, t.claude_session_id,
@@ -1785,7 +1786,7 @@ SELECT
   t.sub_deliverable_json, t.integration_head_sha, t.created_at, t.updated_at
 FROM tasks t`
 
-const rowToTask = (row: Record<string, unknown>): Task => {
+export const rowToTask = (row: Record<string, unknown>): Task => {
   const functional = (row.plan_functional as string | null) ?? null
   const technical = (row.plan_technical as string | null) ?? null
   const plan: TaskPlan | null =
@@ -1933,109 +1934,20 @@ export interface EnqueueTaskOptions {
   spec?: TaskSpec
 }
 
+/**
+ * Public origin-creation entry point. Thin wrapper that delegates to the Arc
+ * aggregate's origin write funnel ({@link Arc.createOrigin}, ADR-0052). The
+ * exported signature `(prompt, plan?, opts?)` is preserved bit-for-bit for the
+ * many call sites and tests that import it; only the internals route through
+ * Arc now. The origin `INSERT INTO tasks` (plus the junction-table writes)
+ * lives in `Arc.createOrigin`, not here.
+ */
 export const enqueueTask = async (
   prompt: string,
   plan?: TaskPlan,
   opts?: EnqueueTaskOptions,
 ): Promise<Task> => {
-  const promptText = coerceToString(prompt, 'enqueueTask: prompt')
-  if (opts?.priority !== undefined) validatePriority(opts.priority)
-  if (
-    opts?.tags !== undefined &&
-    (!Array.isArray(opts.tags) || opts.tags.some((t) => !isTaskTag(t)))
-  ) {
-    throw new Error(
-      `tags must be an array of non-empty strings; got ${JSON.stringify(opts.tags)}`,
-    )
-  }
-  await migrateQueueSchema()
-  const id = `mars-${randomUUID().slice(0, 8)}`
-  const now = new Date().toISOString()
-  const status: TaskStatus = opts?.skipTriage ? 'queued' : 'draft'
-  const authorKind = opts?.author?.kind ?? null
-  const authorName = opts?.author?.name ?? null
-  const originId = opts?.originId ?? id
-  const priority = opts?.priority ?? 0
-  const parentProposalId = opts?.parentProposalId ?? null
-  const sliceIndex = opts?.sliceIndex ?? null
-  const tags: TaskTag[] = opts?.tags ?? ['coder']
-  const kind: TaskKind = opts?.kind ?? 'task'
-  // enqueueTask never sets fix_for_task_id (fix-tasks go through their own
-  // recovery path), so the invariant collapses to: only 'task' and
-  // 'diagnose' kinds are valid here.
-  assertTaskKindInvariant(kind, null)
-  if (kind === 'fix') {
-    throw new Error(
-      `enqueueTask cannot create kind='fix'; use the recovery fix-task path`,
-    )
-  }
-  const spec = opts?.spec ?? null
-  if (spec !== null && !isTaskType(spec.taskType)) {
-    throw new Error(
-      `spec.taskType must be one of ${TASK_TYPES.join(', ')}; got '${String(spec.taskType)}'`,
-    )
-  }
-  const verifyCmd = spec ? spec.verifyCmd : null
-  const taskType = spec ? spec.taskType : null
-  const readFirstJson = spec ? JSON.stringify(spec.readFirst ?? []) : null
-  const prescriptiveAction = spec ? (spec.prescriptiveAction ?? null) : null
-  // sliceKindVal: 'coder' | 'hitl' routing hint from the slicer. Distinct from
-  // the `kind` variable above (TaskKind: 'task' | 'fix' | 'diagnose').
-  const sliceKindVal = spec?.sliceKind ?? null
-  const subDeliverableJson = spec?.subDeliverable
-    ? JSON.stringify(spec.subDeliverable)
-    : null
-  const tagsJson = JSON.stringify(tags)
-  const qc = resolveQueueClient()
-  await qc.execute({
-    sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [
-      id,
-      promptText,
-      status,
-      plan?.functional ?? null,
-      plan?.technical ?? null,
-      authorKind,
-      authorName,
-      originId,
-      priority,
-      parentProposalId,
-      sliceIndex,
-      tagsJson,
-      kind,
-      verifyCmd,
-      taskType,
-      readFirstJson,
-      prescriptiveAction,
-      sliceKindVal,
-      subDeliverableJson,
-      now,
-      now,
-    ],
-  })
-  // Write spec.files to task_spec_files junction table.
-  if (spec?.files && spec.files.length > 0) {
-    for (let i = 0; i < spec.files.length; i++) {
-      await qc.execute({
-        sql: `INSERT OR IGNORE INTO task_spec_files (task_id, path, position) VALUES (?, ?, ?)`,
-        args: [id, spec.files[i], i],
-      })
-    }
-  }
-  // Write spec.doneCriteria to task_done_criteria junction table.
-  if (spec?.doneCriteria && spec.doneCriteria.length > 0) {
-    for (let i = 0; i < spec.doneCriteria.length; i++) {
-      await qc.execute({
-        sql: `INSERT OR IGNORE INTO task_done_criteria (task_id, criterion, position) VALUES (?, ?, ?)`,
-        args: [id, spec.doneCriteria[i], i],
-      })
-    }
-  }
-  const r = await resolveQueueClient().execute({
-    sql: `${TASK_SEL} WHERE t.id = ?`,
-    args: [id],
-  })
-  return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+  return Arc.createOrigin({ prompt, plan, opts })
 }
 
 /**
