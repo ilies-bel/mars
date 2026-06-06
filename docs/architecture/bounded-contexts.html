@@ -1,0 +1,611 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mars — Bounded Contexts &amp; DDD Strategy</title>
+<style>
+  :root {
+    --bg: #f4ede4;
+    --ink: #2b2622;
+    --muted: #8a7f74;
+    --line: #d8ccbe;
+    --card: #fbf6ef;
+    --accent: #b4462f;   /* mars rust */
+    --accent2: #2f6fb4;  /* link blue */
+    --good: #3d7a4f;
+    --warn: #b07a1e;
+    --bad: #b4462f;
+    --shadow: 0 1px 0 rgba(0,0,0,.04), 0 6px 18px rgba(43,38,34,.06);
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.5; }
+  a { color: var(--accent2); }
+  header { padding: 28px 32px 12px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: .2px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  header .meta { margin-top: 8px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  nav.tabs { display: flex; gap: 4px; padding: 10px 32px 0; flex-wrap: wrap; position: sticky; top: 0; background: var(--bg); z-index: 5; border-bottom: 1px solid var(--line); }
+  nav.tabs button {
+    appearance: none; border: 1px solid transparent; border-bottom: none;
+    background: transparent; color: var(--muted); font: inherit; font-size: 13px;
+    padding: 9px 14px; cursor: pointer; border-radius: 8px 8px 0 0;
+  }
+  nav.tabs button:hover { color: var(--ink); }
+  nav.tabs button[aria-selected="true"] { color: var(--ink); background: var(--card); border-color: var(--line); font-weight: 600; }
+  main { padding: 24px 32px 80px; max-width: 1240px; margin: 0 auto; }
+  .panel { display: none; }
+  .panel[data-active="true"] { display: block; animation: fade .18s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(3px);} to {opacity:1; transform:none;} }
+  h2 { font-size: 17px; margin: 4px 0 6px; }
+  h3 { font-size: 14px; margin: 20px 0 8px; color: var(--accent); letter-spacing: .3px; text-transform: uppercase; }
+  p.lede { color: var(--muted); margin: 0 0 18px; max-width: 80ch; }
+  .grid { display: grid; gap: 14px; }
+  .cols-2 { grid-template-columns: 1fr 1fr; }
+  .cols-3 { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 900px) { .cols-2, .cols-3 { grid-template-columns: 1fr; } }
+  .ctx {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; box-shadow: var(--shadow); position: relative;
+  }
+  .ctx h4 { margin: 0 0 2px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .ctx .role { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+  .ctx ul { margin: 0; padding-left: 18px; font-size: 12.5px; }
+  .ctx li { margin: 2px 0; }
+  .pill { font-family: var(--mono); font-size: 10px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .pill.agg { color: var(--accent); border-color: #e3c6bd; background: #f7e9e4; }
+  .pill.inv { color: var(--good); border-color: #bcd7c3; background: #e7f1ea; }
+  .pill.layer { color: var(--accent2); border-color: #c2d3e7; background: #e7eef7; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 6px 0 18px; font-size: 12px; color: var(--muted); align-items:center;}
+  .legend .pill { font-size: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 6px 0 18px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #efe6da; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+  tr:last-child td { border-bottom: none; }
+  code { font-family: var(--mono); font-size: 11.5px; background: #efe6da; padding: 1px 5px; border-radius: 5px; }
+  pre { font-family: var(--mono); font-size: 11.5px; background: #2b2622; color: #f4ede4; padding: 14px 16px; border-radius: 10px; overflow-x: auto; line-height: 1.5; }
+  pre .c { color: #9a8f82; }
+  pre .k { color: #e0a878; }
+  pre .s { color: #a8c98f; }
+  pre .x { color: #e08a78; }
+  .flow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-family: var(--mono); font-size:12px; }
+  .flow .step { background:#efe6da; border:1px solid var(--line); border-radius:8px; padding:6px 10px; }
+  .flow .arrow { color: var(--muted); }
+  .note { border-left: 3px solid var(--accent); padding: 8px 14px; background: #f7e9e4; border-radius: 0 8px 8px 0; font-size: 12.5px; margin: 12px 0; }
+  .note.good { border-color: var(--good); background: #e7f1ea; }
+  .note.warn { border-color: var(--warn); background: #f6eeda; }
+  .layer-stack { display:flex; flex-direction:column; gap:0; border:1px solid var(--line); border-radius:12px; overflow:hidden; box-shadow: var(--shadow);}
+  .layer-row { padding:14px 18px; border-bottom:1px solid var(--line); background: var(--card); }
+  .layer-row:last-child { border-bottom:none; }
+  .layer-row h4 { margin:0 0 4px; display:flex; gap:10px; align-items:center; }
+  .layer-row .dir { color: var(--muted); font-size:11px; font-family:var(--mono); }
+  .layer-row.l1 { background:#efe6da; }
+  .layer-row.l2 { background:#f3e6df; }
+  .layer-row.l3 { background:#e9efdf; }
+  .arc-tree { font-family: var(--mono); font-size:12px; white-space:pre; color: var(--ink); background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .kv { display:grid; grid-template-columns: 180px 1fr; gap:4px 14px; font-size:12.5px; }
+  .kv dt { color: var(--muted); font-family:var(--mono); font-size:11px; }
+  .kv dd { margin:0; }
+  .badge-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .danger { color: var(--bad); }
+  .strike { text-decoration: line-through; color: var(--muted); }
+  footer { color: var(--muted); font-size: 11px; padding: 0 32px 40px; max-width:1240px; margin: 0 auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mars Framework — Bounded Contexts &amp; DDD Strategy</h1>
+  <div class="sub">Imposing a coherent domain model over the current organically-grown orchestrator. Every entity attached to an arc; no stranded work, enforced by construction.</div>
+  <div class="meta">strategy draft · grounded in CONTEXT.md glossary + ADR-0001…0051 · one lib (@mars/mars) · workflows scaffolded into .mars/workflows/</div>
+</header>
+
+<nav class="tabs" id="tabs" role="tablist">
+  <button role="tab" aria-selected="true" data-tab="overview">Overview</button>
+  <button role="tab" aria-selected="false" data-tab="current">Current (as-is)</button>
+  <button role="tab" aria-selected="false" data-tab="target-cap">Target · Capability view</button>
+  <button role="tab" aria-selected="false" data-tab="target-layer">Target · Layer view</button>
+  <button role="tab" aria-selected="false" data-tab="aggregates">Aggregates</button>
+  <button role="tab" aria-selected="false" data-tab="invariants">Invariants</button>
+  <button role="tab" aria-selected="false" data-tab="surfaces">Surfaces &amp; CLI</button>
+</nav>
+
+<main>
+
+<!-- ============ OVERVIEW ============ -->
+<section class="panel" data-tab-panel="overview" data-active="true">
+  <h2>The thesis</h2>
+  <p class="lede">
+    Mars is not missing a domain model — it has a deep one buried in 50+ ADRs, a rich glossary, and a 2,400-line
+    <code>queue.ts</code>. What it lacks is a <strong>bounded-context map that makes its invariants enforced by
+    construction at the aggregate level</strong> rather than scattered across functions, stores, subscribers, and
+    raise-paths. The symptom that triggered this: a context-exhausted follow-up
+    (<code>MARS-21175626</code>) that renders as "No origin recorded" because it was written with
+    <code>origin_id = self</code> before the fix landed — an entity stranded from its arc.
+  </p>
+
+  <div class="note">
+    <strong>Core invariant (this strategy's reason to exist):</strong> every action is attached to an arc; every arc has an origin task; no mutation may create a stranded entity.
+    Enforced by an <strong>app-level aggregate root</strong> (the only writer), <code>assertArcInvariant()</code> on every path, with the raw DB client unexported.
+  </div>
+
+  <h3>Two target views (you choose the canonical one in review)</h3>
+  <div class="grid cols-2">
+    <div class="ctx">
+      <h4>① Capability view <span class="pill">tab 3</span></h4>
+      <p class="role">Bounded contexts by domain capability — maps cleanly onto the glossary.</p>
+      <ul>
+        <li><b>Planning</b> — Proposal → slice → Tree</li>
+        <li><b>Execution</b> — Arc / Action / Workflow run</li>
+        <li><b>Recovery</b> — fix &amp; diagnose, leaf-node rule</li>
+        <li><b>Operator Attention</b> — Action Queue, Alert aggregate</li>
+        <li><b>Observability</b> — KPI, events, reflect</li>
+        <li><b>Provisioning</b> — init/install/projects/workflows scaffold</li>
+      </ul>
+    </div>
+    <div class="ctx">
+      <h4>② Layer view <span class="pill">tab 4</span></h4>
+      <p class="role">One lib, three <em>logical</em> layers with enforced dependency direction (ADR-0047 ladder retired).</p>
+      <ul>
+        <li><b>Engine</b> — workflow runtime, agent/claude-session, git-worktree</li>
+        <li><b>Domain</b> — aggregates + invariants + stores + events (process-free)</li>
+        <li><b>Adapters</b> — daemon, CLI, UI, TUI, skills — all over one app-service layer</li>
+      </ul>
+      <div class="badge-row">
+        <span class="pill layer">workflows → scaffolded into .mars/, runtime-loaded</span>
+      </div>
+    </div>
+  </div>
+
+  <h3>What changes vs. what stays</h3>
+  <table>
+    <tr><th>Decision</th><th>Target</th></tr>
+    <tr><td>Write surface</td><td><b>One Arc aggregate root</b> is the sole task/arc writer; <code>enqueueTask</code>/<code>upsertFixTask</code> become internal to it; raw client stays unexported (ADR-0021 extended).</td></tr>
+    <tr><td>Packaging</td><td><b>One lib</b> <code>@mars/mars</code>. The ADR-0047 8-rung ladder is <span class="strike">retired</span>; 3 layers are logical (arch-test-enforced), not packages.</td></tr>
+    <tr><td>Workflows</td><td>Not a package. <b>Scaffolded into <code>.mars/workflows/*.js</code></b> on <code>mars init</code>, runtime-loaded by the daemon, user-owned (Hybrid file; <code>mars update</code> never overwrites — offers diff).</td></tr>
+    <tr><td>Displays</td><td>CLI, daemon, TUI, skills become <b>thin adapters over one application-service layer</b> — zero re-implemented projection logic.</td></tr>
+    <tr><td>Alert</td><td>Promoted to an <b>arc-rooted read aggregate</b>: goal → plain-English reason → technical drill-down.</td></tr>
+    <tr><td>Model</td><td><b>Tree = Proposal + its Arcs</b>; standalone <code>task add</code> = 1-Arc Tree. <b>One Action</b> entity, <code>kind</code>-routed to a workflow.</td></tr>
+    <tr><td>Orphans</td><td>Enforce <b>forward only</b> — no historical backfill; <code>MARS-21175626</code> stays as-is.</td></tr>
+    <tr><td>Install</td><td><b>Single <code>mars init</code></b>; TTY → wizard, <code>--yes</code>/<code>-f</code> → non-interactive; every prompt has a flag/config equivalent.</td></tr>
+  </table>
+</section>
+
+<!-- ============ CURRENT ============ -->
+<section class="panel" data-tab-panel="current">
+  <h2>Current model (as-is)</h2>
+  <p class="lede">
+    The domain is real but the boundaries are implicit. Writes happen in many places; invariants are guarded per-function
+    rather than per-aggregate; displays read three different ways. Highlighted in <span class="danger">red</span> are the
+    structural gaps this strategy closes.
+  </p>
+
+  <div class="legend">
+    <span class="pill agg">aggregate (implicit)</span>
+    <span class="pill inv">invariant guard</span>
+    <span class="danger">● structural gap</span>
+  </div>
+
+  <div class="grid cols-3">
+    <div class="ctx">
+      <h4>queue.ts <span class="pill">~2,400 LOC</span></h4>
+      <p class="role">The de-facto everything-store.</p>
+      <ul>
+        <li><span class="pill inv">assertTaskKindInvariant</span></li>
+        <li><span class="pill inv">assertNotRecoveryEdge</span></li>
+        <li class="danger">● <code>enqueueTask</code>, <code>upsertFixTask</code>, <code>insertReflectionTask</code> all INSERT independently</li>
+        <li class="danger">● many writers can set <code>origin_id = self</code></li>
+        <li><code>updateTask</code> = status funnel (good)</li>
+      </ul>
+    </div>
+    <div class="ctx">
+      <h4>TaskStore / StateStore <span class="pill">ADR-0021</span></h4>
+      <p class="role">Two facades over one client.</p>
+      <ul>
+        <li>TaskStore: 32+ methods</li>
+        <li>StateStore: proposals + notes</li>
+        <li class="danger">● both are thin pass-throughs — no aggregate owns the invariant</li>
+        <li>raw libsql handle never exported ✓</li>
+      </ul>
+    </div>
+    <div class="ctx">
+      <h4>Daemon <span class="pill">subscribers + HTTP</span></h4>
+      <p class="role">Sole writer process; dispatch loop.</p>
+      <ul>
+        <li>TaskFlightTracker (ADR-0024)</li>
+        <li>Outbox subscribers (ADR-0030/31)</li>
+        <li>recovery-spawn, invalidator, …</li>
+        <li class="danger">● <code>/view/todo/dismiss</code> still exists vs. ADR-0048 "no dismissals"</li>
+      </ul>
+    </div>
+    <div class="ctx">
+      <h4>Workflows <span class="pill">hardcoded</span></h4>
+      <p class="role">implement / triage / plan / slice / init.</p>
+      <ul>
+        <li>honest clients of <code>@mars/workflow</code></li>
+        <li class="danger">● <code>implement-workflow</code> imports ~15 orchestrator-internal modules</li>
+        <li class="danger">● NOT user-extensible — no <code>.mars/workflows/</code></li>
+      </ul>
+    </div>
+    <div class="ctx">
+      <h4>Action Queue <span class="pill">ADR-0048/51</span></h4>
+      <p class="role">Pure projection, arc-keyed.</p>
+      <ul>
+        <li>raiseActionQueueItem → resolved origin_id ✓</li>
+        <li>buildActionQueueView (daemon)</li>
+        <li class="danger">● flat rows; no Alert aggregate; goal/reason/technical not modeled as a hierarchy</li>
+      </ul>
+    </div>
+    <div class="ctx">
+      <h4>Displays <span class="pill">3 paths</span></h4>
+      <p class="role">No shared application layer.</p>
+      <ul>
+        <li>UI → daemon HTTP</li>
+        <li>Skills → shell out to <code>mars</code> CLI</li>
+        <li>CLI → direct store reads + daemon writes</li>
+        <li class="danger">● three different read paths; projection logic mirrored in <code>ui/server/db.ts</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>The stranding bug, concretely</h3>
+  <div class="arc-tree">MARS-21175626  kind=task  origin_id=<span class="danger">mars-21175626 (self)</span>  fix_for_task_id=null
+  prompt: "## context-exhausted follow-up for task mars-89171f74"
+                                       └── parent reference lives ONLY in prose
+  buildOriginTree: origin_id === id  →  Case 3: lone node  →  "No origin recorded"</div>
+  <div class="note warn">Created 2026-06-03, before ADR-0050 arc-inheritance landed. Follow-ups created 2026-06-06 correctly inherit <code>origin_id</code>. The mechanism is fixed forward; the model never made stranding <em>impossible</em>.</div>
+</section>
+
+<!-- ============ TARGET — CAPABILITY ============ -->
+<section class="panel" data-tab-panel="target-cap">
+  <h2>Target · Capability view</h2>
+  <p class="lede">Six bounded contexts by domain capability. Each owns its aggregates and its ubiquitous language (glossary terms in <code>code</code>). The <b>Shared Kernel</b> holds only ids, the event/outbox contract, and the failure-kind registry.</p>
+
+  <div class="legend">
+    <span class="pill agg">aggregate root</span>
+    <span class="pill inv">enforced invariant</span>
+    <span class="pill">value object / read-model</span>
+  </div>
+
+  <div class="grid cols-3">
+    <div class="ctx">
+      <h4>Planning</h4>
+      <p class="role">Shape an idea into runnable work.</p>
+      <ul>
+        <li><span class="pill agg">Tree</span> = Proposal + its Arcs</li>
+        <li><span class="pill agg">Proposal</span> (draft → prd-ready → sliced)</li>
+        <li>slice → emits Arcs into Execution</li>
+        <li><span class="pill inv">a sliced Arc carries the Tree's proposalId</span></li>
+      </ul>
+    </div>
+    <div class="ctx">
+      <h4>Execution <span class="pill">core</span></h4>
+      <p class="role">Run work to done.</p>
+      <ul>
+        <li><span class="pill agg">Arc</span> (origin Action + continuations)</li>
+        <li><span class="pill">Action</span> {kind: task|fix|diagnose|write}</li>
+        <li><span class="pill">WorkflowRun</span> (setup→code→verify→merge)</li>
+        <li><span class="pill inv">every Action attached to an Arc</span></li>
+        <li><span class="pill inv">every Arc has an origin Action</span></li>
+        <li><span class="pill inv">Blocker edges: no Idea→Task cycle (ADR-0015)</span></li>
+      </ul>
+    </div>
+    <div class="ctx">
+      <h4>Recovery</h4>
+      <p class="role">Last automatic shot at a failure.</p>
+      <ul>
+        <li><span class="pill">Recovery Action</span> (kind=fix)</li>
+        <li><span class="pill">Probe</span> (kind=diagnose)</li>
+        <li><span class="pill inv">recovery is a leaf node (ADR-0040)</span></li>
+        <li><span class="pill inv">fix carries by-construction origin edge (ADR-0049)</span></li>
+        <li><span class="pill inv">exactly one recovery per origin failure</span></li>
+      </ul>
+    </div>
+    <div class="ctx">
+      <h4>Operator Attention</h4>
+      <p class="role">Everything needing a human.</p>
+      <ul>
+        <li><span class="pill agg">Action Queue</span> = Alerts + Drafts</li>
+        <li><span class="pill agg">Alert</span> (arc-rooted: goal→reason→technical)</li>
+        <li><span class="pill inv">pure projection of entity state (ADR-0048)</span></li>
+        <li><span class="pill inv">arc key = resolved origin_id (ADR-0051)</span></li>
+        <li><span class="pill inv">an Alert clears only by mutating its entity</span></li>
+      </ul>
+    </div>
+    <div class="ctx">
+      <h4>Observability</h4>
+      <p class="role">Did the harness get better?</p>
+      <ul>
+        <li><span class="pill">KPI vector</span> (ADR-0038, four KPIs)</li>
+        <li><span class="pill">Step span</span> / trace events</li>
+        <li><span class="pill">Reflection</span> (arc post-mortem → draft proposals)</li>
+        <li><span class="pill inv">cost denominated per completed Arc</span></li>
+      </ul>
+    </div>
+    <div class="ctx">
+      <h4>Provisioning</h4>
+      <p class="role">Get a repo onto Mars.</p>
+      <ul>
+        <li><span class="pill">Project</span> registry</li>
+        <li><span class="pill">Supervisor</span> render (stack detect)</li>
+        <li><span class="pill agg">Workflow scaffold</span> (.mars/workflows/*.js)</li>
+        <li><span class="pill inv">single init; every prompt has a flag</span></li>
+        <li><span class="pill inv">scaffolded workflows are user-owned (no overwrite)</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Shared kernel (no upstream deps)</h3>
+  <div class="ctx" style="margin-top:0">
+    <ul style="columns:2">
+      <li><code>Mars id</code> / <code>Bare id</code> — identity (ADR-0039)</li>
+      <li><code>Bus event</code> / <code>Outbox</code> / <code>Subscriber</code> — delivery (ADR-0030/31)</li>
+      <li><code>Failure kind</code> — signature → human reason + recipe + actions (ADR-0042)</li>
+      <li><code>Status transition</code> — the one funnel (Transition seam)</li>
+    </ul>
+  </div>
+
+  <h3>Context map (relationships)</h3>
+  <table>
+    <tr><th>Upstream</th><th>→</th><th>Downstream</th><th>Relationship</th></tr>
+    <tr><td>Planning</td><td>→</td><td>Execution</td><td>Customer/Supplier — slice emits Arcs</td></tr>
+    <tr><td>Execution</td><td>→</td><td>Recovery</td><td>Conformist — failure events spawn fix/diagnose</td></tr>
+    <tr><td>Execution + Recovery</td><td>→</td><td>Operator Attention</td><td>Published Language — events project into Alerts</td></tr>
+    <tr><td>All</td><td>→</td><td>Observability</td><td>Open Host (event stream) — read-only consumer</td></tr>
+    <tr><td>Provisioning</td><td>→</td><td>all</td><td>Bootstrap — creates the .mars substrate they run on</td></tr>
+  </table>
+</section>
+
+<!-- ============ TARGET — LAYER ============ -->
+<section class="panel" data-tab-panel="target-layer">
+  <h2>Target · Layer view</h2>
+  <p class="lede">
+    <strong>One library, <code>@mars/mars</code>.</strong> Three <em>logical</em> layers inside it, with strict dependency
+    direction enforced by an arch-test (upper imports lower only — never upward). The ADR-0047 eight-rung package ladder is
+    retired as too fine-grained. The only thing crossing the install boundary into the consumer repo is scaffolded
+    workflow JS.
+  </p>
+
+  <div class="layer-stack">
+    <div class="layer-row l3">
+      <h4>Adapters <span class="pill layer">operator-facing</span></h4>
+      <div class="dir">imports ↓ Domain (and Engine via Domain only)</div>
+      <ul>
+        <li><b>daemon</b> — dispatch loop, semaphores, HTTP, subscribers</li>
+        <li><b>CLI</b> — the <code>mars</code> command seam (ADR-0023)</li>
+        <li><b>UI</b> — read-only viewer</li>
+        <li><b>TUI</b> — new terminal surface</li>
+        <li><b>skills</b> — Claude Code <code>/mars:*</code></li>
+      </ul>
+      <div class="note good" style="margin:8px 0 0">All five call the <b>Application-Service layer</b> (use-cases) — no surface re-implements projection or invariant logic.</div>
+    </div>
+    <div class="layer-row l2">
+      <h4>Domain <span class="pill layer">process-free brain</span></h4>
+      <div class="dir">imports ↓ Engine only · NO process / HTTP / TTY in this layer</div>
+      <ul>
+        <li><b>Aggregates</b>: Arc (root writer), Tree, Proposal, Action Queue, Alert</li>
+        <li><b>Invariants</b>: <code>assertArcInvariant</code>, leaf-node rule, kind-routing</li>
+        <li><b>Stores</b>: TaskStore / StateStore (raw client unexported)</li>
+        <li><b>Events</b>: outbox publish/subscribe primitives + Mars subscribers</li>
+        <li><b>Application services</b>: use-cases that adapters call</li>
+      </ul>
+    </div>
+    <div class="layer-row l1">
+      <h4>Engine <span class="pill layer">mechanics</span></h4>
+      <div class="dir">imports nothing upward — knows nothing of tasks/arcs/recovery</div>
+      <ul>
+        <li><b>workflow runtime</b> — <code>defineWorkflow</code>, <code>ctx.step</code>, checkpoint-resume</li>
+        <li><b>agent runtime</b> — <code>runClaudeCode</code> + <code>ClaudeEvent</code> (pulled out of git.ts)</li>
+        <li><b>claude-session</b> — PTY control</li>
+        <li><b>git-worktree</b> — worktree / verify / merge primitives</li>
+        <li><b>step primitives</b> exported for scaffolded workflows: <code>setupWorktree, runAgent, verify, merge</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>The workflow extension boundary</h3>
+  <p class="lede">Custom workflows are <b>sandboxed plain-JS with declared steps</b>. They compose engine step primitives and write to the DB <em>only</em> through injected arc services — so the no-stranded-entity invariant holds for custom flows too.</p>
+  <pre><span class="c">// .mars/workflows/implement.js  — scaffolded by `mars init`, user-owned</span>
+<span class="k">import</span> { defineWorkflow, setupWorktree, runAgent, verify, merge } <span class="k">from</span> <span class="s">'mars'</span>
+
+<span class="k">export default</span> defineWorkflow({
+  id: <span class="s">'implement'</span>,
+  kind: <span class="s">'task'</span>,                          <span class="c">// which Action kind this flow handles</span>
+  steps: [setupWorktree, runAgent, verify, merge],
+  <span class="c">// DB access ONLY via ctx.arc (injected) — raw store is NOT in scope</span>
+})</pre>
+  <div class="flow">
+    <span class="step">mars init</span><span class="arrow">→</span>
+    <span class="step">scaffold .mars/workflows/*.js</span><span class="arrow">→</span>
+    <span class="step">daemon boot: dynamic import + register</span><span class="arrow">→</span>
+    <span class="step">mars daemon reload: re-read</span>
+  </div>
+  <div class="note warn">Scaffolded workflows are <b>Hybrid files</b> (glossary). <code>mars update</code> never silently overwrites them — it shows a diff against the new template for the user to merge.</div>
+
+  <h3>Arch-test dependency rule (build-guard)</h3>
+  <pre><span class="c">// fails the build if any import crosses a layer upward</span>
+adapters → domain → engine        <span class="s">// allowed</span>
+domain   → adapters               <span class="x">// FORBIDDEN</span>
+engine   → domain | adapters      <span class="x">// FORBIDDEN</span>
+domain   → process | http | tty   <span class="x">// FORBIDDEN (domain is process-free)</span></pre>
+</section>
+
+<!-- ============ AGGREGATES ============ -->
+<section class="panel" data-tab-panel="aggregates">
+  <h2>Aggregates, entities &amp; their methods</h2>
+  <p class="lede">The write model. The <b>Arc</b> aggregate root is the single thing permitted to create work; the legacy free functions (<code>enqueueTask</code>, <code>upsertFixTask</code>, <code>enqueueFollowUpOnce</code>) become private members. TypeScript keeps the raw client unexported; <code>assertArcInvariant()</code> runs on every write path.</p>
+
+  <h3>Arc — aggregate root (Execution)</h3>
+  <div class="kv">
+    <dt>identity</dt><dd><code>origin_id</code> (the originating Action's id)</dd>
+    <dt>holds</dt><dd>origin Action + every recovery / follow-up Action sharing its <code>origin_id</code></dd>
+    <dt>invariant</dt><dd>non-empty (always ≥ origin); origin Action's <code>origin_id === id</code>; recovery Actions are leaves</dd>
+  </div>
+  <pre><span class="c">// the ONLY task/arc writer in the system</span>
+class Arc {
+  <span class="k">static</span> createOrigin(spec: ActionSpec): Arc          <span class="c">// replaces enqueueTask (origin path)</span>
+  addContinuation(spec, { inheritArc: true }): Action   <span class="c">// replaces --blocked-by / followup; origin_id inherited</span>
+  spawnRecovery(failed: Action, kind: 'fix'|'diagnose'): Action  <span class="c">// replaces upsertFixTask; by-construction edge</span>
+  transition(action: Action, to: Status): void          <span class="c">// the one status funnel</span>
+  addBlocker(from: Action, to: Action): void             <span class="c">// asserts not-recovery-edge (ADR-0040)</span>
+  drop(): void                                           <span class="c">// cascades the whole arc (ADR-0049)</span>
+  status(): ArcStatus                                    <span class="c">// stateless rollup (existing arcStatus)</span>
+  <span class="k">private</span> assertArcInvariant(action): void           <span class="c">// runs on every write; no stranded entity</span>
+}</pre>
+
+  <div class="grid cols-2">
+    <div class="ctx">
+      <h4>Action — entity within Arc</h4>
+      <pre style="margin:0"><span class="k">type</span> ActionKind = <span class="s">'task'</span>|<span class="s">'fix'</span>|<span class="s">'diagnose'</span>|<span class="s">'write'</span>
+Action {
+  id; arcId(origin_id); kind; spec; status
+  fixForTaskId   <span class="c">// non-null iff kind=fix</span>
+  selectsWorkflow(): WorkflowId  <span class="c">// kind-routed</span>
+}</pre>
+    </div>
+    <div class="ctx">
+      <h4>Tree — aggregate (Planning)</h4>
+      <pre style="margin:0">Tree {
+  proposal: Proposal | null   <span class="c">// null ⇒ standalone</span>
+  arcs(): Arc[]               <span class="c">// all slices</span>
+  slice(): Arc[]              <span class="c">// Proposal → Arcs</span>
+}
+<span class="c">// standalone `task add` = 1-Arc Tree (proposal=null)</span></pre>
+    </div>
+    <div class="ctx">
+      <h4>Proposal — aggregate (Planning)</h4>
+      <pre style="margin:0">Proposal {
+  status: draft|prd-ready|sliced|dismissed
+  promote(); reject(); setField(); markSliced()
+  blockers(): Proposal[]   <span class="c">// ADR-0008 separate junction</span>
+}</pre>
+    </div>
+    <div class="ctx">
+      <h4>Action Queue — aggregate (Operator Attention)</h4>
+      <pre style="margin:0">ActionQueue {
+  <span class="c">// pure projection — no close verbs (ADR-0048)</span>
+  alerts(): Alert[]          <span class="c">// failed/blocked/stale</span>
+  drafts(): Proposal[]       <span class="c">// draft proposals</span>
+  <span class="c">// rows clear ONLY when entity transitions</span>
+}</pre>
+    </div>
+  </div>
+
+  <h3>Alert — arc-rooted read aggregate (the new one)</h3>
+  <pre><span class="c">// composed from an Arc + its failure-kind; the operator-facing hierarchy</span>
+Alert {
+  arcId                                  <span class="c">// resolved origin_id (ADR-0051)</span>
+  goal: string                           <span class="c">// origin Action's intent, plain summary</span>
+  reason: string                         <span class="c">// FailureKind.humanReason — clear English, no jargon</span>
+  technical: {                           <span class="c">// drill-down, deeper in the hierarchy</span>
+    failedAction: { id, kind, worktree }
+    signature: FailureSignature
+    traceTail: TraceEvent[]
+    descendants: Action[]                <span class="c">// fix/diagnose attempts</span>
+  }
+  clearsBy: <span class="s">'mutate the underlying entity'</span>  <span class="c">// never a dismiss gesture</span>
+}</pre>
+  <div class="note good">This directly satisfies your spec: "Alert should aggregate a full failed arc and expose the information in a hierarchy relevant to the user: the goal of the original task, a clear English message of why it failed, then more technical details after."</div>
+</section>
+
+<!-- ============ INVARIANTS ============ -->
+<section class="panel" data-tab-panel="invariants">
+  <h2>Invariants — enforced by construction</h2>
+  <p class="lede">Each row is an ADR-backed invariant. The <b>Enforced where</b> column moves from "scattered guard" (today) to "aggregate / DB / arch-test" (target). New ADRs are drafted for the rows without one.</p>
+  <table>
+    <tr><th>Invariant</th><th>ADR</th><th>Enforced where (target)</th></tr>
+    <tr><td>Every Action is attached to an Arc; no stranded entity</td><td class="danger">new</td><td><code>Arc</code> aggregate is sole writer + <code>assertArcInvariant()</code> on every path</td></tr>
+    <tr><td>Every Arc has an origin Action (origin_id resolves to a real Action)</td><td class="danger">new</td><td><code>Arc.createOrigin</code> sets <code>origin_id=id</code>; continuations inherit; forward-only (no backfill)</td></tr>
+    <tr><td>Recovery Actions are leaf nodes</td><td>0040</td><td>blocker-insert guard + cascade walker + spawn path (3 points, one rule)</td></tr>
+    <tr><td>Fix carries a by-construction origin edge; purge cascades the arc</td><td>0049</td><td><code>kind='fix' ⇒ fix_for_task_id NOT NULL</code> at insert; <code>Arc.drop</code> cascade</td></tr>
+    <tr><td>Follow-ups inherit the origin's arc (no synthetic origin_id)</td><td>0050</td><td><code>Arc.addContinuation({inheritArc})</code>; dedup key off origin_id</td></tr>
+    <tr><td>Action-queue arc key = resolved origin_id</td><td>0051</td><td>normalized in the single raise path</td></tr>
+    <tr><td>Action queue is a pure projection; no operator close verbs</td><td>0048</td><td>Invalidator is sole closer; <span class="danger">cut residual <code>/view/todo/dismiss</code></span></td></tr>
+    <tr><td>An Alert clears only by mutating its underlying entity</td><td class="danger">new</td><td>Alert is a read-model over Arc/worktree state — no mutable alert row</td></tr>
+    <tr><td>Status transitions go through one funnel</td><td>Transition seam</td><td><code>Arc.transition</code> wraps <code>updateTask</code>; arch-test forbids other writers</td></tr>
+    <tr><td>Action kind selects the workflow</td><td class="danger">new</td><td><code>Action.selectsWorkflow()</code>; dispatcher routes on kind, not status</td></tr>
+    <tr><td>Workflows are user-extensible plain-JS; DB only via arc services</td><td class="danger">new (supersedes 0047)</td><td>runtime-load <code>.mars/workflows/*.js</code>; raw store not in workflow scope</td></tr>
+    <tr><td>One lib; 3 logical layers; deps point downward only</td><td class="danger">new (supersedes 0047)</td><td>arch-test build-guard on import direction</td></tr>
+    <tr><td>Displays are thin adapters over one app-service layer</td><td class="danger">new</td><td>arch-test: no projection logic outside the domain layer</td></tr>
+    <tr><td>Single install entry; every prompt has a flag/config equivalent</td><td class="danger">new</td><td><code>mars init</code> wizard ↔ flags parity test</td></tr>
+  </table>
+  <div class="note">Rows marked <span class="danger">new</span> become ADRs authored by this strategy. ADR-0047 is <b>superseded</b> by the new "one-lib / 3-logical-layers / scaffolded-workflows" ADR.</div>
+</section>
+
+<!-- ============ SURFACES & CLI ============ -->
+<section class="panel" data-tab-panel="surfaces">
+  <h2>Surfaces &amp; CLI expansion</h2>
+  <p class="lede">All surfaces become thin adapters over the application-service layer. The CLI is the reference adapter and grows to expose the new Tree/Arc/Alert/Workflow concepts. New verbs in <span class="danger">red</span>.</p>
+
+  <h3>Adapter unification</h3>
+  <table>
+    <tr><th>Surface</th><th>Today</th><th>Target</th></tr>
+    <tr><td>UI</td><td>→ daemon HTTP (+ fallback dup in ui/server/db.ts)</td><td>→ app-service via daemon HTTP; no local projection dup</td></tr>
+    <tr><td>Skills</td><td>shell out to <code>mars</code> CLI</td><td>same CLI, but CLI is a thin app-service adapter</td></tr>
+    <tr><td>CLI</td><td>direct store reads + daemon writes</td><td>all through app-service use-cases</td></tr>
+    <tr><td class="danger">TUI</td><td>—</td><td class="danger">new adapter over the same app-service</td></tr>
+  </table>
+
+  <h3>CLI surface — new &amp; changed</h3>
+  <table>
+    <tr><th>Command</th><th>Purpose</th></tr>
+    <tr><td class="danger"><code>mars tree show &lt;id&gt;</code></td><td>show a Tree (proposal + all its arcs) as one unit</td></tr>
+    <tr><td class="danger"><code>mars tree list</code></td><td>list Trees (ideas) with arc rollups</td></tr>
+    <tr><td><code>mars arc list / show &lt;id&gt;</code></td><td>(exists) arc rollup; <code>show</code> gains the goal→reason→technical hierarchy</td></tr>
+    <tr><td class="danger"><code>mars alert list / show &lt;id&gt;</code></td><td>the arc-rooted Alert aggregate (vs. flat action-queue rows)</td></tr>
+    <tr><td class="danger"><code>mars workflow list</code></td><td>list registered workflows (built-in + scaffolded <code>.mars/workflows/*.js</code>)</td></tr>
+    <tr><td class="danger"><code>mars workflow scaffold &lt;name&gt;</code></td><td>write a new editable workflow stub into <code>.mars/workflows/</code></td></tr>
+    <tr><td class="danger"><code>mars workflow validate</code></td><td>type/contract-check user workflows before the daemon loads them</td></tr>
+    <tr><td><code>mars init</code></td><td>single entry; TTY→wizard, <code>--yes</code>/<code>-f cfg</code>→non-interactive; scaffolds workflows</td></tr>
+    <tr><td><code>mars init --wizard</code> / parity</td><td>every wizard prompt has a <code>--flag</code> or config key (parity-tested)</td></tr>
+    <tr><td class="strike"><code>action-queue resolve/dismiss/ack</code></td><td class="strike">already cut by ADR-0048 — confirm no residual paths</td></tr>
+  </table>
+
+  <h3>Application-service layer (the shared seam)</h3>
+  <pre><span class="c">// every adapter (CLI/daemon-HTTP/TUI/skills) calls THESE — never the store directly</span>
+appService = {
+  <span class="c">// Planning</span>
+  proposals.{create, promote, reject, slice}
+  trees.{list, show}
+  <span class="c">// Execution</span>
+  arcs.{createOrigin, addContinuation, list, show, status}
+  actions.{transition, block, unblock}
+  <span class="c">// Recovery</span>
+  recovery.{spawn, diagnose}
+  <span class="c">// Operator Attention</span>
+  alerts.{list, show}            <span class="c">// arc-rooted; goal→reason→technical</span>
+  actionQueue.{view}            <span class="c">// alerts + drafts, pure projection</span>
+  <span class="c">// Observability</span>
+  kpis.{snapshot, window}; reflect.{run, arcReflect}
+  <span class="c">// Provisioning</span>
+  projects.{add, list, remove}; workflows.{list, scaffold, validate, reload}
+}</pre>
+  <div class="note good">"The daemon is fully separated from the display; the displays are TUI, Claude skills, UI — each calls the same functions." → satisfied by this single app-service seam.</div>
+</section>
+
+</main>
+
+<footer>
+  Mars Framework — DDD strategy draft. Companion docs: <code>docs/architecture/aggregate-catalog.md</code> (full class/method/CLI catalog) and the new ADRs.
+  Implementation follows via a multi-agent workflow after this strategy is approved.
+</footer>
+
+<script>
+  const tabs = document.getElementById('tabs');
+  const buttons = [...tabs.querySelectorAll('button')];
+  const panels = [...document.querySelectorAll('.panel')];
+  function activate(name) {
+    buttons.forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+    panels.forEach(p => p.setAttribute('data-active', String(p.dataset.tabPanel === name)));
+    history.replaceState(null, '', '#' + name);
+  }
+  tabs.addEventListener('click', e => {
+    const b = e.target.closest('button[data-tab]');
+    if (b) activate(b.dataset.tab);
+  });
+  const initial = (location.hash || '#overview').slice(1);
+  if (buttons.some(b => b.dataset.tab === initial)) activate(initial);
+</script>
+</body>
+</html>
