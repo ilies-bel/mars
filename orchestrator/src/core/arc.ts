@@ -45,7 +45,7 @@ import {
   type DomainTaskStore,
 } from './store/task-store'
 import { getRecipe, type FixRecipeContext } from './lib/fix-recipes'
-import { buildEventInsert, withWriteTx } from './lib/outbox'
+import { buildEventInsert, publish, withWriteTx } from './lib/outbox'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
 import { internalBus } from '../internal-bus'
 
@@ -54,6 +54,23 @@ const truncate = (s: string, max: number): string =>
 
 const FIX_TASK_AUTHOR_KIND = 'agent'
 const FIX_TASK_AUTHOR_NAME = 'fail-fix-handler'
+
+/**
+ * Maps a {@link TaskStatus} to the outbox event that mirrors it, or `null` for
+ * statuses that do not have a single matching outbox event (e.g. `'blocked'`,
+ * `'running'`). Used by {@link Arc.setTaskStatus} to decide whether to publish.
+ *
+ * Relocated bit-for-bit from `queue.ts` (ADR-0052 sole-writer).
+ */
+const mapStatusToEvent = (
+  status: TaskStatus,
+): 'task.completed' | 'task.dropped' | 'task.failed' | 'task.queued' | null => {
+  if (status === 'done') return 'task.completed'
+  if (status === 'dropped') return 'task.dropped'
+  if (status === 'failed') return 'task.failed'
+  if (status === 'queued') return 'task.queued'
+  return null
+}
 
 /**
  * Spawn-recovery input. Mirrors the historic `upsertFixTask(input)` parameter
@@ -421,6 +438,100 @@ export class Arc {
     })
     if (r.rows.length === 0) return null
     return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+  }
+
+  /**
+   * Atomic single-writer chokepoint for task status changes (ADR-0052).
+   *
+   * Relocated bit-for-bit from `queue.ts:setTaskStatus`. Wraps the raw
+   * `UPDATE tasks SET status` and the matching outbox event in one commit so
+   * the event id is allocated in the same SQLite transaction as the row change
+   * (ADR-0030 same-commit guarantee). Callers that need additional column
+   * updates (e.g. `drop_reason`, `failure_reason`) or additional events (e.g.
+   * `task.terminal`) must issue those in a separate transaction **after**
+   * calling this method (see `Arc.propagateRecoveryDone` / the
+   * blocker-resolution `error = NULL` + `task.terminal` two-tx structure).
+   *
+   * Statuses without a registered event mapping (`'blocked'`, `'running'`,
+   * etc.) are still written to the row — the method just skips the publish
+   * step (see {@link mapStatusToEvent}).
+   *
+   * PARITY (preserved from the historic `setTaskStatus`):
+   *   - **publish-only asymmetry**: `extras.error` rides the `task.failed`
+   *     event payload but is NOT written to the `error` column here. A caller
+   *     that needs the column persisted must do so in a follow-up write.
+   *   - **no terminal-immutability guard**: this method does NOT reject a
+   *     write onto an already-terminal row. The sole guard is the caller-side
+   *     pre-check (blocker-resolution `markOriginDoneFromRecovery` at
+   *     `blocker-resolution.ts:722` returns early when the origin is already
+   *     `done`/`failed`/`dropped`). Keep that defense at the call site.
+   *
+   * Store routing (ADR-0021 / ADR-0030): when `store` is provided the row
+   * UPDATE + event INSERT run via `store.batch([updateStmt, ...eventStmts],
+   * 'write')` (one BEGIN IMMEDIATE … COMMIT); otherwise the body is the
+   * historic `withWriteTx(resolveQueueClient(), …)` form preserved bit-for-bit
+   * (retries on SQLITE_BUSY).
+   */
+  static async setTaskStatus(
+    taskId: string,
+    newStatus: TaskStatus,
+    extras?: { error?: string; result?: unknown; dropReason?: string },
+    store?: DomainTaskStore,
+  ): Promise<void> {
+    const now = new Date().toISOString()
+    const eventType = mapStatusToEvent(newStatus)
+    if (store) {
+      const updateStmt: InStatement = {
+        sql: 'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
+        args: [newStatus, now, taskId],
+      }
+      // No event mapping (e.g. 'blocked', 'running') → row write only, no emit.
+      if (eventType === null) {
+        await store.batch([updateStmt], 'write')
+        return
+      }
+      // Build the matching event payload exactly as the historic publish()
+      // branches did; buildEventInsert validates the payload against the same
+      // Zod schema publish() uses, so the rows are bit-for-bit identical.
+      let eventStmt: InStatement
+      if (newStatus === 'done') {
+        eventStmt = buildEventInsert('task.completed', {
+          taskId,
+          result: extras?.result ?? null,
+        })
+      } else if (newStatus === 'dropped') {
+        eventStmt = buildEventInsert('task.dropped', {
+          taskId,
+          dropReason: extras?.dropReason ?? '',
+        })
+      } else if (newStatus === 'failed') {
+        eventStmt = buildEventInsert('task.failed', {
+          taskId,
+          error: extras?.error ?? '',
+        })
+      } else {
+        eventStmt = buildEventInsert('task.queued', { taskId })
+      }
+      // Row change + event INSERT share one commit (ADR-0030).
+      await store.batch([updateStmt, eventStmt], 'write')
+      return
+    }
+    await withWriteTx(resolveQueueClient(), async (tx) => {
+      await tx.execute({
+        sql: 'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
+        args: [newStatus, now, taskId],
+      })
+      if (eventType === null) return
+      if (newStatus === 'done') {
+        await publish(tx, 'task.completed', { taskId, result: extras?.result ?? null })
+      } else if (newStatus === 'dropped') {
+        await publish(tx, 'task.dropped', { taskId, dropReason: extras?.dropReason ?? '' })
+      } else if (newStatus === 'failed') {
+        await publish(tx, 'task.failed', { taskId, error: extras?.error ?? '' })
+      } else if (newStatus === 'queued') {
+        await publish(tx, 'task.queued', { taskId })
+      }
+    })
   }
 
   /**

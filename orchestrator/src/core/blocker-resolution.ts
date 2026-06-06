@@ -9,7 +9,8 @@ import {
   raiseRetryBudgetExhaustedActionQueue,
 } from './queue-retry'
 import { computeFailureSignature } from './lib/failure-signature'
-import { getTask, setTaskStatus, updateTask } from './queue'
+import { getTask, updateTask } from './queue'
+import { Arc } from './arc'
 import { getDefaultTaskStore } from './store/task-store'
 import { type ActionQueueKind, raiseActionQueueItem, supersedeActionQueueItemsForOrigin } from './lib/action-queue'
 import { buildEventInsert } from './lib/outbox'
@@ -728,14 +729,16 @@ export const markOriginDoneFromRecovery = async (
     }
   }
   // Route the status change and its paired event through the single-writer
-  // chokepoint (setTaskStatus) so they commit atomically. The pre-checks
+  // chokepoint (Arc.setTaskStatus) so they commit atomically. The pre-checks
   // above (origin missing or already terminal) guarantee the origin is not
   // in a terminal state at this point; the TOCTOU window is acceptable in
-  // the single-process orchestrator.
-  await setTaskStatus(originTaskId, 'done', { result: { via: 'recovery' } })
+  // the single-process orchestrator. Arc.setTaskStatus does NOT enforce
+  // terminal immutability — the early-return at the top of this function is
+  // the sole guard (ADR-0052 preserves the caller-side defense).
+  const store = await getDefaultTaskStore()
+  await Arc.setTaskStatus(originTaskId, 'done', { result: { via: 'recovery' } }, store)
   const originFlipped = true
   // Clear the error field and emit the terminal event in a second transaction.
-  const store = await getDefaultTaskStore()
   const now = new Date().toISOString()
   await store.atomic(async (scope) => {
     await scope.execute({

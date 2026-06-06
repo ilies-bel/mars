@@ -7,7 +7,7 @@ import { hasRecipe, type FixRecipeContext } from './lib/fix-recipes'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
 import { truncateFailure } from './lib/truncate-failure'
 import { internalBus } from '../internal-bus'
-import { getTask, setTaskStatus, updateTask, type Task } from './queue'
+import { getTask, updateTask, type Task } from './queue'
 import {
   getRetryBudget,
   markTaskFailed,
@@ -536,9 +536,9 @@ export const handleTaskFailureWithFixTask = async (
     const now = new Date().toISOString()
     // No durable task.blocked emit here: per the AUDIT note above this
     // re-stamps a status the row already holds (no real transition), so an
-    // event would be spurious. setTaskStatus('blocked') satisfies the
+    // event would be spurious. Arc.setTaskStatus('blocked') satisfies the
     // single-writer invariant; the no-mapping path skips the publish.
-    await setTaskStatus(input.taskId, 'blocked')
+    await Arc.setTaskStatus(input.taskId, 'blocked')
 
     const actionQueueItemId = await raiseActionQueueItem({
       kind: FIX_FAIL_LOOP_ACTION_QUEUE_KIND,

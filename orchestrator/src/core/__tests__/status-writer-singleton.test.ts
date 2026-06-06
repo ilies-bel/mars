@@ -5,9 +5,17 @@ import { resolve, relative, sep } from 'node:path'
 /**
  * Architecture guard: the literal `UPDATE tasks SET status` (status as the
  * FIRST column after SET) must appear in exactly one non-test production
- * source file — orchestrator/src/core/queue.ts — and within that file it
- * must be confined to the body of `setTaskStatus`, the single-writer
- * chokepoint (PRD 12fdef39 / ADR-0030).
+ * source file — orchestrator/src/core/arc.ts — and within that file it
+ * must be confined to the body of `Arc.setTaskStatus`, the single-writer
+ * chokepoint (PRD 12fdef39 / ADR-0030 / ADR-0052 sole-writer).
+ *
+ * ADR-0052 relocation: `setTaskStatus` and its `mapStatusToEvent` helper moved
+ * out of queue.ts into the Arc aggregate (`Arc.setTaskStatus`). The canonical
+ * status-bearing `UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`
+ * string and its four `task.completed/dropped/failed/queued` emit branches now
+ * live in core/arc.ts. (The eventual ADR-0052 Enforce step replaces this guard
+ * with a stricter `arc-sole-writer.test.ts`; until then this guard tracks the
+ * relocated home.)
  *
  * Any code path that writes `tasks.status` with `status` as the first column
  * after SET, outside the chokepoint, would bypass the in-transaction
@@ -16,22 +24,25 @@ import { resolve, relative, sep } from 'node:path'
  *
  * Design note — "first column" convention:
  *   Functions that need a conditional WHERE clause (e.g. `unblockTask`,
- *   `promoteDraftToTriaging`) write `SET updated_at = ?, status = ...`
- *   (updated_at first). This exempts them from the scan; they already publish
- *   their lifecycle events atomically in the same transaction. The canonical
- *   `setTaskStatus` write has `status` first, matching the pattern below.
+ *   `promoteDraftToTriaging`, `Arc.promoteDraftToQueued`) write
+ *   `SET updated_at = ?, status = ...` (updated_at first). This exempts them
+ *   from the scan; they already publish their lifecycle events atomically in
+ *   the same transaction. The canonical `Arc.setTaskStatus` write has `status`
+ *   first, matching the pattern below. The column-patch primitive
+ *   `Arc.applyStatusWrite` builds `UPDATE tasks SET ${fields}` from a template
+ *   (no literal `status` token), so it is also not flagged.
  *
  * Two assertions:
  *   1. /UPDATE\s+tasks\s+SET\s+status/i matches in exactly one non-test
- *      production source file: mastra/queue.ts.
- *   2. Every occurrence in queue.ts falls within the body of `setTaskStatus`
- *      (between `export async function setTaskStatus` and the next top-level
- *      `export`).
+ *      production source file: core/arc.ts.
+ *   2. Every occurrence in arc.ts falls within the body of `Arc.setTaskStatus`
+ *      (between `static async setTaskStatus` and the next top-level
+ *      method/`export`).
  */
 
 const SRC_ROOT = resolve(__dirname, '..', '..', '..', 'src')
 const STATUS_WRITE = /UPDATE\s+tasks\s+SET\s+status/i
-const ALLOWED = ['core', 'queue.ts'].join(sep)
+const ALLOWED = ['core', 'arc.ts'].join(sep)
 
 const SKIP_DIRS = new Set(['node_modules', '__tests__', '.git', 'dist', 'build'])
 
@@ -88,26 +99,35 @@ describe('architecture: UPDATE tasks SET status is confined to setTaskStatus in 
 
     expect(
       matches,
-      `these files contain UPDATE tasks SET status outside the setTaskStatus ` +
-        `chokepoint — route them through setTaskStatus(taskId, newStatus) in ` +
-        `queue.ts, or put updated_at before status in the SET clause if a ` +
+      `these files contain UPDATE tasks SET status outside the Arc.setTaskStatus ` +
+        `chokepoint — route them through Arc.setTaskStatus(taskId, newStatus) in ` +
+        `core/arc.ts, or put updated_at before status in the SET clause if a ` +
         `conditional WHERE is required:\n` +
         matches.filter((r) => r !== ALLOWED).join('\n'),
     ).toEqual([ALLOWED])
   })
 
-  it('all STATUS_WRITE occurrences in queue.ts fall within the setTaskStatus function body', () => {
-    const queuePath = resolve(SRC_ROOT, ...ALLOWED.split(sep))
-    const src = stripComments(readFileSync(queuePath, 'utf8'))
+  it('all STATUS_WRITE occurrences in arc.ts fall within the Arc.setTaskStatus method body', () => {
+    const arcPath = resolve(SRC_ROOT, ...ALLOWED.split(sep))
+    const src = stripComments(readFileSync(arcPath, 'utf8'))
 
-    const startMarker = 'export async function setTaskStatus'
+    const startMarker = 'static async setTaskStatus'
     const startIdx = src.indexOf(startMarker)
-    expect(startIdx, 'setTaskStatus not found in queue.ts').toBeGreaterThan(-1)
+    expect(startIdx, 'Arc.setTaskStatus not found in arc.ts').toBeGreaterThan(-1)
 
-    // Window: from the start of setTaskStatus to the next top-level export.
+    // Window: from the start of Arc.setTaskStatus to the start of the next
+    // class member. The next member after setTaskStatus is the `transition`
+    // method; class members are declared as `\n  async <name>(` /
+    // `\n  static <name>(` (two-space indent), so the next such declaration
+    // closes the window.
     const afterStart = startIdx + startMarker.length
-    const nextExportIdx = src.indexOf('\nexport ', afterStart)
-    const windowEnd = nextExportIdx >= 0 ? nextExportIdx : src.length
+    const nextMemberIdx = (() => {
+      const memberPattern = /\n {2}(?:async|static|private)\s/g
+      memberPattern.lastIndex = afterStart
+      const mm = memberPattern.exec(src)
+      return mm ? mm.index : -1
+    })()
+    const windowEnd = nextMemberIdx >= 0 ? nextMemberIdx : src.length
 
     // Collect every STATUS_WRITE match position in the full source, then
     // assert ALL of them fall inside [startIdx, windowEnd).
@@ -122,9 +142,9 @@ describe('architecture: UPDATE tasks SET status is confined to setTaskStatus in 
 
     expect(
       outsideBody,
-      `found ${outsideBody.length} STATUS_WRITE occurrence(s) in queue.ts outside ` +
-        `the setTaskStatus body (character offsets: ${outsideBody.join(', ')}) — ` +
-        `move them inside setTaskStatus or switch to the exempt form ` +
+      `found ${outsideBody.length} STATUS_WRITE occurrence(s) in arc.ts outside ` +
+        `the Arc.setTaskStatus body (character offsets: ${outsideBody.join(', ')}) — ` +
+        `move them inside Arc.setTaskStatus or switch to the exempt form ` +
         `(SET updated_at = ?, status = ...)`,
     ).toEqual([])
   })
