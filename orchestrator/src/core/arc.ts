@@ -15,6 +15,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { type InStatement } from '@libsql/client'
 import {
   coerceToString,
   validatePriority,
@@ -27,6 +28,7 @@ import {
   migrateQueueSchema,
   getTask,
   updateTask,
+  resolveQueueClient,
   MAX_PRIORITY,
   type Task,
   type TaskPlan,
@@ -43,7 +45,7 @@ import {
   type DomainTaskStore,
 } from './store/task-store'
 import { getRecipe, type FixRecipeContext } from './lib/fix-recipes'
-import { buildEventInsert } from './lib/outbox'
+import { buildEventInsert, withWriteTx } from './lib/outbox'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
 import { internalBus } from '../internal-bus'
 
@@ -257,6 +259,72 @@ export class Arc {
       args: [id],
     })
     return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+  }
+
+  /**
+   * The Arc-owned status-write primitive (ADR-0052 sole-writer). Builds the
+   * canonical raw `UPDATE tasks SET ${fields} WHERE id = ?` statement and runs
+   * the lifecycle row-change + paired outbox event INSERTs in a single atomic
+   * commit. This is the *only* place the status-bearing `UPDATE tasks SET …`
+   * string lives — {@link updateTask} (and, in later slices,
+   * {@link Arc.setTaskStatus}) build the column patch (`fields`/`args`),
+   * Zod-validated event payloads (`eventStmts`), the terminal-immutability
+   * pre-check, and the `isStatusChange` decision, then hand the finished pieces
+   * here for the SQL + commit. The caller's `args` array already carries the
+   * trailing `WHERE id = ?` bind value (the patch builder pushes `id` last), so
+   * this method does not append it.
+   *
+   * The three-branch dispatch is preserved bit-for-bit from the historic
+   * `updateTask` body:
+   *   - `appendSessionId` → `withWriteTx` wrapping the row UPDATE, the
+   *     `task_claude_sessions` INSERT (`sessionIdStmt`), and every event INSERT
+   *     in one write transaction;
+   *   - `store` provided → `store.batch([updateStmt, ...eventStmts], 'write')`
+   *     so the row change and event inserts share one commit;
+   *   - else → `withWriteTx(resolveQueueClient())` wrapping the row UPDATE and
+   *     the event INSERTs (retries on `SQLITE_BUSY`).
+   */
+  static async applyStatusWrite(input: {
+    id: string
+    fields: string[]
+    args: unknown[]
+    eventStmts: InStatement[]
+    store?: DomainTaskStore
+    appendSessionId?: boolean
+    sessionIdStmt?: InStatement
+  }): Promise<void> {
+    const updateStmt: InStatement = {
+      sql: `UPDATE tasks SET ${input.fields.join(', ')} WHERE id = ?`,
+      args: input.args as never,
+    }
+
+    if (input.appendSessionId) {
+      // Atomically (a) apply the field updates, (b) insert the new session id
+      // into task_claude_sessions (OR IGNORE deduplicates), and (c) insert the
+      // outbox event row.  All three writes share one write transaction so a
+      // crash between any two leaves the DB consistent (either everything
+      // committed or nothing).
+      const sessionIdStmt = input.sessionIdStmt as InStatement
+      await withWriteTx(resolveQueueClient(), async (tx) => {
+        await tx.execute(updateStmt)
+        await tx.execute(sessionIdStmt)
+        // Event INSERTs share the same transaction: if any throws the whole
+        // transaction rolls back (no orphan state row without event).
+        for (const stmt of input.eventStmts) await tx.execute(stmt)
+      })
+    } else if (input.store) {
+      // store.batch runs all statements atomically (BEGIN IMMEDIATE … COMMIT)
+      // so the state write and event inserts are in the same commit.
+      await input.store.batch([updateStmt, ...input.eventStmts], 'write')
+    } else {
+      // Common path: wrap state write and event inserts in a single write
+      // transaction.  withWriteTx retries on SQLITE_BUSY so a transient lock
+      // contention doesn't drop the event.
+      await withWriteTx(resolveQueueClient(), async (tx) => {
+        await tx.execute(updateStmt)
+        for (const stmt of input.eventStmts) await tx.execute(stmt)
+      })
+    }
   }
 
   /**

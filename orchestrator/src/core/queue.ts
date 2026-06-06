@@ -2176,48 +2176,31 @@ export const updateTask = async (
     }
   }
 
-  const updateStmt: InStatement = {
-    sql: `UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`,
-    args: args as never,
-  }
-
-  if (appendSessionId) {
-    // Atomically (a) apply the field updates, (b) insert the new session id
-    // into task_claude_sessions (OR IGNORE deduplicates), and (c) insert the
-    // outbox event row.  All three writes share one write transaction so a
-    // crash between any two leaves the DB consistent (either everything
-    // committed or nothing).
-    //
-    // Position is MAX(position)+1 for this task, or 0 for the first session.
-    const sessionIdStmt: InStatement = {
-      sql: `INSERT OR IGNORE INTO task_claude_sessions (task_id, session_id, position)
+  // Position is MAX(position)+1 for this task, or 0 for the first session.
+  // Built here (column patch + payload assembly stays in updateTask), but the
+  // raw `UPDATE tasks SET … WHERE id = ?` string and the three-branch atomic
+  // commit live in the Arc aggregate — the sole task-table writer (ADR-0052).
+  const sessionIdStmt: InStatement | undefined = appendSessionId
+    ? {
+        sql: `INSERT OR IGNORE INTO task_claude_sessions (task_id, session_id, position)
             SELECT ?, ?,
               COALESCE(
                 (SELECT MAX(position) + 1 FROM task_claude_sessions WHERE task_id = ?),
                 0
               )`,
-      args: [id, patch.claudeSessionId as string, id],
-    }
-    await withWriteTx(resolveQueueClient(), async (tx) => {
-      await tx.execute(updateStmt)
-      await tx.execute(sessionIdStmt)
-      // Event INSERTs share the same transaction: if any throws the whole
-      // transaction rolls back (no orphan state row without event).
-      for (const stmt of eventStmts) await tx.execute(stmt)
-    })
-  } else if (store) {
-    // store.batch runs all statements atomically (BEGIN IMMEDIATE … COMMIT)
-    // so the state write and event inserts are in the same commit.
-    await store.batch([updateStmt, ...eventStmts], 'write')
-  } else {
-    // Common path: wrap state write and event inserts in a single write
-    // transaction.  withWriteTx retries on SQLITE_BUSY so a transient lock
-    // contention doesn't drop the event.
-    await withWriteTx(resolveQueueClient(), async (tx) => {
-      await tx.execute(updateStmt)
-      for (const stmt of eventStmts) await tx.execute(stmt)
-    })
-  }
+        args: [id, patch.claudeSessionId as string, id],
+      }
+    : undefined
+
+  await Arc.applyStatusWrite({
+    id,
+    fields,
+    args,
+    eventStmts,
+    store,
+    appendSessionId,
+    sessionIdStmt,
+  })
 
   // NOTE: Action-queue clearing on status change is NOT done inline here.
   // The Invalidator (alert-dismisser) subscribes to the task lifecycle
