@@ -2873,44 +2873,15 @@ export const promoteDraftToTriaging = async (
   return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
 }
 
+/**
+ * Thin wrapper over {@link Arc.promoteDraftToQueued} (ADR-0052 sole-writer).
+ * The guarded `'draft' | 'triaging' → 'queued'` status UPDATE + conditional
+ * `task.queued` emit now live inside the Arc aggregate; this export keeps the
+ * historic call surface (the `updateTask` done-cascade, the `TaskStore` facade,
+ * and `triage-workflow.ts`) green by delegating verbatim.
+ */
 export const promoteDraftToQueued = async (
   taskId: string,
 ): Promise<Task | null> => {
-  await migrateQueueSchema()
-  const now = new Date().toISOString()
-  // PRD 2be831da: 'queued' requires zero confirmed-or-pending-review rows;
-  // rejected rows are historical and must not gate the promote.
-  // The guarded UPDATE + the task.queued emit share one transaction; the
-  // event is appended only when the row actually flipped (rowsAffected > 0),
-  // so a no-op promote emits nothing. Emitting task.queued lets the
-  // Invalidator evict any stale failure row for a task that is live again
-  // (ADR-0030).
-  const upd = await withWriteTx(resolveQueueClient(), async (tx) => {
-    const res = await tx.execute({
-      // updated_at first — exempt from STATUS_WRITE arch guard (conditional
-      // NOT EXISTS guard cannot be expressed through setTaskStatus).
-      sql: `UPDATE tasks
-               SET updated_at = ?, status = 'queued'
-             WHERE id = ?
-               AND status IN ('draft', 'triaging')
-               AND NOT EXISTS (
-                 SELECT 1 FROM task_blockers b
-                 JOIN tasks t ON t.id = b.blocker_task_id
-                 WHERE b.task_id = ? AND t.status != 'done'
-                   AND b.state IN ('confirmed', 'pending-review')
-               )`,
-      args: [now, taskId, taskId],
-    })
-    if (res.rowsAffected > 0) {
-      await tx.execute(buildEventInsert('task.queued', { taskId }))
-    }
-    return res
-  })
-  if (upd.rowsAffected === 0) return null
-  const r = await resolveQueueClient().execute({
-    sql: `SELECT * FROM tasks WHERE id = ?`,
-    args: [taskId],
-  })
-  if (r.rows.length === 0) return null
-  return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+  return Arc.promoteDraftToQueued(taskId)
 }

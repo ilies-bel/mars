@@ -328,6 +328,102 @@ export class Arc {
   }
 
   /**
+   * Guarded `'draft' | 'triaging' → 'queued'` promote (ADR-0052 sole-writer).
+   *
+   * Relocated bit-for-bit from `queue.ts:promoteDraftToQueued`. The status
+   * `UPDATE` carries a `NOT EXISTS` conditional WHERE (gate on zero
+   * confirmed-or-pending-review incomplete blockers) that cannot be expressed
+   * through the column-patch {@link Arc.applyStatusWrite} funnel, so it lives
+   * as its own primitive here.
+   *
+   * PRD 2be831da: `'queued'` requires zero confirmed-or-pending-review rows;
+   * rejected rows are historical and must not gate the promote. The guarded
+   * UPDATE + the `task.queued` emit share one transaction; the event is
+   * appended only when the row actually flipped (`rowsAffected > 0`), so a
+   * no-op promote emits nothing. Emitting `task.queued` lets the Invalidator
+   * evict any stale failure row for a task that is live again (ADR-0030).
+   *
+   * Store routing: when `store` is provided the guarded UPDATE + conditional
+   * emit run inside `store.atomic` (same commit); otherwise the body is the
+   * historic `withWriteTx(resolveQueueClient(), …)` form preserved bit-for-bit.
+   *
+   * Returns the updated {@link Task} on success; `null` if the row did not
+   * flip (already past `'draft'/'triaging'`, missing, or gated by a blocker).
+   */
+  static async promoteDraftToQueued(
+    taskId: string,
+    store?: DomainTaskStore,
+  ): Promise<Task | null> {
+    await migrateQueueSchema()
+    const now = new Date().toISOString()
+    if (store) {
+      const upd = await store.atomic(async (scope) => {
+        const res = await scope.execute({
+          // updated_at first — exempt from STATUS_WRITE arch guard (conditional
+          // NOT EXISTS guard cannot be expressed through setTaskStatus).
+          sql: `UPDATE tasks
+                   SET updated_at = ?, status = 'queued'
+                 WHERE id = ?
+                   AND status IN ('draft', 'triaging')
+                   AND NOT EXISTS (
+                     SELECT 1 FROM task_blockers b
+                     JOIN tasks t ON t.id = b.blocker_task_id
+                     WHERE b.task_id = ? AND t.status != 'done'
+                       AND b.state IN ('confirmed', 'pending-review')
+                   )`,
+          args: [now, taskId, taskId],
+        })
+        if ((res.rowsAffected ?? 0) > 0) {
+          await scope.execute(buildEventInsert('task.queued', { taskId }))
+        }
+        return res
+      })
+      if ((upd.rowsAffected ?? 0) === 0) return null
+      const r = await store.query({
+        sql: `SELECT * FROM tasks WHERE id = ?`,
+        args: [taskId],
+      })
+      if (r.rows.length === 0) return null
+      return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+    }
+    // PRD 2be831da: 'queued' requires zero confirmed-or-pending-review rows;
+    // rejected rows are historical and must not gate the promote.
+    // The guarded UPDATE + the task.queued emit share one transaction; the
+    // event is appended only when the row actually flipped (rowsAffected > 0),
+    // so a no-op promote emits nothing. Emitting task.queued lets the
+    // Invalidator evict any stale failure row for a task that is live again
+    // (ADR-0030).
+    const upd = await withWriteTx(resolveQueueClient(), async (tx) => {
+      const res = await tx.execute({
+        // updated_at first — exempt from STATUS_WRITE arch guard (conditional
+        // NOT EXISTS guard cannot be expressed through setTaskStatus).
+        sql: `UPDATE tasks
+                 SET updated_at = ?, status = 'queued'
+               WHERE id = ?
+                 AND status IN ('draft', 'triaging')
+                 AND NOT EXISTS (
+                   SELECT 1 FROM task_blockers b
+                   JOIN tasks t ON t.id = b.blocker_task_id
+                   WHERE b.task_id = ? AND t.status != 'done'
+                     AND b.state IN ('confirmed', 'pending-review')
+                 )`,
+        args: [now, taskId, taskId],
+      })
+      if (res.rowsAffected > 0) {
+        await tx.execute(buildEventInsert('task.queued', { taskId }))
+      }
+      return res
+    })
+    if (upd.rowsAffected === 0) return null
+    const r = await resolveQueueClient().execute({
+      sql: `SELECT * FROM tasks WHERE id = ?`,
+      args: [taskId],
+    })
+    if (r.rows.length === 0) return null
+    return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+  }
+
+  /**
    * The single status-transition funnel (ADR-0052). Routes every task status
    * change through {@link updateTask} — the transition primitive that survives
    * *inside* the aggregate. `updateTask` performs the `UPDATE tasks SET status`
