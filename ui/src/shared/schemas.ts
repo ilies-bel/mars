@@ -11,6 +11,7 @@ const taskStatusSchema = z.enum([
   'failed',
   'dropped',
   'blocked',
+  'under_investigation',
 ])
 
 const proposalSourceSchema = z.enum(['reflection', 'human', 'planner'])

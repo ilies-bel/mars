@@ -160,6 +160,18 @@ export const EventMap = {
     taskId: z.string(),
     question: z.string(),
   }),
+  /**
+   * Emitted when an operator clicks Investigate on a stale-worktree alert.
+   * The task status flips to 'under_investigation' in the same write-tx so
+   * the Invalidator (alert-dismisser) can subscribe here to resolve the open
+   * action-queue row — the alert disappears immediately from the queue.
+   * If the stale-worktree sweep later finds the worktree still stale it
+   * calls raiseInboxItem, which creates a FRESH open row (de-duped only on
+   * state='open'). Payload mirrors task.queued (ADR-0027/0030).
+   */
+  'task.under_investigation': z.object({
+    taskId: z.string(),
+  }),
 } as const;
 
 /** Union of every registered event type name. */

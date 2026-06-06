@@ -20,6 +20,7 @@ export type TaskStatus =
   | 'failed'
   | 'dropped'
   | 'blocked'
+  | 'under_investigation'
 
 /**
  * Transient lifecycle phase between a freshly-promoted task (draft → triaging)
@@ -39,6 +40,9 @@ export const NON_DISPATCHABLE_STATUSES: readonly TaskStatus[] = [
   'done',
   'failed',
   'dropped',
+  // Operator-triggered parking status: the worktree is under human investigation;
+  // the task MUST NOT be re-dispatched until explicitly re-queued.
+  'under_investigation',
 ] as const
 
 export const isDispatchableStatus = (status: TaskStatus): boolean =>
@@ -920,16 +924,20 @@ export const migrateQueueSchema = async (): Promise<void> => {
       taskFkRows.rows as unknown as Array<{ from: string }>
     ).some((r) => r.from === 'fix_for_task_id')
 
-    // Detect missing CHECK constraint on tasks.status. SQLite cannot add CHECK
-    // via ALTER TABLE, so we inspect the CREATE TABLE statement in sqlite_master.
+    // Detect missing or outdated CHECK constraint on tasks.status. SQLite cannot
+    // add/modify CHECK via ALTER TABLE, so we inspect the CREATE TABLE statement
+    // in sqlite_master. A rebuild is needed when the constraint is absent OR when
+    // it does not include every current status value (e.g. 'under_investigation'
+    // was added after the constraint was originally written).
     const tasksSqlRow = (
       await c.execute(
         `SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`,
       )
     ).rows[0] as unknown as { sql: string } | undefined
-    const tasksNeedCheckRebuild = !(tasksSqlRow?.sql ?? '').includes(
-      'CHECK (status IN',
-    )
+    const tasksSql = tasksSqlRow?.sql ?? ''
+    const tasksNeedCheckRebuild =
+      !tasksSql.includes('CHECK (status IN') ||
+      !tasksSql.includes("'under_investigation'")
 
     const healFkRows = await c.execute(
       `PRAGMA foreign_key_list(self_heal_attempts)`,
@@ -1048,7 +1056,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             id                   TEXT    PRIMARY KEY,
             prompt               TEXT    NOT NULL,
             status               TEXT    NOT NULL
-                                         CHECK (status IN ('draft','triaging','queued','running','verifying','merging','vega-reconciling','done','failed','dropped','blocked')),
+                                         CHECK (status IN ('draft','triaging','queued','running','verifying','merging','vega-reconciling','done','failed','dropped','blocked','under_investigation')),
             plan_functional      TEXT,
             plan_technical       TEXT,
             branch               TEXT,
@@ -2247,6 +2255,12 @@ export const updateTask = async (
         buildEventInsert('task.completed', { taskId: id, result: null }),
         buildEventInsert('task.terminal', { taskId: id, reason: 'done' }),
       )
+    } else if (patch.status === 'under_investigation') {
+      // Operator clicked Investigate on a stale-worktree alert. The event rides
+      // the transactional outbox so the Invalidator (alert-dismisser) resolves
+      // the open action-queue row on its next drain — the alert disappears from
+      // the queue without any inline DB write here (ADR-0027/0030).
+      eventStmts.push(buildEventInsert('task.under_investigation', { taskId: id }))
     }
   }
 

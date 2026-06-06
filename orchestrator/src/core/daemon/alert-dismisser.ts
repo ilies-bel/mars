@@ -99,6 +99,16 @@ export async function drainAlertDismissals(
         return true
       }
 
+      // Operator-triggered investigation: resolve the open stale-worktree row.
+      // The row disappears from the action queue immediately; if the stale-
+      // worktree sweep later re-detects the worktree as stale it creates a
+      // FRESH open row (raiseInboxItem de-dups only on state='open').
+      if (event.type === 'task.under_investigation') {
+        const { taskId } = event.payload as { taskId: string }
+        await dismissAlertsOnStatusChange(taskId, 'under_investigation')
+        return true
+      }
+
       // Legacy terminal / queued / unblocked path.
       const eviction = evictionFor(event)
       if (!eviction) return false // ignored event — advance cursor, no work

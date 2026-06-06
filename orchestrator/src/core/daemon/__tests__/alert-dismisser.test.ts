@@ -9,6 +9,8 @@ import type { EventName, EventPayload } from '../../../bus/events.js'
 interface QueueModule {
   migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  enqueueTask: typeof import('../../queue').enqueueTask
+  updateTask: typeof import('../../queue').updateTask
 }
 
 interface ActionQueueModule {
@@ -63,6 +65,27 @@ const loadModules = async (repo: string): Promise<Loaded> => {
     '../../../bus/subscribers'
   )) as unknown as SubscribersModule
   return { q, actionQueue, ad, pub, subs }
+}
+
+/**
+ * Verify that the `events` table contains a row of type `eventType` with
+ * a payload containing `{ taskId }`. Returns true if found.
+ */
+const findEventRow = async (
+  client: Client,
+  eventType: string,
+  taskId: string,
+): Promise<boolean> => {
+  const result = await client.execute({
+    sql: `SELECT payload FROM events WHERE type = ? ORDER BY id DESC LIMIT 10`,
+    args: [eventType],
+  })
+  return result.rows.some((r) => {
+    try {
+      const p = JSON.parse((r as unknown as { payload: string }).payload) as { taskId?: string }
+      return p.taskId === taskId
+    } catch { return false }
+  })
 }
 
 /** Raise a single open, origin-keyed actionQueue item for `taskId`. */
@@ -221,5 +244,73 @@ describe('alert-dismisser outbox subscriber', () => {
 
     expect(first.processed).toBe(1)
     expect(second.processed).toBe(0)
+  })
+
+  describe('task.under_investigation status mutation', () => {
+    it('(a) updateTask under_investigation inserts a task.under_investigation event in the same tx', async () => {
+      const { q, ad } = await loadModules(repo)
+      const client = q.resolveQueueClient()
+
+      // Create a queued task so updateTask has a row to modify.
+      const task = await q.enqueueTask('stale worktree task', undefined, { skipTriage: true })
+      const taskId = task.id
+
+      await ad.ensureAlertDismisser(client)
+      await q.updateTask(taskId, { status: 'under_investigation' })
+
+      // The events table must contain a task.under_investigation row for this task.
+      const found = await findEventRow(client, 'task.under_investigation', taskId)
+      expect(found).toBe(true)
+    })
+
+    it('(b) alert-dismisser resolves the open stale-worktree inbox item on task.under_investigation drain', async () => {
+      const { q, actionQueue, ad } = await loadModules(repo)
+      const client = q.resolveQueueClient()
+
+      const task = await q.enqueueTask('stale worktree', undefined, { skipTriage: true })
+      const taskId = task.id
+      const itemId = await raiseOpenItemFor(actionQueue, taskId)
+
+      // Register the subscriber BEFORE the status mutation so the cursor
+      // is positioned at the current event head (replay: false default).
+      await ad.ensureAlertDismisser(client)
+
+      // Flip via updateTask — emits task.under_investigation into the outbox.
+      await q.updateTask(taskId, { status: 'under_investigation' })
+
+      // Drain: the subscriber should consume the event and resolve the item.
+      const { processed } = await ad.drainAlertDismissals(client)
+
+      expect(processed).toBe(1)
+      const item = await actionQueue.getActionQueueItem(itemId)
+      expect(item).not.toBeNull()
+      expect(item!.state).toBe('resolved')
+    })
+
+    it('(c) a subsequent raiseInboxItem for the same origin creates a FRESH open row (reappear-if-still-stale)', async () => {
+      const { q, actionQueue, ad } = await loadModules(repo)
+      const client = q.resolveQueueClient()
+
+      const task = await q.enqueueTask('stale worktree revisit', undefined, { skipTriage: true })
+      const taskId = task.id
+      const firstItemId = await raiseOpenItemFor(actionQueue, taskId)
+
+      await ad.ensureAlertDismisser(client)
+      await q.updateTask(taskId, { status: 'under_investigation' })
+      await ad.drainAlertDismissals(client)
+
+      // Verify the first item was resolved.
+      expect((await actionQueue.getActionQueueItem(firstItemId))!.state).toBe('resolved')
+
+      // Simulate the stale-worktree sweep re-detecting the stale worktree and
+      // re-raising the alert. raiseInboxItem de-dups only on state='open', so a
+      // new row is created (not the old resolved one).
+      const secondItemId = await raiseOpenItemFor(actionQueue, taskId)
+
+      expect(secondItemId).not.toBe(firstItemId) // distinct row
+      expect((await actionQueue.getActionQueueItem(secondItemId))!.state).toBe('open')
+      // The original resolved item remains untouched.
+      expect((await actionQueue.getActionQueueItem(firstItemId))!.state).toBe('resolved')
+    })
   })
 })

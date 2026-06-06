@@ -21,6 +21,7 @@ const roleFromTask = (t: Task): Role => {
     case 'done':
     case 'failed':
     case 'dropped':
+    case 'under_investigation':
       return 'orchestrator'
   }
 }
@@ -29,6 +30,10 @@ const columnFor = (t: Task): ColumnKey | null => {
   switch (t.status) {
     case 'draft':
     case 'dropped':
+    case 'under_investigation':
+      // 'under_investigation' is a parked state — operator clicked Investigate
+      // on a stale-worktree alert; task is not actively in-flight so it does
+      // not appear in the Kanban board.
       return null
     case 'queued':
       return 'backlog'
