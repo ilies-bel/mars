@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto'
-import { writeFile, rename, chmod } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { writeFile, rename } from 'node:fs/promises'
 
 // ---------------------------------------------------------------------------
 // Error types
