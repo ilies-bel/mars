@@ -130,8 +130,22 @@ export const detectInstallSites = async (
  * PATH; building before that install would fail with `tsup: command not found`.
  * Install or build failures THROW — a workspace package that cannot build
  * would only fail typecheck later, more obscurely.
+ *
+ * Transient pnpm failures (exit 254 with empty stderr) are retried up to
+ * {@link WORKSPACE_DEP_INSTALL_MAX_RETRIES} extra times, mirroring the
+ * ENOTEMPTY retry pattern in {@link installWorktreeDeps}. After a successful
+ * install the build-tool binary is verified to exist in `node_modules/.bin`;
+ * if absent (pnpm exit-0 silent failure), a single re-install is attempted
+ * before proceeding to the build step.
+ *
+ * @internal Exported for unit-testing the retry and bin-check paths; not part
+ * of the module's public API.
  */
-const buildWorkspaceDepsForSite = async (
+
+/** Extra install attempts after the initial try (mirrors ENOTEMPTY_MAX_RETRIES). */
+const WORKSPACE_DEP_INSTALL_MAX_RETRIES = 2
+
+export const buildWorkspaceDepsForSite = async (
   site: InstallSite,
   worktreeRoot: string,
   runner: InstallRunner,
@@ -175,15 +189,72 @@ const buildWorkspaceDepsForSite = async (
       ? ['install', '--frozen-lockfile']
       : ['install']
     log?.(`[setup:install] installing workspace dep (${rel}) deps before build`)
-    const installRes = await runner('pnpm', depInstallArgs, depDir, {
+
+    // (a) Initial install with retry on transient exit 254 + empty stderr.
+    // pnpm emits exit 254 with no stderr output during brief CI races (store
+    // lock contention, flock timeout). Retrying without any cleanup is safe
+    // because the store is left intact on a 254 abort.
+    let installRes = await runner('pnpm', depInstallArgs, depDir, {
       timeoutMs,
       env: { CI: 'true' },
     })
+    for (
+      let attempt = 1;
+      attempt <= WORKSPACE_DEP_INSTALL_MAX_RETRIES &&
+      installRes.exitCode === 254 &&
+      installRes.stderr.trim() === '';
+      attempt++
+    ) {
+      log?.(
+        `[setup:install] workspace dep (${rel}) transient exit 254 — retrying (attempt ${attempt}/${WORKSPACE_DEP_INSTALL_MAX_RETRIES})`,
+      )
+      installRes = await runner('pnpm', depInstallArgs, depDir, {
+        timeoutMs,
+        env: { CI: 'true' },
+      })
+    }
+
     if (installRes.exitCode !== 0) {
+      const debugLogPath = resolve(depDir, 'pnpm-debug.log')
+      log?.(
+        `[setup:install] workspace dep install failed; pnpm-debug.log may have signal at: ${debugLogPath}`,
+      )
       throw new Error(
         `[setup:install] workspace dep install failed (${rel}): pnpm ${depInstallArgs.join(' ')} exited ${installRes.exitCode}\n` +
+          `pnpm-debug.log: ${debugLogPath}\n` +
           `stderr (truncated):\n${installRes.stderr.slice(0, 1000)}`,
       )
+    }
+
+    // (b) After a successful install, verify the build-tool binary is present
+    // in node_modules/.bin. pnpm can exit 0 while leaving the bin tree
+    // incomplete (a known silent failure mode), causing the subsequent
+    // `pnpm run build` to abort with "tsup: command not found". A single
+    // re-install recovers this without needing a full retry loop.
+    const buildScript = depManifest.scripts?.build ?? ''
+    const buildTool = buildScript.trim().split(/\s+/)[0] ?? ''
+    if (buildTool && !buildTool.includes('/')) {
+      const binPath = resolve(depDir, 'node_modules', '.bin', buildTool)
+      if (!(await fileExists(binPath))) {
+        log?.(
+          `[setup:install] workspace dep (${rel}) node_modules/.bin/${buildTool} missing after install — re-installing once`,
+        )
+        const reInstallRes = await runner('pnpm', depInstallArgs, depDir, {
+          timeoutMs,
+          env: { CI: 'true' },
+        })
+        if (reInstallRes.exitCode !== 0) {
+          const debugLogPath = resolve(depDir, 'pnpm-debug.log')
+          log?.(
+            `[setup:install] workspace dep re-install failed; check pnpm-debug.log at: ${debugLogPath}`,
+          )
+          throw new Error(
+            `[setup:install] workspace dep re-install failed (${rel}): pnpm ${depInstallArgs.join(' ')} exited ${reInstallRes.exitCode}\n` +
+              `pnpm-debug.log: ${debugLogPath}\n` +
+              `stderr (truncated):\n${reInstallRes.stderr.slice(0, 1000)}`,
+          )
+        }
+      }
     }
 
     log?.(`[setup:install] building workspace dep (${rel}) before install so its dist is packed`)
