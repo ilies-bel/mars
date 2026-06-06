@@ -39,7 +39,13 @@ const SINGLE_LINE_STATUS = /UPDATE\s+tasks\s+SET\b[^;]*\bstatus\s*=/
 
 const ALLOWLIST = [
   'core/queue.ts',
-  'core/queue-fix-tasks.ts',
+  // core/arc.ts: the Arc aggregate owns the recovery-spawn write path
+  // (Arc.spawnRecovery / Arc.attachToRecovery, ADR-0052). It flips the source
+  // task to 'blocked' inside the same batch that emits the task.blocked event
+  // via buildEventInsert(). The recovery-spawn logic moved here out of
+  // queue-fix-tasks.ts, which is now a thin delegating wrapper with no status
+  // write of its own.
+  'core/arc.ts',
   // queue-retry.ts: status writes routed through setTaskStatus (queue.ts);
   // only extra-column updates and terminal-event publishes remain there.
   'core/blocker-resolution.ts',
