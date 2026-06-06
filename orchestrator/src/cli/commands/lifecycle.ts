@@ -443,6 +443,93 @@ const watch: Command = {
   },
 }
 
+const update: Command = {
+  path: 'update',
+  summary: 'refresh framework files; diff (never clobber) user-owned workflows',
+  usage: 'usage: mars update [--yes] [--verbose] [-f|--config <path>]',
+  run: async (args, deps) => {
+    const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
+    const yes =
+      boolFlags.has('--yes') ||
+      args.positional.includes('-y') ||
+      boolFlags.has('--no-edit')
+    const verbose = boolFlags.has('--verbose')
+    const configPath = args.flags['--config']
+
+    // Phase 1: refresh the framework-owned files (CLAUDE.md, verify.json, …)
+    // via the daemon-routed init workflow with force overwrite. Its
+    // scaffold-workflows step never clobbers user-owned workflows (it runs
+    // force:false) — those are reconciled in phase 2. Running init through the
+    // daemon preserves the single-writer guard so the manifest is never
+    // corrupted by a concurrent write.
+    type InitResult = Awaited<
+      ReturnType<typeof import('../../workflows/init-workflow').runInit>
+    >
+    let initResult: InitResult
+    try {
+      initResult = (await deps.daemon.sendRequest({
+        op: 'init',
+        opts: { force: true, dryRun: false, verbose, ...(configPath ? { configPath } : {}) },
+      })) as InitResult
+    } catch (err: unknown) {
+      const e = err as Error & { code?: string }
+      if (e.code?.startsWith('init-config:')) {
+        deps.err(`error: ${e.message}`)
+        deps.err(`  config: ${e.code.slice('init-config:'.length)}`)
+        return { code: 1 }
+      }
+      if (e.code?.startsWith('nested-tech:')) {
+        const [outer, inner] = e.code.slice('nested-tech:'.length).split('::')
+        deps.err(`error: ${e.message}`)
+        deps.err(`  outer: ${outer}`)
+        deps.err(`  inner: ${inner}`)
+        return { code: 1 }
+      }
+      if (e.code?.startsWith('walk-access:')) {
+        deps.err(`error: ${e.message}`)
+        deps.err(`  path:  ${e.code.slice('walk-access:'.length)}`)
+        return { code: 1 }
+      }
+      throw err
+    }
+
+    if (
+      initResult.status === 'aborted-existing' ||
+      initResult.status === 'aborted-conflict'
+    ) {
+      deps.err(initResult.message)
+      return { code: 1 }
+    }
+
+    deps.out('refreshed framework files:')
+    for (const w of initResult.written ?? []) deps.out(`  ${w}`)
+
+    // Phase 2: reconcile user-owned workflows. Identical files refresh
+    // silently; diverged owned files show a unified diff and prompt accept/skip
+    // (--yes / --no-edit defaults to skip-on-conflict for CI).
+    const { updateWorkflows, realLineReader } = await import(
+      '../../init/update'
+    )
+    const result = await updateWorkflows({
+      repoRoot: deps.ctx.repoRoot,
+      stateDir: deps.ctx.stateDir,
+      yes,
+      readLine: realLineReader,
+      out: (s: string): void => deps.out(s),
+    })
+
+    const created = result.records.filter((r) => r.outcome === 'created')
+    const accepted = result.records.filter((r) => r.outcome === 'accepted')
+    const skipped = result.records.filter((r) => r.outcome === 'skipped')
+    const untouched = result.records.filter((r) => r.outcome === 'untouched')
+    deps.out(
+      `workflows: ${created.length} created, ${accepted.length} updated, ` +
+        `${skipped.length} kept, ${untouched.length} unowned`,
+    )
+    return { code: 0 }
+  },
+}
+
 export const lifecycleCommands: readonly Command[] = [
   show,
   makeSetPlan('functional'),
@@ -458,4 +545,5 @@ export const lifecycleCommands: readonly Command[] = [
   block,
   list,
   watch,
+  update,
 ]
