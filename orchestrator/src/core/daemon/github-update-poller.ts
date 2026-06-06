@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { MARS_VERSION } from '../../version'
+import { classifyInstallRoute } from './install-route'
 
 /**
  * How often the daemon polls for a new GitHub release. Six hours balances
@@ -16,6 +17,13 @@ export interface FrameworkUpdateCache {
   /** ISO-8601 timestamp of the successful check. */
   checkedAt: string
   releaseUrl: string
+  /**
+   * Whether the running daemon can self-update by replacing its own binary.
+   * `true` only when `available` is true AND the install is a prod binary
+   * (not a dev tsx wrapper). Written by the poller so the UI can disable the
+   * "Update" button without a separate RPC round-trip.
+   */
+  selfUpdatable: boolean
 }
 
 /**
@@ -104,6 +112,7 @@ export const pollGithubRelease = async (
 
     const latest = tagName.startsWith('v') ? tagName.slice(1) : tagName
     const available = isNewerVersion(latest, MARS_VERSION)
+    const selfUpdatable = available && classifyInstallRoute() === 'prod'
 
     const cache: FrameworkUpdateCache = {
       installed: MARS_VERSION,
@@ -111,6 +120,7 @@ export const pollGithubRelease = async (
       available,
       checkedAt: new Date().toISOString(),
       releaseUrl: htmlUrl,
+      selfUpdatable,
     }
 
     await writeFile(cacheFile, JSON.stringify(cache, null, 2) + '\n', 'utf8')
