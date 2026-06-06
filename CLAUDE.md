@@ -198,7 +198,7 @@ recovery-spawn path itself.
   spell it `(cd <abs-path> && …)` so the parent shell never moves.
 - The daemon's HTTP server binds an OS-assigned ephemeral port
   (`listen(0, '127.0.0.1', ...)` in
-  `orchestrator/src/mastra/daemon/http-server.ts`) and publishes it to
+  `orchestrator/src/core/daemon/http-server.ts`) and publishes it to
   `.mars/http.port`. To reach the daemon API (e.g. `/failure-reasons`,
   `/events`), read `PORT=$(cat .mars/http.port)` first — never guess the
   port. A 200 from a guessed port is usually an unrelated server (the
