@@ -260,33 +260,6 @@ const ActionBar = ({ item }: ActionBarProps) => {
   )
 }
 
-// ---- Reason + Recovery actions (failed rows only) ----
-
-interface FailedTaskPanelProps {
-  item: ActionQueueItem
-}
-
-/**
- * Reason + recovery actions for a failed-task row, rendered entirely from the
- * row's own fields (ADR-0042). The daemon's `buildActionQueueView` derives the
- * row's `body` (the Failure kind's verboseReason) and `actions` (the Failure
- * kind's recovery menu) from the single signature-keyed Failure kind record, so
- * the UI no longer re-fetches a separate failure-reason catalog or re-resolves a
- * code — it renders what it is handed.
- */
-const FailedTaskReasonAndActions = ({ item }: FailedTaskPanelProps) => {
-  return (
-    <>
-      <div>
-        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-          Reason
-        </dt>
-        <dd className="text-fg">{item.body || '(no reason recorded)'}</dd>
-      </div>
-      <ActionBar item={item} />
-    </>
-  )
-}
 
 // ---- Traces section ----
 
@@ -369,25 +342,27 @@ const TracesSection = ({ taskId }: TracesProps) => {
         Traces
       </dt>
       <dd>
-        <ul className="flex flex-col gap-1">
-          {events.map((e) => (
-            <li key={e.id} className="text-fg">
-              <span className="text-iron/60">{relativeTime(e.timestamp)}</span>{' '}
-              <span className={`font-mono text-[10px] uppercase ${severityColor(e.severity)}`}>
-                [{e.severity}]
-              </span>{' '}
-              <span className="font-mono text-[10px] text-iron">{e.kind}</span>
-              {e.phase ? (
-                <span className="font-mono text-[10px] text-iron/60">
-                  {' '}
-                  ·{' '}
-                  {e.phase}
-                </span>
-              ) : null}{' '}
-              <span>{summarizeTraceEvent(e)}</span>
-            </li>
-          ))}
-        </ul>
+        <div className="max-h-64 overflow-y-auto pr-1">
+          <ul className="flex flex-col gap-1">
+            {events.map((e) => (
+              <li key={e.id} className="text-fg">
+                <span className="text-iron/60">{relativeTime(e.timestamp)}</span>{' '}
+                <span className={`font-mono text-[10px] uppercase ${severityColor(e.severity)}`}>
+                  [{e.severity}]
+                </span>{' '}
+                <span className="font-mono text-[10px] text-iron">{e.kind}</span>
+                {e.phase ? (
+                  <span className="font-mono text-[10px] text-iron/60">
+                    {' '}
+                    ·{' '}
+                    {e.phase}
+                  </span>
+                ) : null}{' '}
+                <span>{summarizeTraceEvent(e)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
         {nextCursor !== null ? (
           <button
             type="button"
@@ -407,13 +382,15 @@ const TracesSection = ({ taskId }: TracesProps) => {
 
 interface DetailProps {
   item: ActionQueueItem
+  /** When provided, origin-tree nodes become navigable buttons that call this with the node id. */
+  onNavigateToTask?: (taskId: string) => void
 }
 
-const ActionQueueDetail = ({ item }: DetailProps) => {
+const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
   // A real failed task (not the daemon-killed-batch sentinel) can open the
   // shared TaskDetailDrawer. The `from=action-queue` tag keeps the Action queue
   // list mounted behind the drawer and returns here on close.
-  const canOpenTaskDetail =
+  const isRealFailedTask =
     item.kind === 'failed-task' && item.entityId !== '__daemon-killed-batch__'
 
   return (
@@ -432,10 +409,17 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
             {item.priority}
           </span>
         </div>
+        {/* Warm title — the original task + failure reason are the headline. */}
         <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
           {item.title || '(no title)'}
         </h2>
-        {canOpenTaskDetail ? (
+        {/* Plain-English failure reason shown prominently below the title for failed-task rows. */}
+        {item.kind === 'failed-task' && item.body ? (
+          <p className="mt-2 whitespace-pre-wrap font-mono text-[12px] text-fg/80">
+            {item.body}
+          </p>
+        ) : null}
+        {isRealFailedTask ? (
           <button
             type="button"
             data-testid="aq-open-task-detail"
@@ -451,11 +435,8 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
 
       <main className="flex-1 px-6 py-4">
         <dl className="flex flex-col gap-4 font-mono text-[12px]">
-          {item.kind === 'failed-task' ? (
-            <FailedTaskReasonAndActions item={item} />
-          ) : (
-            <ActionBar item={item} />
-          )}
+          {/* Recovery actions — always at the top of the main body. */}
+          <ActionBar item={item} />
           {item.kind === 'stale-worktree' && (
             <>
               <div>
@@ -503,16 +484,7 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
               </div>
             </>
           )}
-          <div>
-            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Details
-            </dt>
-            <dd className="whitespace-pre-wrap text-fg">
-              {item.body.trim() || (
-                <span className="text-iron/70">(no details recorded)</span>
-              )}
-            </dd>
-          </div>
+          {/* Diagnosis before the origin chain so context is established first. */}
           {item.diagnosis ? (
             <div>
               <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
@@ -528,6 +500,27 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
               </dd>
             </div>
           ) : null}
+          {/* Origin / recovery chain — navigable links between origin and fix tasks. */}
+          {isRealFailedTask ? (
+            <OriginTree
+              taskId={item.entityId}
+              onNavigate={onNavigateToTask}
+            />
+          ) : null}
+          {/* Details — shown only for non-failed rows; failed rows surface body in the header. */}
+          {item.kind !== 'failed-task' ? (
+            <div>
+              <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+                Details
+              </dt>
+              <dd className="whitespace-pre-wrap text-fg">
+                {item.body.trim() || (
+                  <span className="text-iron/70">(no details recorded)</span>
+                )}
+              </dd>
+            </div>
+          ) : null}
+          {/* DAG context — below the fold. */}
           {item.dag && (
             <>
               {item.dag.proposalId && (
@@ -549,11 +542,9 @@ const ActionQueueDetail = ({ item }: DetailProps) => {
               />
             </>
           )}
-          {item.kind === 'failed-task' && item.entityId !== '__daemon-killed-batch__' ? (
-            <>
-              <TracesSection taskId={item.entityId} />
-              <OriginTree taskId={item.entityId} />
-            </>
+          {/* Traces — bounded scroll so they never push the rest of the card off-screen. */}
+          {isRealFailedTask ? (
+            <TracesSection taskId={item.entityId} />
           ) : null}
           <div>
             <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
@@ -735,7 +726,14 @@ export const ActionQueuePage = () => {
             No matches.
           </div>
         ) : selected ? (
-          <ActionQueueDetail key={selected.id} item={selected} />
+          <ActionQueueDetail
+            key={selected.id}
+            item={selected}
+            onNavigateToTask={(taskId: string) => {
+              const found = filtered.find((i) => i.entityId === taskId)
+              if (found) setSelectedId(found.id)
+            }}
+          />
         ) : (
           <div className="flex h-full items-center justify-center font-mono text-[12px] text-iron">
             Select an item

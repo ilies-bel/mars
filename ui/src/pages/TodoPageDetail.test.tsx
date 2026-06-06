@@ -151,14 +151,16 @@ describe('TodoPage exports', () => {
 // ---------------------------------------------------------------------------
 // AC1: A failed-task row renders its reason from the row body (ADR-0042),
 // which the daemon derived from the signature-keyed Failure kind record.
+// The failure reason is now shown prominently in the header (not in a
+// separate "Reason" section in the body).
 // ---------------------------------------------------------------------------
 
-describe('actionQueue detail – Reason section', () => {
-  it('renders the row body as the reason for a failed-task row', () => {
+describe('actionQueue detail – failure reason in header', () => {
+  it('renders the row body as the failure reason for a failed-task row', () => {
     const qc = makeClient({ taskId: 't-1' })
     const html = renderDetail(BASE_ITEM, qc)
+    // Reason text appears in the card (shown in the header section).
     expect(html).toContain('verbatim body text')
-    expect(html).toContain('>Reason<')
   })
 
   it('renders a different body verbatim for a different row', () => {
@@ -170,7 +172,14 @@ describe('actionQueue detail – Reason section', () => {
     expect(html).toContain('The changes did not pass type-checking.')
   })
 
-  it('does NOT render the Reason section for a stale-worktree row', () => {
+  it('does NOT render a "Reason" section label for any row kind', () => {
+    // The "Reason" label was replaced by inline body text in the header.
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(BASE_ITEM, qc)
+    expect(html).not.toContain('>Reason<')
+  })
+
+  it('does NOT render the failure reason in the header for a stale-worktree row', () => {
     const stale = makeItem({
       kind: 'stale-worktree',
       errorKind: 'stale-worktree',
@@ -191,6 +200,7 @@ describe('actionQueue detail – Reason section', () => {
     })
     const qc = makeClient({ taskId: 't-1' })
     const html = renderDetail(stale, qc)
+    // Stale-worktree rows have no "Reason" label and no failure-reason header text.
     expect(html).not.toContain('>Reason<')
   })
 })
@@ -253,6 +263,21 @@ describe('actionQueue detail – Traces section', () => {
 })
 
 // ---------------------------------------------------------------------------
+// AC3b: Traces list is bounded inside a scrollable container.
+// ---------------------------------------------------------------------------
+
+describe('actionQueue detail – bounded trace scroll', () => {
+  it('wraps the trace list in an overflow-y-auto container', () => {
+    const qc = makeClient({
+      taskId: 't-1',
+      events: ONE_FAILURE_EVENT,
+    })
+    const html = renderDetail(BASE_ITEM, qc)
+    expect(html).toContain('overflow-y-auto')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // AC4: Origins section.
 // ---------------------------------------------------------------------------
 
@@ -282,6 +307,25 @@ describe('actionQueue detail – Origins section', () => {
     })
     const html = renderDetail(BASE_ITEM, qc)
     expect(html).toContain('No origin recorded for this task.')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// AC4b: Origin/recovery navigation — nodes are buttons in the detail card.
+// ---------------------------------------------------------------------------
+
+describe('actionQueue detail – origin/recovery navigation', () => {
+  it('renders origin-tree nodes as navigable buttons for a failed-task row with siblings', () => {
+    const qc = makeClient({
+      taskId: 't-1',
+      origins: PRD_ORIGINS('t-1'),
+    })
+    const html = renderDetail(BASE_ITEM, qc)
+    // Origin tree is present.
+    expect(html).toContain('data-testid="origin-tree"')
+    // When onNavigate is wired, OriginNodeRow wraps each node in a button
+    // with the 'rounded text-left' class pair — unique to navigation mode.
+    expect(html).toContain('rounded text-left')
   })
 })
 
