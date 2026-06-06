@@ -84,26 +84,6 @@ export async function ensureActionQueueRepopulator(client: Client): Promise<void
 }
 
 /**
- * Parse a `recovery_payload` JSON blob and check whether it represents a
- * `main-commiter` recovery. F.2's `raiseAggregatedMainCommiterFailureRow`
- * already owns the actionQueue row for those failures; the structured writer
- * must not compete.
- */
-const isMainCommiterRecovery = (
-  recoveryPayload: string | null,
-  kind: string | undefined,
-): boolean => {
-  if (kind !== 'fix') return false
-  if (recoveryPayload === null || recoveryPayload.length === 0) return false
-  try {
-    const parsed = JSON.parse(recoveryPayload) as { recipe?: unknown }
-    return parsed.recipe === 'main-commiter'
-  } catch {
-    return false
-  }
-}
-
-/**
  * Apply the actionQueue mutation for a single mapped event.
  *
  * Separated from the drain loop so the caller can invoke it AFTER the
@@ -137,8 +117,7 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
       }
     }
 
-    // Load the task to read its structured failure signature and the recovery
-    // metadata that decides whether F.2's aggregated writer owns this row.
+    // Load the task to check its kind and read its structured failure signature.
     const task = await getTask(taskId)
 
     // Race guard (purge-before-drain): only dropTask deletes task rows, so
@@ -149,16 +128,12 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
     // drained, and its cursor will not revisit that close event. Skip.
     if (task === null) return
 
-    // F.2 override: failed `main-commiter` recoveries are handled by
-    // `raiseAggregatedMainCommiterFailureRow`, which writes a cohort-listing
-    // body keyed on the committer's task id. Bail BEFORE raising so the
-    // structured writer and the aggregated writer don't compete.
-    if (
-      task !== null &&
-      isMainCommiterRecovery(task.recoveryPayload, task.kind)
-    ) {
-      return
-    }
+    // Fix-task override: any failed recovery task (kind='fix') is already owned
+    // by the origin-keyed escalation row raised in handleTaskFailureWithFixTask
+    // (queue-fix-tasks.ts). The repopulator must not raise a second row for any
+    // fix task — doing so would split one arc into two alert entries in the
+    // action queue. The origin-keyed row is the single owner regardless of recipe.
+    if (task.kind === 'fix') return
 
     // Resolve the single Failure kind record from the structured failure
     // signature (ADR-0042). This keys on the `<failingStep>/<error-class>`
@@ -167,12 +142,11 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
     // real record (title, reason, recipe ref, action menu) instead of
     // collapsing to `unknown`. Falls through to an unknown record when the
     // signature is null or unregistered.
-    const sig = task?.failureSignature ?? null
-    const fk = resolveFailureKind(sig, task?.error ?? '')
+    const sig = task.failureSignature ?? null
+    const fk = resolveFailureKind(sig, task.error ?? '')
 
-    // raiseActionQueueItem is idempotent: if an open origin row already exists
-    // (raised by a richer writer such as queue-fix-tasks), it bumps
-    // seen_count rather than inserting a duplicate row.
+    // raiseActionQueueItem is idempotent: if an open origin row already exists,
+    // it bumps seen_count rather than inserting a duplicate row.
     await raiseActionQueueItem({
       kind: 'failed',
       category: 'orchestrator',

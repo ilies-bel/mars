@@ -511,6 +511,33 @@ describe('action-queue-repopulator outbox subscriber', () => {
     expect(openItems.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
   })
 
+  it('does not raise a repopulator row for a generic fix task (recoveryPayload=null)', async () => {
+    // A generic (non-main-commiter) recovery task (kind='fix', recoveryPayload=null)
+    // that fails must NOT produce a repopulator row. The origin-keyed escalation row
+    // raised by handleTaskFailureWithFixTask is the single owner of the arc alert.
+    // Previously the narrow isMainCommiterRecovery gate let this case through, causing
+    // a second row keyed on the fix task's own id (lineage audit findings #5 + #7).
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-generic-fix'
+
+    await rep.ensureActionQueueRepopulator(client)
+    await insertTaskRow(client, {
+      id: taskId,
+      kind: 'fix',
+      recoveryPayload: null,
+    })
+
+    await publish(pub, client, 'task.failed', { taskId, error: 'coder failed' })
+    const { processed } = await rep.drainActionQueueRepopulations(client)
+    // The event is consumed (cursor advances, processedOnce commits) …
+    expect(processed).toBe(1)
+    // … but no action-queue row is raised — the repopulator returns early for
+    // all fix tasks, leaving the origin-keyed escalation row as the sole alert.
+    const openItems = await actionQueue.listActionQueueItems('open')
+    expect(openItems.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
+  })
+
   it('derives Failure kind title/body on task.dropped too', async () => {
     const { q, actionQueue, rep, pub } = await loadModules(repo)
     const client = q.resolveQueueClient()
