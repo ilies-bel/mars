@@ -2328,204 +2328,18 @@ export interface DropTaskResult {
 }
 
 /**
- * Database-level drop. Works regardless of status — clears every
- * task_blockers row mentioning <id> on either side, cascade-deletes every
- * fix/recovery task whose `fix_for_task_id` points at <id> (ADR-0049), and
- * deletes the task row. Caller is responsible for cancelling any in-flight
- * workflow and removing the worktree+branch on disk before invoking this.
+ * Database-level drop. Thin wrapper over {@link Arc.drop} (ADR-0052): the full
+ * cascade — pre-delete `task.dropped`/`task.terminal` emits, dependent
+ * re-queue, proposal-blocker cleanup, fix-task cascade, and the final DELETEs,
+ * all inside one atomic transaction (ADR-0030 / ADR-0049) — lives on the Arc
+ * aggregate now. Signature kept byte-identical for the task-store facade and
+ * existing call sites (`corePurgeTask`, etc.).
  *
- * Emits `task.dropped` (then `task.terminal{purged}`) BEFORE `DELETE FROM
- * tasks`, all within a single `withWriteTx` call. The event and the deletion
- * share one atomic commit so the Invalidator (ADR-0030) can still resolve the
- * taskId — a post-delete emit would race the subscriber cursor read and leave
- * Action-queue rows + dismissal permanently stale.
- *
- * Cascade fix tasks receive the same pre-delete event pair so their own
- * Action-queue rows are invalidated atomically (ADR-0049).
+ * Caller is responsible for cancelling any in-flight workflow and removing the
+ * worktree+branch on disk before invoking this.
  */
 export const dropTask = async (id: string): Promise<DropTaskResult> => {
-  await migrateQueueSchema()
-  const c = resolveQueueClient()
-
-  return withWriteTx(c, async (tx) => {
-    const before = await tx.execute({
-      sql: `SELECT status FROM tasks WHERE id = ?`,
-      args: [id],
-    })
-    if (before.rows.length === 0) {
-      throw new Error(`task ${id} not found`)
-    }
-    const previousStatus = (before.rows[0] as unknown as { status: TaskStatus }).status
-
-    const incoming = await tx.execute({
-      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
-      args: [id],
-    })
-    const outgoing = await tx.execute({
-      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
-      args: [id],
-    })
-    const incomingCount = Number(
-      (incoming.rows[0] as unknown as { n: number | bigint }).n,
-    )
-    const outgoingCount = Number(
-      (outgoing.rows[0] as unknown as { n: number | bigint }).n,
-    )
-
-    // Cascade: collect every fix/recovery task whose fix_for_task_id points
-    // at the origin being dropped. These are deleted atomically in the same
-    // transaction (ADR-0049: purge cascades the whole recovery arc).
-    const fixRefRows = await tx.execute({
-      sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
-      args: [id],
-    })
-    const cascadedFixTaskIds = fixRefRows.rows.map(
-      (row) => (row as unknown as { id: string }).id,
-    )
-
-    // Emit task.dropped BEFORE the DELETE so the event survives the row removal
-    // and the Invalidator's cursor can still resolve the taskId (ADR-0030).
-    await publish(tx, 'task.dropped', { taskId: id, dropReason: 'purged' })
-    await publish(tx, 'task.terminal', { taskId: id, reason: 'purged' })
-
-    // Emit pre-delete events for every cascade fix task so their Action-queue
-    // rows are invalidated before their rows disappear (ADR-0030 / ADR-0049).
-    for (const fixId of cascadedFixTaskIds) {
-      await publish(tx, 'task.dropped', { taskId: fixId, dropReason: 'purged' })
-      await publish(tx, 'task.terminal', { taskId: fixId, reason: 'purged' })
-    }
-
-    // Release dependents: tasks blocked on <id> that have no other non-terminal
-    // blocker must flip to 'queued'. This must run BEFORE the bulk DELETE below
-    // so the NOT-EXISTS guard sees the correct remaining edge state.
-    // The individual edge deletions here make the remaining bulk DELETE a no-op
-    // for those rows — correctness is unchanged either way.
-    const depRows = await tx.execute({
-      sql: `SELECT task_id FROM task_blockers WHERE blocker_task_id = ?`,
-      args: [id],
-    })
-    const dependentIds = depRows.rows.map(
-      (r) => (r as unknown as { task_id: string }).task_id,
-    )
-    const releaseNow = new Date().toISOString()
-    for (const depId of dependentIds) {
-      // Remove this specific edge so the NOT-EXISTS subquery below does not
-      // count the dropped task as an active blocker when deciding to re-queue.
-      await tx.execute({
-        sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
-        args: [depId, id],
-      })
-      // Re-queue the dependent only when every other blocker is already terminal.
-      // updated_at precedes status in the SET clause — exempt form required by
-      // the architecture guard (status-writer-singleton.test.ts).
-      const upd = await tx.execute({
-        sql: `UPDATE tasks
-                 SET updated_at = ?, status = 'queued'
-               WHERE id = ? AND status = 'blocked'
-                 AND NOT EXISTS (
-                   SELECT 1
-                     FROM task_blockers b
-                     JOIN tasks t2 ON t2.id = b.blocker_task_id
-                    WHERE b.task_id = ?
-                      AND t2.status NOT IN ('done', 'failed')
-                      AND b.state IN ('confirmed', 'pending-review')
-                 )`,
-        args: [releaseNow, depId, depId],
-      })
-      if ((upd.rowsAffected ?? 0) > 0) {
-        await publish(tx, 'task.unblocked', { taskId: depId, blockerTaskId: id })
-      }
-    }
-
-    await tx.execute({
-      sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
-      args: [id, id],
-    })
-    // task_proposal_blockers has a FK on task_id → tasks(id). Delete these
-    // rows before the task row so the constraint never fires. (Rows where the
-    // task appears as proposal_id are in a different db and have no FK here.)
-    await tx.execute({
-      sql: `DELETE FROM task_proposal_blockers WHERE task_id = ?`,
-      args: [id],
-    })
-    // questions has a FK on task_id → tasks(id). Remove its rows before the
-    // task row is deleted so the FK constraint never fires. The table may not
-    // yet exist on older DB snapshots that haven't been migrated; the execute
-    // is safe because migrateQueueSchema() runs at the top of dropTask and
-    // will have created the table before we reach this point.
-    await tx.execute({
-      sql: `DELETE FROM questions WHERE task_id = ?`,
-      args: [id],
-    })
-
-    // Cascade-delete each fix/recovery task that pointed at the origin.
-    // For each: release any tasks that were blocked on the fix task (e.g. other
-    // origins sharing a shared recipe fix task), clean up its edges and proposal
-    // blockers, then delete its row. ADR-0049: fix tasks never outlive their
-    // origin.
-    for (const fixId of cascadedFixTaskIds) {
-      // Release tasks blocked on this fix task (unblock them if all other
-      // blockers are terminal — mirrors the dependent-release loop above).
-      const fixDepRows = await tx.execute({
-        sql: `SELECT task_id FROM task_blockers WHERE blocker_task_id = ?`,
-        args: [fixId],
-      })
-      for (const row of fixDepRows.rows) {
-        const depId = (row as unknown as { task_id: string }).task_id
-        // Skip the origin being dropped — its row disappears below anyway.
-        if (depId === id) continue
-        await tx.execute({
-          sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
-          args: [depId, fixId],
-        })
-        const upd = await tx.execute({
-          sql: `UPDATE tasks
-                   SET updated_at = ?, status = 'queued'
-                 WHERE id = ? AND status = 'blocked'
-                   AND NOT EXISTS (
-                     SELECT 1
-                       FROM task_blockers b
-                       JOIN tasks t2 ON t2.id = b.blocker_task_id
-                      WHERE b.task_id = ?
-                        AND t2.status NOT IN ('done', 'failed')
-                        AND b.state IN ('confirmed', 'pending-review')
-                   )`,
-          args: [releaseNow, depId, depId],
-        })
-        if ((upd.rowsAffected ?? 0) > 0) {
-          await publish(tx, 'task.unblocked', { taskId: depId, blockerTaskId: fixId })
-        }
-      }
-      await tx.execute({
-        sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
-        args: [fixId, fixId],
-      })
-      await tx.execute({
-        sql: `DELETE FROM task_proposal_blockers WHERE task_id = ?`,
-        args: [fixId],
-      })
-      await tx.execute({
-        sql: `DELETE FROM questions WHERE task_id = ?`,
-        args: [fixId],
-      })
-      await tx.execute({
-        sql: `DELETE FROM tasks WHERE id = ?`,
-        args: [fixId],
-      })
-    }
-
-    await tx.execute({
-      sql: `DELETE FROM tasks WHERE id = ?`,
-      args: [id],
-    })
-
-    return {
-      taskId: id,
-      previousStatus,
-      edgesRemoved: { incoming: incomingCount, outgoing: outgoingCount },
-      cascadedFixTaskIds,
-    }
-  })
+  return Arc.load(id).drop()
 }
 
 export const insertReflectionTask = async (corpusSize: number): Promise<string> => {
@@ -2540,53 +2354,18 @@ export const insertReflectionTask = async (corpusSize: number): Promise<string> 
   return id
 }
 
+/**
+ * Add user-facing blocker edges. Thin wrapper over {@link Arc.addBlocker}
+ * (ADR-0052): the existence checks, dedupe, ADR-0040 leaf-node guard, and the
+ * `state='confirmed'` batch INSERT all live on the Arc aggregate now. Signature
+ * kept byte-identical for the task-store facade and existing call sites
+ * (`enqueueFollowUpOnce`, `upsertFixTask` non-exempt paths).
+ */
 export const addBlockers = async (
   taskId: string,
   blockerIds: readonly string[],
 ): Promise<void> => {
-  if (blockerIds.length === 0) return
-  await migrateQueueSchema()
-  const c = resolveQueueClient()
-
-  const taskRow = await c.execute({
-    sql: `SELECT 1 FROM tasks WHERE id = ?`,
-    args: [taskId],
-  })
-  if (taskRow.rows.length === 0) {
-    throw new Error(`task ${taskId} not found`)
-  }
-  const seen = new Set<string>()
-  const unique: string[] = []
-  for (const id of blockerIds) {
-    if (id === taskId) continue
-    if (seen.has(id)) continue
-    seen.add(id)
-    const r = await c.execute({
-      sql: `SELECT 1 FROM tasks WHERE id = ?`,
-      args: [id],
-    })
-    if (r.rows.length === 0) {
-      throw new Error(`blocker ${id} not found`)
-    }
-    unique.push(id)
-  }
-
-  if (unique.length === 0) return
-  // ADR-0040 leaf-node guard: recovery (fix) tasks cannot be either endpoint
-  // of a task_blockers edge. Probe both sides before the batch — the fix-task
-  // spawn path (`upsertFixTask`) is the one legitimate origin → fix writer
-  // and bypasses this entry point by reaching `task_blockers` directly.
-  for (const blockerId of unique) {
-    await assertNotRecoveryEdge(taskId, blockerId, { client: c })
-  }
-  const now = new Date().toISOString()
-  // Causal writers default to 'confirmed' state. The Linker writes
-  // 'pending-review' rows via a separate entry point (TODO: linker writer).
-  const stmts = unique.map((blockerId) => ({
-    sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-    args: [taskId, blockerId, now],
-  }))
-  await c.batch(stmts, 'write')
+  await Arc.load(taskId).addBlocker(taskId, blockerIds)
 }
 
 /**
@@ -2705,16 +2484,16 @@ export const addPendingReviewBlockers = async (
   await c.batch(stmts, 'write')
 }
 
+/**
+ * Remove a single blocker edge. Thin wrapper over {@link Arc.removeBlocker}
+ * (ADR-0052); status is unchanged. Signature kept byte-identical for the
+ * task-store facade and existing call sites.
+ */
 export const removeBlocker = async (
   taskId: string,
   blockerId: string,
 ): Promise<{ removed: boolean }> => {
-  await migrateQueueSchema()
-  const r = await resolveQueueClient().execute({
-    sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
-    args: [taskId, blockerId],
-  })
-  return { removed: r.rowsAffected > 0 }
+  return Arc.load(taskId).removeBlocker(taskId, blockerId)
 }
 
 export const clearBlockers = async (taskId: string): Promise<void> => {

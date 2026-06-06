@@ -33,6 +33,7 @@ import {
   type TaskKind,
   type TaskTag,
   type EnqueueTaskOptions,
+  type DropTaskResult,
 } from './queue'
 import {
   getDefaultTaskStore,
@@ -41,6 +42,7 @@ import {
 } from './store/task-store'
 import { getRecipe, type FixRecipeContext } from './lib/fix-recipes'
 import { buildEventInsert } from './lib/outbox'
+import { assertNotRecoveryEdge } from './lib/blocker-invariant'
 import { internalBus } from '../internal-bus'
 
 const truncate = (s: string, max: number): string =>
@@ -567,6 +569,308 @@ export class Arc {
       failureSignature: input.failureReasonCode ?? 'verify:main-dirty',
       failingStep: 'dispatch:main-dirty',
       originId: source.originId,
+    })
+  }
+
+  /**
+   * Add user-facing blocker edges (ADR-0052). Routes the historic
+   * `addBlockers` body through the Arc aggregate: existence-check the dependent
+   * task and every blocker id, dedupe (drop self-blocks and repeats), run the
+   * ADR-0040 leaf-node guard ({@link assertNotRecoveryEdge}) on both endpoints
+   * of every surviving edge, then batch-insert `state='confirmed'` rows.
+   *
+   * The recovery-spawn path (`spawnRecovery`/`attachToRecovery`) is the one
+   * legitimate origin → fix edge writer and bypasses this method by reaching
+   * `task_blockers` directly — the guard does not apply there (ADR-0040).
+   */
+  async addBlocker(
+    taskId: string,
+    blockerIds: readonly string[],
+  ): Promise<void> {
+    if (blockerIds.length === 0) return
+    await migrateQueueSchema()
+    const s = this.store
+
+    const taskRow = await s.execute({
+      sql: `SELECT 1 FROM tasks WHERE id = ?`,
+      args: [taskId],
+    })
+    if (taskRow.rows.length === 0) {
+      throw new Error(`task ${taskId} not found`)
+    }
+    const seen = new Set<string>()
+    const unique: string[] = []
+    for (const id of blockerIds) {
+      if (id === taskId) continue
+      if (seen.has(id)) continue
+      seen.add(id)
+      const r = await s.execute({
+        sql: `SELECT 1 FROM tasks WHERE id = ?`,
+        args: [id],
+      })
+      if (r.rows.length === 0) {
+        throw new Error(`blocker ${id} not found`)
+      }
+      unique.push(id)
+    }
+
+    if (unique.length === 0) return
+    // ADR-0040 leaf-node guard: recovery (fix) tasks cannot be either endpoint
+    // of a task_blockers edge. Probe both sides before the batch — the fix-task
+    // spawn path (`spawnRecovery`) is the one legitimate origin → fix writer
+    // and bypasses this entry point by reaching `task_blockers` directly.
+    for (const blockerId of unique) {
+      await assertNotRecoveryEdge(taskId, blockerId, { client: s })
+    }
+    const now = new Date().toISOString()
+    // Causal writers default to 'confirmed' state. The Linker writes
+    // 'pending-review' rows via a separate entry point.
+    const stmts = unique.map((blockerId) => ({
+      sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+      args: [taskId, blockerId, now],
+    }))
+    await s.batch(stmts, 'write')
+  }
+
+  /**
+   * Remove a single blocker edge (ADR-0052). Routes the historic
+   * `removeBlocker` body through the Arc aggregate; status is unchanged.
+   * Reports `{ removed: true }` when a row was deleted, `false` otherwise.
+   */
+  async removeBlocker(
+    taskId: string,
+    blockerId: string,
+  ): Promise<{ removed: boolean }> {
+    await migrateQueueSchema()
+    const r = await this.store.execute({
+      sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+      args: [taskId, blockerId],
+    })
+    return { removed: r.rowsAffected > 0 }
+  }
+
+  /**
+   * Database-level drop of the arc's task (ADR-0052). Works regardless of
+   * status — clears every `task_blockers` row mentioning the id on either side,
+   * cascade-deletes every fix/recovery task whose `fix_for_task_id` points at
+   * the id (ADR-0049), and deletes the task row. Caller is responsible for
+   * cancelling any in-flight workflow and removing the worktree+branch on disk
+   * before invoking this.
+   *
+   * Emits `task.dropped` (then `task.terminal{purged}`) BEFORE `DELETE FROM
+   * tasks`, all within a single atomic transaction (ADR-0030). The event and
+   * the deletion share one commit so the Invalidator can still resolve the
+   * taskId — a post-delete emit would race the subscriber cursor read and leave
+   * Action-queue rows + dismissal permanently stale.
+   *
+   * Cascade fix tasks receive the same pre-delete event pair so their own
+   * Action-queue rows are invalidated atomically (ADR-0049).
+   */
+  async drop(): Promise<DropTaskResult> {
+    await migrateQueueSchema()
+    const id = this.arcId
+
+    return this.store.atomic(async (scope) => {
+      const before = await scope.execute({
+        sql: `SELECT status FROM tasks WHERE id = ?`,
+        args: [id],
+      })
+      if (before.rows.length === 0) {
+        throw new Error(`task ${id} not found`)
+      }
+      const previousStatus = (before.rows[0] as unknown as { status: TaskStatus })
+        .status
+
+      const incoming = await scope.execute({
+        sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
+        args: [id],
+      })
+      const outgoing = await scope.execute({
+        sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
+        args: [id],
+      })
+      const incomingCount = Number(
+        (incoming.rows[0] as unknown as { n: number | bigint }).n,
+      )
+      const outgoingCount = Number(
+        (outgoing.rows[0] as unknown as { n: number | bigint }).n,
+      )
+
+      // Cascade: collect every fix/recovery task whose fix_for_task_id points
+      // at the origin being dropped. These are deleted atomically in the same
+      // transaction (ADR-0049: purge cascades the whole recovery arc).
+      const fixRefRows = await scope.execute({
+        sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+        args: [id],
+      })
+      const cascadedFixTaskIds = fixRefRows.rows.map(
+        (row) => (row as unknown as { id: string }).id,
+      )
+
+      // Emit task.dropped BEFORE the DELETE so the event survives the row
+      // removal and the Invalidator's cursor can still resolve the taskId
+      // (ADR-0030).
+      await scope.execute(
+        buildEventInsert('task.dropped', { taskId: id, dropReason: 'purged' }),
+      )
+      await scope.execute(
+        buildEventInsert('task.terminal', { taskId: id, reason: 'purged' }),
+      )
+
+      // Emit pre-delete events for every cascade fix task so their Action-queue
+      // rows are invalidated before their rows disappear (ADR-0030 / ADR-0049).
+      for (const fixId of cascadedFixTaskIds) {
+        await scope.execute(
+          buildEventInsert('task.dropped', {
+            taskId: fixId,
+            dropReason: 'purged',
+          }),
+        )
+        await scope.execute(
+          buildEventInsert('task.terminal', { taskId: fixId, reason: 'purged' }),
+        )
+      }
+
+      // Release dependents: tasks blocked on <id> that have no other
+      // non-terminal blocker must flip to 'queued'. This must run BEFORE the
+      // bulk DELETE below so the NOT-EXISTS guard sees the correct remaining
+      // edge state. The individual edge deletions here make the remaining bulk
+      // DELETE a no-op for those rows — correctness is unchanged either way.
+      const depRows = await scope.execute({
+        sql: `SELECT task_id FROM task_blockers WHERE blocker_task_id = ?`,
+        args: [id],
+      })
+      const dependentIds = depRows.rows.map(
+        (r) => (r as unknown as { task_id: string }).task_id,
+      )
+      const releaseNow = new Date().toISOString()
+      for (const depId of dependentIds) {
+        // Remove this specific edge so the NOT-EXISTS subquery below does not
+        // count the dropped task as an active blocker when deciding to re-queue.
+        await scope.execute({
+          sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+          args: [depId, id],
+        })
+        // Re-queue the dependent only when every other blocker is already
+        // terminal. updated_at precedes status in the SET clause — exempt form
+        // required by the architecture guard (status-writer-singleton.test.ts).
+        const upd = await scope.execute({
+          sql: `UPDATE tasks
+                   SET updated_at = ?, status = 'queued'
+                 WHERE id = ? AND status = 'blocked'
+                   AND NOT EXISTS (
+                     SELECT 1
+                       FROM task_blockers b
+                       JOIN tasks t2 ON t2.id = b.blocker_task_id
+                      WHERE b.task_id = ?
+                        AND t2.status NOT IN ('done', 'failed')
+                        AND b.state IN ('confirmed', 'pending-review')
+                   )`,
+          args: [releaseNow, depId, depId],
+        })
+        if ((upd.rowsAffected ?? 0) > 0) {
+          await scope.execute(
+            buildEventInsert('task.unblocked', {
+              taskId: depId,
+              blockerTaskId: id,
+            }),
+          )
+        }
+      }
+
+      await scope.execute({
+        sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
+        args: [id, id],
+      })
+      // task_proposal_blockers has a FK on task_id → tasks(id). Delete these
+      // rows before the task row so the constraint never fires. (Rows where the
+      // task appears as proposal_id are in a different db and have no FK here.)
+      await scope.execute({
+        sql: `DELETE FROM task_proposal_blockers WHERE task_id = ?`,
+        args: [id],
+      })
+      // questions has a FK on task_id → tasks(id). Remove its rows before the
+      // task row is deleted so the FK constraint never fires. The table may not
+      // yet exist on older DB snapshots that haven't been migrated; the execute
+      // is safe because migrateQueueSchema() runs at the top of drop() and will
+      // have created the table before we reach this point.
+      await scope.execute({
+        sql: `DELETE FROM questions WHERE task_id = ?`,
+        args: [id],
+      })
+
+      // Cascade-delete each fix/recovery task that pointed at the origin.
+      // For each: release any tasks that were blocked on the fix task (e.g.
+      // other origins sharing a shared recipe fix task), clean up its edges and
+      // proposal blockers, then delete its row. ADR-0049: fix tasks never
+      // outlive their origin.
+      for (const fixId of cascadedFixTaskIds) {
+        // Release tasks blocked on this fix task (unblock them if all other
+        // blockers are terminal — mirrors the dependent-release loop above).
+        const fixDepRows = await scope.execute({
+          sql: `SELECT task_id FROM task_blockers WHERE blocker_task_id = ?`,
+          args: [fixId],
+        })
+        for (const row of fixDepRows.rows) {
+          const depId = (row as unknown as { task_id: string }).task_id
+          // Skip the origin being dropped — its row disappears below anyway.
+          if (depId === id) continue
+          await scope.execute({
+            sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+            args: [depId, fixId],
+          })
+          const upd = await scope.execute({
+            sql: `UPDATE tasks
+                     SET updated_at = ?, status = 'queued'
+                   WHERE id = ? AND status = 'blocked'
+                     AND NOT EXISTS (
+                       SELECT 1
+                         FROM task_blockers b
+                         JOIN tasks t2 ON t2.id = b.blocker_task_id
+                        WHERE b.task_id = ?
+                          AND t2.status NOT IN ('done', 'failed')
+                          AND b.state IN ('confirmed', 'pending-review')
+                     )`,
+            args: [releaseNow, depId, depId],
+          })
+          if ((upd.rowsAffected ?? 0) > 0) {
+            await scope.execute(
+              buildEventInsert('task.unblocked', {
+                taskId: depId,
+                blockerTaskId: fixId,
+              }),
+            )
+          }
+        }
+        await scope.execute({
+          sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
+          args: [fixId, fixId],
+        })
+        await scope.execute({
+          sql: `DELETE FROM task_proposal_blockers WHERE task_id = ?`,
+          args: [fixId],
+        })
+        await scope.execute({
+          sql: `DELETE FROM questions WHERE task_id = ?`,
+          args: [fixId],
+        })
+        await scope.execute({
+          sql: `DELETE FROM tasks WHERE id = ?`,
+          args: [fixId],
+        })
+      }
+
+      await scope.execute({
+        sql: `DELETE FROM tasks WHERE id = ?`,
+        args: [id],
+      })
+
+      return {
+        taskId: id,
+        previousStatus,
+        edgesRemoved: { incoming: incomingCount, outgoing: outgoingCount },
+        cascadedFixTaskIds,
+      }
     })
   }
 
