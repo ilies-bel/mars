@@ -760,9 +760,8 @@ Flags:
 Subcommands:
   (no args)                          alias for 'action-queue list open'
   list [state] [--lean]              list items by state
-                                     (open|acknowledged|resolved|dismissed|all,
-                                     default: open). --lean prints a
-                                     compact summary (counts per
+                                     (open|all, default: open). --lean
+                                     prints a compact summary (counts per
                                      priority, then up to 3 oldest
                                      blockers and 3 oldest drafts with
                                      section totals) instead of one row
@@ -770,10 +769,6 @@ Subcommands:
                                      hooks.
   show <id>                          full detail (accepts full id or unique
                                      8-char prefix)
-  ack <id>                           mark item acknowledged
-  resolve <id> [--note <text>] [--root-cause <text>]
-                                     mark item resolved
-  dismiss <id> [--note <text>]       mark item dismissed
   raise --from <-|path>              file a new action queue item from JSON.
                                      Use --from - to read JSON from stdin,
                                      or --from <path> to read it from a file.
