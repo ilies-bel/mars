@@ -20,6 +20,8 @@ import {
   raiseActionQueueItem,
   getActionQueueItem,
   setActionQueueState,
+  actionQueueKindToEntityKind,
+  entityIdForItem,
   type ActionQueueItem,
 } from '../../core/lib/action-queue'
 import {
@@ -36,28 +38,6 @@ const LEAN_PREVIEW = 3
 
 const NO_DAEMON_MSG =
   'action queue: daemon not running — run `mars daemon start` (the action queue view is served by the daemon)'
-
-const actionQueueKindToEntityKind = (
-  kind: string,
-): 'task' | 'worktree' | 'proposal' => {
-  if (kind === 'stale-worktree') return 'worktree'
-  if (kind === 'draft-proposal') return 'proposal'
-  return 'task'
-}
-
-const extractEntityId = (item: ActionQueueItem): string => {
-  if (item.kind === 'stale-worktree') {
-    if (typeof item.context.taskId === 'string') return item.context.taskId
-  }
-  if (item.kind === 'draft-proposal') {
-    if (typeof item.payload.proposalId === 'string')
-      return item.payload.proposalId
-  }
-  if (typeof item.payload.taskId === 'string') return item.payload.taskId
-  if (typeof item.payload.originTaskId === 'string')
-    return item.payload.originTaskId
-  return item.signature ?? item.id
-}
 
 const readStdin = async (): Promise<string> => {
   const chunks: Buffer[] = []
@@ -221,7 +201,7 @@ const makeAckResolve = (verb: 'ack' | 'resolve'): Command => ({
       await setActionQueueState(item.id, 'resolved', { note: 'operator-resolved' })
     } else {
       const entityKind = actionQueueKindToEntityKind(item.kind)
-      const entityId = extractEntityId(item)
+      const entityId = entityIdForItem(item)
       await dismissEntity(entityKind, entityId, { note: 'ack' })
     }
     deps.out(`${verb} ${item.id}`)
@@ -245,7 +225,7 @@ const actionQueueDismiss: Command = {
       return { code: 1 }
     }
     const entityKind = actionQueueKindToEntityKind(item.kind)
-    const entityId = extractEntityId(item)
+    const entityId = entityIdForItem(item)
     const by = formatAuthor(resolveAuthor(args.flags['--author']))
     const note = args.flags['--note']
     await dismissEntity(entityKind, entityId, {
@@ -273,7 +253,7 @@ const actionQueueUndismiss: Command = {
       return { code: 1 }
     }
     const entityKind = actionQueueKindToEntityKind(item.kind)
-    const entityId = extractEntityId(item)
+    const entityId = entityIdForItem(item)
     const removed = await undismissEntity(entityKind, entityId)
     deps.out(removed ? `undismiss ${item.id}` : `${item.id} was not dismissed`)
     return { code: 0 }

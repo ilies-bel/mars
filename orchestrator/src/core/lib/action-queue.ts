@@ -4,6 +4,7 @@ import { resolveStateClient } from '../store/state-client'
 import { buildEventInsert } from './outbox'
 import type { EventName, EventPayload } from './outbox'
 import { resolveOriginIdForTask } from './origin'
+import { listDismissals } from './action-queue-dismissals'
 
 /**
  * Emit an actionQueue lifecycle event to the queue.db events outbox.
@@ -600,34 +601,108 @@ export interface ListActionQueueOptions {
   kind?: ActionQueueKind
 }
 
+/**
+ * Map an ActionQueueKind to the dismissal entity kind used in
+ * action_queue_dismissals. Exported so callers (CLI verbs, tests) and
+ * listActionQueueItems can share the same mapping.
+ */
+export const actionQueueKindToEntityKind = (
+  kind: string,
+): 'task' | 'worktree' | 'proposal' => {
+  if (kind === 'stale-worktree') return 'worktree'
+  if (kind === 'draft-proposal') return 'proposal'
+  return 'task'
+}
+
+/**
+ * Extract the dismissal entity id from an ActionQueueItem. Exported so CLI
+ * verbs and listActionQueueItems can share the same extraction logic, ensuring
+ * the entity key written at dismiss time matches the key checked at read time.
+ */
+export const entityIdForItem = (item: ActionQueueItem): string => {
+  if (item.kind === 'stale-worktree') {
+    if (typeof item.context.taskId === 'string') return item.context.taskId
+  }
+  if (item.kind === 'draft-proposal') {
+    if (typeof item.payload.proposalId === 'string') return item.payload.proposalId
+  }
+  if (typeof item.payload.taskId === 'string') return item.payload.taskId
+  if (typeof item.payload.originTaskId === 'string') return item.payload.originTaskId
+  return item.signature ?? item.id
+}
+
 export const listActionQueueItems = async (
   state: ActionQueueState | 'all' = 'open',
   opts: ListActionQueueOptions = {},
 ): Promise<ActionQueueItem[]> => {
   await initActionQueue()
   const c = stateClient()
-  const wheres: string[] = []
-  const args: Array<string> = []
-  if (state !== 'all') {
-    wheres.push('state = ?')
-    args.push(state)
+
+  const fetchByState = async (s: ActionQueueState | 'all'): Promise<ActionQueueItem[]> => {
+    const wheres: string[] = []
+    const args: Array<string> = []
+    if (s !== 'all') {
+      wheres.push('state = ?')
+      args.push(s)
+    }
+    if (opts.kind !== undefined) {
+      wheres.push('kind = ?')
+      args.push(opts.kind)
+    }
+    const sql = `SELECT * FROM action_queue_items${
+      wheres.length > 0 ? ` WHERE ${wheres.join(' AND ')}` : ''
+    } ORDER BY raised_at DESC`
+    const r = args.length === 0 ? await c.execute(sql) : await c.execute({ sql, args })
+    const items: ActionQueueItem[] = []
+    for (const row of r.rows) {
+      const r2 = row as unknown as Record<string, unknown>
+      const history = await loadHistory(c, r2.id as string)
+      items.push(rowToActionQueueItem(r2, history))
+    }
+    return items
   }
-  if (opts.kind !== undefined) {
-    wheres.push('kind = ?')
-    args.push(opts.kind)
+
+  // For 'open' and 'dismissed', honor the operator's entity dismissals from
+  // action_queue_dismissals (ADR-0027). Ack-noted entries (note = 'ack') are
+  // intentionally excluded from the hidden set — they remain visible as open.
+  if (state === 'open' || state === 'dismissed') {
+    const dismissals = await listDismissals()
+    const dismissedSet = new Set(
+      dismissals
+        .filter((d) => d.note !== 'ack')
+        .map((d) => `${d.entityKind}:${d.entityId}`),
+    )
+
+    if (state === 'open') {
+      const items = await fetchByState('open')
+      if (dismissedSet.size === 0) return items
+      return items.filter(
+        (item) =>
+          !dismissedSet.has(
+            `${actionQueueKindToEntityKind(item.kind)}:${entityIdForItem(item)}`,
+          ),
+      )
+    }
+
+    // 'dismissed': state='dismissed' DB rows PLUS state='open' rows whose entity
+    // is present in action_queue_dismissals (entity-dismissed items). This
+    // ensures operator dismissals on synthetic/long-lived items like
+    // observability-store-oversize and subscriber-stalled are visible under
+    // `list dismissed` even though their DB state is still 'open'.
+    const byState = await fetchByState('dismissed')
+    if (dismissedSet.size === 0) return byState
+    const openItems = await fetchByState('open')
+    const entityDismissed = openItems.filter((item) =>
+      dismissedSet.has(
+        `${actionQueueKindToEntityKind(item.kind)}:${entityIdForItem(item)}`,
+      ),
+    )
+    return [...byState, ...entityDismissed].sort((a, b) =>
+      b.raisedAt.localeCompare(a.raisedAt),
+    )
   }
-  const sql = `SELECT * FROM action_queue_items${
-    wheres.length > 0 ? ` WHERE ${wheres.join(' AND ')}` : ''
-  } ORDER BY raised_at DESC`
-  const r =
-    args.length === 0 ? await c.execute(sql) : await c.execute({ sql, args })
-  const items: ActionQueueItem[] = []
-  for (const row of r.rows) {
-    const r2 = row as unknown as Record<string, unknown>
-    const history = await loadHistory(c, r2.id as string)
-    items.push(rowToActionQueueItem(r2, history))
-  }
-  return items
+
+  return fetchByState(state)
 }
 
 const isTerminal = (state: ActionQueueState): boolean =>

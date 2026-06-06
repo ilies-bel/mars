@@ -2505,7 +2505,13 @@ export const startDaemon = async (
       // Build the state store adapter.
       const stateStore = {
         listOpenActionQueueItems: async () => {
-          const items = await listActionQueueItems('open')
+          // Use 'all' and filter to state='open' so entity-dismissed items
+          // (state still 'open' in DB) are included. buildActionQueueView
+          // then computes dismissed:true from the dismissal map so `list open`
+          // hides them while `list dismissed` and `show` report them correctly.
+          const items = (await listActionQueueItems('all')).filter(
+            (item) => item.state === 'open',
+          )
           return items.map((item) => ({
             id: item.id,
             kind: item.kind as string,
@@ -2516,6 +2522,7 @@ export const startDaemon = async (
             context: item.context,
             raisedAt: item.raisedAt,
             lastSeenAt: item.lastSeenAt,
+            signature: item.signature,
           }))
         },
         listActionQueueDismissals: async () => {

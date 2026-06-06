@@ -70,6 +70,12 @@ export interface PersistedActionQueueRow {
   context: Record<string, unknown>
   raisedAt: string
   lastSeenAt: string
+  /**
+   * The item's dedup signature, used as the entity-id fallback for
+   * dismissal-map lookups so the view computes the same entity key that the
+   * CLI wrote when the operator ran `mars action-queue dismiss <id>`.
+   */
+  signature?: string | null
 }
 
 /** Narrow task shape `buildActionQueueView` needs — a subset of the queue Task. */
@@ -164,6 +170,8 @@ export const buildActionQueueView = async ({
         : 'task'
 
   // Extract the entity id (task id, worktree id, or proposal id) from a row.
+  // The fallback chain must match entityIdForItem() in core/lib/action-queue.ts
+  // so the entity key checked here equals the key written by the CLI dismiss verb.
   const extractEntityId = (row: PersistedActionQueueRow): string => {
     if (row.kind === 'stale-worktree') {
       if (typeof row.context.taskId === 'string') return row.context.taskId
@@ -178,7 +186,10 @@ export const buildActionQueueView = async ({
     }
     if (typeof row.payload.taskId === 'string') return row.payload.taskId
     if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
-    return row.id
+    // Synthetic / non-task-keyed items (e.g. observability-store-oversize,
+    // subscriber-stalled) carry a dedup signature but no task id in payload.
+    // Use signature first so the dismissal key matches what the CLI wrote.
+    return row.signature ?? row.id
   }
 
   const toUiPriority = (p: string): 'high' | 'normal' | 'low' => {
