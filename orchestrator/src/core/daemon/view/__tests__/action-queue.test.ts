@@ -445,3 +445,90 @@ describe('buildActionQueueView — dag.descendants enrichment', () => {
     expect(originRow!.fixForTaskId ?? null).toBeNull()
   })
 })
+
+// ── hitl-slice-needs-operator: persisted title/body, no failure-registry fallback ──
+
+describe('buildActionQueueView — hitl-slice-needs-operator row', () => {
+  const hitlRow = makeRow({
+    id: 'hitl-row-1',
+    kind: 'hitl-slice-needs-operator',
+    title: 'HITL: End-to-end smoke against a real OpenShift cluster',
+    body: '**HITL slice:** End-to-end smoke\n\n## Manual checklist\n\n- [ ] Deploy to staging\n',
+    payload: {
+      proposalId: 'prop-hitl-abc',
+      sliceIndex: 2,
+      subTaskId: 'sub-task-xyz',
+    },
+    signature: 'prop-hitl-abc:hitl:2',
+  })
+
+  it('uses the persisted title instead of the failure-registry warmTitle', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([hitlRow]),
+      taskStore: makeTaskStore([]),
+    })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.title).toBe('HITL: End-to-end smoke against a real OpenShift cluster')
+  })
+
+  it('uses the persisted body instead of the failure-registry verboseReason', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([hitlRow]),
+      taskStore: makeTaskStore([]),
+    })
+
+    expect(rows[0]!.body).toContain('HITL slice')
+    expect(rows[0]!.body).not.toContain('pipeline step did not complete')
+    expect(rows[0]!.body).not.toContain('A pipeline step')
+  })
+
+  it('does NOT use the generic unknown-failure title even without a matching task', async () => {
+    // The pathological case: no task matches the entity id, which is what
+    // caused the "A pipeline step did not complete" title before the fix.
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([hitlRow]),
+      taskStore: makeTaskStore([]),
+    })
+
+    // The unknown-failure fallback title that used to appear for this case:
+    expect(rows[0]!.title).not.toContain('A pipeline step did not complete')
+    expect(rows[0]!.title).not.toBe('A pipeline step did not complete')
+  })
+
+  it('does not populate dag (no task-backed DAG for HITL items)', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([hitlRow]),
+      taskStore: makeTaskStore([]),
+    })
+
+    expect(rows[0]!.dag).toBeNull()
+  })
+
+  it('fixForTaskId is null for a HITL row', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([hitlRow]),
+      taskStore: makeTaskStore([]),
+    })
+
+    expect(rows[0]!.fixForTaskId ?? null).toBeNull()
+  })
+
+  it('uses derivedRowActions (not failure-kind registry) for HITL items', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([hitlRow]),
+      taskStore: makeTaskStore([]),
+    })
+
+    // derivedRowActions for 'hitl-slice-needs-operator' should not include
+    // 'diagnose-failure' which is only on the failed-task failure-kind registry path.
+    const ops = rows[0]!.actions.map((a) => a.op)
+    expect(ops).not.toContain('diagnose-failure')
+  })
+})

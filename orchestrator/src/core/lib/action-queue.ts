@@ -743,6 +743,8 @@ export type SupersedeReason =
   | 'origin-purged'
   | 'status-changed'
   | 'subscriber-unstalled'
+  /** hitl-slice-needs-operator item has no matching HITL slice task in any state. */
+  | 'hitl-orphan-no-slice-task'
 
 /**
  * Auto-close every open actionQueue item keyed to the given origin task. Called
@@ -887,6 +889,65 @@ export const supersedeObsoletePreflightDirtyMainRows = async (
     await setActionQueueState(id, 'resolved', {
       resolution: 'superseded',
       note: 'superseded by slice K: preflight code path retired',
+      by,
+    })
+    ids.push(id)
+  }
+  return ids
+}
+
+/**
+ * Boot-time orphan sweep: supersede every open `hitl-slice-needs-operator`
+ * actionQueue item whose signature has NO matching HITL slice task in any
+ * state. A HITL item is considered orphaned when the slicer raised the
+ * actionQueue row but never persisted a task with `slice_kind='hitl'` for
+ * that `origin_id` + `slice_index` combination.
+ *
+ * Guard: an item is only swept when it is genuinely orphaned (no matching
+ * HITL task in ANY state). An item backed by a blocked or running HITL task
+ * is left open.
+ *
+ * Idempotent — rerunning matches no open rows (closed rows are excluded by
+ * the WHERE clause) and produces no further writes.
+ *
+ * @returns The ids of the rows that were superseded.
+ */
+export const supersedeOrphanedHitlActionQueueRows = async (
+  by = 'daemon:hitl-orphan-sweep',
+): Promise<string[]> => {
+  await initActionQueue()
+  const c = stateClient()
+  // Fetch all open hitl-slice-needs-operator rows. Both action_queue_items
+  // and tasks live in the same mars.db file (ADR-0034), so we can JOIN them.
+  const openRows = await c.execute({
+    sql: `SELECT id, signature FROM action_queue_items
+           WHERE kind = 'hitl-slice-needs-operator' AND state = 'open'`,
+    args: [],
+  })
+  const ids: string[] = []
+  for (const row of openRows.rows) {
+    const id = (row as unknown as { id: string; signature: string | null }).id
+    const sig = (row as unknown as { id: string; signature: string | null }).signature
+    if (!sig) continue
+    // Signature format: <originId>:hitl:<sliceIndex>
+    const match = sig.match(/^(.+):hitl:(\d+)$/)
+    if (!match) continue
+    const originId = match[1]!
+    const sliceIndex = parseInt(match[2]!, 10)
+    // Check whether any task with slice_kind='hitl' exists for this origin+index.
+    const taskCheck = await c.execute({
+      sql: `SELECT 1 FROM tasks
+             WHERE origin_id = ? AND slice_index = ? AND slice_kind = 'hitl'
+             LIMIT 1`,
+      args: [originId, sliceIndex],
+    })
+    if (taskCheck.rows.length > 0) {
+      // A backing HITL task exists in some state — leave the item open.
+      continue
+    }
+    await setActionQueueState(id, 'resolved', {
+      resolution: 'superseded',
+      note: 'superseded: hitl-orphan-no-slice-task',
       by,
     })
     ids.push(id)

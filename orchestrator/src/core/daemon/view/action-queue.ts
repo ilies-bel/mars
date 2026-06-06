@@ -226,10 +226,10 @@ export const buildActionQueueView = async ({
 
     // For failed-task rows, actions come from the FailureKind registry so
     // the title, reason, and action menu are always from the same record.
-    // For stale-worktree and draft-proposal rows, the non-failure derived-row
-    // action menu is the authority (unchanged behaviour).
+    // For stale-worktree, draft-proposal, and hitl-slice-needs-operator rows,
+    // the non-failure derived-row action menu is the authority.
     let actions: { id: string; label: string; op: string }[]
-    if (uiKind === 'failed-task') {
+    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
       const sig = taskById.get(entityId)?.failureSignature ?? null
       const fk =
         sig !== null
@@ -247,7 +247,7 @@ export const buildActionQueueView = async ({
 
     // DAG enrichment for task-backed rows.
     let dag: ActionQueueRow['dag'] = null
-    if (uiKind === 'failed-task') {
+    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
       const task = taskById.get(entityId)
       if (task) {
         const blockers = task.blockedBy.map(toNode)
@@ -356,9 +356,13 @@ export const buildActionQueueView = async ({
     // For failed-task rows, derive title and body from the Failure kind registry
     // rather than from the persisted row strings — the registry provides warm,
     // human-readable copy keyed to the failure's actual cause.
+    // hitl-slice-needs-operator rows carry their own operator-facing title/body
+    // set by the slicer; skip the failure-registry lookup so the persisted
+    // copy (e.g. "HITL: End-to-end smoke against a real cluster") is shown
+    // instead of the generic "A pipeline step did not complete" fallback.
     let title = row.title
     let body = row.body
-    if (uiKind === 'failed-task') {
+    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
       const failedTask = taskById.get(entityId)
       const sig = failedTask?.failureSignature ?? null
       const fk =
@@ -374,8 +378,9 @@ export const buildActionQueueView = async ({
     }
 
     // Propagate fixForTaskId so the UI can render an "origin" link on recovery rows.
+    // hitl-slice-needs-operator items are not task-backed, so no fixForTaskId.
     const fixForTaskId =
-      uiKind === 'failed-task'
+      uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator'
         ? (taskById.get(entityId)?.fixForTaskId ?? null)
         : null
 

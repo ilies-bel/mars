@@ -67,6 +67,7 @@ import {
 } from '../blocker-resolution'
 import {
   supersedeObsoletePreflightDirtyMainRows,
+  supersedeOrphanedHitlActionQueueRows,
 } from '../lib/action-queue'
 import {
   raiseAggregatedMainCommiterFailureRow,
@@ -402,6 +403,24 @@ export const startDaemon = async (
   } catch (err) {
     log(
       `[slice K] preflight-dirty-main actionQueue cleanup failed: ${(err as Error).message}`,
+    )
+  }
+
+  // Boot-time orphan sweep: supersede open hitl-slice-needs-operator items
+  // that have no backing HITL slice task. The slicer may raise the actionQueue
+  // row before persisting the HITL task, or may raise it when no hitl task is
+  // ever created; such rows can never close via tryCompleteHitlSlice and would
+  // otherwise remain open forever. Idempotent: silent when no orphans found.
+  try {
+    const swept = await supersedeOrphanedHitlActionQueueRows()
+    if (swept.length > 0) {
+      log(
+        `[hitl-orphan-sweep] resolved ${swept.length} orphaned hitl-slice-needs-operator actionQueue row(s)`,
+      )
+    }
+  } catch (err) {
+    log(
+      `[hitl-orphan-sweep] orphan sweep failed: ${(err as Error).message}`,
     )
   }
 

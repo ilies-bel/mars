@@ -26,6 +26,7 @@ interface ActionQueueModule {
   supersedeActionQueueItemsForOrigin: typeof import('./action-queue').supersedeActionQueueItemsForOrigin
   reconcileStaleActionQueueItems: typeof import('./action-queue').reconcileStaleActionQueueItems
   supersedeObsoletePreflightDirtyMainRows: typeof import('./action-queue').supersedeObsoletePreflightDirtyMainRows
+  supersedeOrphanedHitlActionQueueRows: typeof import('./action-queue').supersedeOrphanedHitlActionQueueRows
 }
 
 const setupRepo = (): string => {
@@ -836,6 +837,108 @@ describe('action-queue', () => {
       const item = await actionQueue.getActionQueueItem(id, async () => null)
       expect(item!.liveTaskStatus).toBeNull()
     })
+  })
+})
+
+describe('supersedeOrphanedHitlActionQueueRows — orphan sweep', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('supersedes an open hitl-slice-needs-operator item with no backing HITL task', async () => {
+    const actionQueue = await loadModule(repo)
+
+    // Raise a hitl-slice-needs-operator item with no task in the tasks table.
+    await actionQueue.raiseActionQueueItem({
+      kind: 'hitl-slice-needs-operator',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: 'HITL: Manual smoke test',
+      body: 'Run the smoke test manually',
+      payload: { proposalId: 'prop-orphan-1', sliceIndex: 3, subTaskId: 'sub-1' },
+      context: {},
+      raisedBy: 'slicer',
+      signature: 'prop-orphan-1:hitl:3',
+    })
+
+    // Confirm it is open before sweep.
+    const before = await actionQueue.listActionQueueItems('open')
+    expect(before.some((i) => i.kind === 'hitl-slice-needs-operator')).toBe(true)
+
+    const swept = await actionQueue.supersedeOrphanedHitlActionQueueRows()
+    expect(swept).toHaveLength(1)
+
+    // Should no longer appear as open.
+    const after = await actionQueue.listActionQueueItems('open')
+    expect(after.every((i) => i.kind !== 'hitl-slice-needs-operator')).toBe(true)
+  })
+
+  it('does NOT supersede a hitl-slice-needs-operator item that has a backing HITL task', async () => {
+    const actionQueue = await loadModule(repo)
+
+    // Insert a tasks row with slice_kind='hitl' matching the signature.
+    const { migrateQueueSchema, resolveQueueClient } = await import('../queue') as {
+      migrateQueueSchema: () => Promise<void>
+      resolveQueueClient: () => import('@libsql/client').Client
+    }
+    await migrateQueueSchema()
+    const client = resolveQueueClient()
+    const now = new Date().toISOString()
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, slice_index, slice_kind, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: ['hitl-task-1', 'Manual HITL step', 'blocked', 'prop-backed-1', 5, 'hitl', now, now],
+    })
+
+    // Raise the corresponding actionQueue item.
+    await actionQueue.raiseActionQueueItem({
+      kind: 'hitl-slice-needs-operator',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: 'HITL: Backed step',
+      body: 'This one has a backing task',
+      payload: { proposalId: 'prop-backed-1', sliceIndex: 5, subTaskId: 'sub-2' },
+      context: {},
+      raisedBy: 'slicer',
+      signature: 'prop-backed-1:hitl:5',
+    })
+
+    const swept = await actionQueue.supersedeOrphanedHitlActionQueueRows()
+    // The item has a backing task — must NOT be swept.
+    expect(swept).toHaveLength(0)
+
+    // Still open.
+    const open = await actionQueue.listActionQueueItems('open')
+    expect(open.some((i) => i.kind === 'hitl-slice-needs-operator')).toBe(true)
+  })
+
+  it('is idempotent — a second call after sweep supersedes nothing', async () => {
+    const actionQueue = await loadModule(repo)
+
+    await actionQueue.raiseActionQueueItem({
+      kind: 'hitl-slice-needs-operator',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: 'HITL: Idempotent check',
+      body: 'Run twice',
+      payload: { proposalId: 'prop-idem-1', sliceIndex: 1, subTaskId: 'sub-3' },
+      context: {},
+      raisedBy: 'slicer',
+      signature: 'prop-idem-1:hitl:1',
+    })
+
+    const first = await actionQueue.supersedeOrphanedHitlActionQueueRows()
+    expect(first).toHaveLength(1)
+
+    const second = await actionQueue.supersedeOrphanedHitlActionQueueRows()
+    expect(second).toHaveLength(0)
   })
 })
 
