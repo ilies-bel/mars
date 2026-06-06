@@ -608,7 +608,9 @@ export const startDaemon = async (
       }
       const { runWorkflow } = await import('@mars/workflow')
       const { implementWorkflow } = await import('../../workflows/implement-workflow')
-      const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
+      const { createQueueWorkflowStore, loadWorkflowForKind } = await import(
+        '../../workflows/queue-workflow-store'
+      )
       // The implement pipeline now runs on the in-house @mars/workflow engine
       // rather than Mastra. Two seams are wired here:
       //   - `store`    — the engine's run/step checkpoint persistence, backed
@@ -622,6 +624,17 @@ export const startDaemon = async (
       // entirely engine-driven — there is no `resumeFrom` hint in the input.
       const taskStore = await getDefaultTaskStore()
       const workflowStore = createQueueWorkflowStore()
+      // ADR-0056: resolve the workflow to run by kind. A user-owned
+      // `.mars/workflows/<kind>-workflow.js` (scaffolded by `mars init`) wins
+      // over the bundled `implementWorkflow`; absent/malformed → fall back to
+      // the bundled one. This changes WHICH workflow runs — not the engine and
+      // not the write funnel: `services.store` is still the Arc-routed
+      // TaskStore (S4), so task-state writes keep going through the aggregate.
+      const dispatchKind = task.kind ?? 'task'
+      const workflowToRun = await loadWorkflowForKind(
+        dispatchKind,
+        implementWorkflow,
+      )
       // Pino-shaped logger adapter over the daemon's `log`. The engine emits
       // structured run/step lifecycle lines (`step.started`, `step.completed`,
       // `run.failed`, …); fold them into one greppable daemon log line each.
@@ -636,13 +649,13 @@ export const startDaemon = async (
         log(`[implement] ${task.id} ${evt.step ?? 'run'}:${evt.event}`)
       }
       const result = await runWorkflow(
-        implementWorkflow,
+        workflowToRun,
         {
           taskId: task.id,
           prompt: task.prompt,
           plan: task.plan,
           tags: task.tags ?? ['coder'],
-          kind: task.kind ?? 'task',
+          kind: dispatchKind,
           integrationBranch,
           spec: task.spec
             ? {

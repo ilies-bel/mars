@@ -1,12 +1,17 @@
+import { existsSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
+import { resolve as resolvePath } from 'node:path'
 import type { Client } from '@libsql/client'
 import type {
   RunRecord,
   RunStatus,
   StepRecord,
   StepStatus,
+  Workflow,
   WorkflowStore,
 } from '@mars/workflow'
 import { getCompositionRootClient } from '../core/store/task-store'
+import { getRepoRoot } from '../core/context'
 
 /**
  * `WorkflowStore` adapter over the orchestrator's `.mars/queue.db`.
@@ -259,4 +264,80 @@ export const createQueueWorkflowStore = (
       })
     },
   }
+}
+
+/**
+ * Repo-relative directory the user-owned workflow modules live in. Mirrors
+ * `WORKFLOWS_DEST_REL` in `src/init/scaffold-workflows.ts` — `mars init`
+ * scaffolds the official templates here as plain JS the consumer is expected
+ * to edit (ADR-0056), and `mars update` never silently clobbers them
+ * (ADR-0057). The daemon loads them from here at dispatch time.
+ */
+const WORKFLOWS_DIR_REL = '.mars/workflows'
+
+/**
+ * The on-disk filename for a workflow of the given `kind`. The scaffold lands
+ * each template at `.mars/workflows/<kind>-workflow.js`, so a task of
+ * `kind: 'task' | 'fix' | 'diagnose'` resolves to `task-workflow.js` etc.
+ */
+export const workflowFileNameForKind = (kind: string): string =>
+  `${kind}-workflow.js`
+
+/**
+ * Absolute path the user-owned workflow for `kind` would live at, under
+ * `repoRoot` (defaults to the composition-root repo root).
+ */
+export const userWorkflowPathForKind = (
+  kind: string,
+  repoRoot: string = getRepoRoot(),
+): string =>
+  resolvePath(repoRoot, WORKFLOWS_DIR_REL, workflowFileNameForKind(kind))
+
+/**
+ * The minimal shape a user-owned workflow module must default-export. It is a
+ * plain-JS `@mars/workflow` workflow object — `{ id, fn }`, optionally an
+ * `inputSchema` — runnable verbatim by `runWorkflow`. The scaffold templates
+ * (`src/init/templates/workflows/*.js`) emit exactly this; we validate the
+ * two load-bearing fields at load time and treat anything else as malformed.
+ */
+const isWorkflowShape = (value: unknown): value is Workflow<unknown, unknown, unknown> => {
+  if (typeof value !== 'object' || value === null) return false
+  const candidate = value as { id?: unknown; fn?: unknown }
+  return typeof candidate.id === 'string' && typeof candidate.fn === 'function'
+}
+
+/**
+ * Resolve the workflow to run for a task of the given `kind`.
+ *
+ * When the consumer has a user-owned `.mars/workflows/<kind>-workflow.js` on
+ * disk (scaffolded by `mars init`, ADR-0056), it is dynamically imported and
+ * its default export — a plain-JS `@mars/workflow` workflow object — is run in
+ * place of the bundled in-repo workflow. When the file is absent (or its
+ * default export is malformed), the daemon falls back to `bundledFallback` (the
+ * in-repo `implementWorkflow`).
+ *
+ * This loader changes WHICH workflow runs, not how it runs: the caller still
+ * dispatches it through `runWorkflow` with the same `store` /
+ * `services: { store }` wiring, so task-state writes keep funnelling through
+ * the Arc aggregate (ADR-0052 / S4). No new engine, no Mastra.
+ *
+ * The bundled fallback is injected rather than imported here so this module
+ * stays free of the heavy `implement-workflow` dependency graph and the daemon
+ * can keep loading it lazily.
+ */
+export const loadWorkflowForKind = async <I, O, S>(
+  kind: string,
+  bundledFallback: Workflow<I, O, S>,
+  repoRoot: string = getRepoRoot(),
+): Promise<Workflow<I, O, S>> => {
+  const path = userWorkflowPathForKind(kind, repoRoot)
+  if (!existsSync(path)) return bundledFallback
+
+  // Plain-JS user module outside the TS source tree: the specifier is
+  // computed at runtime, so TS cannot (and should not) statically resolve it.
+  // Import by file URL so absolute paths work cross-platform.
+  const mod = (await import(pathToFileURL(path).href)) as { default?: unknown }
+  const candidate = mod.default
+  if (!isWorkflowShape(candidate)) return bundledFallback
+  return candidate as Workflow<I, O, S>
 }
