@@ -245,8 +245,6 @@ const minActionQueueItem = (overrides: Record<string, unknown> = {}) => ({
   body: 'Something went wrong',
   at: new Date().toISOString(),
   dag: null,
-  dismissed: false,
-  ackState: null,
   errorKind: 'generic',
   actions: [],
   ...overrides,

@@ -44,12 +44,6 @@ const KIND_LABEL: Record<ActionQueueItem['kind'], string> = {
   'draft-proposal': 'draft',
 }
 
-const ACK_STATE_LABEL: Record<'ack' | 'resolved' | 'dismissed', string> = {
-  ack: 'acknowledged',
-  resolved: 'resolved',
-  dismissed: 'dismissed',
-}
-
 // ---- Row ----
 
 interface RowProps {
@@ -99,7 +93,6 @@ export const ActionQueueRow = memo(({
       <div className="mt-1 flex items-center justify-between gap-2">
         <span className="font-mono text-[10px] text-iron/70">
           {formatTime(item.at)}
-          {item.ackState !== null ? ` · ${ACK_STATE_LABEL[item.ackState]}` : ''}
         </span>
         {onRestart !== null && (
           <button

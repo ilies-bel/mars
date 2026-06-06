@@ -26,8 +26,6 @@ const BASE_ITEM: ActionQueueItem = {
   body: 'Task failed because of X',
   at: '2026-01-01T00:00:00Z',
   dag: null,
-  dismissed: false,
-  ackState: null,
   errorKind: 'failed-task',
   actions: [
     { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },

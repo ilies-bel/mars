@@ -72,8 +72,6 @@ const BASE_ITEM: ActionQueueItem = {
   body: 'The task failed with an error.',
   at: '2026-01-01T00:00:00Z',
   dag: null,
-  dismissed: false,
-  ackState: null,
   errorKind: 'failed-task',
   actions: [{ id: 'restart', label: 'Restart', op: 'restart' }],
   diagnosis: null,

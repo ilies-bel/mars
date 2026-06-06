@@ -29,6 +29,8 @@ const roleFromStatus = (status: ProgressTask['status']): Role => {
     case 'failed':
     case 'dropped':
       return 'orchestrator'
+    default:
+      return 'orchestrator'
   }
 }
 

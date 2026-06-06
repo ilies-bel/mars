@@ -69,8 +69,6 @@ const BASE_ITEM: ActionQueueItem = {
   body: 'verbatim body text',
   at: new Date().toISOString(),
   dag: null,
-  dismissed: false,
-  ackState: null,
   errorKind: 'failed-task',
   actions: [{ id: 'restart', label: 'Restart', op: 'restart' }],
   diagnosis: null,

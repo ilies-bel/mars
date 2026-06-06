@@ -170,13 +170,6 @@ const actionQueueBaseSchema = z.object({
   body: z.string(),
   at: z.string(),
   dag: dagContextSchema.nullable(),
-  dismissed: z.boolean(),
-  /**
-   * The specific operator action recorded against this row, or null when no
-   * action has been taken. 'ack' items remain visible in the open filter;
-   * 'resolved' and 'dismissed' items are hidden from it.
-   */
-  ackState: z.enum(['ack', 'resolved', 'dismissed']).nullable(),
   // Machine-readable error-kind key the row resolves to (a superset of `kind`:
   // a daemon-killed failure resolves to 'daemon-killed', not 'failed-task').
   errorKind: z.string(),
@@ -284,8 +277,6 @@ export const actionQueueResponseSchema = z.array(
       body: typeof raw.body === 'string' ? raw.body : '',
       at: '1970-01-01T00:00:00.000Z',
       dag: null,
-      dismissed: false,
-      ackState: null,
       errorKind:
         typeof raw.errorKind === 'string'
           ? raw.errorKind
