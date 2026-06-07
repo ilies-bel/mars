@@ -83,29 +83,6 @@ export const MAIN_DIRTY_VERIFY_MESSAGE =
 export const isMainDirtyVerifyError = (err: unknown): boolean =>
   errorHaystack(err).includes('verify:main-dirty')
 
-// Thrown by the code step when the read-span guard trips (agent read without
-// acting) and we successfully spawn a diagnose Chore and park the original
-// task in `blocked`. The daemon uses it to suppress the misleading
-// `task.completed status=failed` emit — the task is already parked
-// `blocked` with a real task_blockers edge to the diagnose Chore.
-export const TOO_HARD_ABORT_MESSAGE = (taskId: string): string =>
-  `task ${taskId} aborted by read-span guard: diagnose Chore spawned, parent parked in blocked`
-
-export const isTooHardAbortError = (err: unknown): boolean =>
-  errorHaystack(err).includes('aborted by read-span guard: diagnose Chore spawned')
-
-// Thrown by the code step when the read-span hard-abort ceiling fires
-// (MARS_READ_SPAN_ABORT_LIMIT). The worker is killed via its externalAbort
-// signal (exit code 138). The task is already marked failed with
-// 'exploration-loop' as the abort cause before this sentinel is thrown.
-// The daemon uses `isExplorationLoopAbortError` to suppress re-updating the
-// task in its exception-catch path so our failure record is not overwritten.
-export const EXPLORATION_LOOP_ABORT_MESSAGE = (taskId: string): string =>
-  `task ${taskId} aborted by exploration-loop ceiling: coder crossed the read-span hard-abort limit`
-
-export const isExplorationLoopAbortError = (err: unknown): boolean =>
-  errorHaystack(err).includes('aborted by exploration-loop ceiling')
-
 // Thrown by the code step when the context token budget fires (the worker's
 // maxContextTokens was reached). The worker exits with exitCode 138 and a
 // distinct stderr containing "context budget exhausted". The task is marked
@@ -124,14 +101,8 @@ import { runWorkerWithSpan, runNonLlmStepWithSpan } from '../core/lib/run-worker
 import { resolveVerifyCwd, type RanVerifyStep } from '../core/lib/derive-repro-command'
 import { resolveTaskCwd } from '../core/lib/resolve-task-cwd'
 import { relative } from 'node:path'
-import {
-  createReadSpanWatcher,
-  resolveReadSpanLimit,
-  resolveReadSpanAbortLimit,
-} from '../core/lib/read-span-watch'
 import { TDD_WORKER_BRIEF } from './tdd-brief'
 import { CONTEXT_GATHERING_BRIEF } from './context-gathering-brief'
-import { buildDiagnoseChorePrompt } from '../core/lib/diagnose-chore'
 
 const planSchema = z
   .object({
@@ -147,23 +118,9 @@ const tagSchema: z.ZodType<TaskTag[]> = z.array(z.string()).default(['coder'])
 
 // Task role, mirroring {@link TaskKind}. Defaults to 'task' when the
 // dispatcher omits it (legacy rows). 'diagnose' marks a diagnose-only
-// Chore — exempt from the read-span guard, never commits, short-circuits
-// out of verify+merge after recording its verdict.
+// Chore — never commits, short-circuits out of verify+merge after
+// recording its verdict.
 const kindSchema = z.enum(['task', 'fix', 'diagnose']).default('task')
-
-/**
- * Predicate that the code step consults to decide whether to wire the
- * read-span watcher around a Worker run. Exported so the rule is testable
- * in isolation — the actual call site reproduces this expression literally.
- *
- * - Diagnose Chores are exempt: their whole job is reading (PRD 06e677fb).
- *   Their backstop is the Worker harness's existing time/turn cap.
- * - Every other dispatched task (Coder and Fixer) gets the watcher.
- *   The structured-write Writer exemption was removed with ADR 0019.
- */
-export const shouldWireReadSpanWatcher = (
-  kind: 'task' | 'fix' | 'diagnose',
-): boolean => kind !== 'diagnose'
 
 // Structured-task contract. Mirrors {@link TaskSpec} in queue.ts. Optional so
 // legacy free-prose rows still flow through composePrompt unchanged.
@@ -251,7 +208,7 @@ export const DEVIATION_RULES = [
   '',
   '**Fix-attempt cap.** If you have run the verify command 3 times on this task and it still fails for reasons you cannot explain, STOP. File a follow-up task via `mars task add --blocked-by $TASK_ID` describing the failing verify and what you tried, then exit. Do not loop.',
   '',
-  '**Explore-trust rule — treat sub-agent summaries as authoritative.** When an Explore or general-purpose sub-agent returns a structured summary citing file paths and line numbers, treat that summary as authoritative orientation. Proceed directly to an Edit or Write within at most TWO follow-up Reads, and only Read ranges the sub-agent did NOT cover. Re-reading a file the sub-agent already summarised counts as analysis paralysis and trips the read-span watcher.',
+  '**Explore-trust rule — treat sub-agent summaries as authoritative.** When an Explore or general-purpose sub-agent returns a structured summary citing file paths and line numbers, treat that summary as authoritative orientation. Proceed directly to an Edit or Write within at most TWO follow-up Reads, and only Read ranges the sub-agent did NOT cover. Re-reading a file the sub-agent already summarised counts as analysis paralysis.',
   '',
   '`$TASK_ID` is the id of the task you are executing right now; the orchestrator passes it to you in the brief below.',
 ].join('\n')
@@ -269,49 +226,27 @@ export const CODING_DISCIPLINE = [
   '- **Cross-boundary changes need real-boundary verification.** When you add a cap, limit, or guard on a subprocess or external call, include at least one test (or documented manual step) against the real binary or service — stub-only tests can pass while the real path misbehaves.',
 ].join('\n')
 
-// Build the Coder Worker's standing Session instructions for a given
-// read-span limit. The limit is threaded in so the stated budget in the
-// instructions always equals the value the guard actually enforces — there
-// is no second hardcoded number. Call `buildCoderSystemPrompt(resolveReadSpanLimit())`
-// at dispatch time so `MARS_READ_SPAN_LIMIT` overrides are reflected without
-// restarting the daemon.
-//
-// The read-span guard section tells the Coder how many consecutive
-// Read/Grep/Glob calls without an action trigger the advisory log line.
-// Phrasing mirrors the watcher's own invariant: log-only, no abort.
-export const buildCoderSystemPrompt = (readSpanLimit: number): string => {
-  const readSpanGuard = [
-    '## Read-span guard',
-    '',
-    `A watcher observes consecutive Read/Grep/Glob tool calls without an interleaving action-class call (Edit/Write/Bash/NotebookEdit). When your streak first reaches **${readSpanLimit}**, the watcher logs one advisory warning. It does not abort your run or kill the process. Override the threshold with \`MARS_READ_SPAN_LIMIT=<n>\`.`,
-  ].join('\n')
-  return [TDD_WORKER_BRIEF, readSpanGuard, CONTEXT_GATHERING_BRIEF, DEVIATION_RULES].join('\n\n')
-}
+// Build the Coder Worker's standing Session instructions. The TDD brief,
+// context-gathering discipline, and deviation rules are passed once as the
+// Worker's Session-level system prompt so they are present for the whole
+// Session and never re-sent inside the per-Task prompt.
+export const buildCoderSystemPrompt = (): string =>
+  [TDD_WORKER_BRIEF, CONTEXT_GATHERING_BRIEF, DEVIATION_RULES].join('\n\n')
 
-// Standing Session instructions for the Coder Worker. The test-driven-
-// development operating philosophy, the read-span guard budget, and the
-// deviation rules are all passed once, as the Worker's Session-level system
-// prompt, so they are present for the whole Session and never re-sent inside
-// the per-Task prompt. This means the Coder does not re-absorb ~150+ lines
-// of boilerplate at the top of every Task and a retry does not replay it
-// verbatim — keeping the per-task prompt focused on the actual work.
-//
-// This export is computed at module-load time using the current env so it
-// stays usable as a static reference. Production dispatch uses
-// `resolveWorkerSystemPrompt` which re-calls `buildCoderSystemPrompt` at
-// call time so live `MARS_READ_SPAN_LIMIT` overrides take effect immediately.
-export const CODER_SYSTEM_PROMPT = buildCoderSystemPrompt(resolveReadSpanLimit())
+// Standing Session instructions for the Coder Worker. Computed at module-load
+// time for static-reference use; production dispatch calls
+// `resolveWorkerSystemPrompt` which also calls `buildCoderSystemPrompt`.
+export const CODER_SYSTEM_PROMPT = buildCoderSystemPrompt()
 
 // Resolve the standing Session instructions a dispatched Worker is launched
 // with. Every dispatched task uses the Coder standing instructions: TDD
-// operating philosophy, read-span guard budget (dynamic — read from env at
-// call time), and deviation rules. The structured-write accommodation lane
-// (Writer system prompt) was removed by ADR 0019.
+// operating philosophy and deviation rules. The structured-write accommodation
+// lane (Writer system prompt) was removed by ADR 0019.
 // Centralised here so the code step does not assemble the system prompt inline
 // and the surface is a single auditable seam.
 export const resolveWorkerSystemPrompt = (
   _tag: TaskTag,
-): string => buildCoderSystemPrompt(resolveReadSpanLimit())
+): string => buildCoderSystemPrompt()
 
 /**
  * Pick the Worker that should handle a dispatched Task.
@@ -958,38 +893,6 @@ export const implementWorkflow = defineWorkflow<
         input.kind === 'fix'
           ? Workers.Fixer
           : pickWorkerForTags(input.tags, allWorkers)
-      // Read/Grep span watcher (gsd-style analysis-paralysis signal). When the
-      // threshold is reached AND the agent has taken zero actions for the
-      // entire run, a single diagnose Chore is spawned and the original task
-      // is parked in `blocked` behind it (see the post-run check below).
-      // Diagnose Chores are exempt (their job IS heavy reading; PRD 06e677fb —
-      // their backstop is the time/turn cap). Every other dispatched task gets
-      // the watcher.
-      // AbortController bridged into the worker via externalAbort. When the
-      // read-span hard-abort ceiling fires (MARS_READ_SPAN_ABORT_LIMIT) the
-      // onAbort callback signals this controller; the worker exits with
-      // exitCode 138 (the 'external abort' exit code). The exploration-loop
-      // check below then handles the aftermath.
-      const ac = new AbortController()
-      let spanCeilingAborted = false
-      const watcher = shouldWireReadSpanWatcher(input.kind)
-        ? createReadSpanWatcher({
-            limit: resolveReadSpanLimit(),
-            onThreshold: (info) => {
-              console.log(
-                `[span] task ${input.taskId}: ${info.limit} consecutive Read/Grep/Glob calls without action (trace=${info.trace.map((t) => t.tool).join('+')}).`,
-              )
-            },
-            abortLimit: resolveReadSpanAbortLimit(),
-            onAbort: (info) => {
-              spanCeilingAborted = true
-              ac.abort()
-              console.log(
-                `[span] task ${input.taskId}: abort ceiling hit (${info.limit} reads without action); signalling external abort`,
-              )
-            },
-          })
-        : null
       // Reuse the workflow-level trace store opened at the top of `fn`. A
       // null store (workflow couldn't open one) is forwarded as-is — the
       // worker span wrapper handles undefined gracefully.
@@ -1001,9 +904,7 @@ export const implementWorkflow = defineWorkflow<
         runOptions: {
           cwd: worktreePath,
           systemPrompt: resolveWorkerSystemPrompt(primaryTag),
-          externalAbort: ac.signal,
           onEvent: async (event) => {
-            watcher?.observe(event)
             // Was `writer.write({type:'claude-event', event})`; the engine's
             // progress emitter replaces the Mastra workflow writer.
             ctx.emit('claude-event', event)
@@ -1015,20 +916,12 @@ export const implementWorkflow = defineWorkflow<
         originId,
         phase: 'code',
       })
-      // Per-run read/action summary. Emitted on every wired run so paralysis
-      // patterns are greppable in bulk (e.g. zero-action runs with a high
-      // max-streak), not just when the threshold was tripped.
-      if (watcher) {
-        console.log(
-          `[span-summary] task ${input.taskId}: maxStreak=${watcher.maxStreak} totalReads=${watcher.totalReads} totalActions=${watcher.totalActions} tripped=${watcher.thresholdEverReached}`,
-        )
-      }
       // Context-budget hard abort: the worker was killed because its context
       // token budget (maxContextTokens) was exhausted. The worker exits with
       // exitCode 138 and stderr containing "context budget exhausted".
       // Treat this as a failure with reason 'context-exhausted', enqueue
       // exactly one follow-up task blocked by this task, and exit WITHOUT
-      // triggering the Fixer pipeline (same shape as exploration-loop).
+      // triggering the Fixer pipeline.
       // This check runs BEFORE the exploration-loop check because both use
       // exitCode 138; the two are disambiguated by the stderr string.
       if (r.exitCode === 138 && r.stderr.includes('context budget exhausted')) {
@@ -1095,138 +988,6 @@ export const implementWorkflow = defineWorkflow<
         }
       }
 
-      // Exploration-loop hard abort: the worker was killed by the read-span
-      // abort ceiling (MARS_READ_SPAN_ABORT_LIMIT). The worker exits with
-      // exitCode 138. Record 'exploration-loop' as the abort cause, enqueue
-      // exactly one follow-up task blocked by this task so the operator can
-      // inspect the transcript, and exit WITHOUT triggering the Fixer pipeline
-      // (no handleTaskFailureWithFixTask call). This check runs before the
-      // lower-threshold 'diagnose Chore' guard below so the two paths are
-      // mutually exclusive.
-      if (spanCeilingAborted && r.exitCode === 138) {
-        const followUpPrompt = [
-          `## exploration-loop follow-up for task ${input.taskId}`,
-          '',
-          `Task \`${input.taskId}\` was aborted by the read-span hard-abort ceiling`,
-          `(MARS_READ_SPAN_ABORT_LIMIT). The coder crossed the ceiling after`,
-          `${watcher!.maxStreak} consecutive reads without taking any action.`,
-          '',
-          `Inspect the coder transcript for task \`${input.taskId}\` to understand`,
-          `why it stalled in an exploration-loop. Once the original task is`,
-          `restarted or resolved, this follow-up will unblock automatically.`,
-        ].join('\n')
-        try {
-          // enqueueFollowUpOnce deduplicates on followup_dedup_key='followup:<taskId>:exploration-loop'
-          // (ADR-0050: origin_id now carries the real arc origin, not the dedup key).
-          // Restarting the origin and hitting the ceiling again will NOT create a second
-          // follow-up — the existing open one is reused.
-          const { id: followUpId, created } = await enqueueFollowUpOnce(
-            input.taskId,
-            'exploration-loop',
-            followUpPrompt,
-          )
-          await updateTask(
-            input.taskId,
-            {
-              status: 'failed',
-              error: `exploration-loop: coder hit the read-span abort ceiling (maxStreak=${watcher!.maxStreak})`,
-              failedPhase: 'code',
-              failureReason: 'exploration-loop',
-              failureReasonCode: 'exploration-loop',
-            },
-            store,
-          )
-          if (created) {
-            console.log(
-              `[span] task ${input.taskId}: exploration-loop abort; follow-up ${followUpId} enqueued and blocked by this task`,
-            )
-          } else {
-            console.log(
-              `[span] task ${input.taskId}: exploration-loop abort; existing follow-up ${followUpId} already open, skipping re-enqueue`,
-            )
-          }
-          throw new Error(EXPLORATION_LOOP_ABORT_MESSAGE(input.taskId))
-        } catch (err) {
-          if (err instanceof Error && isExplorationLoopAbortError(err)) throw err
-          console.error(
-            `[span] task ${input.taskId}: failed to handle exploration-loop abort:`,
-            err,
-          )
-          await updateTask(
-            input.taskId,
-            {
-              status: 'failed',
-              error: `exploration-loop abort (follow-up failed: ${String(err).slice(0, 400)})`,
-              failedPhase: 'code',
-              failureReasonCode: 'exploration-loop',
-              failureReason: 'exploration-loop',
-            },
-            store,
-          ).catch(() => {})
-          throw err instanceof Error ? err : new Error(String(err))
-        }
-      }
-      // Read-span guard: if the agent tripped the threshold AND never took any
-      // action during the entire run, spawn a single diagnose Chore and park
-      // the original task behind it. The Chore has a bounded contract:
-      // investigate only, record one structured verdict, never attempt the
-      // parent's work. See PRD 06e677fb; the old three-way free-form
-      // instruction is gone.
-      if (watcher?.thresholdEverReached && watcher.totalActions === 0) {
-        const diagnosePrompt = buildDiagnoseChorePrompt(
-          input.taskId,
-          input.prompt,
-          watcher.trace,
-        )
-        try {
-          const child = await enqueueTask(diagnosePrompt, undefined, {
-            skipTriage: true,
-            kind: 'diagnose',
-            originId,
-          })
-          const errorSummary =
-            `too_hard:no-action-after-reads: maxStreak=${watcher.maxStreak}; diagnose Chore=${child.id}`.slice(0, 1000)
-          await updateTask(
-            input.taskId,
-            { status: 'blocked', error: errorSummary, failedPhase: 'code' },
-            store,
-          )
-          await addBlockers(input.taskId, [child.id])
-          console.log(
-            `[span] task ${input.taskId}: ${watcher.maxStreak} reads without action; spawned diagnose Chore ${child.id} as blocker; parent → blocked`,
-          )
-          // Throw the sentinel: the engine records run-claude-code `failed` and
-          // the daemon's `isTooHardAbortError` suppression keeps the misleading
-          // `task.completed status=failed` emit from firing.
-          throw new Error(TOO_HARD_ABORT_MESSAGE(input.taskId))
-        } catch (err) {
-          if (err instanceof Error && isTooHardAbortError(err)) throw err
-          // Spawn failed — park the task failed; don't silently swallow.
-          console.error(
-            `[span] task ${input.taskId}: failed to spawn diagnose Chore:`,
-            err,
-          )
-          await updateTask(
-            input.taskId,
-            {
-              status: 'failed',
-              error: `diagnose Chore spawn failed: ${String(err).slice(0, 500)}`,
-              failedPhase: 'code',
-              failureReason: `diagnose Chore spawn failed: ${String(err).slice(0, 500)}`,
-              failureSignature: computeFailureSignature(
-                'code:diagnose-spawn',
-                String(err),
-              ),
-              failureReasonCode: computeFailureSignature(
-                'code:diagnose-spawn',
-                String(err),
-              ),
-            },
-            store,
-          ).catch(() => {})
-          throw err instanceof Error ? err : new Error(String(err))
-        }
-      }
       // Classify the worktree end-state. Only the 'dirty-no-commits' case is
       // worth a log line — it's the new failure mode the post-test commit
       // guard is being built to detect. Clean-success and clean-no-work are

@@ -2324,7 +2324,7 @@ describe('enqueueTask round-trip: slicer intent lands on emitted task row', () =
 describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Task text', () => {
   // The coder Worker used to re-absorb the ~150-line TDD brief at the top
   // of every per-Task prompt, and a retry replayed it verbatim — burning
-  // the read-span budget on boilerplate. It now arrives once, as the
+  // token budget on boilerplate. It now arrives once, as the
   // Worker's standing Session instructions, and never inside the per-Task
   // prompt.
   const proposal = {
@@ -2333,7 +2333,7 @@ describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Tas
     problem: 'The brief is replayed verbatim on every retry.',
     solution: 'Carry it in the Session standing instructions instead.',
     outOfScope: 'Retuning the read budget.',
-    notes: 'Slice 1 of the read-span PRD.',
+    notes: 'Slice 1 of the TDD brief refactor.',
     userStories: ['As a coder I do not re-absorb the brief each task.'],
   }
   const slice = {

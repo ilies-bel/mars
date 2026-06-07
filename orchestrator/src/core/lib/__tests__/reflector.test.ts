@@ -203,9 +203,9 @@ describe('runReflector output parsing (fixture)', () => {
       },
       suggestions: [
         {
-          title: 'Cap read-span on the code step',
+          title: 'Cap token spend on the code step',
           category: 'token',
-          prompt: 'Add a Read budget watcher to the code step. Save your work.',
+          prompt: 'Add a token budget cap to the code step. Save your work.',
           rationale: '120k tokens leaked on retries of task abcd1234',
         },
       ],

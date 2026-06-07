@@ -117,7 +117,6 @@ describe('mars init: root CLAUDE.md template', () => {
       'Mastra Studio',
       'localhost:4111',
       'MARS_WORKER_MODEL',
-      'MARS_READ_SPAN_LIMIT',
     ]
     for (const needle of forbidden) {
       expect(written, `template leaks framework-internal token ${JSON.stringify(needle)}`).not.toContain(needle)

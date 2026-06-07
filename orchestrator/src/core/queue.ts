@@ -111,13 +111,13 @@ export interface Blocker {
  *
  *   - `'task'`     → ordinary work; `fixForTaskId` MUST be null
  *   - `'fix'`      → recovery fix-task; `fixForTaskId` MUST be non-null
- *   - `'diagnose'` → terminal investigate-only Chore spawned when a coder
- *                    trips the read-span guard. Reads heavily without acting,
- *                    records a verdict through `mars diagnose set`, and
- *                    parks the original task behind itself. Never spawns
- *                    another diagnose Chore (see PRD 06e677fb / ADR).
- *                    `fixForTaskId` MUST be null; the link to the origin
- *                    stuck task is via `origin_id`.
+ *   - `'diagnose'` → terminal investigate-only Chore. Reads heavily
+ *                    without acting, records a verdict through
+ *                    `mars diagnose set`, and parks the original task
+ *                    behind itself. Never spawns another diagnose Chore
+ *                    (see PRD 06e677fb / ADR). `fixForTaskId` MUST be
+ *                    null; the link to the origin stuck task is via
+ *                    `origin_id`.
  *
  * The field is declared optional on the TypeScript type for backwards
  * compatibility with existing `Task` literals in tests and fixtures; every

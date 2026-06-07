@@ -13,8 +13,8 @@
  * every slice the session handles.
  *
  * IMPORTANT: these are composed into CODER_SYSTEM_PROMPT (standing Session
- * instructions) by buildCoderSystemPrompt, between the read-span guard and
- * the deviation rules. Do NOT include them in per-Task prompts.
+ * instructions) by buildCoderSystemPrompt, between the TDD brief and the
+ * deviation rules. Do NOT include them in per-Task prompts.
  */
 export const CONTEXT_GATHERING_BRIEF = [
   '## Context-gathering discipline',

@@ -8,23 +8,15 @@ import {
   CODING_DISCIPLINE,
   BLOCKERS_ABORT_MESSAGE,
   DEVIATION_RULES,
-  TOO_HARD_ABORT_MESSAGE,
-  EXPLORATION_LOOP_ABORT_MESSAGE,
   CONTEXT_EXHAUSTED_ABORT_MESSAGE,
   composePrompt,
   detectPostCoderState,
   failureExcerpt,
   isBlockersAbortError,
-  isTooHardAbortError,
-  isExplorationLoopAbortError,
   isContextExhaustedAbortError,
   resolveWorkerSystemPrompt,
-  shouldWireReadSpanWatcher,
 } from '../implement-workflow'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
-import { buildDiagnoseChorePrompt } from '../../core/lib/diagnose-chore'
-import { resolveReadSpanLimit, createReadSpanWatcher } from '../../core/lib/read-span-watch'
-import type { ReadSpanTrace } from '../../core/lib/read-span-watch'
 
 describe('composePrompt — coder default', () => {
   it('appends the commit footer to a bare prompt', () => {
@@ -101,58 +93,6 @@ describe('composePrompt — uniform commit-footer gate (ADR 0019)', () => {
   })
 })
 
-describe('shouldWireReadSpanWatcher — read-span guard exemption', () => {
-  it("wires the watcher for an ordinary task (kind='task')", () => {
-    // After ADR 0019 the tag parameter is gone — the watcher fires for every
-    // dispatched run regardless of tag (since 'coder' is the only tag).
-    expect(shouldWireReadSpanWatcher('task')).toBe(true)
-  })
-
-  it("wires the watcher for a recovery fix-task (kind='fix')", () => {
-    expect(shouldWireReadSpanWatcher('fix')).toBe(true)
-  })
-
-  it("does NOT wire the watcher for a diagnose Chore (kind='diagnose')", () => {
-    // PRD 06e677fb: heavy reading is the diagnose Chore's actual job;
-    // its only backstop is the existing time/turn cap.
-    expect(shouldWireReadSpanWatcher('diagnose')).toBe(false)
-  })
-
-  it('diagnose kind produces a null watcher at the call site — no abort can trigger regardless of read count', () => {
-    // Replicates the exact conditional used in codeStep:
-    //   const watcher = shouldWireReadSpanWatcher(kind) ? createReadSpanWatcher(...) : null
-    // When kind='diagnose' the watcher is null; watcher?.thresholdEverReached is
-    // undefined (falsy) so the guard branch `watcher?.thresholdEverReached && ...`
-    // never fires no matter how many consecutive reads the agent issues.
-    const watcher = shouldWireReadSpanWatcher('diagnose')
-      ? createReadSpanWatcher({ limit: resolveReadSpanLimit(), onThreshold: () => {} })
-      : null
-    expect(watcher).toBeNull()
-    expect(watcher?.thresholdEverReached).toBeUndefined()
-  })
-
-  it('ordinary task kind produces a live watcher that can trip the guard', () => {
-    // Contrasting case: for kind='task' the watcher is non-null, meaning
-    // the guard is active and consecutive reads will trip thresholdEverReached.
-    // ClaudeEvent wraps tool uses inside message.content (assistant turn).
-    const limit = 2
-    const watcher = shouldWireReadSpanWatcher('task')
-      ? createReadSpanWatcher({ limit, onThreshold: () => {} })
-      : null
-    expect(watcher).not.toBeNull()
-    // Feed enough read events to exceed the limit (each is an assistant turn
-    // with one Read tool_use block, matching what extractToolUses expects).
-    const readEvent = {
-      type: 'assistant',
-      message: {
-        content: [{ type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/src/foo.ts' } }],
-      },
-    }
-    for (let i = 0; i < limit + 1; i++) watcher!.observe(readEvent)
-    expect(watcher!.thresholdEverReached).toBe(true)
-  })
-})
-
 describe('composePrompt — diagnose Chore short-circuit', () => {
   it("returns the prompt verbatim when kind is 'diagnose' — no commit footer", () => {
     const prompt = '# Diagnose-only Chore for mars-aaaaaaaa\n\nbody'
@@ -205,44 +145,6 @@ describe('resolveWorkerSystemPrompt — uniform Coder standing instructions (ADR
     expect(coderPrompt).toContain('## Deviation rules')
     // Verify the function is deterministic and returns the coder prompt for every valid tag.
     expect(resolveWorkerSystemPrompt('coder')).toBe(coderPrompt)
-  })
-})
-
-describe('resolveWorkerSystemPrompt — read-span guard budget in standing instructions', () => {
-  afterEach(() => {
-    delete process.env.MARS_READ_SPAN_LIMIT
-  })
-
-  it('coder standing instructions contain a read-span guard section', () => {
-    delete process.env.MARS_READ_SPAN_LIMIT
-    const instructions = resolveWorkerSystemPrompt('coder')!
-    expect(instructions).toMatch(/Read.span guard/i)
-  })
-
-  it('the stated consecutive-read budget equals the configured guard limit (default 5)', () => {
-    delete process.env.MARS_READ_SPAN_LIMIT
-    const instructions = resolveWorkerSystemPrompt('coder')!
-    const limit = resolveReadSpanLimit() // → 5 by default
-    // The limit must appear in the read-span guard context, not incidentally.
-    // Implementation embeds it as "**<limit>**" in the guard section.
-    expect(instructions).toContain(`**${limit}**`)
-  })
-
-  it('overriding MARS_READ_SPAN_LIMIT changes the stated budget in the standing instructions', () => {
-    process.env.MARS_READ_SPAN_LIMIT = '12'
-    const instructions = resolveWorkerSystemPrompt('coder')!
-    const limit = resolveReadSpanLimit() // → 12
-    expect(limit).toBe(12)
-    // The new limit must appear in the guard section.
-    expect(instructions).toContain(`**${limit}**`)
-    // The default (5) must NOT appear as the guard limit when overridden.
-    expect(instructions).not.toContain('**5**')
-  })
-
-  it('every tag resolves to the same standing instructions including the read-span guard section', () => {
-    // After ADR 0019 there is no writer-specific prompt without the guard.
-    const instructions = resolveWorkerSystemPrompt('coder')
-    expect(instructions).toMatch(/Read.span guard/i)
   })
 })
 
@@ -519,7 +421,7 @@ describe('resolveWorkerSystemPrompt — Explore-trust rule inside deviation-rule
   it('coder system prompt contains the analysis-paralysis phrase', () => {
     const prompt = resolveWorkerSystemPrompt('coder')!
     expect(prompt).toContain(
-      'Re-reading a file the sub-agent already summarised counts as analysis paralysis and trips the read-span watcher.',
+      'Re-reading a file the sub-agent already summarised counts as analysis paralysis.',
     )
   })
 
@@ -531,7 +433,7 @@ describe('resolveWorkerSystemPrompt — Explore-trust rule inside deviation-rule
       'Proceed directly to an Edit or Write within at most TWO follow-up Reads, and only Read ranges the sub-agent did NOT cover.',
     )
     expect(DEVIATION_RULES).toContain(
-      'Re-reading a file the sub-agent already summarised counts as analysis paralysis and trips the read-span watcher.',
+      'Re-reading a file the sub-agent already summarised counts as analysis paralysis.',
     )
   })
 
@@ -544,14 +446,12 @@ describe('buildCoderSystemPrompt — context-gathering discipline brief', () => 
     expect(instructions).toContain(CONTEXT_GATHERING_BRIEF)
   })
 
-  it('brief appears after the read-span guard section and before the deviation rules section', () => {
+  it('brief appears before the deviation rules section', () => {
     const instructions = resolveWorkerSystemPrompt('coder')!
-    const readSpanGuardIdx = instructions.indexOf('## Read-span guard')
     const briefIdx = instructions.indexOf(CONTEXT_GATHERING_BRIEF)
     const deviationRulesIdx = instructions.indexOf(DEVIATION_RULES)
 
-    expect(readSpanGuardIdx).toBeGreaterThan(-1)
-    expect(briefIdx).toBeGreaterThan(readSpanGuardIdx)
+    expect(briefIdx).toBeGreaterThan(-1)
     expect(deviationRulesIdx).toBeGreaterThan(briefIdx)
   })
 
@@ -712,138 +612,6 @@ describe('composePrompt — read-first and prescriptive-action sections', () => 
 })
 
 // ---------------------------------------------------------------------------
-// Sentinel helpers for the read-span guard → diagnose Chore path
-// ---------------------------------------------------------------------------
-
-describe('isTooHardAbortError — read-span sentinel', () => {
-  it('recognises the sentinel message emitted by the codeStep', () => {
-    const err = new Error(TOO_HARD_ABORT_MESSAGE('mars-abc12345'))
-    expect(isTooHardAbortError(err)).toBe(true)
-  })
-
-  it('does not false-positive on an unrelated error', () => {
-    expect(isTooHardAbortError(new Error('some other failure'))).toBe(false)
-    expect(isTooHardAbortError(new Error('blockers; aborting dispatch'))).toBe(false)
-  })
-
-  it('recognises the sentinel through a Mastra-wrapped cause chain', () => {
-    const cause = new Error(TOO_HARD_ABORT_MESSAGE('mars-abc12345'))
-    const wrapped = new Error('Step run-claude-code failed: something')
-    Object.assign(wrapped, { cause })
-    expect(isTooHardAbortError(wrapped)).toBe(true)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Diagnose Chore spawn — prompt contract
-//
-// The read-span guard spawns a diagnose Chore carrying buildDiagnoseChorePrompt.
-// These tests assert that the spawned prompt enforces the diagnose-only
-// contract and that no legacy three-way wording ("note OR surgical change OR
-// file an idea") remains. See PRD 06e677fb and acceptance criteria slice 2.
-// ---------------------------------------------------------------------------
-
-const SAMPLE_TRACE: readonly ReadSpanTrace[] = [
-  { tool: 'Read', target: 'src/foo.ts' },
-  { tool: 'Read', target: 'src/bar.ts' },
-  { tool: 'Grep', target: 'fooImpl' },
-  { tool: 'Read', target: 'src/baz.ts' },
-  { tool: 'Glob', target: 'src/**/*.ts' },
-]
-
-describe('read-span trip — diagnose Chore prompt contract', () => {
-  it('spawned prompt explicitly forbids attempting the parent task', () => {
-    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
-    expect(prompt).toMatch(/MUST NOT/)
-    expect(prompt).toMatch(/attempt the parent task/)
-  })
-
-  it('spawned prompt explicitly forbids making the fix', () => {
-    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
-    expect(prompt).toMatch(/make the fix yourself/)
-  })
-
-  it('spawned prompt instructs verdict recording via mars diagnose set', () => {
-    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
-    expect(prompt).toMatch(/mars diagnose set mars-parent01/)
-    expect(prompt).toMatch(/"kind": "root-cause-found"/)
-    expect(prompt).toMatch(/"kind": "inconclusive"/)
-  })
-
-  it('spawned prompt includes the parent task prompt verbatim', () => {
-    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
-    expect(prompt).toContain('do the original work')
-  })
-
-  it('spawned prompt includes the read trail that preceded the abort', () => {
-    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
-    expect(prompt).toContain('## Read trail before abort')
-    expect(prompt).toContain('src/foo.ts')
-    expect(prompt).toContain('Grep')
-  })
-
-  it('does NOT offer the legacy "produce a concise note" option', () => {
-    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
-    expect(prompt).not.toMatch(/produce a concise note/i)
-  })
-
-  it('does NOT offer the legacy "small surgical change" option', () => {
-    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
-    expect(prompt).not.toMatch(/small surgical change/i)
-  })
-
-  it('does NOT offer the legacy "mars proposal add" / "file a mars proposal" option', () => {
-    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
-    expect(prompt).not.toMatch(/mars proposal add/i)
-    expect(prompt).not.toMatch(/file a `mars proposal/i)
-  })
-
-  it('spawned child is exempt from the read-span guard (stated in the prompt)', () => {
-    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
-    expect(prompt).toMatch(/exempt from the read-span guard/)
-  })
-
-  it('forbids spawning another diagnose Chore (terminality invariant)', () => {
-    const prompt = buildDiagnoseChorePrompt('mars-parent01', 'do the original work', SAMPLE_TRACE)
-    expect(prompt).toMatch(/spawn another diagnose Chore|any other follow-up task/)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// exploration-loop abort sentinel
-// ---------------------------------------------------------------------------
-
-describe('isExplorationLoopAbortError — exploration-loop ceiling sentinel', () => {
-  it('recognises the sentinel emitted by the codeStep on ceiling abort', () => {
-    const err = new Error(EXPLORATION_LOOP_ABORT_MESSAGE('mars-abc12345'))
-    expect(isExplorationLoopAbortError(err)).toBe(true)
-  })
-
-  it('does not false-positive on unrelated errors', () => {
-    expect(isExplorationLoopAbortError(new Error('some other failure'))).toBe(false)
-    expect(isExplorationLoopAbortError(new Error('aborted by read-span guard: diagnose Chore spawned'))).toBe(false)
-    expect(isExplorationLoopAbortError(new Error('verify command exited 1'))).toBe(false)
-    expect(isExplorationLoopAbortError(null)).toBe(false)
-    expect(isExplorationLoopAbortError(undefined)).toBe(false)
-  })
-
-  it('recognises the sentinel through a wrapped cause chain', () => {
-    const cause = new Error(EXPLORATION_LOOP_ABORT_MESSAGE('mars-abc12345'))
-    const wrapped = new Error('Step run-claude-code failed: something')
-    Object.assign(wrapped, { cause })
-    expect(isExplorationLoopAbortError(wrapped)).toBe(true)
-  })
-
-  it('sentinel message is distinct from the too-hard-abort sentinel', () => {
-    // Regression guard: the two sentinels must not cross-detect.
-    const tooHardErr = new Error(TOO_HARD_ABORT_MESSAGE('mars-xyz'))
-    const loopErr = new Error(EXPLORATION_LOOP_ABORT_MESSAGE('mars-xyz'))
-    expect(isExplorationLoopAbortError(tooHardErr)).toBe(false)
-    expect(isTooHardAbortError(loopErr)).toBe(false)
-  })
-})
-
-// ---------------------------------------------------------------------------
 // context-exhausted abort sentinel
 // ---------------------------------------------------------------------------
 
@@ -855,7 +623,6 @@ describe('isContextExhaustedAbortError — context-budget ceiling sentinel', () 
 
   it('does not false-positive on unrelated errors', () => {
     expect(isContextExhaustedAbortError(new Error('some other failure'))).toBe(false)
-    expect(isContextExhaustedAbortError(new Error('aborted by exploration-loop ceiling'))).toBe(false)
     expect(isContextExhaustedAbortError(new Error('verify command exited 1'))).toBe(false)
     expect(isContextExhaustedAbortError(null)).toBe(false)
     expect(isContextExhaustedAbortError(undefined)).toBe(false)
@@ -866,15 +633,5 @@ describe('isContextExhaustedAbortError — context-budget ceiling sentinel', () 
     const wrapped = new Error('Step run-claude-code failed: something')
     Object.assign(wrapped, { cause })
     expect(isContextExhaustedAbortError(wrapped)).toBe(true)
-  })
-
-  it('sentinel is distinct from exploration-loop and too-hard-abort sentinels', () => {
-    const ctxErr = new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE('mars-xyz'))
-    const loopErr = new Error(EXPLORATION_LOOP_ABORT_MESSAGE('mars-xyz'))
-    const tooHardErr = new Error(TOO_HARD_ABORT_MESSAGE('mars-xyz'))
-    expect(isContextExhaustedAbortError(loopErr)).toBe(false)
-    expect(isContextExhaustedAbortError(tooHardErr)).toBe(false)
-    expect(isExplorationLoopAbortError(ctxErr)).toBe(false)
-    expect(isTooHardAbortError(ctxErr)).toBe(false)
   })
 })

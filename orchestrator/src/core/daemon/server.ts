@@ -673,8 +673,6 @@ export const startDaemon = async (
       const {
         isBlockersAbortError,
         isMainDirtyVerifyError,
-        isTooHardAbortError,
-        isExplorationLoopAbortError,
         isContextExhaustedAbortError,
       } = await import('../../workflows/implement-workflow')
       // Read the failure off RunResult.error (the engine puts the thrown Error
@@ -697,27 +695,8 @@ export const startDaemon = async (
         log(`[implement] ${task.id} parked blocked: integration branch dirty at verify; main-commiter spawned/attached`)
         return
       }
-      // A read-span guard trip parks the original task `blocked` with a
-      // task_blockers edge to the diagnose Chore. The step throws the sentinel
-      // to abort the run, so the result surfaces as `failed` — suppress the
-      // misleading `task.completed status=failed` emit and let the blocked
-      // state stand.
-      if (result.status === 'failed' && isTooHardAbortError(resultError)) {
-        log(`[implement] ${task.id} parked blocked: read-span guard tripped; diagnose Chore spawned as blocker`)
-        return
-      }
-      // An exploration-loop ceiling abort marks the task `failed` with cause
-      // 'exploration-loop' and enqueues one follow-up task. The task IS
-      // genuinely failed so we emit `task.completed` — the dedicated log line
-      // is the only difference from the generic path.
-      if (result.status === 'failed' && isExplorationLoopAbortError(resultError)) {
-        log(`[implement] ${task.id} failed: exploration-loop ceiling abort; follow-up enqueued`)
-        bus.emit('task.completed', { taskId: task.id, status: result.status })
-        return
-      }
       // A context-budget exhaustion abort marks the task `failed` with cause
-      // 'context-exhausted' and enqueues one follow-up task. Same shape as
-      // exploration-loop: the task is genuinely failed, just log and emit.
+      // 'context-exhausted' and enqueues one follow-up task.
       if (result.status === 'failed' && isContextExhaustedAbortError(resultError)) {
         log(`[implement] ${task.id} failed: context-budget ceiling abort; follow-up enqueued`)
         bus.emit('task.completed', { taskId: task.id, status: result.status })
@@ -741,12 +720,10 @@ export const startDaemon = async (
       // import fails, treat the error as an ordinary failure rather than a
       // benign blockers-abort — failing the task is the safe default.
       let isBlockersAbort = false
-      let isExplorationLoopAbort = false
       let isContextExhaustedAbort = false
       try {
-        const { isBlockersAbortError, isExplorationLoopAbortError, isContextExhaustedAbortError } = await import('../../workflows/implement-workflow')
+        const { isBlockersAbortError, isContextExhaustedAbortError } = await import('../../workflows/implement-workflow')
         isBlockersAbort = isBlockersAbortError(err)
-        isExplorationLoopAbort = isExplorationLoopAbortError(err)
         isContextExhaustedAbort = isContextExhaustedAbortError(err)
       } catch (importErr) {
         log(
@@ -757,11 +734,6 @@ export const startDaemon = async (
       }
       if (isBlockersAbort) {
         log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
-      } else if (isExplorationLoopAbort) {
-        // The workflow already marked this task failed with cause 'exploration-loop'
-        // before throwing the sentinel. Suppress the re-update that would overwrite
-        // that carefully-set failure record.
-        log(`[implement] ${task.id} exploration-loop ceiling abort (exception path); task already marked failed`)
       } else if (isContextExhaustedAbort) {
         // The workflow already marked this task failed with cause 'context-exhausted'
         // before throwing the sentinel. Suppress the re-update.
@@ -791,7 +763,7 @@ export const startDaemon = async (
       }
     } finally {
       // The finally always runs even if an earlier `return` short-circuited
-      // the try (the blockers-abort / dirty-main / too-hard branches), so the
+      // the try (the blockers-abort / dirty-main branches), so the
       // semaphore slot and inFlight entry are released on every exit path and
       // drain() re-arms the loop. drain() has its own internal catch, so the
       // fire-and-forget `void` here can never leak a rejection.

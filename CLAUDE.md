@@ -167,10 +167,7 @@ recovery-spawn path itself.
 ## Orchestrator notes
 
 - Coder runs get a deviation-rules brief: no bailing without an auto-fix
-  commit, a `--blocked-by $TASK_ID` follow-up, or a `mars proposal add`. A
-  watcher logs (but does not abort) once a coder makes 5+ consecutive
-  Read/Grep/Glob calls without an Edit/Write/Bash; override the threshold
-  via `MARS_READ_SPAN_LIMIT`.
+  commit, a `--blocked-by $TASK_ID` follow-up, or a `mars proposal add`.
 - **Worker models (defaults):** Coder → `claude-sonnet-4-6`, Fixer →
   `claude-opus-4-7` (recovery resilience), Writer → `claude-haiku-4-5-20251001`,
   Planner/Slicer → `claude-opus-4-7` (architectural reasoning), Triager →
