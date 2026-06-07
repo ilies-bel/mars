@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { OriginTree } from '@/widgets/OriginTree'
+import ArcChainRail from '@/widgets/ArcChainRail'
 import {
   fetchEvents,
   invokeAction,
@@ -20,7 +21,7 @@ import type {
   TraceEvent,
 } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
-import { taskHash } from '@/shared/routing'
+import { taskHash, proposalHash } from '@/shared/routing'
 import { getFallbackCopy, logFallbackError } from '@/shared/uiFallback'
 
 // ---- Helpers ----
@@ -555,6 +556,14 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 </p>
               </dd>
             </div>
+          ) : null}
+          {/* Arc chain rail — navigable Proposal-to-Attempt chain for arc-failed alerts. */}
+          {item.kind === 'arc-failed' ? (
+            <ArcChainRail
+              chain={item.chain}
+              onSelectTask={openTask}
+              onOpenProposal={(id) => { window.location.hash = proposalHash(id) }}
+            />
           ) : null}
           {/* Origin / recovery chain — navigable links between origin and fix tasks. */}
           {isRealFailedTask ? (

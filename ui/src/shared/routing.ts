@@ -78,6 +78,13 @@ export const taskHash = (id: string, from?: RouteName): string => {
 }
 
 /**
+ * Builds a proposal overlay hash. `proposalHash('x')` → `#/proposal/x`.
+ * Mirrors `taskHash` for the proposal routing shape.
+ */
+export const proposalHash = (id: string): string =>
+  `#/proposal/${encodeURIComponent(id)}`
+
+/**
  * Parses an optional `#/proposal/<id>` overlay route. Proposal rows route here
  * instead of `#/task/<id>` so the App can render the proposal drawer while task
  * rows keep opening the task drawer unchanged.
