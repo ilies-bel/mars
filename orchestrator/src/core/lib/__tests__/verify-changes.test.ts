@@ -192,29 +192,29 @@ describe('loadVerifyScopes', () => {
     rmSync(workDir, { recursive: true, force: true })
   })
 
-  it('returns a single root scope with default steps when manifest is missing', async () => {
+  it('returns no scopes (no-op pass) when manifest is missing', async () => {
     const scopes = await loadVerifyScopes(resolve(workDir, 'nope.json'))
-    expect(scopes.map((s) => s.scope)).toEqual(['.'])
-    expect(scopes[0].steps.map((s) => s.name)).toEqual([
-      'typecheck',
-      'test',
-      'lint',
-    ])
+    expect(scopes).toEqual([])
   })
 
-  it('returns a single root scope with default steps when manifest has no verify entries', async () => {
+  it('returns no scopes (no-op pass) when manifest has no verify entries', async () => {
     const path = resolve(workDir, 'manifest-no-entries.json')
     writeFileSync(
       path,
       JSON.stringify({ supervisors: [{ name: 'baseline-supervisor' }] }),
     )
     const scopes = await loadVerifyScopes(path)
-    expect(scopes.map((s) => s.scope)).toEqual(['.'])
-    expect(scopes[0].steps.map((s) => s.name)).toEqual([
-      'typecheck',
-      'test',
-      'lint',
-    ])
+    expect(scopes).toEqual([])
+  })
+
+  it('missing manifest yields passed:true with zero steps end-to-end', async () => {
+    const scopes = await loadVerifyScopes(resolve(workDir, 'absent.json'))
+    const steps = selectVerifySteps(scopes, [])
+    expect(steps).toEqual([])
+    // verifyChanges with no steps passes immediately (no required failures)
+    const result = await verifyChanges({ steps, cwd: workDir })
+    expect(result.passed).toBe(true)
+    expect(result.steps).toEqual([])
   })
 
   it('keeps a step name declared by two different scopes as two distinct, scope-tagged steps', async () => {

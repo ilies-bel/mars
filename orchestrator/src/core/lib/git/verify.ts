@@ -378,12 +378,6 @@ export const verifyChanges = async (
   return { passed: !requiredFailed && !stoppedOnRequired, steps: results }
 }
 
-const DEFAULT_VERIFY_STEPS: VerifyStepSpec[] = [
-  { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
-  { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
-  { name: 'lint', cmd: 'npx', args: ['biome', 'check', '.'], required: true },
-]
-
 interface ManifestSupervisorEntry {
   name?: string
   scope?: string
@@ -420,17 +414,14 @@ const fileInScope = (file: string, scope: string): boolean => {
   return f === scope || f.startsWith(`${scope}/`)
 }
 
-const rootScopeOnly = (): VerifyScope[] => [
-  { scope: '.', steps: DEFAULT_VERIFY_STEPS.map((s) => ({ ...s, dir: '.' })) },
-]
-
 /**
  * Load the recipe's verify steps grouped by scope. Unlike the previous
  * collapse-by-name behaviour, two scopes that declare a step with the
  * same name are kept as distinct entries — each scope owns its steps and
  * its directory. Within a single scope a repeated step name keeps the
  * first occurrence. A missing, unparseable, or verify-less manifest
- * degrades to a single root scope running the default steps.
+ * yields no scopes (no-op pass) — defining verification steps is the
+ * user's responsibility via the supervisors manifest.
  */
 export const loadVerifyScopes = async (
   manifestPath: string,
@@ -440,7 +431,7 @@ export const loadVerifyScopes = async (
     raw = await readFile(manifestPath, 'utf8')
   } catch (error: unknown) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return rootScopeOnly()
+      return []
     }
     throw error
   }
@@ -448,7 +439,7 @@ export const loadVerifyScopes = async (
   try {
     parsed = JSON.parse(raw) as SupervisorsManifest
   } catch {
-    return rootScopeOnly()
+    return []
   }
   const supervisors = parsed.supervisors ?? []
   const byScope = new Map<string, Map<string, VerifyStepSpec>>()
@@ -474,7 +465,7 @@ export const loadVerifyScopes = async (
       })
     }
   }
-  if (byScope.size === 0) return rootScopeOnly()
+  if (byScope.size === 0) return []
   return order.map((scope) => ({
     scope,
     steps: Array.from(byScope.get(scope)!.values()),
@@ -537,5 +528,3 @@ export const getChangedFiles = async (
   }
 }
 
-export const DEFAULT_VERIFY_STEPS_FALLBACK: ReadonlyArray<VerifyStepSpec> =
-  DEFAULT_VERIFY_STEPS
