@@ -436,6 +436,53 @@ describe('computeCostPerArcDistribution — percentile math', () => {
 })
 
 // ---------------------------------------------------------------------------
+// 9a. computeCostPerArcDistribution — dangling-origin join-reachability fix
+// ---------------------------------------------------------------------------
+
+describe('computeCostPerArcDistribution — dangling-origin arc', () => {
+  it('recovers cost when trace_events are keyed by the arc/origin id with no matching task row', async () => {
+    const store = await makeStore()
+    // Arc 'dangling-origin': there is NO task row with id='dangling-origin'.
+    // Only a member task with origin_id='dangling-origin' exists.
+    // The trace event is stored under te.task_id='dangling-origin' (the arc id),
+    // which is the pattern for usage signals captured during the arc's run.
+    await insertTask(store, {
+      id: 'member-task',
+      status: 'done',
+      origin_id: 'dangling-origin',
+    })
+    await insertSignal(store, { taskId: 'dangling-origin', inputTokens: 500 })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.sampleCount).toBe(1)
+    expect(result.p50).toBeCloseTo(500, 10)
+  })
+
+  it('does not double-count when one signal is member-keyed and another is arc-keyed', async () => {
+    const store = await makeStore()
+    // Arc 'arc-mixed' has a member task with a member-keyed signal AND
+    // a separate arc-keyed signal (dangling-origin pattern).
+    // The two signals must be summed once each; neither should be counted twice.
+    await insertTask(store, {
+      id: 'arc-mixed-member',
+      status: 'done',
+      origin_id: 'arc-mixed',
+    })
+    // Member-keyed signal: 200 tokens
+    await insertSignal(store, { taskId: 'arc-mixed-member', inputTokens: 200 })
+    // Arc-keyed signal: 300 tokens (dangling-origin pattern)
+    await insertSignal(store, { taskId: 'arc-mixed', inputTokens: 300 })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.sampleCount).toBe(1)
+    // Total must be 200 + 300 = 500, not 200 + 300 + 300 (no double-count)
+    expect(result.p50).toBeCloseTo(500, 10)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // 9. computeAutonomousCompletionRate — fixture cases
 // ---------------------------------------------------------------------------
 

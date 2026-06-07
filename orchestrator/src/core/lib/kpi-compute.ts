@@ -147,6 +147,11 @@ export async function computeCostPerArcDistribution(
   // task in that Arc. done_arcs selects arcs where any task in the window
   // reached 'done'; the tasks join then collects ALL tasks for those arcs (not
   // just those inside the window) so the full cost is captured.
+  // arc_te collects all (arc_id, te_id, payload) triples, using UNION (not
+  // UNION ALL) to deduplicate.  Two join paths are needed because
+  // trace_events.task_id is either the member task's id (normal path) OR the
+  // arc/origin id itself (dangling-origin path — no task row exists for that
+  // id, so the member-task join would miss these rows entirely).
   const result = await surface.query({
     sql: `WITH done_arcs AS (
             SELECT COALESCE(origin_id, id) AS arc_id
@@ -156,22 +161,35 @@ export async function computeCostPerArcDistribution(
               AND updated_at <= ?
             GROUP BY COALESCE(origin_id, id)
             HAVING MAX(CASE WHEN status = 'done' THEN 1 ELSE 0 END) = 1
+          ),
+          arc_te AS (
+            -- Path 1: trace event keyed by a member task id (normal dispatch path)
+            SELECT da.arc_id, te.id AS te_id, te.payload
+            FROM done_arcs da
+            JOIN tasks t ON COALESCE(t.origin_id, t.id) = da.arc_id
+            JOIN trace_events te ON te.task_id = t.id
+              AND te.kind = 'step_ended'
+              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+            UNION
+            -- Path 2: trace event keyed by the arc/origin id directly
+            -- (dangling-origin pattern: no task row has id=arc_id, only
+            --  member tasks with origin_id=arc_id)
+            SELECT da.arc_id, te.id AS te_id, te.payload
+            FROM done_arcs da
+            JOIN trace_events te ON te.task_id = da.arc_id
+              AND te.kind = 'step_ended'
+              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
           )
           SELECT
             da.arc_id,
             COALESCE(SUM(
-              CAST(json_extract(te.payload, '$.usageSignals.inputTokens')        AS REAL) +
-              CAST(json_extract(te.payload, '$.usageSignals.outputTokens')       AS REAL) +
-              CAST(json_extract(te.payload, '$.usageSignals.cacheCreateTokens')  AS REAL) +
-              CAST(json_extract(te.payload, '$.usageSignals.cacheReadTokens')    AS REAL) * 0.1
+              CAST(json_extract(ate.payload, '$.usageSignals.inputTokens')        AS REAL) +
+              CAST(json_extract(ate.payload, '$.usageSignals.outputTokens')       AS REAL) +
+              CAST(json_extract(ate.payload, '$.usageSignals.cacheCreateTokens')  AS REAL) +
+              CAST(json_extract(ate.payload, '$.usageSignals.cacheReadTokens')    AS REAL) * 0.1
             ), 0) AS weighted_tokens
           FROM done_arcs da
-          LEFT JOIN tasks t
-            ON COALESCE(t.origin_id, t.id) = da.arc_id
-          LEFT JOIN trace_events te
-            ON te.task_id = t.id
-           AND te.kind = 'step_ended'
-           AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+          LEFT JOIN arc_te ate ON ate.arc_id = da.arc_id
           GROUP BY da.arc_id`,
     args: [window.windowStart, window.windowEnd],
   })
