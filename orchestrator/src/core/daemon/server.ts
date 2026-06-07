@@ -3061,6 +3061,33 @@ export const startDaemon = async (
   }, OBSERVABILITY_SWEEP_MS)
   observabilitySweep.unref()
 
+  // ── WAL checkpoint sweep ──────────────────────────────────────────────────
+  // Periodically runs PRAGMA wal_checkpoint(TRUNCATE) on the daemon's DB
+  // client so the WAL file stays bounded even when the long-lived connection
+  // suppresses SQLite's built-in autocheckpoint.  A blocked result (busy=1)
+  // is expected under write load and is logged, not thrown.  Default: 60 s;
+  // override via MARS_WAL_CHECKPOINT_INTERVAL_MS.  .unref() so the timer
+  // never holds the daemon process alive after shutdown.
+  const WAL_CHECKPOINT_MS = Number(
+    process.env.MARS_WAL_CHECKPOINT_INTERVAL_MS ?? 60_000,
+  )
+  const { sweepWalCheckpoint } = await import('./wal-checkpoint-sweeper')
+  const walCheckpointSweep = setInterval(() => {
+    void (async () => {
+      try {
+        const { busy, log: walLog, checkpointed } = await sweepWalCheckpoint(
+          getCompositionRootClient(),
+        )
+        log(
+          `[wal-checkpoint] busy=${busy} log=${walLog} checkpointed=${checkpointed}`,
+        )
+      } catch (err) {
+        log(`[wal-checkpoint] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, WAL_CHECKPOINT_MS)
+  walCheckpointSweep.unref()
+
   // ── Alert-dismisser drain ─────────────────────────────────────────────────
   // Polls the outbox for status-transition events and clears the implicated
   // task's action-queue alert(s). This keeps the "status change clears
@@ -3131,6 +3158,7 @@ export const startDaemon = async (
     clearInterval(staleSweep)
     clearInterval(observabilityWatchdog)
     clearInterval(observabilitySweep)
+    clearInterval(walCheckpointSweep)
     clearInterval(alertDrain)
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)
