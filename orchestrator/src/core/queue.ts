@@ -306,6 +306,13 @@ export interface Task {
    * layer treats it as an opaque string; recipe code parses it.
    */
   recoveryPayload: string | null
+  /**
+   * One-line statement of what the task sets out to do, authored at creation
+   * time and stored verbatim. Defaults to the first sentence of `prompt` when
+   * not provided explicitly. Always a non-null string ('' on legacy rows that
+   * predate the column but have not been backfilled yet).
+   */
+  intent: string
   createdAt: string
   updatedAt: string
 }
@@ -643,6 +650,30 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // every non-follow-up row.
   if (!names.has('followup_dedup_key')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN followup_dedup_key TEXT`)
+  }
+  // intent: one-line statement of what the task sets out to do, authored at
+  // creation time. Backfilled from the first sentence of prompt for existing
+  // rows so the field is never blank in practice.
+  if (!names.has('intent')) {
+    await c.execute(
+      `ALTER TABLE tasks ADD COLUMN intent TEXT NOT NULL DEFAULT ''`,
+    )
+    // Backfill: intent = first sentence of prompt (split on '. ' or newline,
+    // capped at 200 chars).
+    await c.execute(`
+      UPDATE tasks SET intent = SUBSTR(
+        CASE
+          WHEN INSTR(prompt, '. ') > 0
+            AND (INSTR(prompt, CHAR(10)) = 0
+                 OR INSTR(prompt, '. ') < INSTR(prompt, CHAR(10)))
+          THEN SUBSTR(prompt, 1, INSTR(prompt, '. '))
+          WHEN INSTR(prompt, CHAR(10)) > 0
+          THEN SUBSTR(prompt, 1, INSTR(prompt, CHAR(10)) - 1)
+          ELSE prompt
+        END,
+        1, 200
+      ) WHERE intent = ''
+    `)
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
@@ -1100,6 +1131,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             sub_deliverable_json TEXT,
             integration_head_sha TEXT,
             followup_dedup_key   TEXT,
+            intent               TEXT    NOT NULL DEFAULT '',
             created_at           TEXT    NOT NULL,
             updated_at           TEXT    NOT NULL
           )
@@ -1114,7 +1146,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             origin_id, parent_proposal_id, slice_index, failed_phase, resume_from,
             verify_cmd, task_type, read_first_json,
             prescriptive_action, slice_kind, sub_deliverable_json,
-            integration_head_sha, followup_dedup_key, created_at, updated_at
+            integration_head_sha, followup_dedup_key, intent, created_at, updated_at
           )
           SELECT
             id, prompt, status, plan_functional, plan_technical,
@@ -1127,7 +1159,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             parent_proposal_id, slice_index, failed_phase, resume_from,
             verify_cmd, task_type, read_first_json,
             prescriptive_action, slice_kind, sub_deliverable_json,
-            integration_head_sha, followup_dedup_key, created_at, updated_at
+            integration_head_sha, followup_dedup_key, COALESCE(intent, ''), created_at, updated_at
           FROM tasks
         `)
         // Re-run the legacy origin_id backfill inside the rebuild to ensure
@@ -1791,7 +1823,7 @@ SELECT
   (SELECT json_group_array(criterion ORDER BY position)
      FROM task_done_criteria WHERE task_id = t.id) AS done_criteria_json,
   t.task_type, t.read_first_json, t.prescriptive_action, t.slice_kind,
-  t.sub_deliverable_json, t.integration_head_sha, t.created_at, t.updated_at
+  t.sub_deliverable_json, t.integration_head_sha, t.intent, t.created_at, t.updated_at
 FROM tasks t`
 
 export const rowToTask = (row: Record<string, unknown>): Task => {
@@ -1849,6 +1881,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     spec: rowToTaskSpec(row),
     integrationHeadSha: (row.integration_head_sha as string | null) ?? null,
     recoveryPayload: (row.recovery_payload as string | null) ?? null,
+    intent: (row.intent as string | null) ?? '',
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -1940,6 +1973,12 @@ export interface EnqueueTaskOptions {
    * sections on top.
    */
   spec?: TaskSpec
+  /**
+   * One-line statement of what the task sets out to do. When omitted,
+   * defaults to the first sentence of `prompt` (split on '. ' or newline,
+   * capped at 200 chars).
+   */
+  intent?: string
 }
 
 /**

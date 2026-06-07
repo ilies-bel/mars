@@ -283,8 +283,26 @@ export class Arc {
       ? JSON.stringify(taskSpec.subDeliverable)
       : null
     const tagsJson = JSON.stringify(tags)
+    // Derive intent from opts or from the first sentence of prompt (split on
+    // '. ' or newline, capped at 200 chars). Inlined — single call site.
+    let intent: string
+    if (opts?.intent !== undefined && opts.intent !== '') {
+      intent = opts.intent.slice(0, 200)
+    } else {
+      const nlIdx = promptText.indexOf('\n')
+      const dotIdx = promptText.indexOf('. ')
+      let end: number
+      if (dotIdx !== -1 && (nlIdx === -1 || dotIdx < nlIdx)) {
+        end = dotIdx + 1 // include the '.'
+      } else if (nlIdx !== -1) {
+        end = nlIdx // exclude the newline
+      } else {
+        end = promptText.length
+      }
+      intent = promptText.slice(0, Math.min(end, 200))
+    }
     await resolvedStore.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         promptText,
@@ -305,6 +323,7 @@ export class Arc {
         prescriptiveAction,
         sliceKindVal,
         subDeliverableJson,
+        intent,
         now,
         now,
       ],

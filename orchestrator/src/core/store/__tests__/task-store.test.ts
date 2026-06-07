@@ -71,6 +71,39 @@ describe('createTaskStore', () => {
     expect(fetched?.status).toBe('queued')
   })
 
+  it('enqueueTask with explicit intent stores and returns it verbatim', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask(
+      'Do complex things. With many sentences.',
+      undefined,
+      { skipTriage: true, intent: 'Implement the frobnication layer' },
+    )
+
+    expect(task.intent).toBe('Implement the frobnication layer')
+
+    const fetched = await store.getTask(task.id)
+    expect(fetched?.intent).toBe('Implement the frobnication layer')
+
+    const listed = await store.listTasks('queued')
+    const found = listed.find((t) => t.id === task.id)
+    expect(found?.intent).toBe('Implement the frobnication layer')
+  })
+
+  it('enqueueTask without intent derives it from the first sentence of prompt', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask(
+      'Fix the bug. Then clean up.',
+      undefined,
+      { skipTriage: true },
+    )
+
+    expect(task.intent).toBe('Fix the bug.')
+  })
+
   it('listTasks returns all queued tasks', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
     const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
