@@ -7,7 +7,7 @@ export const KpiVector = () => {
   if (isLoading || !kpis) return null
 
   return (
-    <div className="flex gap-3 border-b border-iron/20 bg-bg px-4 py-2">
+    <div className="flex flex-wrap gap-3">
       {kpis.map((kpi) => (
         <KpiTile key={kpi.key} kpi={kpi} />
       ))}

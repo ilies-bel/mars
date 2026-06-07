@@ -7,6 +7,7 @@ import { severityColor, summarizeTraceEvent } from '@/shared/actionQueueDetail'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { TraceEvent } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
+import { KpiVector } from '@/widgets/KpiVector'
 
 /**
  * Events tab — the unified trace stream.
@@ -415,6 +416,9 @@ export const EventsPage = () => {
           {initial.isFetching ? 'Refreshing…' : 'Refresh'}
         </button>
       </header>
+
+      {/* KPI strip — four metric tiles at the top of the Events tab */}
+      <KpiVector />
 
       {/* Filter row — fixed above the scrollable list */}
       <div className="flex flex-wrap items-start gap-4">

@@ -1,8 +1,9 @@
 /**
  * Tests for KpiTile and KpiVector components.
  *
- * KpiTile receives a Kpi prop and renders the label + current value.
- * KpiVector calls useKpis() and renders one KpiTile per KPI.
+ * KpiTile receives a Kpi prop and renders the label + formatted current value
+ * plus a mini sparkline SVG. KpiVector calls useKpis() and renders one KpiTile
+ * per KPI.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -24,32 +25,32 @@ const kpi = (overrides: Partial<Kpi> & { key: Kpi['key'] }): Kpi => ({
 })
 
 // ---------------------------------------------------------------------------
-// KpiTile
+// KpiTile — label and formatted value
 // ---------------------------------------------------------------------------
 
 describe('KpiTile', () => {
   it('renders the human-readable label for cost_per_arc', () => {
     const html = renderToStaticMarkup(<KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5 })} />)
     expect(html).toContain('Cost per Arc')
-    expect(html).toContain('2.5')
+    expect(html).toContain('3 tok')
   })
 
   it('renders the human-readable label for failure_rate', () => {
     const html = renderToStaticMarkup(<KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.1 })} />)
     expect(html).toContain('Failure Rate')
-    expect(html).toContain('0.1')
+    expect(html).toContain('10.0%')
   })
 
   it('renders the human-readable label for autonomous_completion_rate', () => {
     const html = renderToStaticMarkup(<KpiTile kpi={kpi({ key: 'autonomous_completion_rate', currentValue: 0.9 })} />)
     expect(html).toContain('Autonomous Completion')
-    expect(html).toContain('0.9')
+    expect(html).toContain('90.0%')
   })
 
   it('renders the human-readable label for recovery_success_rate', () => {
     const html = renderToStaticMarkup(<KpiTile kpi={kpi({ key: 'recovery_success_rate', currentValue: 0.75 })} />)
     expect(html).toContain('Recovery Success')
-    expect(html).toContain('0.75')
+    expect(html).toContain('75.0%')
   })
 })
 
@@ -92,13 +93,17 @@ describe('KpiVector', () => {
     expect(html).toContain('Recovery Success')
   })
 
-  it('renders the currentValue of each KPI', async () => {
+  it('renders the formatted value of each KPI', async () => {
     const { KpiVector } = await import('./KpiVector')
     const html = renderToStaticMarkup(<KpiVector />)
-    expect(html).toContain('1')
-    expect(html).toContain('0.05')
-    expect(html).toContain('0.9')
-    expect(html).toContain('0.8')
+    // cost_per_arc: 1.0 → '1 tok'
+    expect(html).toContain('1 tok')
+    // failure_rate: 0.05 → '5.0%'
+    expect(html).toContain('5.0%')
+    // autonomous_completion_rate: 0.9 → '90.0%'
+    expect(html).toContain('90.0%')
+    // recovery_success_rate: 0.8 → '80.0%'
+    expect(html).toContain('80.0%')
   })
 
   it('renders all four tiles even when some KPIs are low-confidence (layout invariant)', async () => {

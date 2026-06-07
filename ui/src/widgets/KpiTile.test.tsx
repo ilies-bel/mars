@@ -1,19 +1,27 @@
 /**
- * Tests for KpiTile drift arrow rendering.
+ * Tests for KpiTile and formatKpiValue.
  *
- * Each KPI has an improvement direction:
- *   - cost_per_arc, failure_rate: lower-is-better
- *   - autonomous_completion_rate, recovery_success_rate: higher-is-better
+ * Each tile shows:
+ *   - The human-readable label
+ *   - A mini sparkline SVG (polyline when series >= 2 non-null points,
+ *     flat baseline otherwise)
+ *   - A cleanly formatted current value
  *
- * Regressions always render as ↑ with kpi-drift--regressed,
- * improvements as ↓ with kpi-drift--improved,
- * flat (|delta| < 1e-6) as → with kpi-drift--flat.
+ * The old drift-arrow / raw-number rendering has been removed.
+ *
+ * Value formatting rules:
+ *   - cost_per_arc   → compact token count: 0 tok / 1.2k tok / 1.5M tok
+ *   - failure_rate, autonomous_completion_rate, recovery_success_rate
+ *                    → percent with one decimal: '0.6%', '85.6%', '98.6%'
+ *
+ * Low-confidence path: shows '<label>: insufficient samples' and
+ * kpi-tile--low-confidence class; does NOT render sparkline or formatted value.
  */
 
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { Kpi } from '@/entities/kpi/types'
-import { KpiTile } from './KpiTile'
+import type { Kpi, KpiSeriesPoint } from '@/shared/schemas'
+import { KpiTile, formatKpiValue } from './KpiTile'
 
 const kpi = (overrides: Partial<Kpi> & { key: Kpi['key'] }): Kpi => ({
   key: overrides.key,
@@ -22,191 +30,193 @@ const kpi = (overrides: Partial<Kpi> & { key: Kpi['key'] }): Kpi => ({
   delta: overrides.delta ?? 0,
   sampleCount: overrides.sampleCount ?? 0,
   lowConfidence: overrides.lowConfidence ?? false,
+  series: overrides.series,
+})
+
+const point = (value: number | null): KpiSeriesPoint => ({
+  takenAt: '2024-01-01T00:00:00Z',
+  value,
 })
 
 // ---------------------------------------------------------------------------
-// cost_per_arc — lower-is-better
+// formatKpiValue — pure helper
 // ---------------------------------------------------------------------------
 
-describe('KpiTile drift: cost_per_arc (lower-is-better)', () => {
-  it('renders ↓ improved when delta is negative', () => {
-    const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 1.5, delta: -0.5 })} />,
-    )
-    expect(html).toContain('↓')
-    expect(html).toContain('kpi-drift--improved')
-    expect(html).toContain('-0.5')
+describe('formatKpiValue', () => {
+  // percent keys
+  it('formats failure_rate as percent with one decimal', () => {
+    expect(formatKpiValue('failure_rate', 0.00621118)).toBe('0.6%')
   })
 
-  it('renders ↑ regressed when delta is positive', () => {
-    const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, delta: 0.5 })} />,
-    )
-    expect(html).toContain('↑')
-    expect(html).toContain('kpi-drift--regressed')
-    expect(html).toContain('+0.5')
+  it('formats autonomous_completion_rate as percent with one decimal', () => {
+    expect(formatKpiValue('autonomous_completion_rate', 0.85625)).toBe('85.6%')
   })
 
-  it('renders → flat when delta is zero', () => {
-    const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, delta: 0 })} />,
-    )
-    expect(html).toContain('→')
-    expect(html).toContain('kpi-drift--flat')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// failure_rate — lower-is-better
-// ---------------------------------------------------------------------------
-
-describe('KpiTile drift: failure_rate (lower-is-better)', () => {
-  it('renders ↓ improved when delta is negative', () => {
-    const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.05, delta: -0.02 })} />,
-    )
-    expect(html).toContain('↓')
-    expect(html).toContain('kpi-drift--improved')
+  it('formats recovery_success_rate as percent with one decimal', () => {
+    expect(formatKpiValue('recovery_success_rate', 0.98648)).toBe('98.6%')
   })
 
-  it('renders ↑ regressed when delta is positive', () => {
-    const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.08, delta: 0.03 })} />,
-    )
-    expect(html).toContain('↑')
-    expect(html).toContain('kpi-drift--regressed')
+  it('formats a zero percent correctly', () => {
+    expect(formatKpiValue('failure_rate', 0)).toBe('0.0%')
   })
 
-  it('renders → flat when |delta| < epsilon (5e-7)', () => {
-    const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'failure_rate', delta: 5e-7 })} />,
-    )
-    expect(html).toContain('→')
-    expect(html).toContain('kpi-drift--flat')
+  // cost_per_arc — token count
+  it('formats cost_per_arc zero as "0 tok"', () => {
+    expect(formatKpiValue('cost_per_arc', 0)).toBe('0 tok')
+  })
+
+  it('formats cost_per_arc values < 1000 as integer tok', () => {
+    expect(formatKpiValue('cost_per_arc', 999)).toBe('999 tok')
+  })
+
+  it('formats cost_per_arc values >= 1000 with k suffix', () => {
+    expect(formatKpiValue('cost_per_arc', 1234)).toBe('1.2k tok')
+  })
+
+  it('formats cost_per_arc values at exactly 1000 as 1.0k tok', () => {
+    expect(formatKpiValue('cost_per_arc', 1000)).toBe('1.0k tok')
+  })
+
+  it('formats cost_per_arc values >= 1000000 with M suffix', () => {
+    expect(formatKpiValue('cost_per_arc', 1_500_000)).toBe('1.5M tok')
+  })
+
+  it('formats cost_per_arc at exactly 1000000 as 1.0M tok', () => {
+    expect(formatKpiValue('cost_per_arc', 1_000_000)).toBe('1.0M tok')
   })
 })
 
 // ---------------------------------------------------------------------------
-// autonomous_completion_rate — higher-is-better
+// KpiTile rendering — normal (non-low-confidence) path
 // ---------------------------------------------------------------------------
 
-describe('KpiTile drift: autonomous_completion_rate (higher-is-better)', () => {
-  it('renders ↓ improved when delta is positive', () => {
+describe('KpiTile — label and formatted value', () => {
+  it('renders the label for cost_per_arc', () => {
     const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'autonomous_completion_rate', currentValue: 0.9, delta: 0.1 })} />,
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5 })} />,
     )
-    expect(html).toContain('↓')
-    expect(html).toContain('kpi-drift--improved')
+    expect(html).toContain('Cost per Arc')
   })
 
-  it('renders ↑ regressed when delta is negative', () => {
+  it('renders formatted value for cost_per_arc', () => {
     const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'autonomous_completion_rate', currentValue: 0.7, delta: -0.1 })} />,
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5 })} />,
     )
-    expect(html).toContain('↑')
-    expect(html).toContain('kpi-drift--regressed')
+    expect(html).toContain('3 tok')
   })
 
-  it('renders → flat when delta is zero', () => {
+  it('renders the label for failure_rate', () => {
     const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'autonomous_completion_rate', delta: 0 })} />,
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.05 })} />,
     )
-    expect(html).toContain('→')
-    expect(html).toContain('kpi-drift--flat')
+    expect(html).toContain('Failure Rate')
+  })
+
+  it('renders formatted percent value for failure_rate', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.05 })} />,
+    )
+    expect(html).toContain('5.0%')
+  })
+
+  it('renders formatted percent value for autonomous_completion_rate', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'autonomous_completion_rate', currentValue: 0.9 })} />,
+    )
+    expect(html).toContain('90.0%')
+  })
+
+  it('renders formatted percent value for recovery_success_rate', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'recovery_success_rate', currentValue: 0.75 })} />,
+    )
+    expect(html).toContain('75.0%')
+  })
+})
+
+describe('KpiTile — sparkline rendering', () => {
+  it('renders an svg element regardless of series data', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.05 })} />,
+    )
+    expect(html).toContain('<svg')
+  })
+
+  it('renders a polyline when series has >= 2 non-null points', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile
+        kpi={kpi({
+          key: 'failure_rate',
+          currentValue: 0.05,
+          series: [point(0.04), point(0.05), point(0.06)],
+        })}
+      />,
+    )
+    expect(html).toContain('<polyline')
+  })
+
+  it('does NOT render a polyline when series is empty (flat baseline)', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.05, series: [] })} />,
+    )
+    expect(html).not.toContain('<polyline')
+  })
+
+  it('does NOT render a polyline when series has only 1 non-null point', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile
+        kpi={kpi({
+          key: 'failure_rate',
+          currentValue: 0.05,
+          series: [point(0.05)],
+        })}
+      />,
+    )
+    expect(html).not.toContain('<polyline')
+  })
+
+  it('does NOT render a polyline when all series points are null', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile
+        kpi={kpi({
+          key: 'failure_rate',
+          currentValue: 0.05,
+          series: [point(null), point(null)],
+        })}
+      />,
+    )
+    expect(html).not.toContain('<polyline')
   })
 })
 
 // ---------------------------------------------------------------------------
-// recovery_success_rate — higher-is-better
-// ---------------------------------------------------------------------------
-
-describe('KpiTile drift: recovery_success_rate (higher-is-better)', () => {
-  it('renders ↓ improved when delta is positive', () => {
-    const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'recovery_success_rate', currentValue: 0.85, delta: 0.05 })} />,
-    )
-    expect(html).toContain('↓')
-    expect(html).toContain('kpi-drift--improved')
-  })
-
-  it('renders ↑ regressed when delta is negative', () => {
-    const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'recovery_success_rate', currentValue: 0.75, delta: -0.05 })} />,
-    )
-    expect(html).toContain('↑')
-    expect(html).toContain('kpi-drift--regressed')
-  })
-
-  it('renders → flat when delta is zero', () => {
-    const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'recovery_success_rate', delta: 0 })} />,
-    )
-    expect(html).toContain('→')
-    expect(html).toContain('kpi-drift--flat')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Signed delta display
-// ---------------------------------------------------------------------------
-
-describe('KpiTile delta display', () => {
-  it('prefixes positive delta with +', () => {
-    const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'cost_per_arc', delta: 0.12 })} />,
-    )
-    expect(html).toContain('+0.12')
-  })
-
-  it('shows negative delta without modification', () => {
-    const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'cost_per_arc', delta: -3.4 })} />,
-    )
-    expect(html).toContain('-3.4')
-  })
-
-  it('shows zero delta as 0 for flat case', () => {
-    const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'cost_per_arc', delta: 0 })} />,
-    )
-    expect(html).toContain('→')
-    // delta of 0 renders without + prefix
-    expect(html).toContain('0')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Low-confidence rendering
+// Low-confidence path
 // ---------------------------------------------------------------------------
 
 describe('KpiTile low-confidence', () => {
   it('renders the label and "insufficient samples" when lowConfidence is true', () => {
     const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, delta: -0.5, lowConfidence: true })} />,
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, lowConfidence: true })} />,
     )
     expect(html).toContain('Cost per Arc')
     expect(html).toContain('insufficient samples')
     expect(html).toContain('kpi-tile--low-confidence')
   })
 
-  it('suppresses currentValue, delta, and drift arrow when lowConfidence is true', () => {
+  it('suppresses sparkline and formatted value when lowConfidence is true', () => {
     const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, delta: -0.5, lowConfidence: true })} />,
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, lowConfidence: true })} />,
     )
-    expect(html).not.toContain('2.5')
-    expect(html).not.toContain('-0.5')
-    expect(html).not.toContain('↓')
-    expect(html).not.toContain('↑')
-    expect(html).not.toContain('→')
+    expect(html).not.toContain('<svg')
+    expect(html).not.toContain('3 tok')
   })
 
-  it('renders the full numeric tile when lowConfidence is false', () => {
+  it('renders the full tile (sparkline + formatted value) when lowConfidence is false', () => {
     const html = renderToStaticMarkup(
-      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, delta: -0.5, lowConfidence: false })} />,
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, lowConfidence: false })} />,
     )
-    expect(html).toContain('2.5')
-    expect(html).toContain('↓')
-    expect(html).toContain('-0.5')
+    expect(html).toContain('<svg')
+    expect(html).toContain('3 tok')
     expect(html).not.toContain('insufficient samples')
     expect(html).not.toContain('kpi-tile--low-confidence')
   })
