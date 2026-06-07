@@ -448,11 +448,13 @@ describe('blocker-resolution (task_blockers)', () => {
       expect((await q.getTask(origin.id))?.status).toBe('done')
     })
 
-    it('is a no-op when origin is already in a terminal state', async () => {
+    it('is a no-op when origin is already done (true idempotent case)', async () => {
+      // 'done' is the only status that is a genuine no-op: the origin is already
+      // in the desired terminal state and there is no open failed-task row.
       const { q, br } = await loadModules(repo)
       const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
       await q.resolveQueueClient().execute({
-        sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
         args: [origin.id],
       })
 
@@ -461,16 +463,67 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(result.originFlipped).toBe(false)
       expect(result.unblock).toBeNull()
       expect(result.actionQueueItemsClosed).toBe(0)
-      expect((await q.getTask(origin.id))?.status).toBe('failed')
+      expect((await q.getTask(origin.id))?.status).toBe('done')
     })
 
-    // Bug guard: a recovery-failed actionQueue row keyed to an origin that is
-    // already terminal (origin parked in `failed` by the retry-budget
-    // guard before recovery finished) must still be closed when the
-    // recovery itself reaches done. Previously the early-return on
+    // Regression guard for the status-reconciliation race (mars-a007a7d0):
+    // a successful recovery must flip a 'failed' origin to 'done' — origins
+    // stranding in 'failed' after their recovery succeeds was the bug.
+    it('flips a failed origin to done, closes its action-queue row, and unblocks dependents', async () => {
+      const { q, br, actionQueue } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+      await blockTask(q, dep.id, origin.id, 0)
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
+        args: [origin.id],
+      })
+      await actionQueue.raiseActionQueueItem({
+        kind: 'failed',
+        category: 'orchestrator',
+        priority: 'high',
+        title: 'origin task failed',
+        body: 'test',
+        payload: {},
+        context: {},
+        raisedBy: 'test',
+        signature: 'verify:has-diff/no-commits-ahead',
+        originTaskId: origin.id,
+      })
+
+      const result = await br.markOriginDoneFromRecovery(origin.id)
+
+      // The recovery is authoritative: the origin must flip to done.
+      expect(result.originFlipped).toBe(true)
+      expect(result.actionQueueItemsClosed).toBe(1)
+      expect(result.unblock).not.toBeNull()
+      expect(result.unblock!.outcomes.map((o) => o.outcome)).toContain('queued')
+      expect((await q.getTask(origin.id))?.status).toBe('done')
+      expect((await q.getTask(dep.id))?.status).toBe('queued')
+      // Action-queue row must be closed.
+      const open = await actionQueue.listActionQueueItems('open')
+      expect(open.find((r) => r.kind === 'failed')).toBeUndefined()
+    })
+
+    it('flips a dropped origin to done when recovery succeeds', async () => {
+      const { q, br } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'dropped' WHERE id = ?`,
+        args: [origin.id],
+      })
+
+      const result = await br.markOriginDoneFromRecovery(origin.id)
+
+      expect(result.originFlipped).toBe(true)
+      expect((await q.getTask(origin.id))?.status).toBe('done')
+    })
+
+    // Bug guard (superseded by mars-a007a7d0 fix): previously the early-return on
     // terminal-origin skipped supersedeActionQueueItemsForOrigin entirely and
-    // stranded the row.
-    it('closes actionQueue rows keyed to a terminal origin even though it cannot flip status', async () => {
+    // stranded the row, AND the origin stayed 'failed'. The fix reconciles both:
+    // the action-queue row is closed AND the origin is flipped to 'done'.
+    it('closes actionQueue rows and reconciles a terminal-failed origin to done when recovery succeeds', async () => {
       const { q, br, actionQueue } = await loadModules(repo)
       const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
       await q.resolveQueueClient().execute({
@@ -492,8 +545,10 @@ describe('blocker-resolution (task_blockers)', () => {
 
       const result = await br.markOriginDoneFromRecovery(origin.id)
 
-      expect(result.originFlipped).toBe(false)
+      // Both the status flip AND the row close must happen atomically.
+      expect(result.originFlipped).toBe(true)
       expect(result.actionQueueItemsClosed).toBe(1)
+      expect((await q.getTask(origin.id))?.status).toBe('done')
       const open = await actionQueue.listActionQueueItems('open')
       expect(open.find((r) => r.kind === 'failed')).toBeUndefined()
     })

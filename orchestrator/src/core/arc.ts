@@ -2439,7 +2439,10 @@ export class Arc {
         actionQueueItemsClosed,
       }
     }
-    if (origin.status === 'done' || origin.status === 'failed' || origin.status === 'dropped') {
+    if (origin.status === 'done') {
+      // True idempotent no-op: origin is already in the desired terminal state.
+      // An already-done origin has no open failed-task action-queue row, so
+      // actionQueueItemsClosed is 0 here (the supersede above was a no-op).
       return {
         originTaskId,
         originFlipped: false,
@@ -2448,11 +2451,13 @@ export class Arc {
       }
     }
     // Route the status change and its paired event through the single-writer
-    // chokepoint (Arc.setTaskStatus) so they commit atomically. The pre-checks
-    // above (origin missing or already terminal) guarantee the origin is not
-    // in a terminal state at this point; the TOCTOU window is acceptable in
+    // chokepoint (Arc.setTaskStatus) so they commit atomically. We intentionally
+    // reconcile 'failed' and 'dropped' origins to 'done' here — a successful
+    // recovery shipping the work is the authoritative signal that the origin
+    // reached done, regardless of what the retry-budget guard or any other
+    // upstream writer previously stamped. The TOCTOU window is acceptable in
     // the single-process orchestrator. Arc.setTaskStatus does NOT enforce
-    // terminal immutability — the early-return at the top of this function is
+    // terminal immutability — the early-return above (for 'done' only) is
     // the sole guard (ADR-0052 preserves the caller-side defense).
     const store = await getDefaultTaskStore()
     await Arc.setTaskStatus(originTaskId, 'done', { result: { via: 'recovery' } }, store)
