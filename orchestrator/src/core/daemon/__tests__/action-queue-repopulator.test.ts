@@ -826,4 +826,42 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     expect(openItems.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(1)
   })
+
+  it('closes an already-open failed-task row when repopulator processes task.dropped{dropReason:purged} (post-hoc purge)', async () => {
+    // Regression for: a failed-task row is raised by task.failed, then the
+    // task is purged later.  When task.dropped{purged} drains through the
+    // repopulator the still-open row must be closed immediately — without
+    // waiting for the periodic reconcile sweep.
+    //
+    // Timeline:
+    //   1. task.failed → repopulator raises an open row for T
+    //   2. operator purges T → task.dropped{purged} published (task row still
+    //      exists at event publish time, matches real dropTask ordering)
+    //   3. repopulator drains task.dropped{purged} → must close the open row
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-posthoc-purge-closes-row'
+
+    await rep.ensureActionQueueRepopulator(client)
+    // Task row exists so getTask() returns non-null during task.failed drain.
+    await insertTaskRow(client, { id: taskId })
+
+    // Step 1: task.failed → open row raised
+    await publish(pub, client, 'task.failed', { taskId, error: 'boom' })
+    const { processed: p1 } = await rep.drainActionQueueRepopulations(client)
+    expect(p1).toBe(1)
+
+    const openBefore = await actionQueue.listActionQueueItems('open')
+    expect(openBefore.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(1)
+
+    // Step 2: task is purged — task row still exists when event is published
+    // (matching real dropTask behaviour: event published before row deleted).
+    await publish(pub, client, 'task.dropped', { taskId, dropReason: 'purged' })
+    const { processed: p2 } = await rep.drainActionQueueRepopulations(client)
+    expect(p2).toBe(1)
+
+    // Step 3: row must be closed — no manual reconcile call needed.
+    const openAfter = await actionQueue.listActionQueueItems('open')
+    expect(openAfter.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
+  })
 })

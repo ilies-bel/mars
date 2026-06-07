@@ -6,6 +6,7 @@ import { drainWithStall } from './subscriber-drain.js'
 import { resolveFailureKind } from '../lib/failure-kinds'
 import {
   raiseActionQueueItem,
+  resolveAllRowsForTask,
   supersedeActionQueueItemsForOrigin,
   type SupersedeReason,
 } from '../lib/action-queue'
@@ -108,6 +109,15 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
     if (event.type === 'task.dropped') {
       const { dropReason } = event.payload as { taskId: string; dropReason: string }
       if (dropReason === 'purged') {
+        // Belt-and-suspenders close: resolveAllRowsForTask catches rows keyed
+        // by origin_task_id directly (covers any row that was raised for this
+        // task, regardless of fingerprint). supersedeActionQueueItemsForOrigin
+        // then handles rows matched by fingerprint with proper history/events.
+        // Both are idempotent — rows already closed by the other call are a
+        // silent no-op. Together they ensure a post-hoc purge (task purged
+        // after the failed-task row was already raised) closes the stale row
+        // immediately without waiting for the next reconcile sweep.
+        await resolveAllRowsForTask(taskId)
         await supersedeActionQueueItemsForOrigin(
           taskId,
           'origin-purged',
