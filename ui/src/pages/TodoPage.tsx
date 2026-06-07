@@ -43,6 +43,15 @@ const KIND_LABEL: Record<ActionQueueItem['kind'], string> = {
   'draft-proposal': 'draft',
 }
 
+export type KindFilter = 'all' | 'alerts' | 'drafts'
+
+/** Pure helper: returns true when `item` should be shown for the given `filter`. */
+export function matchesKindFilter(item: ActionQueueItem, filter: KindFilter): boolean {
+  if (filter === 'all') return true
+  if (filter === 'alerts') return item.kind === 'failed-task' || item.kind === 'stale-worktree'
+  return item.kind === 'draft-proposal'
+}
+
 // ---- Row ----
 
 interface RowProps {
@@ -601,6 +610,7 @@ const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
 export const ActionQueuePage = () => {
   const { items, error, projectsError, projectsEmpty } = useActionQueue()
   const [query, setQuery] = useState<string>('')
+  const [kindFilter, setKindFilter] = useState<KindFilter>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const qc = useQueryClient()
@@ -614,15 +624,16 @@ export const ActionQueuePage = () => {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return items
     return items.filter(
       (i) =>
-        i.id.toLowerCase().includes(q) ||
-        i.title.toLowerCase().includes(q) ||
-        i.body.toLowerCase().includes(q) ||
-        i.kind.toLowerCase().includes(q),
+        matchesKindFilter(i, kindFilter) &&
+        (!q ||
+          i.id.toLowerCase().includes(q) ||
+          i.title.toLowerCase().includes(q) ||
+          i.body.toLowerCase().includes(q) ||
+          i.kind.toLowerCase().includes(q)),
     )
-  }, [items, query])
+  }, [items, query, kindFilter])
 
   const selected =
     filtered.find((i) => i.id === selectedId) ?? filtered[0] ?? null
@@ -666,6 +677,27 @@ export const ActionQueuePage = () => {
           <p className="mt-1 font-mono text-[10px] text-iron">
             {items.length} item{items.length === 1 ? '' : 's'}
           </p>
+          <div
+            role="group"
+            aria-label="Filter action queue by kind"
+            className="mt-2 flex border border-iron/30"
+          >
+            {(['all', 'alerts', 'drafts'] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                aria-pressed={kindFilter === f}
+                data-testid={`action-queue-filter-${f}`}
+                onClick={() => setKindFilter(f)}
+                className={[
+                  'flex-1 border-r border-iron/30 px-2 py-0.5 font-mono text-[10px] last:border-r-0 focus:outline-none focus:ring-1 focus:ring-iron/50',
+                  kindFilter === f ? 'bg-iron/20 text-fg' : 'bg-bg text-iron',
+                ].join(' ')}
+              >
+                {f === 'all' ? 'All' : f === 'alerts' ? 'Alerts' : 'Drafts'}
+              </button>
+            ))}
+          </div>
           <input
             type="search"
             value={query}

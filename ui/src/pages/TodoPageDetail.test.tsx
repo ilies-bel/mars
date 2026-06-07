@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ActionQueuePage as _Page, ActionQueueRow } from './TodoPage'
+import { ActionQueuePage as _Page, ActionQueueRow, matchesKindFilter } from './TodoPage'
 import type {
   ActionQueueItem,
   EventsResponse,
@@ -543,8 +543,11 @@ describe('actionQueue sidebar – grouped sections', () => {
     const failed = makeItem({ id: 'f1', kind: 'failed-task', actions: [] })
     const html = renderPage([failed])
     expect(html).toContain('Failed tasks')
-    expect(html).not.toContain('Drafts')
-    expect(html).not.toContain('Stale worktrees')
+    // Check that the section *body* elements for absent kinds are not rendered
+    // (the text "Drafts" now also appears in the kind-filter control buttons,
+    //  so we check the section-body id instead of raw text).
+    expect(html).not.toContain('id="section-body-draft-proposal"')
+    expect(html).not.toContain('id="section-body-stale-worktree"')
   })
 
   it('places draft rows inside the Drafts section and failed rows inside Failed tasks', () => {
@@ -590,5 +593,131 @@ describe('actionQueue sidebar – grouped sections', () => {
     // aria-controls="section-body-failed-task" and id="section-body-failed-task" must both appear
     expect(html).toContain('aria-controls="section-body-failed-task"')
     expect(html).toContain('id="section-body-failed-task"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// matchesKindFilter — pure helper unit tests.
+// All three item kinds × all three filter values (9 combinations).
+// ---------------------------------------------------------------------------
+
+describe('matchesKindFilter – all combinations', () => {
+  const failedItem = makeItem({ kind: 'failed-task' })
+  const staleItem = makeItem({
+    kind: 'stale-worktree',
+    errorKind: 'stale-worktree',
+    staleWorktreeDetail: {
+      prompt: null,
+      status: 'running',
+      ageHours: 2,
+      updatedAt: new Date().toISOString(),
+      branch: 'task/s1',
+      empty: false,
+      investigation: null,
+    },
+  })
+  const draftItem = makeItem({ kind: 'draft-proposal', errorKind: 'draft-proposal', actions: [] })
+
+  // filter === 'all'
+  it('"all" filter passes a failed-task item', () => {
+    expect(matchesKindFilter(failedItem, 'all')).toBe(true)
+  })
+  it('"all" filter passes a stale-worktree item', () => {
+    expect(matchesKindFilter(staleItem, 'all')).toBe(true)
+  })
+  it('"all" filter passes a draft-proposal item', () => {
+    expect(matchesKindFilter(draftItem, 'all')).toBe(true)
+  })
+
+  // filter === 'alerts'
+  it('"alerts" filter passes a failed-task item', () => {
+    expect(matchesKindFilter(failedItem, 'alerts')).toBe(true)
+  })
+  it('"alerts" filter passes a stale-worktree item', () => {
+    expect(matchesKindFilter(staleItem, 'alerts')).toBe(true)
+  })
+  it('"alerts" filter rejects a draft-proposal item', () => {
+    expect(matchesKindFilter(draftItem, 'alerts')).toBe(false)
+  })
+
+  // filter === 'drafts'
+  it('"drafts" filter rejects a failed-task item', () => {
+    expect(matchesKindFilter(failedItem, 'drafts')).toBe(false)
+  })
+  it('"drafts" filter rejects a stale-worktree item', () => {
+    expect(matchesKindFilter(staleItem, 'drafts')).toBe(false)
+  })
+  it('"drafts" filter passes a draft-proposal item', () => {
+    expect(matchesKindFilter(draftItem, 'drafts')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ActionQueuePage – kind filter control renders with correct attributes.
+// ---------------------------------------------------------------------------
+
+describe('ActionQueuePage – kind filter control', () => {
+  const renderPage = (items: ActionQueueItem[]): string => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['action-queue', null], items)
+    return renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <_Page />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('renders all three filter buttons with their data-testids', () => {
+    const html = renderPage([BASE_ITEM])
+    expect(html).toContain('data-testid="action-queue-filter-all"')
+    expect(html).toContain('data-testid="action-queue-filter-alerts"')
+    expect(html).toContain('data-testid="action-queue-filter-drafts"')
+  })
+
+  it('renders the filter group with the correct aria-label', () => {
+    const html = renderPage([BASE_ITEM])
+    expect(html).toContain('aria-label="Filter action queue by kind"')
+  })
+
+  it('"All" button is pressed by default (aria-pressed="true")', () => {
+    const html = renderPage([BASE_ITEM])
+    // The All button must carry aria-pressed="true" on initial render.
+    // We find its testid and confirm aria-pressed follows in the markup.
+    const allBtnIdx = html.indexOf('data-testid="action-queue-filter-all"')
+    expect(allBtnIdx).toBeGreaterThan(-1)
+    // aria-pressed appears as an attribute on the button tag — check the
+    // slice of HTML around the All button for aria-pressed="true".
+    const snippet = html.slice(Math.max(0, allBtnIdx - 100), allBtnIdx + 150)
+    expect(snippet).toContain('aria-pressed="true"')
+  })
+
+  it('"Alerts" and "Drafts" buttons are not pressed by default', () => {
+    const html = renderPage([BASE_ITEM])
+    // Count aria-pressed="true" occurrences — only the All button should have it.
+    const trueCount = (html.match(/aria-pressed="true"/g) ?? []).length
+    expect(trueCount).toBe(1)
+    // Both Alerts and Drafts carry aria-pressed="false".
+    const falseCount = (html.match(/aria-pressed="false"/g) ?? []).length
+    expect(falseCount).toBe(2)
+  })
+
+  it('draft-proposal rows appear in the default "All" view', () => {
+    const draft = makeItem({
+      id: 'd1',
+      kind: 'draft-proposal',
+      errorKind: 'draft-proposal',
+      title: 'a draft proposal title',
+      actions: [],
+    })
+    const html = renderPage([draft])
+    expect(html).toContain('a draft proposal title')
+  })
+
+  it('failed-task rows appear in the default "All" view', () => {
+    const html = renderPage([BASE_ITEM])
+    // BASE_ITEM is a failed-task; its title must appear.
+    expect(html).toContain(BASE_ITEM.title)
   })
 })
