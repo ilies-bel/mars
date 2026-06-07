@@ -1,15 +1,14 @@
 /**
  * `action-queue` command group: `list` (default), `show`, `raise`
- * (JSON on stdin/file), `watch`, and `reconcile`.
+ * (JSON on stdin/file), `watch`, `reconcile`, and `resolve`.
  *
  * `list`, `show`, and the bare `action-queue` alias read through the daemon's
  * `GET /view/action-queue` endpoint so the CLI and UI always render the same
  * derived view (`buildActionQueueView`). If the daemon is not running, both
  * commands fail fast — there is no fallback to the raw DB path.
  *
- * The action queue is a pure projection of entity state. Rows open and close
- * driven solely by entity (task/worktree/proposal) transitions — there are no
- * operator close verbs.
+ * `resolve` closes a single row by id or prefix — the precise operator gesture
+ * that complements `reconcile`'s all-or-nothing sweep.
  *
  * --lean is a boolean flag that lands in positionals after routing.
  */
@@ -251,11 +250,42 @@ const actionQueueReconcile: Command = {
   },
 }
 
+const actionQueueResolve: Command = {
+  path: 'action-queue resolve',
+  summary: 'close a single action queue item by id or prefix',
+  usage: 'usage: mars action-queue resolve <id> [--note <text>]',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    if (!id) {
+      deps.err('usage: mars action-queue resolve <id> [--note <text>]')
+      return { code: 1 }
+    }
+    const note = args.flags['--note']
+    const { migrateQueueSchema } = await import('../../core/queue')
+    await migrateQueueSchema()
+    const { getActionQueueItem, setActionQueueState } = await import(
+      '../../core/lib/action-queue'
+    )
+    const item = await getActionQueueItem(id)
+    if (!item) {
+      deps.err(`no action queue item matching ${id}`)
+      return { code: 1 }
+    }
+    await setActionQueueState(item.id, 'resolved', {
+      by: 'cli:operator',
+      ...(note !== undefined ? { note } : {}),
+    })
+    deps.out(item.id)
+    return { code: 0 }
+  },
+}
+
 export const actionQueueCommands: readonly Command[] = [
   actionQueueList,
   actionQueueShow,
   actionQueueRaise,
   actionQueueWatch,
   actionQueueReconcile,
+  actionQueueResolve,
   actionQueueDefault,
 ]
