@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -60,9 +60,12 @@ describe('continue degrades to restart for pre-setup failures', () => {
     expect(after?.error).toBeNull()
   })
 
-  // ── failedPhase 'code' → non-resumable setup-time failure ─────────────────
+  // ── failedPhase 'code' with no worktree → degrades to restart ─────────────
+  // The task had failedPhase='code' but no branch/worktreePath were ever
+  // recorded (e.g. a setup-time install failure before worktree creation).
+  // The degrade happens because !task.branch && !task.worktreePath → isPreSetup.
 
-  it('re-queues from setup when failedPhase is code', async () => {
+  it('re-queues from setup when failedPhase is code but no worktree was created', async () => {
     const { queue, continueTask } = await loadModules(repo)
 
     const task = await queue.enqueueTask('test work', undefined, { skipTriage: true })
@@ -70,15 +73,46 @@ describe('continue degrades to restart for pre-setup failures', () => {
       status: 'failed',
       error: 'install step failed',
       failedPhase: 'code',
+      // No branch or worktreePath — worktree was never created
     })
 
     const result = await continueTask.coreContinueTask(task.id)
 
+    // Degrades because no worktree to preserve (not because failedPhase==='code')
     expect(result.degradedToRestart).toBe(true)
 
     const after = await queue.getTask(task.id)
     expect(after?.status).toBe('queued')
     expect(after?.failedPhase).toBeNull()
+  })
+
+  // ── failedPhase 'code' with existing worktree → resumes code phase ─────────
+
+  it('resumes code phase without degrading when failedPhase is code and worktree exists', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const task = await queue.enqueueTask('test work', undefined, { skipTriage: true })
+    // Simulate a context-exhausted kill: failedPhase='code', worktree on disk.
+    // Use the repo dir itself as the worktree path so existsSync returns true.
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'context-exhausted: coder hit the context token budget limit',
+      failedPhase: 'code',
+      branch: `task/${task.id}`,
+      worktreePath: repo,
+    })
+
+    const result = await continueTask.coreContinueTask(task.id)
+
+    expect(result.degradedToRestart).toBe(false)
+    expect(result.codePhaseResume).toBe(true)
+
+    const after = await queue.getTask(task.id)
+    expect(after?.status).toBe('queued')
+    // failedPhase stays on the row — used by dispatchImplement to inject resume banner
+    expect(after?.failedPhase).toBe('code')
+    expect(after?.branch).toBe(`task/${task.id}`) // preserved
+    expect(after?.error).toBeNull()
   })
 
   // ── Guard: only failed tasks can be continued ──────────────────────────────
@@ -185,5 +219,44 @@ describe('continue degrades to restart for pre-setup failures', () => {
     expect(after?.status).toBe('queued')
     expect(after?.failedPhase).toBe('verify')
     expect(after?.branch).toBe(`task/${task.id}`) // preserved
+  })
+
+  // ── Auto-commit dirty worktree before code-phase resume ───────────────────
+
+  it('auto-commits dirty worktree before code-phase resume', async () => {
+    // Set up a real git repo with an initial commit so we can inspect git log.
+    const gitRepo = mkdtempSync(resolve(tmpdir(), 'mars-continue-autocommit-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: gitRepo })
+      execFileSync('git', ['-c', 'user.email=test@test', '-c', 'user.name=Test', 'commit', '--allow-empty', '-m', 'initial'], { cwd: gitRepo })
+
+      const { queue, continueTask } = await loadModules(gitRepo)
+
+      const task = await queue.enqueueTask('test work', undefined, { skipTriage: true })
+      await queue.updateTask(task.id, {
+        status: 'failed',
+        error: 'context-exhausted',
+        failedPhase: 'code',
+        branch: `task/${task.id}`,
+        worktreePath: gitRepo,
+      })
+
+      // Create an untracked file to simulate dangling work.
+      writeFileSync(resolve(gitRepo, 'wip-file.ts'), 'export const x = 1\n')
+
+      const result = await continueTask.coreContinueTask(task.id)
+
+      expect(result.degradedToRestart).toBe(false)
+      expect(result.codePhaseResume).toBe(true)
+
+      // Verify a wip commit was created.
+      const log = execFileSync('git', ['log', '--oneline'], {
+        cwd: gitRepo,
+        encoding: 'utf-8',
+      }).trim()
+      expect(log).toMatch(/wip:/)
+    } finally {
+      rmSync(gitRepo, { recursive: true, force: true })
+    }
   })
 })

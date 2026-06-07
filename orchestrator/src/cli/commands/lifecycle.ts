@@ -96,7 +96,7 @@ const makeContinueRestart = (verb: 'continue' | 'restart'): Command => ({
   path: verb,
   summary:
     verb === 'continue'
-      ? 'resume failed tasks on their existing worktree'
+      ? 'resume failed tasks on their existing worktree (code-phase failures auto-commit wip and re-enter code; verify/merge failures re-run from the failed step; refuses when worktree is missing or no phase was recorded)'
       : 'wipe and re-run failed tasks from setup',
   usage: `usage: mars ${verb} <id> [<id> ...]`,
   run: async (args, deps) => {
@@ -124,6 +124,13 @@ const makeContinueRestart = (verb: 'continue' | 'restart'): Command => ({
         note = fallbackNote
           ? `queued ${id} for restart from setup — ${fallbackNote}`
           : `queued ${id} for restart from setup (failure was pre-setup; continue and restart are equivalent here)`
+      } else if (
+        verb === 'continue' &&
+        res !== null &&
+        typeof res === 'object' &&
+        (res as { codePhaseResume?: boolean }).codePhaseResume === true
+      ) {
+        note = `queued ${id} to continue from code phase — prior work in worktree preserved (run 'git log' in the worktree to review)`
       } else {
         note =
           verb === 'continue'

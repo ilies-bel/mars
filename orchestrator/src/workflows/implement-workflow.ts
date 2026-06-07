@@ -28,9 +28,6 @@ import {
 } from '../core/lib/worktree-install'
 import type { ClaudeEvent } from '../core/lib/claude-stream'
 import {
-  enqueueTask,
-  addBlockers,
-  enqueueFollowUpOnce,
   hasIncompleteBlockers,
   updateTask,
 } from '../core/queue'
@@ -545,6 +542,12 @@ const implementInputSchema = z.object({
   kind: kindSchema,
   integrationBranch: z.string().default('main'),
   spec: specSchema,
+  /**
+   * True when the task is being re-dispatched after a code-phase failure with
+   * an existing worktree. The code step prepends a resume banner to the coder
+   * prompt so the agent reads prior progress before continuing.
+   */
+  resumeFromCodePhase: z.boolean().default(false),
 })
 
 export type ImplementInput = z.infer<typeof implementInputSchema>
@@ -849,8 +852,14 @@ export const implementWorkflow = defineWorkflow<
       const originId = await resolveOriginIdForTask(input.taskId)
       // Use the first valid tag as the primary routing tag, defaulting to 'coder'.
       const primaryTag: TaskTag = input.tags.find(isTaskTag) ?? 'coder'
+      // Code-phase resume: prepend a banner so the coder reads prior progress
+      // first. The banner is the first thing the agent sees; the original
+      // prompt follows so the full task spec is still present.
+      const basePrompt = input.resumeFromCodePhase
+        ? `## Code-phase resume\n\nPrior progress is already in this worktree. Run \`git log -p\` first to review what was already completed, then continue from where the last coder stopped. Do NOT restart from scratch.\n\n${input.prompt}`
+        : input.prompt
       const fullPrompt = composePrompt(
-        input.prompt,
+        basePrompt,
         input.plan,
         primaryTag,
         input.spec ?? null,
@@ -925,67 +934,26 @@ export const implementWorkflow = defineWorkflow<
       // This check runs BEFORE the exploration-loop check because both use
       // exitCode 138; the two are disambiguated by the stderr string.
       if (r.exitCode === 138 && r.stderr.includes('context budget exhausted')) {
-        const followUpPrompt = [
-          `## context-exhausted follow-up for task ${input.taskId}`,
-          '',
-          `Task \`${input.taskId}\` was killed because the coder's context token`,
-          `budget was exhausted (maxContextTokens limit). The run was stopped`,
-          `before Claude Code could auto-compact the context window.`,
-          '',
-          `Inspect the coder transcript for task \`${input.taskId}\` to understand`,
-          `what the coder was doing when it ran out of context. Once the original`,
-          `task is restarted or resolved, this follow-up will unblock automatically.`,
-        ].join('\n')
-        try {
-          // enqueueFollowUpOnce deduplicates on followup_dedup_key='followup:<taskId>:context-exhausted'
-          // (ADR-0050: origin_id now carries the real arc origin, not the dedup key).
-          // Restarting the origin and context-exhausting again will NOT create a second
-          // follow-up — the existing open one is reused.
-          const { id: followUpId, created } = await enqueueFollowUpOnce(
-            input.taskId,
-            'context-exhausted',
-            followUpPrompt,
-          )
-          await updateTask(
-            input.taskId,
-            {
-              status: 'failed',
-              error: `context-exhausted: coder hit the context token budget limit`,
-              failedPhase: 'code',
-              failureReason: 'context-exhausted',
-              failureReasonCode: 'context-exhausted',
-            },
-            store,
-          )
-          if (created) {
-            console.log(
-              `[ctx] task ${input.taskId}: context-exhausted abort; follow-up ${followUpId} enqueued and blocked by this task`,
-            )
-          } else {
-            console.log(
-              `[ctx] task ${input.taskId}: context-exhausted abort; existing follow-up ${followUpId} already open, skipping re-enqueue`,
-            )
-          }
-          throw new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE(input.taskId))
-        } catch (err) {
-          if (err instanceof Error && isContextExhaustedAbortError(err)) throw err
-          console.error(
-            `[ctx] task ${input.taskId}: failed to handle context-exhausted abort:`,
-            err,
-          )
-          await updateTask(
-            input.taskId,
-            {
-              status: 'failed',
-              error: `context-exhausted abort (follow-up failed: ${String(err).slice(0, 400)})`,
-              failedPhase: 'code',
-              failureReasonCode: 'context-exhausted',
-              failureReason: 'context-exhausted',
-            },
-            store,
-          ).catch(() => {})
-          throw err instanceof Error ? err : new Error(String(err))
-        }
+        // Context-budget hard abort: mark the task failed (failedPhase:'code')
+        // so the worktree is preserved on disk. The operator can resume with
+        // 'mars continue <id>' — no auto-spawned follow-up is needed because
+        // the failed task itself surfaces in the action queue and continue now
+        // re-enters the code step on the existing worktree.
+        await updateTask(
+          input.taskId,
+          {
+            status: 'failed',
+            error: `context-exhausted: coder hit the context token budget limit`,
+            failedPhase: 'code',
+            failureReason: 'context-exhausted',
+            failureReasonCode: 'context-exhausted',
+          },
+          store,
+        )
+        console.log(
+          `[ctx] task ${input.taskId}: context-exhausted; use 'mars continue ${input.taskId}' to resume on the existing worktree`,
+        )
+        throw new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE(input.taskId))
       }
 
       // Classify the worktree end-state. Only the 'dirty-no-commits' case is

@@ -642,6 +642,13 @@ export const startDaemon = async (
         if (evt.event === 'claude-event' || evt.event === 'vcs-supervisor-event') return
         log(`[implement] ${task.id} ${evt.step ?? 'run'}:${evt.event}`)
       }
+      // Detect a code-phase resume: the task was continued (not restarted)
+      // after a code-phase failure, so its worktree is preserved on disk.
+      // The workflow injects a resume banner into the coder prompt so the
+      // agent reads prior progress before continuing. failedPhase stays on
+      // the row across the re-queue (coreContinueTask does not clear it),
+      // which is how we distinguish a resume from a first-time dispatch.
+      const resumeFromCodePhase = task.failedPhase === 'code' && !!task.worktreePath
       const result = await runWorkflow(
         workflowToRun,
         {
@@ -661,6 +668,7 @@ export const startDaemon = async (
                 prescriptiveAction: task.spec.prescriptiveAction ?? null,
               }
             : null,
+          resumeFromCodePhase,
         },
         {
           store: workflowStore,
