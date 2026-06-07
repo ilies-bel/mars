@@ -17,10 +17,10 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly --declaration --rootDir src --outDir dist && cp dist/index.d.ts dist/index.d.cts",
     "build:watch": "tsup --watch",
-    "prepare": "tsup",
-    "prepack": "tsup",
+    "prepare": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly --declaration --rootDir src --outDir dist && cp dist/index.d.ts dist/index.d.cts",
+    "prepack": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly --declaration --rootDir src --outDir dist && cp dist/index.d.ts dist/index.d.cts",
     "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

@@ -3,7 +3,7 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: ['src/index.ts'],
   format: ['esm', 'cjs'],
-  dts: true,
+  dts: false,
   clean: true,
   outDir: 'dist',
   // Externalize runtime dependencies — don't bundle them
