@@ -7,6 +7,35 @@ import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 
 export const DEFAULT_INSTALL_TIMEOUT_MS = 8 * 60_000
 
+/** Maximum time to wait for a declared .d.ts/.d.cts file to appear after build. */
+export const DECLARATION_WAIT_TIMEOUT_MS = 30_000
+
+/**
+ * Poll `fs.stat` until `filePath` exists and has non-zero size, or until
+ * `timeoutMs` elapses. Resolves when the file appears; throws on timeout.
+ *
+ * @internal Exported for unit-testing; not part of the module's public API.
+ */
+export const waitForFile = async (
+  filePath: string,
+  { timeoutMs, intervalMs = 200 }: { timeoutMs: number; intervalMs?: number },
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      const s = await stat(filePath)
+      if (s.isFile() && s.size > 0) return
+    } catch {
+      // not yet present — fall through to sleep
+    }
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) {
+      throw new Error(`file never materialized within ${timeoutMs}ms: ${filePath}`)
+    }
+    await new Promise<void>((r) => setTimeout(r, Math.min(intervalMs, remaining)))
+  }
+}
+
 export type PackageManager = 'pnpm' | 'npm' | 'yarn' | 'bun'
 
 export interface InstallSite {
@@ -151,6 +180,7 @@ export const buildWorkspaceDepsForSite = async (
   runner: InstallRunner,
   log: ((line: string) => void) | undefined,
   timeoutMs: number,
+  declarationTimeoutMs = DECLARATION_WAIT_TIMEOUT_MS,
 ): Promise<void> => {
   if (site.manager !== 'pnpm') return // only pnpm `file:`/`workspace:` links here
   let manifest: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
@@ -169,7 +199,13 @@ export const buildWorkspaceDepsForSite = async (
     const rootWithSep = worktreeRoot.endsWith('/') ? worktreeRoot : `${worktreeRoot}/`
     if (depDir !== worktreeRoot && !depDir.startsWith(rootWithSep)) continue
     if (built.has(depDir)) continue
-    let depManifest: { scripts?: Record<string, string> }
+    let depManifest: {
+      name?: string
+      scripts?: Record<string, string>
+      types?: string
+      typings?: string
+      exports?: Record<string, unknown>
+    }
     try {
       depManifest = JSON.parse(await readFile(resolve(depDir, 'package.json'), 'utf8'))
     } catch {
@@ -267,6 +303,47 @@ export const buildWorkspaceDepsForSite = async (
         `[setup:install] workspace dep build failed (${rel}): pnpm run build exited ${r.exitCode}\n` +
           `stderr (truncated):\n${r.stderr.slice(0, 1000)}`,
       )
+    }
+
+    // Declaration-existence barrier: if the dep's package.json declares type
+    // entrypoints (.d.ts / .d.cts), assert they exist on disk before returning
+    // control to the install step. Build tools (e.g. tsup with dts:true) can
+    // exit 0 before their declaration pass has finished writing the .d.ts
+    // files, so pnpm may hardlink a dist/ with JS but no declarations →
+    // downstream `tsc --noEmit` fails TS7016. A thrown error here surfaces as
+    // a classified setup failure instead of a confusing downstream typecheck
+    // error — that is the desired behavior.
+    const declPaths: string[] = []
+    if (typeof depManifest.types === 'string') {
+      declPaths.push(resolve(depDir, depManifest.types))
+    }
+    if (typeof depManifest.typings === 'string') {
+      declPaths.push(resolve(depDir, depManifest.typings))
+    }
+    if (depManifest.exports != null && typeof depManifest.exports === 'object') {
+      for (const exportValue of Object.values(depManifest.exports)) {
+        if (
+          exportValue != null &&
+          typeof exportValue === 'object' &&
+          !Array.isArray(exportValue)
+        ) {
+          const conds = exportValue as Record<string, unknown>
+          if (typeof conds['types'] === 'string') {
+            declPaths.push(resolve(depDir, conds['types']))
+          }
+        }
+      }
+    }
+    for (const declPath of declPaths) {
+      if (!declPath.endsWith('.d.ts') && !declPath.endsWith('.d.cts')) continue
+      try {
+        await waitForFile(declPath, { timeoutMs: declarationTimeoutMs })
+      } catch {
+        const depName = typeof depManifest.name === 'string' ? depManifest.name : rel
+        throw new Error(
+          `[setup:install] ${depName} build finished but declaration ${declPath} never materialized; refusing to install a declaration-less dist`,
+        )
+      }
     }
   }
 }

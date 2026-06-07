@@ -8,7 +8,10 @@ import {
   regenInstallCommand,
   installWorktreeDeps,
   repairInstallInPlace,
+  buildWorkspaceDepsForSite,
+  waitForFile,
   WorktreeInstallError,
+  DEFAULT_INSTALL_TIMEOUT_MS,
 } from '../worktree-install'
 import type { InstallSite } from '../worktree-install'
 import type { RunSubprocessResult } from '../git/claude'
@@ -398,6 +401,147 @@ describe('worktree-install', () => {
       expect(lines).toHaveLength(2)
       expect(lines[0]).toMatch(/ENOTEMPTY.*retrying/)
       expect(lines[1]).toMatch(/exit=0/)
+    })
+  })
+
+  describe('waitForFile', () => {
+    it('resolves once the file appears within the timeout', async () => {
+      const filePath = resolve(workDir, 'index.d.ts')
+      // Schedule file creation after we start waiting.
+      setTimeout(() => writeFileSync(filePath, 'export {}'), 50)
+      await expect(
+        waitForFile(filePath, { timeoutMs: 2000, intervalMs: 20 }),
+      ).resolves.toBeUndefined()
+    })
+
+    it('throws when the file never appears before the timeout elapses', async () => {
+      const filePath = resolve(workDir, 'missing.d.ts')
+      await expect(
+        waitForFile(filePath, { timeoutMs: 100, intervalMs: 20 }),
+      ).rejects.toThrow(/never materialized/)
+    })
+  })
+
+  describe('buildWorkspaceDepsForSite (declaration barrier)', () => {
+    const pnpmSite = (dir: string): InstallSite => ({
+      dir,
+      manager: 'pnpm',
+      lockfile: 'pnpm-lock.yaml',
+    })
+
+    const setupWorkspace = (opts: { declTypes?: string; exportsTypes?: string } = {}) => {
+      const siteDir = resolve(workDir, 'orchestrator')
+      const depDir = resolve(workDir, 'packages', 'workflow')
+      mkdirSync(siteDir)
+      writeFileSync(resolve(siteDir, 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(siteDir, 'package.json'),
+        JSON.stringify({
+          name: 'orch',
+          dependencies: { '@mars/workflow': 'file:../packages/workflow' },
+        }),
+      )
+      mkdirSync(depDir, { recursive: true })
+      writeFileSync(resolve(depDir, 'pnpm-lock.yaml'), '')
+      const depPkg: Record<string, unknown> = {
+        name: '@mars/workflow',
+        scripts: { build: 'tsup' },
+      }
+      if (opts.declTypes) depPkg['types'] = opts.declTypes
+      if (opts.exportsTypes) {
+        depPkg['exports'] = { '.': { types: opts.exportsTypes, default: './dist/index.js' } }
+      }
+      writeFileSync(resolve(depDir, 'package.json'), JSON.stringify(depPkg))
+      return { siteDir, depDir }
+    }
+
+    it('throws when build exits 0 but a declared top-level types path never materializes', async () => {
+      const { siteDir } = setupWorkspace({ declTypes: './dist/index.d.ts' })
+      // Runner always succeeds, but the .d.ts file is never created on disk.
+      const runner = async () => ok()
+      await expect(
+        buildWorkspaceDepsForSite(
+          pnpmSite(siteDir),
+          workDir,
+          runner,
+          undefined,
+          DEFAULT_INSTALL_TIMEOUT_MS,
+          /* declarationTimeoutMs */ 100,
+        ),
+      ).rejects.toThrow(/@mars\/workflow.*never materialized|never materialized/)
+    })
+
+    it('throws with a message naming the dep and the missing declaration path', async () => {
+      const { siteDir, depDir } = setupWorkspace({ declTypes: './dist/index.d.ts' })
+      const runner = async () => ok()
+      let thrown: Error | undefined
+      try {
+        await buildWorkspaceDepsForSite(
+          pnpmSite(siteDir),
+          workDir,
+          runner,
+          undefined,
+          DEFAULT_INSTALL_TIMEOUT_MS,
+          /* declarationTimeoutMs */ 100,
+        )
+      } catch (e) {
+        thrown = e as Error
+      }
+      expect(thrown).toBeDefined()
+      expect(thrown!.message).toContain('@mars/workflow')
+      expect(thrown!.message).toContain(resolve(depDir, 'dist', 'index.d.ts'))
+      expect(thrown!.message).toContain('never materialized')
+      expect(thrown!.message).toContain('refusing to install a declaration-less dist')
+    })
+
+    it('proceeds without throwing when the declared types file is already present after build', async () => {
+      const { siteDir, depDir } = setupWorkspace({ declTypes: './dist/index.d.ts' })
+      // Pre-create the declaration file so the barrier finds it immediately.
+      mkdirSync(resolve(depDir, 'dist'), { recursive: true })
+      writeFileSync(resolve(depDir, 'dist', 'index.d.ts'), 'export {}')
+      const runner = async () => ok()
+      await expect(
+        buildWorkspaceDepsForSite(
+          pnpmSite(siteDir),
+          workDir,
+          runner,
+          undefined,
+          DEFAULT_INSTALL_TIMEOUT_MS,
+          /* declarationTimeoutMs */ 500,
+        ),
+      ).resolves.toBeUndefined()
+    })
+
+    it('enforces exports.types entries in addition to the top-level types field', async () => {
+      const { siteDir } = setupWorkspace({ exportsTypes: './dist/index.d.ts' })
+      const runner = async () => ok()
+      await expect(
+        buildWorkspaceDepsForSite(
+          pnpmSite(siteDir),
+          workDir,
+          runner,
+          undefined,
+          DEFAULT_INSTALL_TIMEOUT_MS,
+          /* declarationTimeoutMs */ 100,
+        ),
+      ).rejects.toThrow(/never materialized/)
+    })
+
+    it('does not enforce the barrier when the dep declares no types entrypoint', async () => {
+      // No types/typings/exports.types declared → barrier is a no-op.
+      setupWorkspace() // no declTypes, no exportsTypes
+      const { siteDir } = { siteDir: resolve(workDir, 'orchestrator') }
+      const runner = async () => ok()
+      await expect(
+        buildWorkspaceDepsForSite(
+          pnpmSite(siteDir),
+          workDir,
+          runner,
+          undefined,
+          DEFAULT_INSTALL_TIMEOUT_MS,
+          /* declarationTimeoutMs */ 100,
+        ),
+      ).resolves.toBeUndefined()
     })
   })
 
