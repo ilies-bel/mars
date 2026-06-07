@@ -16,11 +16,10 @@
  *  - Single-open drill-in: at most ONE combo open. Double-click toggles;
  *    Escape / canvas-dblclick / the Collapse button closes. Anchored expand +
  *    push-outward + restore, ported faithfully (the load-bearing part).
- *  - Dim sources combine: search (`searchMatchIds`) + cluster (`ghostedClusters`)
- *    + hover-trace. A node stays bright only if it passes search AND cluster
- *    filters AND (no hover active OR it's hover-lit). One `computeStateMap`
- *    function resolves the per-element state, applied in ONE batched
- *    `setElementState` call.
+ *  - Dim sources combine: search (`searchMatchIds`) + hover-trace. A node stays
+ *    bright only if it passes the search filter AND (no hover active OR it's
+ *    hover-lit). One `computeStateMap` function resolves the per-element state,
+ *    applied in ONE batched `setElementState` call.
  *
  * NAVIGATION / CLICK MODEL (documented choice)
  * --------------------------------------------
@@ -65,8 +64,6 @@ import type { Cluster } from '@/shared/schemas'
 export interface TopologyViewProps {
   tasks: ProgressTask[]
   proposals: ProgressProposalNode[]
-  /** Toolbar cluster toggles: cluster names + 'Arc' whose combos dim. */
-  ghostedClusters?: Set<string>
   /** Toolbar proposal dropdown. Non-null → drill into that proposal. */
   selectedProposalId?: string | null
   /** Toolbar search; null = no search. Only these ids stay full-opacity. */
@@ -104,7 +101,6 @@ const isBenignBounds = (s: unknown): boolean => typeof s === 'string' && s.inclu
 export const TopologyView = ({
   tasks,
   proposals,
-  ghostedClusters,
   selectedProposalId,
   searchMatchIds,
   onSelectProposal,
@@ -124,8 +120,8 @@ export const TopologyView = ({
   const pendingSwapRef = useRef<string | null>(null)
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Latest props the imperative handlers read (avoids stale closures).
-  const propsRef = useRef({ tasks, ghostedClusters, searchMatchIds })
-  propsRef.current = { tasks, ghostedClusters, searchMatchIds }
+  const propsRef = useRef({ tasks, searchMatchIds })
+  propsRef.current = { tasks, searchMatchIds }
   const onSelectProposalRef = useRef(onSelectProposal)
   onSelectProposalRef.current = onSelectProposal
   // Tracks the externally-driven selectedProposalId so we only react to changes
@@ -258,10 +254,10 @@ export const TopologyView = ({
     // All dim/active resolution lives in the pure `computeStateMap` (model
     // module); here we just feed it the live element snapshot + current inputs.
     const applyHighlight = (): void => {
-      const { ghostedClusters: gc, searchMatchIds: search } = propsRef.current
+      const { searchMatchIds: search } = propsRef.current
       const map = computeStateMap(
         { nodes: graph.getNodeData(), edges: graph.getEdgeData(), combos: graph.getComboData() },
-        { searchMatchIds: search, ghostedClusters: gc, lit: litRef.current },
+        { searchMatchIds: search, lit: litRef.current },
       )
       void graph.setElementState(map)
     }
@@ -748,10 +744,10 @@ export const TopologyView = ({
     if (!graph) return
     const map = computeStateMap(
       { nodes: graph.getNodeData(), edges: graph.getEdgeData(), combos: graph.getComboData() },
-      { searchMatchIds, ghostedClusters, lit: litRef.current },
+      { searchMatchIds, lit: litRef.current },
     )
     void graph.setElementState(map)
-  }, [searchMatchIds, ghostedClusters])
+  }, [searchMatchIds])
 
   // Drive drill-in from the external selectedProposalId control.
   useEffect(() => {

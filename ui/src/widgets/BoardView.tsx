@@ -60,11 +60,6 @@ export interface BoardViewProps {
   error: Error | null
   selectedProposalId: string | null
   /**
-   * Cluster names whose entire column should be suppressed (driven by the
-   * per-cluster toggle chips). 'Queued' has no toggle and is never hidden.
-   */
-  ghostedClusters?: Set<string>
-  /**
    * When set, only tasks whose ID is in this set are rendered in each column.
    * null = no active text search (show all tasks).
    */
@@ -76,7 +71,6 @@ export const BoardView = ({
   drafts,
   error,
   selectedProposalId,
-  ghostedClusters,
   searchMatchIds,
 }: BoardViewProps) => {
   let cursor = 0
@@ -90,8 +84,6 @@ export const BoardView = ({
     <>
       <main className="flex min-h-0 flex-1 gap-3 overflow-hidden bg-bg p-4">
         {CLUSTERS.map((cluster) => {
-          // 'Queued' has no toggle; the rest respect the cluster toggles.
-          if (cluster !== 'Queued' && ghostedClusters?.has(cluster)) return null
           const clusterTasks = byCluster[cluster]
           const filtered =
             selectedProposalId !== null

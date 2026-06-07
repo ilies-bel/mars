@@ -34,7 +34,6 @@ describe('TopologyView – empty state', () => {
       <TopologyView
         tasks={noTasks}
         proposals={noProposals}
-        ghostedClusters={new Set(['Blocked'])}
         selectedProposalId="p1"
         searchMatchIds={new Set(['x'])}
         onSelectProposal={() => {}}

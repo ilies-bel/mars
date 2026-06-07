@@ -17,7 +17,6 @@ describe('decodeProgressState', () => {
     expect(state.view).toBe(defaults.view)
     expect(state.query).toBe(defaults.query)
     expect(state.proposal).toBeNull()
-    expect(state.clusters.size).toBe(4)
   })
 
   it('returns defaults when there is no query string', () => {
@@ -25,9 +24,6 @@ describe('decodeProgressState', () => {
     expect(state.view).toBe('topology')
     expect(state.query).toBe('')
     expect(state.proposal).toBeNull()
-    expect([...state.clusters].sort()).toEqual(
-      ['Arc', 'Blocked', 'Failed', 'In progress'],
-    )
   })
 
   it('decodes board view', () => {
@@ -64,47 +60,10 @@ describe('decodeProgressState', () => {
     expect(decodeProgressState('#/progress?proposal=').proposal).toBeNull()
   })
 
-  it('defaults clusters to all-active when param is absent', () => {
-    const state = decodeProgressState('#/progress')
-    expect(state.clusters.size).toBe(4)
-    expect(state.clusters.has('Arc')).toBe(true)
-    expect(state.clusters.has('In progress')).toBe(true)
-    expect(state.clusters.has('Blocked')).toBe(true)
-    expect(state.clusters.has('Failed')).toBe(true)
-  })
-
-  it('decodes a partial cluster list', () => {
-    const state = decodeProgressState('#/progress?clusters=Arc,Blocked')
-    expect(state.clusters.has('Arc')).toBe(true)
-    expect(state.clusters.has('Blocked')).toBe(true)
-    expect(state.clusters.has('In progress')).toBe(false)
-    expect(state.clusters.has('Failed')).toBe(false)
-  })
-
-  it('decodes URL-encoded cluster names with spaces', () => {
-    const state = decodeProgressState('#/progress?clusters=In%20progress,Failed')
-    expect(state.clusters.has('In progress')).toBe(true)
-    expect(state.clusters.has('Failed')).toBe(true)
-    expect(state.clusters.has('Arc')).toBe(false)
-    expect(state.clusters.has('Blocked')).toBe(false)
-  })
-
-  it('decodes an empty clusters param as an empty set', () => {
-    const state = decodeProgressState('#/progress?clusters=')
-    expect(state.clusters.size).toBe(0)
-  })
-
-  it('silently ignores unrecognised cluster names', () => {
-    const state = decodeProgressState('#/progress?clusters=Arc,bogus')
-    expect(state.clusters.size).toBe(1)
-    expect(state.clusters.has('Arc')).toBe(true)
-  })
-
   it('silently ignores the legacy recency param', () => {
     // The recency param no longer exists; old URLs with it should not throw.
     const state = decodeProgressState('#/progress?recency=7d')
     expect(state.view).toBe('topology')
-    expect(state.clusters.size).toBe(4)
   })
 })
 
@@ -153,35 +112,12 @@ describe('encodeProgressState', () => {
     expect(encodeProgressState(state)).not.toContain('proposal=')
   })
 
-  it('encodes a partial cluster set', () => {
-    const state: ProgressUrlState = {
-      ...defaultProgressUrlState(),
-      clusters: new Set(['Arc', 'Blocked'] as const),
-    }
-    const encoded = encodeProgressState(state)
-    expect(encoded).toContain('clusters=')
-    expect(encoded).toContain('Arc')
-    expect(encoded).toContain('Blocked')
-    expect(encoded).not.toContain('Failed')
-    expect(encoded).not.toContain('In%20progress')
-  })
-
-  it('omits the clusters param when all four are active (default)', () => {
-    expect(encodeProgressState(defaultProgressUrlState())).not.toContain('clusters=')
-  })
-
-  it('encodes an empty (all-deactivated) cluster set', () => {
-    const state: ProgressUrlState = {
-      ...defaultProgressUrlState(),
-      clusters: new Set(),
-    }
-    const encoded = encodeProgressState(state)
-    // The param must be present (distinguishes "none active" from "default/all active")
-    expect(encoded).toContain('clusters=')
-  })
-
   it('never encodes a recency param', () => {
     expect(encodeProgressState(defaultProgressUrlState())).not.toContain('recency=')
+  })
+
+  it('never encodes a clusters param', () => {
+    expect(encodeProgressState(defaultProgressUrlState())).not.toContain('clusters=')
   })
 
   it('starts with ? when any param is present', () => {
@@ -219,42 +155,16 @@ describe('encode → decode round-trip', () => {
     expect(restored.proposal).toBe('prop-abc-123')
   })
 
-  it('restores partial cluster toggles', () => {
-    const state: ProgressUrlState = {
-      ...defaultProgressUrlState(),
-      clusters: new Set(['Arc', 'In progress'] as const),
-    }
-    const restored = decodeProgressState(`#/progress${encodeProgressState(state)}`)
-    expect(restored.clusters.has('Arc')).toBe(true)
-    expect(restored.clusters.has('In progress')).toBe(true)
-    expect(restored.clusters.has('Blocked')).toBe(false)
-    expect(restored.clusters.has('Failed')).toBe(false)
-  })
-
-  it('restores empty cluster set', () => {
-    const state: ProgressUrlState = {
-      ...defaultProgressUrlState(),
-      clusters: new Set(),
-    }
-    const restored = decodeProgressState(`#/progress${encodeProgressState(state)}`)
-    expect(restored.clusters.size).toBe(0)
-  })
-
   it('restores a fully non-default state', () => {
     const state: ProgressUrlState = {
       view: 'board',
       query: 'test search',
       proposal: 'p-abc',
-      clusters: new Set(['Arc', 'In progress'] as const),
     }
     const hash = `#/progress${encodeProgressState(state)}`
     const restored = decodeProgressState(hash)
     expect(restored.view).toBe('board')
     expect(restored.query).toBe('test search')
     expect(restored.proposal).toBe('p-abc')
-    expect(restored.clusters.has('Arc')).toBe(true)
-    expect(restored.clusters.has('In progress')).toBe(true)
-    expect(restored.clusters.has('Blocked')).toBe(false)
-    expect(restored.clusters.has('Failed')).toBe(false)
   })
 })

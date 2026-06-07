@@ -261,7 +261,7 @@ describe('computeStateMap', () => {
   const edgeId = blockerKey('a', 'b')
 
   it('leaves everything at-rest with no filters and no hover', () => {
-    const map = computeStateMap(snapshot(), { searchMatchIds: null, ghostedClusters: undefined, lit: null })
+    const map = computeStateMap(snapshot(), { searchMatchIds: null, lit: null })
     expect(map.a).toEqual([])
     expect(map.b).toEqual([])
     expect(map[edgeId]).toEqual([])
@@ -271,28 +271,15 @@ describe('computeStateMap', () => {
   it('dims nodes outside the search set', () => {
     const map = computeStateMap(snapshot(), {
       searchMatchIds: new Set(['a']),
-      ghostedClusters: undefined,
       lit: null,
     })
     expect(map.a).toEqual([])
     expect(map.b).toEqual(['dim'])
-  })
-
-  it('dims nodes whose cluster is ghosted, and the arc combo when "Arc" is ghosted', () => {
-    const map = computeStateMap(snapshot(), {
-      searchMatchIds: null,
-      ghostedClusters: new Set(['Blocked', 'Arc']),
-      lit: null,
-    })
-    expect(map.a).toEqual([])
-    expect(map.b).toEqual(['dim'])
-    expect(map['combo:p1']).toEqual(['dim'])
   })
 
   it('dims an edge when either endpoint is filtered out', () => {
     const map = computeStateMap(snapshot(), {
       searchMatchIds: new Set(['a']), // b is filtered → edge a->b dims
-      ghostedClusters: undefined,
       lit: null,
     })
     expect(map[edgeId]).toEqual(['dim'])
@@ -300,7 +287,7 @@ describe('computeStateMap', () => {
 
   it('with a hover trace, lights the lit set and dims everything else', () => {
     const lit: ChainResult = { nodes: new Set(['a', 'b']), edges: new Set([edgeId]), proposals: new Set(['p1']) }
-    const map = computeStateMap(snapshot(), { searchMatchIds: null, ghostedClusters: undefined, lit })
+    const map = computeStateMap(snapshot(), { searchMatchIds: null, lit })
     expect(map.a).toEqual(['active'])
     expect(map.b).toEqual(['active'])
     expect(map[edgeId]).toEqual(['active'])
@@ -311,7 +298,6 @@ describe('computeStateMap', () => {
     const lit: ChainResult = { nodes: new Set(['a', 'b']), edges: new Set([edgeId]), proposals: new Set(['p1']) }
     const map = computeStateMap(snapshot(), {
       searchMatchIds: new Set(['a']), // b is lit but filtered out → dim, not active
-      ghostedClusters: undefined,
       lit,
     })
     expect(map.a).toEqual(['active'])
@@ -320,7 +306,7 @@ describe('computeStateMap', () => {
 
   it('dims a hover-unlit element even if it passes the filters', () => {
     const lit: ChainResult = { nodes: new Set(['a']), edges: new Set(), proposals: new Set(['p1']) }
-    const map = computeStateMap(snapshot(), { searchMatchIds: null, ghostedClusters: undefined, lit })
+    const map = computeStateMap(snapshot(), { searchMatchIds: null, lit })
     expect(map.a).toEqual(['active'])
     expect(map.b).toEqual(['dim'])
   })

@@ -206,7 +206,7 @@ describe('parseProposalRoute', () => {
 describe('resolvePageRoute', () => {
   it('returns progress when a task overlay hash is present', () => {
     // A task drawer hash forces the Progress page to stay mounted so that
-    // the operator's view state (active tab, cluster toggles) is preserved.
+    // the operator's view state (active tab, filters) is preserved.
     expect(resolvePageRoute('#/task/mars-abc123')).toBe('progress')
   })
 

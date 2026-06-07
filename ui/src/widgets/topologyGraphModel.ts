@@ -244,8 +244,6 @@ export interface ElementSnapshot {
 export interface HighlightInputs {
   /** Toolbar search; null = no search. Only these ids stay full-opacity. */
   searchMatchIds: Set<string> | null | undefined
-  /** Cluster names + 'Proposal' whose nodes dim. */
-  ghostedClusters: Set<string> | null | undefined
   /** Active hover-trace lit set, or null when nothing is hovered. */
   lit: ChainResult | null
 }
@@ -255,8 +253,8 @@ export interface HighlightInputs {
  * batched `setElementState`). This is the single source of truth for how the
  * three dim sources combine:
  *
- *   - An element is FILTERED-dim if it fails the search filter OR the cluster
- *     filter (these persist on top of everything else).
+ *   - An element is FILTERED-dim if it fails the search filter (persists on top
+ *     of everything else).
  *   - When a hover trace is active (`lit`), an element is 'active' only if it's
  *     in the lit set AND not filtered; everything else is 'dim'.
  *   - With no hover, an element is 'dim' if filtered, else at-rest (`[]`).
@@ -264,19 +262,17 @@ export interface HighlightInputs {
  * An edge survives the filters only if BOTH its endpoints do.
  */
 export const computeStateMap = (snapshot: ElementSnapshot, inputs: HighlightInputs): Record<string, string[]> => {
-  const { searchMatchIds: search, ghostedClusters: gc, lit } = inputs
+  const { searchMatchIds: search, lit } = inputs
   const map: Record<string, string[]> = {}
 
   const nodeById = new Map<string, NodeData>(snapshot.nodes.map((n) => [String(n.id), n]))
 
-  const taskFilterDim = (id: string, cluster: unknown): boolean => {
+  const taskFilterDim = (id: string): boolean => {
     if (search != null && !search.has(id)) return true
-    if (gc != null && gc.has(String(cluster))) return true
     return false
   }
   const comboFilterDim = (arcKey: string): boolean => {
     if (search != null && !search.has(arcKey)) return true
-    if (gc != null && gc.has('Arc')) return true
     return false
   }
   const resolve = (litMember: boolean, filtered: boolean): string[] =>
@@ -284,15 +280,15 @@ export const computeStateMap = (snapshot: ElementSnapshot, inputs: HighlightInpu
 
   for (const n of snapshot.nodes) {
     const id = String(n.id)
-    map[id] = resolve(lit?.nodes.has(id) ?? false, taskFilterDim(id, n.data?.cluster))
+    map[id] = resolve(lit?.nodes.has(id) ?? false, taskFilterDim(id))
   }
   for (const e of snapshot.edges) {
     const id = String(e.id)
     const s = nodeById.get(String(e.source))
     const t = nodeById.get(String(e.target))
     const filtered =
-      (s ? taskFilterDim(String(s.id), s.data?.cluster) : false) ||
-      (t ? taskFilterDim(String(t.id), t.data?.cluster) : false)
+      (s ? taskFilterDim(String(s.id)) : false) ||
+      (t ? taskFilterDim(String(t.id)) : false)
     map[id] = resolve(lit?.edges.has(id) ?? false, filtered)
   }
   for (const c of snapshot.combos) {

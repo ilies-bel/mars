@@ -1,16 +1,14 @@
 /**
  * URL state encoding/decoding for the Progress tab's filter controls.
  *
- * Four filter dimensions are encoded as query parameters appended to the
+ * Three filter dimensions are encoded as query parameters appended to the
  * `#/progress` hash:
  *
  *   view        'topology' (default, omitted) | 'board'
  *   q           search text (omitted when empty)
  *   proposal    proposal id to filter by (omitted when null)
- *   clusters    comma-separated list of active ClusterToggle values
- *               (omitted when all four are active — the default)
  *
- * Example: `#/progress?view=board&q=deploy&clusters=Proposal,Blocked`
+ * Example: `#/progress?view=board&q=deploy`
  *
  * Default values are omitted to keep URLs clean. Absent parameters decode as
  * defaults, so a bare `#/progress` hash produces the full-default state.
@@ -21,22 +19,18 @@
 
 import type { Tab } from './tabs'
 import { DEFAULT_TAB } from './tabs'
-import type { ClusterToggle } from '@/widgets/ClusterToggleBar'
-import { ALL_CLUSTER_TOGGLES } from '@/widgets/ClusterToggleBar'
 
 export type ProgressUrlState = {
   view: Tab
   query: string
   proposal: string | null
-  clusters: Set<ClusterToggle>
 }
 
-/** Returns a fresh default state (new Set per call — not a shared reference). */
+/** Returns a fresh default state (new object per call — not a shared reference). */
 export const defaultProgressUrlState = (): ProgressUrlState => ({
   view: DEFAULT_TAB,
   query: '',
   proposal: null,
-  clusters: new Set(ALL_CLUSTER_TOGGLES),
 })
 
 /**
@@ -55,13 +49,6 @@ export const encodeProgressState = (state: ProgressUrlState): string => {
   }
   if (state.proposal !== null) {
     parts.push(`proposal=${encodeURIComponent(state.proposal)}`)
-  }
-
-  // Include the clusters param only when NOT all four toggles are active.
-  // This lets a bare `#/progress` mean "default = all active".
-  const activeList = ALL_CLUSTER_TOGGLES.filter((c) => state.clusters.has(c))
-  if (activeList.length !== ALL_CLUSTER_TOGGLES.length) {
-    parts.push(`clusters=${activeList.map(encodeURIComponent).join(',')}`)
   }
 
   return parts.length > 0 ? `?${parts.join('&')}` : ''
@@ -95,22 +82,7 @@ export const decodeProgressState = (hash: string): ProgressUrlState => {
   const proposal =
     rawProposal !== undefined && rawProposal.length > 0 ? rawProposal : null
 
-  let clusters: Set<ClusterToggle>
-  if (params.has('clusters')) {
-    const raw = params.get('clusters') ?? ''
-    clusters = new Set(
-      raw
-        .split(',')
-        .map((s) => s.trim())
-        .filter((s): s is ClusterToggle =>
-          (ALL_CLUSTER_TOGGLES as readonly string[]).includes(s),
-        ),
-    )
-  } else {
-    clusters = new Set(ALL_CLUSTER_TOGGLES)
-  }
-
-  return { view, query, proposal, clusters }
+  return { view, query, proposal }
 }
 
 /**

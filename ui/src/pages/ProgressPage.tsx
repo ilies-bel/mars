@@ -8,11 +8,6 @@ import {
 } from '@/shared/progressUrlState'
 import type { Tab } from '@/shared/tabs'
 import { BoardView } from '@/widgets/BoardView'
-import {
-  ALL_CLUSTER_TOGGLES,
-  ClusterToggleBar,
-  type ClusterToggle,
-} from '@/widgets/ClusterToggleBar'
 import { Footer } from '@/widgets/Footer'
 import { Sidebar } from '@/widgets/Sidebar'
 import { TabStrip } from '@/widgets/TabStrip'
@@ -28,9 +23,6 @@ export const ProgressPage = () => {
   const { byCluster, tasks, proposals, error, connected } = useProgress()
   const { drafts } = useTodo()
   const [activeTab, setActiveTab] = useState<Tab>(initialUrlState.view)
-  const [activeToggles, setActiveToggles] = useState<Set<ClusterToggle>>(
-    initialUrlState.clusters,
-  )
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(
     initialUrlState.proposal,
   )
@@ -63,14 +55,6 @@ export const ProgressPage = () => {
     return new Set([...matchingTaskIds, ...matchingProposalIds])
   }, [searchQuery, tasks, proposals])
 
-  const handleToggle = (cluster: ClusterToggle): void =>
-    setActiveToggles((prev) => {
-      const next = new Set(prev)
-      if (next.has(cluster)) next.delete(cluster)
-      else next.add(cluster)
-      return next
-    })
-
   // Sync filter state to the URL after every change (debounced at 300 ms so
   // rapid search keystrokes don't produce a history entry per character).
   // history.replaceState is used — no hashchange event fires, so the app-level
@@ -81,16 +65,10 @@ export const ProgressPage = () => {
         view: activeTab,
         query: searchQuery,
         proposal: selectedProposalId,
-        clusters: activeToggles,
       })
     }, 300)
     return () => clearTimeout(id)
-  }, [activeTab, searchQuery, selectedProposalId, activeToggles])
-
-  // Clusters whose nodes/cards should be suppressed.
-  const ghostedClusters = new Set<string>(
-    ALL_CLUSTER_TOGGLES.filter((c) => !activeToggles.has(c)),
-  )
+  }, [activeTab, searchQuery, selectedProposalId])
 
   const totalTasks = tasks?.length ?? 0
   const inProgressCount = byCluster['In progress'].length
@@ -113,7 +91,6 @@ export const ProgressPage = () => {
         />
         <KpiVector />
         <TabStrip active={activeTab} onSelect={setActiveTab} />
-        <ClusterToggleBar active={activeToggles} onToggle={handleToggle} />
         {/* Text search — always visible */}
         <div className="flex items-center gap-2 border-b border-iron/20 bg-bg px-4 py-1.5">
           <input
@@ -160,7 +137,6 @@ export const ProgressPage = () => {
           <TopologyView
             tasks={tasks ?? []}
             proposals={proposals}
-            ghostedClusters={ghostedClusters}
             selectedProposalId={selectedProposalId}
             searchMatchIds={searchMatchIds}
             onSelectProposal={setSelectedProposalId}
@@ -171,7 +147,6 @@ export const ProgressPage = () => {
             drafts={drafts}
             error={error}
             selectedProposalId={selectedProposalId}
-            ghostedClusters={ghostedClusters}
             searchMatchIds={searchMatchIds}
           />
         )}
