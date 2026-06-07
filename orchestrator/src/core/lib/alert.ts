@@ -165,7 +165,7 @@ export const buildAlert = (
 export interface FailedArcRecord {
   /** The arc id (origin_id). MUST already be resolved to the arc root. */
   arcId: string
-  /** The origin task's prompt — the arc's goal. */
+  /** The origin task's intent (falling back to the prompt for legacy rows) — the arc's goal. */
   goal: string
   /** Structured failure signature written at failure time, or null. */
   failureSignature: string | null

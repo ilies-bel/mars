@@ -94,6 +94,20 @@ describe('buildAlert', () => {
     expect(alert.goal).toBe('line one line two line three')
   })
 
+  it('surfaces goal verbatim from intent — no LLM call, no recomputation', () => {
+    // Mirrors the daemon path: origin.intent is stored as FailedArcRecord.goal and
+    // buildAlert must pass it through unchanged. This regression guards against any
+    // layer accidentally overwriting or re-deriving the intent.
+    const fk = resolveFailureKind('verify:has-diff/no-commits-ahead', '')
+    const alert = buildAlert('mars-intent01', fk, '', {
+      goal: 'rename foo to bar',
+      traceTail: '',
+      descendants: [],
+      chain: [],
+    })
+    expect(alert.goal).toBe('rename foo to bar')
+  })
+
   it('is pure: does not mutate its inputs and is deterministic', () => {
     const fk = resolveFailureKind('verify:has-diff/no-commits-ahead', 'boom')
     const input = {

@@ -2153,7 +2153,7 @@ export const startDaemon = async (
 
           records.push({
             arcId,
-            goal: origin.prompt,
+            goal: origin.intent || origin.prompt,
             failureSignature: failing.failureSignature,
             capturedError,
             traceTail: capturedError,
