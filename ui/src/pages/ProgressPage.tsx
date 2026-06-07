@@ -9,7 +9,6 @@ import {
 import type { Tab } from '@/shared/tabs'
 import { BoardView } from '@/widgets/BoardView'
 import { Footer } from '@/widgets/Footer'
-import { Sidebar } from '@/widgets/Sidebar'
 import { TabStrip } from '@/widgets/TabStrip'
 import { TopologyView } from '@/widgets/TopologyView'
 import { KpiVector } from '@/widgets/KpiVector'
@@ -70,18 +69,12 @@ export const ProgressPage = () => {
     return () => clearTimeout(id)
   }, [activeTab, searchQuery, selectedProposalId])
 
-  const totalTasks = tasks?.length ?? 0
   const inProgressCount = byCluster['In progress'].length
   const blockedCount = byCluster.Blocked.length
   const failedCount = byCluster.Failed.length
 
   return (
     <div className="flex h-full w-full min-h-0 overflow-hidden bg-bg">
-      <Sidebar
-        tasksCount={totalTasks}
-        triageCount={blockedCount}
-        connected={connected}
-      />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopStripe
           inProgress={inProgressCount}

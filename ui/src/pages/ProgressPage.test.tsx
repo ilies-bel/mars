@@ -92,14 +92,18 @@ describe('ProgressPage – proposal filter control', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Responsive layout: nav sidebar must not squeeze content on narrow viewports.
+// Responsive layout: the sidebar has been removed; main content fills the
+// full width of the viewport.
 // ---------------------------------------------------------------------------
 
 describe('ProgressPage – responsive layout', () => {
-  it('nav sidebar is hidden on mobile and visible on sm+ breakpoint', () => {
+  it('renders no nav sidebar — main content fills the full width', () => {
     const html = renderToStaticMarkup(<ProgressPage />)
-    // hidden hides on all sizes; sm:flex reveals it at ≥640px.
-    expect(html).toContain('hidden sm:flex')
+    // The sidebar carried class="hidden sm:flex …" and a fixed w-[200px].
+    // Both must be absent now that the sidebar is removed.
+    expect(html).not.toContain('w-[200px]')
+    // The outer wrapper passes flex-1 to the sole content column.
+    expect(html).toContain('flex-1')
   })
 })
 
