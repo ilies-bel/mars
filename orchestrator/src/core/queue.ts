@@ -515,15 +515,10 @@ export const migrateQueueSchema = async (): Promise<void> => {
     )
   ).rows.length > 0
   if (hasTaskBlockers) {
-    await c.execute(
-      `DELETE FROM task_blockers
-        WHERE blocker_task_id IN (
-          SELECT id FROM tasks WHERE kind = 'fix' AND fix_for_task_id IS NULL
-        )
-        OR task_id IN (
-          SELECT id FROM tasks WHERE kind = 'fix' AND fix_for_task_id IS NULL
-        )`,
-    )
+    // arch-guard:migration-delete — ADR-0052 exemption. Removes ADR-0040
+    // leaf-guard violation edges (fix tasks wired as blockers) from legacy DBs.
+    await c.execute(`DELETE FROM task_blockers WHERE blocker_task_id IN (SELECT id FROM tasks WHERE kind = 'fix' AND fix_for_task_id IS NULL)`) // arch-guard:migration-delete
+    await c.execute(`DELETE FROM task_blockers WHERE task_id IN (SELECT id FROM tasks WHERE kind = 'fix' AND fix_for_task_id IS NULL)`) // arch-guard:migration-delete
   }
   // arch-guard:migration-delete — ADR-0052 sole-writer exemption. This orphan
   // cleanup (kind='fix' rows with a NULL origin pointer, an ADR-0049
@@ -746,9 +741,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
     await c.execute(
       `ALTER TABLE task_blockers ADD COLUMN state TEXT NOT NULL DEFAULT 'confirmed'`,
     )
-    await c.execute(
-      `UPDATE task_blockers SET state = 'confirmed' WHERE state IS NULL OR state = ''`,
-    )
+    await c.execute(`UPDATE task_blockers SET state = 'confirmed' WHERE state IS NULL OR state = ''`) // arch-guard:migration-write
   }
   await c.execute(`
     CREATE INDEX IF NOT EXISTS idx_task_blockers_task ON task_blockers(task_id)
@@ -888,8 +881,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
         })
         if (fixTask.rows.length === 0) continue
         await c.execute({
-          sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
-                VALUES (?, ?, ?)`,
+          sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`, // arch-guard:migration-write
           args: [r.task_id, r.fix_task_id, now],
         })
       }
@@ -2390,49 +2382,17 @@ export const enqueueFollowUpOnce = async (
  * Used by the deterministic Linker added by PRD 2be831da; tests exercise it
  * directly until the Linker landing slice wires the call site.
  */
+/**
+ * Write Linker-candidate blocker rows in `'pending-review'` state (ADR-0006).
+ * Thin wrapper over {@link Arc.addPendingReviewBlockers} (ADR-0052): the Linker
+ * is the sole *deriver* of lexical-overlap edges; Arc is the sole *writer* of
+ * `task_blockers` rows. Signature kept for existing call sites.
+ */
 export const addPendingReviewBlockers = async (
   taskId: string,
   blockerIds: readonly string[],
 ): Promise<void> => {
-  if (blockerIds.length === 0) return
-  await migrateQueueSchema()
-  const c = resolveQueueClient()
-
-  const taskRow = await c.execute({
-    sql: `SELECT 1 FROM tasks WHERE id = ?`,
-    args: [taskId],
-  })
-  if (taskRow.rows.length === 0) {
-    throw new Error(`task ${taskId} not found`)
-  }
-  const seen = new Set<string>()
-  const unique: string[] = []
-  for (const id of blockerIds) {
-    if (id === taskId) continue
-    if (seen.has(id)) continue
-    seen.add(id)
-    const r = await c.execute({
-      sql: `SELECT 1 FROM tasks WHERE id = ?`,
-      args: [id],
-    })
-    if (r.rows.length === 0) {
-      throw new Error(`blocker ${id} not found`)
-    }
-    unique.push(id)
-  }
-  if (unique.length === 0) return
-  // ADR-0040 leaf-node guard: even pending-review Linker rows are subject to
-  // the recovery leaf rule. A recovery task is never the candidate of a
-  // keyword-overlap edge.
-  for (const blockerId of unique) {
-    await assertNotRecoveryEdge(taskId, blockerId, { client: c })
-  }
-  const now = new Date().toISOString()
-  const stmts = unique.map((blockerId) => ({
-    sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'pending-review', ?)`,
-    args: [taskId, blockerId, now],
-  }))
-  await c.batch(stmts, 'write')
+  await Arc.load(taskId).addPendingReviewBlockers(taskId, blockerIds)
 }
 
 /**
@@ -2448,11 +2408,7 @@ export const removeBlocker = async (
 }
 
 export const clearBlockers = async (taskId: string): Promise<void> => {
-  await migrateQueueSchema()
-  await resolveQueueClient().execute({
-    sql: `DELETE FROM task_blockers WHERE task_id = ?`,
-    args: [taskId],
-  })
+  await Arc.load(taskId).clearBlockers(taskId)
 }
 
 /**
@@ -2594,35 +2550,9 @@ export const transferProposalBlockerToTask = async (
   if (blockerRow.rows.length === 0) {
     throw new Error(`blocker task ${newBlockerTaskId} not found`)
   }
-  // ADR-0040 leaf-node guard: refuse the transfer if any endpoint involved
-  // is a recovery task. dependents are tasks waiting on a proposal — they
-  // are origin work by construction, so practical violations are unlikely,
-  // but the guard runs anyway so the bottleneck stays in one place.
-  for (const taskId of dependents) {
-    if (taskId === newBlockerTaskId) continue
-    await assertNotRecoveryEdge(taskId, newBlockerTaskId, { client: c })
-  }
-  const now = new Date().toISOString()
-  const stmts: InStatement[] = []
-  for (const taskId of dependents) {
-    // Insert the new task_blockers row BEFORE deleting the
-    // task_proposal_blockers row so that, even though `batch` is already a
-    // single transaction, the intra-transaction statement order also
-    // preserves the never-observably-zero-blockers invariant. Self-edges
-    // (a slice blocked by itself) are skipped, mirroring addBlockers.
-    if (taskId !== newBlockerTaskId) {
-      stmts.push({
-        sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
-        args: [taskId, newBlockerTaskId, now],
-      })
-    }
-    stmts.push({
-      sql: `DELETE FROM task_proposal_blockers WHERE task_id = ? AND proposal_id = ?`,
-      args: [taskId, proposalId],
-    })
-  }
-  await c.batch(stmts, 'write')
-  return { transferred: dependents }
+  // Delegate to Arc (ADR-0052 sole-writer for task_blockers). Arc.transferProposalEdges
+  // re-runs the ADR-0040 leaf-node guard and builds the atomic INSERT+DELETE batch.
+  return Arc.transferProposalEdges(dependents, newBlockerTaskId, proposalId)
 }
 
 export interface UnblockTaskResult {

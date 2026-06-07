@@ -1,6 +1,6 @@
 import { computeFailureSignature } from './lib/failure-signature'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
-import { updateTask, resolveQueueClient } from './queue'
+import { clearBlockers, updateTask } from './queue'
 
 export const DEFAULT_RETRY_BUDGET = 0
 
@@ -33,11 +33,8 @@ export const markTaskDropped = async (
   // transition (e.g. task already 'done') throws IllegalTransitionError before
   // any DB write.
   await updateTask(taskId, { status: 'dropped', failureReason: reason, failureReasonCode: code })
-  // Blocker-edge cleanup is not a status write; keep it here.
-  await resolveQueueClient().execute({
-    sql: `DELETE FROM task_blockers WHERE task_id = ?`,
-    args: [taskId],
-  })
+  // Clear outbound blocker edges through the Arc aggregate (ADR-0052 sole-writer).
+  await clearBlockers(taskId)
 }
 
 /**
@@ -65,11 +62,8 @@ export const markTaskFailed = async (
   // transition (e.g. task already 'done') throws IllegalTransitionError before
   // any DB write.
   await updateTask(taskId, { status: 'failed', failureReason: reason, failureReasonCode: code })
-  // Blocker-edge cleanup is not a status write; keep it here.
-  await resolveQueueClient().execute({
-    sql: `DELETE FROM task_blockers WHERE task_id = ?`,
-    args: [taskId],
-  })
+  // Clear outbound blocker edges through the Arc aggregate (ADR-0052 sole-writer).
+  await clearBlockers(taskId)
   // Block downstream queued tasks whose only path to running was this
   // failed prerequisite. Dynamic import breaks the queue-retry <->
   // blocker-resolution module cycle. Best-effort: a cascade failure

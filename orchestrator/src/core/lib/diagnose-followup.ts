@@ -4,6 +4,7 @@ import {
   getTask,
   updateTask,
 } from '../queue'
+import { Arc } from '../arc'
 import { getDefaultTaskStore } from '../store/task-store'
 import { getDiagnosis, type StoredDiagnosis } from './diagnose'
 import { raiseActionQueueItem } from './action-queue'
@@ -58,12 +59,7 @@ const removeBlockerEdge = async (
   parentTaskId: string,
   blockerTaskId: string,
 ): Promise<void> => {
-  const store = await getDefaultTaskStore()
-  await store.execute({
-    sql: `DELETE FROM task_blockers
-           WHERE task_id = ? AND blocker_task_id = ?`,
-    args: [parentTaskId, blockerTaskId],
-  })
+  await Arc.load(parentTaskId).removeBlocker(parentTaskId, blockerTaskId)
 }
 
 const buildFixPrompt = (

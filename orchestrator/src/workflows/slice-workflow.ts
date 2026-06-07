@@ -7,7 +7,6 @@ import { getProposal, markProposalSliced } from '../core/proposals'
 import { getDefaultStateStore } from '../core/store/state-store'
 import { enqueueTask, updateTask } from '../core/queue'
 import { Arc } from '../core/arc'
-import { assertNotRecoveryEdge } from '../core/lib/blocker-invariant'
 import { getDefaultTaskStore } from '../core/store/task-store'
 import { Workers } from '../core/workers'
 import { parseClaudeJsonResult } from '../core/lib/claude-json'
@@ -964,22 +963,13 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
           })
         }
       }
-      // Phase 2: wire blockers using the resolved task ids.
-      const now = new Date().toISOString()
+      // Phase 2: wire blockers using the resolved task ids. Routes through the
+      // Arc aggregate (ADR-0052 sole-writer for task_blockers); Arc.addBlocker
+      // carries the ADR-0040 leaf-node guard internally.
       for (let i = 0; i < total; i += 1) {
         const deps = parsed.slices[i].blockedBy
         for (const dep of deps) {
-          // ADR-0040 leaf-node guard. Slicer-emitted rows are kind='task' by
-          // construction, so the assert is defensive — but the bottleneck
-          // sits at every task_blockers writer regardless of provenance.
-          await assertNotRecoveryEdge(taskIds[i], taskIds[dep - 1], {
-            client: taskStore,
-          })
-          await taskStore.execute({
-            sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
-                  VALUES (?, ?, ?)`,
-            args: [taskIds[i], taskIds[dep - 1], now],
-          })
+          await Arc.load(taskIds[i], taskStore).addBlocker(taskIds[i], [taskIds[dep - 1]])
         }
       }
       // Phase 2b: wire each hitl slice task to block on its Coder sub-task.
@@ -987,16 +977,10 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       // the operator confirms the manual step. hitlSliceIndices[j] is the
       // 0-based position in taskIds; subTaskIds[j] is the sub-task id.
       for (let j = 0; j < hitlSliceIndices.length; j += 1) {
-        await assertNotRecoveryEdge(
+        await Arc.load(taskIds[hitlSliceIndices[j]], taskStore).addBlocker(
           taskIds[hitlSliceIndices[j]],
-          subTaskIds[j],
-          { client: taskStore },
+          [subTaskIds[j]],
         )
-        await taskStore.execute({
-          sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
-                VALUES (?, ?, ?)`,
-          args: [taskIds[hitlSliceIndices[j]], subTaskIds[j], now],
-        })
       }
       // Phase 3: transition each slice to 'queued' (no blockers and kind='coder') or
       // 'blocked' (has blockers or kind='hitl'). hitl slices are ALWAYS blocked —

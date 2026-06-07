@@ -17,8 +17,9 @@ import { resolve, relative, sep } from 'node:path'
  * `status-writer-singleton.test.ts` (status-as-first-column confined to
  * `Arc.setTaskStatus`) is a finer, complementary check and coexists.
  *
- * ── Three detection patterns (run over comment-stripped source, with the file
- *    joined into one string so a multi-line `SET … status =` clause matches) ──
+ * ── Three detection patterns for `tasks` (run over comment-stripped source,
+ *    with the file joined into one string so a multi-line `SET … status =`
+ *    clause matches) ──
  *
  *   1. INSERT — catches `INSERT INTO tasks`, `INSERT OR IGNORE INTO tasks`,
  *      `INSERT OR REPLACE INTO tasks`. The `(?!_)` negative-lookahead EXEMPTS
@@ -31,30 +32,38 @@ import { resolve, relative, sep } from 'node:path'
  *      flagged.
  *   3. DELETE — catches `DELETE FROM tasks` (lifecycle row deletes).
  *
+ * ── Three detection patterns for `task_blockers` ──
+ *   4. TB_INSERT — catches `INSERT [OR IGNORE|REPLACE] INTO task_blockers`.
+ *      The `(?!_)` lookahead exempts `task_blockers_new` (migration rebuild).
+ *   5. TB_UPDATE — catches `UPDATE task_blockers` (any column update).
+ *   6. TB_DELETE — catches `DELETE FROM task_blockers` (edge row deletes).
+ *
  * ── Migration exemption (the hard constraint) ──
- * `migrateQueueSchema` (queue.ts) legitimately runs several task-table writes.
- * Each is safe, and safe for a DISTINCT, explicit reason (belt-and-braces):
+ * `migrateQueueSchema` (queue.ts) legitimately runs several task-table and
+ * task_blockers-table writes. Each is safe, and safe for a DISTINCT, explicit
+ * reason (belt-and-braces):
  *   (a) `INSERT INTO tasks_new` / `UPDATE tasks_new …` — auto-exempt: the
  *       `(?!_)` lookahead skips `tasks_new`, and STATUS requires `tasks` to be
  *       followed by whitespace+`SET`, not `_new`.
- *   (b) `UPDATE tasks SET kind = …` / `tag = …` / `tags_json = …` /
+ *   (b) `INSERT INTO task_blockers_new` — auto-exempt via the same `(?!_)`
+ *       lookahead in TB_INSERT.
+ *   (c) `UPDATE tasks SET kind = …` / `tag = …` / `tags_json = …` /
  *       `origin_id = …` / `blocker_id = …` / `prompt = …` — NOT status writes,
  *       so STATUS never matches them (column-name gated, not table gated).
- *   (c) the ONE genuinely-flaggable line — the orphan-cleanup
- *       `DELETE FROM tasks WHERE kind='fix' AND fix_for_task_id IS NULL`
- *       (ADR-0049 legacy purge) — is exempted by an HONORED comment marker
- *       `// arch-guard:migration-delete` carried on the SAME physical line as
- *       the DELETE. The guard, BEFORE comment-stripping, splits the source into
- *       lines and drops any line bearing the marker, then rejoins and strips
- *       comments. The marker is therefore LINE-SCOPED and migration-only: it
- *       cannot blanket-disable the DELETE pattern (the meta-guard below proves
- *       an UNMARKED `DELETE FROM tasks` on the same synthetic file is still
- *       flagged), and a lifecycle delete smuggled onto a marked line would be a
- *       visible review red flag.
+ *   (d) genuinely-flaggable migration writes are exempted by an HONORED comment
+ *       marker carried on the SAME physical line as the SQL:
+ *       - `// arch-guard:migration-delete` for DELETE statements.
+ *       - `// arch-guard:migration-write` for INSERT/UPDATE statements.
+ *       The guard, BEFORE comment-stripping, splits the source into lines and
+ *       drops any line bearing either marker, then rejoins and strips comments.
+ *       The markers are LINE-SCOPED and migration-only: they cannot blanket-
+ *       disable patterns (the meta-guard below proves an UNMARKED write on the
+ *       same synthetic file is still flagged), and a lifecycle write smuggled
+ *       onto a marked line would be a visible review red flag.
  *
- * ── Two assertions ──
- *   1. No out-of-allowlist file matches any of the 3 patterns (after marker +
- *      comment stripping).
+ * ── Assertions ──
+ *   1. No out-of-allowlist file matches any of the 6 patterns (after marker +
+ *      comment stripping). ALLOWLIST = ['core/arc.ts'] for both tables.
  *   2. `core/arc.ts` actually emits — it calls `publish(` or `buildEventInsert(`
  *      — proving the sole writer is event-emitting in-tx (ADR-0030), not a
  *      silent writer.
@@ -72,12 +81,14 @@ const SINGLE_LINE_STATUS = /UPDATE\s+tasks\s+SET\b[^;]*\bstatus\s*=/i
 // (3) lifecycle row delete.
 const DELETE_PATTERN = /DELETE\s+FROM\s+tasks\b/i
 
-// After path.sep normalization, the ONLY legitimate task-table writer.
+// After path.sep normalization, the ONLY legitimate task-table and
+// task_blockers-table writer.
 const ALLOWLIST = ['core/arc.ts'].map((p) => p.split('/').join(sep))
 
-// Honored migration-only marker. A physical line bearing it is dropped BEFORE
-// comment-stripping (line-scoped; cannot blanket-disable the DELETE pattern).
+// Honored migration-only markers. A physical line bearing either is dropped
+// BEFORE comment-stripping (line-scoped; cannot blanket-disable patterns).
 const MIGRATION_DELETE_MARKER = '// arch-guard:migration-delete'
+const MIGRATION_WRITE_MARKER = '// arch-guard:migration-write'
 
 const SKIP_DIRS = new Set(['node_modules', '__tests__', '.git', 'dist', 'build'])
 
@@ -98,14 +109,20 @@ const walk = (dir: string): string[] => {
 }
 
 /**
- * Drop any physical line carrying the honored migration-delete marker. Runs
- * BEFORE comment-stripping so the marker (a `//` comment) is still present to
- * match. Line-scoped: only the marked line disappears.
+ * Drop any physical line carrying an honored migration marker. Runs BEFORE
+ * comment-stripping so the markers (JS `//` comments) are still present to
+ * match. Line-scoped: only marked lines disappear. Covers both:
+ *   - `// arch-guard:migration-delete` — exempts migration DELETE statements.
+ *   - `// arch-guard:migration-write`  — exempts migration INSERT/UPDATE statements.
  */
 const stripMigrationMarkedLines = (src: string): string =>
   src
     .split('\n')
-    .filter((line) => !line.includes(MIGRATION_DELETE_MARKER))
+    .filter(
+      (line) =>
+        !line.includes(MIGRATION_DELETE_MARKER) &&
+        !line.includes(MIGRATION_WRITE_MARKER),
+    )
     .join('\n')
 
 /**
@@ -163,6 +180,39 @@ const collectWriters = (): { rel: string; text: string }[] => {
   return hits
 }
 
+// ── task_blockers sole-writer patterns (ADR-0052 extended to the edge table) ──
+//
+// (4) TB_INSERT — catches INSERT [OR IGNORE|REPLACE] INTO task_blockers.
+//     The (?!_) lookahead exempts `task_blockers_new` (migration rebuild only).
+const TB_INSERT_PATTERN =
+  /INSERT\s+(?:OR\s+(?:IGNORE|REPLACE)\s+)?INTO\s+task_blockers\b(?!_)/i
+// (5) TB_UPDATE — any UPDATE task_blockers (column-agnostic; any update is a write).
+const TB_UPDATE_PATTERN = /UPDATE\s+task_blockers\b/i
+// (6) TB_DELETE — catches DELETE FROM task_blockers (edge row deletes).
+const TB_DELETE_PATTERN = /DELETE\s+FROM\s+task_blockers\b/i
+
+/** True if the normalized source contains any task_blockers write. */
+const matchesAnyTBWrite = (text: string): boolean =>
+  TB_INSERT_PATTERN.test(text) ||
+  TB_UPDATE_PATTERN.test(text) ||
+  TB_DELETE_PATTERN.test(text)
+
+/**
+ * Files whose normalized source matches a task_blockers INSERT / UPDATE /
+ * DELETE (after migration-marker + comment stripping).
+ */
+const collectTBWriters = (): { rel: string; text: string }[] => {
+  const hits: { rel: string; text: string }[] = []
+  for (const file of walk(SRC_ROOT)) {
+    const rel = relative(SRC_ROOT, file)
+    const text = normalizeForScan(readFileSync(file, 'utf8'))
+    if (matchesAnyTBWrite(text)) {
+      hits.push({ rel, text })
+    }
+  }
+  return hits
+}
+
 describe('ADR-0052: the Arc aggregate is the sole task-table writer', () => {
   it('no out-of-allowlist file INSERTs / status-UPDATEs / DELETEs tasks', () => {
     const offenders = collectWriters()
@@ -188,6 +238,21 @@ describe('ADR-0052: the Arc aggregate is the sole task-table writer', () => {
       `${ALLOWLIST[0]} writes the task table but never calls publish(/buildEventInsert( — ` +
         'the sole writer must emit its lifecycle event in the same transaction (ADR-0030)',
     ).toBe(true)
+  })
+})
+
+describe('ADR-0052: the Arc aggregate is the sole task_blockers writer', () => {
+  it('no out-of-allowlist file INSERTs / UPDATEs / DELETEs task_blockers', () => {
+    const offenders = collectTBWriters()
+      .map((h) => h.rel)
+      .filter((rel) => rel !== ALLOWLIST[0])
+    expect(
+      offenders,
+      'These files INSERT / UPDATE / DELETE task_blockers outside the Arc aggregate ' +
+        '(ADR-0052 sole-writer, extended to task_blockers). Relocate the write into ' +
+        'core/arc.ts or route through an Arc method; the only legitimate ' +
+        `task_blockers writer is Arc.\n${offenders.join('\n')}`,
+    ).toEqual([])
   })
 })
 
@@ -251,5 +316,72 @@ describe('ADR-0052 sole-writer guard: meta-guard (regexes catch, do not over-fla
         `await c.execute('DELETE FROM tasks WHERE id = ?')`,
     )
     expect(matchesAnyWrite(markedPlusUnmarked)).toBe(true)
+  })
+
+  // ── task_blockers meta-guards ─────────────────────────────────────────────
+
+  it('TB_INSERT_PATTERN catches task_blockers INSERTs, exempts task_blockers_new', () => {
+    expect(
+      TB_INSERT_PATTERN.test(`INSERT INTO task_blockers (task_id) VALUES (?)`),
+    ).toBe(true)
+    expect(
+      TB_INSERT_PATTERN.test(
+        `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
+      ),
+    ).toBe(true)
+    // migration table-rebuild NOT flagged
+    expect(
+      TB_INSERT_PATTERN.test(
+        `INSERT INTO task_blockers_new (task_id, blocker_task_id, state, created_at) SELECT ...`,
+      ),
+    ).toBe(false)
+  })
+
+  it('TB_UPDATE_PATTERN catches task_blockers UPDATEs', () => {
+    expect(
+      TB_UPDATE_PATTERN.test(`UPDATE task_blockers SET state = 'confirmed' WHERE state IS NULL`),
+    ).toBe(true)
+  })
+
+  it('TB_DELETE_PATTERN catches task_blockers DELETEs', () => {
+    expect(
+      TB_DELETE_PATTERN.test(`DELETE FROM task_blockers WHERE task_id = ?`),
+    ).toBe(true)
+  })
+
+  it('planted task_blockers INSERT / UPDATE / DELETE WOULD be flagged', () => {
+    const insertFile = normalizeForScan(
+      `await x.execute('INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)')`,
+    )
+    const updateFile = normalizeForScan(
+      `await x.execute("UPDATE task_blockers SET state = 'confirmed' WHERE state IS NULL")`,
+    )
+    const deleteFile = normalizeForScan(
+      `await x.execute('DELETE FROM task_blockers WHERE task_id = ?')`,
+    )
+    expect(matchesAnyTBWrite(insertFile)).toBe(true)
+    expect(matchesAnyTBWrite(updateFile)).toBe(true)
+    expect(matchesAnyTBWrite(deleteFile)).toBe(true)
+  })
+
+  it('task_blockers migration markers are LINE-SCOPED: marked lines stripped, unmarked still flagged', () => {
+    // arch-guard:migration-delete strips a DELETE line.
+    const markedDelete = normalizeForScan(
+      `await c.execute('DELETE FROM task_blockers WHERE task_id = ?') ${MIGRATION_DELETE_MARKER}`,
+    )
+    expect(matchesAnyTBWrite(markedDelete)).toBe(false)
+
+    // arch-guard:migration-write strips an INSERT/UPDATE line.
+    const markedInsert = normalizeForScan(
+      `await c.execute({ sql: 'INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)' }) ${MIGRATION_WRITE_MARKER}`,
+    )
+    expect(matchesAnyTBWrite(markedInsert)).toBe(false)
+
+    // An UNMARKED task_blockers write on the same synthetic file is still flagged.
+    const markedPlusUnmarked = normalizeForScan(
+      `await c.execute('DELETE FROM task_blockers WHERE task_id = ?') ${MIGRATION_DELETE_MARKER}\n` +
+        `await c.execute('INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)')`,
+    )
+    expect(matchesAnyTBWrite(markedPlusUnmarked)).toBe(true)
   })
 })

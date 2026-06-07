@@ -1388,6 +1388,121 @@ export class Arc {
   }
 
   /**
+   * Remove all outbound blocker edges for `taskId` (ADR-0052). Used by
+   * terminal-transition paths (`markTaskDropped`, `markTaskFailed`) to clear
+   * the task's dependent edges before or after the status flip. Status is
+   * unchanged; callers update status separately via `updateTask`.
+   */
+  async clearBlockers(taskId: string): Promise<void> {
+    await migrateQueueSchema()
+    await this.store.execute({
+      sql: `DELETE FROM task_blockers WHERE task_id = ?`,
+      args: [taskId],
+    })
+  }
+
+  /**
+   * Write Linker-candidate blocker rows in `'pending-review'` state (ADR-0052,
+   * ADR-0006). The Linker is the sole *deriver* of lexical-overlap edges; this
+   * Arc method is the sole *writer*, so Arc remains the only code that runs SQL
+   * against `task_blockers`. Mirrors {@link addBlocker} but stamps
+   * `state='pending-review'` so the dispatcher gates on the row before the
+   * operator confirms it.
+   */
+  async addPendingReviewBlockers(
+    taskId: string,
+    blockerIds: readonly string[],
+  ): Promise<void> {
+    if (blockerIds.length === 0) return
+    await migrateQueueSchema()
+    const s = this.store
+
+    const taskRow = await s.execute({
+      sql: `SELECT 1 FROM tasks WHERE id = ?`,
+      args: [taskId],
+    })
+    if (taskRow.rows.length === 0) {
+      throw new Error(`task ${taskId} not found`)
+    }
+    const seen = new Set<string>()
+    const unique: string[] = []
+    for (const id of blockerIds) {
+      if (id === taskId) continue
+      if (seen.has(id)) continue
+      seen.add(id)
+      const r = await s.execute({
+        sql: `SELECT 1 FROM tasks WHERE id = ?`,
+        args: [id],
+      })
+      if (r.rows.length === 0) {
+        throw new Error(`blocker ${id} not found`)
+      }
+      unique.push(id)
+    }
+    if (unique.length === 0) return
+    // ADR-0040 leaf-node guard: even pending-review Linker rows are subject to
+    // the recovery leaf rule. A recovery task is never the candidate of a
+    // keyword-overlap edge.
+    for (const blockerId of unique) {
+      await assertNotRecoveryEdge(taskId, blockerId, { client: s })
+    }
+    const now = new Date().toISOString()
+    const stmts = unique.map((blockerId) => ({
+      sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'pending-review', ?)`,
+      args: [taskId, blockerId, now],
+    }))
+    await s.batch(stmts, 'write')
+  }
+
+  /**
+   * ADR-0015 promote-transfer, executed as a single write batch (ADR-0052).
+   * For every task in `dependents` blocked by `proposalId` in
+   * `task_proposal_blockers`, atomically deletes that proposal-blocker row and
+   * inserts a `'confirmed'` `task_blockers` row pointing at `newBlockerTaskId`,
+   * preserving the never-observably-zero-blockers invariant via
+   * insert-before-delete ordering within the batch.
+   *
+   * Static: this operation spans multiple task IDs so no single Arc instance
+   * owns it. Uses the process-wide default store.
+   */
+  static async transferProposalEdges(
+    dependents: string[],
+    newBlockerTaskId: string,
+    proposalId: string,
+  ): Promise<{ transferred: string[] }> {
+    if (dependents.length === 0) return { transferred: [] }
+    const store = getDefaultDomainTaskStore()
+    // ADR-0040 leaf-node guard: refuse the transfer if any endpoint is a
+    // recovery task. dependents are tasks waiting on a proposal — they are
+    // origin work by construction, so practical violations are unlikely, but
+    // the guard runs anyway so the bottleneck sits at every task_blockers writer.
+    for (const taskId of dependents) {
+      if (taskId === newBlockerTaskId) continue
+      await assertNotRecoveryEdge(taskId, newBlockerTaskId, { client: store })
+    }
+    const now = new Date().toISOString()
+    const stmts: InStatement[] = []
+    for (const taskId of dependents) {
+      // Insert the task_blockers row BEFORE deleting the task_proposal_blockers
+      // row so statement ordering inside the batch also preserves the
+      // never-observably-zero-blockers invariant. Self-edges are skipped,
+      // mirroring addBlocker.
+      if (taskId !== newBlockerTaskId) {
+        stmts.push({
+          sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
+          args: [taskId, newBlockerTaskId, now],
+        })
+      }
+      stmts.push({
+        sql: `DELETE FROM task_proposal_blockers WHERE task_id = ? AND proposal_id = ?`,
+        args: [taskId, proposalId],
+      })
+    }
+    await store.batch(stmts, 'write')
+    return { transferred: dependents }
+  }
+
+  /**
    * Database-level drop of the arc's task (ADR-0052). Works regardless of
    * status — clears every `task_blockers` row mentioning the id on either side,
    * cascade-deletes every fix/recovery task whose `fix_for_task_id` points at
