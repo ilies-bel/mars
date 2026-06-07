@@ -433,6 +433,13 @@ export const kpiKeySchema = z.enum([
   'recovery_success_rate',
 ])
 
+export const kpiSeriesPointSchema = z.object({
+  takenAt: z.string(),
+  value: z.number().nullable(),
+})
+
+export type KpiSeriesPoint = z.infer<typeof kpiSeriesPointSchema>
+
 export const kpiSchema = z.object({
   key: kpiKeySchema,
   currentValue: z.number(),
@@ -440,6 +447,7 @@ export const kpiSchema = z.object({
   delta: z.number(),
   sampleCount: z.number(),
   lowConfidence: z.boolean(),
+  series: z.array(kpiSeriesPointSchema).optional(),
 })
 
 export const kpisResponseSchema = z.object({

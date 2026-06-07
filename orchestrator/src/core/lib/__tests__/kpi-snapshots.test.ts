@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { openLibsql } from '../libsql.js'
 import { createTaskStore, type DomainTaskStore as TaskStore } from '../../store/task-store.js'
-import { takeKpiSnapshot, readLatestKpiSnapshot, readKpiWindowComparison } from '../kpi-snapshots.js'
+import { takeKpiSnapshot, readLatestKpiSnapshot, readKpiWindowComparison, readKpiSeries } from '../kpi-snapshots.js'
 
 // ---------------------------------------------------------------------------
 // Test DB helpers
@@ -616,5 +616,89 @@ describe('takeKpiSnapshot — autonomous_completion_rate column', () => {
 
     expect(snap).not.toBeNull()
     expect(snap!.autonomous_completion_rate).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. readKpiSeries — last-N oldest-first time-series
+// ---------------------------------------------------------------------------
+
+describe('readKpiSeries', () => {
+  it('returns empty arrays for all series when the store has no snapshots', async () => {
+    const store = await makeStore()
+    const series = await readKpiSeries({ store })
+    expect(series.failure_rate).toEqual([])
+    expect(series.autonomous_completion_rate).toEqual([])
+    expect(series.recovery_success_rate).toEqual([])
+    expect(series.cost_per_arc_p50).toEqual([])
+  })
+
+  it('returns the most-recent N snapshots ordered oldest-first when rows exceed limit', async () => {
+    const store = await makeStore()
+    const times = [
+      '2026-01-01T00:00:00Z',
+      '2026-01-02T00:00:00Z',
+      '2026-01-03T00:00:00Z',
+      '2026-01-04T00:00:00Z',
+      '2026-01-05T00:00:00Z',
+    ]
+    for (const t of times) {
+      await insertSnapshot(store, {
+        id: randomUUID(),
+        taken_at: t,
+        window_start: t,
+        window_end: t,
+        sample_count: 10,
+        low_confidence: 0,
+        failure_rate: 0.1,
+      })
+    }
+    // limit=3 → last 3 (Jan 3, Jan 4, Jan 5) in ascending order
+    const series = await readKpiSeries({ store, limit: 3 })
+    expect(series.failure_rate).toHaveLength(3)
+    expect(series.failure_rate[0].takenAt).toBe('2026-01-03T00:00:00Z')
+    expect(series.failure_rate[1].takenAt).toBe('2026-01-04T00:00:00Z')
+    expect(series.failure_rate[2].takenAt).toBe('2026-01-05T00:00:00Z')
+  })
+
+  it('preserves null column values as value: null in each series', async () => {
+    const store = await makeStore()
+    await insertSnapshot(store, {
+      id: randomUUID(),
+      taken_at: '2026-01-01T00:00:00Z',
+      window_start: '2025-12-25T00:00:00Z',
+      window_end: '2026-01-01T00:00:00Z',
+      sample_count: 0,
+      low_confidence: 1,
+      failure_rate: null,
+      autonomous_completion_rate: null,
+      recovery_success_rate: null,
+      cost_per_arc_p50: null,
+    })
+    const series = await readKpiSeries({ store })
+    expect(series.failure_rate[0].value).toBeNull()
+    expect(series.autonomous_completion_rate[0].value).toBeNull()
+    expect(series.recovery_success_rate[0].value).toBeNull()
+    expect(series.cost_per_arc_p50[0].value).toBeNull()
+  })
+
+  it('returns points in ascending order by takenAt', async () => {
+    const store = await makeStore()
+    // Insert in non-chronological order to confirm sorting is applied
+    const times = ['2026-01-03T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z']
+    for (const t of times) {
+      await insertSnapshot(store, {
+        id: randomUUID(),
+        taken_at: t,
+        window_start: t,
+        window_end: t,
+        sample_count: 5,
+        low_confidence: 0,
+        failure_rate: 0.1,
+      })
+    }
+    const series = await readKpiSeries({ store })
+    const takenAts = series.failure_rate.map((p) => p.takenAt)
+    expect(takenAts).toEqual([...takenAts].sort())
   })
 })

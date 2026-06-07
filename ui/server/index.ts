@@ -1,7 +1,7 @@
 import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { loadProjectRegistry } from '../../orchestrator/src/registry/projects.ts'
-import { fetchKpis, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'
+import { fetchKpis, fetchKpiSeries, type KpiSeries, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'
 import { createProjectContextCache, type ProjectContextEntry } from './projectContext.ts'
 import { probeDaemonHealth } from './projectHealth.ts'
 import { resolveRepo, UnknownProjectError } from './repo.ts'
@@ -243,8 +243,21 @@ export const startServer = async (
 
         if (path === '/api/kpis') {
           try {
-            const kpis = await fetchKpis(ctx.stateDir)
-            return jsonResponse(200, { kpis })
+            const [kpis, series] = await Promise.all([
+              fetchKpis(ctx.stateDir),
+              fetchKpiSeries(ctx.stateDir),
+            ])
+            const seriesKeyMap: Record<string, keyof KpiSeries> = {
+              failure_rate: 'failure_rate',
+              autonomous_completion_rate: 'autonomous_completion_rate',
+              recovery_success_rate: 'recovery_success_rate',
+              cost_per_arc: 'cost_per_arc_p50',
+            }
+            const kpisWithSeries = kpis.map((kpi) => {
+              const sk = seriesKeyMap[kpi.key]
+              return { ...kpi, series: sk !== undefined ? series[sk] : [] }
+            })
+            return jsonResponse(200, { kpis: kpisWithSeries })
           } catch (err) {
             return jsonResponse(500, { error: (err as Error).message })
           }

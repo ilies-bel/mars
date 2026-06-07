@@ -15,6 +15,7 @@ import {
   type TraceEventStore,
 } from '../lib/trace-events-store'
 import { listKpis as defaultListKpis, type KpiRecord } from './kpi-store'
+import { readKpiSeries, type KpiSeries } from '../lib/kpi-snapshots.js'
 import type { RestartTaskError } from './restart-task'
 import { SelfUpdateError, SELF_UPDATE_ERRORS } from './self-update'
 import type { ProgressTask, ProposalNode } from './view/progress'
@@ -166,6 +167,12 @@ export interface HttpServerDeps {
    * real persistence layer (proposal 9a2ab5f8) is wired in.
    */
   listKpis?: () => Promise<KpiRecord[]>
+  /**
+   * Return the KPI time-series for `GET /kpis/series`. When omitted, falls back
+   * to {@link readKpiSeries} from `kpi-snapshots.ts`. Inject in tests to avoid
+   * hitting the real store.
+   */
+  listKpisSeries?: (limit: number) => Promise<KpiSeries>
   /**
    * Return the full task list from the daemon's DomainTaskStore.
    * Served by `GET /view/tasks` so the read-only UI renders only what the
@@ -491,6 +498,21 @@ export const startHttpServer = async (
           .catch((err: unknown) => sendError(res, err))
         return
       }
+    }
+
+    // GET /kpis/series?limit=N — per-column KPI time-series (oldest-first, last N
+    // snapshots). Pure read; no draining gate. Must be matched before /kpis so
+    // the more-specific path wins.
+    if (req.method === 'GET' && /^\/kpis\/series(\?.*)?$/.test(req.url ?? '')) {
+      const qs = req.url?.includes('?') ? req.url.slice(req.url.indexOf('?') + 1) : ''
+      const rawLimit = new URLSearchParams(qs).get('limit')
+      const parsedLimit = rawLimit !== null ? Number(rawLimit) : 90
+      const limit = Number.isFinite(parsedLimit) && parsedLimit >= 1 ? Math.floor(parsedLimit) : 90
+      const fn = deps.listKpisSeries ?? ((lim: number) => readKpiSeries({ limit: lim }))
+      fn(limit)
+        .then((series) => sendJson(res, 200, { series }))
+        .catch((err: unknown) => sendError(res, err))
+      return
     }
 
     // GET /kpis — the four-KPI vector (ADR-0040, the harness-health KPI ADR

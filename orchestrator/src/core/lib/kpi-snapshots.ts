@@ -185,6 +185,72 @@ export async function readLatestKpiSnapshot(
   return rowToSnapshot(result.rows[0])
 }
 
+export interface KpiSeriesPoint {
+  takenAt: string
+  value: number | null
+}
+
+export interface KpiSeries {
+  failure_rate: KpiSeriesPoint[]
+  autonomous_completion_rate: KpiSeriesPoint[]
+  recovery_success_rate: KpiSeriesPoint[]
+  cost_per_arc_p50: KpiSeriesPoint[]
+}
+
+/**
+ * Return the last `limit` kpi_snapshots rows ordered oldest-first as per-column
+ * time-series arrays. Accepts an optional store for test injection; defaults to
+ * the production default store.
+ *
+ * Uses a subquery to select the most-recent N rows (ORDER BY taken_at DESC
+ * LIMIT ?) then re-orders them ascending so callers always receive
+ * oldest-first data.
+ */
+export async function readKpiSeries(opts: {
+  limit?: number
+  store?: TaskStore
+}): Promise<KpiSeries> {
+  const { limit = 90, store: injectedStore } = opts
+  const s = injectedStore ?? (await getDefaultTaskStore())
+
+  const result = await s.query({
+    sql: `SELECT taken_at, failure_rate, autonomous_completion_rate,
+                 recovery_success_rate, cost_per_arc_p50
+          FROM (
+            SELECT taken_at, failure_rate, autonomous_completion_rate,
+                   recovery_success_rate, cost_per_arc_p50
+            FROM kpi_snapshots
+            ORDER BY taken_at DESC
+            LIMIT ?
+          )
+          ORDER BY taken_at ASC`,
+    args: [limit],
+  })
+
+  const series: KpiSeries = {
+    failure_rate: [],
+    autonomous_completion_rate: [],
+    recovery_success_rate: [],
+    cost_per_arc_p50: [],
+  }
+
+  for (const raw of result.rows) {
+    const r = raw as unknown as {
+      taken_at: string
+      failure_rate: number | null
+      autonomous_completion_rate: number | null
+      recovery_success_rate: number | null
+      cost_per_arc_p50: number | null
+    }
+    series.failure_rate.push({ takenAt: r.taken_at, value: r.failure_rate })
+    series.autonomous_completion_rate.push({ takenAt: r.taken_at, value: r.autonomous_completion_rate })
+    series.recovery_success_rate.push({ takenAt: r.taken_at, value: r.recovery_success_rate })
+    series.cost_per_arc_p50.push({ takenAt: r.taken_at, value: r.cost_per_arc_p50 })
+  }
+
+  return series
+}
+
 const KPI_KEYS: ReadonlyArray<keyof KpiDeltas> = [
   'failure_rate',
   'autonomous_completion_rate',
