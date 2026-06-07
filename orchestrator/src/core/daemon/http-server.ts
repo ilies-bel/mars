@@ -105,6 +105,13 @@ export interface HttpServerDeps {
   /** Remove a leftover worktree by its id (terminal/absent task). */
   pruneWorktree: (id: string) => Promise<void>
   /**
+   * Reject a draft proposal: flip its status from `draft` → `dismissed` and
+   * emit `proposal.dismissed`, which causes the action-queue projection to drop
+   * the row. Throws when the proposal has dependent tasks (let the error
+   * propagate to the existing `sendError` path so the UI surfaces it).
+   */
+  dismissProposal: (id: string) => Promise<void>
+  /**
    * Run a cheap Haiku investigation over the worktree diff, persist the result
    * onto the actionQueue item payload, and return the explanation text. Read-only:
    * never mutates the worktree. Concurrent calls for the same id must be
@@ -309,7 +316,7 @@ const sendError = (
  * declares. Each maps `POST /actions/:op/:id` to the matching daemon handler.
  * `restart-daemon` is handled separately (it has no `:id`).
  */
-type EntityOp = 'restart' | 'unblock' | 'purge' | 'prune-worktree'
+type EntityOp = 'restart' | 'unblock' | 'purge' | 'prune-worktree' | 'dismiss'
 
 const TRACE_EVENT_KIND_SET = new Set<TraceEventKind>(TRACE_EVENT_KINDS)
 const TRACE_EVENT_SEVERITIES: readonly TraceEventSeverity[] = [
@@ -410,6 +417,7 @@ const handleEventsRequest = async (
  *   POST /actions/unblock/:id    → phantom-recover a blocked task
  *   POST /actions/purge/:id      → drop a task + worktree
  *   POST /actions/prune-worktree/:id → remove a stale worktree
+ *   POST /actions/dismiss/:id    → reject a draft proposal (draft → dismissed)
  *   POST /actions/restart-daemon → re-exec the daemon
  *
  * The server uses an OS-assigned port (port 0). Callers discover the port via
@@ -424,6 +432,7 @@ export const startHttpServer = async (
     unblock: deps.unblockTask,
     purge: deps.purgeTask,
     'prune-worktree': deps.pruneWorktree,
+    dismiss: deps.dismissProposal,
   }
 
   const server: Server = createServer((req, res) => {

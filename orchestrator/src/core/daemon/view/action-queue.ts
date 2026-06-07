@@ -46,7 +46,7 @@ export interface ActionQueueRow {
     proposalId: string | null
   } | null
   errorKind: string
-  actions: { id: string; label: string; op: string }[]
+  actions: { id: string; label: string; op: string; needsConfirm?: boolean; hint?: string }[]
   staleWorktreeDetail: StaleWorktreeDetail | null
   diagnosis: { text: string; diagnosedAt: string } | null
   /**
@@ -236,12 +236,14 @@ export const buildActionQueueView = async ({
           ? (lookupFailureKind(sig) ??
             unknownFailureKind(failingStepFromSignature(sig), ''))
           : unknownFailureKind('unknown', '')
-      actions = fk.actions as { id: string; label: string; op: string }[]
+      actions = fk.actions as { id: string; label: string; op: string; needsConfirm?: boolean; hint?: string }[]
     } else {
-      actions = derivedRowActions(errorKind) as {
+      actions = derivedRowActions(errorKind, entityId) as {
         id: string
         label: string
         op: string
+        needsConfirm?: boolean
+        hint?: string
       }[]
     }
 

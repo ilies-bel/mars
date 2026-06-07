@@ -29,6 +29,7 @@ const makeDeps = (
   unblockTask: async () => {},
   purgeTask: async () => {},
   pruneWorktree: async () => {},
+  dismissProposal: async () => {},
   investigateWorktree: async () => ({ explanation: '' }),
   diagnoseFailure: async () => ({ diagnosis: '' }),
   restartDaemon: async () => {},

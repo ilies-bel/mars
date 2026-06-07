@@ -2201,6 +2201,10 @@ export const startDaemon = async (
       // so a half-gone worktree still prunes cleanly.
       await removeWorktree({ path, branch: `task/${id}` }, true, true)
     },
+    dismissProposal: async (id) => {
+      const { rejectProposal } = await import('../proposals')
+      await rejectProposal(id)
+    },
     investigateWorktree: (() => {
       // One active investigation per worktree id. A second concurrent POST for
       // the same id returns immediately with a "already running" explanation

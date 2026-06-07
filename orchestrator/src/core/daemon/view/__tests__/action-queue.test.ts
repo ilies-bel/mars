@@ -346,9 +346,9 @@ describe('buildActionQueueView — stale-worktree row (no regression)', () => {
   })
 })
 
-// ── Draft-proposal: actions unchanged (slice 3 regression coverage) ───────────
+// ── Draft-proposal: copy + dismiss actions ────────────────────────────────────
 
-describe('buildActionQueueView — draft-proposal row (no regression)', () => {
+describe('buildActionQueueView — draft-proposal row', () => {
   it('derives draft-proposal actions from the derived-row menu, not the FailureKind registry', async () => {
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,
@@ -356,7 +356,7 @@ describe('buildActionQueueView — draft-proposal row (no regression)', () => {
         makeRow({
           id: 'dp-row',
           kind: 'draft-proposal',
-          payload: { proposalId: 'prop-1' },
+          payload: { proposalId: 'prop-abc' },
           context: {},
         }),
       ]),
@@ -365,7 +365,22 @@ describe('buildActionQueueView — draft-proposal row (no regression)', () => {
 
     const dpRow = rows.find((r) => r.kind === 'draft-proposal')
     expect(dpRow).toBeDefined()
-    expect(dpRow!.actions.some((a) => a.op === 'shape')).toBe(true)
+
+    // Must carry exactly the two new actions: copy (move-forward) + dismiss.
+    const ops = dpRow!.actions.map((a) => a.op)
+    expect(ops).toContain('copy')
+    expect(ops).toContain('dismiss')
+    expect(ops).not.toContain('shape')
+
+    // The copy action's hint must include the proposal entity id.
+    const copyAction = dpRow!.actions.find((a) => a.op === 'copy')
+    expect(copyAction).toBeDefined()
+    expect(copyAction!.hint).toContain('prop-abc')
+
+    // The dismiss action must require confirmation.
+    const dismissAction = dpRow!.actions.find((a) => a.op === 'dismiss')
+    expect(dismissAction).toBeDefined()
+    expect((dismissAction as { needsConfirm?: boolean }).needsConfirm).toBe(true)
   })
 })
 

@@ -109,7 +109,10 @@ describe('ActionQueueRow – Restart button visibility', () => {
     const draftItem = makeItem({
       kind: 'draft-proposal',
       errorKind: 'draft-proposal',
-      actions: [{ id: 'shape', label: 'Shape', op: 'shape', hint: '/mars:grill' }],
+      actions: [
+        { id: 'move-forward', label: 'Move forward', op: 'copy', hint: '/mars:grill prop-1' },
+        { id: 'dismiss', label: 'Dismiss', op: 'dismiss', needsConfirm: true },
+      ],
     })
     const html = renderRow(draftItem, { onRestart: null })
     expect(html).not.toContain('Restart')
@@ -199,7 +202,10 @@ describe('ActionQueueRow – Restart button visibility', () => {
       id: 'row-3',
       kind: 'draft-proposal',
       errorKind: 'draft-proposal',
-      actions: [{ id: 'shape', label: 'Shape', op: 'shape', hint: '/mars:grill' }],
+      actions: [
+        { id: 'move-forward', label: 'Move forward', op: 'copy', hint: '/mars:grill prop-1' },
+        { id: 'dismiss', label: 'Dismiss', op: 'dismiss', needsConfirm: true },
+      ],
     })
 
     const htmlFailed = renderRow(failedItem, { onRestart: () => {} })

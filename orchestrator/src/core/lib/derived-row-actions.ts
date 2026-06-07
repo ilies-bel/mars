@@ -23,30 +23,37 @@ import type { ActionDescriptor } from './failure-kinds'
 /** The non-failure derived action-queue row kinds. */
 export type DerivedRowKind = 'stale-worktree' | 'draft-proposal'
 
-/** Recovery menus keyed by the non-failure derived row kind. */
-export const DERIVED_ROW_ACTIONS: Readonly<
-  Record<DerivedRowKind, ActionDescriptor[]>
-> = Object.freeze({
-  'stale-worktree': [
-    { id: 'investigate', label: 'Investigate', op: 'investigate' },
-    {
-      id: 'prune',
-      label: 'Prune worktree',
-      op: 'prune-worktree',
-      needsConfirm: true,
-    },
-  ],
-  'draft-proposal': [
-    { id: 'shape', label: 'Shape', op: 'shape', hint: '/mars:grill' },
-  ],
-})
-
 /**
  * Resolve the recovery menu for a non-failure derived row kind. Returns an
  * empty list for any other kind (failed-task rows derive their menu from the
  * FailureKind registry instead).
+ *
+ * For draft-proposal rows the `entityId` is interpolated into the copy-action
+ * hint so the UI can copy a fully-qualified runnable command (e.g.
+ * `/mars:grill <proposalId>`).
  */
-export const derivedRowActions = (rowKind: string): ActionDescriptor[] =>
-  rowKind === 'stale-worktree' || rowKind === 'draft-proposal'
-    ? DERIVED_ROW_ACTIONS[rowKind]
-    : []
+export const derivedRowActions = (rowKind: string, entityId?: string): ActionDescriptor[] => {
+  if (rowKind === 'stale-worktree') {
+    return [
+      { id: 'investigate', label: 'Investigate', op: 'investigate' },
+      {
+        id: 'prune',
+        label: 'Prune worktree',
+        op: 'prune-worktree',
+        needsConfirm: true,
+      },
+    ]
+  }
+  if (rowKind === 'draft-proposal') {
+    return [
+      {
+        id: 'move-forward',
+        label: 'Move forward',
+        op: 'copy',
+        hint: entityId ? `/mars:grill ${entityId}` : '/mars:grill',
+      },
+      { id: 'dismiss', label: 'Dismiss', op: 'dismiss', needsConfirm: true },
+    ]
+  }
+  return []
+}

@@ -57,9 +57,11 @@ import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
  * - `restart-daemon`           — process-level: re-exec the daemon itself.
  * - `restart-all-daemon-killed`— batch: re-queue every failed task that carries
  *                                the daemon-killed signature in one request.
- * - `shape`                    — no daemon verb; a hint to run a skill
- *                                (`/mars:grill`). Rendered as guidance, not a
- *                                one-click button.
+ * - `copy`                     — client-side only; the UI copies `hint` verbatim
+ *                                to the clipboard. Must NEVER reach the daemon.
+ * - `dismiss`                  — reject a draft proposal: flips its status from
+ *                                `draft` → `dismissed` and drops the action-queue
+ *                                row.
  */
 export type ActionOp =
   | 'restart'
@@ -70,7 +72,8 @@ export type ActionOp =
   | 'diagnose-failure'
   | 'restart-daemon'
   | 'restart-all-daemon-killed'
-  | 'shape'
+  | 'copy'
+  | 'dismiss'
 
 /**
  * A declarative recovery action. No executable code — the daemon owns the
@@ -90,8 +93,8 @@ export interface ActionDescriptor {
    */
   needsConfirm?: boolean
   /**
-   * For `op: 'shape'` only — the skill/command the operator should run, since
-   * there is no daemon verb to call. Ignored for every other op.
+   * For `op: 'copy'` only — the fully-qualified runnable command the UI copies
+   * to the clipboard (e.g. `/mars:grill <proposalId>`). Ignored for every other op.
    */
   hint?: string
 }

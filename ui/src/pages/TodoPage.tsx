@@ -227,7 +227,7 @@ const ActionBar = ({ item }: ActionBarProps) => {
       </dt>
       <dd className="flex flex-wrap gap-2">
         {visibleActions.map((action) =>
-          action.op === 'shape' ? (
+          action.op === 'copy' ? (
             <span
               key={action.id}
               className="border border-iron/30 px-3 py-1.5 font-mono text-[11px] text-iron"

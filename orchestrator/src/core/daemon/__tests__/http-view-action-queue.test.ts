@@ -445,6 +445,7 @@ describe('GET /view/action-queue via HTTP server', () => {
       unblockTask: async () => {},
       purgeTask: async () => {},
       pruneWorktree: async () => {},
+  dismissProposal: async () => {},
       investigateWorktree: async () => ({ explanation: '' }),
       diagnoseFailure: async () => ({ diagnosis: '' }),
       restartDaemon: async () => {},

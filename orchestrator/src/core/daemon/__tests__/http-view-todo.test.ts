@@ -20,6 +20,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   unblockTask: async () => {},
   purgeTask: async () => {},
   pruneWorktree: async () => {},
+  dismissProposal: async () => {},
   investigateWorktree: async () => ({ explanation: '' }),
   diagnoseFailure: async () => ({ diagnosis: '' }),
   restartDaemon: async () => {},
