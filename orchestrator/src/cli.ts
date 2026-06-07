@@ -52,7 +52,7 @@ Commands:
   update [--yes] [--verbose] [-f|--config <path>]
                                 refresh the framework-owned files an existing
                                 repo received from 'mars init' (CLAUDE.md,
-                                verify.json, supervisors) and reconcile the
+                                supervisors) and reconcile the
                                 user-owned workflow scaffolds in
                                 .mars/workflows/. Workflow files are NEVER
                                 silently overwritten (ADR-0057): an identical
@@ -440,8 +440,8 @@ Flags:
   update: `mars update [--yes] [--verbose] [-f|--config <path>]
 
 Re-run init in update-mode on an existing repo. Refreshes the
-framework-owned files (root + per-folder CLAUDE.md, verify.json,
-supervisors) by force, then reconciles the user-owned workflow scaffolds
+framework-owned files (root + per-folder CLAUDE.md, supervisors) by force,
+then reconciles the user-owned workflow scaffolds
 under .mars/workflows/ WITHOUT clobbering them (ADR-0057).
 
 Workflow reconciliation, per file:

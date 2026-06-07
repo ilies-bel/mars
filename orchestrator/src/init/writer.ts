@@ -26,11 +26,8 @@ export interface VerifyStepEntry {
 
 export interface SlimInitInput {
   repoRoot: string
-  verifyConfigPath: string
   contextPath: string
   adrDir: string
-  verifySteps: ReadonlyArray<VerifyStepEntry>
-  now?: () => string
 }
 
 export interface SlimInitResult {
@@ -45,27 +42,7 @@ Canonical domain terms for this project. Edited via \`mars glossary\`.
 `
 
 export const writeSlimInit = (input: SlimInitInput): SlimInitResult => {
-  const now = input.now ?? (() => new Date().toISOString())
   const written: string[] = []
-
-  mkdirSync(dirname(input.verifyConfigPath), { recursive: true })
-  const config = {
-    version: 1 as const,
-    generatedAt: now(),
-    verifySteps: input.verifySteps.map((s) => ({
-      name: s.name,
-      cmd: s.cmd,
-      args: [...s.args],
-      required: s.required,
-      ...(s.cwd !== undefined ? { cwd: s.cwd } : {}),
-    })),
-  }
-  writeFileSync(
-    input.verifyConfigPath,
-    JSON.stringify(config, null, 2) + '\n',
-    'utf8',
-  )
-  written.push(relative(input.repoRoot, input.verifyConfigPath))
 
   if (!existsSync(input.contextPath)) {
     mkdirSync(dirname(input.contextPath), { recursive: true })

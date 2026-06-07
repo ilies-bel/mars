@@ -13,7 +13,7 @@ let the result speak for itself.
 ## What you can do
 
 - Identify the lint command from `package.json` `scripts` (`lint`,
-  `lint:fix`, or a `biome`/`eslint` invocation) or from `verify.json`.
+  `lint:fix`, or a `biome`/`eslint` invocation) or from the supervisors manifest.
 - Run the autofix variant once (`--fix`, `--write`, etc. — whatever the
   project uses).
 - Re-run the plain lint to confirm it goes green.

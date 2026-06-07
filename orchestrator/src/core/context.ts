@@ -10,7 +10,6 @@ export interface OrchestratorContext {
   stateDbPath: string
   supervisorsDir: string
   supervisorsManifest: string
-  verifyConfigPath: string
 }
 
 /**
@@ -106,7 +105,6 @@ export const resolveContext = (override?: string): OrchestratorContext => {
     stateDbPath: resolve(stateDir, 'mars.db'),
     supervisorsDir,
     supervisorsManifest: resolve(supervisorsDir, 'manifest.json'),
-    verifyConfigPath: resolve(stateDir, 'verify.json'),
   }
   return cached
 }

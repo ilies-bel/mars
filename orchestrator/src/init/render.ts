@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { SupervisorSpec } from './detect-stack'
-import type { VerifyStepEntry } from './writer'
 
 const moduleDir = (): string => dirname(fileURLToPath(import.meta.url))
 
@@ -72,9 +71,7 @@ export const minimalRenderInput = (spec: SupervisorSpec): RenderInput => ({
  * A single entry in `manifest.json`'s `scopes[]` array. Declares where a
  * stack lives in the repo (`path`, '.' for the root), what tag identifies
  * the stack, and the shell command for each verify kind (build, test,
- * typecheck, …) that belongs to that scope. This is the only input
- * `compileVerifyStepsFromScopes` accepts — no implicit stack detection
- * happens at this layer.
+ * typecheck, …) that belongs to that scope.
  */
 export interface ScopeManifestEntry {
   path: string
@@ -122,27 +119,6 @@ export const validateScopes = (raw: unknown): ScopeManifestEntry[] => {
     }
     return { path, stack, verify: verifyMap }
   })
-}
-
-/**
- * Compile the `scopes[]` declared in `manifest.json` into the verify steps
- * that get persisted as `.mars/verify.json`. Emits exactly one step per
- * scope-kind pair, in scope-declared order; each step carries the scope's
- * `path` as its `cwd` ('.' for the root scope). An empty input yields an
- * empty list — implicit stack detection lives elsewhere.
- */
-export const compileVerifyStepsFromScopes = (
-  scopes: ReadonlyArray<ScopeManifestEntry>,
-): VerifyStepEntry[] => {
-  return scopes.flatMap((scope) =>
-    Object.entries(scope.verify).map(([kind, shellCmd]) => ({
-      name: `${scope.path}:${kind}`,
-      cmd: 'sh',
-      args: ['-c', shellCmd],
-      required: true,
-      cwd: scope.path,
-    })),
-  )
 }
 
 export interface ValidationIssue {

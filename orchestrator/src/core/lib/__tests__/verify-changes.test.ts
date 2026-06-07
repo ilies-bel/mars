@@ -203,7 +203,7 @@ describe('loadVerifyScopes', () => {
   })
 
   it('returns a single root scope with default steps when manifest has no verify entries', async () => {
-    const path = resolve(workDir, 'no-verify.json')
+    const path = resolve(workDir, 'manifest-no-entries.json')
     writeFileSync(
       path,
       JSON.stringify({ supervisors: [{ name: 'baseline-supervisor' }] }),

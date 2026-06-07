@@ -225,38 +225,12 @@ const runRenderSupervisors = async (
     return stack.supervisors.map(renderOne)
 }
 
-const scopeDepth = (scope: string | undefined): number => {
-  if (!scope || scope === '.' || scope === '') return 0
-  return scope.split('/').filter(Boolean).length
-}
-
-const flattenVerifySteps = (
-  rendered: ReadonlyArray<z.infer<typeof renderedSupervisorSchema>>,
-): VerifyStepEntry[] => {
-  const byName = new Map<string, { entry: VerifyStepEntry; depth: number }>()
-  for (const r of rendered) {
-    const verify = r.verify
-    if (!verify || verify.length === 0) continue
-    const depth = scopeDepth(r.spec.scope)
-    for (const v of verify) {
-      const existing = byName.get(v.name)
-      if (!existing || depth < existing.depth) {
-        byName.set(v.name, { entry: { ...v, args: [...v.args] }, depth })
-      }
-    }
-  }
-  return Array.from(byName.values()).map((e) => e.entry)
-}
-
 const runWriteSlimInit = async (rendered: RenderedSupervisor[]): Promise<string[]> => {
   const ctx = resolveContext()
-  const verifySteps = flattenVerifySteps(rendered)
   const slimResult = writeSlimInit({
     repoRoot: ctx.repoRoot,
-    verifyConfigPath: ctx.verifyConfigPath,
     contextPath: resolve(ctx.repoRoot, 'CONTEXT.md'),
     adrDir: resolve(ctx.repoRoot, 'docs', 'adr'),
-    verifySteps,
   })
   const perFolderResult = writePerFolderClaudeMds({
     repoRoot: ctx.repoRoot,
@@ -468,12 +442,11 @@ interface InitWorkflowOutput {
 // Linear steps, threaded by native control flow. The step NAMES
 // ('detect-stack', 'render-supervisors', 'write-slim-init', 'scaffold-claude',
 // 'scaffold-workflows', 'init-databases', 'seed-recipes', 'activate-plugin')
-// are load-bearing trace-view labels. Disk side effects (verify.json,
-// per-folder + root CLAUDE.md, the .mars/workflows/*.js scaffold, the init
-// manifest, and the recipe override seeds) and DB side effects
-// (queue.db/state.db) are preserved verbatim. Failures THROW; the engine
-// records the step failed. 'activate-plugin' is best-effort: it never throws
-// regardless of outcome.
+// are load-bearing trace-view labels. Disk side effects (per-folder + root
+// CLAUDE.md, the .mars/workflows/*.js scaffold, the init manifest, and the
+// recipe override seeds) and DB side effects (queue.db/state.db) are preserved
+// verbatim. Failures THROW; the engine records the step failed. 'activate-plugin'
+// is best-effort: it never throws regardless of outcome.
 export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
   id: 'init',
   inputSchema: initInputSchema,
@@ -556,8 +529,7 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
   }
 
   // Migration: remove stale per-stack supervisor .md files written by the
-  // old init system. Runs before the pre-flight conflict check so an existing
-  // verify.json is preserved as-is (no regeneration of verifySteps).
+  // old init system.
   const { purged } = purgeStaleSupervisorMds(ctx.supervisorsDir)
   if (purged.length > 0) {
     process.stdout.write(
@@ -580,27 +552,13 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
     )
   }
 
-  // Pre-flight: aggregate every path that would be overwritten — the slim
-  // `verify.json` plus everything under `.claude/` plus root `CLAUDE.md` —
-  // so we can bail with a single message before the heavy detect/render
-  // steps spend time on a doomed run.
+  // Pre-flight: aggregate every path that would be overwritten — everything
+  // under `.claude/` plus root `CLAUDE.md` — so we can bail with a single
+  // message before the heavy detect/render steps spend time on a doomed run.
   if (!opts.force) {
-    const conflicts: string[] = []
-    if (existsSync(ctx.verifyConfigPath)) {
-      conflicts.push(relative(ctx.repoRoot, ctx.verifyConfigPath))
-    }
-    conflicts.push(...planClaudeConflicts(ctx.repoRoot))
+    const conflicts = planClaudeConflicts(ctx.repoRoot)
     if (conflicts.length > 0) {
       const list = conflicts.map((p) => `  - ${p}`).join('\n')
-      // Preserve `aborted-existing` for the verify-only path so existing
-      // callers / tests that special-case it keep working; promote to
-      // `aborted-conflict` only when scaffold targets are involved.
-      if (conflicts.length === 1 && conflicts[0] === relative(ctx.repoRoot, ctx.verifyConfigPath)) {
-        return {
-          status: 'aborted-existing',
-          message: `verify config already exists at ${ctx.verifyConfigPath}; pass --force to overwrite`,
-        }
-      }
       return {
         status: 'aborted-conflict',
         message: `refusing to overwrite existing files (pass --force to replace):\n${list}`,
@@ -639,7 +597,7 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
 
   return {
     status: 'ok',
-    message: 'verify config generated',
+    message: 'init complete',
     written: result.output.written,
   }
 }

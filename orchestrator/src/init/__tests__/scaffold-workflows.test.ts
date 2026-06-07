@@ -357,7 +357,6 @@ describe('mars update — command wiring (in-process)', () => {
       stateDbPath: resolve(stateDir, 'mars.db'),
       supervisorsDir: resolve(stateDir, 'supervisors'),
       supervisorsManifest: resolve(stateDir, 'supervisors', 'manifest.json'),
-      verifyConfigPath: resolve(stateDir, 'verify.json'),
     }) as OrchestratorContext
 
   const stubStore = {} as unknown as DomainTaskStore

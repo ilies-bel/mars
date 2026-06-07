@@ -456,7 +456,7 @@ const update: Command = {
     const verbose = boolFlags.has('--verbose')
     const configPath = args.flags['--config']
 
-    // Phase 1: refresh the framework-owned files (CLAUDE.md, verify.json, …)
+    // Phase 1: refresh the framework-owned files (CLAUDE.md, supervisors, …)
     // via the daemon-routed init workflow with force overwrite. Its
     // scaffold-workflows step never clobbers user-owned workflows (it runs
     // force:false) — those are reconciled in phase 2. Running init through the
