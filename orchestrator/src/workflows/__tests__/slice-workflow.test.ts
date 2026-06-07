@@ -2246,6 +2246,81 @@ describe('enqueueTask round-trip: hitl slice kind and subDeliverable land on tas
   })
 })
 
+describe('enqueueTask round-trip: slicer intent lands on emitted task row', () => {
+  let repo: string
+
+  const setupRepo = (): string => {
+    const r = mkdtempSync(resolve(tmpdir(), 'mars-slice-intent-'))
+    execFileSync('git', ['init', '-q'], { cwd: r })
+    mkdirSync(resolve(r, '.mars'), { recursive: true })
+    return r
+  }
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('persists the slice title as intent, distinct from the full prompt', async () => {
+    vi.resetModules()
+    process.env.MARS_REPO = repo
+    const queue = await import('../../core/queue')
+    await queue.migrateQueueSchema()
+
+    const sliceTitle = 'Add intent field to slicer emit path'
+    const fullPrompt =
+      '# ' +
+      sliceTitle +
+      '\n\nSlice 1 of 3 for PRD abc: Redesign the failed-arc Alert.\n\n' +
+      '## What to build\n\nWire intent through enqueueTask so Alerts display a slicer-authored one-liner.\n\n' +
+      '## Acceptance criteria\n\n- [ ] intent is non-empty on every emitted task\n'
+
+    const task = await queue.enqueueTask(fullPrompt, undefined, {
+      intent: sliceTitle.slice(0, 200),
+      spec: {
+        files: ['orchestrator/src/workflows/slice-workflow.ts'],
+        verifyCmd: null,
+        doneCriteria: ['intent is non-empty on every emitted task'],
+        taskType: 'auto',
+      },
+    })
+
+    const reloaded = await queue.getTask(task.id)
+    // intent must be non-empty
+    expect(reloaded?.intent).toBeTruthy()
+    // intent must differ from the full prompt (it is a short one-liner, not the whole body)
+    expect(reloaded?.intent).not.toBe(fullPrompt)
+    // intent must match the slice title verbatim
+    expect(reloaded?.intent).toBe(sliceTitle)
+  })
+
+  it('caps intent at 200 characters', async () => {
+    vi.resetModules()
+    process.env.MARS_REPO = repo
+    const queue = await import('../../core/queue')
+    await queue.migrateQueueSchema()
+
+    const longTitle = 'A'.repeat(300)
+    const task = await queue.enqueueTask('prompt body', undefined, {
+      intent: longTitle.slice(0, 200),
+      spec: {
+        files: [],
+        verifyCmd: null,
+        doneCriteria: ['done'],
+        taskType: 'auto',
+      },
+    })
+
+    const reloaded = await queue.getTask(task.id)
+    expect(reloaded?.intent.length).toBeLessThanOrEqual(200)
+    expect(reloaded?.intent).toBe('A'.repeat(200))
+  })
+})
+
 describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Task text', () => {
   // The coder Worker used to re-absorb the ~150-line TDD brief at the top
   // of every per-Task prompt, and a retry replayed it verbatim — burning

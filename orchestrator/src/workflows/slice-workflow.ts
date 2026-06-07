@@ -894,6 +894,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
           originId: proposal.id,
           parentProposalId: proposal.id,
           sliceIndex: i + 1,
+          intent: (slice.title.trim() || slice.whatToBuild.split(/[.!?\n]/)[0].trim()).slice(0, 200),
           spec: {
             files,
             verifyCmd,
@@ -928,6 +929,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
             author: proposal.author ?? undefined,
             originId: proposal.id,
             parentProposalId: proposal.id,
+            intent: sub.title.slice(0, 200),
             spec: {
               files: sub.files ?? [],
               verifyCmd: null,
