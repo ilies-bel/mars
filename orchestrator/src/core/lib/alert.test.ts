@@ -14,6 +14,7 @@ import {
   buildAlert,
   listAlerts,
   showAlert,
+  type AlertChainNode,
   type AlertSources,
   type FailedArcRecord,
   type StaleWorktreeRecord,
@@ -29,6 +30,7 @@ describe('buildAlert', () => {
       goal: 'Rebuild the merge gate so dirty trees are rejected',
       traceTail: 'Error: nothing committed',
       descendants: [{ id: 'fix-9f8e', status: 'failed' }],
+      chain: [],
     })
 
     expect(alert.kind).toBe('arc-failed')
@@ -54,6 +56,7 @@ describe('buildAlert', () => {
       goal: 'g',
       traceTail: '',
       descendants: [],
+      chain: [],
     })
     expect(alert.reason).toBe('A check did not pass')
   })
@@ -70,6 +73,7 @@ describe('buildAlert', () => {
       goal: 'Add the alert read aggregate',
       traceTail: '',
       descendants: [],
+      chain: [],
     })
 
     expect(alert.kind).toBe('stale-worktree')
@@ -85,6 +89,7 @@ describe('buildAlert', () => {
       goal: 'line one\n  line two\n\n  line three',
       traceTail: '',
       descendants: [],
+      chain: [],
     })
     expect(alert.goal).toBe('line one line two line three')
   })
@@ -100,10 +105,12 @@ describe('buildAlert', () => {
     const first = buildAlert('arc-1', fk, 'boom', {
       ...input,
       descendants: frozenDescendants,
+      chain: [],
     })
     const second = buildAlert('arc-1', fk, 'boom', {
       ...input,
       descendants: frozenDescendants,
+      chain: [],
     })
     // Same inputs → identical output (deterministic, no hidden state).
     expect(second).toEqual(first)
@@ -120,6 +127,9 @@ describe('listAlerts / showAlert', () => {
     capturedError: 'TS2304: Cannot find name foo',
     traceTail: 'TS2304: Cannot find name foo',
     descendants: [{ id: 'fix-aaaa', status: 'failed' }],
+    chain: [
+      { kind: 'task', id: 'mars-failed01', status: 'failed', label: 'Cut the operator dismiss endpoint', attemptIndex: 1 },
+    ],
   }
 
   const staleRecord: StaleWorktreeRecord = {
@@ -178,12 +188,61 @@ describe('listAlerts / showAlert', () => {
       'arc-x',
       resolveFailureKind('verify:has-diff/no-commits-ahead', ''),
       'tail',
-      { goal: 'g', traceTail: 'tail', descendants: [] },
+      { goal: 'g', traceTail: 'tail', descendants: [], chain: [] },
     )
     await listAlerts(sources)
     await showAlert('mars-failed01', sources)
 
     expect(raiseSpy).not.toHaveBeenCalled()
     raiseSpy.mockRestore()
+  })
+})
+
+describe('Alert chain field', () => {
+  it('full chain: proposal head + 3 attempts flows through buildAlert verbatim', () => {
+    const fk = resolveFailureKind('verify:has-diff/no-commits-ahead', '')
+    const chain: AlertChainNode[] = [
+      { kind: 'proposal', id: 'prop-a1b2c3d4', status: 'sliced', label: 'Add the merge gate' },
+      { kind: 'task', id: 'mars-t0001', status: 'failed', label: 'Add the merge gate', attemptIndex: 1 },
+      { kind: 'task', id: 'mars-t0002', status: 'failed', label: 'Add the merge gate', attemptIndex: 2 },
+      { kind: 'task', id: 'mars-t0003', status: 'failed', label: 'Add the merge gate', attemptIndex: 3 },
+    ]
+
+    const alert = buildAlert('mars-t0001', fk, '', {
+      goal: 'Add the merge gate',
+      traceTail: '',
+      descendants: [],
+      chain,
+    })
+
+    expect(alert.chain).toEqual(chain)
+    expect(alert.chain).toHaveLength(4)
+    expect(alert.chain[0].kind).toBe('proposal')
+    expect(alert.chain[0].id).toBe('prop-a1b2c3d4')
+    expect(alert.chain[1].kind).toBe('task')
+    expect(alert.chain[1].attemptIndex).toBe(1)
+    expect(alert.chain[2].attemptIndex).toBe(2)
+    expect(alert.chain[3].attemptIndex).toBe(3)
+  })
+
+  it('lone-task fallback: chain is a single task node with no synthetic "No origin" node', () => {
+    const fk = resolveFailureKind('verify:has-diff/no-commits-ahead', '')
+    const chain: AlertChainNode[] = [
+      { kind: 'task', id: 'mars-lone01', status: 'failed', label: 'Lone task with no proposal', attemptIndex: 1 },
+    ]
+
+    const alert = buildAlert('mars-lone01', fk, '', {
+      goal: 'Lone task with no proposal',
+      traceTail: '',
+      descendants: [],
+      chain,
+    })
+
+    expect(alert.chain).toHaveLength(1)
+    expect(alert.chain[0].kind).toBe('task')
+    expect(alert.chain[0].id).toBe('mars-lone01')
+    expect(alert.chain[0].attemptIndex).toBe(1)
+    // No synthetic 'No origin recorded' node
+    expect(alert.chain.every((n) => !n.label.includes('No origin'))).toBe(true)
   })
 })

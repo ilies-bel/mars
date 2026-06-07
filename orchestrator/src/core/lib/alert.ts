@@ -40,6 +40,19 @@ export interface AlertDescendant {
 }
 
 /**
+ * One node in the arc's Proposal-to-Attempt chain. Ordered oldest → newest:
+ * proposal head (if any), origin task (attemptIndex=1), operator-initiated
+ * restarts (attemptIndex=2, 3, …), automatic recovery descendants.
+ */
+export interface AlertChainNode {
+  kind: 'proposal' | 'task'
+  id: string
+  status?: string
+  label: string
+  attemptIndex?: number
+}
+
+/**
  * The arc-rooted read aggregate. Pure projection — never persisted.
  *
  * The three text fields form a goal → reason → technical hierarchy:
@@ -54,6 +67,8 @@ export interface Alert {
   reason: string
   technical: string
   kind: AlertKind
+  /** Ordered arc lineage: proposal head → origin attempt → restarts → recoveries. */
+  chain: AlertChainNode[]
 }
 
 /** Raw inputs {@link buildAlert} derives an {@link Alert} from. */
@@ -67,6 +82,8 @@ export interface BuildAlertInput {
   traceTail: string
   /** The arc's descendant tasks (recovery / fix chain), oldest → newest. */
   descendants: readonly AlertDescendant[]
+  /** Ordered arc lineage: proposal head → origin attempt → restarts → recoveries. */
+  chain: AlertChainNode[]
 }
 
 /** Collapse whitespace and clip a string to a single readable line. */
@@ -137,6 +154,7 @@ export const buildAlert = (
     reason,
     technical,
     kind,
+    chain: input.chain,
   }
 }
 
@@ -157,6 +175,13 @@ export interface FailedArcRecord {
   traceTail: string
   /** Descendant tasks in the arc (recovery / fix chain), oldest → newest. */
   descendants: AlertDescendant[]
+  /**
+   * Ordered arc lineage built by the AlertSources implementation. Head is the
+   * originating proposal (if any), followed by origin task (attemptIndex=1),
+   * operator-initiated restarts (attemptIndex=2, 3, …), then recovery tasks.
+   * A lone task with no proposal and no restarts has a single-element chain.
+   */
+  chain: AlertChainNode[]
 }
 
 /**
@@ -215,6 +240,7 @@ const alertForFailedArc = (record: FailedArcRecord): Alert => {
     goal: record.goal,
     traceTail: record.traceTail,
     descendants: record.descendants,
+    chain: record.chain,
   })
 }
 
@@ -232,6 +258,7 @@ const alertForStaleWorktree = async (
     goal: record.prompt,
     traceTail: '',
     descendants: [],
+    chain: [],
   })
 }
 

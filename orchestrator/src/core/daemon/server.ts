@@ -2089,6 +2089,11 @@ export const startDaemon = async (
           bucket.push(t)
           byArc.set(arcId, bucket)
         }
+        const { getProposal: fetchProposal } = await import('../proposals')
+        const truncateLabel = (prompt: string) => {
+          const flat = prompt.replace(/\s+/g, ' ').trim()
+          return flat.length <= 80 ? flat : `${flat.slice(0, 79)}…`
+        }
         const records = []
         for (const [arcId, arcTasks] of byArc) {
           const rollup = await store.arcStatus(arcId)
@@ -2107,6 +2112,45 @@ export const startDaemon = async (
           const descendants = arcTasks
             .filter((t) => t.id !== arcId)
             .map((t) => ({ id: t.id, status: t.status }))
+
+          // Build the arc chain: optional proposal head → origin attempt (1) →
+          // operator-initiated restarts (2, 3, …) → automatic recovery tasks.
+          const proposalRow = await store.query({
+            sql: `SELECT parent_proposal_id FROM tasks WHERE id = ? LIMIT 1`,
+            args: [arcId],
+          })
+          const parentProposalId: string | null =
+            (proposalRow.rows[0] as unknown as { parent_proposal_id: string | null } | undefined)
+              ?.parent_proposal_id ?? null
+          const proposal = parentProposalId ? await fetchProposal(parentProposalId) : null
+          // Operator restarts: non-fix, non-origin tasks (same arc but distinct runs).
+          // Recovery tasks: fix tasks (fixForTaskId set or kind === 'fix').
+          const restartTasks = arcTasks.filter(
+            (t) => t.id !== arcId && t.fixForTaskId === null && t.kind !== 'fix',
+          )
+          const recoveryTasks = arcTasks.filter(
+            (t) => t.id !== arcId && (t.fixForTaskId !== null || t.kind === 'fix'),
+          )
+          const chain = [
+            ...(proposal
+              ? [{ kind: 'proposal' as const, id: proposal.id, status: proposal.status, label: proposal.title || proposal.id }]
+              : []),
+            { kind: 'task' as const, id: arcId, status: origin.status, label: truncateLabel(origin.prompt), attemptIndex: 1 },
+            ...restartTasks.map((t, i) => ({
+              kind: 'task' as const,
+              id: t.id,
+              status: t.status,
+              label: truncateLabel(t.prompt),
+              attemptIndex: i + 2,
+            })),
+            ...recoveryTasks.map((t) => ({
+              kind: 'task' as const,
+              id: t.id,
+              status: t.status,
+              label: truncateLabel(t.prompt),
+            })),
+          ]
+
           records.push({
             arcId,
             goal: origin.prompt,
@@ -2114,6 +2158,7 @@ export const startDaemon = async (
             capturedError,
             traceTail: capturedError,
             descendants,
+            chain,
           })
         }
         return records
