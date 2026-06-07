@@ -3161,6 +3161,30 @@ export const startDaemon = async (
   }, WAL_CHECKPOINT_MS)
   walCheckpointSweep.unref()
 
+  // ── KPI snapshot sweep ────────────────────────────────────────────────────
+  // Takes a rolling 7-day KPI snapshot once per interval and persists a row
+  // to kpi_snapshots so the /kpis route and UI tiles always have data.
+  // Default: 1 h (60 * 60_000 ms) — the window is 7 days so hourly is
+  // plenty and cheap.  Override via MARS_KPI_SNAPSHOT_MS.  .unref() so the
+  // timer never holds the daemon process alive after shutdown.
+  const KPI_SNAPSHOT_MS = Number(process.env.MARS_KPI_SNAPSHOT_MS ?? 60 * 60_000)
+  const runKpiSnapshot = (): void => {
+    void (async () => {
+      try {
+        const { takeKpiSnapshot } = await import('../lib/kpi-snapshots.js')
+        await takeKpiSnapshot({ surface: getDefaultDomainTaskStore(), now: new Date().toISOString() })
+        log('[kpi-snapshot] snapshot taken')
+      } catch (err) {
+        log(`[kpi-snapshot] errored: ${(err as Error).message}`)
+      }
+    })()
+  }
+  // Take one snapshot immediately on startup so a freshly started daemon
+  // shows data without waiting a full interval.
+  runKpiSnapshot()
+  const kpiSnapshotSweep = setInterval(runKpiSnapshot, KPI_SNAPSHOT_MS)
+  kpiSnapshotSweep.unref()
+
   // ── Alert-dismisser drain ─────────────────────────────────────────────────
   // Polls the outbox for status-transition events and clears the implicated
   // task's action-queue alert(s). This keeps the "status change clears
@@ -3232,6 +3256,7 @@ export const startDaemon = async (
     clearInterval(observabilityWatchdog)
     clearInterval(observabilitySweep)
     clearInterval(walCheckpointSweep)
+    clearInterval(kpiSnapshotSweep)
     clearInterval(alertDrain)
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)
