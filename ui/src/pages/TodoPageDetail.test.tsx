@@ -446,3 +446,112 @@ describe('actionQueue detail – origin tasks fallback (prod)', () => {
     expect(html).not.toContain('Failed to load')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Sidebar grouping: kind-labelled collapsible sections
+// Each test renders ActionQueuePage with pre-seeded action-queue cache data
+// and verifies the section structure in the HTML output.
+// ---------------------------------------------------------------------------
+
+describe('actionQueue sidebar – grouped sections', () => {
+  const renderPage = (items: ActionQueueItem[]): string => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['action-queue', null], items)
+    return renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <_Page />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('renders three section headers when all three kinds are present', () => {
+    const draft = makeItem({ id: 'd1', kind: 'draft-proposal', errorKind: 'draft-proposal', actions: [] })
+    const failed = makeItem({ id: 'f1', kind: 'failed-task', actions: [] })
+    const stale = makeItem({
+      id: 's1',
+      kind: 'stale-worktree',
+      errorKind: 'stale-worktree',
+      actions: [],
+      staleWorktreeDetail: {
+        prompt: null,
+        status: 'running',
+        ageHours: 10,
+        updatedAt: new Date().toISOString(),
+        branch: 'task/s1',
+        empty: true,
+        investigation: null,
+      },
+    })
+    const html = renderPage([draft, failed, stale])
+    expect(html).toContain('Drafts')
+    expect(html).toContain('Failed tasks')
+    expect(html).toContain('Stale worktrees')
+  })
+
+  it('renders per-section item counts in section headers', () => {
+    const draft1 = makeItem({ id: 'd1', kind: 'draft-proposal', entityId: 'e-d1', errorKind: 'draft-proposal', actions: [] })
+    const draft2 = makeItem({ id: 'd2', kind: 'draft-proposal', entityId: 'e-d2', errorKind: 'draft-proposal', actions: [] })
+    const failed = makeItem({ id: 'f1', kind: 'failed-task', actions: [] })
+    const html = renderPage([draft1, draft2, failed])
+    // Section header text is "Drafts 2" and "Failed tasks 1"
+    expect(html).toContain('Drafts 2')
+    expect(html).toContain('Failed tasks 1')
+    // Stale worktrees bucket is empty — header must not appear
+    expect(html).not.toContain('Stale worktrees')
+  })
+
+  it('omits a section header when that kind has no items after filtering', () => {
+    const failed = makeItem({ id: 'f1', kind: 'failed-task', actions: [] })
+    const html = renderPage([failed])
+    expect(html).toContain('Failed tasks')
+    expect(html).not.toContain('Drafts')
+    expect(html).not.toContain('Stale worktrees')
+  })
+
+  it('places draft rows inside the Drafts section and failed rows inside Failed tasks', () => {
+    const draft = makeItem({
+      id: 'd1',
+      kind: 'draft-proposal',
+      errorKind: 'draft-proposal',
+      title: 'my draft proposal',
+      actions: [],
+    })
+    const failed = makeItem({ id: 'f1', kind: 'failed-task', title: 'my failed task', actions: [] })
+    const html = renderPage([draft, failed])
+    // Drafts header appears before draft title, which appears before Failed tasks header
+    const draftsHeaderPos = html.indexOf('Drafts')
+    const draftTitlePos = html.indexOf('my draft proposal')
+    const failedHeaderPos = html.indexOf('Failed tasks')
+    const failedTitlePos = html.indexOf('my failed task')
+    expect(draftsHeaderPos).toBeLessThan(draftTitlePos)
+    expect(draftTitlePos).toBeLessThan(failedHeaderPos)
+    expect(failedHeaderPos).toBeLessThan(failedTitlePos)
+  })
+
+  it('all sections are expanded by default (aria-expanded="true" on each section button)', () => {
+    const draft = makeItem({ id: 'd1', kind: 'draft-proposal', errorKind: 'draft-proposal', actions: [] })
+    const failed = makeItem({ id: 'f1', kind: 'failed-task', actions: [] })
+    const html = renderPage([draft, failed])
+    // Both sections carry aria-expanded="true" by default
+    const matches = html.match(/aria-expanded="true"/g)
+    expect(matches).not.toBeNull()
+    expect(matches!.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('row titles are present in the HTML when their section is expanded (default state)', () => {
+    const failed = makeItem({ id: 'f1', kind: 'failed-task', title: 'visible task title', actions: [] })
+    const html = renderPage([failed])
+    // Expanding a section is the default; row content must be in the output
+    expect(html).toContain('visible task title')
+  })
+
+  it('section body id matches the button aria-controls, linking header to its rows', () => {
+    const failed = makeItem({ id: 'f1', kind: 'failed-task', title: 'task x', actions: [] })
+    const html = renderPage([failed])
+    // aria-controls="section-body-failed-task" and id="section-body-failed-task" must both appear
+    expect(html).toContain('aria-controls="section-body-failed-task"')
+    expect(html).toContain('id="section-body-failed-task"')
+  })
+})

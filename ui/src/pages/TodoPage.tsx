@@ -1,5 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
@@ -610,17 +609,23 @@ export const ActionQueuePage = () => {
     restartMutation.mutate(entityId)
   }, [restartMutation])
 
-  // Virtual list for the action-queue sidebar (can reach 300+ items).
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const virtualizer = useVirtualizer({
-    count: filtered.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 72,
-    overscan: 5,
-    // initialRect ensures items render during SSR (renderToStaticMarkup in tests)
-    // where scrollRef.current is null and no ResizeObserver fires.
-    initialRect: { width: 0, height: 4000 },
+  // Per-section open/collapsed state; all sections start expanded.
+  const [openSections, setOpenSections] = useState<Record<ActionQueueItem['kind'], boolean>>({
+    'draft-proposal': true,
+    'failed-task': true,
+    'stale-worktree': true,
   })
+
+  const toggleSection = useCallback((kind: ActionQueueItem['kind']) => {
+    setOpenSections((prev) => ({ ...prev, [kind]: !prev[kind] }))
+  }, [])
+
+  // Group filtered items by kind while preserving within-group server order.
+  const grouped = useMemo(() => ({
+    'draft-proposal': filtered.filter((i) => i.kind === 'draft-proposal'),
+    'failed-task': filtered.filter((i) => i.kind === 'failed-task'),
+    'stale-worktree': filtered.filter((i) => i.kind === 'stale-worktree'),
+  }), [filtered])
 
   return (
     <div className="flex flex-col sm:flex-row h-full w-full overflow-hidden bg-bg">
@@ -643,53 +648,61 @@ export const ActionQueuePage = () => {
           />
         </header>
 
-        <div ref={scrollRef} className="flex-1 overflow-auto">
+        <div className="flex-1 overflow-auto">
           {filtered.length === 0 && (query.trim() || (!projectsEmpty && !projectsError)) ? (
             <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
               {query.trim() ? 'No matches.' : 'No items.'}
             </p>
           ) : filtered.length > 0 ? (
-            <div
-              style={{
-                height: `${virtualizer.getTotalSize()}px`,
-                position: 'relative',
-              }}
-            >
-              {virtualizer.getVirtualItems().map((vItem) => {
-                const item = filtered[vItem.index]
+            <div>
+              {([
+                ['draft-proposal', 'Drafts'],
+                ['failed-task', 'Failed tasks'],
+                ['stale-worktree', 'Stale worktrees'],
+              ] as const).map(([kind, title]) => {
+                const bucket = grouped[kind]
+                if (bucket.length === 0) return null
+                const isOpen = openSections[kind]
+                const sectionBodyId = `section-body-${kind}`
                 return (
-                  <div
-                    key={vItem.key}
-                    data-index={vItem.index}
-                    ref={virtualizer.measureElement}
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      transform: `translateY(${vItem.start}px)`,
-                    }}
-                  >
-                    <ActionQueueRow
-                      item={item}
-                      active={item.id === (selected?.id ?? null)}
-                      onSelect={handleSelect}
-                      onRestart={
-                        item.actions.some((a) => a.op === 'restart')
-                          ? handleRestart
-                          : null
-                      }
-                      restartPending={
-                        restartMutation.isPending &&
-                        restartMutation.variables === item.entityId
-                      }
-                      restartError={
-                        restartMutation.isError &&
-                        restartMutation.variables === item.entityId
-                          ? (restartMutation.error as Error).message
-                          : null
-                      }
-                    />
+                  <div key={kind}>
+                    <button
+                      type="button"
+                      aria-expanded={isOpen}
+                      aria-controls={sectionBodyId}
+                      onClick={() => toggleSection(kind)}
+                      className="flex w-full items-center justify-between border-b border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide text-iron hover:bg-iron/5"
+                    >
+                      <span>{title} {bucket.length}</span>
+                      <span aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
+                    </button>
+                    {isOpen && (
+                      <div id={sectionBodyId}>
+                        {bucket.map((item) => (
+                          <ActionQueueRow
+                            key={item.id}
+                            item={item}
+                            active={item.id === (selected?.id ?? null)}
+                            onSelect={handleSelect}
+                            onRestart={
+                              item.actions.some((a) => a.op === 'restart')
+                                ? handleRestart
+                                : null
+                            }
+                            restartPending={
+                              restartMutation.isPending &&
+                              restartMutation.variables === item.entityId
+                            }
+                            restartError={
+                              restartMutation.isError &&
+                              restartMutation.variables === item.entityId
+                                ? (restartMutation.error as Error).message
+                                : null
+                            }
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )
               })}
