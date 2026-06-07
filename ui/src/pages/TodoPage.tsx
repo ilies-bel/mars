@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
 import { OriginTree } from '@/widgets/OriginTree'
 import ArcChainRail from '@/widgets/ArcChainRail'
 import {
@@ -17,6 +18,7 @@ import {
 import type {
   ActionDescriptor,
   ActionQueueItem,
+  ActionQueueResolution,
   DagNode,
   TraceEvent,
 } from '@/shared/schemas'
@@ -162,6 +164,44 @@ const DagList = ({ label, nodes, onNodeClick }: DagListProps) => {
     </div>
   )
 }
+
+// ---- Resolution block (read-only; shown for resolved history rows) ----
+
+interface ResolutionBlockProps {
+  resolution: ActionQueueResolution
+}
+
+const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
+  <div data-testid="resolution-block">
+    <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+      Resolution
+    </dt>
+    <dd className="flex flex-col gap-1">
+      <span className="font-mono text-[11px] text-fg">
+        {resolution.resolution ?? '(closed)'}
+      </span>
+      <span className="font-mono text-[10px] text-iron/70">
+        {formatTime(resolution.resolvedAt)}
+        {resolution.resolvedBy ? ` · ${resolution.resolvedBy}` : null}
+      </span>
+      {resolution.resolutionNote ? (
+        <p className="whitespace-pre-wrap font-mono text-[11px] text-iron">
+          {resolution.resolutionNote}
+        </p>
+      ) : null}
+      {resolution.rootCause ? (
+        <div className="mt-1">
+          <span className="font-mono text-[10px] uppercase tracking-wider text-iron/70">
+            Root cause:{' '}
+          </span>
+          <span className="font-mono text-[11px] text-iron">
+            {resolution.rootCause}
+          </span>
+        </div>
+      ) : null}
+    </dd>
+  </div>
+)
 
 // ---- Action bar ----
 
@@ -494,8 +534,13 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
 
       <main className="flex-1 px-6 py-4">
         <dl className="flex flex-col gap-4 font-mono text-[12px]">
-          {/* Recovery actions — always at the top of the main body. */}
-          <ActionBar item={item} />
+          {/* Resolution block — shown for resolved history rows; suppresses ActionBar. */}
+          {item.resolution ? (
+            <ResolutionBlock resolution={item.resolution} />
+          ) : (
+            /* Recovery actions — shown only for live (open) rows. */
+            <ActionBar item={item} />
+          )}
           {item.kind === 'stale-worktree' && (
             <>
               <div>
@@ -628,9 +673,19 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
 
 export const ActionQueuePage = () => {
   const { items, error, projectsError, projectsEmpty } = useActionQueue()
+  const {
+    items: historyItems,
+    nextCursor: historyNextCursor,
+    isLoadingMore: historyLoadingMore,
+    loadMore: loadMoreHistory,
+  } = useActionQueueHistory()
+
   const [query, setQuery] = useState<string>('')
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
+  // Selected id — may be a live item or a history item.
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // History accordion: collapsed by default.
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   const qc = useQueryClient()
   const restartMutation = useMutation({
@@ -654,8 +709,12 @@ export const ActionQueuePage = () => {
     )
   }, [items, query, kindFilter])
 
-  const selected =
-    filtered.find((i) => i.id === selectedId) ?? filtered[0] ?? null
+  // Resolve selected item from live rows first, then from history rows.
+  const selectedLive = filtered.find((i) => i.id === selectedId) ?? null
+  const selectedHistory = !selectedLive
+    ? historyItems.find((i) => i.id === selectedId) ?? null
+    : null
+  const selected = selectedLive ?? selectedHistory ?? filtered[0] ?? null
   const empty = items.length === 0
   const noMatches = !empty && filtered.length === 0
 
@@ -791,6 +850,71 @@ export const ActionQueuePage = () => {
               })}
             </div>
           ) : null}
+
+          {/* History accordion — collapsed by default, at the bottom of the sidebar */}
+          <div data-testid="history-accordion">
+            <button
+              type="button"
+              aria-expanded={historyOpen}
+              aria-controls="section-body-history"
+              onClick={() => setHistoryOpen((v) => !v)}
+              className="flex w-full items-center justify-between border-b border-t border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide text-iron/60 hover:bg-iron/5"
+            >
+              <span>History ({historyItems.length} loaded)</span>
+              <span aria-hidden="true">{historyOpen ? '▾' : '▸'}</span>
+            </button>
+            {historyOpen && (
+              <div id="section-body-history">
+                {historyItems.length === 0 ? (
+                  <p className="px-3 py-2 font-mono text-[11px] text-iron/40">
+                    No resolved items.
+                  </p>
+                ) : (
+                  historyItems.map((item) => (
+                    <div
+                      key={item.id}
+                      data-testid="history-row"
+                      className={[
+                        'cursor-pointer px-3 py-2 transition-colors',
+                        item.id === (selected?.id ?? null) ? 'bg-iron/20' : 'hover:bg-iron/10',
+                      ].join(' ')}
+                      onClick={() => handleSelect(item.id)}
+                    >
+                      <div className="flex items-baseline gap-2">
+                        {item.kind !== 'failed-task' && (
+                          <span className="shrink-0 font-mono text-[9px] uppercase text-iron/60">
+                            {kindBadgeLabel(item.kind)}
+                          </span>
+                        )}
+                        <span className="break-all font-mono text-[10px] text-iron/70">
+                          {item.entityId}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 break-words font-mono text-[11px] text-iron/70">
+                        {(item.resolution?.resolution ?? item.title) || '(no title)'}
+                      </div>
+                      <div className="mt-0.5 font-mono text-[10px] text-iron/40">
+                        {item.resolution
+                          ? relativeTime(item.resolution.resolvedAt)
+                          : relativeTime(item.at)}
+                      </div>
+                    </div>
+                  ))
+                )}
+                {historyNextCursor !== null ? (
+                  <button
+                    type="button"
+                    data-testid="history-load-more"
+                    disabled={historyLoadingMore}
+                    onClick={loadMoreHistory}
+                    className="w-full border-t border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase text-iron/60 hover:bg-iron/5 disabled:opacity-50"
+                  >
+                    {historyLoadingMore ? 'Loading…' : 'Load more'}
+                  </button>
+                ) : null}
+              </div>
+            )}
+          </div>
         </div>
 
         {(error || projectsError) ? (
@@ -821,13 +945,13 @@ export const ActionQueuePage = () => {
               </p>
             </div>
           </div>
-        ) : empty ? (
+        ) : empty && !selected ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div className="font-mono text-[12px] text-iron">
               No items. Action queue alerts appear here when tasks need operator attention.
             </div>
           </div>
-        ) : noMatches ? (
+        ) : noMatches && !selected ? (
           <div className="flex h-full items-center justify-center font-mono text-[12px] text-iron">
             No matches.
           </div>

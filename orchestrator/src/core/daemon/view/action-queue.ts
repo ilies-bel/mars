@@ -20,6 +20,15 @@ import { derivedRowActions } from '../../lib/derived-row-actions'
 export type DerivedActionQueueKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
 export type DerivedActionQueueFilter = 'open' | 'all'
 
+/** Resolution metadata carried by resolved rows in history responses. */
+export interface ActionQueueResolutionMeta {
+  resolvedAt: string
+  resolution: string | null
+  resolutionNote: string | null
+  rootCause: string | null
+  resolvedBy: string | null
+}
+
 export interface StaleWorktreeDetail {
   prompt: string | null
   status: string
@@ -61,6 +70,12 @@ export interface ActionQueueRow {
    * Drives the "Fix for: <origin>" navigable link in the UI.
    */
   fixForTaskId?: string | null
+  /**
+   * Resolution metadata — non-null on history rows (state='resolved'), null on
+   * live open rows. The UI uses this to determine whether to render the
+   * Resolution header and suppress action buttons.
+   */
+  resolution?: ActionQueueResolutionMeta | null
 }
 
 /** Raw actionQueue row shape as persisted in `action_queue_items`. */
@@ -76,6 +91,12 @@ export interface PersistedActionQueueRow {
   lastSeenAt: string
   /** The item's dedup signature, used as the entity-id fallback. */
   signature?: string | null
+  /** Resolution fields — populated on resolved rows, absent/null on open rows. */
+  resolvedAt?: string | null
+  resolution?: string | null
+  resolutionNote?: string | null
+  rootCause?: string | null
+  resolvedBy?: string | null
 }
 
 /** Narrow task shape `buildActionQueueView` needs — a subset of the queue Task. */
@@ -112,6 +133,11 @@ export interface TaskForActionQueue {
  */
 export interface ActionQueueStateStore {
   listOpenActionQueueItems(): Promise<PersistedActionQueueRow[]>
+  /** Cursor-paged resolved rows, newest-first. Used by the history view. */
+  listResolvedActionQueueItems(opts: {
+    limit?: number
+    cursor?: string | null
+  }): Promise<{ items: PersistedActionQueueRow[]; nextCursor: string | null }>
 }
 
 /**
@@ -128,6 +154,15 @@ export interface BuildActionQueueViewParams {
   /** Absolute path to the repo root — used for the stale-worktree git probe. */
   repoRoot: string
   filter: DerivedActionQueueFilter
+}
+
+export interface BuildActionQueueHistoryViewParams {
+  stateStore: ActionQueueStateStore
+  taskStore: ActionQueueTaskStore
+  /** Absolute path to the repo root — used for the stale-worktree git probe. */
+  repoRoot: string
+  limit?: number
+  cursor?: string | null
 }
 
 /**
@@ -464,4 +499,248 @@ export const buildActionQueueView = async ({
   }
 
   return filtered
+}
+
+/**
+ * Derive an ActionQueueRow[] for resolved (history) rows, cursor-paged
+ * newest-first by resolved_at.
+ *
+ * Applies the same kind-mapping, entity-id extraction, DAG enrichment, and
+ * stale-worktree git probe as buildActionQueueView so the existing detail pane
+ * can render resolved rows. Resolved rows carry resolution metadata and have
+ * empty actions (they are read-only).
+ */
+export const buildActionQueueHistoryView = async ({
+  stateStore,
+  taskStore,
+  repoRoot,
+  limit,
+  cursor,
+}: BuildActionQueueHistoryViewParams): Promise<{
+  rows: ActionQueueRow[]
+  nextCursor: string | null
+}> => {
+  const { items: persistedRows, nextCursor } =
+    await stateStore.listResolvedActionQueueItems({ limit, cursor })
+
+  const allTasks = await taskStore.listTasks()
+  const taskById = new Map(allTasks.map((t) => [t.id, t]))
+  const blockingMap = new Map<string, string[]>()
+  for (const t of allTasks) {
+    for (const blkId of t.blockedBy) {
+      const arr = blockingMap.get(blkId) ?? []
+      arr.push(t.id)
+      blockingMap.set(blkId, arr)
+    }
+  }
+  const fixForTaskMap = new Map<string, string[]>()
+  for (const t of allTasks) {
+    if (t.fixForTaskId) {
+      const arr = fixForTaskMap.get(t.fixForTaskId) ?? []
+      arr.push(t.id)
+      fixForTaskMap.set(t.fixForTaskId, arr)
+    }
+  }
+
+  const toUiKind = (k: string): DerivedActionQueueKind => {
+    if (k === 'stale-worktree') return 'stale-worktree'
+    if (k === 'draft-proposal') return 'draft-proposal'
+    return 'failed-task'
+  }
+
+  const extractEntityId = (row: PersistedActionQueueRow): string => {
+    if (row.kind === 'stale-worktree') {
+      if (typeof row.context.taskId === 'string') return row.context.taskId
+    }
+    if (row.kind === 'draft-proposal') {
+      if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+    }
+    if (row.kind === 'slices-dropped') {
+      if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+    }
+    if (typeof row.payload.taskId === 'string') return row.payload.taskId
+    if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
+    return row.signature ?? row.id
+  }
+
+  const toUiPriority = (p: string): 'high' | 'normal' | 'low' => {
+    if (p === 'urgent' || p === 'high') return 'high'
+    if (p === 'low') return 'low'
+    return 'normal'
+  }
+
+  const toErrorKind = (k: string): string =>
+    k === 'failed' ? 'failed-task' : k
+
+  const toNode = (id: string) => {
+    const t = taskById.get(id)
+    const summarize = (prompt: string): string => {
+      const oneLine = prompt.replace(/\s+/g, ' ').trim()
+      return oneLine.length <= 80 ? oneLine : `${oneLine.slice(0, 79)}…`
+    }
+    return {
+      id,
+      status: (t?.status ?? 'dropped') as string,
+      summary: t ? summarize(t.prompt) : '(unknown task)',
+    }
+  }
+
+  const rows: ActionQueueRow[] = []
+
+  for (const row of persistedRows) {
+    const uiKind = toUiKind(row.kind)
+    const entityId = extractEntityId(row)
+    const errorKind = toErrorKind(row.kind)
+
+    // DAG enrichment (same as live view).
+    let dag: ActionQueueRow['dag'] = null
+    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+      const task = taskById.get(entityId)
+      if (task) {
+        const blockers = task.blockedBy.map(toNode)
+        const blocking = (blockingMap.get(entityId) ?? []).map(toNode)
+        const descendants = (fixForTaskMap.get(entityId) ?? []).map(toNode)
+        dag = { blockers, blocking, descendants, proposalId: task.parentProposalId }
+      }
+    }
+
+    // Stale-worktree enrichment (safe — catches missing dirs).
+    let staleWorktreeDetail: StaleWorktreeDetail | null = null
+    if (uiKind === 'stale-worktree') {
+      const task = taskById.get(entityId)
+      const worktreePath = join(repoRoot, '.mars', 'worktrees', entityId)
+      let empty = false
+      if (existsSync(worktreePath)) {
+        try {
+          const base = execFileSync(
+            'git',
+            ['-C', worktreePath, 'merge-base', 'HEAD', 'main'],
+            { encoding: 'utf8' },
+          ).trim()
+          let hasDiff = false
+          try {
+            execFileSync(
+              'git',
+              ['-C', worktreePath, 'diff', '--quiet', `${base}..HEAD`],
+              { encoding: 'utf8' },
+            )
+          } catch {
+            hasDiff = true
+          }
+          const porcelain = hasDiff
+            ? 'X'
+            : execFileSync(
+                'git',
+                ['-C', worktreePath, 'status', '--porcelain'],
+                { encoding: 'utf8' },
+              ).trim()
+          empty = !hasDiff && porcelain === ''
+        } catch {
+          empty = false
+        }
+      }
+      staleWorktreeDetail = {
+        prompt:
+          typeof row.payload.prompt === 'string'
+            ? row.payload.prompt
+            : (task?.prompt ?? null),
+        status:
+          task?.status ??
+          (typeof row.payload.status === 'string'
+            ? row.payload.status
+            : 'absent (no matching task)'),
+        ageHours:
+          typeof row.payload.ageHours === 'number' ? row.payload.ageHours : 0,
+        updatedAt:
+          task?.updatedAt ??
+          (typeof row.payload.updatedAt === 'string'
+            ? row.payload.updatedAt
+            : row.lastSeenAt),
+        branch:
+          typeof row.payload.branch === 'string'
+            ? row.payload.branch
+            : (task?.branch ?? null),
+        empty,
+        investigation:
+          typeof row.payload.investigation === 'string'
+            ? row.payload.investigation
+            : null,
+      }
+    }
+
+    // Diagnosis.
+    let diagnosis: { text: string; diagnosedAt: string } | null = null
+    const rawDiagnosis = row.payload.diagnosis
+    if (
+      rawDiagnosis !== null &&
+      typeof rawDiagnosis === 'object' &&
+      typeof (rawDiagnosis as { text?: unknown }).text === 'string' &&
+      typeof (rawDiagnosis as { diagnosedAt?: unknown }).diagnosedAt === 'string'
+    ) {
+      diagnosis = {
+        text: (rawDiagnosis as { text: string }).text,
+        diagnosedAt: (rawDiagnosis as { diagnosedAt: string }).diagnosedAt,
+      }
+    }
+
+    const failureReasonCode =
+      typeof row.payload.failureReasonCode === 'string'
+        ? row.payload.failureReasonCode
+        : null
+
+    // Title / body from the failure-kind registry for failed-task rows.
+    let title = row.title
+    let body = row.body
+    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+      const failedTask = taskById.get(entityId)
+      const sig = failedTask?.failureSignature ?? null
+      const fk =
+        sig !== null
+          ? (lookupFailureKind(sig) ??
+              unknownFailureKind(
+                failingStepFromSignature(sig),
+                failedTask?.lastErrorOutput ?? '',
+              ))
+          : unknownFailureKind('unknown', failedTask?.lastErrorOutput ?? '')
+      title = fk.warmTitle
+      body = fk.verboseReason
+    }
+
+    const fixForTaskId =
+      uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator'
+        ? (taskById.get(entityId)?.fixForTaskId ?? null)
+        : null
+
+    // Build resolution metadata from the resolved row fields.
+    const resolution: ActionQueueResolutionMeta | null =
+      row.resolvedAt
+        ? {
+            resolvedAt: row.resolvedAt,
+            resolution: row.resolution ?? null,
+            resolutionNote: row.resolutionNote ?? null,
+            rootCause: row.rootCause ?? null,
+            resolvedBy: row.resolvedBy ?? null,
+          }
+        : null
+
+    rows.push({
+      id: row.id,
+      kind: uiKind,
+      entityId,
+      priority: toUiPriority(row.priority),
+      title,
+      body,
+      at: row.lastSeenAt,
+      dag,
+      errorKind,
+      actions: [], // Resolved rows are read-only; no actions.
+      staleWorktreeDetail,
+      diagnosis,
+      failureReasonCode,
+      fixForTaskId,
+      resolution,
+    })
+  }
+
+  return { rows, nextCursor }
 }

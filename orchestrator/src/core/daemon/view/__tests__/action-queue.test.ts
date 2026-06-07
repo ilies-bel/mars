@@ -58,6 +58,7 @@ const makeStateStore = (
   rows: PersistedActionQueueRow[] = [],
 ): ActionQueueStateStore => ({
   listOpenActionQueueItems: async () => rows,
+  listResolvedActionQueueItems: async () => ({ items: [], nextCursor: null }),
 })
 
 const makeTaskStore = (

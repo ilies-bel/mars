@@ -994,6 +994,106 @@ export const dismissAlertsOnStatusChange = async (
   return ids
 }
 
+// ---------------------------------------------------------------------------
+// Resolved-row paged reader
+// ---------------------------------------------------------------------------
+
+/**
+ * A page of resolved action-queue items, ordered newest-first by `resolved_at`.
+ * `nextCursor` is non-null only when more rows exist past the current page.
+ */
+export interface ResolvedActionQueuePage {
+  items: ActionQueueItem[]
+  nextCursor: string | null
+}
+
+/** Encode a (resolvedAt, id) pair into an opaque cursor token. */
+const encodeHistoryCursor = (resolvedAt: string, id: string): string =>
+  Buffer.from(JSON.stringify({ resolvedAt, id }), 'utf8').toString('base64url')
+
+/** Decode a cursor token; returns null for malformed input. */
+const decodeHistoryCursor = (
+  cursor: string,
+): { resolvedAt: string; id: string } | null => {
+  try {
+    const raw = Buffer.from(cursor, 'base64url').toString('utf8')
+    const parsed = JSON.parse(raw) as unknown
+    if (
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      'resolvedAt' in parsed &&
+      'id' in parsed &&
+      typeof (parsed as Record<string, unknown>).resolvedAt === 'string' &&
+      typeof (parsed as Record<string, unknown>).id === 'string'
+    ) {
+      return parsed as { resolvedAt: string; id: string }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Return a cursor-paged slice of resolved action-queue items, newest-first
+ * by `resolved_at`. Rows with a null `resolved_at` are excluded (legacy
+ * rows closed before the column was populated).
+ *
+ * Pass the returned `nextCursor` as `cursor` on the next call to page
+ * forward. `nextCursor` is null when the last page has been reached.
+ *
+ * The cursor is a base64url-encoded (resolvedAt, id) pair — the same
+ * shape used by the trace-events store — so it survives new writes
+ * between pages without skipping or duplicating rows.
+ */
+export const listResolvedActionQueueItems = async ({
+  limit = 50,
+  cursor,
+}: {
+  limit?: number
+  cursor?: string | null
+} = {}): Promise<ResolvedActionQueuePage> => {
+  await initActionQueue()
+  const c = stateClient()
+
+  const conditions: string[] = ["state = 'resolved'", 'resolved_at IS NOT NULL']
+  const args: Array<string | number> = []
+
+  if (cursor) {
+    const decoded = decodeHistoryCursor(cursor)
+    if (decoded) {
+      conditions.push('(resolved_at < ? OR (resolved_at = ? AND id < ?))')
+      args.push(decoded.resolvedAt, decoded.resolvedAt, decoded.id)
+    }
+  }
+
+  const sql = `SELECT * FROM action_queue_items WHERE ${conditions.join(' AND ')} ORDER BY resolved_at DESC, id DESC LIMIT ?`
+  args.push(limit + 1)
+
+  const r = await c.execute({ sql, args })
+  const rows = r.rows as unknown as Record<string, unknown>[]
+
+  const hasMore = rows.length > limit
+  const pageRows = hasMore ? rows.slice(0, limit) : rows
+
+  const items: ActionQueueItem[] = []
+  for (const row of pageRows) {
+    const history = await loadHistory(c, row.id as string)
+    items.push(rowToActionQueueItem(row, history))
+  }
+
+  const lastRow = pageRows[pageRows.length - 1]
+  const nextCursor =
+    hasMore && lastRow
+      ? encodeHistoryCursor(
+          lastRow.resolved_at as string,
+          lastRow.id as string,
+        )
+      : null
+
+  return { items, nextCursor }
+}
+
 /**
  * Resolve every open Action-queue row whose `origin_task_id` matches
  * `taskId`, regardless of kind. Used by the Invalidator on `task.completed`

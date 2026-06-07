@@ -163,6 +163,18 @@ export const actionDescriptorSchema = z.object({
   hint: z.string().optional(),
 })
 
+// Resolution metadata carried by resolved rows (history). Non-null only on
+// rows returned by GET /api/action-queue/history.
+export const actionQueueResolutionSchema = z.object({
+  resolvedAt: z.string(),
+  resolution: z.string().nullable(),
+  resolutionNote: z.string().nullable(),
+  rootCause: z.string().nullable(),
+  resolvedBy: z.string().nullable(),
+})
+
+export type ActionQueueResolution = z.infer<typeof actionQueueResolutionSchema>
+
 // Shared base schema — fields present on every action-queue row regardless of kind.
 const actionQueueBaseSchema = z.object({
   id: z.string(),
@@ -203,6 +215,11 @@ const actionQueueBaseSchema = z.object({
    * Drives the "Fix for: <origin>" navigable link in the failure card.
    */
   fixForTaskId: z.string().nullable().optional(),
+  /**
+   * Resolution metadata — non-null on history rows, absent/null on live open rows.
+   * The UI uses this to render the Resolution block and suppress action buttons.
+   */
+  resolution: actionQueueResolutionSchema.nullish(),
 })
 
 // Detail block carried by every 'stale-worktree' row — absent on all other kinds.
@@ -496,6 +513,46 @@ export const frameworkUpdateSchema = z.object({
 })
 
 export type FrameworkUpdate = z.infer<typeof frameworkUpdateSchema>
+
+// ----------------------------------------------------------------------------
+// Action queue history (GET /api/action-queue/history).
+// A cursor-paged list of resolved rows with resolution metadata.
+// ----------------------------------------------------------------------------
+
+export const actionQueueHistoryResponseSchema = z.object({
+  rows: z.array(
+    actionQueueItemSchema.catch((ctx) => {
+      const raw =
+        typeof ctx.input === 'object' && ctx.input !== null
+          ? (ctx.input as Record<string, unknown>)
+          : {}
+      const attempt = failedTaskItemSchema.safeParse({ ...raw, kind: 'failed-task' })
+      if (attempt.success) return attempt.data
+      return {
+        id: typeof raw.id === 'string' ? raw.id : 'unknown',
+        kind: 'failed-task' as const,
+        entityId: typeof raw.entityId === 'string' ? raw.entityId : '',
+        priority: 'high' as const,
+        title: typeof raw.title === 'string' ? raw.title : '',
+        body: typeof raw.body === 'string' ? raw.body : '',
+        at: '1970-01-01T00:00:00.000Z',
+        dag: null,
+        errorKind:
+          typeof raw.errorKind === 'string'
+            ? raw.errorKind
+            : typeof raw.kind === 'string'
+              ? raw.kind
+              : 'unknown',
+        actions: [],
+        diagnosis: null,
+        failureReasonCode: null,
+      }
+    }),
+  ),
+  nextCursor: z.string().nullable(),
+})
+
+export type ActionQueueHistoryResponse = z.infer<typeof actionQueueHistoryResponseSchema>
 
 export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
 export type ActionDescriptor = z.infer<typeof actionDescriptorSchema>

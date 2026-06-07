@@ -1,5 +1,6 @@
 import type { ZodType } from 'zod'
 import {
+  actionQueueHistoryResponseSchema,
   actionQueueResponseSchema,
   eventsResponseSchema,
   frameworkUpdateSchema,
@@ -10,6 +11,7 @@ import {
   tasksResponseSchema,
   todoResponseSchema,
   workerSessionsResponseSchema,
+  type ActionQueueHistoryResponse,
   type ActionQueueItem,
   type EventsResponse,
   type FrameworkUpdate,
@@ -120,6 +122,24 @@ export const fetchFrameworkUpdate = async (): Promise<FrameworkUpdate> => {
 
 export const fetchActionQueue = async (projectId?: string): Promise<ActionQueueItem[]> => {
   return fetchJson(appendProject('/api/action-queue/action-queue', projectId), actionQueueResponseSchema)
+}
+
+/**
+ * Fetch a cursor-paged slice of resolved action-queue rows (history).
+ * Rows are newest-first by resolved_at. Pass the returned `nextCursor`
+ * as `cursor` on the next call to page forward.
+ */
+export const fetchActionQueueHistory = async (
+  opts: { cursor?: string | null; limit?: number } = {},
+  projectId?: string,
+): Promise<ActionQueueHistoryResponse> => {
+  const params = new URLSearchParams()
+  if (opts.cursor) params.set('cursor', opts.cursor)
+  if (opts.limit !== undefined) params.set('limit', String(opts.limit))
+  if (projectId) params.set('project', encodeURIComponent(projectId))
+  const qs = params.toString()
+  const path = qs ? `/api/action-queue/history?${qs}` : '/api/action-queue/history'
+  return fetchJson(path, actionQueueHistoryResponseSchema)
 }
 
 export const dismissActionQueueItem = async (id: string): Promise<void> => {
@@ -340,7 +360,9 @@ export const dismissTodoItem = async (
 }
 
 export type {
+  ActionQueueHistoryResponse,
   ActionQueueItem,
+  ActionQueueResolution,
   DaemonHealth,
   EventsResponse,
   FrameworkUpdate,

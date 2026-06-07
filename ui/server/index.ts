@@ -143,6 +143,11 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        if (path === '/api/action-queue/history') {
+          const r = await proxyGet(ctx.stateDir, `/view/action-queue/history${url.search}`)
+          return jsonResponse(r.status, r.body)
+        }
+
         if (
           (path === '/api/action-queue/dismiss' ||
             path === '/api/action-queue/ack' ||

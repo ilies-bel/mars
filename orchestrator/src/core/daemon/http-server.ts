@@ -217,6 +217,16 @@ export interface HttpServerDeps {
    */
   viewActionQueue: (filter: DerivedActionQueueFilter) => Promise<ActionQueueRow[]>
   /**
+   * Return a cursor-paged slice of resolved action-queue rows for the history
+   * accordion. Served by `GET /view/action-queue/history?cursor=...&limit=...`.
+   * Optional — when omitted the route returns an empty page (graceful degradation
+   * for daemons built before this dep was added).
+   */
+  viewActionQueueHistory?: (opts: {
+    cursor?: string | null
+    limit?: number
+  }) => Promise<{ rows: ActionQueueRow[]; nextCursor: string | null }>
+  /**
    * Return the combined payload for GET /view/todo: draft proposals + open
    * stale-worktree alerts. The daemon is the sole reader of its own DB; the
    * UI server proxies this endpoint instead of querying the DB directly.
@@ -694,6 +704,31 @@ export const startHttpServer = async (
       deps
         .viewTerminalEvents()
         .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/action-queue/history?cursor=...&limit=... — resolved rows,
+    // cursor-paged newest-first. Pure read; no draining gate.
+    if (
+      req.method === 'GET' &&
+      req.url &&
+      req.url.startsWith('/view/action-queue/history')
+    ) {
+      if (!deps.viewActionQueueHistory) {
+        sendJson(res, 200, { rows: [], nextCursor: null })
+        return
+      }
+      const parsed = new URL(req.url, 'http://localhost')
+      const cursor = parsed.searchParams.get('cursor') ?? null
+      const limitRaw = parsed.searchParams.get('limit')
+      const limit =
+        limitRaw !== null && Number.isFinite(Number.parseInt(limitRaw, 10))
+          ? Math.min(Math.max(1, Number.parseInt(limitRaw, 10)), 200)
+          : 50
+      deps
+        .viewActionQueueHistory({ cursor, limit })
+        .then((result) => sendJson(res, 200, result))
         .catch((err: unknown) => sendError(res, err))
       return
     }

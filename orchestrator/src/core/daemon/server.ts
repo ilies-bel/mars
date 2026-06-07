@@ -2718,6 +2718,8 @@ export const startDaemon = async (
             signature: item.signature,
           }))
         },
+        // Stub — viewActionQueue only needs open rows; history is handled by viewActionQueueHistory.
+        listResolvedActionQueueItems: async () => ({ items: [], nextCursor: null }),
       }
 
       // Build the task store adapter: tasks + blocker info + parentProposalId.
@@ -2771,6 +2773,97 @@ export const startDaemon = async (
         taskStore,
         repoRoot: getRepoRoot(),
         filter,
+      })
+    },
+    viewActionQueueHistory: async ({ cursor, limit }) => {
+      const { buildActionQueueHistoryView } = await import('./view/action-queue')
+      const { listResolvedActionQueueItems } = await import('../lib/action-queue')
+      const { listTasks: qListTasks } = await import('../queue')
+      const getQueueClient = getCompositionRootClient
+      const { getRepoRoot } = await import('../context')
+
+      await runCompositionRootMigrations()
+
+      const stateStore = {
+        listOpenActionQueueItems: async () => [],
+        listResolvedActionQueueItems: async (opts: {
+          limit?: number
+          cursor?: string | null
+        }) => {
+          const page = await listResolvedActionQueueItems(opts)
+          return {
+            items: page.items.map((item) => ({
+              id: item.id,
+              kind: item.kind as string,
+              priority: item.priority as string,
+              title: item.title,
+              body: item.body,
+              payload: item.payload,
+              context: item.context,
+              raisedAt: item.raisedAt,
+              lastSeenAt: item.lastSeenAt,
+              signature: item.signature,
+              resolvedAt: item.resolvedAt,
+              resolution: item.resolution,
+              resolutionNote: item.resolutionNote,
+              rootCause: item.rootCause,
+              resolvedBy: item.resolutionDetails?.resolvedBy ?? null,
+            })),
+            nextCursor: page.nextCursor,
+          }
+        },
+      }
+
+      const taskStore = {
+        listTasks: async () => {
+          const tasks = await qListTasks()
+          const c = getQueueClient()
+          let blockedByMap = new Map<string, string[]>()
+          let proposalMap = new Map<string, string | null>()
+          try {
+            const blockersResult = await c.execute(
+              `SELECT task_id, blocker_task_id FROM task_blockers`,
+            )
+            for (const row of blockersResult.rows) {
+              const r = row as unknown as { task_id: string; blocker_task_id: string }
+              const arr = blockedByMap.get(r.task_id) ?? []
+              arr.push(r.blocker_task_id)
+              blockedByMap.set(r.task_id, arr)
+            }
+          } catch {
+            // task_blockers may not exist on a fresh repo — empty map.
+          }
+          try {
+            const proposalResult = await c.execute(
+              `SELECT id, parent_proposal_id FROM tasks WHERE parent_proposal_id IS NOT NULL`,
+            )
+            for (const row of proposalResult.rows) {
+              const r = row as unknown as { id: string; parent_proposal_id: string | null }
+              proposalMap.set(r.id, r.parent_proposal_id)
+            }
+          } catch {
+            // Tolerate missing column on legacy repos.
+          }
+          return tasks.map((t) => ({
+            id: t.id,
+            status: t.status,
+            prompt: t.prompt,
+            blockedBy: blockedByMap.get(t.id) ?? [],
+            parentProposalId: proposalMap.get(t.id) ?? null,
+            failureSignature: t.failureSignature,
+            branch: t.branch,
+            updatedAt: t.updatedAt,
+            fixForTaskId: t.fixForTaskId ?? null,
+          }))
+        },
+      }
+
+      return buildActionQueueHistoryView({
+        stateStore,
+        taskStore,
+        repoRoot: getRepoRoot(),
+        limit,
+        cursor,
       })
     },
     viewTodo: async () => {
