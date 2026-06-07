@@ -79,9 +79,11 @@ export const ActionQueueRow = memo(({
   return (
     <div className={baseClass} onClick={() => onSelect(item.id)}>
       <div className="flex items-baseline gap-2">
-        <span className="shrink-0 font-mono text-[9px] uppercase text-iron/80">
-          {kindBadgeLabel(item.kind)}
-        </span>
+        {item.kind !== 'failed-task' && (
+          <span className="shrink-0 font-mono text-[9px] uppercase text-iron/80">
+            {kindBadgeLabel(item.kind)}
+          </span>
+        )}
         <span className="break-all font-mono text-[10px] text-iron">
           {item.entityId}
         </span>

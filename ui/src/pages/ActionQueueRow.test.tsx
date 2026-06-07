@@ -336,3 +336,38 @@ describe('ActionQueueDetail – arc-failed headline layout', () => {
     expect(html).toMatch(/<h2[^>]*>.*Some failed task title.*<\/h2>/s)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Acceptance criterion: failed-task card header must not contain the literal
+// string 'FAILED'. The section title 'Failed tasks' already conveys context.
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueRow – failed-task card header omits FAILED badge', () => {
+  it('does not contain the string FAILED in the card header for a failed-task row', () => {
+    const html = renderRow(BASE_ITEM, { onRestart: () => {} })
+    expect(html).not.toMatch(/FAILED/)
+  })
+
+  it('still shows the kind badge for non-failed-task rows (e.g. stale-worktree)', () => {
+    const staleItem = makeItem({
+      kind: 'stale-worktree',
+      errorKind: 'stale-worktree',
+      actions: [
+        { id: 'investigate', label: 'Investigate', op: 'investigate' },
+        { id: 'prune', label: 'Prune worktree', op: 'prune-worktree', needsConfirm: true },
+      ],
+      staleWorktreeDetail: {
+        prompt: 'some task',
+        status: 'running',
+        ageHours: 24,
+        updatedAt: '2026-01-01T00:00:00Z',
+        branch: 'task/task-abc',
+        empty: false,
+        investigation: null,
+      },
+    })
+    const html = renderRow(staleItem, { onRestart: null })
+    // 'stale wt' badge (uppercased via CSS) — its lowercase text appears in the DOM
+    expect(html).toContain('stale wt')
+  })
+})
