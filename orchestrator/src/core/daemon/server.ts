@@ -1139,6 +1139,7 @@ export const startDaemon = async (
     priority?: number,
     tags?: Task['tags'],
     spec?: Task['spec'],
+    intent?: string,
   ): Promise<Task> => {
     const opts: Parameters<typeof enqueueTask>[2] = {}
     if (skipTriage) opts.skipTriage = true
@@ -1146,6 +1147,7 @@ export const startDaemon = async (
     if (priority !== undefined) opts.priority = priority
     if (tags !== undefined) opts.tags = tags
     if (spec) opts.spec = spec
+    if (intent !== undefined) opts.intent = intent
     // Arc inheritance (ADR-0050): when a task has exactly one blocker it is
     // almost always a continuation of that blocker's work (the canonical coder
     // follow-up pattern: `mars task add "..." --blocked-by $TASK_ID`). Inherit
@@ -1712,6 +1714,7 @@ export const startDaemon = async (
             req.priority,
             req.tags,
             req.spec,
+            req.intent,
           )
           return { ok: true, data: task }
         }

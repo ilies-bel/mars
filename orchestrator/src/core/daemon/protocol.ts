@@ -14,6 +14,7 @@ export type DaemonRequest =
       priority?: number
       tags?: TaskTag[]
       spec?: TaskSpec
+      intent?: string
     }
   | { op: 'task.priority'; id: string; priority: number }
   | {

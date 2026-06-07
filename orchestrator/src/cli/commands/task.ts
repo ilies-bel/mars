@@ -24,11 +24,12 @@ import type { Command, CommandDeps, CommandResult } from '../command'
 import { errorMessage, spawnNoticeOut } from './shared'
 
 const TASK_ADD_USAGE =
-  'usage: mars task add "<prompt>" [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [plan flags]'
+  'usage: mars task add "<prompt>" [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [plan flags]'
 
 interface EnqueueParams {
   prompt: string
   skipTriage: boolean
+  intent?: string
   blockerIds?: readonly string[]
   priority?: number
   tags?: string[]
@@ -85,6 +86,7 @@ const enqueueViaDaemon = async (
       ...(params.priority !== undefined ? { priority: params.priority } : {}),
       ...(params.tags !== undefined ? { tags: params.tags } : {}),
       ...(params.spec !== undefined ? { spec: params.spec } : {}),
+      ...(params.intent !== undefined ? { intent: params.intent } : {}),
     },
     { onSpawnNotice: spawnNoticeOut(deps.out) },
   )) as { id: string; status: string }
@@ -122,9 +124,14 @@ export const taskAdd: Command = {
       deps.err(specResult.message)
       return { code: 1 }
     }
+    const intentFlag = args.flags['--intent']?.trim()
+    const intent = intentFlag
+      ? intentFlag.slice(0, 200)
+      : (prompt.match(/^(.+?[.!?])(\s|$)/)?.[1] ?? prompt).slice(0, 200)
     return enqueueViaDaemon(deps, args.flags, {
       prompt,
       skipTriage: true,
+      intent,
       blockerIds: parseBlockedBy(args),
       priority,
       tags: parseTags(args),

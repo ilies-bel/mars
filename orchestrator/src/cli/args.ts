@@ -59,6 +59,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--name',
   '--path',
   '--config',
+  '--intent',
   // mars init wizard non-interactive parity (ADR-0058). One value flag per
   // string/enum WizardPrompt in src/init/wizard.ts; the parity build-guard
   // (init/__tests__/wizard-parity.test.ts) fails if a prompt lacks its flag.

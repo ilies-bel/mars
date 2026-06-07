@@ -479,12 +479,14 @@ Plan flags:
   task: `mars task <subcommand> ...
 
 Subcommands:
-  add "<prompt>" [plan flags] [--author kind:name] [--blocked-by <id> ...]
+  add "<prompt>" [--intent <text>] [plan flags] [--author kind:name] [--blocked-by <id> ...]
       Enqueue a runnable task directly (status='queued'; skips triage).
       Agent runners can pick it up immediately via 'mars run' / the
       orchestrator. Plan flags and --author behave like 'mars add'.
       --blocked-by <id> may be repeated; each <id> must already exist.
-      The new task will not dispatch until every blocker reaches 'done'.`,
+      The new task will not dispatch until every blocker reaches 'done'.
+      --intent <text>  one-line summary stored on the task; derived from the
+                       first sentence of the prompt when omitted.`,
   proposal: `mars proposal <subcommand> ...
 
 Subcommands:
