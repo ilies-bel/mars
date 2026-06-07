@@ -61,7 +61,11 @@ const ALLOWLIST = [
   // main-dirty-action-queue.ts: releaseMainCommitterDependents flips blocked
   // tasks back to queued inside a transaction that also calls publish().
   'core/daemon/main-dirty-action-queue.ts',
-  'workflows/slice-workflow.ts',
+  // workflows/slice-workflow.ts left this allowlist (ADR-0052 sole-writer):
+  // its two lifecycle `DELETE FROM tasks` purges (pre-flight orphan cleanup +
+  // rollback) moved into Arc.dropProposalSlices / Arc.dropTasksForProposal in
+  // core/arc.ts, which emit task.dropped + task.terminal{purged} in the same
+  // atomic tx. slice-workflow.ts now holds ZERO task-table writes.
 ].map((p) => p.split('/').join(sep))
 
 const SKIP_DIRS = new Set(['node_modules', '__tests__', '.git', 'dist', 'build'])

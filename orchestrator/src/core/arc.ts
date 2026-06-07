@@ -1454,6 +1454,116 @@ export class Arc {
   }
 
   /**
+   * Slicer lifecycle purge by explicit id list (ADR-0052 sole-writer). Used by
+   * the slice workflow's rollback path to drop a known set of slice + Coder
+   * sub-task rows when slicing fails part-way. Distinct from {@link Arc.drop}:
+   * single-task scoped (no recovery-arc cascade), no dependent re-queue, and a
+   * caller-supplied `dropReason` (e.g. `'slicer-rollback'`) rather than the
+   * fixed `'purged'`.
+   *
+   * Per id, runs ONE atomic transaction that emits `task.dropped{dropReason}`
+   * then `task.terminal{reason:'purged'}` BEFORE `DELETE FROM task_blockers`
+   * (both edge directions) and `DELETE FROM tasks` — the event and the row
+   * removal share one commit so the Invalidator (ADR-0030) can still resolve
+   * the taskId and clear any open action-queue rows after the row is gone.
+   *
+   * Each id is its own atomic scope (never batched across ids) so a single
+   * failed delete does not poison the others. Best-effort `.catch()` wrapping
+   * is the CALLER's responsibility (preserving the original per-id swallow),
+   * NOT this method's — a thrown error here surfaces to the caller's catch.
+   */
+  static async dropTasksForProposal(
+    taskStore: DomainTaskStore,
+    ids: string[],
+    dropReason: string,
+  ): Promise<void> {
+    for (const id of ids) {
+      await taskStore.atomic(async (scope) => {
+        await scope.execute(
+          buildEventInsert('task.dropped', {
+            taskId: id,
+            dropReason,
+          }),
+        )
+        await scope.execute(
+          buildEventInsert('task.terminal', {
+            taskId: id,
+            reason: 'purged',
+          }),
+        )
+        await scope.execute({
+          sql: `DELETE FROM task_blockers WHERE task_id = ? OR blocker_task_id = ?`,
+          args: [id, id],
+        })
+        await scope.execute({
+          sql: `DELETE FROM tasks WHERE id = ?`,
+          args: [id],
+        })
+      })
+    }
+  }
+
+  /**
+   * Slicer lifecycle purge by proposal (ADR-0052 sole-writer). Used by the
+   * slice workflow's crash-recovery pre-flight to drop any orphaned tasks that
+   * claim a proposal as parent before Phase 1 re-inserts a fresh set.
+   *
+   * SELECTs the orphan ids (outside any transaction), and — when at least one
+   * exists — runs ONE atomic transaction that emits `task.dropped{dropReason}`
+   * then `task.terminal{reason:'purged'}` for every orphan id BEFORE the two
+   * bulk deletes (`DELETE FROM task_blockers` for both edge directions scoped
+   * by the parent-proposal sub-select, then `DELETE FROM tasks WHERE
+   * parent_proposal_id = ?`). Events and row removal share one commit so the
+   * Invalidator (ADR-0030) can still resolve each taskId after the rows are
+   * gone.
+   *
+   * Best-effort `.catch()` wrapping is the CALLER's responsibility (preserving
+   * the original swallow on both the SELECT and the atomic), NOT this method's.
+   */
+  static async dropProposalSlices(
+    taskStore: DomainTaskStore,
+    proposalId: string,
+    dropReason: string,
+  ): Promise<void> {
+    const orphanRows = await taskStore.query({
+      sql: `SELECT id FROM tasks WHERE parent_proposal_id = ?`,
+      args: [proposalId],
+    })
+    const orphanIds = orphanRows.rows.map(
+      (r) => (r as unknown as { id: string }).id,
+    )
+    if (orphanIds.length === 0) return
+    await taskStore.atomic(async (scope) => {
+      for (const orphanId of orphanIds) {
+        await scope.execute(
+          buildEventInsert('task.dropped', {
+            taskId: orphanId,
+            dropReason,
+          }),
+        )
+        await scope.execute(
+          buildEventInsert('task.terminal', {
+            taskId: orphanId,
+            reason: 'purged',
+          }),
+        )
+      }
+      await scope.execute({
+        sql: `DELETE FROM task_blockers WHERE task_id IN (
+                SELECT id FROM tasks WHERE parent_proposal_id = ?
+              ) OR blocker_task_id IN (
+                SELECT id FROM tasks WHERE parent_proposal_id = ?
+              )`,
+        args: [proposalId, proposalId],
+      })
+      await scope.execute({
+        sql: `DELETE FROM tasks WHERE parent_proposal_id = ?`,
+        args: [proposalId],
+      })
+    })
+  }
+
+  /**
    * Unblock-by-completion write funnel (ADR-0052 sole-writer). When a task
    * lands `done`, look up every task that has it listed as a blocker in
    * `task_blockers` and transition each from `blocked` -> `queued` (or
