@@ -10,7 +10,8 @@
 
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ActionQueueRow } from './TodoPage'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { ActionQueueDetail, ActionQueueRow } from './TodoPage'
 import type { ActionQueueItem } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
@@ -270,5 +271,68 @@ describe('ActionQueueRow – restart error display', () => {
     expect(html).toContain('>Restart<')
     // And the button should NOT carry the disabled="" attribute (pending = false, the default)
     expect(html).not.toContain('disabled=""')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ActionQueueDetail – arc-failed headline layout
+// AC: goal renders as h2-equivalent headline, reason directly below in secondary
+//     weight; goal must appear before reason in the DOM.
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueDetail – arc-failed headline layout', () => {
+  const arcFailedItem: ActionQueueItem = makeItem({
+    kind: 'arc-failed',
+    entityId: 'origin-abc',
+    title: 'Refactor auth to use JWT',
+    body: 'signature: code/context-exceeded',
+    errorKind: 'arc-failed',
+    actions: [],
+    goal: 'Refactor the auth module to use JWT tokens',
+    reason: 'The coder ran out of context before the task was finished',
+    chain: [],
+  })
+
+  const renderDetail = (item: ActionQueueItem): string => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <ActionQueueDetail item={item} />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('renders goal as the h2 headline for arc-failed items', () => {
+    const html = renderDetail(arcFailedItem)
+    expect(html).toContain('Refactor the auth module to use JWT tokens')
+    // goal must be in an h2 element
+    expect(html).toMatch(/<h2[^>]*>.*Refactor the auth module to use JWT tokens.*<\/h2>/s)
+  })
+
+  it('renders reason below goal in a secondary paragraph for arc-failed items', () => {
+    const html = renderDetail(arcFailedItem)
+    expect(html).toContain('The coder ran out of context before the task was finished')
+  })
+
+  it('goal appears before reason in the rendered DOM for arc-failed items', () => {
+    const html = renderDetail(arcFailedItem)
+    const goalPos = html.indexOf('Refactor the auth module to use JWT tokens')
+    const reasonPos = html.indexOf('The coder ran out of context before the task was finished')
+    expect(goalPos).toBeGreaterThan(-1)
+    expect(reasonPos).toBeGreaterThan(-1)
+    // h2 headline (goal) must precede the secondary paragraph (reason)
+    expect(goalPos).toBeLessThan(reasonPos)
+  })
+
+  it('does not show goal as headline for failed-task items (title stays)', () => {
+    const failedItem = makeItem({
+      kind: 'failed-task',
+      title: 'Some failed task title',
+      body: 'Task failed because of X',
+      errorKind: 'failed-task',
+      actions: [],
+    })
+    const html = renderDetail(failedItem)
+    expect(html).toMatch(/<h2[^>]*>.*Some failed task title.*<\/h2>/s)
   })
 })

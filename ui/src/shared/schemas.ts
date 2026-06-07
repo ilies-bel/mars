@@ -248,10 +248,42 @@ const draftProposalItemSchema = actionQueueBaseSchema.extend({
   kind: z.literal('draft-proposal'),
 })
 
+/**
+ * One node in the alert's Proposal-to-Attempt chain.
+ * Ordered oldest → newest: proposal head (if any), origin task (attemptIndex=1),
+ * operator-initiated restarts (attemptIndex=2, 3, …), automatic recovery tasks.
+ */
+const alertChainNodeSchema = z.object({
+  kind: z.enum(['proposal', 'task']),
+  id: z.string(),
+  status: z.string().optional(),
+  label: z.string(),
+  attemptIndex: z.number().optional(),
+})
+
+/**
+ * Arc-rooted alert row: every task in the arc is terminal with no success.
+ * Carries the three-level goal → reason → technical hierarchy from the Alert
+ * read aggregate (ADR-0054). The `title` and `body` base fields carry the same
+ * goal and technical detail respectively for backward-compatible row rendering;
+ * the named `goal` and `reason` fields exist so the detail panel can surface
+ * them as distinct typographic levels without concatenating.
+ */
+const arcFailedItemSchema = actionQueueBaseSchema.extend({
+  kind: z.literal('arc-failed'),
+  /** One-line intent: what the arc was trying to achieve. */
+  goal: z.string(),
+  /** Warm, human-readable failure cause (FailureKind copy). */
+  reason: z.string(),
+  /** Ordered arc lineage: proposal head → origin attempt → restarts → recoveries. */
+  chain: z.array(alertChainNodeSchema),
+})
+
 export const actionQueueItemSchema = z.discriminatedUnion('kind', [
   failedTaskItemSchema,
   staleWorktreeItemSchema,
   draftProposalItemSchema,
+  arcFailedItemSchema,
 ])
 
 // Element-level catch: when a row has an unrecognised 'kind' value (e.g. a stale
@@ -459,6 +491,7 @@ export type FrameworkUpdate = z.infer<typeof frameworkUpdateSchema>
 
 export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
 export type ActionDescriptor = z.infer<typeof actionDescriptorSchema>
+export type AlertChainNode = z.infer<typeof alertChainNodeSchema>
 export type DagNode = z.infer<typeof dagNodeSchema>
 export type DagContext = z.infer<typeof dagContextSchema>
 export type TaskStatus = z.infer<typeof taskStatusSchema>

@@ -9,6 +9,7 @@ import {
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import {
+  kindBadgeLabel,
   severityColor,
   summarizeTraceEvent,
 } from '@/shared/actionQueueDetail'
@@ -35,12 +36,6 @@ const priorityBadgeClass = (priority: string): string => {
   if (priority === 'high') return 'text-error'
   if (priority === 'normal') return 'text-warn'
   return 'text-iron/60'
-}
-
-const KIND_LABEL: Record<ActionQueueItem['kind'], string> = {
-  'failed-task': 'failed',
-  'stale-worktree': 'stale wt',
-  'draft-proposal': 'draft',
 }
 
 export type KindFilter = 'all' | 'alerts' | 'drafts'
@@ -84,7 +79,7 @@ export const ActionQueueRow = memo(({
     <div className={baseClass} onClick={() => onSelect(item.id)}>
       <div className="flex items-baseline gap-2">
         <span className="shrink-0 font-mono text-[9px] uppercase text-iron/80">
-          {KIND_LABEL[item.kind]}
+          {kindBadgeLabel(item.kind)}
         </span>
         <span className="break-all font-mono text-[10px] text-iron">
           {item.entityId}
@@ -431,7 +426,7 @@ interface DetailProps {
   onNavigateToTask?: (taskId: string) => void
 }
 
-const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
+export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
   // A real failed task (not the daemon-killed-batch sentinel) can open the
   // shared TaskDetailDrawer. The `from=action-queue` tag keeps the Action queue
   // list mounted behind the drawer and returns here on close.
@@ -451,7 +446,7 @@ const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
             {item.entityId}
           </span>
           <span className="shrink-0 font-mono text-[10px] uppercase text-iron/80">
-            {KIND_LABEL[item.kind]}
+            {kindBadgeLabel(item.kind)}
           </span>
           <span
             className={`ml-auto font-mono text-[10px] uppercase ${priorityBadgeClass(item.priority)}`}
@@ -459,16 +454,29 @@ const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
             {item.priority}
           </span>
         </div>
-        {/* Warm title — the original task + failure reason are the headline. */}
-        <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
-          {item.title || '(no title)'}
-        </h2>
-        {/* Plain-English failure reason shown prominently below the title for failed-task rows. */}
-        {item.kind === 'failed-task' && item.body ? (
-          <p className="mt-2 whitespace-pre-wrap font-mono text-[12px] text-fg/80">
-            {item.body}
-          </p>
-        ) : null}
+        {/* For arc-failed: goal is the headline, reason is the subordinate line. */}
+        {/* For all other kinds: title is the headline, body shown for failed-task. */}
+        {item.kind === 'arc-failed' ? (
+          <>
+            <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
+              {item.goal || '(no goal)'}
+            </h2>
+            <p className="mt-1 whitespace-pre-wrap font-mono text-[12px] text-fg/80">
+              {item.reason}
+            </p>
+          </>
+        ) : (
+          <>
+            <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
+              {item.title || '(no title)'}
+            </h2>
+            {item.kind === 'failed-task' && item.body ? (
+              <p className="mt-2 whitespace-pre-wrap font-mono text-[12px] text-fg/80">
+                {item.body}
+              </p>
+            ) : null}
+          </>
+        )}
         {isRealFailedTask ? (
           <button
             type="button"
@@ -555,8 +563,8 @@ const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
               onNavigate={onNavigateToTask}
             />
           ) : null}
-          {/* Details — shown only for non-failed rows; failed rows surface body in the header. */}
-          {item.kind !== 'failed-task' ? (
+          {/* Details — shown only for rows where body is not already in the header. */}
+          {item.kind !== 'failed-task' && item.kind !== 'arc-failed' ? (
             <div>
               <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
                 Details
@@ -654,6 +662,7 @@ export const ActionQueuePage = () => {
     'draft-proposal': true,
     'failed-task': true,
     'stale-worktree': true,
+    'arc-failed': true,
   })
 
   const toggleSection = useCallback((kind: ActionQueueItem['kind']) => {
@@ -665,6 +674,7 @@ export const ActionQueuePage = () => {
     'draft-proposal': filtered.filter((i) => i.kind === 'draft-proposal'),
     'failed-task': filtered.filter((i) => i.kind === 'failed-task'),
     'stale-worktree': filtered.filter((i) => i.kind === 'stale-worktree'),
+    'arc-failed': filtered.filter((i) => i.kind === 'arc-failed'),
   }), [filtered])
 
   return (
@@ -719,6 +729,7 @@ export const ActionQueuePage = () => {
               {([
                 ['draft-proposal', 'Drafts'],
                 ['failed-task', 'Failed tasks'],
+                ['arc-failed', 'Failed arcs'],
                 ['stale-worktree', 'Stale worktrees'],
               ] as const).map(([kind, title]) => {
                 const bucket = grouped[kind]

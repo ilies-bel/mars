@@ -75,3 +75,16 @@ export const originKindLabel = (kind: string): string => {
   if (kind === 'fix') return 'FIX'
   return 'TASK'
 }
+
+/**
+ * Short display label for an action-queue row kind. Used in both the sidebar
+ * row kind badge and the detail panel header badge so the label is authoritative
+ * in one place for all four kinds (including `arc-failed`).
+ */
+export const kindBadgeLabel = (kind: string): string => {
+  if (kind === 'arc-failed') return 'arc failed'
+  if (kind === 'failed-task') return 'failed'
+  if (kind === 'stale-worktree') return 'stale wt'
+  if (kind === 'draft-proposal') return 'draft'
+  return kind
+}
