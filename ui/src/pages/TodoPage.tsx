@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
@@ -167,10 +167,11 @@ const INVESTIGATE_OP = 'investigate'
 const DIAGNOSE_OP = 'diagnose-failure'
 
 /**
- * Renders one button per recovery action on the row. Clicking proxies the
- * action's `op` to the daemon (via `/api/actions`). `needsConfirm` actions
- * prompt first; destructive ops are styled accordingly. The `shape` op has no
- * daemon verb — it renders as a guidance chip showing the skill to run.
+ * Renders one button per action on the row. Clicking proxies the action's
+ * `op` to the daemon (via `/api/actions`). `needsConfirm` actions prompt
+ * first; destructive ops are styled accordingly. The `copy` op copies
+ * `action.hint` (or `action.label`) to the clipboard and shows a transient
+ * 'Copied ✓' confirmation — it does NOT call the daemon.
  *
  * For stale-worktree rows where `empty === true` the Investigate action is
  * suppressed (nothing to analyse in an empty worktree).
@@ -178,6 +179,15 @@ const DIAGNOSE_OP = 'diagnose-failure'
 const ActionBar = ({ item }: ActionBarProps) => {
   const qc = useQueryClient()
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [copiedActionId, setCopiedActionId] = useState<string | null>(null)
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Clear the transient 'Copied' timer on unmount to avoid a setState-after-unmount.
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+    }
+  }, [])
 
   const mutation = useMutation({
     mutationFn: ({ action }: { action: ActionDescriptor }) => {
@@ -220,21 +230,43 @@ const ActionBar = ({ item }: ActionBarProps) => {
     mutation.mutate({ action })
   }
 
+  const handleCopy = (action: ActionDescriptor) => {
+    const text = action.hint ?? action.label
+    if (typeof navigator === 'undefined' || !navigator.clipboard) {
+      setErrorMsg('Clipboard unavailable')
+      return
+    }
+    navigator.clipboard.writeText(text).then(
+      () => {
+        if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+        setCopiedActionId(action.id)
+        copyTimerRef.current = setTimeout(() => {
+          setCopiedActionId(null)
+          copyTimerRef.current = null
+        }, 1500)
+      },
+      (err: unknown) => {
+        setErrorMsg((err instanceof Error ? err.message : null) ?? 'Copy failed')
+      },
+    )
+  }
+
   return (
     <div>
       <dt className="mb-2 text-[10px] uppercase tracking-wider text-iron">
-        Recovery
+        Move forward
       </dt>
       <dd className="flex flex-wrap gap-2">
         {visibleActions.map((action) =>
           action.op === 'copy' ? (
-            <span
+            <button
               key={action.id}
-              className="border border-iron/30 px-3 py-1.5 font-mono text-[11px] text-iron"
+              type="button"
+              onClick={() => handleCopy(action)}
+              className="border border-iron/30 px-3 py-1.5 font-mono text-[11px] text-iron transition hover:bg-iron/10 active:scale-[0.97]"
             >
-              {action.label}
-              {action.hint ? ` · ${action.hint}` : ''}
-            </span>
+              {copiedActionId === action.id ? 'Copied ✓' : action.label}
+            </button>
           ) : (
             <button
               key={action.id}

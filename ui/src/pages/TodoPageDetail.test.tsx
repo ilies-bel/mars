@@ -204,15 +204,15 @@ describe('actionQueue detail – failure reason in header', () => {
 })
 
 // ---------------------------------------------------------------------------
-// AC2: Recovery actions render as buttons from the row's own `actions` (the
+// AC2: Actions render as buttons from the row's own `actions` (the
 // Failure kind menu), via the shared ActionBar.
 // ---------------------------------------------------------------------------
 
-describe('actionQueue detail – Recovery actions', () => {
+describe('actionQueue detail – Move forward actions', () => {
   it('renders a Restart action button from the row actions', () => {
     const qc = makeClient({ taskId: 't-1' })
     const html = renderDetail(BASE_ITEM, qc)
-    expect(html).toContain('Recovery')
+    expect(html).toContain('Move forward')
     // BASE_ITEM carries a single restart action on the row.
     expect(html).toContain('>Restart<')
   })
@@ -232,6 +232,43 @@ describe('actionQueue detail – Recovery actions', () => {
     expect(html).toContain('>Investigate<')
     expect(html).toContain('>Restart from scratch<')
     expect(html).toContain('>Drop permanently<')
+  })
+
+  // copy op: renders as an interactive button, not a guidance-chip span.
+  // The old span chip concatenated label · hint; the new button shows only
+  // the label (hint is copied to clipboard on click, not displayed inline).
+  it('renders a copy action as a clipboard button (not a guidance-chip span)', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(
+      makeItem({
+        actions: [
+          { id: 'copy-1', label: 'Move forward', op: 'copy', hint: '/mars:grill t-1' },
+        ],
+      }),
+      qc,
+    )
+    // Old chip format — label followed by ' · hint' — must be absent.
+    expect(html).not.toContain('Move forward · ')
+    // The action's label must still appear in the rendered output.
+    expect(html).toContain('Move forward')
+    // A <button> tag must be present (the section header is a <dt>, not a button,
+    // so the <button> tag comes from the action).
+    expect(html).toContain('<button')
+  })
+
+  // dismiss op goes through the generic button path (needsConfirm gate fires in
+  // the browser; here we just verify the button renders with the right label).
+  it('renders a dismiss action as a button via the generic path', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(
+      makeItem({
+        actions: [
+          { id: 'dismiss-1', label: 'Dismiss', op: 'dismiss', needsConfirm: true },
+        ],
+      }),
+      qc,
+    )
+    expect(html).toContain('>Dismiss<')
   })
 })
 
