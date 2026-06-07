@@ -323,3 +323,27 @@ export const dataSignature = (
   const propSig = proposals.map((p) => `${p.id}|${p.title}`).join(';')
   return `${tasks.length}/${proposals.length}#${taskSig}#${propSig}`
 }
+
+/**
+ * Period and minimum stroke-opacity for the 'In progress' node pulse.
+ * Period matches the board view's CSS animation (1.6 s).
+ */
+export const PULSE_PERIOD_MS = 1600
+export const PULSE_MIN_OPACITY = 0.4
+
+/**
+ * Compute the strokeOpacity for an 'In progress' node pulse at a given elapsed
+ * time. Returns a value in [PULSE_MIN_OPACITY, 1.0] using a cosine-based
+ * ease-in-out cycle that starts fully opaque, dips to PULSE_MIN_OPACITY at the
+ * midpoint, then returns to 1.0 — mirroring the board view's CSS animation:
+ * `@keyframes mars-pulse { 0%,100% { opacity:1 } 50% { opacity:0.35 } }`.
+ *
+ * Pure and side-effect-free; testable without a canvas.
+ */
+export const pulseOpacity = (elapsedMs: number): number => {
+  const t = (elapsedMs % PULSE_PERIOD_MS) / PULSE_PERIOD_MS
+  // cos(2πt): 1 at t=0, −1 at t=0.5, 1 at t=1.  Map [1,−1] → [0,1] then
+  // scale into [PULSE_MIN_OPACITY, 1.0].
+  const k = (Math.cos(2 * Math.PI * t) + 1) / 2
+  return PULSE_MIN_OPACITY + k * (1 - PULSE_MIN_OPACITY)
+}

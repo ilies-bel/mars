@@ -10,6 +10,9 @@ import {
   dataSignature,
   dominant,
   type ElementSnapshot,
+  pulseOpacity,
+  PULSE_MIN_OPACITY,
+  PULSE_PERIOD_MS,
   rollupByProposal,
   type Rollup,
 } from './topologyGraphModel'
@@ -358,5 +361,42 @@ describe('dataSignature', () => {
     const before = dataSignature([task({ id: 't1', cluster: 'Queued' })], [])
     const after = dataSignature([task({ id: 't1', cluster: 'Queued', fixForTaskId: 'x' })], [])
     expect(before).not.toBe(after)
+  })
+})
+
+describe('pulseOpacity', () => {
+  it('returns 1.0 at elapsed 0 (full opacity at start)', () => {
+    expect(pulseOpacity(0)).toBeCloseTo(1.0, 5)
+  })
+
+  it('returns PULSE_MIN_OPACITY at the half-period (dip)', () => {
+    expect(pulseOpacity(PULSE_PERIOD_MS / 2)).toBeCloseTo(PULSE_MIN_OPACITY, 5)
+  })
+
+  it('returns 1.0 at the full period (back to full opacity)', () => {
+    expect(pulseOpacity(PULSE_PERIOD_MS)).toBeCloseTo(1.0, 5)
+  })
+
+  it('stays within [PULSE_MIN_OPACITY, 1.0] across the full cycle', () => {
+    for (let i = 0; i <= 100; i++) {
+      const v = pulseOpacity((i / 100) * PULSE_PERIOD_MS)
+      expect(v).toBeGreaterThanOrEqual(PULSE_MIN_OPACITY - 1e-10)
+      expect(v).toBeLessThanOrEqual(1.0 + 1e-10)
+    }
+  })
+
+  it('is periodic: value at t equals value at t + PULSE_PERIOD_MS', () => {
+    const offsets = [0, 137, 400, 799, 1200]
+    for (const t of offsets) {
+      expect(pulseOpacity(t)).toBeCloseTo(pulseOpacity(t + PULSE_PERIOD_MS), 10)
+    }
+  })
+
+  it('is continuous: adjacent samples differ by less than 0.05 at 60 fps', () => {
+    const frameDuration = 1000 / 60
+    for (let t = 0; t < PULSE_PERIOD_MS; t += frameDuration) {
+      const diff = Math.abs(pulseOpacity(t + frameDuration) - pulseOpacity(t))
+      expect(diff).toBeLessThan(0.05)
+    }
   })
 })

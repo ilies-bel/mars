@@ -54,6 +54,7 @@ import {
   PROPOSAL_STROKE,
   PROPOSAL_TEXT,
   arcKeyFromComboId,
+  pulseOpacity,
 } from './topologyGraphModel'
 import type { Cluster } from '@/shared/schemas'
 
@@ -118,6 +119,7 @@ export const TopologyView = ({
   const cloudHomeRef = useRef<Map<string, [number, number]>>(new Map())
   const nudgeHomeRef = useRef<Map<string, [number, number]>>(new Map())
   const animGenRef = useRef(0)
+  const pulseGenRef = useRef(0)
   const busyRef = useRef(false)
   const pendingSwapRef = useRef<string | null>(null)
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -656,6 +658,39 @@ export const TopologyView = ({
       // apply any initial filter dim state
       applyHighlight()
 
+      // Pulse the orange stroke of 'In progress' nodes on a ~1.6 s ease-in-out
+      // cosine cycle, echoing the board view's animate-mars-pulse CSS animation.
+      // - Skipped entirely under prefers-reduced-motion.
+      // - Dimmed nodes (state includes 'dim') are left at their dim opacity so
+      //   the search/cluster/hover dim state is never overridden by the pulse.
+      // - In-progress IDs are cached at loop start (stable within a graph
+      //   lifecycle) so per-frame work is O(in-progress nodes).
+      // - Generation token (pulseGenRef) cancels the loop on graph rebuild or
+      //   unmount, following the same pattern as animateCombos / animGenRef.
+      if (!reduced()) {
+        const pulseGen = ++pulseGenRef.current
+        const inProgressIds = graph
+          .getNodeData()
+          .filter((n) => n.data?.cluster === 'In progress')
+          .map((n) => String(n.id))
+        if (inProgressIds.length > 0) {
+          const t0 = performance.now()
+          const pulseFn = (): void => {
+            if (pulseGen !== pulseGenRef.current) return
+            const opacity = pulseOpacity(performance.now() - t0)
+            const updates = inProgressIds
+              .filter((id) => !graph.getElementState(id).includes('dim'))
+              .map((id) => ({ id, style: { strokeOpacity: opacity } }))
+            if (updates.length > 0) {
+              graph.updateNodeData(updates)
+              void graph.draw().catch(() => {})
+            }
+            requestAnimationFrame(pulseFn)
+          }
+          requestAnimationFrame(pulseFn)
+        }
+      }
+
       graph.on('node:pointerenter', (ev: IPointerEvent) => {
         const id = String((ev.target as { id?: string }).id)
         schedule(() => hoverTask(id))
@@ -684,6 +719,7 @@ export const TopologyView = ({
     })
 
     return () => {
+      ++pulseGenRef.current // cancel in-progress pulse rAF loop
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('error', onWindowError, true)
       window.removeEventListener('unhandledrejection', onRejection)
