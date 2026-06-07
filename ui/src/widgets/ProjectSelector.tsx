@@ -22,18 +22,10 @@ import { projectIdentity } from '@/shared/projectIdentity'
 import { startProject } from '@/shared/api'
 import type { DaemonHealth, Project } from '@/shared/schemas'
 
-const HEALTH_LABEL: Record<DaemonHealth, string> = {
-  live: 'live',
-  degraded: 'degraded',
-  down: 'down',
-}
-
-const healthBadgeClass = (health: DaemonHealth): string => {
-  if (health === 'live')
-    return 'rounded px-1 font-mono text-[9px] uppercase leading-none bg-green-900/40 text-green-400'
-  if (health === 'degraded')
-    return 'rounded px-1 font-mono text-[9px] uppercase leading-none bg-yellow-900/40 text-yellow-400'
-  return 'rounded px-1 font-mono text-[9px] uppercase leading-none bg-red-900/40 text-red-400'
+const healthGlyphClass = (health: DaemonHealth): string => {
+  if (health === 'live') return 'text-green-400'
+  if (health === 'degraded') return 'text-yellow-400'
+  return 'text-red-400'
 }
 
 interface ProjectSelectorInnerProps {
@@ -73,14 +65,15 @@ export const ProjectSelectorInner = ({
         data-testid="project-selector-trigger"
         className="flex items-center gap-1.5 rounded px-2 py-0.5 font-mono text-[11px] text-fg transition-colors hover:bg-iron/20"
       >
-        <span aria-hidden="true">{focusedIcon}</span>
-        {focusedName}
         <span
-          className={healthBadgeClass(focusedProject.health)}
-          data-testid="health-badge-trigger"
+          role="img"
+          aria-label={`${focusedName} — ${focusedProject.health}`}
+          title={`${focusedName} — ${focusedProject.health}`}
+          className={healthGlyphClass(focusedProject.health)}
         >
-          {HEALTH_LABEL[focusedProject.health]}
+          {focusedIcon}
         </span>
+        {focusedName}
         <span aria-hidden="true" className="ml-1 text-iron">
           {open ? '▲' : '▼'}
         </span>
@@ -111,14 +104,15 @@ export const ProjectSelectorInner = ({
                     : 'text-iron hover:bg-iron/10 hover:text-fg',
                 ].join(' ')}
               >
-                <span aria-hidden="true">{icon}</span>
-                {name}
                 <span
-                  className={healthBadgeClass(p.health)}
-                  data-testid={`health-badge-${p.projectId}`}
+                  role="img"
+                  aria-label={`${name} — ${p.health}`}
+                  title={`${name} — ${p.health}`}
+                  className={healthGlyphClass(p.health)}
                 >
-                  {HEALTH_LABEL[p.health]}
+                  {icon}
                 </span>
+                {name}
                 {p.health === 'down' ? (
                   <button
                     type="button"

@@ -2,7 +2,7 @@
  * Tests for the ProjectSelector widget.
  *
  * Verifies observable behaviour through the public interface:
- *   - trigger shows the currently focused project (name + health badge)
+ *   - trigger shows the currently focused project (color-coded glyph + name)
  *   - the open dropdown lists all registered projects
  *   - the focused project carries aria-current="true" in the open dropdown
  *   - Start button appears only for 'down' projects in the open dropdown
@@ -137,19 +137,34 @@ describe('ProjectSelector – trigger shows focused project', () => {
     expect(html).toContain('aria-expanded="true"')
   })
 
-  it('trigger shows a health badge for the focused project', () => {
+  it('trigger glyph has role="img" so the status is accessible', () => {
     const html = renderClosed('proj-live')
-    expect(html).toContain('data-testid="health-badge-trigger"')
+    expect(html).toContain('role="img"')
   })
 
-  it('trigger badge shows "live" for a live focused project', () => {
+  it('trigger glyph aria-label carries the live status for a live focused project', () => {
     const html = renderClosed('proj-live')
-    expect(html).toMatch(/data-testid="health-badge-trigger"[^>]*>live</)
+    expect(html).toContain('aria-label="Live Project — live"')
   })
 
-  it('trigger badge shows "down" when the focused project is down', () => {
+  it('trigger glyph aria-label carries the down status for a down focused project', () => {
     const html = renderClosed('proj-down')
-    expect(html).toMatch(/data-testid="health-badge-trigger"[^>]*>down</)
+    expect(html).toContain('aria-label="Down Project — down"')
+  })
+
+  it('trigger glyph has the live color class for a live focused project', () => {
+    const html = renderClosed('proj-live')
+    expect(html).toContain('text-green-400')
+  })
+
+  it('trigger glyph has the down color class for a down focused project', () => {
+    const html = renderClosed('proj-down')
+    expect(html).toContain('text-red-400')
+  })
+
+  it('trigger does not render an old text health-badge pill', () => {
+    const html = renderClosed('proj-live')
+    expect(html).not.toContain('data-testid="health-badge-trigger"')
   })
 
   it('the dropdown list is NOT present in the closed state', () => {
@@ -187,29 +202,33 @@ describe('ProjectSelector – opening reveals all projects', () => {
     expect(html).toContain('data-testid="project-item-proj-down"')
   })
 
-  it('renders a health badge for each project in the dropdown', () => {
+  it('dropdown glyphs carry health status in their aria-labels', () => {
     const html = renderOpen()
-    expect(html).toContain('data-testid="health-badge-proj-live"')
-    expect(html).toContain('data-testid="health-badge-proj-degraded"')
-    expect(html).toContain('data-testid="health-badge-proj-down"')
+    expect(html).toContain('aria-label="Live Project — live"')
+    expect(html).toContain('aria-label="Degraded Project — degraded"')
+    expect(html).toContain('aria-label="Down Project — down"')
   })
 
-  it('shows "live" badge text for a live project', () => {
+  it('live project glyph has green color class', () => {
     const html = renderOpen()
-    const match = html.match(/data-testid="health-badge-proj-live"[^>]*>([^<]+)</)
-    expect(match?.[1]).toBe('live')
+    expect(html).toContain('text-green-400')
   })
 
-  it('shows "degraded" badge text for a degraded project', () => {
+  it('degraded project glyph has yellow color class', () => {
     const html = renderOpen()
-    const match = html.match(/data-testid="health-badge-proj-degraded"[^>]*>([^<]+)</)
-    expect(match?.[1]).toBe('degraded')
+    expect(html).toContain('text-yellow-400')
   })
 
-  it('shows "down" badge text for a down project', () => {
+  it('down project glyph has red color class', () => {
     const html = renderOpen()
-    const match = html.match(/data-testid="health-badge-proj-down"[^>]*>([^<]+)</)
-    expect(match?.[1]).toBe('down')
+    expect(html).toContain('text-red-400')
+  })
+
+  it('does not render old text health-badge pills', () => {
+    const html = renderOpen()
+    expect(html).not.toContain('data-testid="health-badge-proj-live"')
+    expect(html).not.toContain('data-testid="health-badge-proj-degraded"')
+    expect(html).not.toContain('data-testid="health-badge-proj-down"')
   })
 })
 
