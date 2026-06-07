@@ -587,14 +587,11 @@ const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {isRealFailedTask ? (
             <TracesSection taskId={item.entityId} />
           ) : null}
-          <div>
-            <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-              Last updated
-            </dt>
-            <dd className="text-fg">{formatTime(item.at)}</dd>
-          </div>
         </dl>
       </main>
+      <footer className="border-t border-iron/30 px-6 py-3 font-mono text-[10px] text-iron/60">
+        {isRealFailedTask ? 'Failed' : 'Last activity'}: {relativeTime(item.at)}
+      </footer>
     </div>
   )
 }

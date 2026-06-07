@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { formatRelativeAge, formatRelativeAgeFromHours } from './time'
+import { formatRelativeAge, formatRelativeAgeFromHours, relativeTime } from './time'
 
 const SEC = 1_000
 const MIN = 60 * SEC
@@ -115,5 +115,37 @@ describe('formatRelativeAgeFromHours', () => {
 
   it('regression: a 73.4-hour-old item renders as days, not "73.4h"', () => {
     expect(formatRelativeAgeFromHours(73.4)).toBe('3d')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// relativeTime — used by the Alert detail footer
+// ---------------------------------------------------------------------------
+
+describe('relativeTime – footer elapsed format', () => {
+  const NOW = 1_700_000_000_000 // fixed epoch for determinism
+
+  it('returns "1h ago" for a timestamp 1 hour in the past', () => {
+    const iso = new Date(NOW - 60 * 60 * 1_000).toISOString()
+    expect(relativeTime(iso, NOW)).toBe('1h ago')
+  })
+
+  it('returns "30m ago" for a timestamp 30 minutes in the past', () => {
+    const iso = new Date(NOW - 30 * 60 * 1_000).toISOString()
+    expect(relativeTime(iso, NOW)).toBe('30m ago')
+  })
+
+  it('returns "Xs ago" format — never an ISO/absolute date string', () => {
+    const iso = new Date(NOW - 45 * 1_000).toISOString()
+    const result = relativeTime(iso, NOW)
+    // Must not contain a year like '2023' or an ISO date separator 'T'
+    expect(result).not.toMatch(/\d{4}-\d{2}-\d{2}/)
+    expect(result).not.toContain('T')
+    expect(result).toMatch(/ago$/)
+  })
+
+  it('returns "1d ago" for a timestamp 24 hours in the past', () => {
+    const iso = new Date(NOW - 24 * 60 * 60 * 1_000).toISOString()
+    expect(relativeTime(iso, NOW)).toBe('1d ago')
   })
 })
