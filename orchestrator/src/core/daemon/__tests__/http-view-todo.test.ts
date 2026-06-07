@@ -80,6 +80,7 @@ describe('GET /view/todo', () => {
       createdAt: 1_700_000_000_000,
       updatedAt: 1_700_000_001_000,
       acceptanceCount: 2,
+      userStories: [],
     }
     const stale: StaleWorktreeAlert = {
       taskId: 'task-abc',

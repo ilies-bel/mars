@@ -24,6 +24,7 @@ const withDrafts = (n: number): TodoPayload => ({
     createdAt: Date.now(),
     updatedAt: Date.now(),
     acceptanceCount: 0,
+    userStories: [] as string[],
   })),
   staleWorktrees: [],
 })

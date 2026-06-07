@@ -26,6 +26,8 @@ const draftFeatureSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
   acceptanceCount: z.number(),
+  /** Ordered user story texts. Absent on legacy daemon responses — defaults to []. */
+  userStories: z.array(z.string()).optional().default([]),
 })
 
 const taskPlanSchema = z

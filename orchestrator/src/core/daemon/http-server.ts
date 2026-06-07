@@ -71,6 +71,8 @@ export interface DraftFeature {
   createdAt: number
   updatedAt: number
   acceptanceCount: number
+  /** Ordered list of user story texts for this proposal. Empty when none have been added. */
+  userStories: string[]
 }
 
 /** Wire shape returned by GET /view/todo for a single stale-worktree alert. */

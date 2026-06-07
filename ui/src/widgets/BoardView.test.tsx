@@ -35,6 +35,7 @@ const draft = (id: string, title = `Draft ${id}`): DraftFeature => ({
   createdAt: 0,
   updatedAt: 0,
   acceptanceCount: 0,
+  userStories: [],
 })
 
 const emptyByCluster = () => ({

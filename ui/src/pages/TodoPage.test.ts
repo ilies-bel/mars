@@ -55,8 +55,9 @@ const makeProposal = (
     createdAt: Date.now(),
     updatedAt: Date.now(),
     acceptanceCount: 0,
+    userStories: [],
     ...overrides,
-  },
+  } as ProposalItem['draft'],
 })
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ const draftProposal = (overrides: Partial<DraftFeature> = {}): DraftFeature => (
   createdAt: Date.now(),
   updatedAt: Date.now(),
   acceptanceCount: 3,
+  userStories: [],
   ...overrides,
 })
 
@@ -293,5 +294,93 @@ describe('ProposalDetailDrawer – sliced-tasks list', () => {
     )
     // The second line of the alpha prompt should NOT appear.
     expect(html).not.toContain('some extra detail that should be ignored')
+  })
+})
+
+// ── Body sections: problem, solution, user stories ───────────────────────────
+
+describe('ProposalDetailDrawer – body sections', () => {
+  it('renders the problem statement when non-empty', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ problem: 'The drawer shows nothing useful.' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-detail-problem"')
+    expect(html).toContain('The drawer shows nothing useful.')
+  })
+
+  it('renders the solution / PRD body when non-empty', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ solution: 'Render problem, solution, and user stories.' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-detail-solution"')
+    expect(html).toContain('Render problem, solution, and user stories.')
+  })
+
+  it('renders the user stories list when stories are present', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ userStories: ['Story alpha', 'Story beta'] })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-detail-stories"')
+    expect(html).toContain('Story alpha')
+    expect(html).toContain('Story beta')
+  })
+
+  it('omits the problem section when problem is empty', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ problem: '' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="proposal-detail-problem"')
+  })
+
+  it('omits the solution section when solution is empty', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ solution: '' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="proposal-detail-solution"')
+  })
+
+  it('omits the user stories section when no stories exist', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ userStories: [] })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="proposal-detail-stories"')
+  })
+
+  it('renders all three sections when all content is present', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({
+          problem: 'Users see an empty panel.',
+          solution: 'Fill the panel with PRD content.',
+          userStories: ['User sees the problem', 'User sees the solution'],
+        })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-detail-problem"')
+    expect(html).toContain('data-testid="proposal-detail-solution"')
+    expect(html).toContain('data-testid="proposal-detail-stories"')
+    expect(html).toContain('Users see an empty panel.')
+    expect(html).toContain('Fill the panel with PRD content.')
+    expect(html).toContain('User sees the problem')
+    expect(html).toContain('User sees the solution')
   })
 })

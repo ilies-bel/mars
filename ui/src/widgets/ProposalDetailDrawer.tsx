@@ -180,36 +180,83 @@ export const ProposalDetailDrawer = ({
           Close
         </button>
       </header>
-      {childTasks.length > 0 ? (
-        <section
-          data-testid="sliced-tasks"
-          className="flex flex-col gap-2 overflow-y-auto border-b border-iron/40 px-4 py-3"
-        >
-          <h3 className="font-mono text-[10px] uppercase tracking-wide text-iron/80">
-            Sliced tasks
-          </h3>
-          <ul className="flex flex-col gap-1.5">
-            {childTasks.map((task) => (
-              <li key={task.id}>
-                <a
-                  href={`#/task/${encodeURIComponent(task.id)}`}
-                  className="flex items-center gap-2 rounded border border-iron/20 px-2 py-1.5 font-mono text-xs transition-colors hover:bg-iron/5"
-                >
-                  <span className="shrink-0 text-iron">{task.id}</span>
-                  <span
-                    className={`inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${badgeClass(task.status)}`}
+
+      {/* Scrollable body — problem, solution, user stories, sliced tasks */}
+      <div className="flex flex-1 flex-col overflow-y-auto">
+        {proposal.problem.trim() ? (
+          <section
+            data-testid="proposal-detail-problem"
+            className="border-b border-iron/40 px-4 py-3"
+          >
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-iron/60">
+              Problem
+            </p>
+            <p className="whitespace-pre-wrap font-mono text-xs text-fg">{proposal.problem}</p>
+          </section>
+        ) : null}
+
+        {proposal.solution.trim() ? (
+          <section
+            data-testid="proposal-detail-solution"
+            className="border-b border-iron/40 px-4 py-3"
+          >
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-iron/60">
+              Solution
+            </p>
+            <p className="whitespace-pre-wrap font-mono text-xs text-fg">{proposal.solution}</p>
+          </section>
+        ) : null}
+
+        {proposal.userStories.length > 0 ? (
+          <section
+            data-testid="proposal-detail-stories"
+            className="border-b border-iron/40 px-4 py-3"
+          >
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-iron/60">
+              User stories
+            </p>
+            <ol className="flex flex-col gap-1.5">
+              {proposal.userStories.map((story, idx) => (
+                <li key={idx} className="flex gap-2 font-mono text-xs text-fg">
+                  <span className="shrink-0 text-iron/60">{idx + 1}.</span>
+                  <span>{story}</span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        ) : null}
+
+        {childTasks.length > 0 ? (
+          <section
+            data-testid="sliced-tasks"
+            className="flex flex-col gap-2 border-b border-iron/40 px-4 py-3"
+          >
+            <h3 className="font-mono text-[10px] uppercase tracking-wide text-iron/80">
+              Sliced tasks
+            </h3>
+            <ul className="flex flex-col gap-1.5">
+              {childTasks.map((task) => (
+                <li key={task.id}>
+                  <a
+                    href={`#/task/${encodeURIComponent(task.id)}`}
+                    className="flex items-center gap-2 rounded border border-iron/20 px-2 py-1.5 font-mono text-xs transition-colors hover:bg-iron/5"
                   >
-                    {task.status}
-                  </span>
-                  <span className="min-w-0 truncate text-fg">
-                    {task.prompt.split('\n')[0]?.slice(0, 80) ?? ''}
-                  </span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+                    <span className="shrink-0 text-iron">{task.id}</span>
+                    <span
+                      className={`inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${badgeClass(task.status)}`}
+                    >
+                      {task.status}
+                    </span>
+                    <span className="min-w-0 truncate text-fg">
+                      {task.prompt.split('\n')[0]?.slice(0, 80) ?? ''}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+      </div>
 
       {/* CLI commands — read-only, status-appropriate, copy-to-clipboard */}
       <section className="border-t border-iron/40 px-4 py-3">

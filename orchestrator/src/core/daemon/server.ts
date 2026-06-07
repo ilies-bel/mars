@@ -2770,6 +2770,26 @@ export const startDaemon = async (
            WHERE p.status = 'draft'
            ORDER BY p.created_at DESC`,
         )
+
+        // Load user stories for all draft proposals in one query.
+        const storiesMap = new Map<string, string[]>()
+        if (r.rows.length > 0) {
+          const ids = r.rows.map((row) => (row as unknown as { id: string }).id)
+          const placeholders = ids.map(() => '?').join(', ')
+          const storiesResult = await client.execute({
+            sql: `SELECT proposal_id, text FROM proposal_user_stories
+                  WHERE proposal_id IN (${placeholders})
+                  ORDER BY proposal_id, position ASC`,
+            args: ids,
+          })
+          for (const row of storiesResult.rows) {
+            const r0 = row as unknown as { proposal_id: string; text: string }
+            const arr = storiesMap.get(r0.proposal_id) ?? []
+            arr.push(r0.text)
+            storiesMap.set(r0.proposal_id, arr)
+          }
+        }
+
         for (const row of r.rows) {
           const r0 = row as unknown as Record<string, unknown>
           const src = r0.source
@@ -2785,6 +2805,7 @@ export const startDaemon = async (
             createdAt: Number(r0.created_at ?? 0),
             updatedAt: Number(r0.updated_at ?? 0),
             acceptanceCount: Number(r0.acceptance_count ?? 0),
+            userStories: storiesMap.get(r0.id as string) ?? [],
           })
         }
       }

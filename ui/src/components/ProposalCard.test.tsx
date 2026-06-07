@@ -13,8 +13,9 @@ const draft = (overrides: Partial<DraftFeature> = {}): DraftFeature => ({
   createdAt: Date.now(),
   updatedAt: Date.now(),
   acceptanceCount: 0,
+  userStories: [],
   ...overrides,
-})
+} as DraftFeature)
 
 describe('ProposalCard', () => {
   it('renders an anchor linking to #/proposal/<id>', () => {
