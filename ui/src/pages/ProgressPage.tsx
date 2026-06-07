@@ -76,7 +76,7 @@ export const ProgressPage = () => {
   const failedCount = byCluster.Failed.length
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-bg">
+    <div className="flex h-full w-full min-h-0 overflow-hidden bg-bg">
       <Sidebar
         tasksCount={totalTasks}
         triageCount={blockedCount}
