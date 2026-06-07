@@ -176,6 +176,81 @@ describe('buildActionQueueHistoryView — resolved row shape', () => {
     expect(result.rows).toHaveLength(0)
     expect(result.nextCursor).toBeNull()
   })
+
+  it('preserves the store order (newest-first) in the returned rows', async () => {
+    // The store returns rows newest-first (ORDER BY resolved_at DESC).
+    // buildActionQueueHistoryView must not reorder them.
+    const rows = [
+      makeResolvedRow({ id: 'newest', resolvedAt: '2024-01-03T00:00:00.000Z' }),
+      makeResolvedRow({ id: 'middle', resolvedAt: '2024-01-02T00:00:00.000Z', payload: { taskId: 'task-1' } }),
+      makeResolvedRow({ id: 'oldest', resolvedAt: '2024-01-01T00:00:00.000Z', payload: { taskId: 'task-1' } }),
+    ]
+
+    const result = await buildActionQueueHistoryView({
+      stateStore: makeStateStore(rows),
+      taskStore: makeTaskStore([makeTask()]),
+      repoRoot: '/nonexistent',
+      limit: 50,
+    })
+
+    expect(result.rows).toHaveLength(3)
+    // Verify order is preserved: newest first.
+    expect(result.rows[0]!.id).toBe('newest')
+    expect(result.rows[1]!.id).toBe('middle')
+    expect(result.rows[2]!.id).toBe('oldest')
+  })
+
+  it('first page returns the newest rows and nextCursor points past them', async () => {
+    // Simulate 5 rows ordered newest-first; fetch first page of 2.
+    const rows = Array.from({ length: 5 }, (_, i) =>
+      makeResolvedRow({
+        id: `row-${i}`,
+        resolvedAt: `2024-01-0${5 - i}T00:00:00.000Z`,
+        payload: { taskId: 'task-1' },
+      }),
+    )
+
+    const page1 = await buildActionQueueHistoryView({
+      stateStore: makeStateStore(rows),
+      taskStore: makeTaskStore([makeTask()]),
+      repoRoot: '/nonexistent',
+      limit: 2,
+      cursor: undefined,
+    })
+
+    // First page: 2 rows, cursor for next page.
+    expect(page1.rows).toHaveLength(2)
+    expect(page1.rows[0]!.id).toBe('row-0')
+    expect(page1.rows[1]!.id).toBe('row-1')
+    expect(page1.nextCursor).not.toBeNull()
+
+    // Second page: 2 rows, cursor for next page.
+    const page2 = await buildActionQueueHistoryView({
+      stateStore: makeStateStore(rows),
+      taskStore: makeTaskStore([makeTask()]),
+      repoRoot: '/nonexistent',
+      limit: 2,
+      cursor: page1.nextCursor,
+    })
+
+    expect(page2.rows).toHaveLength(2)
+    expect(page2.rows[0]!.id).toBe('row-2')
+    expect(page2.rows[1]!.id).toBe('row-3')
+    expect(page2.nextCursor).not.toBeNull()
+
+    // Third page: 1 row, no nextCursor.
+    const page3 = await buildActionQueueHistoryView({
+      stateStore: makeStateStore(rows),
+      taskStore: makeTaskStore([makeTask()]),
+      repoRoot: '/nonexistent',
+      limit: 2,
+      cursor: page2.nextCursor,
+    })
+
+    expect(page3.rows).toHaveLength(1)
+    expect(page3.rows[0]!.id).toBe('row-4')
+    expect(page3.nextCursor).toBeNull()
+  })
 })
 
 // ── HTTP route: GET /view/action-queue/history ────────────────────────────────

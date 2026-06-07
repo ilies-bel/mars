@@ -721,3 +721,187 @@ describe('ActionQueuePage – kind filter control', () => {
     expect(html).toContain(BASE_ITEM.title)
   })
 })
+
+// ---------------------------------------------------------------------------
+// AC: Resolution block — shown for resolved history rows; ActionBar suppressed.
+// A resolved item has item.resolution != null; this controls which branch of
+// the {item.resolution ? <ResolutionBlock> : <ActionBar>} renders.
+// ---------------------------------------------------------------------------
+
+describe('actionQueue detail – Resolution block for resolved items', () => {
+  const RESOLVED_AT = '2024-01-02T00:00:00.000Z'
+
+  const resolvedItem: ActionQueueItem = makeItem({
+    id: 'resolved-item-1',
+    resolution: {
+      resolvedAt: RESOLVED_AT,
+      resolution: 'superseded',
+      resolutionNote: 'origin-done',
+      rootCause: null,
+      resolvedBy: 'daemon:auto-supersede',
+    },
+    // Resolved items carry empty actions (no live buttons needed).
+    actions: [],
+  })
+
+  it('renders the Resolution block when item.resolution is non-null', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(resolvedItem, qc)
+    expect(html).toContain('data-testid="resolution-block"')
+  })
+
+  it('renders the resolution value inside the Resolution block', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(resolvedItem, qc)
+    // The resolution string 'superseded' must appear inside the block.
+    expect(html).toContain('superseded')
+  })
+
+  it('renders the resolvedBy value inside the Resolution block', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(resolvedItem, qc)
+    expect(html).toContain('daemon:auto-supersede')
+  })
+
+  it('renders the resolutionNote when present', () => {
+    const itemWithNote = makeItem({
+      ...resolvedItem,
+      resolution: {
+        ...resolvedItem.resolution!,
+        resolutionNote: 'automatically closed after origin completed',
+      },
+    })
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(itemWithNote, qc)
+    expect(html).toContain('automatically closed after origin completed')
+  })
+
+  it('renders the rootCause when present', () => {
+    const itemWithCause = makeItem({
+      ...resolvedItem,
+      resolution: {
+        ...resolvedItem.resolution!,
+        rootCause: 'transient CI outage',
+      },
+    })
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(itemWithCause, qc)
+    expect(html).toContain('transient CI outage')
+  })
+
+  it('hides the ActionBar (Move forward section) for a resolved item', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(resolvedItem, qc)
+    // The ActionBar renders a "Move forward" heading — must be absent.
+    expect(html).not.toContain('Move forward')
+  })
+
+  it('shows the ActionBar for a live (non-resolved) item', () => {
+    const liveItem = makeItem({
+      actions: [{ id: 'restart', label: 'Restart', op: 'restart' }],
+    })
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(liveItem, qc)
+    // ActionBar renders "Move forward" for live items.
+    expect(html).toContain('Move forward')
+  })
+
+  it('does NOT render the Resolution block for a live (non-resolved) item', () => {
+    const liveItem = makeItem({ actions: [{ id: 'restart', label: 'Restart', op: 'restart' }] })
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(liveItem, qc)
+    expect(html).not.toContain('data-testid="resolution-block"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// AC: History accordion — collapsed by default; shows count; Load more
+// button visible when nextCursor is non-null.
+// ---------------------------------------------------------------------------
+
+describe('ActionQueuePage – History accordion', () => {
+  const makeHistoryResponse = (
+    items: ActionQueueItem[],
+    nextCursor: string | null,
+  ) => ({ rows: items, nextCursor })
+
+  const renderPageWithHistory = (
+    liveItems: ActionQueueItem[],
+    historyItems: ActionQueueItem[],
+    nextCursor: string | null = null,
+  ): string => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['action-queue', null], liveItems)
+    qc.setQueryData(['action-queue-history', null], makeHistoryResponse(historyItems, nextCursor))
+    return renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <_Page />
+      </QueryClientProvider>,
+    )
+  }
+
+  const historyRow: ActionQueueItem = makeItem({
+    id: 'hist-1',
+    resolution: {
+      resolvedAt: '2024-01-02T00:00:00.000Z',
+      resolution: 'superseded',
+      resolutionNote: null,
+      rootCause: null,
+      resolvedBy: 'daemon:auto-supersede',
+    },
+    actions: [],
+  })
+
+  it('renders the history accordion in the sidebar', () => {
+    const html = renderPageWithHistory([], [])
+    expect(html).toContain('data-testid="history-accordion"')
+  })
+
+  it('is collapsed by default (aria-expanded="false")', () => {
+    const html = renderPageWithHistory([], [historyRow])
+    // The history accordion button must carry aria-expanded="false".
+    expect(html).toContain('aria-controls="section-body-history"')
+    const accordionStart = html.indexOf('data-testid="history-accordion"')
+    expect(accordionStart).toBeGreaterThan(-1)
+    const snippet = html.slice(accordionStart, accordionStart + 500)
+    expect(snippet).toContain('aria-expanded="false"')
+    expect(snippet).not.toContain('aria-expanded="true"')
+  })
+
+  it('history section body is not rendered when collapsed (default state)', () => {
+    const html = renderPageWithHistory([], [historyRow])
+    // The section body is only rendered when historyOpen=true.
+    expect(html).not.toContain('id="section-body-history"')
+  })
+
+  it('shows correct count in header: "History (N loaded)"', () => {
+    const twoItems = [
+      historyRow,
+      makeItem({ id: 'hist-2', resolution: { resolvedAt: '2024-01-01T00:00:00.000Z', resolution: null, resolutionNote: null, rootCause: null, resolvedBy: null }, actions: [] }),
+    ]
+    const html = renderPageWithHistory([], twoItems)
+    expect(html).toContain('History (2 loaded)')
+  })
+
+  it('shows "History (0 loaded)" when no history items exist', () => {
+    const html = renderPageWithHistory([], [])
+    expect(html).toContain('History (0 loaded)')
+  })
+
+  it('Load more button is not rendered when accordion is collapsed (default state)', () => {
+    // Even with nextCursor set, Load more is inside the collapsed section body.
+    const html = renderPageWithHistory([], [historyRow], 'cursor-token-1')
+    expect(html).not.toContain('data-testid="history-load-more"')
+  })
+
+  it('live items are still visible alongside the history accordion', () => {
+    const live = makeItem({ id: 'live-1', title: 'live task', actions: [{ id: 'restart', label: 'Restart', op: 'restart' }] })
+    const html = renderPageWithHistory([live], [historyRow])
+    // Live item title must be present
+    expect(html).toContain('live task')
+    // History accordion must also be present
+    expect(html).toContain('data-testid="history-accordion"')
+  })
+})
