@@ -1,72 +1,51 @@
 /**
- * Live Todo TUI — what `mars actionQueue watch` renders.
+ * Mars Action-Queue Cockpit TUI — what `mars action-queue watch` renders.
  *
- * Mirrors the web UI's Todo page: a single feed of drafts (proposals
- * waiting to be shaped) and stale worktrees (operational alerts), grouped
- * into Today / Yesterday / This Week / Older. Bucketing rules live in
- * `orchestrator/src/core/lib/todo-feed.ts` so the CLI, web UI server,
- * and React Todo page all agree.
+ * Connects directly to the Mars daemon HTTP API. The daemon port is discovered
+ * by reading `.mars/http.port` — never guessed or taken from an environment
+ * variable (a guessed-port 200 is often an unrelated server). Initial state
+ * comes from GET /view/action-queue?filter=open. The view stays live over the
+ * daemon's SSE channel at GET /view/stream: on each 'action-queue' or 'tasks'
+ * event the full projection is re-fetched and re-rendered. A reconnect loop
+ * survives daemon restarts without killing the TUI.
  *
- * Data source: the local web UI server's `/api/todo` endpoint at
- * `MARS_UI_URL` (default `http://127.0.0.1:7777`). Reusing the existing
- * HTTP endpoint avoids duplicating the DB-query path in the orchestrator
- * package today. A future task can lift `listTodo()` into `todo-feed.ts`
- * and have the web server delegate to it; both surfaces will keep working
- * because the wire shape is unchanged.
+ * Renders the full ActionQueueRow projection — failed-task, stale-worktree,
+ * draft-proposal, and the synthetic daemon-killed-batch row — sorted by
+ * priority then recency. No mutating actions in this slice (read path only).
  *
- * Keybindings (intentionally trimmed from the old action_queue_items TUI):
+ * Keybindings:
  *   - j/k or arrows : move cursor
  *   - enter         : open detail view
  *   - b or escape   : back from detail
  *   - q or ctrl-c   : quit
- *
- * a/r/d (ack/resolve/dismiss) are gone because drafts and stale worktrees
- * have no in-TUI mutating actions in this slice — by design. `mars actionQueue`
- * (the non-watch verb) keeps managing the orchestrator `action_queue_items` table
- * exactly as before.
  */
 
 import React, { useEffect, useState, useCallback } from 'react'
 import { Box, Text, render, useApp, useInput } from 'ink'
-import {
-  BUCKET_ORDER,
-  BUCKET_LABEL,
-  buildTodoFeed,
-  groupTodoIntoBuckets,
-  itemKey,
-  itemTimestamp,
-  type DraftLike,
-  type StaleLike,
-  type TodoItem,
-} from '../core/lib/todo-feed'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { getStateDir } from '../core/context'
+import type { ActionQueueRow } from '../core/daemon/view/action-queue'
 
-const POLL_INTERVAL_MS = 1000
+// ─── port discovery ───────────────────────────────────────────────────────────
 
-const DEFAULT_UI_URL = 'http://127.0.0.1:7777'
-
-const todoUrl = (): string => {
-  const base = process.env.MARS_UI_URL?.trim() || DEFAULT_UI_URL
-  return `${base.replace(/\/+$/, '')}/api/todo`
-}
-
-interface TodoPayload {
-  drafts: DraftLike[]
-  staleWorktrees: StaleLike[]
-}
-
-const fetchTodoPayload = async (): Promise<TodoPayload> => {
-  const res = await fetch(todoUrl())
-  if (!res.ok) {
-    throw new Error(`GET /api/todo: HTTP ${res.status}`)
-  }
-  const body = (await res.json()) as TodoPayload
-  return {
-    drafts: Array.isArray(body.drafts) ? body.drafts : [],
-    staleWorktrees: Array.isArray(body.staleWorktrees)
-      ? body.staleWorktrees
-      : [],
+/**
+ * Read the daemon's HTTP base URL from `<stateDir>/http.port`.
+ * Returns null when the file is absent or contains a non-integer port.
+ *
+ * Exported so the data-discovery path is independently testable.
+ */
+export const resolveDaemonBaseUrl = (stateDir: string): string | null => {
+  try {
+    const raw = readFileSync(join(stateDir, 'http.port'), 'utf8').trim()
+    const port = Number(raw)
+    return Number.isInteger(port) && port > 0 ? `http://127.0.0.1:${port}` : null
+  } catch {
+    return null
   }
 }
+
+// ─── display helpers ──────────────────────────────────────────────────────────
 
 const formatRelativeMs = (ts: number, now: number): string => {
   const diffSec = Math.max(0, Math.floor((now - ts) / 1000))
@@ -80,172 +59,256 @@ const formatRelativeMs = (ts: number, now: number): string => {
   return `${d}d ago`
 }
 
-const shortId = (id: string): string =>
-  id.length <= 8 ? id : id.slice(0, 8)
+const shortId = (id: string): string => (id.length <= 8 ? id : id.slice(0, 8))
+
+const kindColor = (kind: ActionQueueRow['kind']): string => {
+  if (kind === 'failed-task') return 'red'
+  if (kind === 'stale-worktree') return 'yellow'
+  return 'magenta' // draft-proposal
+}
+
+// ─── Row ──────────────────────────────────────────────────────────────────────
 
 interface RowProps {
-  item: TodoItem
+  row: ActionQueueRow
   selected: boolean
   now: number
 }
 
-const Row: React.FC<RowProps> = ({ item, selected, now }) => {
-  const ts = itemTimestamp(item, now)
-  const rel = formatRelativeMs(ts, now)
-
-  if (item.kind === 'draft') {
-    const d = item.draft
-    const goal = d.goal.trim() || '(no goal)'
-    return (
-      <Box>
-        <Text color={selected ? 'cyan' : undefined}>
-          {selected ? '> ' : '  '}
-        </Text>
-        <Text color="magenta">draft</Text>
-        <Text> </Text>
-        <Text dimColor>{shortId(d.id)}</Text>
-        <Text>  </Text>
-        <Text>{goal}</Text>
-        <Text>  </Text>
-        <Text dimColor>{rel}</Text>
-      </Box>
-    )
-  }
-
-  const w = item.worktree
+const Row: React.FC<RowProps> = ({ row, selected, now }) => {
+  const ts = Date.parse(row.at)
+  const rel = Number.isNaN(ts) ? row.at : formatRelativeMs(ts, now)
   return (
     <Box>
-      <Text color={selected ? 'cyan' : undefined}>
-        {selected ? '> ' : '  '}
-      </Text>
-      <Text color="yellow">stale</Text>
+      <Text color={selected ? 'cyan' : undefined}>{selected ? '> ' : '  '}</Text>
+      <Text color={kindColor(row.kind)}>{row.kind}</Text>
       <Text> </Text>
-      <Text dimColor>{shortId(w.taskId)}</Text>
+      <Text dimColor>{shortId(row.entityId)}</Text>
       <Text>  </Text>
-      <Text>{w.prompt.trim() || '(no prompt)'}</Text>
+      <Text>{row.title}</Text>
       <Text>  </Text>
       <Text dimColor>{rel}</Text>
     </Box>
   )
 }
 
+// ─── Detail ───────────────────────────────────────────────────────────────────
+
 interface DetailProps {
-  item: TodoItem
+  row: ActionQueueRow
   now: number
 }
 
-const Detail: React.FC<DetailProps> = ({ item, now }) => {
-  if (item.kind === 'draft') {
-    const d = item.draft
-    return (
-      <Box flexDirection="column" flexGrow={1}>
-        <Box>
-          <Text bold>draft · {d.id}</Text>
-        </Box>
-        <Box marginTop={1}>
-          <Text>{d.goal.trim() || '(no goal)'}</Text>
-        </Box>
-        <Box marginTop={1} flexDirection="column">
-          <Text dimColor>source: {d.source}</Text>
-          <Text dimColor>acceptance: {d.acceptanceCount}</Text>
-          <Text dimColor>
-            updated: {formatRelativeMs(d.updatedAt, now)}
-          </Text>
-        </Box>
-        <Box marginTop={1}>
-          <Text dimColor>refine: /mars:chat {d.id}</Text>
-        </Box>
-      </Box>
-    )
-  }
-
-  const w = item.worktree
+const Detail: React.FC<DetailProps> = ({ row, now }) => {
+  const ts = Date.parse(row.at)
+  const rel = Number.isNaN(ts) ? row.at : formatRelativeMs(ts, now)
   return (
     <Box flexDirection="column" flexGrow={1}>
       <Box>
-        <Text bold>stale worktree · {w.taskId}</Text>
+        <Text bold>
+          {row.kind} · {row.entityId}
+        </Text>
       </Box>
       <Box marginTop={1}>
-        <Text>{w.prompt.trim() || '(no prompt)'}</Text>
+        <Text bold>{row.title}</Text>
       </Box>
+      {!!row.body && (
+        <Box marginTop={1}>
+          <Text>{row.body}</Text>
+        </Box>
+      )}
       <Box marginTop={1} flexDirection="column">
-        <Text dimColor>status: {w.status}</Text>
-        <Text dimColor>age: {w.ageHours.toFixed(1)}h</Text>
-        <Text dimColor>updated_at: {w.updatedAt}</Text>
+        <Text dimColor>id:       {row.id}</Text>
+        <Text dimColor>priority: {row.priority}</Text>
+        <Text dimColor>at:       {rel}</Text>
+        {!!row.errorKind && row.errorKind !== 'unknown' && (
+          <Text dimColor>error:    {row.errorKind}</Text>
+        )}
+        {!!row.failureReasonCode && (
+          <Text dimColor>code:     {row.failureReasonCode}</Text>
+        )}
+        {!!row.fixForTaskId && (
+          <Text dimColor>fix for:  {row.fixForTaskId}</Text>
+        )}
       </Box>
-      <Box marginTop={1} flexDirection="column">
-        <Text bold>cleanup:</Text>
-        <Text>mars purge {w.taskId}</Text>
+      {row.dag && (
+        <Box marginTop={1} flexDirection="column">
+          {!!row.dag.proposalId && (
+            <Text dimColor>proposal:    {row.dag.proposalId}</Text>
+          )}
+          {row.dag.blockers.length > 0 && (
+            <Text dimColor>
+              blockers:    {row.dag.blockers.map((b) => `${b.id}(${b.status})`).join(', ')}
+            </Text>
+          )}
+          {row.dag.blocking.length > 0 && (
+            <Text dimColor>
+              blocking:    {row.dag.blocking.map((b) => `${b.id}(${b.status})`).join(', ')}
+            </Text>
+          )}
+          {row.dag.descendants.length > 0 && (
+            <Text dimColor>
+              descendants: {row.dag.descendants.map((b) => `${b.id}(${b.status})`).join(', ')}
+            </Text>
+          )}
+        </Box>
+      )}
+      {row.staleWorktreeDetail && (
+        <Box marginTop={1} flexDirection="column">
+          <Text dimColor>status: {row.staleWorktreeDetail.status}</Text>
+          <Text dimColor>age:    {row.staleWorktreeDetail.ageHours.toFixed(1)}h</Text>
+          {!!row.staleWorktreeDetail.branch && (
+            <Text dimColor>branch: {row.staleWorktreeDetail.branch}</Text>
+          )}
+          {row.staleWorktreeDetail.empty && (
+            <Text dimColor>(worktree is empty — safe to purge)</Text>
+          )}
+          <Box marginTop={1}>
+            <Text>mars purge {row.entityId}</Text>
+          </Box>
+        </Box>
+      )}
+      {row.diagnosis && (
+        <Box marginTop={1} flexDirection="column">
+          <Text bold dimColor>
+            diagnosis:
+          </Text>
+          <Text>{row.diagnosis.text}</Text>
+          <Text dimColor>diagnosed: {row.diagnosis.diagnosedAt}</Text>
+        </Box>
+      )}
+      <Box marginTop={1}>
+        <Text dimColor>b back · q quit</Text>
       </Box>
     </Box>
   )
 }
 
+// ─── App ──────────────────────────────────────────────────────────────────────
+
 interface AppState {
-  items: TodoItem[]
-  draftCount: number
-  staleCount: number
+  rows: ActionQueueRow[]
   cursor: number
-  detailKey: string | null
+  detailId: string | null
   error: string | null
+  live: boolean
   now: number
 }
 
-const TodoWatchApp: React.FC = () => {
+const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) => {
   const { exit } = useApp()
   const [state, setState] = useState<AppState>({
-    items: [],
-    draftCount: 0,
-    staleCount: 0,
+    rows: [],
     cursor: 0,
-    detailKey: null,
-    error: null,
+    detailId: null,
+    error: baseUrl === null
+      ? 'daemon not running — start with `mars daemon start`'
+      : null,
+    live: false,
     now: Date.now(),
   })
 
   const refresh = useCallback(async (): Promise<void> => {
+    if (!baseUrl) return
     try {
-      const payload = await fetchTodoPayload()
-      const items = buildTodoFeed(payload)
+      const res = await fetch(`${baseUrl}/view/action-queue?filter=open`)
+      if (!res.ok) throw new Error(`GET /view/action-queue: HTTP ${res.status}`)
+      const rows = (await res.json()) as ActionQueueRow[]
       setState((prev) => {
         const cursor =
-          items.length === 0 ? 0 : Math.min(prev.cursor, items.length - 1)
+          rows.length === 0 ? 0 : Math.min(prev.cursor, rows.length - 1)
         return {
           ...prev,
-          items,
-          draftCount: payload.drafts.length,
-          staleCount: payload.staleWorktrees.length,
+          rows,
           cursor,
           error: null,
+          live: true,
           now: Date.now(),
         }
       })
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
-      setState((prev) => ({ ...prev, error: message, now: Date.now() }))
+      setState((prev) => ({
+        ...prev,
+        error: message,
+        live: false,
+        now: Date.now(),
+      }))
     }
-  }, [])
+  }, [baseUrl])
 
+  // Initial fetch on mount.
   useEffect(() => {
     void refresh()
-    const t = setInterval(() => {
-      void refresh()
-    }, POLL_INTERVAL_MS)
-    return () => clearInterval(t)
   }, [refresh])
 
-  // Flat list, sorted into bucket order. `state.cursor` indexes into this
-  // flat view so j/k can move smoothly across bucket boundaries while the
-  // visual grouping (with headers) is computed below.
-  const groups = groupTodoIntoBuckets(state.items, state.now)
-  const flat: TodoItem[] = []
-  for (const g of groups) flat.push(...g.items)
-  const selected = flat[state.cursor] ?? null
+  // SSE stream: re-fetch the full projection whenever the daemon emits an
+  // 'action-queue' or 'tasks' event. Reconnects automatically after drops.
+  useEffect(() => {
+    if (!baseUrl) return
+
+    let cancelled = false
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let abortCtrl: AbortController | null = null
+
+    const connect = async (): Promise<void> => {
+      if (cancelled) return
+      abortCtrl = new AbortController()
+      try {
+        const res = await fetch(`${baseUrl}/view/stream`, {
+          signal: abortCtrl.signal,
+        })
+        if (!res.ok || !res.body) {
+          if (!cancelled)
+            reconnectTimer = setTimeout(() => void connect(), 2000)
+          return
+        }
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        while (!cancelled) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          // SSE frames are delimited by double newlines.
+          const frames = buffer.split('\n\n')
+          buffer = frames.pop() ?? ''
+          for (const frame of frames) {
+            if (cancelled) break
+            const eventLine = frame
+              .trim()
+              .split('\n')
+              .find((l) => l.startsWith('event:'))
+            if (eventLine) {
+              const name = eventLine.slice('event:'.length).trim()
+              if (name === 'action-queue' || name === 'tasks') {
+                void refresh()
+              }
+            }
+          }
+        }
+      } catch {
+        // Absorb abort errors; fall through to reconnect.
+      }
+      if (!cancelled)
+        reconnectTimer = setTimeout(() => void connect(), 2000)
+    }
+
+    void connect()
+
+    return () => {
+      cancelled = true
+      abortCtrl?.abort()
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer)
+    }
+  }, [baseUrl, refresh])
+
+  const selected = state.rows[state.cursor] ?? null
 
   useInput((input, key) => {
-    if (state.detailKey !== null) {
+    if (state.detailId !== null) {
       if (input === 'b' || key.escape) {
-        setState((prev) => ({ ...prev, detailKey: null }))
+        setState((prev) => ({ ...prev, detailId: null }))
         return
       }
       if (input === 'q' || (key.ctrl && input === 'c')) {
@@ -262,7 +325,9 @@ const TodoWatchApp: React.FC = () => {
       setState((prev) => ({
         ...prev,
         cursor:
-          flat.length === 0 ? 0 : Math.min(prev.cursor + 1, flat.length - 1),
+          prev.rows.length === 0
+            ? 0
+            : Math.min(prev.cursor + 1, prev.rows.length - 1),
       }))
       return
     }
@@ -275,23 +340,23 @@ const TodoWatchApp: React.FC = () => {
     }
     if (key.return) {
       if (selected) {
-        setState((prev) => ({ ...prev, detailKey: itemKey(selected) }))
+        setState((prev) => ({ ...prev, detailId: selected.id }))
       }
       return
     }
   })
 
-  if (state.detailKey !== null) {
-    const detailItem = flat.find((i) => itemKey(i) === state.detailKey)
+  if (state.detailId !== null) {
+    const detailRow = state.rows.find((r) => r.id === state.detailId)
     return (
       <Box flexDirection="column">
         <Box>
           <Text bold color="cyan">
-            mars todo · detail
+            mars action-queue · detail
           </Text>
         </Box>
-        {detailItem ? (
-          <Detail item={detailItem} now={state.now} />
+        {detailRow ? (
+          <Detail row={detailRow} now={state.now} />
         ) : (
           <Box>
             <Text dimColor>(item no longer available)</Text>
@@ -309,55 +374,42 @@ const TodoWatchApp: React.FC = () => {
     )
   }
 
-  let runningIndex = 0
+  const failedCount = state.rows.filter((r) => r.kind === 'failed-task').length
+  const staleCount = state.rows.filter((r) => r.kind === 'stale-worktree').length
+  const draftCount = state.rows.filter((r) => r.kind === 'draft-proposal').length
+
   return (
     <Box flexDirection="column">
       <Box>
         <Text bold color="cyan">
-          mars todo
+          mars action-queue
         </Text>
         <Text> · </Text>
-        <Text color="magenta">{state.draftCount} drafts</Text>
+        <Text color="red">{failedCount} failed</Text>
         <Text> · </Text>
-        <Text color="yellow">{state.staleCount} stale</Text>
+        <Text color="yellow">{staleCount} stale</Text>
+        <Text> · </Text>
+        <Text color="magenta">{draftCount} drafts</Text>
+        {state.live ? (
+          <Text dimColor> · live</Text>
+        ) : (
+          <Text dimColor> · connecting…</Text>
+        )}
       </Box>
       <Box marginTop={1} flexDirection="column">
-        {flat.length === 0 ? (
+        {state.rows.length === 0 && !state.error ? (
           <Box justifyContent="center" paddingY={2}>
-            <Text dimColor>
-              todo empty — no drafts or stale worktrees
-            </Text>
+            <Text dimColor>action queue empty</Text>
           </Box>
         ) : (
-          // We iterate the grouped buckets so headers render in canonical
-          // order; the flat-cursor mapping above keeps j/k navigation in
-          // sync with the visual order.
-          BUCKET_ORDER.map((key) => {
-            const group = groups.find((g) => g.key === key)
-            if (!group) return null
-            const header = (
-              <Box key={`h-${key}`} marginTop={1}>
-                <Text dimColor>── {BUCKET_LABEL[key]} ──</Text>
-              </Box>
-            )
-            const rows = group.items.map((item) => {
-              const idx = runningIndex++
-              return (
-                <Row
-                  key={itemKey(item)}
-                  item={item}
-                  selected={idx === state.cursor}
-                  now={state.now}
-                />
-              )
-            })
-            return (
-              <Box key={`g-${key}`} flexDirection="column">
-                {header}
-                {rows}
-              </Box>
-            )
-          })
+          state.rows.map((row, i) => (
+            <Row
+              key={row.id}
+              row={row}
+              selected={i === state.cursor}
+              now={state.now}
+            />
+          ))
         )}
       </Box>
       {state.error && (
@@ -366,14 +418,14 @@ const TodoWatchApp: React.FC = () => {
         </Box>
       )}
       <Box marginTop={1}>
-        <Text dimColor>
-          j/k move · enter detail · q quit
-        </Text>
+        <Text dimColor>j/k move · enter detail · q quit</Text>
       </Box>
     </Box>
   )
 }
 
 export const runActionQueueWatch = (): void => {
-  render(<TodoWatchApp />)
+  const stateDir = getStateDir()
+  const baseUrl = resolveDaemonBaseUrl(stateDir)
+  render(<ActionQueueWatchApp baseUrl={baseUrl} />)
 }
