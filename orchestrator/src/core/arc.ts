@@ -38,6 +38,7 @@ import {
   type FollowUpKind,
   type EnqueueTaskOptions,
   type DropTaskResult,
+  type UnblockTaskResult,
 } from './queue'
 import {
   getDefaultTaskStore,
@@ -86,6 +87,26 @@ import {
 
 const truncate = (s: string, max: number): string =>
   s.length <= max ? s : `${s.slice(0, max)}…`
+
+/**
+ * Thrown when an Arc-aggregate write would leave (or has left) the task graph
+ * in a state that violates one of the two Arc invariants checked by
+ * {@link Arc.assertArcInvariant} (ADR-0052):
+ *
+ *  A. every Action's `origin_id` resolves to a real Arc root row;
+ *  B. every Arc root is a non-recovery origin Action (`kind` ∈ {'task',
+ *     'diagnose'}, `fix_for_task_id IS NULL`).
+ *
+ * This is a *construction guard*, not a runtime recovery path: a throw means
+ * the aggregate produced a stranded entity, which is a bug in a write method,
+ * not an operator-actionable condition.
+ */
+export class ArcInvariantError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ArcInvariantError'
+  }
+}
 
 const FIX_TASK_AUTHOR_KIND = 'agent'
 const FIX_TASK_AUTHOR_NAME = 'fail-fix-handler'
@@ -310,6 +331,7 @@ export class Arc {
       sql: `${TASK_SEL} WHERE t.id = ?`,
       args: [id],
     })
+    await Arc.maybeAssertArcInvariant(id, resolvedStore)
     return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
   }
 
@@ -476,6 +498,97 @@ export class Arc {
   }
 
   /**
+   * Guarded `'draft' → 'triaging'` promote (ADR-0052 sole-writer). Relocated
+   * bit-for-bit from `queue.ts:promoteDraftToTriaging`. The dispatcher calls
+   * this immediately after picking a draft task so it is observable in the
+   * transient `'triaging'` phase while the Linker runs. The conditional WHERE
+   * (`AND status = 'draft'`) cannot be expressed through the column-patch
+   * {@link Arc.applyStatusWrite} funnel, so it lives as its own primitive here.
+   *
+   * PARITY: the historic body emitted NO lifecycle event for the
+   * draft→triaging flip (it is an internal staging transition the Invalidator
+   * does not track), so this relocation issues the guarded UPDATE only — no
+   * publish/buildEventInsert. The `updated_at`-first SET ordering is preserved.
+   *
+   * Returns the updated {@link Task} on success; `null` if the row did not flip
+   * (missing, or not currently in `'draft'`).
+   */
+  static async promoteDraftToTriaging(taskId: string): Promise<Task | null> {
+    await migrateQueueSchema()
+    const now = new Date().toISOString()
+    const upd = await resolveQueueClient().execute({
+      sql: `UPDATE tasks
+               SET updated_at = ?, status = 'triaging'
+             WHERE id = ?
+               AND status = 'draft'`,
+      args: [now, taskId],
+    })
+    if (upd.rowsAffected === 0) return null
+    const r = await resolveQueueClient().execute({
+      sql: `SELECT * FROM tasks WHERE id = ?`,
+      args: [taskId],
+    })
+    if (r.rows.length === 0) return null
+    return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+  }
+
+  /**
+   * Manual unblock escape hatch (ADR-0052 sole-writer). Relocated bit-for-bit
+   * from `queue.ts:unblockTask`. Flips a `blocked`-or-`queued` task to `failed`,
+   * clears its `task_blockers` rows, and emits `task.failed` + `task.terminal`
+   * — all in ONE write transaction (ADR-0030) so the status write is never a
+   * silent bypass of the event substrate. Used by `mars unblock <id>` so users
+   * do not reach for sqlite when a row has slipped into an inconsistent state.
+   *
+   * PARITY (preserved bit-for-bit from the historic `unblockTask`):
+   *   - `'queued'` is accepted alongside `'blocked'` (drop a not-yet-dispatched
+   *     row); any other status returns `{ outcome: 'noop' }`;
+   *   - the guarded UPDATE uses the `updated_at`-first SET ordering;
+   *   - the terminal event fires with reason `'failed'`; per ADR-0028 the
+   *     Invalidator deliberately does NOT close action-queue rows on `failed`.
+   */
+  static async unblockTask(taskId: string): Promise<UnblockTaskResult> {
+    await migrateQueueSchema()
+    const c = resolveQueueClient()
+    const before = await c.execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [taskId],
+    })
+    if (before.rows.length === 0) {
+      throw new Error(`task ${taskId} not found`)
+    }
+    const previousStatus = (before.rows[0] as unknown as { status: string }).status
+    if (previousStatus !== 'blocked' && previousStatus !== 'queued') {
+      return { taskId, outcome: 'noop', previousStatus }
+    }
+    const now = new Date().toISOString()
+    await withWriteTx(c, async (tx) => {
+      await tx.execute({
+        // updated_at first — conditional WHERE; events published atomically below.
+        sql: `UPDATE tasks
+                 SET updated_at = ?,
+                     status = 'failed'
+               WHERE id = ? AND status IN ('blocked', 'queued')`,
+        args: [now, taskId],
+      })
+      await tx.execute({
+        sql: `DELETE FROM task_blockers WHERE task_id = ?`,
+        args: [taskId],
+      })
+      await tx.execute(
+        buildEventInsert('task.failed', {
+          taskId,
+          error: 'unblocked via mars unblock',
+        }),
+      )
+      await tx.execute(
+        buildEventInsert('task.terminal', { taskId, reason: 'failed' }),
+      )
+    })
+    return { taskId, outcome: 'unblocked', previousStatus }
+  }
+
+  /**
    * Atomic single-writer chokepoint for task status changes (ADR-0052).
    *
    * Relocated bit-for-bit from `queue.ts:setTaskStatus`. Wraps the raw
@@ -577,24 +690,45 @@ export class Arc {
    * statuses) in one atomic write, guarding terminal immutability via
    * {@link IllegalTransitionError}.
    *
-   * `extras` mirrors the historic `setTaskStatus` extras shape so callers that
-   * carried an `error`/`dropReason` payload map cleanly onto `updateTask`'s
-   * patch columns:
-   *   - `error`     → `patch.error`     (rides the `task.failed` payload),
-   *   - `dropReason`→ `patch.failureReason` (rides the `task.dropped` payload).
+   * `extras` mirrors the historic `setTaskStatus`/`updateTask` extras shape so
+   * callers that carried an `error`/`dropReason` payload — and the richer
+   * forensic columns the cascade/terminal funnels write — map cleanly onto
+   * `updateTask`'s patch columns:
+   *   - `error`            → `patch.error`            (rides the failure payload),
+   *   - `dropReason`       → `patch.failureReason`    (rides the `task.dropped`
+   *     payload),
+   *   - `failureReason`    → `patch.failureReason`    (free-text archive; takes
+   *     precedence over `dropReason` when both are given),
+   *   - `failureReasonCode`→ `patch.failureReasonCode`(typed catalog code),
+   *   - `failureSignature` → `patch.failureSignature` (structured signature).
    * `result` is accepted for shape-compatibility but is not a persisted column;
    * `updateTask` emits `task.completed` with `result: null` (unchanged).
    */
   async transition(
     taskId: string,
     to: TaskStatus,
-    extras?: { error?: string; result?: unknown; dropReason?: string },
+    extras?: {
+      error?: string
+      result?: unknown
+      dropReason?: string
+      failureReason?: string | null
+      failureReasonCode?: string | null
+      failureSignature?: string | null
+    },
   ): Promise<void> {
+    const failureReason =
+      extras?.failureReason !== undefined
+        ? extras.failureReason
+        : extras?.dropReason
     await updateTask(taskId, {
       status: to,
       ...(extras?.error !== undefined ? { error: extras.error } : {}),
-      ...(extras?.dropReason !== undefined
-        ? { failureReason: extras.dropReason }
+      ...(failureReason !== undefined ? { failureReason } : {}),
+      ...(extras?.failureReasonCode !== undefined
+        ? { failureReasonCode: extras.failureReasonCode }
+        : {}),
+      ...(extras?.failureSignature !== undefined
+        ? { failureSignature: extras.failureSignature }
         : {}),
     })
   }
@@ -660,6 +794,7 @@ export class Arc {
       args: [dedupKey, followUp.id],
     })
     await this.addBlocker(followUp.id, [originTaskId])
+    await Arc.maybeAssertArcInvariant(followUp.id, s)
     return { id: followUp.id, created: true }
   }
 
@@ -814,6 +949,7 @@ export class Arc {
         failingStep: input.failingStep,
         originId: source.originId,
       })
+      await Arc.maybeAssertArcInvariant(input.sourceTaskId, s)
       return { fixTaskId: existingId, created: false }
     }
 
@@ -913,6 +1049,7 @@ export class Arc {
       originId: source.originId,
     })
 
+    await Arc.maybeAssertArcInvariant(input.sourceTaskId, s)
     return { fixTaskId, created: true }
   }
 
@@ -995,6 +1132,7 @@ export class Arc {
       failingStep: 'dispatch:main-dirty',
       originId: source.originId,
     })
+    await Arc.maybeAssertArcInvariant(input.sourceTaskId, s)
   }
 
   /**
@@ -1148,6 +1286,7 @@ export class Arc {
       originId: input.sourceOriginId,
     })
 
+    await Arc.maybeAssertArcInvariant(input.sourceTaskId, s)
     return { fixTaskId }
   }
 
@@ -1209,6 +1348,7 @@ export class Arc {
       args: [taskId, blockerId, now],
     }))
     await s.batch(stmts, 'write')
+    await Arc.maybeAssertArcInvariant(taskId, s)
   }
 
   /**
@@ -1850,8 +1990,11 @@ export class Arc {
         'blocked-dependent',
         CANCELLED_CASCADE_FAILURE_REASON,
       )
-      await updateTask(row.id, {
-        status: 'failed',
+      // Route the terminal flip through the Arc.transition funnel (ADR-0052):
+      // the one status funnel, wrapping updateTask. The patch is preserved
+      // bit-for-bit — transition maps failureReason/failureReasonCode/
+      // failureSignature straight onto updateTask's columns.
+      await Arc.load(row.id).transition(row.id, 'failed', {
         error: `cancelled-blocker-cascade: blocker ${blockerTaskId} was cancelled by user`,
         failureReason: CANCELLED_CASCADE_FAILURE_REASON,
         failureSignature: cascadeSignature,
@@ -2014,6 +2157,106 @@ export class Arc {
   }
 
   /**
+   * Failed-committer dependent release write funnel (ADR-0052 sole-writer).
+   * Relocated bit-for-bit from `main-dirty-action-queue.ts:releaseMainCommitterDependents`.
+   *
+   * On committer FAILURE, release every task currently `blocked` solely because
+   * of `committerTaskId`: per dependent, in ONE atomic transaction, delete the
+   * dead committer's `task_blockers` edge then flip the dependent `blocked` ->
+   * `queued` only when no other non-terminal blocker remains, emitting
+   * `task.unblocked` in the same commit (ADR-0030). The driving SELECT, the
+   * `internalBus().emit` wake-hints, and the per-row logging stay OUTSIDE the
+   * atomic (best-effort), exactly as the historic helper structured them.
+   *
+   * This is the only place this status write lives now; the daemon helper
+   * `releaseMainCommitterDependents` is a thin delegating wrapper with no
+   * task-table write of its own (ADR-0052 sole-writer).
+   *
+   * Returns `{ released }` (count of dependents re-queued) so the caller can
+   * log the same `released/total` summary it logged before.
+   */
+  static async releaseMainCommitterDependents(
+    committerTaskId: string,
+    log: (msg: string) => void,
+  ): Promise<{ released: number; total: number }> {
+    const s = await getDefaultTaskStore()
+    const now = new Date().toISOString()
+
+    // Find all tasks currently `blocked` on this committer.
+    const r = await s.query({
+      sql: `SELECT t.id AS id
+              FROM task_blockers tb
+              JOIN tasks t ON t.id = tb.task_id
+             WHERE tb.blocker_task_id = ?
+               AND t.status = 'blocked'`,
+      args: [committerTaskId],
+    })
+
+    const dependents = r.rows as unknown as Array<{ id: string }>
+    if (dependents.length === 0) return { released: 0, total: 0 }
+
+    let released = 0
+
+    for (const row of dependents) {
+      const flipped = await s.atomic(async (scope) => {
+        // Remove the dead committer's blocker edge. Within this transaction the
+        // deletion is immediately visible to the subquery in the UPDATE below.
+        await scope.execute({
+          sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+          args: [row.id, committerTaskId],
+        })
+        // Re-queue only when no other non-terminal blocker still exists.
+        // updated_at precedes status in the SET clause — the conditional WHERE
+        // cannot be expressed through setTaskStatus; the task.unblocked event is
+        // emitted atomically in the same transaction (ADR-0030).
+        const upd = await scope.execute({
+          sql: `UPDATE tasks
+                   SET updated_at = ?, status = 'queued'
+                 WHERE id = ? AND status = 'blocked'
+                   AND NOT EXISTS (
+                     SELECT 1
+                       FROM task_blockers b
+                       JOIN tasks t2 ON t2.id = b.blocker_task_id
+                      WHERE b.task_id = ?
+                        AND t2.status NOT IN ('done', 'failed')
+                        AND b.state IN ('confirmed', 'pending-review')
+                   )`,
+          args: [now, row.id, row.id],
+        })
+        const didFlip = (upd.rowsAffected ?? 0) > 0
+        if (didFlip) {
+          await scope.execute(
+            buildEventInsert('task.unblocked', {
+              taskId: row.id,
+              blockerTaskId: committerTaskId,
+            }),
+          )
+        }
+        return didFlip
+      })
+      if (flipped) {
+        internalBus().emit('task.unblocked', {
+          taskId: row.id,
+          blockerTaskId: committerTaskId,
+        })
+        released++
+        log(
+          `[main-dirty] re-queued task ${row.id} released from failed committer ${committerTaskId}`,
+        )
+      } else {
+        log(
+          `[main-dirty] task ${row.id}: committer edge removed but other active blockers remain; left in blocked`,
+        )
+      }
+    }
+
+    log(
+      `[main-dirty] released ${released}/${dependents.length} dependent(s) from failed committer ${committerTaskId}`,
+    )
+    return { released, total: dependents.length }
+  }
+
+  /**
    * Propagate-recovery-done write funnel (ADR-0052 sole-writer). When a
    * recovery task (kind='fix', non-null fixForTaskId) reaches `done`, the work
    * the operator was waiting on has shipped. Flip the origin row (`this.arcId`)
@@ -2103,16 +2346,97 @@ export class Arc {
   }
 
   /**
-   * Assert the two Arc invariants. PLACEHOLDER (S1): no-op stub; the real
-   * checks land in S9.
+   * Assert the two Arc invariants for the Action `arcId` (ADR-0052). This is a
+   * debug-assert seam: it issues two cheap SELECTs against the just-committed
+   * state and throws {@link ArcInvariantError} if the aggregate produced a
+   * stranded entity. It is invoked at the TAIL of every mutating Arc write
+   * method (after the batch/atomic commit) but is GATED behind
+   * `MARS_ARC_INVARIANT_CHECK === '1'` so production transaction latency is
+   * untouched; the vitest setup sets the flag so the suite enforces it on every
+   * arc-mutating test.
    *
-   *  1. Every Action's `arcId` (`origin_id`) points at a real Arc — i.e. there
-   *     is a row whose `id` equals that `origin_id`.
-   *  2. Every Arc has exactly one origin Action with `kind='task'` (the row
-   *     whose `id === origin_id`).
+   * INVARIANT A — *every Action has its own row*. Resolve the row for `arcId`.
+   * A missing Action row means the aggregate's write did not persist (or was
+   * partially committed) — a stranded Action. This is the strong, always-on half
+   * of the invariant: the write method just claimed to create/mutate `arcId`, so
+   * its row MUST exist post-commit.
+   *
+   * INVARIANT B — *a TASK-rooted Arc root is a non-recovery origin Action*. The
+   * Arc root is the row whose `id === origin_id`. When the arc is self-rooted
+   * (`origin_id === id`) OR `origin_id` resolves to a real `tasks` row, that root
+   * MUST have `kind` in `('task', 'diagnose')` AND `fix_for_task_id IS NULL`: a
+   * recovery (fix) row can never be an Arc root. The PK on `tasks.id` guarantees
+   * uniqueness, so "exactly one origin Action" collapses to existence + kind.
+   *
+   * `origin_id` is deliberately NOT a foreign key (see queue.ts: "origin_id can
+   * hold proposal IDs or other non-task arc identifiers; REFERENCES tasks(id)
+   * would reject them"). A proposal-originated task carries `origin_id =
+   * <proposalId>` — a row in the `proposals` table, not `tasks` — so an
+   * `origin_id` that resolves to NO `tasks` row is a legitimate, documented
+   * shape (a proposal-rooted / external-grouping arc), NOT a strand. INVARIANT B
+   * therefore fires only when the root is a genuine task row; a non-task origin
+   * pointer is a soft grouping key and carries no `kind` to check.
+   *
+   * {@link Arc.drop} is EXEMPT (it deletes the row, so post-commit the arcId no
+   * longer resolves and INVARIANT A would always throw) — `drop` therefore does
+   * NOT call this method.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private static assertArcInvariant(_arcId: string): void {
-    // S9: implement the two-invariant check. Intentionally a no-op this slice.
+  private static async assertArcInvariant(
+    arcId: string,
+    store: DomainTaskStore,
+  ): Promise<void> {
+    // INVARIANT A: the Action's own row exists post-commit.
+    const actionRes = await store.query({
+      sql: `SELECT id, origin_id, kind FROM tasks WHERE id = ?`,
+      args: [arcId],
+    })
+    if (actionRes.rows.length === 0) {
+      throw new ArcInvariantError(`Action ${arcId} has no row`)
+    }
+    const actionRow = actionRes.rows[0] as unknown as {
+      id: string
+      origin_id: string | null
+      kind: string | null
+    }
+    const oid = actionRow.origin_id ?? actionRow.id
+    // INVARIANT B: only when origin_id names a real TASK row. A proposal-id /
+    // external grouping origin (no tasks-row) is a documented non-FK shape, not
+    // a strand — there is nothing in `tasks` to kind-check, so we skip silently.
+    const rootRes = await store.query({
+      sql: `SELECT kind, fix_for_task_id FROM tasks WHERE id = ?`,
+      args: [oid],
+    })
+    if (rootRes.rows.length === 0) {
+      return
+    }
+    const rootRow = rootRes.rows[0] as unknown as {
+      kind: string | null
+      fix_for_task_id: string | null
+    }
+    const rootKind = rootRow.kind ?? 'task'
+    if (rootKind !== 'task' && rootKind !== 'diagnose') {
+      throw new ArcInvariantError(
+        `Arc root ${oid} (for Action ${arcId}) has kind='${rootKind}'; an Arc root must be kind 'task' or 'diagnose'`,
+      )
+    }
+    if (rootRow.fix_for_task_id !== null) {
+      throw new ArcInvariantError(
+        `Arc root ${oid} (for Action ${arcId}) has fix_for_task_id='${rootRow.fix_for_task_id}'; a recovery row can never be an Arc root`,
+      )
+    }
+  }
+
+  /**
+   * Run {@link Arc.assertArcInvariant} only when `MARS_ARC_INVARIANT_CHECK === '1'`.
+   * Centralises the env gate so every call site is a single `await` and the
+   * production tx path pays no SELECT round-trip.
+   */
+  private static async maybeAssertArcInvariant(
+    arcId: string,
+    store: DomainTaskStore,
+  ): Promise<void> {
+    if (process.env.MARS_ARC_INVARIANT_CHECK === '1') {
+      await Arc.assertArcInvariant(arcId, store)
+    }
   }
 }

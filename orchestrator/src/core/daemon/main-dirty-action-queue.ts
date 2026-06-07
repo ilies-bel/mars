@@ -18,8 +18,7 @@
 import { raiseActionQueueItem, supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
 import { getDefaultTaskStore } from '../store/task-store'
 import { MAIN_COMMITER_RECIPE } from '../lib/main-dirty'
-import { buildEventInsert } from '../lib/outbox'
-import { internalBus } from '../../internal-bus'
+import { Arc } from '../arc'
 
 /**
  * SQL fragment that matches an open actionQueue row associated with a recovery
@@ -230,75 +229,8 @@ export const releaseMainCommitterDependents = async (
   committerTaskId: string,
   log: (msg: string) => void,
 ): Promise<void> => {
-  const s = await getDefaultTaskStore()
-  const now = new Date().toISOString()
-
-  // Find all tasks currently `blocked` on this committer.
-  const r = await s.query({
-    sql: `SELECT t.id AS id
-            FROM task_blockers tb
-            JOIN tasks t ON t.id = tb.task_id
-           WHERE tb.blocker_task_id = ?
-             AND t.status = 'blocked'`,
-    args: [committerTaskId],
-  })
-
-  const dependents = r.rows as unknown as Array<{ id: string }>
-  if (dependents.length === 0) return
-
-  let released = 0
-
-  for (const row of dependents) {
-    const flipped = await s.atomic(async (scope) => {
-      // Remove the dead committer's blocker edge. Within this transaction the
-      // deletion is immediately visible to the subquery in the UPDATE below.
-      await scope.execute({
-        sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
-        args: [row.id, committerTaskId],
-      })
-      // Re-queue only when no other non-terminal blocker still exists.
-      const upd = await scope.execute({
-        sql: `UPDATE tasks
-                 SET updated_at = ?, status = 'queued'
-               WHERE id = ? AND status = 'blocked'
-                 AND NOT EXISTS (
-                   SELECT 1
-                     FROM task_blockers b
-                     JOIN tasks t2 ON t2.id = b.blocker_task_id
-                    WHERE b.task_id = ?
-                      AND t2.status NOT IN ('done', 'failed')
-                      AND b.state IN ('confirmed', 'pending-review')
-                 )`,
-        args: [now, row.id, row.id],
-      })
-      const didFlip = (upd.rowsAffected ?? 0) > 0
-      if (didFlip) {
-        await scope.execute(
-          buildEventInsert('task.unblocked', {
-            taskId: row.id,
-            blockerTaskId: committerTaskId,
-          }),
-        )
-      }
-      return didFlip
-    })
-    if (flipped) {
-      internalBus().emit('task.unblocked', {
-        taskId: row.id,
-        blockerTaskId: committerTaskId,
-      })
-      released++
-      log(
-        `[main-dirty] re-queued task ${row.id} released from failed committer ${committerTaskId}`,
-      )
-    } else {
-      log(
-        `[main-dirty] task ${row.id}: committer edge removed but other active blockers remain; left in blocked`,
-      )
-    }
-  }
-
-  log(
-    `[main-dirty] released ${released}/${dependents.length} dependent(s) from failed committer ${committerTaskId}`,
-  )
+  // ADR-0052 sole-writer: the status write (blocked -> queued), the edge
+  // delete, and the task.unblocked emit all live in the Arc aggregate now.
+  // This is a thin delegating wrapper with no task-table write of its own.
+  await Arc.releaseMainCommitterDependents(committerTaskId, log)
 }

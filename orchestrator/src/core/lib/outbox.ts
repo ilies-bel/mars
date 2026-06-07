@@ -7,13 +7,13 @@
  * here to keep the boundary explicit (and to give us a single place
  * to add cross-cutting concerns later: tracing, redaction, etc.).
  *
- * Phase 1 (in progress): wrap every `INSERT/UPDATE/DELETE` on
- * `tasks` and `task_blockers` in a libsql write transaction and call
- * `publish(tx, '<event>', { ... })` inside the same tx. Once all four
- * allowlisted writer files (`queue.ts`, `queue-fix-tasks.ts`,
- * `queue-retry.ts`, `blocker-resolution.ts`) route through this
- * helper, the arch test in `__tests__/db-writes-eventful.test.ts`
- * flips its `it.todo` assertions to real `it()`.
+ * ADR-0052 sole-writer: every lifecycle `INSERT/UPDATE-status/DELETE` on
+ * `tasks` lives in the Arc aggregate (`core/arc.ts`) and calls
+ * `publish(tx, '<event>', { ... })` / `buildEventInsert(...)` inside the same
+ * tx, so the row-change and its outbox event commit atomically. The arch test
+ * in `__tests__/arc-sole-writer.test.ts` enforces this by construction:
+ * `core/arc.ts` is the ONLY file allowed to write the task table, and it must
+ * emit (call `publish(` / `buildEventInsert(`).
  */
 export { publish, publishWithRetry, buildEventInsert, withWriteTx } from '../../bus/publisher.js'
 export type { RetryOpts } from '../../bus/publisher.js'

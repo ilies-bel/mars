@@ -30,5 +30,8 @@ export default defineConfig({
       '**/worktrees/**',
     ],
     environment: 'node',
+    // Turn ON the Arc-invariant debug-assert seam for the whole suite (ADR-0052)
+    // so every arc-mutating test exercises Arc.assertArcInvariant after commit.
+    setupFiles: ['./test/setup-env.ts'],
   },
 })

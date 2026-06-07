@@ -518,8 +518,16 @@ export const migrateQueueSchema = async (): Promise<void> => {
         )`,
     )
   }
+  // arch-guard:migration-delete — ADR-0052 sole-writer exemption. This orphan
+  // cleanup (kind='fix' rows with a NULL origin pointer, an ADR-0049
+  // by-construction violation that can only exist on legacy DBs) is the ONE
+  // genuinely-flaggable lifecycle DELETE inside migrateQueueSchema. The marker
+  // is line-scoped: arc-sole-writer.test.ts drops only the SAME physical line
+  // carrying it (the DELETE statement itself), so the marker cannot blanket-
+  // disable the DELETE pattern elsewhere. It is migration-only; a real
+  // lifecycle delete on a marked line would be a visible review red flag.
   await c.execute(
-    `DELETE FROM tasks WHERE kind = 'fix' AND fix_for_task_id IS NULL`,
+    `DELETE FROM tasks WHERE kind = 'fix' AND fix_for_task_id IS NULL`, // arch-guard:migration-delete
   )
   if (!names.has('priority')) {
     // CHECK constraint cannot be added via ALTER TABLE in SQLite; the
@@ -2590,59 +2598,17 @@ export interface UnblockTaskResult {
  * do not need to reach for sqlite when the row has slipped into an
  * inconsistent state (stale junction rows after a blocker was purged).
  */
+/**
+ * Thin wrapper over {@link Arc.unblockTask} (ADR-0052 sole-writer). The
+ * `blocked|queued → failed` status write + blocker clear + `task.failed` /
+ * `task.terminal` emit now live inside the Arc aggregate; this export keeps the
+ * historic call surface (`mars unblock <id>`, the daemon RPC, the `TaskStore`
+ * facade) green by delegating verbatim.
+ */
 export const unblockTask = async (
   taskId: string,
 ): Promise<UnblockTaskResult> => {
-  await migrateQueueSchema()
-  const c = resolveQueueClient()
-  const before = await c.execute({
-    sql: `SELECT status FROM tasks WHERE id = ?`,
-    args: [taskId],
-  })
-  if (before.rows.length === 0) {
-    throw new Error(`task ${taskId} not found`)
-  }
-  const previousStatus = (before.rows[0] as unknown as { status: string }).status
-  // 'queued' is accepted alongside 'blocked' so a user can drop a task that
-  // hasn't dispatched yet (e.g. an auto-spawned recovery whose parent chain
-  // has been replaced). The flip is the same: status -> 'failed', clear any
-  // task_blockers rows. The follow-up `mars purge` then deletes the row.
-  if (previousStatus !== 'blocked' && previousStatus !== 'queued') {
-    return { taskId, outcome: 'noop', previousStatus }
-  }
-  const now = new Date().toISOString()
-  // Status write + blocker clear + lifecycle emit share one transaction so
-  // this is not a silent bypass of the event substrate (ADR-0030). The
-  // terminal event fires with reason 'failed'; per ADR-0028 the Invalidator
-  // deliberately does NOT close Action-queue rows on `failed` — the operator
-  // resolves the failed task explicitly (a subsequent `mars purge` emits the
-  // 'purged' terminal that does clear the row).
-  await withWriteTx(c, async (tx) => {
-    await tx.execute({
-      // updated_at first so the STATUS_WRITE arch guard treats this as the
-      // exempt "complex conditional" form rather than flagging it as a raw
-      // bypass of setTaskStatus. The events are published atomically below.
-      sql: `UPDATE tasks
-               SET updated_at = ?,
-                   status = 'failed'
-             WHERE id = ? AND status IN ('blocked', 'queued')`,
-      args: [now, taskId],
-    })
-    await tx.execute({
-      sql: `DELETE FROM task_blockers WHERE task_id = ?`,
-      args: [taskId],
-    })
-    await tx.execute(
-      buildEventInsert('task.failed', {
-        taskId,
-        error: 'unblocked via mars unblock',
-      }),
-    )
-    await tx.execute(
-      buildEventInsert('task.terminal', { taskId, reason: 'failed' }),
-    )
-  })
-  return { taskId, outcome: 'unblocked', previousStatus }
+  return Arc.unblockTask(taskId)
 }
 
 /**
@@ -2802,23 +2768,10 @@ export const listAllBlockers = async (taskId: string): Promise<Blocker[]> => {
 export const promoteDraftToTriaging = async (
   taskId: string,
 ): Promise<Task | null> => {
-  await migrateQueueSchema()
-  const now = new Date().toISOString()
-  const upd = await resolveQueueClient().execute({
-    // updated_at first — exempt from STATUS_WRITE arch guard (conditional WHERE).
-    sql: `UPDATE tasks
-             SET updated_at = ?, status = 'triaging'
-           WHERE id = ?
-             AND status = 'draft'`,
-    args: [now, taskId],
-  })
-  if (upd.rowsAffected === 0) return null
-  const r = await resolveQueueClient().execute({
-    sql: `SELECT * FROM tasks WHERE id = ?`,
-    args: [taskId],
-  })
-  if (r.rows.length === 0) return null
-  return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+  // ADR-0052 sole-writer: the guarded 'draft' → 'triaging' status UPDATE now
+  // lives inside the Arc aggregate; this export keeps the historic call surface
+  // (the dispatcher, the triaging tests) green by delegating verbatim.
+  return Arc.promoteDraftToTriaging(taskId)
 }
 
 /**
