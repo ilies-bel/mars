@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ApiErrorPanel } from '@/components/ApiErrorPanel'
-import { useTodo } from '@/entities/todo/useTodo'
+import { useProposals } from '@/entities/proposals/useProposals'
 import { useProgress } from '@/hooks/useProgress'
 import {
   readProgressStateFromUrl,
@@ -19,7 +19,7 @@ export const ProgressPage = () => {
   const [initialUrlState] = useState(() => readProgressStateFromUrl())
 
   const { byCluster, tasks, proposals, error, connected } = useProgress()
-  const { drafts } = useTodo()
+  const { proposals: drafts } = useProposals()
   const [activeTab, setActiveTab] = useState<Tab>(initialUrlState.view)
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(
     initialUrlState.proposal,

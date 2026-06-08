@@ -15,7 +15,7 @@ import {
   fetchProgress,
   fetchProjects,
   fetchTasks,
-  fetchTodo,
+  fetchPending,
   startProject,
   triggerSelfUpdate,
 } from './api'
@@ -129,10 +129,10 @@ describe('fetchTasks', () => {
 })
 
 // ---------------------------------------------------------------------------
-// fetchTodo
+// fetchPending
 // ---------------------------------------------------------------------------
 
-describe('fetchTodo', () => {
+describe('fetchPending', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let fetchSpy: Mock<any>
 
@@ -161,7 +161,7 @@ describe('fetchTodo', () => {
       ],
     }
     fetchSpy.mockResolvedValue(json(payload))
-    const result = await fetchTodo()
+    const result = await fetchPending()
     expect(result.drafts).toHaveLength(1)
     expect(result.staleWorktrees).toHaveLength(1)
     expect(result.staleWorktrees[0].taskId).toBe('wt-1')
@@ -169,14 +169,14 @@ describe('fetchTodo', () => {
 
   it('returns empty collections when nothing is pending', async () => {
     fetchSpy.mockResolvedValue(json({ drafts: [], staleWorktrees: [] }))
-    const result = await fetchTodo()
+    const result = await fetchPending()
     expect(result.drafts).toEqual([])
     expect(result.staleWorktrees).toEqual([])
   })
 
   it('throws when staleWorktrees key is absent', async () => {
     fetchSpy.mockResolvedValue(json({ drafts: [] }))
-    await expect(fetchTodo()).rejects.toThrow('schema validation')
+    await expect(fetchPending()).rejects.toThrow('schema validation')
   })
 })
 

@@ -112,7 +112,7 @@ export const fetchProgress = async (
   return { tasks: data.tasks, proposals: data.proposals }
 }
 
-export const fetchTodo = async (projectId?: string): Promise<TodoPayload> => {
+export const fetchPending = async (projectId?: string): Promise<TodoPayload> => {
   return fetchJson(appendProject('/api/todo', projectId), todoResponseSchema)
 }
 

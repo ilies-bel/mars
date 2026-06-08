@@ -108,7 +108,7 @@ describe('fetchProposals', () => {
     expect(calledUrl).not.toContain('project=')
   })
 
-  it('propagates fetch errors from the underlying fetchTodo call', async () => {
+  it('propagates fetch errors from the underlying API call', async () => {
     fetchSpy.mockRejectedValue(new TypeError('Failed to fetch'))
     await expect(fetchProposals()).rejects.toThrow('cannot reach the mars-ui API server')
   })

@@ -11,7 +11,7 @@ import {
   resolvePageRoute,
 } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
-import { useTodo } from '@/entities/todo/useTodo'
+import { useProposals } from '@/entities/proposals/useProposals'
 import { useProgress } from '@/hooks/useProgress'
 import { FocusedProjectProvider } from '@/shared/useFocusedProject'
 import { ProgressPage } from '@/pages/ProgressPage'
@@ -44,7 +44,7 @@ const AppInner = () => {
   const proposalNodeId = parseProposalNodeRoute(hash)
   // Proposal fields come from the existing `/api/todo` drafts fetch — no new
   // endpoint is introduced for the drawer.
-  const { drafts } = useTodo()
+  const { proposals: drafts } = useProposals()
   // Graph data for the task drawer's subgraph.  React Query deduplicates this
   // against the identical call inside ProgressPage — no extra network request.
   const { tasks, proposals } = useProgress()

@@ -43,8 +43,8 @@ mock.module('@/hooks/useProgress', () => ({
   useProgress: mockUseProgress,
 }))
 
-mock.module('@/entities/todo/useTodo', () => ({
-  useTodo: () => ({ drafts: [], staleWorktrees: [], error: null, connected: true }),
+mock.module('@/entities/proposals/useProposals', () => ({
+  useProposals: () => ({ proposals: [], error: null, connected: true }),
 }))
 
 mock.module('@/entities/kpi/useKpis', () => ({

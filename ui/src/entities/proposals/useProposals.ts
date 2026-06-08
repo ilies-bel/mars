@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchTodo } from '@/shared/api'
+import { fetchPending } from '@/shared/api'
 import { useSseConnected } from '@/shared/sseStatus'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { DraftFeature } from '@/shared/schemas'
@@ -14,11 +14,11 @@ export const useProposals = (): State => {
   const { focusedProjectId: projectId, projectsSettled, projectsError, projects } = useFocusedProject()
   const connected = useSseConnected()
   // Fire without ?project= when the registry is empty so the server's --repo
-  // default can answer (same behaviour as useTodo).
+  // default can answer.
   const projectsEmpty = projectsSettled && projectsError === null && projects.length === 0
   const query = useQuery({
     queryKey: ['todo', projectId],
-    queryFn: () => fetchTodo(projectId ?? undefined),
+    queryFn: () => fetchPending(projectId ?? undefined),
     enabled: projectId !== null || projectsEmpty,
   })
 
