@@ -1,6 +1,7 @@
 export type {
   DraftFeature,
   ProposalSource,
+  ProposalsPayload,
   StaleWorktree,
-  TodoPayload,
+  StaleWorktreesPayload,
 } from '@/shared/schemas'

@@ -9,28 +9,11 @@ import {
   resolvePageRoute,
   taskHash,
 } from './routing'
-import type { TodoPayload } from './schemas'
+import type { StaleWorktreesPayload } from './schemas'
 
-const emptyTodo = (): TodoPayload => ({ drafts: [], staleWorktrees: [] })
+const emptyStaleWorktrees = (): StaleWorktreesPayload => ({ staleWorktrees: [] })
 
-const withDrafts = (n: number): TodoPayload => ({
-  drafts: Array.from({ length: n }, (_, i) => ({
-    id: `proposal-${i}`,
-    title: `title ${i}`,
-    problem: '',
-    solution: '',
-    status: 'draft',
-    source: 'human' as const,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    acceptanceCount: 0,
-    userStories: [] as string[],
-  })),
-  staleWorktrees: [],
-})
-
-const withStale = (n: number): TodoPayload => ({
-  drafts: [],
+const withStale = (n: number): StaleWorktreesPayload => ({
   staleWorktrees: Array.from({ length: n }, (_, i) => ({
     taskId: `wt-${i}`,
     status: 'done',
@@ -85,16 +68,16 @@ describe('detectRoute', () => {
 
 describe('actionQueueCount', () => {
   it('returns 0 when there are no stale worktrees', () => {
-    expect(actionQueueCount(emptyTodo())).toBe(0)
+    expect(actionQueueCount(emptyStaleWorktrees())).toBe(0)
   })
 
-  it('returns the number of stale worktrees regardless of drafts', () => {
-    const todo = { ...withStale(3), drafts: withDrafts(5).drafts }
-    expect(actionQueueCount(todo)).toBe(3)
+  it('returns the count of stale worktrees', () => {
+    expect(actionQueueCount(withStale(3))).toBe(3)
   })
 
   it('does not count drafts toward the action-queue badge', () => {
-    expect(actionQueueCount(withDrafts(10))).toBe(0)
+    // actionQueueCount accepts StaleWorktreesPayload — proposals are not part of the type
+    expect(actionQueueCount(emptyStaleWorktrees())).toBe(0)
   })
 })
 

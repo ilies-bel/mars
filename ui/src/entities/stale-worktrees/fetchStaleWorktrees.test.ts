@@ -1,6 +1,6 @@
 /**
- * Tests for fetchStaleWorktrees — the fetcher that returns the staleWorktrees
- * slice of the /api/todo payload.  fetch is mocked at the system boundary;
+ * Tests for fetchStaleWorktrees — the fetcher that returns stale worktrees
+ * from /api/stale-worktrees.  fetch is mocked at the system boundary;
  * everything else is real code.
  */
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
@@ -87,11 +87,11 @@ describe('fetchStaleWorktrees', () => {
     expect(result).toEqual([])
   })
 
-  it('hits the /api/todo endpoint', async () => {
+  it('hits the /api/stale-worktrees endpoint', async () => {
     fetchSpy.mockResolvedValue(json(todoPayload()))
     await fetchStaleWorktrees()
     const calledUrl = (fetchSpy.mock.calls[0] as string[])[0]!
-    expect(calledUrl).toContain('/api/todo')
+    expect(calledUrl).toContain('/api/stale-worktrees')
   })
 
   it('appends ?project=<id> when a projectId is provided', async () => {

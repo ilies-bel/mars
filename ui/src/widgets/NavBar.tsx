@@ -1,5 +1,4 @@
 import { useProgress } from '@/hooks/useProgress'
-import { useProposals } from '@/entities/proposals/useProposals'
 import { useStaleWorktrees } from '@/entities/stale-worktrees/useStaleWorktrees'
 import { detectRoute, actionQueueCount } from '@/shared/routing'
 import { ProjectSelector } from './ProjectSelector'
@@ -28,11 +27,10 @@ const CountBadge = ({ count }: CountBadgeProps) =>
 export const NavBar = ({ hash }: NavBarProps) => {
   const route = detectRoute(hash)
 
-  const { proposals } = useProposals()
   const { staleWorktrees } = useStaleWorktrees()
   const { tasks } = useProgress()
 
-  const actionCount = actionQueueCount({ drafts: proposals, staleWorktrees })
+  const actionCount = actionQueueCount({ staleWorktrees })
   const progressCount = tasks?.length ?? 0
 
   return (

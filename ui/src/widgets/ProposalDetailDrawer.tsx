@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DraftFeature, ProgressTask } from '@/shared/schemas'
 
 interface ProposalDetailDrawerProps {
-  /** Proposal sourced from the existing `/api/todo` drafts fetch. */
+  /** Proposal sourced from the `/api/proposals` fetch. */
   proposal: DraftFeature
   /** Clears the `#/proposal/<id>` hash so the drawer closes. */
   onClose: () => void

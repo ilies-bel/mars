@@ -352,9 +352,18 @@ export const startServer = async (
           return jsonResponse(result.status, result.body)
         }
 
-        if (path === '/api/todo') {
+        if (path === '/api/proposals') {
           const r = await proxyGet(ctx.stateDir, '/view/todo')
-          return jsonResponse(r.status, r.body)
+          if (r.status !== 200) return jsonResponse(r.status, r.body)
+          const body = r.body as { drafts?: unknown }
+          return jsonResponse(200, { drafts: body.drafts ?? [] })
+        }
+
+        if (path === '/api/stale-worktrees') {
+          const r = await proxyGet(ctx.stateDir, '/view/todo')
+          if (r.status !== 200) return jsonResponse(r.status, r.body)
+          const body = r.body as { staleWorktrees?: unknown }
+          return jsonResponse(200, { staleWorktrees: body.staleWorktrees ?? [] })
         }
 
         if (path === '/api/framework-update') {
@@ -384,7 +393,7 @@ export const startServer = async (
           }
         }
 
-        if (path === '/api/todo/dismiss' && req.method === 'POST') {
+        if (path === '/api/action-queue/dismiss' && req.method === 'POST') {
           try {
             const body = await req.json() as { id?: unknown; kind?: unknown }
             const { id, kind } = body

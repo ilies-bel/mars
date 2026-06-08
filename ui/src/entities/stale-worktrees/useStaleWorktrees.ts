@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchPending } from '@/shared/api'
+import { fetchStaleWorktreesPayload } from '@/shared/api'
 import { useSseConnected } from '@/shared/sseStatus'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { StaleWorktree } from '@/shared/schemas'
@@ -17,8 +17,8 @@ export const useStaleWorktrees = (): State => {
   // default can answer.
   const projectsEmpty = projectsSettled && projectsError === null && projects.length === 0
   const query = useQuery({
-    queryKey: ['todo', projectId],
-    queryFn: () => fetchPending(projectId ?? undefined),
+    queryKey: ['stale-worktrees', projectId],
+    queryFn: () => fetchStaleWorktreesPayload(projectId ?? undefined),
     enabled: projectId !== null || projectsEmpty,
   })
 

@@ -142,6 +142,14 @@ export const todoResponseSchema = z.object({
   staleWorktrees: z.array(staleWorktreeSchema),
 })
 
+export const proposalsResponseSchema = z.object({
+  drafts: z.array(draftFeatureSchema),
+})
+
+export const staleWorktreesResponseSchema = z.object({
+  staleWorktrees: z.array(staleWorktreeSchema),
+})
+
 export const dagNodeSchema = z.object({
   id: z.string(),
   status: z.string(),
@@ -567,4 +575,5 @@ export type Cluster = z.infer<typeof clusterSchema>
 export type ProgressTask = z.infer<typeof progressTaskSchema>
 export type ProgressProposalNode = z.infer<typeof progressProposalNodeSchema>
 export type StaleWorktree = z.infer<typeof staleWorktreeSchema>
-export type TodoPayload = z.infer<typeof todoResponseSchema>
+export type ProposalsPayload = z.infer<typeof proposalsResponseSchema>
+export type StaleWorktreesPayload = z.infer<typeof staleWorktreesResponseSchema>

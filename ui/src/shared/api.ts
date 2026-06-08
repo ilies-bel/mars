@@ -8,8 +8,9 @@ import {
   originsResponseSchema,
   progressResponseSchema,
   projectsResponseSchema,
+  proposalsResponseSchema,
+  staleWorktreesResponseSchema,
   tasksResponseSchema,
-  todoResponseSchema,
   workerSessionsResponseSchema,
   type ActionQueueHistoryResponse,
   type ActionQueueItem,
@@ -20,8 +21,9 @@ import {
   type ProgressProposalNode,
   type ProgressTask,
   type Project,
+  type ProposalsPayload,
+  type StaleWorktreesPayload,
   type Task,
-  type TodoPayload,
   type WorkerSession,
 } from './schemas'
 
@@ -112,8 +114,12 @@ export const fetchProgress = async (
   return { tasks: data.tasks, proposals: data.proposals }
 }
 
-export const fetchPending = async (projectId?: string): Promise<TodoPayload> => {
-  return fetchJson(appendProject('/api/todo', projectId), todoResponseSchema)
+export const fetchProposalsPayload = async (projectId?: string): Promise<ProposalsPayload> => {
+  return fetchJson(appendProject('/api/proposals', projectId), proposalsResponseSchema)
+}
+
+export const fetchStaleWorktreesPayload = async (projectId?: string): Promise<StaleWorktreesPayload> => {
+  return fetchJson(appendProject('/api/stale-worktrees', projectId), staleWorktreesResponseSchema)
 }
 
 export const fetchFrameworkUpdate = async (): Promise<FrameworkUpdate> => {
@@ -346,7 +352,7 @@ export const dismissTodoItem = async (
   id: string,
   kind: 'draft' | 'stale',
 ): Promise<void> => {
-  const r = await fetch(`${BASE}/api/todo/dismiss`, {
+  const r = await fetch(`${BASE}/api/action-queue/dismiss`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, kind }),
@@ -354,7 +360,7 @@ export const dismissTodoItem = async (
   if (!r.ok) {
     const text = await r.text().catch(() => '')
     throw new Error(
-      `POST /api/todo/dismiss → ${r.status}${text ? `: ${text}` : ''}`,
+      `POST /api/action-queue/dismiss → ${r.status}${text ? `: ${text}` : ''}`,
     )
   }
 }
@@ -370,9 +376,10 @@ export type {
   OriginsResponse,
   ProgressProposalNode,
   Project,
+  ProposalsPayload,
   SessionOutcome,
   StaleWorktree,
-  TodoPayload,
+  StaleWorktreesPayload,
   TraceEvent,
   WorkerSession,
 } from './schemas'

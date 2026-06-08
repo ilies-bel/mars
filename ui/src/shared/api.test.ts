@@ -15,7 +15,8 @@ import {
   fetchProgress,
   fetchProjects,
   fetchTasks,
-  fetchPending,
+  fetchProposalsPayload,
+  fetchStaleWorktreesPayload,
   startProject,
   triggerSelfUpdate,
 } from './api'
@@ -129,10 +130,10 @@ describe('fetchTasks', () => {
 })
 
 // ---------------------------------------------------------------------------
-// fetchPending
+// fetchProposalsPayload
 // ---------------------------------------------------------------------------
 
-describe('fetchPending', () => {
+describe('fetchProposalsPayload', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let fetchSpy: Mock<any>
 
@@ -144,39 +145,72 @@ describe('fetchPending', () => {
     fetchSpy.mockRestore()
   })
 
-  it('returns typed todo payload with drafts and stale worktrees', async () => {
-    const payload = {
-      drafts: [minDraft()],
-      staleWorktrees: [
-        {
-          taskId: 'wt-1',
-          status: 'done',
-          ageHours: 48,
-          updatedAt: new Date().toISOString(),
-          prompt: 'old task',
-          error: null,
-          branch: 'task/wt-1',
-          blockerTaskId: null,
-        },
-      ],
-    }
-    fetchSpy.mockResolvedValue(json(payload))
-    const result = await fetchPending()
+  it('returns ProposalsPayload with drafts from /api/proposals', async () => {
+    fetchSpy.mockResolvedValue(json({ drafts: [minDraft()] }))
+    const result = await fetchProposalsPayload()
     expect(result.drafts).toHaveLength(1)
+    expect(result.drafts[0].id).toBe('proposal-1')
+  })
+
+  it('returns empty drafts when nothing is pending', async () => {
+    fetchSpy.mockResolvedValue(json({ drafts: [] }))
+    const result = await fetchProposalsPayload()
+    expect(result.drafts).toEqual([])
+  })
+
+  it('throws when drafts key is absent', async () => {
+    fetchSpy.mockResolvedValue(json({}))
+    await expect(fetchProposalsPayload()).rejects.toThrow('schema validation')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// fetchStaleWorktreesPayload
+// ---------------------------------------------------------------------------
+
+describe('fetchStaleWorktreesPayload', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('returns StaleWorktreesPayload from /api/stale-worktrees', async () => {
+    fetchSpy.mockResolvedValue(
+      json({
+        staleWorktrees: [
+          {
+            taskId: 'wt-1',
+            status: 'done',
+            ageHours: 48,
+            updatedAt: new Date().toISOString(),
+            prompt: 'old task',
+            error: null,
+            branch: 'task/wt-1',
+            blockerTaskId: null,
+          },
+        ],
+      }),
+    )
+    const result = await fetchStaleWorktreesPayload()
     expect(result.staleWorktrees).toHaveLength(1)
     expect(result.staleWorktrees[0].taskId).toBe('wt-1')
   })
 
-  it('returns empty collections when nothing is pending', async () => {
-    fetchSpy.mockResolvedValue(json({ drafts: [], staleWorktrees: [] }))
-    const result = await fetchPending()
-    expect(result.drafts).toEqual([])
+  it('returns empty staleWorktrees when nothing is pending', async () => {
+    fetchSpy.mockResolvedValue(json({ staleWorktrees: [] }))
+    const result = await fetchStaleWorktreesPayload()
     expect(result.staleWorktrees).toEqual([])
   })
 
   it('throws when staleWorktrees key is absent', async () => {
-    fetchSpy.mockResolvedValue(json({ drafts: [] }))
-    await expect(fetchPending()).rejects.toThrow('schema validation')
+    fetchSpy.mockResolvedValue(json({}))
+    await expect(fetchStaleWorktreesPayload()).rejects.toThrow('schema validation')
   })
 })
 

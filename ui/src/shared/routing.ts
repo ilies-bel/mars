@@ -1,4 +1,4 @@
-import type { TodoPayload } from './schemas'
+import type { StaleWorktreesPayload } from './schemas'
 
 export type RouteName = 'action-queue' | 'progress' | 'events'
 
@@ -116,8 +116,8 @@ export const parseProposalNodeRoute = (hash: string): string | null => {
  * Badge count for the Action queue nav entry — stale worktrees only.
  * Drafts are surfaced inline in the Action queue and must not appear here.
  */
-export const actionQueueCount = (todo: TodoPayload): number =>
-  todo.staleWorktrees.length
+export const actionQueueCount = (payload: StaleWorktreesPayload): number =>
+  payload.staleWorktrees.length
 
 /**
  * Resolves the page route that should render beneath a potential overlay.

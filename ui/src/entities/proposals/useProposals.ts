@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchPending } from '@/shared/api'
+import { fetchProposalsPayload } from '@/shared/api'
 import { useSseConnected } from '@/shared/sseStatus'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { DraftFeature } from '@/shared/schemas'
@@ -17,8 +17,8 @@ export const useProposals = (): State => {
   // default can answer.
   const projectsEmpty = projectsSettled && projectsError === null && projects.length === 0
   const query = useQuery({
-    queryKey: ['todo', projectId],
-    queryFn: () => fetchPending(projectId ?? undefined),
+    queryKey: ['proposals', projectId],
+    queryFn: () => fetchProposalsPayload(projectId ?? undefined),
     enabled: projectId !== null || projectsEmpty,
   })
 

@@ -42,7 +42,7 @@ const AppInner = () => {
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
   const proposalNodeId = parseProposalNodeRoute(hash)
-  // Proposal fields come from the existing `/api/todo` drafts fetch — no new
+  // Proposal fields come from the `/api/proposals` fetch — no new
   // endpoint is introduced for the drawer.
   const { proposals: drafts } = useProposals()
   // Graph data for the task drawer's subgraph.  React Query deduplicates this
