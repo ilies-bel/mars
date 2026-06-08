@@ -243,9 +243,9 @@ const ActionBar = ({ item }: ActionBarProps) => {
       return invokeAction(action.op, entityId)
     },
     onMutate: () => setErrorMsg(null),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['action-queue'] })
-      void qc.invalidateQueries({ queryKey: ['progress'] })
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['action-queue'], refetchType: 'active' })
+      await qc.invalidateQueries({ queryKey: ['progress'] })
     },
     onError: (err) => setErrorMsg((err as Error).message),
   })
@@ -690,9 +690,9 @@ export const ActionQueuePage = () => {
   const qc = useQueryClient()
   const restartMutation = useMutation({
     mutationFn: (entityId: string) => invokeAction('restart', entityId),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['action-queue'] })
-      void qc.invalidateQueries({ queryKey: ['progress'] })
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['action-queue'], refetchType: 'active' })
+      await qc.invalidateQueries({ queryKey: ['progress'] })
     },
   })
 
