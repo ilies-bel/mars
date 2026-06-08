@@ -39,6 +39,7 @@ export interface StepSpan {
   durationMs: number | null
   taskId: string | null
   originId: string | null
+  evalResults?: Array<{ label: string; value: number | string | null; warn: boolean }>
 }
 
 // ── Drill-in trail helpers ────────────────────────────────────────────────────
@@ -498,6 +499,21 @@ export const TaskDetailBody = ({
   )
 }
 
+const EvalChip = ({ label, value, warn }: { label: string; value: number | string | null; warn: boolean }) => {
+  if (value === null) return null
+  return (
+    <span
+      className={`rounded border px-1 py-0.5 font-mono text-[10px] ${
+        warn
+          ? 'border-amber-500/60 text-amber-400'
+          : 'border-iron/30 text-muted'
+      }`}
+    >
+      {label} {String(value)}
+    </span>
+  )
+}
+
 /**
  * The step timeline — every Step span for the focused task's run, shown as a
  * compact ordered list. Rendered as its own drawer section (independent of the
@@ -540,6 +556,13 @@ const StepTimeline = ({ spans }: { spans: StepSpan[] }) => (
             {s.durationMs != null ? (
               <span className="ml-auto shrink-0 text-muted">
                 {formatDuration(s.durationMs)}
+              </span>
+            ) : null}
+            {s.evalResults && s.evalResults.length > 0 ? (
+              <span className="ml-1 flex items-center gap-1">
+                {s.evalResults.map((r) => (
+                  <EvalChip key={r.label} label={r.label} value={r.value} warn={r.warn} />
+                ))}
               </span>
             ) : null}
           </li>

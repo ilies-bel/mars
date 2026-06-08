@@ -43,6 +43,7 @@ export interface StepSpan {
   durationMs: number | null
   taskId: string | null
   originId: string | null
+  evalResults?: Array<{ label: string; value: number | string | null; warn: boolean }>
 }
 
 /** Wire shape returned by GET /view/framework-update. */

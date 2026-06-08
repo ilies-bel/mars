@@ -16,6 +16,7 @@
 
 import { summarizeUsage } from './claude-usage'
 import { isReflectDisabled } from './reflect-signals'
+import { evaluateStep } from './step-evaluators'
 import type { TraceEventStore, TraceEventPhase } from './trace-events-store'
 import type { Worker, RunOptions } from '../workers'
 import type { RunClaudeResult } from './git/claude'
@@ -36,6 +37,13 @@ export interface RunWorkerWithSpanOptions {
   originId: string
   /** Optional phase tag (`code`, `verify`, …) attached to both events. */
   phase?: TraceEventPhase
+  /**
+   * Optional. Called after the worker succeeds to supply extra key/value
+   * pairs that are merged into the `step_ended` payload before
+   * `evaluateStep` runs. Spread before `evalResults` so evaluators can
+   * read the caller-supplied fields. Returning an empty object is a no-op.
+   */
+  getExtraPayload?: () => Record<string, unknown>
 }
 
 const safeRecord = async (
@@ -78,6 +86,7 @@ export const runWorkerWithSpan = async (
     workflowInstanceId,
     originId,
     phase,
+    getExtraPayload,
   } = options
 
   const startedAt = Date.now()
@@ -98,18 +107,23 @@ export const runWorkerWithSpan = async (
     result = await worker.run(prompt, runOptions)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    const failurePayload = {
+      stepName,
+      workflowInstanceId,
+      workerName: worker.config.name,
+      outcome: 'failed' as const,
+      failureReason: msg.slice(0, 200),
+      durationMs: Date.now() - startedAt,
+    }
+    const failureEvalResults = evaluateStep(stepName, failurePayload)
     await safeRecord(traceStore, {
       kind: 'step_ended',
       taskId: originId,
       originId,
       phase: phase ?? null,
       payload: {
-        stepName,
-        workflowInstanceId,
-        workerName: worker.config.name,
-        outcome: 'failed',
-        failureReason: msg.slice(0, 200),
-        durationMs: Date.now() - startedAt,
+        ...failurePayload,
+        ...(failureEvalResults.length > 0 ? { evalResults: failureEvalResults } : {}),
       },
     })
     throw err
@@ -133,27 +147,33 @@ export const runWorkerWithSpan = async (
     ? undefined
     : JSON.stringify(result.conversation)
 
+  const successPayload = {
+    stepName,
+    workflowInstanceId,
+    workerName: worker.config.name,
+    outcome,
+    ...(failureReason !== undefined ? { failureReason } : {}),
+    sessionId: result.sessionId ?? null,
+    durationMs: Date.now() - startedAt,
+    usageSignals: {
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cacheCreateTokens: usage.cacheCreateTokens,
+      cacheReadTokens: usage.cacheReadTokens,
+      messageCount: usage.messageCount,
+    },
+    ...(transcript !== undefined ? { transcript } : {}),
+    ...(getExtraPayload !== undefined ? getExtraPayload() : {}),
+  }
+  const evalResults = evaluateStep(stepName, successPayload)
   await safeRecord(traceStore, {
     kind: 'step_ended',
     taskId: originId,
     originId,
     phase: phase ?? null,
     payload: {
-      stepName,
-      workflowInstanceId,
-      workerName: worker.config.name,
-      outcome,
-      ...(failureReason !== undefined ? { failureReason } : {}),
-      sessionId: result.sessionId ?? null,
-      durationMs: Date.now() - startedAt,
-      usageSignals: {
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        cacheCreateTokens: usage.cacheCreateTokens,
-        cacheReadTokens: usage.cacheReadTokens,
-        messageCount: usage.messageCount,
-      },
-      ...(transcript !== undefined ? { transcript } : {}),
+      ...successPayload,
+      ...(evalResults.length > 0 ? { evalResults } : {}),
     },
   })
 
@@ -239,38 +259,48 @@ export const runNonLlmStepWithSpan = async <T>(
     const result = await fn()
     const vegaInfo = getVegaInfo?.() ?? null
     const commandOutput = getCommandOutput?.()
+    const nonLlmSuccessPayload = {
+      stepName,
+      workflowInstanceId,
+      outcome: 'completed' as const,
+      durationMs: Date.now() - startedAt,
+      ...(vegaInfo !== null
+        ? { workerName: vegaInfo.workerName, sessionId: vegaInfo.sessionId }
+        : {}),
+      ...(commandOutput !== undefined ? { commandOutput } : {}),
+    }
+    const nonLlmSuccessEvalResults = evaluateStep(stepName, nonLlmSuccessPayload)
     await safeRecord(traceStore, {
       kind: 'step_ended',
       taskId: originId,
       originId,
       phase,
       payload: {
-        stepName,
-        workflowInstanceId,
-        outcome: 'completed',
-        durationMs: Date.now() - startedAt,
-        ...(vegaInfo !== null
-          ? { workerName: vegaInfo.workerName, sessionId: vegaInfo.sessionId }
-          : {}),
-        ...(commandOutput !== undefined ? { commandOutput } : {}),
+        ...nonLlmSuccessPayload,
+        ...(nonLlmSuccessEvalResults.length > 0 ? { evalResults: nonLlmSuccessEvalResults } : {}),
       },
     })
     return result
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     const commandOutput = getCommandOutput?.()
+    const nonLlmFailurePayload = {
+      stepName,
+      workflowInstanceId,
+      outcome: 'failed' as const,
+      failureReason: msg.slice(0, 200),
+      durationMs: Date.now() - startedAt,
+      ...(commandOutput !== undefined ? { commandOutput } : {}),
+    }
+    const nonLlmFailureEvalResults = evaluateStep(stepName, nonLlmFailurePayload)
     await safeRecord(traceStore, {
       kind: 'step_ended',
       taskId: originId,
       originId,
       phase,
       payload: {
-        stepName,
-        workflowInstanceId,
-        outcome: 'failed',
-        failureReason: msg.slice(0, 200),
-        durationMs: Date.now() - startedAt,
-        ...(commandOutput !== undefined ? { commandOutput } : {}),
+        ...nonLlmFailurePayload,
+        ...(nonLlmFailureEvalResults.length > 0 ? { evalResults: nonLlmFailureEvalResults } : {}),
       },
     })
     throw err

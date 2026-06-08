@@ -964,11 +964,6 @@ export const implementWorkflow = defineWorkflow<
             // Handler backfills originalPrompt from task.prompt when '' is passed.
             originalPrompt: '',
           },
-        }).catch((err) => {
-          console.error(
-            `[failure-handler] task ${input.taskId} context-exhausted handling errored:`,
-            err,
-          )
         })
         console.log(
           `[ctx] task ${input.taskId}: context-exhausted; recovery fix-task spawned to resume the existing worktree`,

@@ -2688,6 +2688,9 @@ export const startDaemon = async (
                 : null,
             taskId: s.taskId,
             originId: s.originId,
+            evalResults: Array.isArray(endEvent?.payload.evalResults)
+              ? (endEvent.payload.evalResults as Array<{ label: string; value: number | string | null; warn: boolean }>)
+              : undefined,
           }
         })
         // Ascending by startedAt — preserves workflow execution order.

@@ -894,6 +894,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     }
 
     const traceStore = await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)
+    let slicedTaskCount = 0
     const r = await runWorkerWithSpan({
       worker: Workers.Slicer,
       prompt: buildSlicerPrompt(proposal),
@@ -902,6 +903,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       stepName: 'generate-slices',
       workflowInstanceId: ctx.runId,
       originId: inputData.proposalId,
+      getExtraPayload: () => ({ slicedTaskCount }),
     })
     if (r.exitCode !== 0) {
       throw new Error(
@@ -940,6 +942,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     parsed.slices = dropAlreadySatisfiedSlices(parsed.slices, getRepoRoot())
     const droppedCount = preDropCount - parsed.slices.length
     const total = parsed.slices.length
+    slicedTaskCount = total
 
     // Action quality guard: for each slice whose prescriptiveAction is vague,
     // re-prompt the slicer exactly once naming the specific anti-pattern.
