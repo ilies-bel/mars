@@ -15,6 +15,7 @@
 
 import { route, type CommandRegistry } from './registry'
 import type { CommandDeps, CommandResult } from './command'
+import type { DomainTaskStore } from '../core/store/task-store'
 import type { ParsedArgs } from './args'
 
 /**
@@ -54,10 +55,21 @@ export const isUnknown = (
  * Build the production {@link CommandDeps}: real store, real daemon transport,
  * resolved context, console sinks.
  *
- * `ctx` is resolved lazily on first access. `resolveContext` mkdirs the repo's
- * `.mars/`, so commands that never touch `deps.ctx` (notably the `ui` family,
- * which uses the raw `--repo` flag) do not create state directories — matching
- * the pre-seam ordering where `ui` ran before context resolution.
+ * Both `ctx` and `store` are resolved lazily on first access.
+ *
+ * `ctx` laziness: `resolveContext` mkdirs the repo's `.mars/`, so commands
+ * that never touch `deps.ctx` (notably the `ui` family, which uses the raw
+ * `--repo` flag) do not create state directories — matching the pre-seam
+ * ordering where `ui` ran before context resolution.
+ *
+ * `store` laziness: the queue client singleton inside `resolveQueueClient()`
+ * resolves its DB path from the context singleton the first time it is
+ * called. By deferring store construction until after `deps.ctx` is
+ * accessed (which writes the correct --repo path into the context cache),
+ * the queue client is guaranteed to open the right `.mars/mars.db` — the
+ * one under `--repo`, not the one under `CWD`/`MARS_REPO`. Without this
+ * ordering, `getDefaultDomainTaskStore()` called eagerly would pick up
+ * whatever the CWD resolved to, silently reading the wrong database.
  */
 export const makeProductionDeps = async (
   repo: string | undefined,
@@ -67,8 +79,9 @@ export const makeProductionDeps = async (
   const { sendRequest } = await import('../core/daemon/client')
 
   let resolvedCtx: ReturnType<typeof resolveContext> | undefined
+  let resolvedStore: ReturnType<typeof getDefaultDomainTaskStore> | undefined
+
   const deps = {
-    store: getDefaultDomainTaskStore(),
     daemon: { sendRequest },
     out: (s: string): void => {
       console.log(s)
@@ -83,6 +96,20 @@ export const makeProductionDeps = async (
     get(): ReturnType<typeof resolveContext> {
       if (!resolvedCtx) resolvedCtx = resolveContext(repo)
       return resolvedCtx
+    },
+  })
+
+  Object.defineProperty(deps, 'store', {
+    enumerable: true,
+    get(): DomainTaskStore {
+      if (!resolvedStore) {
+        // Force context resolution first so that the queue client singleton
+        // (created inside resolveQueueClient()) picks up the correct DB path
+        // from the already-cached context rather than falling back to CWD.
+        void deps.ctx
+        resolvedStore = getDefaultDomainTaskStore()
+      }
+      return resolvedStore
     },
   })
 
