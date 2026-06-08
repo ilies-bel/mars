@@ -602,8 +602,8 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-auto">
-      <header className="border-b border-iron/30 px-6 py-4">
+    <div className="flex h-full min-w-0 flex-col overflow-auto">
+      <header className="min-w-0 border-b border-iron/30 px-6 py-4">
         {/* Headline: original task id, kind badge, priority */}
         <div className="flex items-baseline gap-3">
           <span className="break-all font-mono text-[11px] uppercase text-iron">

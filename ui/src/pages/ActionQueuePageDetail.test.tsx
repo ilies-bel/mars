@@ -1192,3 +1192,48 @@ describe('ActionQueueDetail – draft-proposal rich content', () => {
     expect(html).toContain('Dismiss')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Heading overflow prevention.
+// The outer detail-panel container must carry min-w-0 so the h2 heading can
+// shrink to the flex-allocated width and break-all wraps the text rather than
+// the whole panel pushing past the viewport.
+// ---------------------------------------------------------------------------
+
+describe('actionQueue detail – heading overflow prevention', () => {
+  it('renders the full arc-failed goal text without truncation', () => {
+    const longGoal =
+      'Fix and retry b40205e8, or abandon mars-77fa3747: recovery failed at merge:preflight'
+    const item = makeItem({
+      id: 'arc-failed:arc-1',
+      kind: 'arc-failed',
+      entityId: 'arc-1',
+      goal: longGoal,
+      reason: 'recovery task mars-77fa3747 failed',
+      chain: [],
+      actions: [{ id: 'restart', label: 'Restart', op: 'restart' }],
+    })
+    const qc = makeClient({ taskId: 'arc-1' })
+    const html = renderDetail(item, qc)
+    // The full goal (including the trailing recovery task id) must appear in the
+    // markup — not truncated or clipped.
+    expect(html).toContain(longGoal)
+  })
+
+  it('outer detail panel container carries min-w-0 to prevent horizontal overflow', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(BASE_ITEM, qc)
+    // The outer container must have min-w-0 alongside h-full and overflow-auto.
+    // This specific triple is only present on the ActionQueueDetail outer div;
+    // it will fail if min-w-0 is missing from that element.
+    expect(html).toContain('h-full min-w-0 flex-col overflow-auto')
+  })
+
+  it('header element carries min-w-0 so its flex-column stretch is bounded', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(BASE_ITEM, qc)
+    // The header inside the outer div is a flex item in a flex column; without
+    // min-w-0 its min-content size can exceed the container width.
+    expect(html).toContain('min-w-0 border-b border-iron')
+  })
+})
