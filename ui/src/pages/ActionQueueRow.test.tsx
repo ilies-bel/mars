@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ActionQueueDetail, ActionQueueRow } from './TodoPage'
+import { ActionQueueDetail, ActionQueueRow } from './ActionQueuePage'
 import type { ActionQueueItem } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------

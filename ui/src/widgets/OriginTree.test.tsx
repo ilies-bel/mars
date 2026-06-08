@@ -195,8 +195,10 @@ describe('OriginTree – loading and error states', () => {
   it('renders the error line when the query fails', () => {
     const html = render(errored('boom'), { taskId: 't-err' })
     expect(html).toContain('>Origins<')
-    expect(html).toContain('Failed to load origins')
-    expect(html).toContain('boom')
+    // renderToStaticMarkup HTML-encodes apostrophes; match the encoded form.
+    // The component uses getFallbackCopy which shows sanitized copy (not the raw
+    // error message) in prod mode — 'boom' no longer appears in the HTML.
+    expect(html).toContain("Couldn&#x27;t load the origin tasks.")
     expect(html).not.toContain('data-testid="origin-tree"')
   })
 })
