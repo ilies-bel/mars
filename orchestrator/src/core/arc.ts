@@ -35,7 +35,6 @@ import {
   type TaskStatus,
   type TaskKind,
   type TaskTag,
-  type FollowUpKind,
   type EnqueueTaskOptions,
   type DropTaskResult,
   type UnblockTaskResult,
@@ -750,71 +749,6 @@ export class Arc {
         ? { failureSignature: extras.failureSignature }
         : {}),
     })
-  }
-
-  /**
-   * Continuation (follow-up) write funnel (ADR-0052). Enqueues a follow-up task
-   * for `originTaskId` exactly ONCE, across restarts.
-   *
-   * Deduplicates via the dedicated `followup_dedup_key` column (value:
-   * `followup:<originTaskId>:<kind>`): if an open (non-terminal) follow-up for
-   * this origin+kind combination already exists, the enqueue is skipped and the
-   * existing task id is returned with `created: false`.
-   *
-   * Arc membership (ADR-0050): the follow-up's `origin_id` is set to the
-   * RESOLVED `origin_id` of `originTaskId` (i.e. the arc root), not to a
-   * synthetic dedup string, so the follow-up is reachable from the same arc as
-   * the task it continues. Creation routes through {@link Arc.createOrigin}
-   * (via the queue wrapper) and the blocker edge through {@link Arc.addBlocker}.
-   */
-  async addContinuation(
-    originTaskId: string,
-    kind: FollowUpKind,
-    prompt: string,
-  ): Promise<{ id: string; created: boolean }> {
-    const dedupKey = `followup:${originTaskId}:${kind}`
-    await migrateQueueSchema()
-    const s = this.store
-    // Dedup: if an open (non-terminal) follow-up with this dedup key exists,
-    // reuse it.
-    const existing = await s.execute({
-      sql: `SELECT id FROM tasks WHERE followup_dedup_key = ? AND status NOT IN ('done', 'failed', 'dropped') LIMIT 1`,
-      args: [dedupKey],
-    })
-    if (existing.rows.length > 0) {
-      const id = (existing.rows[0] as unknown as { id: string }).id
-      return { id, created: false }
-    }
-    // Inherit the arc: resolve the origin task's actual origin_id so the
-    // follow-up joins the same arc as the task it continues (ADR-0050).
-    const originRow = await s.execute({
-      sql: `SELECT origin_id, id FROM tasks WHERE id = ?`,
-      args: [originTaskId],
-    })
-    const resolvedOriginId =
-      originRow.rows.length > 0
-        ? ((
-            originRow.rows[0] as unknown as {
-              origin_id: string | null
-              id: string
-            }
-          ).origin_id ?? originTaskId)
-        : originTaskId
-    const followUp = await Arc.createOrigin(
-      {
-        prompt,
-        opts: { skipTriage: true, originId: resolvedOriginId },
-      },
-      s,
-    )
-    // Stamp the dedup key onto the newly created follow-up row.
-    await s.execute({
-      sql: `UPDATE tasks SET followup_dedup_key = ? WHERE id = ?`,
-      args: [dedupKey, followUp.id],
-    })
-    await this.addBlocker(followUp.id, [originTaskId])
-    await Arc.maybeAssertArcInvariant(followUp.id, s)
-    return { id: followUp.id, created: true }
   }
 
   /**

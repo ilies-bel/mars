@@ -2328,51 +2328,13 @@ export const insertReflectionTask = async (corpusSize: number): Promise<string> 
  * (ADR-0052): the existence checks, dedupe, ADR-0040 leaf-node guard, and the
  * `state='confirmed'` batch INSERT all live on the Arc aggregate now. Signature
  * kept byte-identical for the task-store facade and existing call sites
- * (`enqueueFollowUpOnce`, `upsertFixTask` non-exempt paths).
+ * (`upsertFixTask` non-exempt paths).
  */
 export const addBlockers = async (
   taskId: string,
   blockerIds: readonly string[],
 ): Promise<void> => {
   await Arc.load(taskId).addBlocker(taskId, blockerIds)
-}
-
-/**
- * Follow-up task kind: distinguishes context-exhausted from exploration-loop
- * follow-ups so each origin+kind pair has a unique dedup key.
- */
-export type FollowUpKind = 'context-exhausted' | 'exploration-loop'
-
-/**
- * Enqueue a follow-up task for `originTaskId` exactly ONCE, across restarts.
- *
- * Deduplicates via a dedicated `followup_dedup_key` column (value:
- * `followup:<originTaskId>:<kind>`): if an open (non-terminal) follow-up for
- * this origin+kind combination already exists in the DB, the enqueue is
- * skipped and the existing task id is returned with `created: false`.
- *
- * Arc membership (ADR-0050): the follow-up's `origin_id` is set to the
- * RESOLVED `origin_id` of `originTaskId` (i.e. the arc root), not to a
- * synthetic dedup string. This ensures the follow-up is reachable from the
- * same arc as the task it continues.
- *
- * When no open follow-up exists the task is created with `skipTriage: true`,
- * a blocker edge from the follow-up back to `originTaskId` is added, and the
- * result has `created: true`.
- */
-/**
- * Enqueue a follow-up task for `originTaskId` exactly ONCE, across restarts.
- * Thin wrapper over {@link Arc.addContinuation} (ADR-0052): the
- * `followup_dedup_key` dedup, arc-inheritance resolution, origin creation, and
- * blocker-edge wiring all live on the Arc aggregate now. Signature kept
- * byte-identical for existing call sites (`implement-workflow.ts`).
- */
-export const enqueueFollowUpOnce = async (
-  originTaskId: string,
-  kind: FollowUpKind,
-  prompt: string,
-): Promise<{ id: string; created: boolean }> => {
-  return Arc.load(originTaskId).addContinuation(originTaskId, kind, prompt)
 }
 
 /**
