@@ -150,3 +150,7 @@ Each task prompt must stand alone. Include:
   <path>`, tool `--cwd` flags, absolute paths, or `mars --repo <root>
   …`. If a one-off subshell is unavoidable, spell it `(cd <abs-path>
   && …)` so the parent shell never moves.
+- The `.mcp.json` at your repo root registers the **codegraph** MCP
+  server; install it first (`brew install codegraph` or
+  `npm install -g @codegraph/cli`) for the `codegraph_*` tools to
+  work.

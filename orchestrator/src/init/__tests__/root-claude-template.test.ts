@@ -18,12 +18,13 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { scaffoldClaudeConfig } from '../scaffold'
+import { planClaudeCopies, scaffoldClaudeConfig } from '../scaffold'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -146,5 +147,73 @@ describe('mars init: root CLAUDE.md template', () => {
 
     const claudeDir = resolve(root, '.claude')
     expect(existsSync(claudeDir)).toBe(false)
+  })
+})
+
+const BUNDLED_MCP_JSON_PATH = resolve(
+  __dirname,
+  '..',
+  'templates',
+  '.mcp.json',
+)
+
+describe('mars init: .mcp.json scaffold', () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(resolve(tmpdir(), 'mars-mcp-scaffold-'))
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('.mcp.json is in the planClaudeCopies candidate set', () => {
+    const copies = planClaudeCopies(root)
+    const rels = copies.map((c) => c.rel)
+    expect(rels).toContain('.mcp.json')
+  })
+
+  it('writes .mcp.json to the target repo root with the codegraph server block intact', () => {
+    const result = scaffoldClaudeConfig({ repoRoot: root })
+    expect(result.status).toBe('ok')
+    expect((result as { status: 'ok'; written: string[] }).written).toContain('.mcp.json')
+
+    const written = readFileSync(resolve(root, '.mcp.json'), 'utf8')
+    const parsed = JSON.parse(written) as Record<string, unknown>
+    expect(parsed).toHaveProperty('mcpServers')
+    const servers = parsed['mcpServers'] as Record<string, unknown>
+    expect(servers).toHaveProperty('codegraph')
+  })
+
+  it('written .mcp.json matches the bundled template byte-for-byte', () => {
+    scaffoldClaudeConfig({ repoRoot: root })
+    const written = readFileSync(resolve(root, '.mcp.json'))
+    const bundled = readFileSync(BUNDLED_MCP_JSON_PATH)
+    expect(written.equals(bundled)).toBe(true)
+  })
+
+  it('does NOT overwrite a pre-existing .mcp.json (no-clobber rule)', () => {
+    const dest = resolve(root, '.mcp.json')
+    const original = JSON.stringify({ mcpServers: { myServer: {} } })
+    writeFileSync(dest, original, 'utf8')
+
+    const result = scaffoldClaudeConfig({ repoRoot: root })
+    // The conflict is reported; the file is left untouched.
+    expect(result.status).toBe('conflict')
+    expect((result as { status: 'conflict'; conflicts: string[] }).conflicts).toContain('.mcp.json')
+    expect(readFileSync(dest, 'utf8')).toBe(original)
+  })
+
+  it('force:true overwrites a pre-existing .mcp.json', () => {
+    const dest = resolve(root, '.mcp.json')
+    writeFileSync(dest, '{"mcpServers":{}}', 'utf8')
+
+    const result = scaffoldClaudeConfig({ repoRoot: root, force: true })
+    expect(result.status).toBe('ok')
+
+    const written = readFileSync(dest)
+    const bundled = readFileSync(BUNDLED_MCP_JSON_PATH)
+    expect(written.equals(bundled)).toBe(true)
   })
 })

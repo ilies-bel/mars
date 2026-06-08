@@ -15,6 +15,13 @@ const TEMPLATES_DIR = resolve(
 
 const TEMPLATE_CLAUDE_MD = resolve(TEMPLATES_DIR, 'CLAUDE.md')
 
+/**
+ * Bundled template for the repo-root `.mcp.json` that registers the codegraph
+ * MCP server. Delivered via the scaffold path (NOT via the `.claude/` bundle)
+ * because `.mcp.json` lives at the repo root, not inside `.claude/`.
+ */
+const TEMPLATE_MCP_JSON = resolve(TEMPLATES_DIR, '.mcp.json')
+
 export interface ScaffoldClaudeOptions {
   repoRoot: string
   force?: boolean
@@ -45,16 +52,24 @@ interface PlannedCopy {
  * install time. Only the repository-bound `CLAUDE.md` is scaffolded.
  */
 export const planClaudeCopies = (repoRoot: string): PlannedCopy[] => {
-  if (!existsSync(TEMPLATE_CLAUDE_MD)) return []
+  const copies: PlannedCopy[] = []
 
-  const dest = resolve(repoRoot, 'CLAUDE.md')
-  return [
-    {
-      src: TEMPLATE_CLAUDE_MD,
-      dest,
-      rel: relative(repoRoot, dest),
-    },
-  ]
+  if (existsSync(TEMPLATE_CLAUDE_MD)) {
+    const dest = resolve(repoRoot, 'CLAUDE.md')
+    copies.push({ src: TEMPLATE_CLAUDE_MD, dest, rel: relative(repoRoot, dest) })
+  }
+
+  // .mcp.json: registers the codegraph MCP server so `codegraph_*` tools are
+  // available to Claude Code sessions in the consumer repo. Collision policy:
+  // if the target repo already has a .mcp.json, do NOT clobber it — the
+  // `force` guard in `scaffoldClaudeConfig` (and the `existsSync` filter in
+  // `planClaudeConflicts`) enforces this for every entry in this array.
+  if (existsSync(TEMPLATE_MCP_JSON)) {
+    const dest = resolve(repoRoot, '.mcp.json')
+    copies.push({ src: TEMPLATE_MCP_JSON, dest, rel: relative(repoRoot, dest) })
+  }
+
+  return copies
 }
 
 /**
