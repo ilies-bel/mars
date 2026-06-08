@@ -3,7 +3,6 @@
   "_comment": "Install manifest for `mars install`. See docs/manifest.md for how to add an asset. `owned` files are overwritten unconditionally (ADR-0004); `hybrid` files are written only if absent and refuse on existence (ADR-0007). Validated by scripts/check-manifest.mjs.",
   "owned": [
     ".claude/plugin.json",
-    ".claude/hooks/block-tracked-writes.sh",
     ".claude/hooks/warn-raw-queue-sql.sh",
     ".claude/agents/vcs-supervisor.md",
     ".claude/skills/mars:chat/SKILL.md",
@@ -21,9 +20,6 @@
     ".claude/settings.json"
   ],
   "hookRegistrations": [
-    { "matcher": "Edit", "command": ".claude/hooks/block-tracked-writes.sh" },
-    { "matcher": "Write", "command": ".claude/hooks/block-tracked-writes.sh" },
-    { "matcher": "NotebookEdit", "command": ".claude/hooks/block-tracked-writes.sh" },
     { "matcher": "Bash", "command": ".claude/hooks/warn-raw-queue-sql.sh" }
   ],
   "scopes": []

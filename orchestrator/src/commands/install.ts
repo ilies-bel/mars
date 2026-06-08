@@ -24,7 +24,7 @@ export interface HookRegistration {
   /**
    * Repo-relative path to the hook script that must also appear in
    * `manifest.owned` for the registration to be applied.
-   * (e.g. '.claude/hooks/block-tracked-writes.sh')
+   * (e.g. '.claude/hooks/warn-raw-queue-sql.sh')
    */
   command: string
 }

@@ -362,14 +362,14 @@ describe('runInstall — settings.json hook merge', () => {
   const HOOK_MANIFEST: Manifest = {
     schemaVersion: 1,
     owned: [
-      '.claude/hooks/block-tracked-writes.sh',
+      '.claude/hooks/block-branch-switch.sh',
       '.claude/hooks/warn-raw-queue-sql.sh',
     ],
     hybrid: ['.claude/settings.json'],
     hookRegistrations: [
-      { matcher: 'Edit', command: '.claude/hooks/block-tracked-writes.sh' },
-      { matcher: 'Write', command: '.claude/hooks/block-tracked-writes.sh' },
-      { matcher: 'NotebookEdit', command: '.claude/hooks/block-tracked-writes.sh' },
+      { matcher: 'Edit', command: '.claude/hooks/block-branch-switch.sh' },
+      { matcher: 'Write', command: '.claude/hooks/block-branch-switch.sh' },
+      { matcher: 'NotebookEdit', command: '.claude/hooks/block-branch-switch.sh' },
       { matcher: 'Bash', command: '.claude/hooks/warn-raw-queue-sql.sh' },
     ],
     scopes: [],
@@ -384,7 +384,7 @@ describe('runInstall — settings.json hook merge', () => {
    * copy the owned files before it reaches the hybrid merge step.
    */
   const HOOK_SOURCES = new Map<string, Buffer>([
-    [join(FRAMEWORK_ROOT, '.claude/hooks/block-tracked-writes.sh'), Buffer.from('#!/bin/bash\n')],
+    [join(FRAMEWORK_ROOT, '.claude/hooks/block-branch-switch.sh'), Buffer.from('#!/bin/bash\n')],
     [join(FRAMEWORK_ROOT, '.claude/hooks/warn-raw-queue-sql.sh'), Buffer.from('#!/bin/bash\n')],
     [SETTINGS_SRC, Buffer.from('{}')], // framework template used when settings.json is absent
   ])
@@ -409,20 +409,20 @@ describe('runInstall — settings.json hook merge', () => {
     // existing key is preserved
     expect(result.enabledPlugins).toEqual(['@my-plugin'])
 
-    // Edit → block-tracked-writes.sh is registered
+    // Edit → block-branch-switch.sh is registered
     const editEntry = result.hooks.PreToolUse.find((e) => e.matcher === 'Edit')
     expect(editEntry).toBeDefined()
-    expect(editEntry!.hooks.some((h) => h.command.includes('block-tracked-writes.sh'))).toBe(true)
+    expect(editEntry!.hooks.some((h) => h.command.includes('block-branch-switch.sh'))).toBe(true)
 
-    // Write → block-tracked-writes.sh is registered
+    // Write → block-branch-switch.sh is registered
     const writeEntry = result.hooks.PreToolUse.find((e) => e.matcher === 'Write')
     expect(writeEntry).toBeDefined()
-    expect(writeEntry!.hooks.some((h) => h.command.includes('block-tracked-writes.sh'))).toBe(true)
+    expect(writeEntry!.hooks.some((h) => h.command.includes('block-branch-switch.sh'))).toBe(true)
 
-    // NotebookEdit → block-tracked-writes.sh is registered
+    // NotebookEdit → block-branch-switch.sh is registered
     const notebookEntry = result.hooks.PreToolUse.find((e) => e.matcher === 'NotebookEdit')
     expect(notebookEntry).toBeDefined()
-    expect(notebookEntry!.hooks.some((h) => h.command.includes('block-tracked-writes.sh'))).toBe(true)
+    expect(notebookEntry!.hooks.some((h) => h.command.includes('block-branch-switch.sh'))).toBe(true)
 
     // Bash → warn-raw-queue-sql.sh is registered
     const bashEntry = result.hooks.PreToolUse.find((e) => e.matcher === 'Bash')
@@ -442,7 +442,7 @@ describe('runInstall — settings.json hook merge', () => {
     }
     const editEntry = result.hooks.PreToolUse.find((e) => e.matcher === 'Edit')
     expect(editEntry!.hooks[0].command).toBe(
-      '$CLAUDE_PROJECT_DIR/.claude/hooks/block-tracked-writes.sh',
+      '$CLAUDE_PROJECT_DIR/.claude/hooks/block-branch-switch.sh',
     )
   })
 
@@ -490,10 +490,10 @@ describe('runInstall — settings.json hook merge', () => {
     // warn-raw-queue-sql.sh is deliberately absent from owned
     const manifest: Manifest = {
       schemaVersion: 1,
-      owned: ['.claude/hooks/block-tracked-writes.sh'],
+      owned: ['.claude/hooks/block-branch-switch.sh'],
       hybrid: ['.claude/settings.json'],
       hookRegistrations: [
-        { matcher: 'Edit', command: '.claude/hooks/block-tracked-writes.sh' },
+        { matcher: 'Edit', command: '.claude/hooks/block-branch-switch.sh' },
         { matcher: 'Bash', command: '.claude/hooks/warn-raw-queue-sql.sh' }, // not in owned!
       ],
       scopes: [],
@@ -501,7 +501,7 @@ describe('runInstall — settings.json hook merge', () => {
     const deps = makeDeps({
       existingPaths: new Set([SETTINGS_DST]),
       sourceFiles: new Map([
-        [join(FRAMEWORK_ROOT, '.claude/hooks/block-tracked-writes.sh'), Buffer.from('#!/bin/bash\n')],
+        [join(FRAMEWORK_ROOT, '.claude/hooks/block-branch-switch.sh'), Buffer.from('#!/bin/bash\n')],
         [SETTINGS_DST, Buffer.from('{}')],
       ]),
     })
@@ -528,7 +528,7 @@ describe('runInstall — settings.json hook merge', () => {
         PreToolUse: [
           {
             matcher: 'Edit',
-            hooks: [{ type: 'command', command: '$CLAUDE_PROJECT_DIR/.claude/hooks/block-tracked-writes.sh' }],
+            hooks: [{ type: 'command', command: '$CLAUDE_PROJECT_DIR/.claude/hooks/block-branch-switch.sh' }],
           },
         ],
       },
