@@ -28,6 +28,12 @@ scheduled_tasks.lock
 # mars install manifest — per-install runtime state, never committed.
 mars.lock
 
+# codegraph local index — per-machine SQLite knowledge graph + cache, rebuilt
+# by `codegraph init` and kept fresh by the file-watcher. Never committed (the
+# repo-root `.mcp.json` that registers the codegraph MCP server IS tracked;
+# only this generated index directory is not).
+.codegraph/
+
 # Session-scoped git worktrees (sibling of the gitignored /.worktrees/).
 .worktrees-session/
 

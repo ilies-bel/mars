@@ -164,6 +164,17 @@ export interface Worker {
 const CLAUDE_OPUS_MODEL = 'claude-opus-4-7'
 const CLAUDE_SONNET_MODEL = 'claude-sonnet-4-6'
 
+// codegraph nudge appended to the system prompt of the workers that benefit
+// most from the pre-indexed code knowledge graph (Planner, Slicer, Coder).
+// The codegraph MCP server is registered in the repo-root `.mcp.json`, so the
+// `codegraph_*` tools are available to every dispatched `claude -p` run that
+// reads project MCP config (which they all do — see claudeStreamArgs'
+// --strict-mcp-config + --setting-sources project,local). The nudge steers the
+// worker toward the graph before it falls back to broad file-scanning, which
+// is what cuts tool calls and context churn.
+const CODEGRAPH_NUDGE =
+  'A pre-indexed code knowledge graph is available via the `codegraph_*` MCP tools (codegraph_explore, codegraph_search, codegraph_callers, codegraph_callees, codegraph_impact, codegraph_node, codegraph_files, codegraph_status). Before broad file-scanning (rg/fd/Glob across the tree), consult codegraph to locate symbols, trace call graphs, and assess blast radius — it is faster and cheaper than reading files to reconstruct structure. Fall back to direct file reads when the graph lacks the detail you need.'
+
 // Resolve the effective model for the Coder Worker. When `MARS_WORKER_MODEL`
 // is set, it overrides the pinned default — useful for one-off sessions that
 // need Opus reasoning (e.g. a complex architectural migration) without editing
@@ -205,6 +216,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,
+    appendSystemPrompt: CODEGRAPH_NUDGE,
     disallowedTools: [],
     outputFormat: 'stream-json',
     maxMessages: resolveWorkerMaxMessages(),
@@ -218,6 +230,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     effort: 'high',
     permissionMode: 'default',
     bare: false,
+    appendSystemPrompt: CODEGRAPH_NUDGE,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
     maxMessages: resolveWorkerMaxMessages(),
@@ -231,6 +244,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     effort: 'high',
     permissionMode: 'default',
     bare: false,
+    appendSystemPrompt: CODEGRAPH_NUDGE,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
     // Slicing is a read-heavy, one-shot analysis of a whole PRD against the
