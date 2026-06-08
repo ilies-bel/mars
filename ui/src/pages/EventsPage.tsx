@@ -7,6 +7,7 @@ import { severityColor, summarizeTraceEvent } from '@/shared/actionQueueDetail'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { TraceEvent } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
+import { taskHash } from '@/shared/routing'
 import { KpiVector } from '@/widgets/KpiVector'
 
 /**
@@ -220,8 +221,13 @@ interface EventRowProps {
 }
 
 const EventRow = memo(({ event }: EventRowProps) => {
+  const stepName =
+    (event.kind === 'step_started' || event.kind === 'step_ended') &&
+    typeof event.payload.stepName === 'string'
+      ? event.payload.stepName
+      : undefined
   const href = event.taskId
-    ? `#/task/${encodeURIComponent(event.taskId)}`
+    ? taskHash(event.taskId, 'events', stepName)
     : undefined
   const body = (
     <>

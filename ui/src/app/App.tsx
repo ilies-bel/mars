@@ -8,6 +8,7 @@ import {
   parseProposalNodeRoute,
   parseTaskOrigin,
   parseTaskRoute,
+  parseTaskStep,
   resolvePageRoute,
 } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
@@ -42,6 +43,7 @@ const AppInner = () => {
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
   const proposalNodeId = parseProposalNodeRoute(hash)
+  const activeStepName = parseTaskStep(hash) ?? undefined
   // Proposal fields come from the `/api/proposals` fetch — no new
   // endpoint is introduced for the drawer.
   const { proposals: drafts } = useProposals()
@@ -71,6 +73,7 @@ const AppInner = () => {
           onClose={() => clearTaskHash(hash)}
           tasks={tasks ?? []}
           proposals={proposals}
+          activeStepName={activeStepName}
         />
       ) : null}
       {proposal ? (

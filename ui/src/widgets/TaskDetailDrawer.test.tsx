@@ -981,4 +981,55 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     const rowCount = (html.match(/data-testid="step-timeline-row"/g) ?? []).length
     expect(rowCount).toBe(0)
   })
+
+  it('sets data-active=true on the row whose stepName matches activeStepName', () => {
+    const spans = [
+      span({ stepName: 'setup', workflowInstanceId: 'wf-1' }),
+      span({ stepName: 'code', workflowInstanceId: 'wf-1' }),
+      span({ stepName: 'verify', workflowInstanceId: 'wf-1' }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        stepSpans={spans}
+        activeStepName="code"
+      />,
+    )
+    // The 'code' row is highlighted; others are not.
+    expect(html).toContain('data-active="true"')
+    // Verify the highlight class is applied to the active row.
+    expect(html).toContain('ring-amber-400')
+    // The other rows must not be highlighted.
+    const activeMatches = (html.match(/data-active="true"/g) ?? []).length
+    expect(activeMatches).toBe(1)
+  })
+
+  it('sets data-active=false on all rows when activeStepName does not match any span', () => {
+    const spans = [
+      span({ stepName: 'setup', workflowInstanceId: 'wf-1' }),
+      span({ stepName: 'code', workflowInstanceId: 'wf-1' }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        stepSpans={spans}
+        activeStepName="merge"
+      />,
+    )
+    expect(html).not.toContain('data-active="true"')
+    expect(html).not.toContain('ring-amber-400')
+  })
+
+  it('does not add data-active=true when activeStepName is omitted', () => {
+    const spans = [
+      span({ stepName: 'code', workflowInstanceId: 'wf-1' }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
+    )
+    // No highlight when no active step is provided
+    expect(html).not.toContain('data-active="true"')
+  })
 })

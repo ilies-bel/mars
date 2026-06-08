@@ -98,6 +98,13 @@ interface TaskDetailDrawerProps {
    * current node; otherwise the next `taskId` effect would reset the trail.
    */
   initialTrail?: string[]
+  /**
+   * Step name to highlight in the step timeline. When the drawer is opened
+   * from an event row, this is set to the event's `payload.stepName` so the
+   * matching step row is visually distinguished. Events without a step name
+   * leave this undefined — the timeline renders normally with no active row.
+   */
+  activeStepName?: string
 }
 
 type LoadState =
@@ -521,7 +528,13 @@ const EvalChip = ({ label, value, warn }: { label: string; value: number | strin
  * the `stepSpans` prop (tests / static rendering) or the `/api/step-spans`
  * fetch. Returns null until span data resolves.
  */
-const StepTimeline = ({ spans }: { spans: StepSpan[] }) => (
+const StepTimeline = ({
+  spans,
+  activeStepName,
+}: {
+  spans: StepSpan[]
+  activeStepName?: string
+}) => (
   <section
     data-testid="task-step-timeline"
     className="border-b border-iron/20 px-4 py-3"
@@ -533,40 +546,44 @@ const StepTimeline = ({ spans }: { spans: StepSpan[] }) => (
       <p className="font-mono text-xs text-iron">No steps recorded yet</p>
     ) : (
       <ol className="flex flex-col gap-1">
-        {spans.map((s, i) => (
-          <li
-            key={`${s.workflowInstanceId}-${s.stepName}-${i}`}
-            data-testid="step-timeline-row"
-            data-outcome={s.outcome}
-            className={`flex items-center gap-2 rounded px-2 py-1 font-mono text-xs ${
-              s.outcome === 'running'
-                ? 'bg-amber-500/10 text-amber-400'
-                : s.outcome === 'failed'
-                  ? 'text-red-400'
-                  : s.outcome === 'killed'
-                    ? 'text-orange-400'
-                    : 'text-fg'
-            }`}
-          >
-            <span className="w-16 shrink-0 font-semibold">{s.stepName}</span>
-            {s.workerName != null ? (
-              <span className="shrink-0 text-muted">{s.workerName}</span>
-            ) : null}
-            <span className="shrink-0 text-muted">{outcomeLabel(s.outcome)}</span>
-            {s.durationMs != null ? (
-              <span className="ml-auto shrink-0 text-muted">
-                {formatDuration(s.durationMs)}
-              </span>
-            ) : null}
-            {s.evalResults && s.evalResults.length > 0 ? (
-              <span className="ml-1 flex items-center gap-1">
-                {s.evalResults.map((r) => (
-                  <EvalChip key={r.label} label={r.label} value={r.value} warn={r.warn} />
-                ))}
-              </span>
-            ) : null}
-          </li>
-        ))}
+        {spans.map((s, i) => {
+          const isActive = activeStepName != null && s.stepName === activeStepName
+          return (
+            <li
+              key={`${s.workflowInstanceId}-${s.stepName}-${i}`}
+              data-testid="step-timeline-row"
+              data-outcome={s.outcome}
+              data-active={isActive}
+              className={`flex items-center gap-2 rounded px-2 py-1 font-mono text-xs ${
+                s.outcome === 'running'
+                  ? 'bg-amber-500/10 text-amber-400'
+                  : s.outcome === 'failed'
+                    ? 'text-red-400'
+                    : s.outcome === 'killed'
+                      ? 'text-orange-400'
+                      : 'text-fg'
+              }${isActive ? ' ring-1 ring-amber-400 bg-amber-500/15' : ''}`}
+            >
+              <span className="w-16 shrink-0 font-semibold">{s.stepName}</span>
+              {s.workerName != null ? (
+                <span className="shrink-0 text-muted">{s.workerName}</span>
+              ) : null}
+              <span className="shrink-0 text-muted">{outcomeLabel(s.outcome)}</span>
+              {s.durationMs != null ? (
+                <span className="ml-auto shrink-0 text-muted">
+                  {formatDuration(s.durationMs)}
+                </span>
+              ) : null}
+              {s.evalResults && s.evalResults.length > 0 ? (
+                <span className="ml-1 flex items-center gap-1">
+                  {s.evalResults.map((r) => (
+                    <EvalChip key={r.label} label={r.label} value={r.value} warn={r.warn} />
+                  ))}
+                </span>
+              ) : null}
+            </li>
+          )
+        })}
       </ol>
     )}
   </section>
@@ -580,6 +597,7 @@ export const TaskDetailDrawer = ({
   proposals,
   stepSpans,
   initialTrail,
+  activeStepName,
 }: TaskDetailDrawerProps) => {
   const drawerRef = useRef<HTMLElement>(null)
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
@@ -927,7 +945,9 @@ export const TaskDetailDrawer = ({
       {/* Step timeline — renders when spans data is available (prop or fetched).
           Sits between the relationship Context and the per-task detail body as
           a diagnostic-ish view of the task's run. */}
-      {resolvedSpans !== null ? <StepTimeline spans={resolvedSpans} /> : null}
+      {resolvedSpans !== null ? (
+        <StepTimeline spans={resolvedSpans} activeStepName={activeStepName} />
+      ) : null}
 
       {state.kind === 'not-found' ? (
         <div

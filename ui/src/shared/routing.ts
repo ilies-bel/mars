@@ -71,10 +71,39 @@ export const parseTaskOrigin = (hash: string): RouteName | null => {
  * knows where to return on close. `taskHash('x')` → `#/task/x` (origin
  * defaults to Progress); `taskHash('x', 'action-queue')` →
  * `#/task/x?from=action-queue`.
+ *
+ * Pass an optional `step` (a step name such as `'code'`) to encode the active
+ * step into the hash so the drawer can highlight the matching step row on open:
+ * `taskHash('x', 'events', 'code')` → `#/task/x?from=events&step=code`.
  */
-export const taskHash = (id: string, from?: RouteName): string => {
+export const taskHash = (id: string, from?: RouteName, step?: string): string => {
   const base = `#/task/${encodeURIComponent(id)}`
-  return from ? `${base}?from=${from}` : base
+  const params: string[] = []
+  if (from) params.push(`from=${from}`)
+  if (step) params.push(`step=${encodeURIComponent(step)}`)
+  return params.length > 0 ? `${base}?${params.join('&')}` : base
+}
+
+/**
+ * Reads the active step name encoded in a `#/task/<id>?…&step=<name>` hash.
+ *
+ * Returns the decoded step name, or `null` when the hash carries no `step`
+ * param or carries an empty one. Parsing mirrors `parseTaskOrigin` — plain
+ * string-splitting, no `URLSearchParams`.
+ */
+export const parseTaskStep = (hash: string): string | null => {
+  if (parseTaskRoute(hash) === null) return null
+  const queryIndex = hash.indexOf('?')
+  if (queryIndex === -1) return null
+  const query = hash.slice(queryIndex + 1)
+  for (const pair of query.split('&')) {
+    const eq = pair.indexOf('=')
+    if (eq === -1) continue
+    if (pair.slice(0, eq) !== 'step') continue
+    const value = decodeURIComponent(pair.slice(eq + 1))
+    return value.length > 0 ? value : null
+  }
+  return null
 }
 
 /**

@@ -238,14 +238,56 @@ describe('EventsPage render', () => {
     expect(html).toContain('No events match these filters.')
   })
 
-  it('renders one row per event with the severity badge and a #/task/<id> link', () => {
+  it('renders one row per event with the severity badge and a #/task/<id>?from=events link', () => {
     const qc = makeClient(makeResponse([makeEvent({ taskId: 't-abc' })]))
     const html = renderPage(qc)
     expect(html).toContain('[error]')
     expect(html).toContain('task_failed')
     expect(html).toContain('verify:typecheck')
-    // Click affordance — the row is wrapped in an anchor to the task drawer.
-    expect(html).toContain('href="#/task/t-abc"')
+    // Click affordance — row is wrapped in an anchor to the task drawer, tagged
+    // with from=events so closing the drawer returns to the Events page.
+    expect(html).toContain('href="#/task/t-abc?from=events"')
+  })
+
+  it('includes step= in the href for a step_started event', () => {
+    const qc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-step',
+          taskId: 't-step',
+          kind: 'step_started',
+          phase: 'code',
+          payload: { stepName: 'code' },
+        }),
+      ]),
+    )
+    const html = renderPage(qc)
+    // The href must encode both the origin page and the active step so the
+    // drawer can highlight the matching step row.
+    expect(html).toContain('href="#/task/t-step?from=events&amp;step=code"')
+  })
+
+  it('includes step= in the href for a step_ended event', () => {
+    const qc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-step-end',
+          taskId: 't-step2',
+          kind: 'step_ended',
+          phase: 'verify',
+          payload: { stepName: 'verify' },
+        }),
+      ]),
+    )
+    const html = renderPage(qc)
+    expect(html).toContain('href="#/task/t-step2?from=events&amp;step=verify"')
+  })
+
+  it('does not include step= for non-step events (only from= is present)', () => {
+    const qc = makeClient(makeResponse([makeEvent({ taskId: 't-other', kind: 'task_failed' })]))
+    const html = renderPage(qc)
+    expect(html).toContain('href="#/task/t-other?from=events"')
+    expect(html).not.toContain('step=')
   })
 
   it('renders rows without an anchor when the event has no taskId', () => {

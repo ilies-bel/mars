@@ -4,6 +4,7 @@ import {
   actionQueueCount,
   parseTaskRoute,
   parseTaskOrigin,
+  parseTaskStep,
   parseProposalRoute,
   parseProposalNodeRoute,
   resolvePageRoute,
@@ -156,6 +157,52 @@ describe('taskHash', () => {
     expect(taskHash('mars-123', 'action-queue')).toBe(
       '#/task/mars-123?from=action-queue',
     )
+  })
+
+  it('appends &step=<name> when a step is given alongside from', () => {
+    expect(taskHash('x', 'events', 'code')).toBe('#/task/x?from=events&step=code')
+  })
+
+  it('appends step= without from when from is omitted but step is given', () => {
+    expect(taskHash('x', undefined, 'verify')).toBe('#/task/x?step=verify')
+  })
+
+  it('percent-encodes the step name', () => {
+    expect(taskHash('x', 'events', 'my step')).toBe(
+      '#/task/x?from=events&step=my%20step',
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseTaskStep — reads the optional step= query param from a task hash
+// ---------------------------------------------------------------------------
+
+describe('parseTaskStep', () => {
+  it('returns null when the hash has no task fragment', () => {
+    expect(parseTaskStep('#/progress')).toBeNull()
+    expect(parseTaskStep('')).toBeNull()
+  })
+
+  it('returns null when the task hash has no step param', () => {
+    expect(parseTaskStep('#/task/x')).toBeNull()
+    expect(parseTaskStep('#/task/x?from=events')).toBeNull()
+  })
+
+  it('returns the step name when present', () => {
+    expect(parseTaskStep('#/task/x?from=events&step=code')).toBe('code')
+  })
+
+  it('returns the step name when step is the only query param', () => {
+    expect(parseTaskStep('#/task/x?step=verify')).toBe('verify')
+  })
+
+  it('decodes percent-encoded step names', () => {
+    expect(parseTaskStep('#/task/x?step=my%20step')).toBe('my step')
+  })
+
+  it('returns null for an empty step value', () => {
+    expect(parseTaskStep('#/task/x?step=')).toBeNull()
   })
 })
 
