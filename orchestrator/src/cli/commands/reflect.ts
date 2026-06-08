@@ -7,6 +7,7 @@
  */
 
 import type { Command, CommandDeps } from '../command'
+import { errorMessage } from './shared'
 
 const REFLECT_DISABLED_MSG = 'reflection disabled via MARS_REFLECT_DISABLED=1'
 
@@ -296,12 +297,44 @@ const arcReflect: Command = {
   },
 }
 
+const arcPurge: Command = {
+  path: 'arc purge',
+  summary: 'purge a whole task arc (origin + all same-origin siblings)',
+  usage: 'usage: mars arc purge <id> [--force]',
+  run: async (args, deps) => {
+    const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
+    const positionals = args.positional.filter((a) => !a.startsWith('--'))
+    const id = positionals[0]
+    if (!id) {
+      deps.err('usage: mars arc purge <id> [--force]')
+      return { code: 1 }
+    }
+    const force = flagSet.has('--force')
+    let result: { purgedIds: string[]; originId: string }
+    try {
+      result = (await deps.daemon.sendRequest({
+        op: 'arc-purge',
+        id,
+        force,
+      })) as { purgedIds: string[]; originId: string }
+    } catch (err) {
+      deps.err(`${id}: ${errorMessage(err)}`)
+      return { code: 1 }
+    }
+    for (const purgedId of result.purgedIds) {
+      deps.out(`purged ${purgedId}`)
+    }
+    deps.out(`purged arc ${result.originId} (${result.purgedIds.length} task${result.purgedIds.length === 1 ? '' : 's'})`)
+    return { code: 0 }
+  },
+}
+
 const arcGroup: Command = {
   path: 'arc',
   summary: 'arc subcommands',
-  usage: 'usage: mars arc <list|reflect> ...',
+  usage: 'usage: mars arc <list|purge|reflect> ...',
   run: (_args, deps) => {
-    deps.err('usage: mars arc <list|reflect> ...')
+    deps.err('usage: mars arc <list|purge|reflect> ...')
     return { code: 1 }
   },
 }
@@ -309,6 +342,7 @@ const arcGroup: Command = {
 export const reflectCommands: readonly Command[] = [
   reflect,
   arcList,
+  arcPurge,
   arcReflect,
   arcGroup,
 ]

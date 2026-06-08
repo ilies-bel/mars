@@ -1491,6 +1491,18 @@ export const startDaemon = async (
     // design removes (ADR-0027/0030).
   }
 
+  const handleArcPurge = async (
+    id: string,
+    force: boolean,
+  ): Promise<{ purgedIds: string[]; originId: string }> => {
+    const { coreArcPurge } = await import('./arc-purge')
+    const { getRepoRoot } = await import('../context')
+    return coreArcPurge(id, force, integrationBranch, getRepoRoot())
+    // Action-queue rows for each purged task are closed by the Invalidator,
+    // which consumes the task.terminal{purged} events emitted in-tx by
+    // Arc.drop() before each row is deleted (ADR-0027/0030).
+  }
+
   const handleUnblock = async (id: string): Promise<UnblockTaskResult> => {
     return unblockTask(id)
   }
@@ -1718,6 +1730,10 @@ export const startDaemon = async (
         case 'purge': {
           await handlePurge(req.id, req.force ?? false)
           return { ok: true }
+        }
+        case 'arc-purge': {
+          const arcResult = await handleArcPurge(req.id, req.force ?? false)
+          return { ok: true, data: arcResult }
         }
         case 'drop': {
           const result = await handleDrop(req.id, req.force ?? false)
