@@ -198,11 +198,7 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
       category: 'user',
       priority: 'normal',
       title: `Draft proposal: ${payload.title}`,
-      body: [
-        `Proposal \`${payload.proposalId}\` from \`${payload.source}\` is ready for review.`,
-        '',
-        `Run \`mars proposal show ${payload.proposalId}\` to see details.`,
-      ].join('\n'),
+      body: `Proposal \`${payload.proposalId}\` from \`${payload.source}\` is ready for review.`,
       payload: {
         proposalId: payload.proposalId,
         source: payload.source,
