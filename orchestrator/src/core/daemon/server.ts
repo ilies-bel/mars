@@ -52,7 +52,7 @@ import {
 } from '../store/task-store'
 import { listTerminalEvents } from './view/terminal-events'
 import { buildSessionsView } from './view/sessions'
-import { listProposals, promoteProposal } from '../proposals'
+import { getProposal, listProposals, promoteProposal } from '../proposals'
 import type { DraftFeature, FrameworkUpdateState, StaleWorktreeAlert } from './http-server'
 import {
   CANCELLED_FAILURE_REASON,
@@ -2984,6 +2984,7 @@ export const startDaemon = async (
 
       return { drafts, staleWorktrees }
     },
+    viewProposal: (id: string) => getProposal(id),
     viewFrameworkUpdate: async (): Promise<FrameworkUpdateState> => {
       const cacheFile = resolvePath(resolveContext().stateDir, 'update.json')
       const { classifyInstallRoute: classify } = await import('./install-route')

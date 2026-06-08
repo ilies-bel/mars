@@ -30,6 +30,23 @@ const draftFeatureSchema = z.object({
   userStories: z.array(z.string()).optional().default([]),
 })
 
+/** Full proposal record returned by GET /api/proposals/:id. */
+export const proposalDetailSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  problem: z.string(),
+  solution: z.string(),
+  outOfScope: z.string(),
+  notes: z.string(),
+  status: z.string(),
+  source: proposalSourceSchema,
+  author: z.object({ kind: z.string(), name: z.string() }).nullable().optional(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  userStories: z.array(z.string()),
+})
+export type ProposalDetail = z.infer<typeof proposalDetailSchema>
+
 const taskPlanSchema = z
   .object({
     functional: z.string(),

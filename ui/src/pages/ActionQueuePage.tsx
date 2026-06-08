@@ -7,6 +7,7 @@ import { OriginTree } from '@/widgets/OriginTree'
 import ArcChainRail from '@/widgets/ArcChainRail'
 import {
   fetchEvents,
+  fetchProposalDetail,
   invokeAction,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
@@ -485,6 +486,95 @@ const TracesSection = ({ taskId }: TracesProps) => {
   )
 }
 
+// ---- Proposal detail section ----
+
+/** Lazy-fetches the full proposal by id and renders Problem / Solution / User stories / etc. */
+const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
+  const projectId = useFocusedProjectId()
+
+  const query = useQuery({
+    queryKey: ['proposal-detail', projectId, proposalId],
+    queryFn: () => fetchProposalDetail(proposalId, projectId ?? undefined),
+    enabled: projectId !== null,
+  })
+
+  if (query.isPending) {
+    return (
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Proposal
+        </dt>
+        <dd className="text-iron/60">Loading…</dd>
+      </div>
+    )
+  }
+
+  if (query.isError || !query.data) {
+    return (
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Proposal
+        </dt>
+        <dd className="text-iron/60">(could not load proposal)</dd>
+      </div>
+    )
+  }
+
+  const p = query.data
+
+  return (
+    <>
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Problem
+        </dt>
+        <dd className="whitespace-pre-wrap text-fg">{p.problem || <span className="text-iron/70">(none)</span>}</dd>
+      </div>
+      <div>
+        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+          Solution
+        </dt>
+        <dd className="whitespace-pre-wrap text-fg">{p.solution || <span className="text-iron/70">(none)</span>}</dd>
+      </div>
+      {p.userStories.length > 0 ? (
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            User stories
+          </dt>
+          <dd>
+            <ol className="list-decimal pl-4 text-fg">
+              {p.userStories.map((story, i) => (
+                <li key={i} className="mb-0.5 text-[12px]">{story}</li>
+              ))}
+            </ol>
+          </dd>
+        </div>
+      ) : null}
+      {p.outOfScope ? (
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Out of scope
+          </dt>
+          <dd className="whitespace-pre-wrap text-fg">{p.outOfScope}</dd>
+        </div>
+      ) : null}
+      {p.notes ? (
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Notes
+          </dt>
+          <dd className="whitespace-pre-wrap text-fg">{p.notes}</dd>
+        </div>
+      ) : null}
+      <div>
+        <dd className="text-[10px] text-iron/60">
+          Status: {p.status} · from {p.source} · {new Date(p.createdAt).toLocaleDateString()}
+        </dd>
+      </div>
+    </>
+  )
+}
+
 // ---- Detail panel ----
 
 interface DetailProps {
@@ -643,8 +733,12 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
               onNavigate={onNavigateToTask}
             />
           ) : null}
-          {/* Details — shown only for rows where body is not already in the header. */}
-          {item.kind !== 'failed-task' && item.kind !== 'arc-failed' ? (
+          {/* Draft-proposal: rich proposal content lazy-fetched from the daemon. */}
+          {item.kind === 'draft-proposal' ? (
+            <ProposalDetailSection proposalId={item.entityId} />
+          ) : null}
+          {/* Details — shown for stale-worktree rows (body text). */}
+          {item.kind === 'stale-worktree' ? (
             <div>
               <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
                 Details

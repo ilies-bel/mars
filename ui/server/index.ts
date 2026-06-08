@@ -359,6 +359,19 @@ export const startServer = async (
           return jsonResponse(200, { drafts: body.drafts ?? [] })
         }
 
+        // GET /api/proposals/:id — proxy the daemon's by-id proposal endpoint.
+        if (path.startsWith('/api/proposals/') && req.method === 'GET') {
+          const proposalId = decodeURIComponent(path.slice('/api/proposals/'.length))
+          if (!proposalId) {
+            return jsonResponse(400, { error: 'proposalId is required' })
+          }
+          const result = await proxyGet(
+            ctx.stateDir,
+            `/view/proposal/${encodeURIComponent(proposalId)}`,
+          )
+          return jsonResponse(result.status, result.body)
+        }
+
         if (path === '/api/stale-worktrees') {
           const r = await proxyGet(ctx.stateDir, '/view/todo')
           if (r.status !== 200) return jsonResponse(r.status, r.body)

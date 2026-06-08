@@ -30,6 +30,7 @@ import {
   type ArcCandidate,
 } from '../lib/deep-reflect-query'
 import type { Alert } from '../lib/alert'
+import type { Proposal } from '../proposals'
 
 /** Wire shape for a single step span, returned by GET /view/step-spans. */
 export interface StepSpan {
@@ -233,6 +234,14 @@ export interface HttpServerDeps {
    * UI server proxies this endpoint instead of querying the DB directly.
    */
   viewTodo: () => Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[] }>
+  /**
+   * Return the full Proposal record for GET /view/proposal/:id, or null when
+   * no proposal with that id exists. Serves the detail panel's lazy-load path
+   * so the UI never needs to query state.db directly.
+   * Optional for backward-compat with test fixtures; the route returns 501
+   * when omitted and 404 when the proposal does not exist.
+   */
+  viewProposal?: (id: string) => Promise<Proposal | null>
   /**
    * Return the terminal-event feed from the daemon's DomainTaskStore.
    * Served by `GET /view/terminal-events` so the read-only UI renders only
@@ -650,6 +659,33 @@ export const startHttpServer = async (
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return
+    }
+
+    // GET /view/proposal/:id — full Proposal record for the detail panel
+    // lazy-load path. Returns 404 when the proposal does not exist.
+    // Pure read; no draining gate.
+    {
+      const proposalMatch =
+        req.method === 'GET' && req.url
+          ? req.url.match(/^\/view\/proposal\/([^/?]+)(?:\?.*)?$/)
+          : null
+      if (proposalMatch && proposalMatch[1]) {
+        if (!deps.viewProposal) {
+          sendJson(res, 501, { ok: false, error: 'viewProposal not implemented' })
+          return
+        }
+        const proposalId = decodeURIComponent(proposalMatch[1])
+        deps.viewProposal(proposalId)
+          .then((proposal) => {
+            if (proposal === null) {
+              sendJson(res, 404, { ok: false, error: `Proposal ${proposalId} not found` })
+            } else {
+              sendJson(res, 200, proposal)
+            }
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
     }
 
     // GET /view/reflect?limit=N&since=ISO — recent task corpus data (entries +

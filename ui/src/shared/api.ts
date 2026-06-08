@@ -8,6 +8,7 @@ import {
   originsResponseSchema,
   progressResponseSchema,
   projectsResponseSchema,
+  proposalDetailSchema,
   proposalsResponseSchema,
   staleWorktreesResponseSchema,
   tasksResponseSchema,
@@ -21,6 +22,7 @@ import {
   type ProgressProposalNode,
   type ProgressTask,
   type Project,
+  type ProposalDetail,
   type ProposalsPayload,
   type StaleWorktreesPayload,
   type Task,
@@ -116,6 +118,10 @@ export const fetchProgress = async (
 
 export const fetchProposalsPayload = async (projectId?: string): Promise<ProposalsPayload> => {
   return fetchJson(appendProject('/api/proposals', projectId), proposalsResponseSchema)
+}
+
+export const fetchProposalDetail = async (id: string, projectId?: string): Promise<ProposalDetail> => {
+  return fetchJson(appendProject(`/api/proposals/${encodeURIComponent(id)}`, projectId), proposalDetailSchema)
 }
 
 export const fetchStaleWorktreesPayload = async (projectId?: string): Promise<StaleWorktreesPayload> => {
@@ -376,6 +382,7 @@ export type {
   OriginsResponse,
   ProgressProposalNode,
   Project,
+  ProposalDetail,
   ProposalsPayload,
   SessionOutcome,
   StaleWorktree,

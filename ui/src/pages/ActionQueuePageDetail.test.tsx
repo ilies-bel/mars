@@ -14,6 +14,7 @@ import type {
   ActionQueueItem,
   EventsResponse,
   OriginsResponse,
+  ProposalDetail,
 } from '@/shared/schemas'
 
 // Silence the unused-variable lint warning. ActionQueuePage is exported to
@@ -1039,5 +1040,155 @@ describe('useActionQueue – polling safety net (refetchInterval + invalidation 
 
     const stateAfter = qc.getQueryState(['action-queue', projectId])
     expect(stateAfter?.isInvalidated).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Draft-proposal detail panel — lazy-loaded rich content.
+//
+// When a draft-proposal row is selected, the detail panel should lazy-fetch
+// the full proposal (Problem / Solution / User stories / Out of scope / Notes)
+// and display them, replacing the old "Run mars proposal show" boilerplate.
+// ---------------------------------------------------------------------------
+
+const SAMPLE_PROPOSAL: ProposalDetail = {
+  id: 'prop-abc',
+  title: 'Better error messages',
+  problem: 'Errors are too cryptic for end-users.',
+  solution: 'Rewrite every error string to be human-friendly.',
+  outOfScope: 'Error telemetry pipeline',
+  notes: 'Revisit after v2.',
+  status: 'draft',
+  source: 'human',
+  author: null,
+  createdAt: 1700000000000,
+  updatedAt: 1700000001000,
+  userStories: [
+    'As a user I can read the error without consulting docs.',
+    'As a developer I know which module raised the error.',
+  ],
+}
+
+const makeDraftItem = (proposalId: string): ActionQueueItem =>
+  makeItem({
+    id: `draft-proposal:${proposalId}`,
+    kind: 'draft-proposal',
+    entityId: proposalId,
+    errorKind: 'draft-proposal',
+    title: 'Better error messages',
+    body: `Proposal \`${proposalId}\` from \`human\` is ready for review. Run \`mars proposal show ${proposalId}\` to see details.`,
+    actions: [{ id: 'dismiss', label: 'Dismiss', op: 'dismiss', needsConfirm: true }],
+  })
+
+const renderDraftDetail = (proposalId: string, proposal: ProposalDetail | null): string => {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  })
+  qc.setQueryData(['action-queue', null], [makeDraftItem(proposalId)])
+  // Seed the proposal-detail query (projectId=null mirrors the test context).
+  if (proposal !== null) {
+    qc.setQueryData(['proposal-detail', null, proposalId], proposal)
+  }
+  return renderToStaticMarkup(
+    <QueryClientProvider client={qc}>
+      <_Page />
+    </QueryClientProvider>,
+  )
+}
+
+describe('ActionQueueDetail – draft-proposal rich content', () => {
+  it('renders the Problem section from the fetched proposal', () => {
+    const html = renderDraftDetail('prop-abc', SAMPLE_PROPOSAL)
+    expect(html).toContain('Problem')
+    expect(html).toContain('Errors are too cryptic for end-users.')
+  })
+
+  it('renders the Solution section from the fetched proposal', () => {
+    const html = renderDraftDetail('prop-abc', SAMPLE_PROPOSAL)
+    expect(html).toContain('Solution')
+    expect(html).toContain('Rewrite every error string to be human-friendly.')
+  })
+
+  it('renders user stories as a numbered list', () => {
+    const html = renderDraftDetail('prop-abc', SAMPLE_PROPOSAL)
+    expect(html).toContain('User stories')
+    expect(html).toContain('As a user I can read the error without consulting docs.')
+    expect(html).toContain('As a developer I know which module raised the error.')
+  })
+
+  it('renders Out of scope when non-empty', () => {
+    const html = renderDraftDetail('prop-abc', SAMPLE_PROPOSAL)
+    expect(html).toContain('Out of scope')
+    expect(html).toContain('Error telemetry pipeline')
+  })
+
+  it('renders Notes when non-empty', () => {
+    const html = renderDraftDetail('prop-abc', SAMPLE_PROPOSAL)
+    expect(html).toContain('Notes')
+    expect(html).toContain('Revisit after v2.')
+  })
+
+  it('does NOT render the "Run mars proposal show" boilerplate', () => {
+    const html = renderDraftDetail('prop-abc', SAMPLE_PROPOSAL)
+    expect(html).not.toContain('Run `mars proposal show')
+    expect(html).not.toContain('mars proposal show')
+  })
+
+  it('shows a loading placeholder while the proposal is being fetched (query pending)', () => {
+    // Seed the queue but NOT the proposal-detail query → isPending branch.
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['action-queue', null], [makeDraftItem('prop-abc')])
+    // Intentionally do NOT seed ['proposal-detail', null, 'prop-abc'].
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <_Page />
+      </QueryClientProvider>,
+    )
+    // The panel must show something meaningful — the title or a loading state.
+    // It must NOT show the old boilerplate.
+    expect(html).not.toContain('mars proposal show')
+  })
+
+  it('shows an error fallback when the proposal fetch fails', () => {
+    // Seeding an Error object as query data triggers isError in react-query.
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['action-queue', null], [makeDraftItem('prop-err')])
+    // Seed with null to trigger the !data error branch.
+    qc.setQueryData(['proposal-detail', null, 'prop-err'], null)
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <_Page />
+      </QueryClientProvider>,
+    )
+    // The panel must show the graceful error fallback.
+    expect(html).toContain('could not load proposal')
+  })
+
+  it('omits Out of scope section when the field is empty', () => {
+    const noOutOfScope: ProposalDetail = { ...SAMPLE_PROPOSAL, outOfScope: '' }
+    const html = renderDraftDetail('prop-abc', noOutOfScope)
+    expect(html).not.toContain('Out of scope')
+  })
+
+  it('omits Notes section when the field is empty', () => {
+    const noNotes: ProposalDetail = { ...SAMPLE_PROPOSAL, notes: '' }
+    const html = renderDraftDetail('prop-abc', noNotes)
+    expect(html).not.toContain('Notes')
+  })
+
+  it('omits User stories section when the list is empty', () => {
+    const noStories: ProposalDetail = { ...SAMPLE_PROPOSAL, userStories: [] }
+    const html = renderDraftDetail('prop-abc', noStories)
+    expect(html).not.toContain('User stories')
+  })
+
+  it('keeps ActionBar (Move forward / Dismiss) visible above the proposal content', () => {
+    const html = renderDraftDetail('prop-abc', SAMPLE_PROPOSAL)
+    expect(html).toContain('Move forward')
+    expect(html).toContain('Dismiss')
   })
 })
