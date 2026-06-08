@@ -842,8 +842,8 @@ export const ActionQueuePage = () => {
           ) : filtered.length > 0 ? (
             <div>
               {([
-                ['draft-proposal', 'Drafts'],
                 ['failed-task', 'Failed tasks'],
+                ['draft-proposal', 'Drafts'],
                 ['arc-failed', 'Failed arcs'],
                 ['stale-worktree', 'Stale worktrees'],
               ] as const).map(([kind, title]) => {
