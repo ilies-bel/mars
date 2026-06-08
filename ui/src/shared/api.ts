@@ -4,6 +4,7 @@ import {
   actionQueueResponseSchema,
   eventsResponseSchema,
   frameworkUpdateSchema,
+  kpiArcsResponseSchema,
   kpisResponseSchema,
   originsResponseSchema,
   progressResponseSchema,
@@ -18,6 +19,8 @@ import {
   type EventsResponse,
   type FrameworkUpdate,
   type Kpi,
+  type KpiArcsResponse,
+  type KpiKey,
   type OriginsResponse,
   type ProgressProposalNode,
   type ProgressTask,
@@ -220,6 +223,20 @@ export const fetchKpis = async (projectId?: string): Promise<Kpi[]> => {
 }
 
 /**
+ * Fetch the per-arc breakdown for a single KPI key.
+ * Returns the full response including window metadata and arc list.
+ */
+export const fetchKpiArcs = async (
+  key: KpiKey,
+  projectId?: string,
+): Promise<KpiArcsResponse> => {
+  return fetchJson(
+    appendProject(`/api/kpis/${encodeURIComponent(key)}/arcs`, projectId),
+    kpiArcsResponseSchema,
+  )
+}
+
+/**
  * Invoke a recovery action against the daemon (via the UI server proxy). `op`
  * is the registry verb; `entityId` is the task/worktree id, omitted for
  * process-level ops (`restart-daemon`). Throws with the daemon's error message
@@ -379,6 +396,9 @@ export type {
   EventsResponse,
   FrameworkUpdate,
   Kpi,
+  KpiArc,
+  KpiArcsResponse,
+  KpiKey,
   OriginsResponse,
   ProgressProposalNode,
   Project,

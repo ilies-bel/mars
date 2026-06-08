@@ -384,6 +384,21 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/kpis/:key/arcs — per-arc breakdown for a single KPI.
+        // Must be matched before /api/kpis so the longer path wins.
+        if (path.startsWith('/api/kpis/') && path.endsWith('/arcs') && req.method === 'GET') {
+          const key = decodeURIComponent(path.slice('/api/kpis/'.length, -'/arcs'.length))
+          if (!key) {
+            return jsonResponse(400, { error: 'kpi key is required' })
+          }
+          try {
+            const result = await proxyGet(ctx.stateDir, `/kpis/${encodeURIComponent(key)}/arcs`)
+            return jsonResponse(result.status, result.body)
+          } catch (err) {
+            return jsonResponse(500, { error: (err as Error).message })
+          }
+        }
+
         if (path === '/api/kpis') {
           try {
             const [kpis, series] = await Promise.all([

@@ -11,6 +11,10 @@ import {
   computeCostPerArcDistribution,
   computeFailureRate,
   computeRecoverySuccessRate,
+  listAutonomousArcs,
+  listCostPerArcArcs,
+  listFailureRateArcs,
+  listRecoveryArcs,
 } from '../kpi-compute.js'
 
 // ---------------------------------------------------------------------------
@@ -20,6 +24,7 @@ import {
 const TASKS_DDL = `
   CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
+    prompt TEXT,
     status TEXT NOT NULL,
     origin_id TEXT,
     fix_for_task_id TEXT,
@@ -677,5 +682,206 @@ describe('computeRecoverySuccessRate — success-and-failure fixture', () => {
 
     expect(result.value).toBe(1)
     expect(result.sampleCount).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 11. listFailureRateArcs — mirrors computeFailureRate arc grouping
+// ---------------------------------------------------------------------------
+
+describe('listFailureRateArcs', () => {
+  it('returns empty array when no terminal tasks in window', async () => {
+    const store = await makeStore()
+    const arcs = await listFailureRateArcs(store, WINDOW)
+    expect(arcs).toHaveLength(0)
+  })
+
+  it('marks a done arc as passed', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'arc-done', status: 'done' })
+    const arcs = await listFailureRateArcs(store, WINDOW)
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].passed).toBe(true)
+    expect(arcs[0].status).toBe('done')
+    expect(arcs[0].arcId).toBe('arc-done')
+  })
+
+  it('marks a failed arc as not passed', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'arc-fail', status: 'failed' })
+    const arcs = await listFailureRateArcs(store, WINDOW)
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].passed).toBe(false)
+    expect(arcs[0].status).toBe('failed')
+  })
+
+  it('groups origin + recovery into one arc, passed when recovery succeeded', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'origin', status: 'failed', origin_id: null })
+    await insertTask(store, { id: 'recovery', status: 'done', origin_id: 'origin' })
+
+    const arcs = await listFailureRateArcs(store, WINDOW)
+    // One arc (grouped by COALESCE(origin_id, id) = 'origin')
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].arcId).toBe('origin')
+    expect(arcs[0].passed).toBe(true)
+  })
+
+  it('arc count matches computeFailureRate sampleCount', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'd1', status: 'done' })
+    await insertTask(store, { id: 'd2', status: 'done' })
+    await insertTask(store, { id: 'f1', status: 'failed' })
+
+    const arcs = await listFailureRateArcs(store, WINDOW)
+    const compute = await computeFailureRate(store, WINDOW)
+
+    expect(arcs).toHaveLength(compute.sampleCount)
+    const failedCount = arcs.filter((a) => !a.passed).length
+    const total = arcs.length
+    expect(failedCount / total).toBeCloseTo(compute.value!, 10)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 12. listAutonomousArcs — mirrors computeAutonomousCompletionRate
+// ---------------------------------------------------------------------------
+
+describe('listAutonomousArcs', () => {
+  it('returns empty array when no done arcs in window', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'f1', status: 'failed' })
+    const arcs = await listAutonomousArcs(store, WINDOW)
+    expect(arcs).toHaveLength(0)
+  })
+
+  it('marks a clean done arc as passed (autonomous)', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'clean', status: 'done' })
+    const arcs = await listAutonomousArcs(store, WINDOW)
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].passed).toBe(true)
+  })
+
+  it('marks an arc with a fix task as not passed', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'origin', status: 'failed' })
+    await insertTask(store, {
+      id: 'fix',
+      status: 'done',
+      origin_id: 'origin',
+      fix_for_task_id: 'origin',
+    })
+    const arcs = await listAutonomousArcs(store, WINDOW)
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].passed).toBe(false)
+  })
+
+  it('arc + passed counts match computeAutonomousCompletionRate value/sampleCount', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'auto', status: 'done' })
+    await insertTask(store, { id: 'orig2', status: 'failed' })
+    await insertTask(store, { id: 'fix2', status: 'done', origin_id: 'orig2', fix_for_task_id: 'orig2' })
+
+    const arcs = await listAutonomousArcs(store, WINDOW)
+    const compute = await computeAutonomousCompletionRate(store, WINDOW)
+
+    expect(arcs).toHaveLength(compute.sampleCount)
+    const autonomousCount = arcs.filter((a) => a.passed).length
+    expect(autonomousCount / arcs.length).toBeCloseTo(compute.value!, 10)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 13. listRecoveryArcs — mirrors computeRecoverySuccessRate
+// ---------------------------------------------------------------------------
+
+describe('listRecoveryArcs', () => {
+  it('returns empty array when no recovery tasks in window', async () => {
+    const store = await makeStore()
+    const arcs = await listRecoveryArcs(store, WINDOW)
+    expect(arcs).toHaveLength(0)
+  })
+
+  it('marks a successful recovery as passed', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'orig', status: 'done' })
+    await insertTask(store, { id: 'fix', status: 'done', origin_id: 'orig', fix_for_task_id: 'orig' })
+    const arcs = await listRecoveryArcs(store, WINDOW)
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].passed).toBe(true)
+    expect(arcs[0].originTaskId).toBe('orig')
+  })
+
+  it('marks a failed recovery as not passed', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'orig', status: 'failed' })
+    await insertTask(store, { id: 'fix', status: 'failed', origin_id: 'orig', fix_for_task_id: 'orig' })
+    const arcs = await listRecoveryArcs(store, WINDOW)
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].passed).toBe(false)
+  })
+
+  it('row count and pass rate match computeRecoverySuccessRate', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'o1', status: 'done' })
+    await insertTask(store, { id: 'r1', status: 'done', origin_id: 'o1', fix_for_task_id: 'o1' })
+    await insertTask(store, { id: 'o2', status: 'failed' })
+    await insertTask(store, { id: 'r2', status: 'failed', origin_id: 'o2', fix_for_task_id: 'o2' })
+
+    const arcs = await listRecoveryArcs(store, WINDOW)
+    const compute = await computeRecoverySuccessRate(store, WINDOW)
+
+    expect(arcs).toHaveLength(compute.sampleCount)
+    const passed = arcs.filter((a) => a.passed).length
+    expect(passed / arcs.length).toBeCloseTo(compute.value!, 10)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 14. listCostPerArcArcs — mirrors computeCostPerArcDistribution
+// ---------------------------------------------------------------------------
+
+describe('listCostPerArcArcs', () => {
+  it('returns empty array when no done arcs', async () => {
+    const store = await makeStore()
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+    expect(arcs).toHaveLength(0)
+  })
+
+  it('returns one row per done arc with costTokens set', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'arc1', status: 'done' })
+    await insertSignal(store, { taskId: 'arc1', inputTokens: 1000 })
+    await insertTask(store, { id: 'arc2', status: 'done' })
+    await insertSignal(store, { taskId: 'arc2', inputTokens: 2000 })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+    expect(arcs).toHaveLength(2)
+    for (const arc of arcs) {
+      expect(arc.passed).toBe(true)
+      expect(arc.costTokens).toBeDefined()
+      expect(arc.costTokens).toBeGreaterThan(0)
+    }
+  })
+
+  it('row count matches computeCostPerArcDistribution sampleCount', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'a1', status: 'done' })
+    await insertSignal(store, { taskId: 'a1', inputTokens: 100 })
+    await insertTask(store, { id: 'a2', status: 'done' })
+    await insertSignal(store, { taskId: 'a2', inputTokens: 200 })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+    const compute = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(arcs).toHaveLength(compute.sampleCount)
+  })
+
+  it('all arcs have passed=true (cost_per_arc has no pass/fail)', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'arc', status: 'done' })
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+    expect(arcs.every((a) => a.passed)).toBe(true)
   })
 })

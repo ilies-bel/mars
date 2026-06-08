@@ -4,6 +4,7 @@ import { ProposalDetailDrawer } from '@/widgets/ProposalDetailDrawer'
 import { ProposalNodeDrawer } from '@/widgets/ProposalNodeDrawer'
 import { useHashRoute } from '@/shared/useHashRoute'
 import {
+  parseKpiRoute,
   parseProposalRoute,
   parseProposalNodeRoute,
   parseTaskOrigin,
@@ -18,6 +19,7 @@ import { FocusedProjectProvider } from '@/shared/useFocusedProject'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/ActionQueuePage'
 import { EventsPage } from '@/pages/EventsPage'
+import { KpiDetailPage } from '@/pages/KpiDetailPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 
 /** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
@@ -25,6 +27,7 @@ const ROUTE_BASE: Record<RouteName, string> = {
   'action-queue': '#/action-queue',
   progress: '#/progress',
   events: '#/events',
+  kpi: '#/events',
 }
 
 /**
@@ -43,6 +46,7 @@ const AppInner = () => {
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
   const proposalNodeId = parseProposalNodeRoute(hash)
+  const kpiKey = parseKpiRoute(hash)
   const activeStepName = parseTaskStep(hash) ?? undefined
   // Proposal fields come from the `/api/proposals` fetch — no new
   // endpoint is introduced for the drawer.
@@ -59,7 +63,9 @@ const AppInner = () => {
       <FrameworkUpdateBanner />
       <NavBar hash={hash} />
       <div className="min-h-0 flex-1">
-        {route === 'progress' ? (
+        {route === 'kpi' && kpiKey !== null ? (
+          <KpiDetailPage kpiKey={kpiKey} />
+        ) : route === 'progress' ? (
           <ProgressPage />
         ) : route === 'events' ? (
           <EventsPage />

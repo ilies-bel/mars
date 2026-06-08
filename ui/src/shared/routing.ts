@@ -1,19 +1,46 @@
+import type { KpiKey } from './schemas'
 import type { StaleWorktreesPayload } from './schemas'
 
-export type RouteName = 'action-queue' | 'progress' | 'events'
+export type RouteName = 'action-queue' | 'progress' | 'events' | 'kpi'
 
 /**
  * Derives the current route from the URL hash.
  *
  * #/progress[/…]        → progress
  * #/events[/…]          → events
+ * #/kpi/<key>           → kpi
  * everything else       → action-queue  (default; also covers #/todo legacy)
  */
 export const detectRoute = (hash: string): RouteName => {
   if (hash.startsWith('#/progress')) return 'progress'
   if (hash.startsWith('#/events')) return 'events'
+  if (hash.startsWith('#/kpi/')) return 'kpi'
   return 'action-queue'
 }
+
+/**
+ * Parses an optional `#/kpi/<key>` full-page route.
+ *
+ * Returns the KPI key when the hash matches, or `null` otherwise.
+ * Unrecognised keys normalise to `null`.
+ */
+export const parseKpiRoute = (hash: string): KpiKey | null => {
+  const m = /^#\/kpi\/([^/?#]+)/.exec(hash)
+  if (!m) return null
+  const key = decodeURIComponent(m[1]) as KpiKey
+  const valid: KpiKey[] = [
+    'cost_per_arc',
+    'failure_rate',
+    'autonomous_completion_rate',
+    'recovery_success_rate',
+  ]
+  return valid.includes(key) ? key : null
+}
+
+/**
+ * Builds a `#/kpi/<key>` hash for navigating to the KPI detail page.
+ */
+export const kpiHash = (key: KpiKey): string => `#/kpi/${encodeURIComponent(key)}`
 
 /**
  * Parses an optional `#/task/<id>` overlay route. The task drawer is layered
@@ -35,6 +62,7 @@ const ROUTE_NAMES: readonly RouteName[] = [
   'action-queue',
   'progress',
   'events',
+  'kpi',
 ]
 
 const isRouteName = (value: string): value is RouteName =>
@@ -177,6 +205,10 @@ export const resolvePageRoute = (hash: string): RouteName => {
   const proposalNodeId = parseProposalNodeRoute(hash)
   if (proposalNodeId !== null) {
     return 'progress'
+  }
+  const kpiKey = parseKpiRoute(hash)
+  if (kpiKey !== null) {
+    return 'kpi'
   }
   return detectRoute(hash)
 }

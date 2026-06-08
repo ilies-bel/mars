@@ -501,6 +501,44 @@ export type Kpi = z.infer<typeof kpiSchema>
 export type KpisPayload = z.infer<typeof kpisResponseSchema>
 
 // ----------------------------------------------------------------------------
+// KPI arcs (GET /api/kpis/:key/arcs). Per-arc breakdown behind a KPI value.
+// Each row is one arc (or recovery sample for recovery_success_rate) with a
+// PASS/FAIL classification that mirrors the kpi-compute.ts grouping logic.
+// For cost_per_arc, `passed` is always true and `costTokens` carries the
+// cache-weighted token cost so the user sees the distribution.
+// ----------------------------------------------------------------------------
+
+export const kpiArcSchema = z.object({
+  /** The arc id (COALESCE(origin_id, id)). */
+  arcId: z.string(),
+  /** The origin task id for this arc (may differ from arcId for recovery samples). */
+  originTaskId: z.string(),
+  /** Human-readable task prompt / title (first 120 chars). */
+  title: z.string(),
+  /** Terminal status of the arc. */
+  status: z.string(),
+  /** Whether this arc PASSED the KPI's classification criterion. */
+  passed: z.boolean(),
+  /**
+   * Cache-weighted token cost — only present for cost_per_arc arcs.
+   * Absent (undefined) for all other KPI keys.
+   */
+  costTokens: z.number().optional(),
+})
+
+export const kpiArcsResponseSchema = z.object({
+  key: kpiKeySchema,
+  window: z.object({
+    windowStart: z.string(),
+    windowEnd: z.string(),
+  }),
+  arcs: z.array(kpiArcSchema),
+})
+
+export type KpiArc = z.infer<typeof kpiArcSchema>
+export type KpiArcsResponse = z.infer<typeof kpiArcsResponseSchema>
+
+// ----------------------------------------------------------------------------
 // Projects (GET /api/projects). Multi-project dashboard — each entry is one
 // mars repo managed by a separate daemon. health reflects the current daemon
 // liveness: live (responsive), degraded (slow / partial), down (unreachable).

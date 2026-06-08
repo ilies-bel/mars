@@ -89,6 +89,9 @@ const makeSpec = (overrides: Partial<SupervisorSpec> = {}): SupervisorSpec => ({
   name: 'frontend-supervisor',
   kind: 'frontend',
   persona: 'frontend developer',
+  scope: '',
+  externalSlugs: [],
+  techs: [],
   detectedFrom: ['package.json'],
   ...overrides,
 })

@@ -14,7 +14,13 @@ import {
   type TraceEventSeverity,
   type TraceEventStore,
 } from '../lib/trace-events-store'
-import { listKpis as defaultListKpis, type KpiRecord } from './kpi-store'
+import {
+  listKpis as defaultListKpis,
+  listKpiArcs as defaultListKpiArcs,
+  type KpiArcsResult,
+  type KpiKey,
+  type KpiRecord,
+} from './kpi-store'
 import { readKpiSeries, type KpiSeries } from '../lib/kpi-snapshots.js'
 import type { RestartTaskError } from './restart-task'
 import { SelfUpdateError, SELF_UPDATE_ERRORS } from './self-update'
@@ -175,6 +181,12 @@ export interface HttpServerDeps {
    * hitting the real store.
    */
   listKpisSeries?: (limit: number) => Promise<KpiSeries>
+  /**
+   * Return the per-arc breakdown for a single KPI key for `GET /kpis/:key/arcs`.
+   * When omitted, falls back to {@link defaultListKpiArcs} from `kpi-store.ts`.
+   * Inject in tests to avoid hitting the real store.
+   */
+  listKpiArcs?: (key: KpiKey) => Promise<KpiArcsResult>
   /**
    * Return the full task list from the daemon's DomainTaskStore.
    * Served by `GET /view/tasks` so the read-only UI renders only what the
@@ -516,6 +528,35 @@ export const startHttpServer = async (
         buildOriginTree(taskId)
           .then((tree) => sendJson(res, 200, tree))
           .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // GET /kpis/:key/arcs — per-arc breakdown for a single KPI key. Uses the
+    // same window as the latest persisted snapshot so the arc list reconciles
+    // with the headline value. Pure read; no draining gate. Must be matched
+    // before /kpis/series and /kpis so the more-specific path wins.
+    {
+      const kpiArcsMatch =
+        req.method === 'GET' && req.url
+          ? req.url.match(/^\/kpis\/([^/?]+)\/arcs(\?.*)?$/)
+          : null
+      if (kpiArcsMatch && kpiArcsMatch[1]) {
+        const key = decodeURIComponent(kpiArcsMatch[1]) as KpiKey
+        const validKeys: readonly string[] = [
+          'cost_per_arc',
+          'failure_rate',
+          'autonomous_completion_rate',
+          'recovery_success_rate',
+        ]
+        if (!validKeys.includes(key)) {
+          sendJson(res, 400, { error: `Unknown KPI key: ${key}` })
+        } else {
+          const fn = deps.listKpiArcs ?? ((k: KpiKey) => defaultListKpiArcs(k))
+          fn(key)
+            .then((result) => sendJson(res, 200, result))
+            .catch((err: unknown) => sendError(res, err))
+        }
         return
       }
     }

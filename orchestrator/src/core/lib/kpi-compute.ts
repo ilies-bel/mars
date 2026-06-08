@@ -9,6 +9,26 @@ export interface KpiWindow {
   windowEnd: string
 }
 
+/**
+ * A single arc row returned by the list* helpers below.
+ *
+ * - `arcId` — the arc root: COALESCE(origin_id, id) for the origin task.
+ * - `originTaskId` — id of the origin task (may differ from arcId when the
+ *   arc groups a recovery sample).
+ * - `title` — first 120 chars of the origin task's prompt (may be empty).
+ * - `status` — terminal status of the arc (or origin task for recovery rows).
+ * - `passed` — whether this arc PASSED the KPI's classification criterion.
+ * - `costTokens` — cache-weighted token cost (only set for cost_per_arc arcs).
+ */
+export interface KpiArcRow {
+  arcId: string
+  originTaskId: string
+  title: string
+  status: string
+  passed: boolean
+  costTokens?: number
+}
+
 export interface FailureRateResult {
   /** null when sampleCount === 0 (no arcs to compute over) */
   value: number | null
@@ -328,4 +348,260 @@ export async function computeRecoverySuccessRate(
   }
 
   return { value: successCount / sampleCount, sampleCount }
+}
+
+// ---------------------------------------------------------------------------
+// Arc-listing helpers — return the arcs behind a KPI value with PASS/FAIL
+// classification that mirrors the compute* functions above.  One source of
+// truth: the SQL grouping logic is expressed here and the compute functions
+// call these to avoid duplication.
+//
+// Each helper joins on the tasks table to pull a human-readable title
+// (first 120 chars of prompt).  If the tasks table does not have a
+// `prompt` column the query still works — rows will have an empty title.
+// ---------------------------------------------------------------------------
+
+/**
+ * List failure-rate arcs in the window.
+ * PASS = arc has at least one task with status='done'.
+ * FAIL = all terminal tasks in the arc are 'failed'.
+ * Mirrors computeFailureRate().
+ */
+export async function listFailureRateArcs(
+  surface: TaskStore,
+  window: KpiWindow,
+): Promise<KpiArcRow[]> {
+  const result = await surface.query({
+    sql: `SELECT
+            COALESCE(t.origin_id, t.id) AS arc_id,
+            COALESCE(t.origin_id, t.id) AS origin_task_id,
+            MAX(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) AS has_done,
+            MAX(CASE WHEN t.status = 'failed' THEN t.status ELSE t.status END) AS arc_status,
+            COALESCE(
+              (SELECT SUBSTR(t2.prompt, 1, 120)
+               FROM tasks t2
+               WHERE t2.id = COALESCE(t.origin_id, t.id)
+               LIMIT 1),
+              ''
+            ) AS title
+          FROM tasks t
+          WHERE t.status IN ('done', 'failed')
+            AND t.updated_at >= ?
+            AND t.updated_at <= ?
+          GROUP BY COALESCE(t.origin_id, t.id)`,
+    args: [window.windowStart, window.windowEnd],
+  })
+
+  return result.rows.map((row) => {
+    const r = row as unknown as {
+      arc_id: string
+      origin_task_id: string
+      has_done: number
+      arc_status: string
+      title: string
+    }
+    const passed = r.has_done === 1
+    return {
+      arcId: r.arc_id,
+      originTaskId: r.origin_task_id,
+      title: r.title ?? '',
+      status: passed ? 'done' : 'failed',
+      passed,
+    }
+  })
+}
+
+/**
+ * List autonomous-completion-rate arcs in the window.
+ * Population = done arcs in window.
+ * PASS (autonomous) = no recovery edge, no task-blocked action-queue item.
+ * FAIL = disqualified by recovery task or inbox item.
+ * Mirrors computeAutonomousCompletionRate().
+ */
+export async function listAutonomousArcs(
+  surface: TaskStore,
+  window: KpiWindow,
+): Promise<KpiArcRow[]> {
+  // Done arcs
+  const doneArcsResult = await surface.query({
+    sql: `SELECT
+            COALESCE(t.origin_id, t.id) AS arc_id,
+            COALESCE(t.origin_id, t.id) AS origin_task_id,
+            COALESCE(
+              (SELECT SUBSTR(t2.prompt, 1, 120)
+               FROM tasks t2
+               WHERE t2.id = COALESCE(t.origin_id, t.id)
+               LIMIT 1),
+              ''
+            ) AS title
+          FROM tasks t
+          WHERE t.status = 'done'
+            AND t.updated_at >= ?
+            AND t.updated_at <= ?
+          GROUP BY COALESCE(t.origin_id, t.id)`,
+    args: [window.windowStart, window.windowEnd],
+  })
+
+  if (doneArcsResult.rows.length === 0) return []
+
+  // Disqualified by recovery task
+  const recoveryResult = await surface.query({
+    sql: `SELECT DISTINCT COALESCE(origin_id, id) AS arc_id
+          FROM tasks
+          WHERE fix_for_task_id IS NOT NULL`,
+    args: [],
+  })
+  const nonAutonomousByRecovery = new Set(
+    recoveryResult.rows.map(r => (r as unknown as { arc_id: string }).arc_id),
+  )
+
+  // Disqualified by task-blocked action-queue item
+  let nonAutonomousByInbox = new Set<string>()
+  try {
+    const inboxResult = await surface.query({
+      sql: `SELECT DISTINCT COALESCE(t.origin_id, t.id) AS arc_id
+            FROM tasks t
+            INNER JOIN action_queue_items a ON a.origin_task_id = t.id
+            WHERE a.kind = 'task-blocked'`,
+      args: [],
+    })
+    nonAutonomousByInbox = new Set(
+      inboxResult.rows.map(r => (r as unknown as { arc_id: string }).arc_id),
+    )
+  } catch {
+    // action_queue_items not in this store's database — inbox check skipped
+  }
+
+  return doneArcsResult.rows.map((row) => {
+    const r = row as unknown as { arc_id: string; origin_task_id: string; title: string }
+    const passed =
+      !nonAutonomousByRecovery.has(r.arc_id) && !nonAutonomousByInbox.has(r.arc_id)
+    return {
+      arcId: r.arc_id,
+      originTaskId: r.origin_task_id,
+      title: r.title ?? '',
+      status: 'done',
+      passed,
+    }
+  })
+}
+
+/**
+ * List recovery-success-rate samples in the window.
+ * Each row is one recovery task (one per origin failure).
+ * PASS = recovery.status='done' AND origin.status='done'.
+ * FAIL = otherwise.
+ * Mirrors computeRecoverySuccessRate().
+ */
+export async function listRecoveryArcs(
+  surface: TaskStore,
+  window: KpiWindow,
+): Promise<KpiArcRow[]> {
+  const result = await surface.query({
+    sql: `SELECT
+            COALESCE(t_origin.origin_id, t_origin.id) AS arc_id,
+            t_origin.id AS origin_task_id,
+            t_origin.status AS origin_status,
+            t_recovery.status AS recovery_status,
+            COALESCE(SUBSTR(t_origin.prompt, 1, 120), '') AS title
+          FROM tasks t_recovery
+          INNER JOIN tasks t_origin
+            ON t_origin.id = t_recovery.fix_for_task_id
+          WHERE t_recovery.fix_for_task_id IS NOT NULL
+            AND t_recovery.status IN ('done', 'failed')
+            AND t_recovery.updated_at >= ?
+            AND t_recovery.updated_at <= ?`,
+    args: [window.windowStart, window.windowEnd],
+  })
+
+  return result.rows.map((row) => {
+    const r = row as unknown as {
+      arc_id: string
+      origin_task_id: string
+      origin_status: string
+      recovery_status: string
+      title: string
+    }
+    const passed = r.recovery_status === 'done' && r.origin_status === 'done'
+    return {
+      arcId: r.arc_id,
+      originTaskId: r.origin_task_id,
+      title: r.title ?? '',
+      status: r.origin_status,
+      passed,
+    }
+  })
+}
+
+/**
+ * List cost-per-arc arcs in the window with their cache-weighted token cost.
+ * Population = done arcs (same as computeCostPerArcDistribution).
+ * No pass/fail — all arcs are `passed: true`; the `costTokens` field carries
+ * the per-arc cost so the user sees the distribution behind p50.
+ * Mirrors computeCostPerArcDistribution().
+ */
+export async function listCostPerArcArcs(
+  surface: TaskStore,
+  window: KpiWindow,
+): Promise<KpiArcRow[]> {
+  const result = await surface.query({
+    sql: `WITH done_arcs AS (
+            SELECT COALESCE(origin_id, id) AS arc_id
+            FROM tasks
+            WHERE status IN ('done', 'failed')
+              AND updated_at >= ?
+              AND updated_at <= ?
+            GROUP BY COALESCE(origin_id, id)
+            HAVING MAX(CASE WHEN status = 'done' THEN 1 ELSE 0 END) = 1
+          ),
+          arc_te AS (
+            SELECT da.arc_id, te.id AS te_id, te.payload
+            FROM done_arcs da
+            JOIN tasks t ON COALESCE(t.origin_id, t.id) = da.arc_id
+            JOIN trace_events te ON te.task_id = t.id
+              AND te.kind = 'step_ended'
+              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+            UNION
+            SELECT da.arc_id, te.id AS te_id, te.payload
+            FROM done_arcs da
+            JOIN trace_events te ON te.task_id = da.arc_id
+              AND te.kind = 'step_ended'
+              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+          )
+          SELECT
+            da.arc_id,
+            COALESCE(SUM(
+              CAST(json_extract(ate.payload, '$.usageSignals.inputTokens')        AS REAL) +
+              CAST(json_extract(ate.payload, '$.usageSignals.outputTokens')       AS REAL) +
+              CAST(json_extract(ate.payload, '$.usageSignals.cacheCreateTokens')  AS REAL) +
+              CAST(json_extract(ate.payload, '$.usageSignals.cacheReadTokens')    AS REAL) * 0.1
+            ), 0) AS weighted_tokens,
+            COALESCE(
+              (SELECT SUBSTR(t2.prompt, 1, 120)
+               FROM tasks t2
+               WHERE t2.id = da.arc_id
+               LIMIT 1),
+              ''
+            ) AS title
+          FROM done_arcs da
+          LEFT JOIN arc_te ate ON ate.arc_id = da.arc_id
+          GROUP BY da.arc_id`,
+    args: [window.windowStart, window.windowEnd],
+  })
+
+  return result.rows.map((row) => {
+    const r = row as unknown as {
+      arc_id: string
+      weighted_tokens: number
+      title: string
+    }
+    return {
+      arcId: r.arc_id,
+      originTaskId: r.arc_id,
+      title: r.title ?? '',
+      status: 'done',
+      passed: true,
+      costTokens: r.weighted_tokens,
+    }
+  })
 }
