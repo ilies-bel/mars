@@ -669,6 +669,7 @@ export const startDaemon = async (
               }
             : null,
           resumeFromCodePhase,
+          recoveryPayload: task.recoveryPayload ?? null,
         },
         {
           store: workflowStore,

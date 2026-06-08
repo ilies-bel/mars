@@ -549,6 +549,13 @@ const implementInputSchema = z.object({
    * prompt so the agent reads prior progress before continuing.
    */
   resumeFromCodePhase: z.boolean().default(false),
+  /**
+   * JSON-serialised recovery payload from `tasks.recovery_payload`. Present
+   * only on `kind='fix'` tasks. Passed through so the verify step can detect
+   * specific recovery recipes (e.g. `main-commiter`) and skip inapplicable
+   * verification steps.
+   */
+  recoveryPayload: z.string().nullable().default(null),
 })
 
 export type ImplementInput = z.infer<typeof implementInputSchema>
@@ -1137,7 +1144,20 @@ export const implementWorkflow = defineWorkflow<
         branch,
         buildCtx('verify'),
       )
-      const steps = selectVerifySteps(scopes, changedFiles)
+      // A main-commiter recovery task's sole success criterion is a clean
+      // working tree — it has no code change to verify. Skip all
+      // test/typecheck/lint steps; the has-diff/commits-ahead gate inside
+      // verifyChanges still runs (ADR 0019 — the gate has no skip option).
+      const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } =
+        await import('../core/lib/main-dirty')
+      const commiterPayload =
+        input.recoveryPayload != null
+          ? parseMainCommiterPayload(input.recoveryPayload)
+          : null
+      const steps =
+        commiterPayload?.recipe === MAIN_COMMITER_RECIPE
+          ? []
+          : selectVerifySteps(scopes, changedFiles)
       // The diff / commits-ahead gate runs for every dispatched task — there
       // is no skip option (ADR 0019). It fails only a branch that has diverged
       // from integration without landing a commit on it; a branch whose tip

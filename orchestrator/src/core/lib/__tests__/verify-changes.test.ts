@@ -18,6 +18,11 @@ import {
   checkBranchHasDiff,
   type VerifyScope,
 } from '../git/verify'
+import {
+  parseMainCommiterPayload,
+  MAIN_COMMITER_RECIPE,
+  serialiseMainCommiterPayload,
+} from '../main-dirty'
 
 const truthyCmd = { cmd: 'node', args: ['-e', 'process.exit(0)'] }
 const falsyCmd = { cmd: 'node', args: ['-e', 'process.stderr.write("boom"); process.exit(1)'] }
@@ -429,5 +434,66 @@ describe('getChangedFiles', () => {
   it('returns an empty list rather than throwing when git fails', async () => {
     const files = await getChangedFiles(repo, 'main', 'no-such-branch')
     expect(files).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// main-commiter verify exemption (regression for task d0f9b1d4)
+// ---------------------------------------------------------------------------
+// A main-commiter recovery task's sole success criterion is a clean working
+// tree — it must never run test/typecheck/lint. The workflow detects this by
+// parsing recovery_payload.recipe and short-circuiting selectVerifySteps to
+// an empty array. These tests pin that decision.
+// ---------------------------------------------------------------------------
+
+describe('main-commiter recovery — verify step exemption', () => {
+  const scopeWithSteps: VerifyScope[] = [
+    {
+      scope: '.',
+      steps: [
+        { name: 'test', cmd: 'npx', args: ['vitest', 'run'], required: true, dir: '.' },
+        { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true, dir: '.' },
+        { name: 'lint', cmd: 'npx', args: ['eslint', '.'], required: false, dir: '.' },
+      ],
+    },
+  ]
+  const changedFiles = ['src/foo.ts']
+
+  it('selects zero verify steps when recovery_payload.recipe is main-commiter', () => {
+    const payload = serialiseMainCommiterPayload({
+      recipe: MAIN_COMMITER_RECIPE,
+      dirtyMainHash: 'deadbeef',
+      integrationBranch: 'main',
+    })
+    const commiterPayload = parseMainCommiterPayload(payload)
+    const steps =
+      commiterPayload?.recipe === MAIN_COMMITER_RECIPE
+        ? []
+        : selectVerifySteps(scopeWithSteps, changedFiles)
+    expect(steps).toEqual([])
+  })
+
+  it('selects full verify steps when recovery_payload is null (non-fix task)', () => {
+    const commiterPayload = parseMainCommiterPayload(null)
+    const steps =
+      commiterPayload?.recipe === MAIN_COMMITER_RECIPE
+        ? []
+        : selectVerifySteps(scopeWithSteps, changedFiles)
+    expect(steps.map((s) => s.name)).toEqual(['test', 'typecheck', 'lint'])
+  })
+
+  it('selects full verify steps when recovery_payload has a different recipe', () => {
+    const rawPayload = JSON.stringify({
+      recipe: 'some-other-recovery-recipe',
+      dirtyMainHash: 'deadbeef',
+      integrationBranch: 'main',
+    })
+    const commiterPayload = parseMainCommiterPayload(rawPayload)
+    // parseMainCommiterPayload returns null for unknown recipes
+    const steps =
+      commiterPayload?.recipe === MAIN_COMMITER_RECIPE
+        ? []
+        : selectVerifySteps(scopeWithSteps, changedFiles)
+    expect(steps.map((s) => s.name)).toEqual(['test', 'typecheck', 'lint'])
   })
 })
