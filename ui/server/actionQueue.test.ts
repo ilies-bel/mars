@@ -127,7 +127,7 @@ const insertActionQueueItem = async (
   })
 }
 
-describe('GET /api/action-queue/action-queue (persisted view)', () => {
+describe('GET /api/action-queue (persisted view)', () => {
   let repo: string
   let server: ReturnType<typeof Bun.serve> | null = null
   let baseUrl: string
@@ -150,7 +150,7 @@ describe('GET /api/action-queue/action-queue (persisted view)', () => {
     filter?: string,
   ): Promise<ActionQueueItemBody[]> => {
     const q = filter ? `?filter=${filter}` : ''
-    const res = await fetch(`${baseUrl}/api/action-queue/action-queue${q}`)
+    const res = await fetch(`${baseUrl}/api/action-queue${q}`)
     expect(res.status).toBe(200)
     return (await res.json()) as ActionQueueItemBody[]
   }

@@ -121,7 +121,7 @@ export const fetchFrameworkUpdate = async (): Promise<FrameworkUpdate> => {
 }
 
 export const fetchActionQueue = async (projectId?: string): Promise<ActionQueueItem[]> => {
-  return fetchJson(appendProject('/api/action-queue/action-queue', projectId), actionQueueResponseSchema)
+  return fetchJson(appendProject('/api/action-queue', projectId), actionQueueResponseSchema)
 }
 
 /**
