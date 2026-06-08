@@ -36,6 +36,10 @@ export const useActionQueue = (): State => {
     queryKey: ['action-queue', projectId],
     queryFn: () => fetchActionQueue(projectId ?? undefined),
     enabled,
+    // Polling safety net: a recovered/superseded row clears within ~15 s even
+    // when SSE events are missed (network blip, reconnect delay).
+    refetchInterval: 15000,
+    refetchOnWindowFocus: true,
   })
 
   return {

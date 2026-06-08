@@ -371,3 +371,64 @@ describe('ActionQueueRow – failed-task card header omits FAILED badge', () => 
     expect(html).toContain('stale wt')
   })
 })
+
+// ---------------------------------------------------------------------------
+// ActionQueueDetail – diagnosis block
+//
+// AC: After diagnose-failure returns, the server writes its findings onto the
+// action-queue item. On the next refetch the detail panel receives the updated
+// item and must render the diagnosis text.
+//
+// These tests also cover the "item reappears with diagnosis after
+// optimistic-dismiss + refetch" lifecycle described in the task spec (point c):
+//   - Before diagnose-failure → item.diagnosis is null → no Diagnosis section
+//   - After refetch → item.diagnosis is populated → Diagnosis section visible
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueDetail – diagnosis rendering (post-diagnose-failure refetch)', () => {
+  const renderDetail = (item: ActionQueueItem): string => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <ActionQueueDetail item={item} />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('(c) renders the Diagnosis section when item.diagnosis is populated', () => {
+    const diagnosedItem = makeItem({
+      diagnosis: {
+        text: 'The task failed because the TypeScript compiler found an unused import.',
+        diagnosedAt: '2026-01-01T12:00:00Z',
+      },
+    })
+    const html = renderDetail(diagnosedItem)
+    expect(html).toContain('>Diagnosis<')
+    expect(html).toContain('The task failed because the TypeScript compiler found an unused import.')
+  })
+
+  it('(c) does NOT render a Diagnosis section when item.diagnosis is null', () => {
+    // BASE_ITEM has diagnosis: null — no diagnosis section must appear
+    const html = renderDetail(BASE_ITEM)
+    expect(html).not.toContain('>Diagnosis<')
+  })
+
+  it('(c) diagnosis text survives re-render after refetch (same item, new diagnosis)', () => {
+    // Simulate the detail panel receiving the updated item after a refetch
+    const itemBeforeDiagnose = makeItem({ diagnosis: null })
+    const itemAfterDiagnose = makeItem({
+      diagnosis: {
+        text: 'Inferred root cause: verify/test-failure on missing dependency.',
+        diagnosedAt: '2026-01-01T12:05:00Z',
+      },
+    })
+    const htmlBefore = renderDetail(itemBeforeDiagnose)
+    const htmlAfter = renderDetail(itemAfterDiagnose)
+
+    // Before diagnosis: no Diagnosis section
+    expect(htmlBefore).not.toContain('>Diagnosis<')
+    // After refetch with diagnosis: Diagnosis section present with text
+    expect(htmlAfter).toContain('>Diagnosis<')
+    expect(htmlAfter).toContain('Inferred root cause: verify/test-failure on missing dependency.')
+  })
+})

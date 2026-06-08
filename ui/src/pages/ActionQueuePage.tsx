@@ -225,6 +225,7 @@ const DIAGNOSE_OP = 'diagnose-failure'
  */
 const ActionBar = ({ item }: ActionBarProps) => {
   const qc = useQueryClient()
+  const projectId = useFocusedProjectId()
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [copiedActionId, setCopiedActionId] = useState<string | null>(null)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -242,12 +243,35 @@ const ActionBar = ({ item }: ActionBarProps) => {
       const entityId = action.op === 'restart-daemon' ? undefined : item.entityId
       return invokeAction(action.op, entityId)
     },
-    onMutate: () => setErrorMsg(null),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['action-queue'], refetchType: 'active' })
-      await qc.invalidateQueries({ queryKey: ['progress'] })
+    onMutate: async () => {
+      setErrorMsg(null)
+      // Prevent an in-flight refetch from overwriting our optimistic removal.
+      await qc.cancelQueries({ queryKey: ['action-queue'] })
+      // Snapshot the current list so we can roll back on error.
+      const snapshot = qc.getQueryData<ActionQueueItem[]>(['action-queue', projectId])
+      // Optimistically remove this item so the row disappears immediately.
+      if (snapshot) {
+        qc.setQueryData(
+          ['action-queue', projectId],
+          snapshot.filter((i) => i.id !== item.id),
+        )
+      }
+      return { snapshot }
     },
-    onError: (err) => setErrorMsg((err as Error).message),
+    onError: (err, _vars, context) => {
+      setErrorMsg((err as Error).message)
+      // Roll back the optimistic removal so the row reappears.
+      if (context?.snapshot !== undefined) {
+        qc.setQueryData(['action-queue', projectId], context.snapshot)
+      }
+    },
+    onSettled: () => {
+      // Always reconcile with the server after the mutation settles (success or
+      // error).  If the server already superseded the row, the refetch drops it
+      // and any transient error never sticks.
+      void qc.invalidateQueries({ queryKey: ['action-queue'] })
+      void qc.invalidateQueries({ queryKey: ['progress'] })
+    },
   })
 
   // Gate Investigate out for empty stale worktrees — there is nothing to analyse.
@@ -688,11 +712,32 @@ export const ActionQueuePage = () => {
   const [historyOpen, setHistoryOpen] = useState(false)
 
   const qc = useQueryClient()
+  const projectId = useFocusedProjectId()
   const restartMutation = useMutation({
     mutationFn: (entityId: string) => invokeAction('restart', entityId),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['action-queue'], refetchType: 'active' })
-      await qc.invalidateQueries({ queryKey: ['progress'] })
+    onMutate: async (entityId) => {
+      // Prevent an in-flight refetch from overwriting our optimistic removal.
+      await qc.cancelQueries({ queryKey: ['action-queue'] })
+      // Snapshot for rollback.
+      const snapshot = qc.getQueryData<ActionQueueItem[]>(['action-queue', projectId])
+      // Optimistically remove the row that triggered the restart.
+      if (snapshot) {
+        qc.setQueryData(
+          ['action-queue', projectId],
+          snapshot.filter((i) => i.entityId !== entityId),
+        )
+      }
+      return { snapshot }
+    },
+    onError: (_err, _entityId, context) => {
+      // Roll back the optimistic removal.
+      if (context?.snapshot !== undefined) {
+        qc.setQueryData(['action-queue', projectId], context.snapshot)
+      }
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['action-queue'] })
+      void qc.invalidateQueries({ queryKey: ['progress'] })
     },
   })
 

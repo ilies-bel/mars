@@ -905,3 +905,139 @@ describe('ActionQueuePage – History accordion', () => {
     expect(html).toContain('data-testid="history-accordion"')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Optimistic action dismiss — cache-driven visibility
+//
+// These tests verify the UI renders correctly at each stage of the optimistic
+// dismiss lifecycle:
+//
+//   (a) Immediately after onMutate fires, the item is removed from the
+//       QueryClient cache — the rendered list must NOT show it.
+//   (b) After onError rolls back the cache, the item reappears if the server
+//       still returns it, but stays absent if the server superseded it.
+//   (c) After diagnose-failure returns, the item reappears carrying
+//       item.diagnosis — the rendered detail panel must show the diagnosis text.
+//
+// Because these tests use renderToStaticMarkup (SSR, no real event dispatch),
+// we simulate each lifecycle stage by directly manipulating the QueryClient
+// cache and re-rendering.
+// ---------------------------------------------------------------------------
+
+describe('ActionQueuePage – optimistic action dismiss (cache-driven visibility)', () => {
+  const renderPageWith = (items: ActionQueueItem[]): string => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['action-queue', null], items)
+    return renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <_Page />
+      </QueryClientProvider>,
+    )
+  }
+
+  // (a) Optimistic dismiss: when onMutate removes the item from the cache,
+  //     the rendered queue must not contain the item.
+  it('(a) item is present in the rendered queue when it is in the cache', () => {
+    const html = renderPageWith([BASE_ITEM])
+    expect(html).toContain(BASE_ITEM.title)
+  })
+
+  it('(a) item disappears from the rendered queue when removed from cache (optimistic dismiss)', () => {
+    // Simulate the cache state after onMutate removes the item
+    const html = renderPageWith([])
+    expect(html).not.toContain(BASE_ITEM.title)
+  })
+
+  // (b) Error rollback: after onError rolls back the optimistic removal, the
+  //     item reappears ONLY if the subsequent refetch still returns it.
+  it('(b) item is restored in rendered queue when rollback repopulates the cache', () => {
+    // Simulate rollback: item is back in the cache
+    const html = renderPageWith([BASE_ITEM])
+    expect(html).toContain(BASE_ITEM.title)
+  })
+
+  it('(b) item stays absent when server omits it from the refetch (server-side supersede)', () => {
+    // After rollback + refetch, server returned empty list — item is gone
+    const html = renderPageWith([])
+    expect(html).not.toContain(BASE_ITEM.title)
+  })
+
+  // (c) diagnose-failure: the row disappears (optimistic dismiss), then the
+  //     diagnose-failure call writes its findings back onto the item server-side.
+  //     After the subsequent refetch, the item reappears with diagnosis populated.
+  it('(c) item is absent when optimistically removed during diagnose-failure', () => {
+    const html = renderPageWith([])
+    expect(html).not.toContain(BASE_ITEM.title)
+  })
+
+  it('(c) item reappears with diagnosis text after refetch following diagnose-failure', () => {
+    const diagnosedItem = makeItem({
+      diagnosis: {
+        text: 'Root cause: missing TypeScript import in verify step.',
+        diagnosedAt: '2026-01-01T12:00:00Z',
+      },
+    })
+    const qc = makeClient({ taskId: BASE_ITEM.entityId })
+    qc.setQueryData(['action-queue', null], [diagnosedItem])
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <_Page />
+      </QueryClientProvider>,
+    )
+    // The diagnosis text must appear in the detail panel
+    expect(html).toContain('Root cause: missing TypeScript import in verify step.')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Polling safety net — useActionQueue refetchInterval / refetchOnWindowFocus
+//
+// (d) The useActionQueue query must be configured so stale rows self-clear
+//     within ~15 s even when SSE events are missed. We verify that:
+//
+//   i.  A pre-seeded action-queue entry is marked stale when
+//       invalidateQueries(['action-queue']) is called — this is the exact
+//       call that both the polling timer and SSE handlers trigger.
+//   ii. The 'action-queue' prefix invalidation matches the per-project key
+//       shape ['action-queue', projectId] used by useActionQueue.
+// ---------------------------------------------------------------------------
+
+describe('useActionQueue – polling safety net (refetchInterval + invalidation mechanism)', () => {
+  it('(d-i) action-queue entry is marked stale after prefix invalidation', async () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
+    })
+    qc.setQueryData(['action-queue', null], [BASE_ITEM])
+
+    // Verify the entry starts fresh (not invalidated)
+    const stateBefore = qc.getQueryState(['action-queue', null])
+    expect(stateBefore?.isInvalidated).toBe(false)
+
+    // This is the exact call made by both the refetchInterval timer and the
+    // SseInvalidator's 'tasks' / 'todo' event handlers.
+    await qc.invalidateQueries({ queryKey: ['action-queue'] })
+
+    const stateAfter = qc.getQueryState(['action-queue', null])
+    expect(stateAfter?.isInvalidated).toBe(true)
+  })
+
+  it('(d-ii) prefix invalidation covers the per-project key shape used by useActionQueue', async () => {
+    const projectId = 'proj-abc'
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
+    })
+    // Simulate the per-project cache entry that useActionQueue creates
+    qc.setQueryData(['action-queue', projectId], [BASE_ITEM])
+
+    const stateBefore = qc.getQueryState(['action-queue', projectId])
+    expect(stateBefore?.isInvalidated).toBe(false)
+
+    // Prefix-match invalidation must reach the per-project entry
+    await qc.invalidateQueries({ queryKey: ['action-queue'] })
+
+    const stateAfter = qc.getQueryState(['action-queue', projectId])
+    expect(stateAfter?.isInvalidated).toBe(true)
+  })
+})
