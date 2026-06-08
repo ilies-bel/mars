@@ -512,7 +512,7 @@ const EvalChip = ({ label, value, warn }: { label: string; value: number | strin
     <span
       className={`rounded border px-1 py-0.5 font-mono text-[10px] ${
         warn
-          ? 'border-amber-500/60 text-amber-400'
+          ? 'border-warn/40 bg-warn/5 text-warn'
           : 'border-iron/30 text-muted'
       }`}
     >
@@ -523,10 +523,11 @@ const EvalChip = ({ label, value, warn }: { label: string; value: number | strin
 
 /**
  * The step timeline — every Step span for the focused task's run, shown as a
- * compact ordered list. Rendered as its own drawer section (independent of the
- * detail fetch) so it surfaces as soon as span data is available, whether from
- * the `stepSpans` prop (tests / static rendering) or the `/api/step-spans`
- * fetch. Returns null until span data resolves.
+ * compact ordered list with a vertical connector line and per-row status dots.
+ * Rendered as its own drawer section (independent of the detail fetch) so it
+ * surfaces as soon as span data is available, whether from the `stepSpans` prop
+ * (tests / static rendering) or the `/api/step-spans` fetch. Returns null until
+ * span data resolves.
  */
 const StepTimeline = ({
   spans,
@@ -545,42 +546,68 @@ const StepTimeline = ({
     {spans.length === 0 ? (
       <p className="font-mono text-xs text-iron">No steps recorded yet</p>
     ) : (
-      <ol className="flex flex-col gap-1">
+      <ol className="flex flex-col">
         {spans.map((s, i) => {
           const isActive = activeStepName != null && s.stepName === activeStepName
+          const isLast = i === spans.length - 1
+
+          const rowTextClass =
+            s.outcome === 'running'
+              ? 'text-warn'
+              : s.outcome === 'failed'
+                ? 'text-error'
+                : s.outcome === 'killed'
+                  ? 'text-ochre'
+                  : 'text-fg'
+
+          const dotClass =
+            s.outcome === 'running'
+              ? 'bg-warn border-warn/60 motion-safe:animate-pulse'
+              : s.outcome === 'failed'
+                ? 'bg-error/80 border-error/60'
+                : s.outcome === 'killed'
+                  ? 'bg-ochre/80 border-ochre/60'
+                  : 'bg-muted/40 border-muted/30'
+
           return (
             <li
               key={`${s.workflowInstanceId}-${s.stepName}-${i}`}
               data-testid="step-timeline-row"
               data-outcome={s.outcome}
               data-active={isActive}
-              className={`flex items-center gap-2 rounded px-2 py-1 font-mono text-xs ${
-                s.outcome === 'running'
-                  ? 'bg-amber-500/10 text-amber-400'
-                  : s.outcome === 'failed'
-                    ? 'text-red-400'
-                    : s.outcome === 'killed'
-                      ? 'text-orange-400'
-                      : 'text-fg'
-              }${isActive ? ' ring-1 ring-amber-400 bg-amber-500/15' : ''}`}
+              className={`relative flex items-start gap-2 rounded pl-5 pr-2 py-1 font-mono text-xs ${rowTextClass}${isActive ? ' ring-1 ring-warn bg-warn/5' : ''}`}
             >
-              <span className="w-16 shrink-0 font-semibold">{s.stepName}</span>
-              {s.workerName != null ? (
-                <span className="shrink-0 text-muted">{s.workerName}</span>
-              ) : null}
-              <span className="shrink-0 text-muted">{outcomeLabel(s.outcome)}</span>
-              {s.durationMs != null ? (
-                <span className="ml-auto shrink-0 text-muted">
-                  {formatDuration(s.durationMs)}
-                </span>
-              ) : null}
-              {s.evalResults && s.evalResults.length > 0 ? (
-                <span className="ml-1 flex items-center gap-1">
-                  {s.evalResults.map((r) => (
-                    <EvalChip key={r.label} label={r.label} value={r.value} warn={r.warn} />
-                  ))}
-                </span>
-              ) : null}
+              {/* Vertical timeline gutter: status dot + connector line */}
+              <span className="absolute left-0 top-0 flex h-full flex-col items-center" aria-hidden="true">
+                <span
+                  data-testid="step-status-dot"
+                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full border ${dotClass}`}
+                />
+                {!isLast && (
+                  <span className="mt-0.5 w-px flex-1 bg-border/60" />
+                )}
+              </span>
+
+              {/* Step info */}
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="min-w-[6rem] font-semibold">{s.stepName}</span>
+                {s.workerName != null ? (
+                  <span className="shrink-0 text-muted">{s.workerName}</span>
+                ) : null}
+                <span className="shrink-0 text-muted">{outcomeLabel(s.outcome)}</span>
+                {s.durationMs != null ? (
+                  <span className="ml-auto shrink-0 text-muted">
+                    {formatDuration(s.durationMs)}
+                  </span>
+                ) : null}
+                {s.evalResults && s.evalResults.length > 0 ? (
+                  <span className="flex flex-wrap items-center gap-1">
+                    {s.evalResults.map((r) => (
+                      <EvalChip key={r.label} label={r.label} value={r.value} warn={r.warn} />
+                    ))}
+                  </span>
+                ) : null}
+              </div>
             </li>
           )
         })}

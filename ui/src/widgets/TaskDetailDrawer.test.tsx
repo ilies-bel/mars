@@ -880,6 +880,7 @@ const span = (overrides: Partial<StepSpan> & { stepName: string }): StepSpan => 
   durationMs: overrides.durationMs ?? 1000,
   taskId: overrides.taskId ?? 'task-t1',
   originId: overrides.originId ?? 'task-t1',
+  evalResults: overrides.evalResults,
 })
 
 describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
@@ -998,8 +999,8 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     )
     // The 'code' row is highlighted; others are not.
     expect(html).toContain('data-active="true"')
-    // Verify the highlight class is applied to the active row.
-    expect(html).toContain('ring-amber-400')
+    // Verify the highlight ring uses the accessible warn token (not raw amber).
+    expect(html).toContain('ring-warn')
     // The other rows must not be highlighted.
     const activeMatches = (html.match(/data-active="true"/g) ?? []).length
     expect(activeMatches).toBe(1)
@@ -1019,7 +1020,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
       />,
     )
     expect(html).not.toContain('data-active="true"')
-    expect(html).not.toContain('ring-amber-400')
+    expect(html).not.toContain('ring-warn')
   })
 
   it('does not add data-active=true when activeStepName is omitted', () => {
@@ -1031,5 +1032,60 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     )
     // No highlight when no active step is provided
     expect(html).not.toContain('data-active="true"')
+  })
+
+  // ── Accessibility / color-token tests ────────────────────────────────────────
+
+  it('a failed step row uses the accessible error token (text-error), not text-red-400 or text-amber-400', () => {
+    const spans = [
+      span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'failed' }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
+    )
+    expect(html).not.toContain('text-red-400')
+    expect(html).not.toContain('text-amber-400')
+    expect(html).toContain('text-error')
+  })
+
+  it('a warn-state EvalChip renders with text-warn, not text-amber-400', () => {
+    const spans = [
+      span({
+        stepName: 'code',
+        workflowInstanceId: 'wf-1',
+        outcome: 'completed',
+        evalResults: [{ label: 'ctx%', value: '95%', warn: true }],
+      }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
+    )
+    expect(html).not.toContain('text-amber-400')
+    expect(html).toContain('text-warn')
+  })
+
+  it('renders a status dot (data-testid="step-status-dot") for every step row', () => {
+    const spans = [
+      span({ stepName: 'setup', workflowInstanceId: 'wf-1' }),
+      span({ stepName: 'code', workflowInstanceId: 'wf-1', workerName: 'Coder' }),
+      span({ stepName: 'merge', workflowInstanceId: 'wf-1' }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
+    )
+    const dotCount = (html.match(/data-testid="step-status-dot"/g) ?? []).length
+    expect(dotCount).toBe(3)
+  })
+
+  it('a running step gets a warn-colored status dot', () => {
+    const spans = [
+      span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'running', endedAt: null, durationMs: null }),
+    ]
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
+    )
+    expect(html).toContain('data-testid="step-status-dot"')
+    // The dot element for a running step must carry the warn background class.
+    expect(html).toContain('bg-warn')
   })
 })
