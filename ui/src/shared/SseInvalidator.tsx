@@ -16,7 +16,8 @@ export const SseInvalidator = () => {
       setSseConnected(true)
       void qc.invalidateQueries({ queryKey: ['tasks'] })
       void qc.invalidateQueries({ queryKey: ['progress'] })
-      void qc.invalidateQueries({ queryKey: ['todo'] })
+      void qc.invalidateQueries({ queryKey: ['proposals'] })
+      void qc.invalidateQueries({ queryKey: ['stale-worktrees'] })
       void qc.invalidateQueries({ queryKey: ['action-queue'] })
     })
 
@@ -43,14 +44,15 @@ export const SseInvalidator = () => {
       }, 150)
     })
 
-    // 'todo' events only touch the todo/actionQueue/action-queue surfaces — they do
-    // not require a full progress refetch.
-    let todoDebounce: ReturnType<typeof setTimeout> | null = null
-    es.addEventListener('todo', () => {
-      if (todoDebounce !== null) clearTimeout(todoDebounce)
-      todoDebounce = setTimeout(() => {
-        todoDebounce = null
-        void qc.invalidateQueries({ queryKey: ['todo'] })
+    // 'proposals' events only touch the proposals/stale-worktrees/action-queue
+    // surfaces — they do not require a full progress refetch.
+    let proposalsDebounce: ReturnType<typeof setTimeout> | null = null
+    es.addEventListener('proposals', () => {
+      if (proposalsDebounce !== null) clearTimeout(proposalsDebounce)
+      proposalsDebounce = setTimeout(() => {
+        proposalsDebounce = null
+        void qc.invalidateQueries({ queryKey: ['proposals'] })
+        void qc.invalidateQueries({ queryKey: ['stale-worktrees'] })
         void qc.invalidateQueries({ queryKey: ['action-queue'] })
       }, 150)
     })
@@ -70,7 +72,7 @@ export const SseInvalidator = () => {
     es.onerror = () => setSseConnected(false)
     return () => {
       if (tasksDebounce !== null) clearTimeout(tasksDebounce)
-      if (todoDebounce !== null) clearTimeout(todoDebounce)
+      if (proposalsDebounce !== null) clearTimeout(proposalsDebounce)
       if (progressDebounce !== null) clearTimeout(progressDebounce)
       es.close()
       setSseConnected(false)

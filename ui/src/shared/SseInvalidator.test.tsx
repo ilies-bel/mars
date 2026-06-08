@@ -70,13 +70,13 @@ describe('SseInvalidator – React Query invalidation mechanism', () => {
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
     })
     qc.setQueryData(['progress', null], { tasks: [], proposals: [] })
-    qc.setQueryData(['todo', null], [])
+    qc.setQueryData(['proposals', null], [])
 
-    // Invalidate only progress — todo should remain fresh.
+    // Invalidate only progress — proposals should remain fresh.
     await qc.invalidateQueries({ queryKey: ['progress'] })
 
-    const todoState = qc.getQueryState(['todo', null])
-    expect(todoState?.isInvalidated).toBe(false)
+    const proposalsState = qc.getQueryState(['proposals', null])
+    expect(proposalsState?.isInvalidated).toBe(false)
   })
 })
 

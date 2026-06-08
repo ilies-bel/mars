@@ -49,7 +49,7 @@ export function createProjectContextCache(
       const hub = new SseHub()
       watchQueue(ctx.queueDbPath, () => {
         hub.broadcast('tasks')
-        hub.broadcast('todo')
+        hub.broadcast('proposals')
       })
       return { ctx, db, stateDb, hub }
     })()

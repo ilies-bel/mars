@@ -69,7 +69,7 @@ export interface FrameworkUpdateState {
   selfUpdatable: boolean
 }
 
-/** Wire shape returned by GET /view/todo for a single draft proposal. */
+/** Wire shape returned by GET /view/proposals for a single draft proposal. */
 export interface DraftFeature {
   id: string
   title: string
@@ -84,7 +84,7 @@ export interface DraftFeature {
   userStories: string[]
 }
 
-/** Wire shape returned by GET /view/todo for a single stale-worktree alert. */
+/** Wire shape returned by GET /view/proposals for a single stale-worktree alert. */
 export interface StaleWorktreeAlert {
   taskId: string
   status: string
@@ -241,11 +241,11 @@ export interface HttpServerDeps {
     limit?: number
   }) => Promise<{ rows: ActionQueueRow[]; nextCursor: string | null }>
   /**
-   * Return the combined payload for GET /view/todo: draft proposals + open
+   * Return the combined payload for GET /view/proposals: draft proposals + open
    * stale-worktree alerts. The daemon is the sole reader of its own DB; the
    * UI server proxies this endpoint instead of querying the DB directly.
    */
-  viewTodo: () => Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[] }>
+  viewProposals: () => Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[] }>
   /**
    * Return the full Proposal record for GET /view/proposal/:id, or null when
    * no proposal with that id exists. Serves the detail panel's lazy-load path
@@ -601,7 +601,7 @@ export const startHttpServer = async (
     }
 
     // GET /view/stream — long-lived Server-Sent Events channel. Emits one
-    // named event per channel ('tasks'|'progress'|'action-queue'|'todo'|'kpis')
+    // named event per channel ('tasks'|'progress'|'action-queue'|'proposals'|'kpis')
     // whenever the daemon mutates the corresponding store. The UI subscribes
     // to avoid polling and to get the same liveness it previously had from
     // watching the DB file. Pure read; no draining gate.
@@ -690,13 +690,13 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /view/todo — draft proposals + open stale-worktree alerts for the
-    // Todo tab. The daemon is the sole reader of its own DB; the UI server
-    // proxies this endpoint instead of querying state.db directly. Pure read;
-    // no draining gate.
-    if (req.method === 'GET' && req.url === '/view/todo') {
+    // GET /view/proposals — draft proposals + open stale-worktree alerts for
+    // the proposals/alerts surface. The daemon is the sole reader of its own
+    // DB; the UI server proxies this endpoint instead of querying state.db
+    // directly. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/proposals') {
       deps
-        .viewTodo()
+        .viewProposals()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return

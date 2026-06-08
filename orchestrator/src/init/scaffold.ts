@@ -14,6 +14,7 @@ const TEMPLATES_DIR = resolve(
 )
 
 const TEMPLATE_CLAUDE_MD = resolve(TEMPLATES_DIR, 'CLAUDE.md')
+
 /**
  * Bundled template for the repo-root `.mcp.json` that registers the codegraph
  * MCP server. Delivered via the scaffold path (NOT via the `.claude/` bundle)

@@ -458,7 +458,7 @@ describe('GET /view/action-queue via HTTP server', () => {
       traceStore: nullTraceStore,
       viewTasks: async () => ({ tasks: [] }),
       viewProgress: async () => ({ tasks: [], proposals: [] }),
-      viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
+      viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
       viewTerminalEvents: async () => ({ events: [] }),
       viewStepSpans: async () => ({ spans: [] }),
   viewSessions: async () => ({ sessions: [] }),

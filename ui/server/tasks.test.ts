@@ -49,9 +49,8 @@ const makeDaemonDeps = (
   actionQueueAck: async () => {},
   actionQueueResolve: async () => {},
   actionQueueDismiss: async () => {},
-  todoDismiss: async () => {},
   viewActionQueue: async () => [],
-  viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
+  viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
 })
 

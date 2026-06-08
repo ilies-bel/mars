@@ -113,7 +113,7 @@ const insertStaleWorktreeItem = async (
   c.close()
 }
 
-describe('GET /api/todo — stale-worktree actionQueue items', () => {
+describe('GET /api/stale-worktrees — stale-worktree actionQueue items', () => {
   let repo: string
   let server: ReturnType<typeof Bun.serve> | null = null
   let baseUrl: string
@@ -148,7 +148,7 @@ describe('GET /api/todo — stale-worktree actionQueue items', () => {
       branch: 'task/task-abc',
     })
 
-    const res = await fetch(`${baseUrl}/api/todo`)
+    const res = await fetch(`${baseUrl}/api/stale-worktrees`)
     expect(res.status).toBe(200)
     const body = (await res.json()) as TodoBody
 
@@ -177,7 +177,7 @@ describe('GET /api/todo — stale-worktree actionQueue items', () => {
       state: 'resolved',
     })
 
-    const res = await fetch(`${baseUrl}/api/todo`)
+    const res = await fetch(`${baseUrl}/api/stale-worktrees`)
     const body = (await res.json()) as TodoBody
 
     expect(body.staleWorktrees).toHaveLength(1)
@@ -185,7 +185,7 @@ describe('GET /api/todo — stale-worktree actionQueue items', () => {
   })
 
   it('returns an empty staleWorktrees array when no actionQueue items exist', async () => {
-    const res = await fetch(`${baseUrl}/api/todo`)
+    const res = await fetch(`${baseUrl}/api/stale-worktrees`)
     expect(res.status).toBe(200)
     const body = (await res.json()) as TodoBody
     expect(Array.isArray(body.staleWorktrees)).toBe(true)

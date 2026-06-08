@@ -60,7 +60,7 @@ const makeDeps = (
   viewTasks: async () => ({ tasks: [] }),
   viewProgress: async () => ({ tasks: [], proposals: [] }),
   viewActionQueue: async () => [],
-  viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
+  viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
   viewTerminalEvents,
   viewStepSpans: async () => ({ spans: [] }),
   viewSessions: async () => ({ sessions: [] }),

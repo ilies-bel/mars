@@ -272,7 +272,7 @@ export const startServer = async (
         }
 
         if (path === '/api/proposals') {
-          const r = await proxyGet(ctx.stateDir, '/view/todo')
+          const r = await proxyGet(ctx.stateDir, '/view/proposals')
           if (r.status !== 200) return jsonResponse(r.status, r.body)
           const body = r.body as { drafts?: unknown }
           return jsonResponse(200, { drafts: body.drafts ?? [] })
@@ -292,7 +292,7 @@ export const startServer = async (
         }
 
         if (path === '/api/stale-worktrees') {
-          const r = await proxyGet(ctx.stateDir, '/view/todo')
+          const r = await proxyGet(ctx.stateDir, '/view/proposals')
           if (r.status !== 200) return jsonResponse(r.status, r.body)
           const body = r.body as { staleWorktrees?: unknown }
           return jsonResponse(200, { staleWorktrees: body.staleWorktrees ?? [] })
@@ -343,8 +343,11 @@ export const startServer = async (
         if (path === '/api/action-queue/dismiss' && req.method === 'POST') {
           try {
             const body = await req.json() as { id?: unknown; kind?: unknown }
-            const { id, kind } = body
-            const result = await proxyPost(ctx.stateDir, '/view/todo/dismiss', { id, kind })
+            const { id } = body
+            if (typeof id !== 'string' || !id) {
+              return jsonResponse(400, { error: 'id is required' })
+            }
+            const result = await proxyAction(ctx.stateDir, 'dismiss', id)
             return jsonResponse(result.status, result.body)
           } catch (err) {
             return jsonResponse(500, { error: (err as Error).message })

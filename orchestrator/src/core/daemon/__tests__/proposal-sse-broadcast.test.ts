@@ -66,7 +66,7 @@ describe('proposal lifecycle → SSE progress broadcast', () => {
     'proposal.promoted',
     'proposal.sliced',
     'proposal.dismissed',
-  ])('%s does not emit unrelated channels (tasks, todo, action-queue)', (event) => {
+  ])('%s does not emit unrelated channels (tasks, proposals, action-queue)', (event) => {
     const bus = new EventEmitter()
     const hub = new ViewStreamHub()
     const broadcastSpy = vi.spyOn(hub, 'broadcast')
@@ -75,7 +75,7 @@ describe('proposal lifecycle → SSE progress broadcast', () => {
     bus.emit(event)
 
     expect(broadcastSpy).not.toHaveBeenCalledWith('tasks')
-    expect(broadcastSpy).not.toHaveBeenCalledWith('todo')
+    expect(broadcastSpy).not.toHaveBeenCalledWith('proposals')
     expect(broadcastSpy).not.toHaveBeenCalledWith('action-queue')
     expect(broadcastSpy).not.toHaveBeenCalledWith('kpis')
   })

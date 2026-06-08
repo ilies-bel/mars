@@ -2901,7 +2901,7 @@ export const startDaemon = async (
         cursor,
       })
     },
-    viewTodo: async () => {
+    viewProposals: async () => {
       const client = getCompositionRootClient()
       // Check if the proposals table exists (absent on a fresh repo before
       // the first `mars init` / daemon run that initialises the schema).
@@ -3168,7 +3168,7 @@ export const startDaemon = async (
         const raised = await detectAndRaiseStaleWorktrees(resolveContext().repoRoot)
         if (raised.length > 0) {
           log(`[stale-sweep] raised/bumped ${raised.length} stale-worktree actionQueue item(s)`)
-          viewStreamHub.broadcast('todo')
+          viewStreamHub.broadcast('proposals')
           viewStreamHub.broadcast('action-queue')
         }
       } catch (err) {

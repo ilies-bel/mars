@@ -1,7 +1,7 @@
 /**
- * Tests for GET /view/todo — draft proposals + open stale-worktree alerts.
+ * Tests for GET /view/proposals — draft proposals + open stale-worktree alerts.
  *
- * The endpoint is a pure read; deps.viewTodo() is injected so the test
+ * The endpoint is a pure read; deps.viewProposals() is injected so the test
  * exercises the HTTP layer without touching a real database.
  */
 import { describe, it, expect } from 'vitest'
@@ -14,7 +14,7 @@ const nullRecipeCatalog: RecipeCatalog = {
   list: () => [],
 }
 
-/** Minimal deps factory — every non-viewTodo dep is a safe no-op. */
+/** Minimal deps factory — every non-viewProposals dep is a safe no-op. */
 const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartTask: async () => {},
   unblockTask: async () => {},
@@ -33,7 +33,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   viewTasks: async () => ({ tasks: [] }),
   viewProgress: async () => ({ tasks: [], proposals: [] }),
   viewActionQueue: async () => [],
-  viewTodo: async () => ({ drafts: [], staleWorktrees: [] }),
+  viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
   viewStepSpans: async () => ({ spans: [] }),
   viewSessions: async () => ({ sessions: [] }),
@@ -50,15 +50,15 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   ...overrides,
 })
 
-describe('GET /view/todo', () => {
+describe('GET /view/proposals', () => {
   it('returns {drafts:[], staleWorktrees:[]} when proposals table does not exist', async () => {
-    // proposalsTableExists() === false maps to viewTodo returning empty arrays
+    // proposalsTableExists() === false maps to viewProposals returning empty arrays
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(
-      makeDeps({ viewTodo: async () => ({ drafts: [], staleWorktrees: [] }) }),
+      makeDeps({ viewProposals: async () => ({ drafts: [], staleWorktrees: [] }) }),
     )
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/todo`)
+      const res = await fetch(`http://127.0.0.1:${port}/view/proposals`)
       expect(res.status).toBe(200)
       expect(res.headers.get('content-type')).toContain('application/json')
       const body = (await res.json()) as { drafts: unknown[]; staleWorktrees: unknown[] }
@@ -69,7 +69,7 @@ describe('GET /view/todo', () => {
     }
   })
 
-  it('returns populated drafts and staleWorktrees from viewTodo', async () => {
+  it('returns populated drafts and staleWorktrees from viewProposals', async () => {
     const draft: DraftFeature = {
       id: 'prop-1',
       title: 'Add SSO',
@@ -94,10 +94,10 @@ describe('GET /view/todo', () => {
     }
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(
-      makeDeps({ viewTodo: async () => ({ drafts: [draft], staleWorktrees: [stale] }) }),
+      makeDeps({ viewProposals: async () => ({ drafts: [draft], staleWorktrees: [stale] }) }),
     )
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/todo`)
+      const res = await fetch(`http://127.0.0.1:${port}/view/proposals`)
       expect(res.status).toBe(200)
       const body = (await res.json()) as {
         drafts: DraftFeature[]
@@ -121,17 +121,17 @@ describe('GET /view/todo', () => {
     }
   })
 
-  it('surfaces errors from viewTodo as 500', async () => {
+  it('surfaces errors from viewProposals as 500', async () => {
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(
       makeDeps({
-        viewTodo: async () => {
+        viewProposals: async () => {
           throw new Error('db locked')
         },
       }),
     )
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/todo`)
+      const res = await fetch(`http://127.0.0.1:${port}/view/proposals`)
       expect(res.status).toBe(500)
       const body = (await res.json()) as { ok: boolean; error: string }
       expect(body.ok).toBe(false)
