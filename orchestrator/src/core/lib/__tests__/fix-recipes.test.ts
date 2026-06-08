@@ -1388,7 +1388,7 @@ describe('handleTaskFailureWithFixTask unknown-signature path', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('marks the source failed and raises an actionQueue item WITHOUT spawning an investigator task', async () => {
+  it('spawns a generic-recipe recovery fix and blocks the source (ADR: uniform failure→fix spawn)', async () => {
     const { q, ft } = await loadModules(repo)
     const originalPrompt =
       'add the nudge link in src/components/NudgePanel.tsx with a specific href'
@@ -1404,23 +1404,26 @@ describe('handleTaskFailureWithFixTask unknown-signature path', () => {
         'completely unknown error text with no classifier rule match',
     })
 
-    expect(result.outcome).toBe('no-recipe')
-    // The auto-investigator is gone: no recipe-proposing task is spawned.
-    expect(
-      (result as { investigatorTaskId?: string }).investigatorTaskId,
-    ).toBeUndefined()
-    expect(result.actionQueueItemId).toBeTruthy()
+    // Every regular-task failure spawns a fix, even with no registered recipe.
+    expect(result.outcome).toBe('blocked')
+    expect(result.fixTaskId).toBeTruthy()
 
-    // Source task is marked failed.
+    // Source task is blocked (not failed) behind the recovery.
     const source = await q.getTask(t.id)
-    expect(source?.status).toBe('failed')
+    expect(source?.status).toBe('blocked')
 
-    // No new task rows beyond the source were created (no investigator).
+    // A kind='fix' recovery was created from the generic recipe, carrying the
+    // original intent verbatim so the fixer can resume from first principles.
+    const fix = await q.getTask(result.fixTaskId as string)
+    expect(fix?.kind).toBe('fix')
+    expect(fix?.fixForTaskId).toBe(t.id)
+    expect(fix?.prompt).toContain(originalPrompt)
+
     const all = await q.resolveQueueClient().execute({
       sql: `SELECT id FROM tasks`,
       args: [],
     })
-    expect(all.rows.length).toBe(1)
+    expect(all.rows.length).toBe(2)
   })
 })
 

@@ -3,7 +3,7 @@ import {
   buildVerifyReproHint,
   type RanVerifyStep,
 } from './lib/derive-repro-command'
-import { hasRecipe, type FixRecipeContext } from './lib/fix-recipes'
+import { type FixRecipeContext } from './lib/fix-recipes'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
 import { truncateFailure } from './lib/truncate-failure'
 import { internalBus } from '../internal-bus'
@@ -28,9 +28,6 @@ export type {
   UpsertFixTaskResult,
   AttachToExistingFixTaskInput,
 } from './arc'
-
-const truncate = (s: string, max: number): string =>
-  s.length <= max ? s : `${s.slice(0, max)}…`
 
 export const RECOVERY_FAILED_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 export const UNKNOWN_FAILURE_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
@@ -159,30 +156,6 @@ const buildRecoveryEscalationBody = (input: {
     .join('\n')
 }
 
-const buildUnknownFailureBody = (input: {
-  sourceTaskId: string
-  failingStep: string
-  failureSignature: string
-  branch: string | null
-  truncatedError: string
-}): string => {
-  return [
-    `Task ${input.sourceTaskId} failed with a signature that has no registered recovery recipe, so the orchestrator did not auto-recover it.`,
-    '',
-    'Context:',
-    `  Failing step: ${input.failingStep}`,
-    `  Failure signature: ${input.failureSignature}`,
-    input.branch ? `  Branch: ${input.branch}` : null,
-    '',
-    'Last error output (tail-truncated):',
-    '```',
-    input.truncatedError,
-    '```',
-  ]
-    .filter((line) => line !== null)
-    .join('\n')
-}
-
 const buildFixFailLoopBody = (input: {
   sourceTaskId: string
   originTaskId: string
@@ -247,7 +220,6 @@ export interface HandleTaskFailureViaTaskResult {
     | 'failed'
     | 'escalated'
     | 'fix-fail-loop'
-    | 'no-recipe'
     | 'noop'
   fixTaskId?: string
   failureSignature?: string
@@ -259,15 +231,14 @@ export interface HandleTaskFailureViaTaskResult {
 /**
  * Failure-handler entrypoint. Terminal outcomes:
  *
- *  - `blocked`: original task → blocked, recovery fix-task enqueued from
- *     the registered recipe for the computed signature.
+ *  - `blocked`: original task → blocked, recovery fix-task enqueued for the
+ *     computed signature. Uses the registered recipe when one exists,
+ *     otherwise a generic first-principles recovery prompt — every
+ *     regular-task failure spawns a fix, even with no recipe (ADR:
+ *     uniform failure→fix spawn, supersedes ADR-0002).
  *  - `escalated`: the failing task is itself a recovery (fix_for_task_id
  *     set). Recovery has a retry budget of 0; we mark it failed and
  *     raise a `recovery-failed` actionQueue item for human attention.
- *  - `no-recipe`: signature has no recipe registered. Original task →
- *     failed and a trace-only actionQueue item is raised. The orchestrator does
- *     NOT auto-diagnose; the operator triggers a one-shot diagnostic agent
- *     from the actionQueue card (the `diagnose-failure` action).
  *  - `fix-fail-loop`: (sourceTaskId, failureSignature) pair has already
  *     burned its fix-task attempts cap (`MARS_MAX_FIX_ATTEMPTS`, default
  *     2). No new fix task is inserted; a deduped `fix-fail-loop` actionQueue
@@ -449,68 +420,14 @@ export const handleTaskFailureWithFixTask = async (
   //     (proposal adee06a6) — must extend HandleTaskFailureViaTaskInput
   //     with spec.files + pre-computed integration re-run results,
   //     since classifyError today only sees errorOutput.
-  // No recipe for this signature — do NOT fall back to a generic prompt
-  // (that's what produced the cascade) and do NOT auto-diagnose. Mark the
-  // source 'failed' and raise a trace-only actionQueue item. The operator decides
-  // whether to diagnose (the card's `diagnose-failure` action spawns a
-  // one-shot Sonnet agent), restart, or purge.
-  if (!hasRecipe(failureSignature)) {
-    const now = new Date().toISOString()
-    const noRecipeReason = truncate(
-      `${input.failingStep}: ${truncatedError}`,
-      1000,
-    )
-    await updateTask(
-      input.taskId,
-      {
-        status: 'failed',
-        error: noRecipeReason,
-        failureReason: noRecipeReason,
-        failureSignature,
-        failureReasonCode: failureSignature,
-      },
-      s,
-    )
-
-    const actionQueueItemId = await raiseActionQueueItem({
-      kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
-      category: 'orchestrator',
-      priority: 'high',
-      title: `Task ${task.id} failed: unknown signature ${failureSignature}`,
-      body: buildUnknownFailureBody({
-        sourceTaskId: task.id,
-        failingStep: input.failingStep,
-        failureSignature,
-        branch,
-        truncatedError,
-      }),
-      payload: {
-        taskId: task.id,
-        originTaskId: task.originId,
-        failingStep: input.failingStep,
-        failureSignature,
-        branch,
-      },
-      context: {
-        repoRoot: process.env.MARS_REPO ?? null,
-      },
-      raisedBy: 'agent:fail-fix-handler',
-      // Dedup on signature so a flapping signature collapses to one row.
-      signature: failureSignature,
-      originTaskId: task.originId,
-      occurrence: {
-        at: now,
-        sourceTaskId: task.id,
-        failingStep: input.failingStep,
-      },
-    })
-    return {
-      outcome: 'no-recipe',
-      failureSignature,
-      retryCount: task.retryCount + 1,
-      actionQueueItemId,
-    }
-  }
+  // No early-out for a missing recipe. Every regular-task failure spawns a
+  // fix, even when the signature has no purpose-built recipe (ADR: uniform
+  // failure→fix spawn, supersedes ADR-0002). The recovery-spawn path resolves
+  // the signature via `getRecipeOrGeneric`, which falls back to a generic,
+  // first-principles recovery prompt — so an unrecognized signature recovers
+  // instead of dead-ending with an "unknown signature" action-queue row that
+  // stranded the worktree. Recovery (fix) failures are still escalated, not
+  // re-recovered (see the `task.fixForTaskId !== null` branch above).
 
   // Fix-fail-loop cap. Count every historical fix-task row for this
   // (sourceTaskId, failureSignature) pair regardless of status. When

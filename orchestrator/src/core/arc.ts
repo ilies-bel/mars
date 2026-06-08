@@ -45,7 +45,7 @@ import {
   getDefaultDomainTaskStore,
   type DomainTaskStore,
 } from './store/task-store'
-import { getRecipe, type FixRecipeContext } from './lib/fix-recipes'
+import { getRecipeOrGeneric, type FixRecipeContext } from './lib/fix-recipes'
 import { buildEventInsert, publish, withWriteTx } from './lib/outbox'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
 import {
@@ -889,9 +889,12 @@ export class Arc {
    * Idempotent on (sourceTaskId, failureSignature): if a fix task is already
    * outstanding for that pair, the existing task is reused.
    *
-   * Caller must guarantee a recipe exists for `input.failureSignature` —
-   * `getRecipe` throws if it doesn't. Use `hasRecipe(signature)` before
-   * calling.
+   * Every regular-task failure spawns a fix, even with no registered recipe
+   * (ADR: uniform failure→fix spawn, supersedes ADR-0002). The signature is
+   * resolved via `getRecipeOrGeneric`, which falls back to the
+   * signature-agnostic generic recovery recipe when none is registered — so
+   * an unknown signature no longer dead-ends, it recovers from first
+   * principles. `getRecipeOrGeneric` never throws.
    *
    * F.1 EXEMPTION (ADR-0040). The by-construction origin → fix
    * `task_blockers` edge is written DIRECTLY in the batch below and MUST NOT
@@ -904,7 +907,7 @@ export class Arc {
   async spawnRecovery(input: UpsertFixTaskInput): Promise<UpsertFixTaskResult> {
     const s = this.store
 
-    const recipe = getRecipe(input.failureSignature)
+    const recipe = getRecipeOrGeneric(input.failureSignature)
     const shared = recipe.shared === true
 
     // Shared recipes (e.g. dirty merge target) reuse a single in-flight

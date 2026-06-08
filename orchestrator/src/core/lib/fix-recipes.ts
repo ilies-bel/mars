@@ -1291,6 +1291,57 @@ const testLibsqlNotAnErrorRecipe: FixRecipe = {
 //     from current main where both the test and implementation are already correct.
 //     Investigated 2026-05-31 (task 09758531, origin mars-d4f3ea6d).
 //
+/**
+ * Generic, signature-agnostic recovery recipe (ADR: every regular-task
+ * failure spawns a fix, even with no registered recipe). When a failure
+ * signature has no purpose-built recipe, the orchestrator no longer dead-ends
+ * the task with an "unknown signature" action-queue row — it spawns a recovery
+ * that works from the original intent, the failure summary, and the existing
+ * worktree. The fixer has no recipe script to follow, so the prompt tells it
+ * to diagnose from first principles. NOT registered in `recipes` — it is
+ * returned only by `getRecipeOrGeneric` as the explicit fallback, so
+ * `hasRecipe` keeps reporting the true "no purpose-built recipe" state.
+ */
+export const genericRecoveryRecipe: FixRecipe = {
+  signature: 'generic/no-recipe',
+  title: (ctx) =>
+    `Recover failed task: ${ctx.targetBranch || 'unknown branch'}`,
+  buildPrompt: (ctx) => {
+    const status = ctx.statusOutput.length > 0 ? ctx.statusOutput : '(empty)'
+    const original =
+      ctx.originalPrompt && ctx.originalPrompt.trim().length > 0
+        ? ctx.originalPrompt
+        : '(no original prompt recorded)'
+    return [
+      `A task failed and there is no purpose-built recovery recipe for its failure signature. You are the recovery: diagnose the failure from first principles, finish or fix the original work, and leave the worktree in a verifiable state.`,
+      '',
+      `The previous run's work (if any) is already in this worktree — read it before doing anything. Do NOT start over from scratch; continue from where it stopped.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `STEP 1 — Understand the original goal. The task you are recovering was asked to do:`,
+      '```',
+      original,
+      '```',
+      '',
+      `STEP 2 — Understand the failure. The failure summary captured at failure time:`,
+      '```',
+      status,
+      '```',
+      '',
+      `STEP 3 — Inspect the worktree to see how far the previous run got (\`git status\`, \`git log\`, \`git diff\`), then either finish the remaining work or repair the defect that caused the failure.`,
+      '',
+      `STEP 4 — Verify your work with the task's verification command(s) if any were specified in the original goal above; otherwise run the project's standard typecheck/test. Do not declare success without running them.`,
+      '',
+      `If you cannot make progress (genuine blocker, ambiguous scope, missing decision), do NOT bail silently: emit a high-priority action-queue item via \`mars action-queue raise --from -\` describing the blocker, then exit.`,
+      '',
+      `Worktree path: ${ctx.targetPath}`,
+      `Branch: ${ctx.targetBranch}`,
+      '',
+      `Save your work (the orchestrator does not commit on your behalf).`,
+    ].join('\n')
+  },
+}
+
 const recipeList: readonly FixRecipe[] = [
   dirtyMergeTargetRecipe,
   worktreeInstallFrozenLockfileRecipe,
@@ -1328,5 +1379,15 @@ export const getRecipe = (signature: string): FixRecipe => {
   }
   return recipe
 }
+
+/**
+ * Like {@link getRecipe} but never throws: returns the purpose-built recipe
+ * for `signature` when one is registered, otherwise the signature-agnostic
+ * {@link genericRecoveryRecipe}. This is the recovery-spawn entry point — every
+ * regular-task failure spawns a fix, and a missing recipe is no longer a
+ * dead-end (ADR: uniform failure→fix spawn supersedes ADR-0002).
+ */
+export const getRecipeOrGeneric = (signature: string): FixRecipe =>
+  recipes[signature] ?? genericRecoveryRecipe
 
 export const listRecipes = (): readonly FixRecipe[] => recipeList

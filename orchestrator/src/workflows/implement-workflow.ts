@@ -83,8 +83,9 @@ export const isMainDirtyVerifyError = (err: unknown): boolean =>
 // Thrown by the code step when the context token budget fires (the worker's
 // maxContextTokens was reached). The worker exits with exitCode 138 and a
 // distinct stderr containing "context budget exhausted". The task is marked
-// failed with 'context-exhausted' before this sentinel is thrown. The daemon
-// uses `isContextExhaustedAbortError` to suppress re-updating the task.
+// failed with 'context-exhausted' and a recovery fix-task is spawned to resume
+// the worktree before this sentinel is thrown. The daemon uses
+// `isContextExhaustedAbortError` to suppress re-updating the task.
 export const CONTEXT_EXHAUSTED_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} aborted by context-budget ceiling: coder hit the context token limit`
 
@@ -928,17 +929,17 @@ export const implementWorkflow = defineWorkflow<
       // Context-budget hard abort: the worker was killed because its context
       // token budget (maxContextTokens) was exhausted. The worker exits with
       // exitCode 138 and stderr containing "context budget exhausted".
-      // Treat this as a failure with reason 'context-exhausted', enqueue
-      // exactly one follow-up task blocked by this task, and exit WITHOUT
-      // triggering the Fixer pipeline.
-      // This check runs BEFORE the exploration-loop check because both use
-      // exitCode 138; the two are disambiguated by the stderr string.
+      // Treat this as an ordinary task failure: spawn a recovery (fix) that
+      // resumes the half-done worktree — every regular-task failure spawns a
+      // fix (ADR: uniform failure→fix spawn). The generic recovery prompt
+      // tells the fixer to read the existing worktree and continue, so the
+      // operator no longer has to run 'mars continue' by hand.
+      // The context-exhausted abort is disambiguated from other exitCode-138
+      // kills by the "context budget exhausted" stderr string.
       if (r.exitCode === 138 && r.stderr.includes('context budget exhausted')) {
-        // Context-budget hard abort: mark the task failed (failedPhase:'code')
-        // so the worktree is preserved on disk. The operator can resume with
-        // 'mars continue <id>' — no auto-spawned follow-up is needed because
-        // the failed task itself surfaces in the action queue and continue now
-        // re-enters the code step on the existing worktree.
+        // Stamp the failure (failedPhase:'code' preserves the worktree on
+        // disk for the fix to resume from); handleTaskFailureWithFixTask then
+        // flips the task to 'blocked' and enqueues the recovery fix-task.
         await updateTask(
           input.taskId,
           {
@@ -950,8 +951,27 @@ export const implementWorkflow = defineWorkflow<
           },
           store,
         )
+        await handleTaskFailureWithFixTask({
+          taskId: input.taskId,
+          failingStep: 'code:context-exhausted',
+          errorOutput: `context budget exhausted (maxContextTokens) mid-code; the worktree holds in-progress work to resume`,
+          branch,
+          store,
+          recipeContext: {
+            targetPath: worktreePath,
+            statusOutput: `The coder ran out of context budget mid-implementation. The worktree at ${worktreePath} holds whatever it committed before the kill — read it and continue.`,
+            targetBranch: branch,
+            // Handler backfills originalPrompt from task.prompt when '' is passed.
+            originalPrompt: '',
+          },
+        }).catch((err) => {
+          console.error(
+            `[failure-handler] task ${input.taskId} context-exhausted handling errored:`,
+            err,
+          )
+        })
         console.log(
-          `[ctx] task ${input.taskId}: context-exhausted; use 'mars continue ${input.taskId}' to resume on the existing worktree`,
+          `[ctx] task ${input.taskId}: context-exhausted; recovery fix-task spawned to resume the existing worktree`,
         )
         throw new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE(input.taskId))
       }

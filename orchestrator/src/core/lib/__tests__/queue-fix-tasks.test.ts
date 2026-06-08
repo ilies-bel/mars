@@ -720,42 +720,42 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
-  it('no-recipe path: marks the source failed and raises an actionQueue item, WITHOUT spawning an investigator task', async () => {
+  it('no-recipe path: spawns a generic-recipe recovery fix and blocks the source (ADR: uniform failure→fix spawn)', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
-    // 'verify:test/unclassified' is NOT in the registered recipe set;
-    // the failure handler should NOT enqueue a recovery and should NOT
-    // auto-spawn a recipe-proposing investigator.
+    // 'verify:test/unclassified' is NOT in the registered recipe set. Every
+    // regular-task failure still spawns a fix — the recovery-spawn path falls
+    // back to the generic, first-principles recovery recipe instead of
+    // dead-ending the task with an "unknown signature" action-queue row.
     const r = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:test',
       errorOutput: 'something nobody has classified yet',
       branch: 'task/x',
     })
-    expect(r.outcome).toBe('no-recipe')
+    expect(r.outcome).toBe('blocked')
     expect(r.failureSignature).toBe('verify:test/unclassified')
-    expect(
-      (r as { investigatorTaskId?: string }).investigatorTaskId,
-    ).toBeUndefined()
-    expect(r.actionQueueItemId).toBeTruthy()
-    expect(r.fixTaskId).toBeUndefined()
+    expect(r.fixTaskId).toBeTruthy()
 
-    // Original task is marked failed with no task_blockers edge.
+    // Source task is blocked (not failed) with a task_blockers edge to the fix.
     const origin = await q.getTask(t.id)
-    expect(origin?.status).toBe('failed')
+    expect(origin?.status).toBe('blocked')
     const blockers = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
       args: [t.id],
     })
-    expect(Number((blockers.rows[0] as unknown as { n: number }).n)).toBe(0)
+    expect(Number((blockers.rows[0] as unknown as { n: number }).n)).toBe(1)
 
-    // No investigator (or any other) task was created beyond the source.
+    // A kind='fix' recovery was created, linked to the source by construction.
+    const fix = await q.getTask(r.fixTaskId as string)
+    expect(fix?.kind).toBe('fix')
+    expect(fix?.fixForTaskId).toBe(t.id)
     const all = await q.resolveQueueClient().execute({
       sql: `SELECT id FROM tasks`,
       args: [],
     })
-    expect(all.rows.length).toBe(1)
+    expect(all.rows.length).toBe(2)
   })
 
   it('fix-fail loop: caps fix-task inserts per (sourceTaskId, failureSignature) at MARS_MAX_FIX_ATTEMPTS (default 2) and escalates to a fix-fail-loop actionQueue item', async () => {
