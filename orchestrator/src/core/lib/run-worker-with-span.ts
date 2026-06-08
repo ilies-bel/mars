@@ -14,7 +14,7 @@
 // (it can be large). Session id and usage signals are always recorded so
 // lightweight queries remain accurate even when reflection is globally disabled.
 
-import { summarizeUsage } from './claude-usage'
+import { summarizeUsage, getLatestContextSize } from './claude-usage'
 import { isReflectDisabled } from './reflect-signals'
 import { evaluateStep } from './step-evaluators'
 import type { TraceEventStore, TraceEventPhase } from './trace-events-store'
@@ -130,6 +130,7 @@ export const runWorkerWithSpan = async (
   }
 
   const usage = summarizeUsage(result.conversation)
+  const contextTokens = getLatestContextSize(result.conversation)
   // Exit code 138 means the run was terminated by an external abort signal
   // (read/grep span watchdog). This is a distinct outcome from a genuine
   // task failure — the worker was killed, not broken.
@@ -161,6 +162,7 @@ export const runWorkerWithSpan = async (
       cacheCreateTokens: usage.cacheCreateTokens,
       cacheReadTokens: usage.cacheReadTokens,
       messageCount: usage.messageCount,
+      contextTokens,
     },
     ...(transcript !== undefined ? { transcript } : {}),
     ...(getExtraPayload !== undefined ? getExtraPayload() : {}),

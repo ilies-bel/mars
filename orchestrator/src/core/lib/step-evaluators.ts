@@ -15,6 +15,8 @@ export interface StepEvaluator {
   warn?: (value: number | string) => boolean
 }
 
+const CONTEXT_WINDOW_TOKENS = 200_000
+
 const registry = new Map<string, StepEvaluator[]>()
 
 export function registerStepEvaluator(stepName: string, evaluator: StepEvaluator): void {
@@ -68,12 +70,8 @@ function llmEvaluators(): StepEvaluator[] {
       compute(payload) {
         const s = usageSignals(payload)
         if (!s) return null
-        const input = toNum(s.inputTokens)
-        const output = toNum(s.outputTokens)
-        const cacheCreate = toNum(s.cacheCreateTokens)
-        const cacheRead = toNum(s.cacheReadTokens)
-        const effective = input + output + cacheCreate + cacheRead * 0.1
-        return Math.round((effective / 200_000) * 100 * 10) / 10
+        const ctx = toNum(s.contextTokens)
+        return Math.round((ctx / CONTEXT_WINDOW_TOKENS) * 100 * 10) / 10
       },
       format: (v) => `${v}%`,
       warn: (v) => (v as number) >= 80,
