@@ -442,38 +442,171 @@ const sliceMentions = (
 ): boolean => new RegExp(`\\b${ident}\\b`).test(sliceText(s))
 
 /**
- * Post-process the slicer's output so a schema-drop / breaking-shape
- * slice is forced to wait on every consumer-update slice in the same
- * PRD that mentions the dropped identifier.
+ * Extract camelCase and snake_case identifiers from text for general-purpose
+ * closeness computation. Extends extractSchemaIdentifiers (which only covers
+ * snake_case) to also include camelCase symbols specific enough to signal
+ * meaningful overlap between slices.
  *
- * Rationale (concrete failure that motivated this): PRD
- * 1b7498f6-remove-all-usd-cost-usd-mentions-from-th sliced into a
- * "Drop legacy_data_col column" slice plus three "Remove legacy_data_col
- * from <consumer>" slices. The slicer LLM emitted ZERO blocker edges,
- * so the schema-drop slice dispatched first and burned its full retry
- * budget on `SQLITE_ERROR: no such column: s.legacy_data_col` inside
- * consumer tests that still read the column. This pass injects the
- * edges the LLM forgot, from the textual signal already in the slice
- * titles (no new heuristics — the language is there). The injection
- * is idempotent, preserves any blockedBy the slicer declared, skips
- * other schema-drop slices to avoid drop↔drop cycles, and skips
- * candidates that already declare the drop as their upstream so the
- * tree stays acyclic.
+ * Single-segment bare words (no underscore, no embedded uppercase after the
+ * first char) are excluded — same 'too-generic bare word' guard as
+ * extractSchemaIdentifiers.
+ */
+const extractGeneralIdentifiers = (text: string): string[] => {
+  const snakeCase = text.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? []
+  // camelCase: starts lowercase, has an uppercase letter in the interior,
+  // length ≥ 4 to avoid trivial acronyms ("getId" → fine, "id" → excluded).
+  const camelCase = [
+    ...(text.match(/\b[a-z][a-z0-9]*[A-Z][a-zA-Z0-9]*\b/g) ?? []),
+  ].filter((id) => id.length >= 4)
+  return Array.from(new Set([...snakeCase, ...camelCase]))
+}
+
+/**
+ * True when slices a and b share at least one specific identifier (snake_case
+ * or camelCase ≥ 4 chars) across their title + whatToBuild +
+ * prescriptiveAction text, or share at least one file path in their
+ * modifies/creates arrays.
+ *
+ * Both signals must be non-trivial: single bare lowercase words are excluded
+ * by extractGeneralIdentifiers, and the shared-file check requires an exact
+ * path match.
+ */
+const isCloseEnough = (
+  a: {
+    title: string
+    whatToBuild: string
+    prescriptiveAction?: string
+    modifies?: string[]
+    creates?: string[]
+  },
+  b: {
+    title: string
+    whatToBuild: string
+    prescriptiveAction?: string
+    modifies?: string[]
+    creates?: string[]
+  },
+): boolean => {
+  const filesA = new Set([...(a.modifies ?? []), ...(a.creates ?? [])])
+  for (const f of [...(b.modifies ?? []), ...(b.creates ?? [])]) {
+    if (filesA.has(f)) return true
+  }
+  const textA = [a.title, a.whatToBuild, a.prescriptiveAction ?? ''].join('\n')
+  const textB = [b.title, b.whatToBuild, b.prescriptiveAction ?? ''].join('\n')
+  const identsA = new Set(extractGeneralIdentifiers(textA))
+  for (const id of extractGeneralIdentifiers(textB)) {
+    if (identsA.has(id)) return true
+  }
+  return false
+}
+
+/**
+ * Returns true if adding the edge (depender depends on blocker) to the current
+ * blockedBy graph would create a cycle.
+ *
+ * A cycle exists iff blocker can already reach depender through existing
+ * blockedBy edges (i.e. blocker transitively waits on depender). The DFS is
+ * bounded to the slice count and always terminates.
+ */
+const wouldCreateCycle = (
+  slices: readonly { blockedBy: number[] }[],
+  dependerIdx: number,
+  blockerOneBased: number,
+): boolean => {
+  const blockerIdx = blockerOneBased - 1
+  const visited = new Set<number>()
+  const stack = [blockerIdx]
+  while (stack.length > 0) {
+    const curr = stack.pop()!
+    if (curr === dependerIdx) return true
+    if (visited.has(curr)) continue
+    visited.add(curr)
+    for (const dep of slices[curr].blockedBy) {
+      stack.push(dep - 1)
+    }
+  }
+  return false
+}
+
+/**
+ * The verdict returned by the direction judge for a close pair (a, b).
+ * When hasDependency is true, aBlocksB indicates direction: true means a must
+ * complete before b; false means b must complete before a.
+ */
+export type DirectionVerdict =
+  | { hasDependency: false }
+  | { hasDependency: true; aBlocksB: boolean }
+
+const directionVerdictSchema = z.union([
+  z.object({ hasDependency: z.literal(false) }),
+  z.object({ hasDependency: z.literal(true), aBlocksB: z.boolean() }),
+])
+
+const buildDirectionJudgementPrompt = (
+  a: { title: string; whatToBuild: string; prescriptiveAction?: string },
+  b: { title: string; whatToBuild: string; prescriptiveAction?: string },
+): string =>
+  `You are reviewing two implementation slices from the same project.
+Determine whether one slice MUST complete before the other can safely start.
+
+SLICE A:
+Title: ${a.title}
+What to build: ${a.whatToBuild}${a.prescriptiveAction ? `\nAction: ${a.prescriptiveAction}` : ''}
+
+SLICE B:
+Title: ${b.title}
+What to build: ${b.whatToBuild}${b.prescriptiveAction ? `\nAction: ${b.prescriptiveAction}` : ''}
+
+Answer in valid JSON only — no prose, no markdown:
+- A must finish before B starts → {"hasDependency": true, "aBlocksB": true}
+- B must finish before A starts → {"hasDependency": true, "aBlocksB": false}
+- No ordering constraint → {"hasDependency": false}`
+
+/**
+ * Two-stage auto-linker: inject blockedBy edges the slicer LLM forgot.
+ *
+ * Stage 1 — Schema-drop fast path (no LLM needed, direction is certain):
+ *   Any slice whose title/whatToBuild matches SCHEMA_DROP_PATTERNS is
+ *   automatically blocked on every consumer slice in the same PRD that
+ *   shares a snake_case identifier with the dropped entity. This is the
+ *   behaviour of the former injectSchemaDropBlockers (motivation: PRD
+ *   1b7498f6-remove-all-usd-cost-usd-mentions-from-th).
+ *
+ * Stage 2 — General heuristic + LLM direction:
+ *   For every non-schema-drop pair, compute textual closeness (shared
+ *   identifiers across title/whatToBuild/prescriptiveAction and shared file
+ *   paths in modifies/creates). Close pairs proceed to the injected
+ *   judgeDirection callback; only pairs the callback labels as dependent get
+ *   an edge, in the direction the callback specifies.
+ *
+ * Invariants (same as the former injectSchemaDropBlockers):
+ *   - Idempotent: merges into existing blockedBy via a Set.
+ *   - Acyclic: a full DFS cycle check is run before every edge insertion.
+ *   - Drop↔drop pairs skipped in Stage 1 (avoids multi-column-drop cycles).
+ *   - Schema-drop pairs excluded from Stage 2 (already handled in Stage 1).
+ *   - judgeDirection errors / 'no dependency' verdicts leave the graph unchanged.
  *
  * Mutates `slices` in place; exported for unit testing.
  */
-export const injectSchemaDropBlockers = (
+export const injectAutoLinkerBlockers = async (
   slices: Array<{
     title: string
     whatToBuild: string
+    prescriptiveAction?: string
+    modifies?: string[]
+    creates?: string[]
     blockedBy: number[]
   }>,
-): void => {
+  judgeDirection: (
+    a: { title: string; whatToBuild: string; prescriptiveAction?: string },
+    b: { title: string; whatToBuild: string; prescriptiveAction?: string },
+  ) => Promise<DirectionVerdict>,
+): Promise<void> => {
+  // ── Stage 1: Schema-drop fast path ──────────────────────────────────────
   const schemaDropIndices: number[] = []
   for (let i = 0; i < slices.length; i += 1) {
     if (isSchemaDropSlice(slices[i])) schemaDropIndices.push(i)
   }
-  if (schemaDropIndices.length === 0) return
 
   for (const dropIdx of schemaDropIndices) {
     const drop = slices[dropIdx]
@@ -490,8 +623,7 @@ export const injectSchemaDropBlockers = (
       // multi-column drop.
       if (isSchemaDropSlice(cand)) continue
       // Cycle guard: if the candidate already declares this drop as a
-      // blocker (an inverted slicer ordering), don't add the reverse
-      // edge.
+      // blocker (an inverted slicer ordering), don't add the reverse edge.
       if (cand.blockedBy.includes(dropOneBased)) continue
       // Textual link: candidate must mention at least one snake_case
       // identifier the drop names.
@@ -499,6 +631,35 @@ export const injectSchemaDropBlockers = (
       merged.add(j + 1)
     }
     drop.blockedBy = Array.from(merged).sort((a, b) => a - b)
+  }
+
+  // ── Stage 2: General heuristic + LLM direction ──────────────────────────
+  const schemaDropSet = new Set(schemaDropIndices)
+
+  for (let i = 0; i < slices.length; i += 1) {
+    for (let j = i + 1; j < slices.length; j += 1) {
+      // Pairs involving schema-drop slices were resolved in Stage 1.
+      if (schemaDropSet.has(i) || schemaDropSet.has(j)) continue
+
+      // Closeness check — skip pairs without a meaningful textual link.
+      if (!isCloseEnough(slices[i], slices[j])) continue
+
+      // LLM direction judgement.
+      const verdict = await judgeDirection(slices[i], slices[j])
+      if (!verdict.hasDependency) continue
+
+      const blockerIdx = verdict.aBlocksB ? i : j
+      const dependerIdx = verdict.aBlocksB ? j : i
+      const blockerOneBased = blockerIdx + 1
+
+      // Full cycle check before injecting the edge.
+      if (wouldCreateCycle(slices, dependerIdx, blockerOneBased)) continue
+
+      const depender = slices[dependerIdx]
+      const merged = new Set<number>(depender.blockedBy)
+      merged.add(blockerOneBased)
+      depender.blockedBy = Array.from(merged).sort((a, b) => a - b)
+    }
   }
 }
 
@@ -749,13 +910,29 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     }
 
     const parsed = parseSlicerOutput(r.stdout)
-    // Repair: the slicer LLM routinely forgets to wire schema-drop ↔
-    // consumer-update edges, sending a "Drop <col>" slice to dispatch
-    // before the slices that remove reads of <col> land. Inject those
-    // edges here from the textual signal already in slice titles, before
-    // the validation loop runs (the injected indices are always in
-    // range, so validation still passes).
-    injectSchemaDropBlockers(parsed.slices)
+    // Repair: the slicer LLM routinely forgets to wire dependency edges
+    // between related slices. Stage 1 handles schema-drop ↔ consumer edges
+    // deterministically; Stage 2 uses textual closeness + LLM direction for
+    // other close pairs. Both stages are non-fatal — errors and 'no
+    // dependency' verdicts leave the graph unchanged. Injected indices are
+    // always in range so the validation loop below still passes.
+    await injectAutoLinkerBlockers(parsed.slices, async (a, b) => {
+      const rr = await runWorkerWithSpan({
+        worker: Workers.Slicer,
+        prompt: buildDirectionJudgementPrompt(a, b),
+        runOptions: { cwd: getRepoRoot() },
+        traceStore,
+        stepName: 'auto-linker-direction',
+        workflowInstanceId: ctx.runId,
+        originId: inputData.proposalId,
+      }).catch(() => null)
+      if (!rr || rr.exitCode !== 0) return { hasDependency: false }
+      try {
+        return directionVerdictSchema.parse(parseClaudeJsonResult(rr.stdout))
+      } catch {
+        return { hasDependency: false }
+      }
+    })
     // Pre-flight drop: remove any slice whose creates files already exist
     // on disk and already export every backtick-declared symbol. Blocker
     // edges pointing at dropped slices are removed from surviving slices.

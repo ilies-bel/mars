@@ -8,7 +8,8 @@ import {
   buildSlicerPrompt,
   slicerOutputSchema,
   sliceFilesForPersistence,
-  injectSchemaDropBlockers,
+  injectAutoLinkerBlockers,
+  type DirectionVerdict,
   dropAlreadySatisfiedSlices,
   composeTaskPrompt,
   subDeliverableSchema,
@@ -857,7 +858,17 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
   })
 })
 
-describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
+// Stub that throws if the direction judge is called — used to verify that
+// certain pairs (e.g. schema-drop vs non-close pairs) never reach Stage 2.
+const neverCalledJudge = async (): Promise<DirectionVerdict> => {
+  throw new Error('judgeDirection should not be called for this pair')
+}
+
+// No-op judge: reports no dependency for any pair. Used when Stage 2 will
+// be triggered (close pairs exist) but we want no extra edges injected.
+const noopJudge = async (): Promise<DirectionVerdict> => ({ hasDependency: false })
+
+describe('injectAutoLinkerBlockers: schema-drop ↔ consumer edges (Stage 1)', () => {
   // Mirrors the concrete failure from PRD
   // 1b7498f6-remove-all-usd-cost-usd-mentions-from-th: a "Drop
   // legacy_data_col column from queue.db schema (hard cut, no migration)"
@@ -867,7 +878,7 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
   // `SQLITE_ERROR: no such column: s.legacy_data_col`. Six actionQueue items
   // later (final one 496b528e), the operator manually wired the edges.
   // This test pins the injection so the regression cannot recur silently.
-  it('blocks a schema-drop slice on every consumer slice that mentions the dropped column (1b7498f6 shape)', () => {
+  it('blocks a schema-drop slice on every consumer slice that mentions the dropped column (1b7498f6 shape)', async () => {
     const slices = [
       {
         title: 'Update README to drop mentions of legacy_data_col from cost docs',
@@ -896,7 +907,9 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
       },
     ]
 
-    injectSchemaDropBlockers(slices)
+    // Consumer slices also share `legacy_data_col` with each other, so Stage 2
+    // will be called for those pairs. Pass noopJudge so no extra edges are added.
+    await injectAutoLinkerBlockers(slices, noopJudge)
 
     // Schema-drop (slice 5, 1-based) must wait on every consumer slice
     // (1..4) that mentions legacy_data_col.
@@ -909,7 +922,7 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
     expect(slices[3].blockedBy).toEqual([])
   })
 
-  it('preserves consumer-slice upstream blockers — does not flatten the dependency tree', () => {
+  it('preserves consumer-slice upstream blockers — does not flatten the dependency tree', async () => {
     const slices = [
       {
         title: 'Remove foo_bar from parser',
@@ -931,14 +944,16 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
       },
     ]
 
-    injectSchemaDropBlockers(slices)
+    // Slices 0 and 1 share `foo_bar` → Stage 2 will run for that pair.
+    // Pass noopJudge so it doesn't add extra edges beyond Stage 1's injection.
+    await injectAutoLinkerBlockers(slices, noopJudge)
 
     expect(slices[0].blockedBy).toEqual([])
     expect(slices[1].blockedBy).toEqual([1])
     expect(slices[2].blockedBy).toEqual([1, 2])
   })
 
-  it('is a no-op when the PRD contains no schema-drop slice', () => {
+  it('is a no-op when the PRD contains no schema-drop slice', async () => {
     const slices = [
       {
         title: 'Add caching to the parser',
@@ -952,13 +967,18 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
       },
     ]
 
-    injectSchemaDropBlockers(slices)
+    // No schema-drop slice → Stage 1 is a no-op.
+    // The pair IS close enough (both have no shared identifiers here,
+    // so Stage 2 closeness check will also fail) — but we still pass
+    // neverCalledJudge to confirm Stage 2 is skipped for non-close pairs.
+    const noopJudge = async (): Promise<DirectionVerdict> => ({ hasDependency: false })
+    await injectAutoLinkerBlockers(slices, noopJudge)
 
     expect(slices[0].blockedBy).toEqual([])
     expect(slices[1].blockedBy).toEqual([])
   })
 
-  it('avoids cycles when a consumer slice already declares the schema-drop as its upstream', () => {
+  it('avoids cycles when a consumer slice already declares the schema-drop as its upstream', async () => {
     const slices = [
       {
         // Inverted slicer ordering: consumer says it waits on the drop.
@@ -974,13 +994,13 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
       },
     ]
 
-    injectSchemaDropBlockers(slices)
+    await injectAutoLinkerBlockers(slices, neverCalledJudge)
 
     expect(slices[0].blockedBy).toEqual([2])
     expect(slices[1].blockedBy).toEqual([])
   })
 
-  it('does not link slices that share no snake_case identifier with the drop', () => {
+  it('does not link slices that share no snake_case identifier with the drop', async () => {
     const slices = [
       {
         title: 'Tweak unrelated docs',
@@ -994,12 +1014,12 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
       },
     ]
 
-    injectSchemaDropBlockers(slices)
+    await injectAutoLinkerBlockers(slices, neverCalledJudge)
 
     expect(slices[1].blockedBy).toEqual([])
   })
 
-  it('is idempotent — re-running over already-injected slices produces no duplicates', () => {
+  it('is idempotent — re-running over already-injected slices produces no duplicates', async () => {
     const slices = [
       {
         title: 'Remove legacy_data_col from parser',
@@ -1013,10 +1033,176 @@ describe('injectSchemaDropBlockers: schema-drop ↔ consumer edges', () => {
       },
     ]
 
-    injectSchemaDropBlockers(slices)
-    injectSchemaDropBlockers(slices)
+    await injectAutoLinkerBlockers(slices, neverCalledJudge)
+    await injectAutoLinkerBlockers(slices, neverCalledJudge)
 
     expect(slices[1].blockedBy).toEqual([1])
+  })
+})
+
+describe('injectAutoLinkerBlockers: general producer→consumer edges (Stage 2)', () => {
+  it('infers a producer→consumer edge when the LLM judges aBlocksB: true', async () => {
+    const slices = [
+      {
+        title: 'Add getUserProfile API endpoint',
+        whatToBuild: 'Expose getUserProfile in api/users.ts',
+        prescriptiveAction: 'Add `getUserProfile` handler to src/api/users.ts.',
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Wire the UI to getUserProfile',
+        whatToBuild: 'Call getUserProfile from the profile page',
+        prescriptiveAction: 'Import `getUserProfile` from src/api/users.ts in ProfilePage.',
+        blockedBy: [] as number[],
+      },
+    ]
+
+    // Judge confirms: slice A (add API) blocks slice B (wire UI)
+    const judge = async (): Promise<DirectionVerdict> => ({
+      hasDependency: true,
+      aBlocksB: true,
+    })
+    await injectAutoLinkerBlockers(slices, judge)
+
+    // Slice B (index 1) must wait on slice A (index 0) → 1-based index = 1
+    expect(slices[1].blockedBy).toEqual([1])
+    expect(slices[0].blockedBy).toEqual([])
+  })
+
+  it('infers a consumer→producer edge when the LLM judges aBlocksB: false', async () => {
+    const slices = [
+      {
+        title: 'Wire UI to fetchUserData',
+        whatToBuild: 'Call fetchUserData from dashboard component',
+        prescriptiveAction: 'Import `fetchUserData` from src/api/data.ts in Dashboard.',
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Add fetchUserData endpoint',
+        whatToBuild: 'Expose fetchUserData in api/data.ts',
+        prescriptiveAction: 'Add `fetchUserData` handler to src/api/data.ts.',
+        blockedBy: [] as number[],
+      },
+    ]
+
+    // Judge says: B (add endpoint) must complete before A (wire UI) — aBlocksB: false
+    const judge = async (): Promise<DirectionVerdict> => ({
+      hasDependency: true,
+      aBlocksB: false,
+    })
+    await injectAutoLinkerBlockers(slices, judge)
+
+    // Slice A (index 0) must wait on slice B (index 1) → 1-based index = 2
+    expect(slices[0].blockedBy).toEqual([2])
+    expect(slices[1].blockedBy).toEqual([])
+  })
+
+  it('adds no edge when the LLM judges hasDependency: false', async () => {
+    const slices = [
+      {
+        title: 'Add getUserProfile endpoint',
+        whatToBuild: 'Expose getUserProfile in api/users.ts',
+        prescriptiveAction: 'Add `getUserProfile` to src/api/users.ts.',
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Refactor getUserProfile logging',
+        whatToBuild: 'Improve getUserProfile logging in api/users.ts',
+        prescriptiveAction: 'Update log calls in `getUserProfile` in src/api/users.ts.',
+        blockedBy: [] as number[],
+      },
+    ]
+
+    const judge = async (): Promise<DirectionVerdict> => ({ hasDependency: false })
+    await injectAutoLinkerBlockers(slices, judge)
+
+    expect(slices[0].blockedBy).toEqual([])
+    expect(slices[1].blockedBy).toEqual([])
+  })
+
+  it('cycle guard refuses an edge that would close a cycle', async () => {
+    // The slicer already wired: slice 2 (index 1) depends on slice 1 (index 0).
+    // The judge now says slice 1 also depends on slice 2 — that would be a cycle.
+    const slices = [
+      {
+        title: 'Add processOrder handler',
+        whatToBuild: 'Add processOrder in orders/handler.ts',
+        prescriptiveAction: 'Add `processOrder` to src/orders/handler.ts.',
+        blockedBy: [2], // already declared: slice 1 waits on slice 2
+      },
+      {
+        title: 'Wire processOrder to the checkout flow',
+        whatToBuild: 'Call processOrder from checkout',
+        prescriptiveAction: 'Import `processOrder` in src/checkout/flow.ts.',
+        blockedBy: [] as number[],
+      },
+    ]
+
+    // Judge says: A (index 0) also needs to complete before B (index 1).
+    // But B is already a blocker of A — adding A→B creates a cycle.
+    const judge = async (): Promise<DirectionVerdict> => ({
+      hasDependency: true,
+      aBlocksB: true,
+    })
+    await injectAutoLinkerBlockers(slices, judge)
+
+    // Edge must NOT be added — graph stays acyclic.
+    expect(slices[0].blockedBy).toEqual([2])
+    expect(slices[1].blockedBy).toEqual([])
+  })
+
+  it('is idempotent — re-running with the same judge produces no duplicates', async () => {
+    const slices = [
+      {
+        title: 'Add getUserProfile endpoint',
+        whatToBuild: 'Expose getUserProfile in api/users.ts',
+        prescriptiveAction: 'Add `getUserProfile` to src/api/users.ts.',
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Wire the UI to getUserProfile',
+        whatToBuild: 'Call getUserProfile from the profile page',
+        prescriptiveAction: 'Import `getUserProfile` from src/api/users.ts in ProfilePage.',
+        blockedBy: [] as number[],
+      },
+    ]
+
+    const judge = async (): Promise<DirectionVerdict> => ({
+      hasDependency: true,
+      aBlocksB: true,
+    })
+    await injectAutoLinkerBlockers(slices, judge)
+    await injectAutoLinkerBlockers(slices, judge)
+
+    expect(slices[1].blockedBy).toEqual([1])
+    expect(slices[0].blockedBy).toEqual([])
+  })
+
+  it('does not call the judge for pairs that are not close enough', async () => {
+    const slices = [
+      {
+        title: 'Update documentation',
+        whatToBuild: 'Edit README',
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Refactor database schema',
+        whatToBuild: 'Change table structure',
+        blockedBy: [] as number[],
+      },
+    ]
+
+    let judgeCallCount = 0
+    const judge = async (): Promise<DirectionVerdict> => {
+      judgeCallCount++
+      return { hasDependency: false }
+    }
+    await injectAutoLinkerBlockers(slices, judge)
+
+    // No shared identifiers or file paths → closeness check fails → judge never called
+    expect(judgeCallCount).toBe(0)
+    expect(slices[0].blockedBy).toEqual([])
+    expect(slices[1].blockedBy).toEqual([])
   })
 })
 
