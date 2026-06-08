@@ -215,6 +215,13 @@ const INVESTIGATE_OP = 'investigate'
 const DIAGNOSE_OP = 'diagnose-failure'
 
 /**
+ * Ops that are process-level and carry no entity id when forwarded to the
+ * daemon. The proxy builds `/actions/<op>` (no id segment) for these; any
+ * other op gets `/actions/<op>/<entityId>`.
+ */
+export const PROCESS_LEVEL_OPS = new Set(['restart-daemon', 'restart-all-daemon-killed'])
+
+/**
  * Renders one button per action on the row. Clicking proxies the action's
  * `op` to the daemon (via `/api/actions`). `needsConfirm` actions prompt
  * first; destructive ops are styled accordingly. The `copy` op copies
@@ -240,8 +247,8 @@ const ActionBar = ({ item }: ActionBarProps) => {
 
   const mutation = useMutation({
     mutationFn: ({ action }: { action: ActionDescriptor }) => {
-      // Process-level ops (restart-daemon) carry no entity id.
-      const entityId = action.op === 'restart-daemon' ? undefined : item.entityId
+      // Process-level ops (restart-daemon, restart-all-daemon-killed) carry no entity id.
+      const entityId = PROCESS_LEVEL_OPS.has(action.op) ? undefined : item.entityId
       return invokeAction(action.op, entityId)
     },
     onMutate: async () => {

@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ActionQueueDetail, ActionQueueRow } from './ActionQueuePage'
+import { ActionQueueDetail, ActionQueueRow, PROCESS_LEVEL_OPS } from './ActionQueuePage'
 import type { ActionQueueItem } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
@@ -430,5 +430,37 @@ describe('ActionQueueDetail – diagnosis rendering (post-diagnose-failure refet
     // After refetch with diagnosis: Diagnosis section present with text
     expect(htmlAfter).toContain('>Diagnosis<')
     expect(htmlAfter).toContain('Inferred root cause: verify/test-failure on missing dependency.')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ActionBar – process-level ops skip entityId
+//
+// AC: restart-all-daemon-killed must be treated as a process-level op (like
+//     restart-daemon) so invokeAction is called WITHOUT an entityId. Without
+//     the fix, ActionBar passes the sentinel '__daemon-killed-batch__' as the
+//     entityId and the daemon proxy builds the wrong URL
+//     (/actions/restart-all-daemon-killed/__daemon-killed-batch__) which 404s.
+//
+// PROCESS_LEVEL_OPS is the exported Set that governs entityId elision inside
+// ActionBar's mutationFn. Testing its membership directly verifies the
+// behavioral contract ("these ops carry no entity id") without requiring DOM
+// events to trigger the mutation.
+// ---------------------------------------------------------------------------
+
+describe('ActionBar – PROCESS_LEVEL_OPS governs entityId elision', () => {
+  it('restart-all-daemon-killed is treated as process-level → no entityId sent', () => {
+    expect(PROCESS_LEVEL_OPS.has('restart-all-daemon-killed')).toBe(true)
+  })
+
+  it('restart-daemon is also process-level → no entityId sent', () => {
+    expect(PROCESS_LEVEL_OPS.has('restart-daemon')).toBe(true)
+  })
+
+  it('entity-level ops retain their entityId', () => {
+    const entityOps = ['restart', 'purge', 'diagnose-failure', 'prune-worktree', 'investigate']
+    for (const op of entityOps) {
+      expect(PROCESS_LEVEL_OPS.has(op)).toBe(false)
+    }
   })
 })
