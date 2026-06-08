@@ -1,8 +1,15 @@
-import { spawnSync } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { loadProjectRegistry } from '../../orchestrator/src/registry/projects.ts'
-import { fetchKpis, fetchKpiSeries, type KpiSeries, proxyAction, proxyGet, proxyPost } from './daemonHttp.ts'
+import {
+  fetchKpis,
+  fetchKpiSeries,
+  type KpiSeries,
+  type DaemonActionResult,
+  proxyAction,
+  proxyGet as realProxyGet,
+  proxyPost,
+} from './daemonHttp.ts'
 import { createProjectContextCache, type ProjectContextEntry } from './projectContext.ts'
 import { probeDaemonHealth } from './projectHealth.ts'
 import { resolveRepo, UnknownProjectError } from './repo.ts'
@@ -13,6 +20,18 @@ interface CliArgs {
   port: number
   host: string
   distDir?: string
+}
+
+/**
+ * Injectable seams for {@link startServer}. Production passes nothing and the
+ * real {@link realProxyGet} (forwarding to the running daemon) is used. Tests
+ * inject a `proxyGet` stub so daemon-backed view endpoints
+ * (`/view/action-queue`, `/origins/:id`, …) can be served from a seeded SQLite
+ * fixture without spawning a daemon — keeping a single projection source of
+ * truth (the daemon's `buildActionQueueView`) instead of forking it here.
+ */
+export interface ServerDeps {
+  proxyGet?: (stateDir: string, path: string) => Promise<DaemonActionResult>
 }
 
 const parseArgs = (argv: string[]): CliArgs => {
@@ -64,7 +83,9 @@ const staticResponse = (root: string, urlPath: string): Response | null => {
 
 export const startServer = async (
   args: CliArgs,
+  deps: ServerDeps = {},
 ): Promise<ReturnType<typeof Bun.serve>> => {
+  const proxyGet = deps.proxyGet ?? realProxyGet
   // Resolve the default context once for startup logging and healthz.
   const defaultCtx = resolveRepo(args.repo)
   // Per-project handle cache: lazily opens TaskDb/StateDb/SseHub on first
@@ -111,7 +132,7 @@ export const startServer = async (
           }
           throw e
         }
-        const { ctx, db, hub, stateDb } = pctx
+        const { ctx, db, hub } = pctx
 
         if (path === '/api/tasks') {
           const r = await proxyGet(ctx.stateDir, '/view/tasks')
@@ -139,124 +160,22 @@ export const startServer = async (
           }
         }
 
+        // GET /api/action-queue — proxy the daemon's derived action-queue view.
+        // The daemon's `buildActionQueueView` is the single source of truth for
+        // the projection (kind/priority normalisation, entityId extraction,
+        // daemon-killed-batch collapsing, stale-worktree git probe, diagnosis
+        // pass-through). This server must NOT re-derive it: a forked copy here
+        // (commit b89c57ce) drifted and emitted `entityId: ''` for non-task-
+        // keyed rows, which made the UI fetch `/api/origins/?project=…` → 400.
+        // Tests inject `deps.proxyGet` to serve this from a seeded SQLite
+        // fixture via the same `buildActionQueueView`, so there is no daemon
+        // dependency and no second projection to drift.
         if (path === '/api/action-queue') {
-          try {
-            const rawItems = await stateDb.listOpenActionQueueItems()
-
-            const normalizePriority = (p: string): 'high' | 'normal' | 'low' =>
-              p === 'urgent' || p === 'high' ? 'high' : p === 'low' ? 'low' : 'normal'
-
-            const normalizeKind = (raw: string): 'failed-task' | 'stale-worktree' | 'draft-proposal' =>
-              raw === 'stale-worktree' ? 'stale-worktree'
-              : raw === 'draft-proposal' ? 'draft-proposal'
-              : 'failed-task'
-
-            const toErrorKind = (raw: string): string => raw === 'failed' ? 'failed-task' : raw
-
-            const getEntityId = (
-              rawKind: string,
-              payload: Record<string, unknown>,
-              context: Record<string, unknown>,
-            ): string => {
-              if (rawKind === 'stale-worktree') {
-                return typeof context.taskId === 'string' ? context.taskId : ''
-              }
-              if (rawKind === 'draft-proposal') {
-                return typeof payload.proposalId === 'string' ? payload.proposalId : ''
-              }
-              return typeof payload.taskId === 'string'
-                ? payload.taskId
-                : typeof context.taskId === 'string'
-                  ? context.taskId
-                  : ''
-            }
-
-            const checkWorktreeEmpty = (taskId: string): boolean => {
-              const worktreeDir = join(ctx.stateDir, 'worktrees', taskId)
-              if (!existsSync(worktreeDir)) return false
-              try {
-                const diff = spawnSync('git', ['diff', 'main...HEAD', '--quiet'], { cwd: worktreeDir })
-                const untracked = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], { cwd: worktreeDir })
-                return diff.status === 0 && (untracked.stdout?.toString().trim() ?? '') === ''
-              } catch {
-                return false
-              }
-            }
-
-            const getDiagnosis = (payload: Record<string, unknown>) => {
-              const d = payload.diagnosis
-              if (
-                d &&
-                typeof d === 'object' &&
-                !Array.isArray(d) &&
-                typeof (d as Record<string, unknown>).text === 'string' &&
-                typeof (d as Record<string, unknown>).diagnosedAt === 'string'
-              ) {
-                const dr = d as Record<string, unknown>
-                return { text: dr.text as string, diagnosedAt: dr.diagnosedAt as string }
-              }
-              return null
-            }
-
-            const items = rawItems.map((item) => {
-              const uiKind = normalizeKind(item.kind)
-              const entityId = getEntityId(item.kind, item.payload, item.context)
-              const base = {
-                id: item.id,
-                kind: uiKind,
-                entityId,
-                priority: normalizePriority(item.priority),
-                title: item.title,
-                body: item.body,
-                at: item.raisedAt,
-                dag: null,
-                errorKind: toErrorKind(item.kind),
-                actions: [],
-                diagnosis: getDiagnosis(item.payload),
-              }
-              if (uiKind === 'stale-worktree') {
-                const p = item.payload
-                return {
-                  ...base,
-                  staleWorktreeDetail: {
-                    prompt: typeof p.prompt === 'string' ? p.prompt : null,
-                    status: typeof p.status === 'string' ? p.status : 'absent (no matching task)',
-                    ageHours: typeof p.ageHours === 'number' ? p.ageHours : 0,
-                    updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : item.raisedAt,
-                    branch: typeof p.branch === 'string' ? p.branch : null,
-                    empty: checkWorktreeEmpty(entityId),
-                    investigation: typeof p.investigation === 'string' ? p.investigation : null,
-                  },
-                }
-              }
-              return { ...base, staleWorktreeDetail: null }
-            })
-
-            // Collapse ≥2 open daemon-killed rows into one synthetic batch row
-            const daemonKilledItems = items.filter((i) => i.errorKind === 'daemon-killed')
-            let result = items
-            if (daemonKilledItems.length >= 2) {
-              result = items.filter((i) => i.errorKind !== 'daemon-killed')
-              result.push({
-                id: 'daemon-killed-batch',
-                kind: 'failed-task' as const,
-                entityId: '__daemon-killed-batch__',
-                priority: 'high' as const,
-                title: `${daemonKilledItems.length} tasks were killed by daemon restart`,
-                body: '',
-                at: daemonKilledItems[0]?.at ?? new Date().toISOString(),
-                dag: null,
-                errorKind: 'daemon-killed-batch',
-                actions: [],
-                diagnosis: null,
-                staleWorktreeDetail: null,
-              })
-            }
-
-            return jsonResponse(200, result)
-          } catch (err) {
-            return jsonResponse(500, { error: (err as Error).message })
-          }
+          const result = await proxyGet(
+            ctx.stateDir,
+            `/view/action-queue${url.search}`,
+          )
+          return jsonResponse(result.status, result.body)
         }
 
         if (path === '/api/action-queue/history') {

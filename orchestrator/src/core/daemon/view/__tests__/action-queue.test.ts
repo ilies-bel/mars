@@ -175,6 +175,46 @@ describe('buildActionQueueView — failed-task action assembly', () => {
   })
 })
 
+// ── entityId fallback: never empty for non-task-keyed rows ───────────────────
+
+describe('buildActionQueueView — entityId is never empty', () => {
+  // Regression for the `/api/origins/?project=…` → 400 bug: a non-task-keyed
+  // failed row (no payload.taskId / context.taskId) must fall back to
+  // `signature ?? id`, NEVER ''. An empty entityId reaches OriginTree, which
+  // then fetches `/api/origins/` with no id and the UI server returns 400.
+  it('falls back to the signature when a failed row has no taskId', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({
+          id: 'row-no-task',
+          payload: {},
+          context: {},
+          signature: 'observability-store-oversize',
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+    })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.entityId).toBe('observability-store-oversize')
+  })
+
+  it('falls back to the row id when a failed row has neither taskId nor signature', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({ id: 'row-bare', payload: {}, context: {}, signature: null }),
+      ]),
+      taskStore: makeTaskStore([]),
+    })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.entityId).toBe('row-bare')
+    expect(rows[0]!.entityId).not.toBe('')
+  })
+})
+
 // ── Failed-task: unregistered signature (slice 3) ─────────────────────────────
 
 describe('buildActionQueueView — unregistered signature', () => {

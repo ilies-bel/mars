@@ -7,6 +7,7 @@ import { createClient, type Client } from '@libsql/client'
 
 import { actionQueueResponseSchema } from '../src/shared/schemas.ts'
 import { startServer } from './index.ts'
+import { makeDaemonStub } from './testDaemonStub.ts'
 
 interface ActionQueueItemBody {
   id: string
@@ -136,7 +137,13 @@ describe('GET /api/action-queue (persisted view)', () => {
     repo = setupRepo()
     const c = await createSchema(dbPath(repo))
     c.close()
-    server = await startServer({ repo, port: 0, host: '127.0.0.1' })
+    // Inject a daemon stub so /api/action-queue (which now proxies the daemon's
+    // /view/action-queue) is served from the seeded SQLite via the canonical
+    // buildActionQueueView — no daemon process, single projection source.
+    server = await startServer(
+      { repo, port: 0, host: '127.0.0.1' },
+      { proxyGet: makeDaemonStub(repo) },
+    )
     baseUrl = `http://${server.hostname}:${server.port}`
   })
 
@@ -160,7 +167,7 @@ describe('GET /api/action-queue (persisted view)', () => {
     expect(body).toEqual([])
   })
 
-  it('maps a seeded action_queue_items row to a valid ActionQueueItem', async () => {
+  it('relays the daemon projection for a seeded action_queue_items row', async () => {
     const c = createClient({ url: `file:${dbPath(repo)}` })
     await insertActionQueueItem(c, {
       id: 'test-row-1',
@@ -182,11 +189,41 @@ describe('GET /api/action-queue (persisted view)', () => {
     // entityId extracted from payload.taskId
     expect(row?.entityId).toBe('t-failed')
     expect(row?.priority).toBe('high')
-    expect(row?.title).toBe('Task t-failed failed')
-    expect(row?.body).toBe('Some failure body')
     // errorKind preserved from persisted kind
     expect(row?.errorKind).toBe('failed-task')
-    expect(row?.actions).toEqual([])
+    // title/body and actions are derived by the canonical buildActionQueueView
+    // from the Failure-kind registry (no signature → unknownFailureKind copy),
+    // not passed through from the persisted row. The exact wording is asserted
+    // in the orchestrator's view/__tests__/action-queue.test.ts; here we only
+    // confirm the proxy relays the derived (non-empty, non-passthrough) values.
+    expect(row?.title).toBe('A pipeline step did not complete')
+    expect(row?.actions.some((a) => a.op === 'diagnose-failure')).toBe(true)
+  })
+
+  it('a non-task-keyed failed row gets a non-empty entityId (origins-400 regression)', async () => {
+    // The bug: a failed row with no taskId in payload/context was projected with
+    // entityId '' by the old forked handler, which made OriginTree fetch
+    // `/api/origins/?project=…` → 400. The canonical view falls back to
+    // signature ?? id, so entityId is never empty.
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await c.execute({
+      sql: `INSERT INTO action_queue_items (id, kind, priority, title, body, payload, context, raised_at, last_seen_at, signature)
+            VALUES (?, 'failed', 'high', ?, '', '{}', '{}', ?, ?, ?)`,
+      args: [
+        'row-no-task',
+        'Observability store oversize',
+        new Date().toISOString(),
+        new Date().toISOString(),
+        'observability-store-oversize',
+      ],
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'row-no-task')
+    expect(row).toBeDefined()
+    expect(row?.entityId).toBe('observability-store-oversize')
+    expect(row?.entityId).not.toBe('')
   })
 
   it('maps daemon-killed kind to errorKind daemon-killed', async () => {

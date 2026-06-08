@@ -591,11 +591,16 @@ interface DetailProps {
 }
 
 export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
-  // A real failed task (not the daemon-killed-batch sentinel) can open the
-  // shared TaskDetailDrawer. The `from=action-queue` tag keeps the Action queue
-  // list mounted behind the drawer and returns here on close.
+  // A real failed task (not the daemon-killed-batch sentinel, and carrying a
+  // non-empty entity id) can open the shared TaskDetailDrawer and render the
+  // OriginTree. An empty entityId would make OriginTree fetch
+  // `/api/origins/?project=…` and 400; treat such a row as non-openable. The
+  // `from=action-queue` tag keeps the Action queue list mounted behind the
+  // drawer and returns here on close.
   const isRealFailedTask =
-    item.kind === 'failed-task' && item.entityId !== '__daemon-killed-batch__'
+    item.kind === 'failed-task' &&
+    item.entityId !== '__daemon-killed-batch__' &&
+    item.entityId !== ''
 
   const openTask = (id: string) => {
     window.location.hash = taskHash(id, 'action-queue')

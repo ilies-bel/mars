@@ -91,7 +91,11 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   const query = useQuery({
     queryKey: ['origins', projectId, taskId],
     queryFn: () => fetchOrigins(taskId, projectId ?? undefined),
-    enabled: projectId !== null,
+    // An empty taskId would produce `GET /api/origins/?project=…`, which the UI
+    // server rejects with 400 (taskId is required). Never fire the request for
+    // an id we know is empty — a malformed/non-task-keyed action-queue row can
+    // surface here with `entityId: ''`.
+    enabled: projectId !== null && taskId !== '',
   })
 
   useEffect(() => {
