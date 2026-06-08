@@ -21,6 +21,7 @@ import {
   validateSupervisor,
 } from '../init/render'
 import {
+  mergeMcpJson,
   planClaudeConflicts,
   scaffoldClaudeConfig,
 } from '../init/scaffold'
@@ -460,8 +461,13 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
     )
     const w1 = await ctx.step('write-slim-init', () => runWriteSlimInit(rendered))
     const w2 = await ctx.step('scaffold-claude', () => runScaffoldClaude(rendered, w1))
-    const w2b = await ctx.step('scaffold-workflows', () => runScaffoldWorkflows(w2))
-    const w3 = await ctx.step('init-databases', () => runInitDatabases(w2b))
+    const w2b = await ctx.step('merge-mcp-json', () => {
+      const appCtx = resolveContext()
+      mergeMcpJson(appCtx.repoRoot)
+      return [...w2, '.mcp.json']
+    })
+    const w2c = await ctx.step('scaffold-workflows', () => runScaffoldWorkflows(w2b))
+    const w3 = await ctx.step('init-databases', () => runInitDatabases(w2c))
     const written = await ctx.step('seed-recipes', () => runSeedRecipes(w3))
     await ctx.step('activate-plugin', runActivatePlugin)
     return { written }

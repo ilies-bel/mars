@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -14,6 +14,7 @@ const TEMPLATES_DIR = resolve(
 )
 
 const TEMPLATE_CLAUDE_MD = resolve(TEMPLATES_DIR, 'CLAUDE.md')
+const TEMPLATE_MCP_JSON = resolve(TEMPLATES_DIR, 'mcp.json')
 
 /**
  * Bundled template for the repo-root `.mcp.json` that registers the codegraph
@@ -118,4 +119,51 @@ export const scaffoldClaudeConfig = (
   }
 
   return { status: 'ok', written }
+}
+
+/**
+ * Merge the codegraph MCP server entry into `<repoRoot>/.mcp.json`.
+ *
+ * - If the consumer has no `.mcp.json`, write the bundled template verbatim.
+ * - If the consumer already has a `.mcp.json`, parse it, add/overwrite ONLY the
+ *   `mcpServers.codegraph` key, and preserve every other server and top-level key.
+ * - If the consumer's `.mcp.json` is malformed JSON, throw with a clear message.
+ * - Idempotent: a second call with the same state produces no diff
+ *   (stable key ordering, 2-space indent, trailing newline).
+ */
+export const mergeMcpJson = (repoRoot: string): void => {
+  const destPath = resolve(repoRoot, '.mcp.json')
+  const template = JSON.parse(readFileSync(TEMPLATE_MCP_JSON, 'utf8')) as {
+    mcpServers: Record<string, unknown>
+  }
+  const codegraphEntry = template.mcpServers['codegraph']
+
+  if (!existsSync(destPath)) {
+    writeFileSync(destPath, JSON.stringify(template, null, 2) + '\n')
+    return
+  }
+
+  let existing: Record<string, unknown>
+  try {
+    existing = JSON.parse(readFileSync(destPath, 'utf8')) as Record<string, unknown>
+  } catch (err) {
+    throw new Error(
+      `.mcp.json at ${destPath} is malformed JSON and cannot be merged: ${(err as Error).message}`,
+    )
+  }
+
+  const existingServers =
+    typeof existing['mcpServers'] === 'object' && existing['mcpServers'] !== null
+      ? (existing['mcpServers'] as Record<string, unknown>)
+      : {}
+
+  const merged: Record<string, unknown> = {
+    ...existing,
+    mcpServers: {
+      ...existingServers,
+      codegraph: codegraphEntry,
+    },
+  }
+
+  writeFileSync(destPath, JSON.stringify(merged, null, 2) + '\n')
 }
