@@ -169,9 +169,10 @@ export const buildG6Data = (
     else arcGroups.set(key, [t])
   }
 
-  // Build one combo per arc
+  // Build one combo per arc — single-task arcs are bare nodes with no wrapper.
   const combos: ComboData[] = []
   for (const [arcKey, arcTasks] of arcGroups) {
+    if (arcTasks.length === 1) continue // single-task arc → bare top-level node, no combo
     const proposal = proposalMap.get(arcKey)
     // Label: proposal title if available, otherwise the origin task's first prompt line.
     const rootTask = arcTasks.find((t) => t.id === arcKey)
@@ -203,11 +204,15 @@ export const buildG6Data = (
 
   const taskIds = new Set(tasks.map((t) => t.id))
 
-  const nodes: NodeData[] = tasks.map((t) => ({
-    id: t.id,
-    combo: comboId(taskArcKey(t)),
-    data: { label: taskLabel(t), cluster: t.cluster, proposalId: t.parentProposalId ?? null },
-  }))
+  const nodes: NodeData[] = tasks.map((t) => {
+    const arcKey = taskArcKey(t)
+    const isMultiTaskArc = arcGroups.get(arcKey)!.length > 1
+    return {
+      id: t.id,
+      combo: isMultiTaskArc ? comboId(arcKey) : undefined,
+      data: { label: taskLabel(t), cluster: t.cluster, proposalId: t.parentProposalId ?? null },
+    }
+  })
 
   const edges: EdgeData[] = []
   for (const t of tasks) {

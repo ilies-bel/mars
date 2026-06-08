@@ -141,12 +141,16 @@ describe('buildG6Data', () => {
   })
 
   it('assigns each in-scope task node to its proposal combo with a prompt-derived label', () => {
-    const tasks = [task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1', prompt: 'Do the thing\nmore detail' })]
+    // Two tasks in p1 → multi-task arc → combo is created; nodes point to it.
+    const tasks = [
+      task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1', prompt: 'Do the thing\nmore detail' }),
+      task({ id: 't2', cluster: 'Queued', parentProposalId: 'p1' }),
+    ]
     const { nodes } = buildG6Data(tasks, [proposal('p1')])
-    expect(nodes).toHaveLength(1)
-    expect(nodes[0]!.id).toBe('t1')
-    expect(nodes[0]!.combo).toBe('combo:p1')
-    expect(nodes[0]!.data).toMatchObject({ label: 'Do the thing', cluster: 'Queued', proposalId: 'p1' })
+    expect(nodes).toHaveLength(2)
+    const t1Node = nodes.find((n) => n.id === 't1')!
+    expect(t1Node.combo).toBe('combo:p1')
+    expect(t1Node.data).toMatchObject({ label: 'Do the thing', cluster: 'Queued', proposalId: 'p1' })
   })
 
   it('renders all tasks as nodes — no task is silently dropped', () => {
@@ -157,8 +161,9 @@ describe('buildG6Data', () => {
     ]
     const { nodes, combos } = buildG6Data(tasks, [proposal('p1')])
     expect(nodes.map((n) => n.id).sort()).toEqual(['t1', 't2', 't3'])
-    // t1 → solo combo keyed on 't1'; t2 → combo keyed on 'p-missing'; t3 → proposal combo p1
-    expect(combos).toHaveLength(3)
+    // All three arcs have exactly one task → all are bare nodes, no combos.
+    expect(combos).toHaveLength(0)
+    expect(nodes.every((n) => n.combo === undefined)).toBe(true)
   })
 
   it('groups tasks sharing the same originId into one arc combo', () => {
@@ -182,6 +187,31 @@ describe('buildG6Data', () => {
     ]
     const { combos } = buildG6Data(tasks, [])
     expect(combos[0]!.data?.label).toBe('Build the widget')
+  })
+
+  it('single-task arc is a bare top-level node (no combo); multi-task arc still gets its combo', () => {
+    const tasks = [
+      // solo arc: arcKey = 'solo' (1 task) → bare node
+      task({ id: 'solo', cluster: 'Queued' }),
+      // multi-task arc: arcKey = 'grp' (2 tasks) → combo
+      task({ id: 'grp', cluster: 'In progress', originId: 'grp' }),
+      task({ id: 'grp2', cluster: 'Queued', originId: 'grp' }),
+    ]
+    const { combos, nodes } = buildG6Data(tasks, [])
+
+    // Only the multi-task arc produces a combo
+    expect(combos).toHaveLength(1)
+    expect(combos[0]!.id).toBe('combo:grp')
+
+    // solo node has no combo
+    const soloNode = nodes.find((n) => n.id === 'solo')!
+    expect(soloNode.combo).toBeUndefined()
+
+    // multi-task arc nodes are assigned to their combo
+    const grpNode = nodes.find((n) => n.id === 'grp')!
+    expect(grpNode.combo).toBe('combo:grp')
+    const grp2Node = nodes.find((n) => n.id === 'grp2')!
+    expect(grp2Node.combo).toBe('combo:grp')
   })
 
   it('emits a recovery edge (kind=recovery) for fix tasks pointing source=fixForTaskId, target=fix', () => {
