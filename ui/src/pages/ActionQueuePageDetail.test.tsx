@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ActionQueuePage as _Page, ActionQueueRow, matchesKindFilter } from './TodoPage'
+import { ActionQueuePage as _Page, ActionQueueRow, matchesKindFilter } from './ActionQueuePage'
 import type {
   ActionQueueItem,
   EventsResponse,
@@ -112,7 +112,7 @@ const makeClient = (opts: {
 // We inline-render the detail panel by going through the public page: we
 // can't (easily) export ActionQueueDetail. Instead, the most direct path
 // is to import the unexported component. Workaround: render the page with
-// the item pre-selected. Cleaner here: just import-as-private from TodoPage.
+// the item pre-selected. Cleaner here: just import-as-private from ActionQueuePage.
 
 // We exercise the smaller sub-components by mounting a wrapped fragment.
 // The page is structured so the ActionQueueDetail body is the union of
@@ -137,7 +137,7 @@ const renderDetail = (item: ActionQueueItem, qc: QueryClient): string => {
 // Lightweight sanity: ActionQueueRow still renders (re-export check).
 // ---------------------------------------------------------------------------
 
-describe('TodoPage exports', () => {
+describe('ActionQueuePage exports', () => {
   it('still exports ActionQueueRow for the sidebar', () => {
     // React.memo wraps the component in an object; verify the export is defined
     // and its underlying type is still a function.

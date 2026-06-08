@@ -15,7 +15,7 @@ import { useTodo } from '@/entities/todo/useTodo'
 import { useProgress } from '@/hooks/useProgress'
 import { FocusedProjectProvider } from '@/shared/useFocusedProject'
 import { ProgressPage } from '@/pages/ProgressPage'
-import { ActionQueuePage } from '@/pages/TodoPage'
+import { ActionQueuePage } from '@/pages/ActionQueuePage'
 import { EventsPage } from '@/pages/EventsPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 

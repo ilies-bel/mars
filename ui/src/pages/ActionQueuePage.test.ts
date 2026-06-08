@@ -1,7 +1,7 @@
 /**
  * Unit tests for the ActionQueuePage actionQueue sidebar search / filter behaviour.
  *
- * All tests operate through the public, pure API of TodoPageFilters — no React
+ * All tests operate through the public, pure API of ActionQueuePageFilters — no React
  * rendering needed.  This file is excluded from the main tsc project (see
  * tsconfig.json `exclude`) so it uses `bun:test` directly, like the other
  * test files in src/shared/.
@@ -14,7 +14,7 @@ import {
   itemKey,
   type AlertItem,
   type ProposalItem,
-} from './TodoPageFilters'
+} from './ActionQueuePageFilters'
 
 // ---------------------------------------------------------------------------
 // Helpers

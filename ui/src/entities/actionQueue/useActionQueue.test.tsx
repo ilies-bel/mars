@@ -20,7 +20,7 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { FocusedProjectProvider } from '@/shared/useFocusedProject'
-import { ActionQueuePage } from '@/pages/TodoPage'
+import { ActionQueuePage } from '@/pages/ActionQueuePage'
 import type { ActionQueueItem } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
