@@ -1,7 +1,7 @@
 /**
  * Tests for the /api/todo endpoint, specifically the stale-worktree
  * actionQueue items slice: items raised by the daemon's stale-worktree sweep
- * are readable from state.db via StateDb and returned to the web UI's
+ * are readable from mars.db via StateDb and returned to the web UI's
  * Alerts section, satisfying "visible identically across CLI, skill,
  * and web UI".
  */

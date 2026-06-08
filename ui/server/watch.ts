@@ -4,7 +4,7 @@ import { basename, dirname } from 'node:path'
 /**
  * SQLite WAL files (-wal, -shm) get rotated on checkpoint, which breaks
  * file-level fs.watch on macOS. Watching the parent directory survives
- * inode changes and catches every mutation to queue.db / -wal / -shm.
+ * inode changes and catches every mutation to mars.db / -wal / -shm.
  */
 export const watchQueue = (
   dbPath: string,
