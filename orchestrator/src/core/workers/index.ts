@@ -172,7 +172,9 @@ const CLAUDE_SONNET_MODEL = 'claude-sonnet-4-6'
 // --strict-mcp-config + --setting-sources project,local). The nudge steers the
 // worker toward the graph before it falls back to broad file-scanning, which
 // is what cuts tool calls and context churn.
-const CODEGRAPH_NUDGE =
+// Exported so tests can pin the exact blast radius (which Workers carry the
+// nudge) and detect unintended additions or removals.
+export const CODEGRAPH_NUDGE =
   'A pre-indexed code knowledge graph is available via the `codegraph_*` MCP tools (codegraph_explore, codegraph_search, codegraph_callers, codegraph_callees, codegraph_impact, codegraph_node, codegraph_files, codegraph_status). Before broad file-scanning (rg/fd/Glob across the tree), consult codegraph to locate symbols, trace call graphs, and assess blast radius — it is faster and cheaper than reading files to reconstruct structure. Fall back to direct file reads when the graph lacks the detail you need.'
 
 // Resolve the effective model for the Coder Worker. When `MARS_WORKER_MODEL`
