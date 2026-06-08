@@ -2430,13 +2430,20 @@ export const startDaemon = async (
           const { getRepoRoot } = await import('../context')
           const { runClaudeCode } = await import('../lib/git/claude')
           const { getTask } = await import('../queue')
-          const { patchOpenActionQueuePayload } = await import('../lib/action-queue')
+          const { patchOpenActionQueuePayload, supersedeActionQueueItemsForOrigin } = await import('../lib/action-queue')
 
           const repoRoot = getRepoRoot()
           const worktreePath = join(repoRoot, '.mars', 'worktrees', id)
           const localExec = promisify(execFile)
 
           const task = await getTask(id)
+
+          if (!task) {
+            // Task is gone — resolve any orphaned action-queue card so it
+            // doesn't stay stuck, and return a clear not-found diagnosis.
+            await supersedeActionQueueItemsForOrigin(id, 'origin-purged', 'diagnose-failure:task-already-gone')
+            return { diagnosis: `task ${id} not found; nothing to diagnose` }
+          }
 
           // The worktree may have been cleaned up on a terminal failure. When
           // it exists, run the diagnosis from inside it (the model can read the

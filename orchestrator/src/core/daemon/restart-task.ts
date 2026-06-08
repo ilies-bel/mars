@@ -1,5 +1,6 @@
 import type { WorkflowStore } from '@mars/workflow'
 import { getTask, hasIncompleteBlockers, updateTask } from '../queue'
+import { supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
 
 export type RestartErrorCode = 'NOT_FOUND' | 'WRONG_STATUS'
 
@@ -42,6 +43,9 @@ export const coreRestartTask = async (
 ): Promise<void> => {
   const task = await getTask(id)
   if (!task) {
+    // Resolve any orphaned action-queue row before surfacing the 404 so the
+    // card clears from the UI rather than being permanently stuck.
+    await supersedeActionQueueItemsForOrigin(id, 'origin-purged', 'restart:task-already-gone')
     throw new RestartTaskError(`task ${id} not found`, 'NOT_FOUND')
   }
   if (!allowedStatuses.has(task.status)) {

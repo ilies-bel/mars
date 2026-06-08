@@ -12,6 +12,7 @@ import {
   listUniqueCommitsAhead,
   type OrphanCommit,
 } from '../lib/sweep'
+import { supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
 
 const exec = promisify(execFile)
 
@@ -57,7 +58,18 @@ export const corePurgeTask = async (
   repoRoot: string,
 ): Promise<DropTaskResult> => {
   const task = await getTask(id)
-  if (!task) throw new Error(`task ${id} not found`)
+  if (!task) {
+    // Task is already gone — the purge goal is already achieved. Resolve any
+    // still-open action-queue rows so orphaned cards don't get stuck, then
+    // return a synthetic success result. Do NOT call dropTask (no row to drop).
+    await supersedeActionQueueItemsForOrigin(id, 'origin-purged', 'purge:task-already-gone')
+    return {
+      taskId: id,
+      previousStatus: 'failed',
+      edgesRemoved: { incoming: 0, outgoing: 0 },
+      cascadedFixTaskIds: [],
+    }
+  }
   if (task.status !== 'failed' && task.status !== 'done') {
     throw new Error(
       `task ${id} is ${task.status}; refuse to purge in-flight tasks`,

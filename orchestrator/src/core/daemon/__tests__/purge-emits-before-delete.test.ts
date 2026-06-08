@@ -26,6 +26,7 @@ interface QueueModule {
 interface ActionQueueModule {
   raiseActionQueueItem: typeof import('../../lib/action-queue').raiseActionQueueItem
   getActionQueueItem: typeof import('../../lib/action-queue').getActionQueueItem
+  initActionQueue: typeof import('../../lib/action-queue').initActionQueue
 }
 
 interface AlertDismisserModule {
@@ -219,5 +220,91 @@ describe('corePurgeTask — task.dropped emitted before DELETE', () => {
     const fixItem = await actionQueue.getActionQueueItem(fixItemId)
     expect(originItem!.state).toBe('resolved')
     expect(fixItem!.state).toBe('resolved')
+  })
+})
+
+describe('corePurgeTask — non-existent task (already-gone idempotency)', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    vi.resetModules()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns success and resolves the open action-queue row when the task is already gone', async () => {
+    const { q, actionQueue, pt } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    // Raise an action-queue row for a task id that has no corresponding task row.
+    const ghostTaskId = 'mars-ghost-0001'
+    await actionQueue.initActionQueue()
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Task ${ghostTaskId} failed`,
+      body: 'stuck',
+      payload: {},
+      context: { task_id: ghostTaskId },
+      raisedBy: 'orchestrator:test',
+      signature: `sig-ghost-${ghostTaskId}`,
+      originTaskId: ghostTaskId,
+    })
+
+    // Confirm the row is open before the purge.
+    const before = await actionQueue.getActionQueueItem(itemId)
+    expect(before!.state).toBe('open')
+
+    // corePurgeTask on a non-existent task must NOT throw.
+    const result = await pt.corePurgeTask(ghostTaskId, false, 'main', repo)
+
+    // Must return a success DropTaskResult shape.
+    expect((result as unknown as { taskId: string }).taskId).toBe(ghostTaskId)
+    expect((result as unknown as { cascadedFixTaskIds: string[] }).cascadedFixTaskIds).toEqual([])
+
+    // The action-queue row must now be resolved.
+    const after = await actionQueue.getActionQueueItem(itemId)
+    expect(after!.state).toBe('resolved')
+
+    // The history must include an open→resolved transition with a non-empty `by`.
+    const resolvedEntry = after!.history.find((h) => h.toState === 'resolved')
+    expect(resolvedEntry).toBeDefined()
+    expect(resolvedEntry!.by).toBeTruthy()
+
+    // Sanity: no task row was created.
+    const taskRow = await client.execute({
+      sql: `SELECT 1 FROM tasks WHERE id = ?`,
+      args: [ghostTaskId],
+    })
+    expect(taskRow.rows.length).toBe(0)
+  })
+
+  it('is idempotent: purging the same already-gone task twice does not throw on the second call', async () => {
+    const { actionQueue, pt } = await loadModules(repo)
+
+    const ghostTaskId = 'mars-ghost-0002'
+    await actionQueue.initActionQueue()
+    await actionQueue.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Task ${ghostTaskId} failed`,
+      body: 'stuck',
+      payload: {},
+      context: { task_id: ghostTaskId },
+      raisedBy: 'orchestrator:test',
+      signature: `sig-ghost2-${ghostTaskId}`,
+      originTaskId: ghostTaskId,
+    })
+
+    // First call resolves the row.
+    await expect(pt.corePurgeTask(ghostTaskId, false, 'main', repo)).resolves.toBeDefined()
+    // Second call finds no open row — must also succeed without throwing.
+    await expect(pt.corePurgeTask(ghostTaskId, false, 'main', repo)).resolves.toBeDefined()
   })
 })
