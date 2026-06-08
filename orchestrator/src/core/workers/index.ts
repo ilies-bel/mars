@@ -200,13 +200,13 @@ export const CODER_MODEL: string =
 // non-bare invocations.
 // Per-worker context token budgets. These are intentionally below the model's
 // real context window (200k tokens for Claude Sonnet/Opus) to kill a run
-// before Claude Code would auto-compact. The 80% warn fires at 120k tokens
-// (well inside the window); the kill fires at 150k — leaving 50k of headroom
+// before Claude Code would auto-compact. The 80% warn fires at 144k tokens
+// (well inside the window); the kill fires at 180k — leaving 20k of headroom
 // before the model's 200k limit so compaction never gets a chance to trigger.
 // Triager gets a much lower budget (50k) because its 40-message cap already
 // constrains it tightly; the context budget is a belt-and-suspenders guard.
-const CODER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(150_000)
-const GENEROUS_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(150_000)
+const CODER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(180_000)
+const GENEROUS_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(180_000)
 const TRIAGER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(50_000)
 
 export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
