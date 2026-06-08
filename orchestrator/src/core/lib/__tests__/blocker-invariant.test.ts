@@ -150,6 +150,17 @@ describe('ADR-0040 recovery-leaf guard', () => {
     expect(inv.isRecoveryTask({})).toBe(false)
   })
 
+  it('isRecoveryTask recognises both legacy bare-hex ids and new fix- prefixed ids (migration tolerance)', async () => {
+    // Recovery task recognition is based on kind/fixForTaskId columns, NOT
+    // the id string shape. Both legacy bare-hex IDs (pre-fix- prefix) and
+    // the new fix-xxxxxxxx IDs must be recognised identically.
+    const { inv } = await loadModules(repo)
+    // Legacy bare-hex id (pre-migration rows in existing .mars/mars.db)
+    expect(inv.isRecoveryTask({ kind: 'fix', fixForTaskId: 'abcd1234' })).toBe(true)
+    // New fix- prefixed id
+    expect(inv.isRecoveryTask({ kind: 'fix', fixForTaskId: 'mars-12345678' })).toBe(true)
+  })
+
   it('addBlockers rejects an edge whose task is a recovery', async () => {
     const { q, inv } = await loadModules(repo)
     const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })

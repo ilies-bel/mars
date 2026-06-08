@@ -176,6 +176,7 @@ describe('queue-fix-tasks', () => {
       },
     })
     expect(r.created).toBe(true)
+    expect(r.fixTaskId).toMatch(/^fix-[0-9a-f]{8}$/)
     expect(r.fixTaskId).toBeTruthy()
 
     const fix = await q.getTask(r.fixTaskId)

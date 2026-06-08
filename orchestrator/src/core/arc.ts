@@ -923,7 +923,7 @@ export class Arc {
           : source.prompt ?? '',
     }
     const prompt = recipe.buildPrompt(recipeContextWithSource)
-    const fixTaskId = randomUUID().slice(0, 8)
+    const fixTaskId = `fix-${randomUUID().slice(0, 8)}`
     // Shared remediations run at top priority — every other queued task is
     // waiting on this one resource (e.g. a clean main). Non-shared fix-tasks
     // stay at default priority; they only unblock the single source.
@@ -1111,7 +1111,7 @@ export class Arc {
    *
    * PARITY (preserved bit-for-bit):
    *   - a single `now` timestamp threaded through every statement;
-   *   - a fresh `randomUUID().slice(0, 8)` fix-task id per call;
+   *   - a fresh `fix-${randomUUID().slice(0, 8)}` fix-task id per call;
    *   - `recovery_payload` IS written (unlike {@link Arc.spawnRecovery}, which
    *     leaves it NULL — the two writers coexist);
    *   - NO `self_heal_attempts` ledger append (intentional, slice F.2 — the
@@ -1135,7 +1135,7 @@ export class Arc {
     traceStore: TraceEventStore
   }): Promise<{ fixTaskId: string }> {
     const s = this.store
-    const fixTaskId = randomUUID().slice(0, 8)
+    const fixTaskId = `fix-${randomUUID().slice(0, 8)}`
     const now = new Date().toISOString()
     const payload: MainCommiterPayload = {
       recipe: MAIN_COMMITER_RECIPE,

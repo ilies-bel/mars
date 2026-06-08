@@ -220,7 +220,7 @@ describe('spawnOrAttachMainCommitter', () => {
       traceStore: nullTraceStore,
     })
     expect(resolution.spawned).toBe(true)
-    expect(resolution.fixTaskId).toMatch(/^[0-9a-f]{8}$/)
+    expect(resolution.fixTaskId).toMatch(/^fix-[0-9a-f]{8}$/)
 
     const after = await queue.getTask(src.id)
     expect(after?.status).toBe('blocked')
