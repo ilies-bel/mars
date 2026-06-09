@@ -27,6 +27,7 @@ const makeRunner = (
 
 const ok = { exitCode: 0, stdout: '', stderr: '' }
 const exit254 = { exitCode: 254, stdout: '', stderr: '' }
+const exit236 = { exitCode: 236, stdout: '', stderr: '' }
 
 // ---------------------------------------------------------------------------
 // Fixture setup
@@ -120,6 +121,37 @@ describe('buildWorkspaceDepsForSite — transient exit 254 retry', () => {
     expect(installCalls).toHaveLength(2) // initial + 1 retry
     const buildCalls = calls.filter((c) => c.args[0] === 'run')
     expect(buildCalls).toHaveLength(1)
+  })
+
+  it('retries once when install exits 236 with empty stderr (transient prepare-script lifecycle failure) and succeeds on second attempt', async () => {
+    const { worktreeRoot, site } = await setupFixture()
+
+    // pnpm exits 236 (ELIFECYCLE — prepare script failed) with empty stderr
+    // during concurrent worktree setups; a clean re-run typically succeeds.
+    const { runner, calls } = makeRunner([exit236, ok, ok])
+
+    await expect(
+      buildWorkspaceDepsForSite(site, worktreeRoot, runner, undefined, 60_000),
+    ).resolves.toBeUndefined()
+
+    const installCalls = calls.filter((c) => c.args[0] === 'install')
+    expect(installCalls).toHaveLength(2) // initial + 1 retry
+    const buildCalls = calls.filter((c) => c.args[0] === 'run')
+    expect(buildCalls).toHaveLength(1)
+  })
+
+  it('does NOT retry when install exits 236 but stderr is non-empty (real lifecycle error)', async () => {
+    const { worktreeRoot, site } = await setupFixture()
+
+    const realError = { exitCode: 236, stdout: '', stderr: 'ELIFECYCLE prepare script failed' }
+    const { runner, calls } = makeRunner([realError, ok, ok])
+
+    await expect(
+      buildWorkspaceDepsForSite(site, worktreeRoot, runner, undefined, 60_000),
+    ).rejects.toThrow(/workspace dep install failed/)
+
+    const installCalls = calls.filter((c) => c.args[0] === 'install')
+    expect(installCalls).toHaveLength(1)
   })
 
   it('does NOT retry when install exits 254 but stderr is non-empty (not a transient race)', async () => {
