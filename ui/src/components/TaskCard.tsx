@@ -147,7 +147,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
       <div className="flex items-center justify-between gap-2">
         <RoleTag role={task.role} />
         <span className="font-mono text-meta text-muted">
-          {relativeTime(task.createdAt)}
+          upd {relativeTime(task.updatedAt)}
         </span>
       </div>
     </article>
