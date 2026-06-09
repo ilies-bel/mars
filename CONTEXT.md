@@ -376,3 +376,7 @@ _Avoid_: projects.json, project list, workspace file
 **Attempt**:
 One execution of a task's work — the original run plus every operator-initiated 'mars restart' re-run; distinct from automatic recovery, which ADR-0040 caps at one.
 _Avoid_: retry, re-run, recovery attempt
+
+**Provider**:
+A Worker attribute naming which agent CLI a Session drives (claude, codex, gemini, ...); each Provider is one adapter at the provider seam knowing how to spawn that CLI, pass the prompt, and parse its output, session id, and exit. Orthogonal to Runtime: a Provider can run under either Runtime.
+_Avoid_: agent backend, vendor, model provider, cli backend
