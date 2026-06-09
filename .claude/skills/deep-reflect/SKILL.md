@@ -147,7 +147,7 @@ Rules:
 
 ## Conventions
 
-- **Never bypass the CLI.** Don't poke at `.mars/queue.db` directly;
+- **Never bypass the CLI.** Don't poke at `.mars/mars.db` directly;
   don't read JSONL transcripts under `~/.claude/projects/` by hand;
   don't insert into `proposals` by hand.
 - **Foreground only.** `mars arc reflect` is the user-visible action;

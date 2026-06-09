@@ -44,7 +44,7 @@ Prefer `/mars:task <prompt>` from a Claude Code session for a
 light-shaping wrapper that checks terminology against the glossary
 before enqueueing.
 
-Tasks live in `.mars/queue.db`. Enqueue via `mars task add "..."`; the
+Tasks live in `.mars/mars.db`. Enqueue via `mars task add "..."`; the
 orchestrator dispatches automatically (worktree → code → verify →
 merge). Inspect via `mars list`.
 
@@ -60,8 +60,8 @@ re-confirmed, even within the same session.
   file lock; coding parallel).
 - Default merge target is `main`. Override per-invocation with
   `INTEGRATION_BRANCH=<branch>`.
-- Per-repo state lives under `.mars/` (gitignored): `state.db`,
-  `queue.db`, `mastra.db`, `worktrees/<task-id>/`, `.merge.lock`.
+- Per-repo state lives under `.mars/` (gitignored): `mars.db`,
+  `worktrees/<task-id>/`, `.merge.lock`.
 
 ## The action queue
 

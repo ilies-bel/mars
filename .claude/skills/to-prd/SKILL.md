@@ -7,7 +7,7 @@ description: Turn the current `/mars:grill` conversation context into a PRD and 
 
 This skill takes the current conversation context — typically a finished
 `/mars:grill <id>` session — and produces a PRD on the draft proposal row in
-`.mars/state.db`. **Do NOT interview the user.** Synthesise from what you
+`.mars/mars.db`. **Do NOT interview the user.** Synthesise from what you
 already know. If a field genuinely cannot be inferred from context, ask
 *one* short, specific question; do not restart grilling.
 
