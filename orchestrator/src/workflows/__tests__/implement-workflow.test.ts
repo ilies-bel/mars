@@ -14,6 +14,9 @@ import {
   failureExcerpt,
   isBlockersAbortError,
   isContextExhaustedAbortError,
+  isOriginWorktreeMissingAbortError,
+  ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
+  recoveryAttachesToOrigin,
   resolveWorkerSystemPrompt,
 } from '../implement-workflow'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
@@ -633,5 +636,40 @@ describe('isContextExhaustedAbortError — context-budget ceiling sentinel', () 
     const wrapped = new Error('Step run-claude-code failed: something')
     Object.assign(wrapped, { cause })
     expect(isContextExhaustedAbortError(wrapped)).toBe(true)
+  })
+})
+
+describe('isOriginWorktreeMissingAbortError — recovery-attach sentinel', () => {
+  it('recognises the sentinel the setup step throws when the origin worktree is gone', () => {
+    const err = new Error(ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE('fix-abc12345'))
+    expect(isOriginWorktreeMissingAbortError(err)).toBe(true)
+  })
+
+  it('does not false-positive on unrelated errors', () => {
+    expect(isOriginWorktreeMissingAbortError(new Error('some other failure'))).toBe(false)
+    expect(isOriginWorktreeMissingAbortError(null)).toBe(false)
+    expect(isOriginWorktreeMissingAbortError(undefined)).toBe(false)
+  })
+
+  it('recognises the sentinel through a wrapped cause chain', () => {
+    const cause = new Error(ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE('fix-abc12345'))
+    const wrapped = new Error('Step setup-worktree failed: something')
+    Object.assign(wrapped, { cause })
+    expect(isOriginWorktreeMissingAbortError(wrapped)).toBe(true)
+  })
+})
+
+describe('recoveryAttachesToOrigin — origin-attach decision', () => {
+  it('an ordinary kind=fix recovery attaches to its origin worktree', () => {
+    expect(recoveryAttachesToOrigin('fix', false)).toBe(true)
+  })
+
+  it('a main-commiter kind=fix recovery does NOT attach (needs its own worktree)', () => {
+    expect(recoveryAttachesToOrigin('fix', true)).toBe(false)
+  })
+
+  it('ordinary tasks and diagnose chores never attach (they create their own)', () => {
+    expect(recoveryAttachesToOrigin('task', false)).toBe(false)
+    expect(recoveryAttachesToOrigin('diagnose', false)).toBe(false)
   })
 })

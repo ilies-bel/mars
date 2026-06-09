@@ -3,7 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
 import { getFallbackCopy, logFallbackError } from '@/shared/uiFallback'
-import { severityColor, severityRowClass, summarizeTraceEvent } from '@/shared/actionQueueDetail'
+import { severityColor, severityRowClass, summarizeTraceEvent, marsToolTextClass } from '@/shared/actionQueueDetail'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { TraceEvent } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
@@ -249,7 +249,7 @@ const EventRow = memo(({ event }: EventRowProps) => {
           {truncateId(event.taskId)}
         </span>
       ) : null}{' '}
-      <span>{summarizeTraceEvent(event)}</span>
+      <span className={marsToolTextClass(event)}>{summarizeTraceEvent(event)}</span>
     </>
   )
   if (href === undefined) {

@@ -1183,3 +1183,85 @@ describe('subprocess PATH preservation', () => {
     expect(env.PATH).toBe(process.env.PATH)
   })
 })
+
+describe('attachToOriginWorktree (recovery attaches to origin worktree)', () => {
+  // A recovery (kind=fix) task does not carve its own worktree — it attaches
+  // to the origin task's existing worktree + branch so it can stack its fix
+  // commit on the origin's in-progress work. These tests provision a real
+  // origin worktree via createWorktree, then assert attach returns that ref
+  // when present and throws OriginWorktreeMissingError when it is gone.
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-attach-origin-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+    writeFileSync(resolve(repo, 'README.md'), '# test\n')
+    execFileSync('git', ['add', '.'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns the origin worktree ref when the origin worktree is present', async () => {
+    const { createWorktree, attachToOriginWorktree } = await import('../git/worktree')
+    // Provision the origin task's worktree exactly as setup-worktree would.
+    const origin = await createWorktree({
+      taskId: 'mars-origin01',
+      integrationBranch: 'main',
+    })
+
+    const ref = await attachToOriginWorktree({
+      originTaskId: 'mars-origin01',
+      originBranch: origin.branch,
+      originWorktreePath: origin.path,
+    })
+    // Attach is a validate-and-return: same path + branch, no new worktree.
+    expect(ref.path).toBe(origin.path)
+    expect(ref.branch).toBe(origin.branch)
+    expect(ref.branch).toBe('task/mars-origin01')
+  })
+
+  it('throws OriginWorktreeMissingError when the origin worktree is gone', async () => {
+    const { createWorktree, removeWorktree, attachToOriginWorktree, OriginWorktreeMissingError } =
+      await import('../git/worktree')
+    const origin = await createWorktree({
+      taskId: 'mars-origin02',
+      integrationBranch: 'main',
+    })
+    // Simulate the cleaned-up-after-merge case: the origin worktree is removed.
+    await removeWorktree({ path: origin.path, branch: origin.branch }, true, false)
+
+    await expect(
+      attachToOriginWorktree({
+        originTaskId: 'mars-origin02',
+        originBranch: origin.branch,
+        originWorktreePath: origin.path,
+      }),
+    ).rejects.toBeInstanceOf(OriginWorktreeMissingError)
+  })
+
+  it('throws OriginWorktreeMissingError when the path exists but is on a different branch', async () => {
+    const { createWorktree, attachToOriginWorktree, OriginWorktreeMissingError } =
+      await import('../git/worktree')
+    const origin = await createWorktree({
+      taskId: 'mars-origin03',
+      integrationBranch: 'main',
+    })
+    // Ask attach for a branch that does not match the worktree's registration.
+    await expect(
+      attachToOriginWorktree({
+        originTaskId: 'mars-origin03',
+        originBranch: 'task/some-other-branch',
+        originWorktreePath: origin.path,
+      }),
+    ).rejects.toBeInstanceOf(OriginWorktreeMissingError)
+  })
+})

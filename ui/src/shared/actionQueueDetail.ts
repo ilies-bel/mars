@@ -102,6 +102,36 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
 }
 
 /**
+ * True when a trace event is a `mars` CLI invocation (a `tool_invoked` event
+ * whose tool basename is exactly `mars`). The basename is taken so a
+ * full-path tool (e.g. `/usr/local/bin/mars`) still matches, mirroring the
+ * basename logic in {@link summarizeTraceEvent}.
+ *
+ * Mars calls are the operator-meaningful actions in a trace (enqueues,
+ * action-queue raises, blocks) as opposed to the `git`/`npx` plumbing, so the
+ * trace surfaces highlight them in blue. Centralised here so every trace
+ * component (Action Queue, Events, Arc rail) applies the same rule.
+ */
+export const isMarsToolEvent = (event: TraceEvent): boolean => {
+  if (event.kind !== 'tool_invoked') return false
+  const raw = event.payload.tool
+  if (typeof raw !== 'string') return false
+  const tool = raw.includes('/') ? raw.split('/').pop() || raw : raw
+  return tool === 'mars'
+}
+
+/**
+ * Tailwind class that paints a `mars` trace row blue so it stands out from the
+ * surrounding `git`/`npx` plumbing. Returns '' for non-mars events so callers
+ * can interpolate it unconditionally. Severity (warn/error) coloring still
+ * wins on its own spans; this tints the command summary text. The blue is the
+ * scoped `--color-trace-mars` brand token (see styles/index.css), not a raw
+ * Tailwind blue, so it stays themeable and on-system.
+ */
+export const marsToolTextClass = (event: TraceEvent): string =>
+  isMarsToolEvent(event) ? 'text-trace-mars font-semibold' : ''
+
+/**
  * Severity-to-tailwind color token used for the dot/badge next to each
  * trace event. Sticks to the existing palette (`iron`/`fg` + warn/err
  * accents from elsewhere in the codebase).

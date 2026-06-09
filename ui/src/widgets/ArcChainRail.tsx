@@ -4,7 +4,7 @@ import type { AlertChainNode } from '@/shared/schemas'
 import { fetchEvents } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { relativeTime } from '@/shared/time'
-import { severityColor, summarizeTraceEvent } from '@/shared/actionQueueDetail'
+import { severityColor, summarizeTraceEvent, marsToolTextClass } from '@/shared/actionQueueDetail'
 
 export interface ArcChainRailProps {
   chain: AlertChainNode[]
@@ -48,7 +48,7 @@ function TaskTracePanel({ taskId }: { taskId: string }) {
             [{e.severity}]
           </span>{' '}
           <span className="text-iron">{e.kind}</span>{' '}
-          <span>{summarizeTraceEvent(e)}</span>
+          <span className={marsToolTextClass(e)}>{summarizeTraceEvent(e)}</span>
         </li>
       ))}
     </ul>

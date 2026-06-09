@@ -670,6 +670,7 @@ export const startDaemon = async (
             : null,
           resumeFromCodePhase,
           recoveryPayload: task.recoveryPayload ?? null,
+          fixForTaskId: task.fixForTaskId ?? null,
         },
         {
           store: workflowStore,
@@ -683,6 +684,7 @@ export const startDaemon = async (
         isBlockersAbortError,
         isMainDirtyVerifyError,
         isContextExhaustedAbortError,
+        isOriginWorktreeMissingAbortError,
       } = await import('../../workflows/implement-workflow')
       // Read the failure off RunResult.error (the engine puts the thrown Error
       // there verbatim on the `failed` path). The detectors flatten the cause
@@ -711,6 +713,15 @@ export const startDaemon = async (
         bus.emit('task.completed', { taskId: task.id, status: result.status })
         return
       }
+      // A recovery (kind=fix) task whose origin worktree is gone: the setup
+      // step already marked it failed and raised an operator action-queue item.
+      // Suppress both the re-update and the `task.completed` emit — emitting
+      // would trip recovery-spawn into raising a SECOND escalation for the same
+      // dead-end. The operator resolves via the raised item.
+      if (result.status === 'failed' && isOriginWorktreeMissingAbortError(resultError)) {
+        log(`[implement] ${task.id} failed: origin worktree missing; recovery cannot attach (action-queue item raised)`)
+        return
+      }
       log(`[implement] ${task.id} -> ${result.status}`)
       bus.emit('task.completed', { taskId: task.id, status: result.status })
     } catch (err) {
@@ -730,10 +741,16 @@ export const startDaemon = async (
       // benign blockers-abort — failing the task is the safe default.
       let isBlockersAbort = false
       let isContextExhaustedAbort = false
+      let isOriginWorktreeMissingAbort = false
       try {
-        const { isBlockersAbortError, isContextExhaustedAbortError } = await import('../../workflows/implement-workflow')
+        const {
+          isBlockersAbortError,
+          isContextExhaustedAbortError,
+          isOriginWorktreeMissingAbortError,
+        } = await import('../../workflows/implement-workflow')
         isBlockersAbort = isBlockersAbortError(err)
         isContextExhaustedAbort = isContextExhaustedAbortError(err)
+        isOriginWorktreeMissingAbort = isOriginWorktreeMissingAbortError(err)
       } catch (importErr) {
         log(
           `[implement] ${task.id} could not load blockers-abort detector (${
@@ -747,6 +764,10 @@ export const startDaemon = async (
         // The workflow already marked this task failed with cause 'context-exhausted'
         // before throwing the sentinel. Suppress the re-update.
         log(`[implement] ${task.id} context-budget ceiling abort (exception path); task already marked failed`)
+      } else if (isOriginWorktreeMissingAbort) {
+        // The setup step already marked this fix task failed and raised an
+        // operator action-queue item. Suppress the re-update and the emit.
+        log(`[implement] ${task.id} origin-worktree-missing abort (exception path); task already marked failed, item raised`)
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
         try {

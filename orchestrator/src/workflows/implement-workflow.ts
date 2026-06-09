@@ -2,7 +2,13 @@ import { defineWorkflow, type StepHandle, type WorkflowCtx } from '@mars/workflo
 import { z } from 'zod'
 
 import { runTool, nullTraceStore, type TraceCtx } from '../core/lib/run-tool'
-import { createWorktree, removeWorktree } from '../core/lib/git/worktree'
+import {
+  createWorktree,
+  removeWorktree,
+  attachToOriginWorktree,
+  OriginWorktreeMissingError,
+  type WorktreeRef,
+} from '../core/lib/git/worktree'
 import {
   cleanWorktreeIfNoCommitsAhead,
   verifyChanges,
@@ -28,6 +34,7 @@ import {
 } from '../core/lib/worktree-install'
 import type { ClaudeEvent } from '../core/lib/claude-stream'
 import {
+  getTask,
   hasIncompleteBlockers,
   updateTask,
 } from '../core/queue'
@@ -92,6 +99,18 @@ export const CONTEXT_EXHAUSTED_ABORT_MESSAGE = (taskId: string): string =>
 
 export const isContextExhaustedAbortError = (err: unknown): boolean =>
   errorHaystack(err).includes('aborted by context-budget ceiling')
+
+// Thrown by the setup step when a recovery (kind=fix) task cannot attach to its
+// origin's worktree because that worktree is gone on disk (e.g. cleaned up after
+// a prior merge). The setup step has already stamped the fix task failed and
+// raised an operator action-queue item before throwing this; the daemon uses
+// `isOriginWorktreeMissingAbortError` to suppress re-updating the task so the
+// raised escalation stands.
+export const ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE = (taskId: string): string =>
+  `recovery ${taskId} aborted: origin worktree is missing and cannot be attached`
+
+export const isOriginWorktreeMissingAbortError = (err: unknown): boolean =>
+  errorHaystack(err).includes('origin worktree is missing and cannot be attached')
 
 import { summarizeUsage } from '../core/lib/claude-usage'
 import { recordSignals } from '../core/lib/reflect-signals'
@@ -259,6 +278,29 @@ export const resolveWorkerSystemPrompt = (
  */
 export const pickWorkerForTask = (task: Pick<Task, 'kind'>): WorkerName =>
   task.kind === 'fix' ? 'Fixer' : 'Coder'
+
+/**
+ * Decide whether a dispatched task's setup step should ATTACH to its origin's
+ * existing worktree (true) or CREATE a fresh `task/<id>` worktree (false).
+ *
+ * Ordinary recovery (kind='fix') tasks attach: they continue the origin's
+ * in-progress work in place, stacking their fix commit on the origin's branch.
+ *
+ * The one exception is a `main-commiter` recovery — also kind='fix', but it
+ * carries a recovery payload with recipe='main-commiter' and its job is to
+ * commit the dirty INTEGRATION branch, not to continue the origin's branch. It
+ * must get its own fresh worktree, so it does NOT attach. Pure and
+ * payload-driven so the rule is testable without a workflow harness.
+ *
+ * @param kind            The dispatched task's kind.
+ * @param isMainCommiter  True when recoveryPayload decodes to the
+ *                        main-commiter recipe (computed by the caller, which
+ *                        owns the async payload parse).
+ */
+export const recoveryAttachesToOrigin = (
+  kind: 'task' | 'fix' | 'diagnose',
+  isMainCommiter: boolean,
+): boolean => kind === 'fix' && !isMainCommiter
 
 const renderSpec = (spec: TaskSpec | null, taskId: string): string | null => {
   if (!spec) return null
@@ -557,6 +599,12 @@ const implementInputSchema = z.object({
    * verification steps.
    */
   recoveryPayload: z.string().nullable().default(null),
+  /**
+   * The origin task this recovery is recovering (`tasks.fix_for_task_id`).
+   * Non-null only on `kind='fix'` tasks; the setup step uses it to attach to
+   * the origin's existing worktree + branch instead of carving a fresh one.
+   */
+  fixForTaskId: z.string().nullable().default(null),
 })
 
 export type ImplementInput = z.infer<typeof implementInputSchema>
@@ -644,6 +692,96 @@ export const implementWorkflow = defineWorkflow<
         // behind the `main-commiter` recovery. The legacy setup-time
         // `checkSetupPreflight` backstop was retired in slice K.
 
+        // Resolve a recovery (kind=fix) task's worktree by attaching to the
+        // origin task's existing worktree + branch. Loads the immediate origin
+        // via `fixForTaskId`, reads its recorded branch/worktreePath, and
+        // validates the worktree is present (attachToOriginWorktree throws
+        // OriginWorktreeMissingError if not). On a missing worktree we stamp the
+        // fix failed, raise an operator action-queue item, and throw the
+        // sentinel — we do NOT silently recreate, because recreating off the
+        // integration tip would discard the origin's in-progress work.
+        const attachOriginWorktreeForFix = async (): Promise<WorktreeRef> => {
+          const originTaskId = input.fixForTaskId
+          if (originTaskId === null) {
+            // Invariant: kind='fix' implies a non-null fix-for pointer
+            // (validateTaskKindInvariant). A null here is a corrupt row.
+            throw new Error(
+              `recovery ${input.taskId} has kind='fix' but no fixForTaskId; cannot resolve origin worktree`,
+            )
+          }
+          const origin = await getTask(originTaskId, store)
+          const originBranch = origin?.branch ?? null
+          const originWorktreePath = origin?.worktreePath ?? null
+          try {
+            if (origin === null || originBranch === null || originWorktreePath === null) {
+              throw new OriginWorktreeMissingError({
+                originTaskId,
+                expectedPath: originWorktreePath ?? '(unrecorded)',
+                expectedBranch: originBranch ?? '(unrecorded)',
+              })
+            }
+            return await attachToOriginWorktree({
+              originTaskId,
+              originBranch,
+              originWorktreePath,
+              traceCtx: buildCtx('setup'),
+            })
+          } catch (err) {
+            if (!(err instanceof OriginWorktreeMissingError)) throw err
+            const summary = err.message
+            const missingSignature = computeFailureSignature(
+              'setup:origin-worktree-missing',
+              summary,
+            )
+            await updateTask(input.taskId, {
+              status: 'failed',
+              error: summary,
+              // FailedPhase has no 'setup' member; a setup failure is a
+              // pre-coding, non-resumable failure and is stamped 'code' to
+              // match the existing setup:install failure path.
+              failedPhase: 'code',
+              failureReason: 'setup:origin-worktree-missing',
+              failureSignature: missingSignature,
+              failureReasonCode: missingSignature,
+            }, store)
+            await raiseActionQueueItem({
+              kind: 'failed',
+              category: 'orchestrator',
+              priority: 'high',
+              title: `Recovery ${input.taskId} cannot attach: origin worktree for ${originTaskId} is gone`,
+              body: [
+                `Recovery task ${input.taskId} (kind=fix) recovers origin task ${originTaskId}, but the origin's worktree is no longer on disk, so the recovery cannot continue the origin's in-progress work in place.`,
+                '',
+                'Context:',
+                `  Expected branch: ${err.expectedBranch}`,
+                `  Expected worktree: ${err.expectedPath}`,
+                '',
+                'Resolve explicitly — e.g. `mars restart` the origin to re-run it from a fresh worktree, or `mars purge` it if the work is no longer needed. The orchestrator does not silently recreate a recovery worktree, because branching off the integration tip would discard the origin\'s in-progress changes.',
+              ].join('\n'),
+              payload: {
+                recoveryTaskId: input.taskId,
+                originTaskId,
+                expectedBranch: err.expectedBranch,
+                expectedWorktreePath: err.expectedPath,
+              },
+              context: { repoRoot: process.env.MARS_REPO ?? null },
+              raisedBy: 'agent:setup-worktree',
+              signature: `${originTaskId}:setup:origin-worktree-missing`,
+              originTaskId,
+              occurrence: {
+                at: new Date().toISOString(),
+                recoveryTaskId: input.taskId,
+              },
+            }).catch((raiseErr) => {
+              console.error(
+                `[setup] recovery ${input.taskId} origin-worktree-missing escalation errored:`,
+                raiseErr,
+              )
+            })
+            throw new Error(ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE(input.taskId))
+          }
+        }
+
         const setupSpanStore = workflowTraceStore === nullTraceStore ? undefined : workflowTraceStore
         return await runNonLlmStepWithSpan({
           stepName: 'setup-worktree',
@@ -653,11 +791,39 @@ export const implementWorkflow = defineWorkflow<
           traceStore: setupSpanStore,
           fn: async () => {
         await updateTask(input.taskId, { status: 'running' }, store)
-        const ref = await createWorktree({
-          taskId: input.taskId,
-          integrationBranch: input.integrationBranch,
-          traceCtx: buildCtx('setup'),
-        })
+        // Ordinary recovery (kind=fix) tasks do NOT carve their own
+        // `task/<fix-id>` worktree. They attach to the ORIGIN task's existing
+        // worktree and branch and stack their fix commit on top of the origin's
+        // work — the faithful "continue where it stopped" behaviour. Carving a
+        // fresh worktree off the integration tip would discard the origin's
+        // in-progress changes, so setup for a fix is a validate-and-attach, not
+        // a create. We still install deps below (the worktree may have been
+        // pruned/recreated, or deps may have drifted).
+        //
+        // EXCEPTION: a `main-commiter` recovery is also kind=fix but carries a
+        // recovery_payload with recipe='main-commiter'. Its job is to commit
+        // the dirty INTEGRATION branch, not to continue the origin's branch, so
+        // it needs its own fresh worktree — it must take the standard
+        // createWorktree path, never the origin-attach path.
+        let isMainCommiterFix = false
+        if (input.kind === 'fix' && input.recoveryPayload != null) {
+          const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } =
+            await import('../core/lib/main-dirty')
+          isMainCommiterFix =
+            parseMainCommiterPayload(input.recoveryPayload)?.recipe ===
+            MAIN_COMMITER_RECIPE
+        }
+        const attachesToOrigin = recoveryAttachesToOrigin(
+          input.kind,
+          isMainCommiterFix,
+        )
+        const ref = attachesToOrigin
+          ? await attachOriginWorktreeForFix()
+          : await createWorktree({
+              taskId: input.taskId,
+              integrationBranch: input.integrationBranch,
+              traceCtx: buildCtx('setup'),
+            })
         await updateTask(input.taskId, {
           branch: ref.branch,
           worktreePath: ref.path,

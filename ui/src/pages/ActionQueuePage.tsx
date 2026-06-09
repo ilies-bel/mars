@@ -16,6 +16,7 @@ import {
   severityColor,
   severityRowClass,
   summarizeTraceEvent,
+  marsToolTextClass,
 } from '@/shared/actionQueueDetail'
 import type {
   ActionDescriptor,
@@ -474,7 +475,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
                     {e.phase}
                   </span>
                 ) : null}{' '}
-                <span>{summarizeTraceEvent(e)}</span>
+                <span className={marsToolTextClass(e)}>{summarizeTraceEvent(e)}</span>
               </li>
             ))}
           </ul>

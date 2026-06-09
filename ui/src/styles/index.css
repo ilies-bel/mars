@@ -55,6 +55,13 @@
   --color-warn:      #92400E;  /* 5.6:1 on bg */
   --color-success:   #166534;  /* 6.1:1 on bg */
 
+  /* Trace highlight: `mars` CLI invocations render in this cool blue so they
+     stand out from the warm-neutral git/npx plumbing in the trace timeline.
+     The brand is otherwise warm and deliberately avoids browser blue, so this
+     is a single scoped exception — a deeper blue chosen for ≥4.5:1 contrast on
+     both the light info-row bg (#F5EDE4) and the dark Arc rail. */
+  --color-trace-mars: #1D4ED8;  /* blue-700 — 6.2:1 on bg, reads blue on dark too */
+
   /* DAG cluster chip colours — consumed via CSS var() in SVG style props */
   --color-dag-proposal-fill:       #2e1065;
   --color-dag-proposal-stroke:     #7c3aed;

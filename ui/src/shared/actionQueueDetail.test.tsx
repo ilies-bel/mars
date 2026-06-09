@@ -11,6 +11,8 @@ import {
   originKindLabel,
   severityColor,
   summarizeTraceEvent,
+  isMarsToolEvent,
+  marsToolTextClass,
 } from './actionQueueDetail'
 import type { TraceEvent } from './schemas'
 
@@ -128,6 +130,52 @@ describe('summarizeTraceEvent', () => {
     expect(summarizeTraceEvent(make('origin_created', { source: 'cli' }))).toBe(
       'origin (cli)',
     )
+  })
+})
+
+describe('isMarsToolEvent / marsToolTextClass', () => {
+  const make = (
+    kind: TraceEvent['kind'],
+    payload: Record<string, unknown> = {},
+  ): TraceEvent => ({
+    id: 'e1',
+    timestamp: '2026-01-01T00:00:00Z',
+    kind,
+    severity: 'info',
+    taskId: 't1',
+    originId: null,
+    phase: 'code',
+    payload,
+  })
+
+  it('flags a tool_invoked event whose tool is mars', () => {
+    expect(isMarsToolEvent(make('tool_invoked', { tool: 'mars' }))).toBe(true)
+  })
+
+  it('flags a full-path mars binary by basename', () => {
+    expect(
+      isMarsToolEvent(make('tool_invoked', { tool: '/usr/local/bin/mars' })),
+    ).toBe(true)
+  })
+
+  it('does not flag git/npx plumbing', () => {
+    expect(isMarsToolEvent(make('tool_invoked', { tool: 'git' }))).toBe(false)
+    expect(isMarsToolEvent(make('tool_invoked', { tool: 'npx' }))).toBe(false)
+  })
+
+  it('does not flag non-tool_invoked kinds even if payload.tool says mars', () => {
+    expect(isMarsToolEvent(make('step_started', { tool: 'mars' }))).toBe(false)
+  })
+
+  it('does not match a tool that merely starts with mars (e.g. marsenv)', () => {
+    expect(isMarsToolEvent(make('tool_invoked', { tool: 'marsenv' }))).toBe(false)
+  })
+
+  it('marsToolTextClass returns the blue token for mars, empty otherwise', () => {
+    expect(marsToolTextClass(make('tool_invoked', { tool: 'mars' }))).toContain(
+      'text-trace-mars',
+    )
+    expect(marsToolTextClass(make('tool_invoked', { tool: 'git' }))).toBe('')
   })
 })
 

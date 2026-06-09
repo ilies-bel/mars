@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, rm, realpath } from 'node:fs/promises'
 import { getStateDir } from '../../context'
 import {
   exec,
@@ -121,6 +121,103 @@ export const createWorktree = async ({
     ? ['worktree', 'add', path, branch]
     : ['worktree', 'add', '-b', branch, path, startPoint]
   await exec(resolveGitBin(), args, { cwd }, setupCtx)
+  return { path, branch }
+}
+
+/**
+ * Thrown by {@link attachToOriginWorktree} when a recovery (kind=fix) task's
+ * origin worktree is no longer on disk (e.g. cleaned up after a prior merge).
+ * A recovery is meant to continue the origin's work in-place on the origin's
+ * branch, so a missing worktree is a hard failure the operator must resolve —
+ * the setup step catches this, fails the fix task, and raises an action-queue
+ * item rather than silently recreating the worktree (see the fix-task branch of
+ * the implement workflow's setup-worktree step).
+ */
+export class OriginWorktreeMissingError extends Error {
+  readonly originTaskId: string
+  readonly expectedPath: string
+  readonly expectedBranch: string
+  constructor(args: { originTaskId: string; expectedPath: string; expectedBranch: string }) {
+    super(
+      `origin worktree for recovery is missing: expected branch '${args.expectedBranch}' ` +
+        `at ${args.expectedPath} (origin task ${args.originTaskId}) is not present on disk`,
+    )
+    this.name = 'OriginWorktreeMissingError'
+    this.originTaskId = args.originTaskId
+    this.expectedPath = args.expectedPath
+    this.expectedBranch = args.expectedBranch
+  }
+}
+
+export interface AttachToOriginWorktreeArgs {
+  /** The origin (recovered) task's id — used only for diagnostics. */
+  originTaskId: string
+  /** The origin task's branch, as recorded on its row (`task/<origin-id>`). */
+  originBranch: string
+  /** The origin task's worktree path, as recorded on its row. */
+  originWorktreePath: string
+  traceCtx?: TraceCtx
+}
+
+/**
+ * Attach a recovery (kind=fix) dispatch to its origin task's EXISTING worktree
+ * and branch instead of carving a fresh `task/<fix-id>` worktree. The recovery
+ * then stacks its commit directly on top of the origin's work — the faithful
+ * "continue where it stopped" behaviour, and what actually happens on disk for
+ * an in-place resume.
+ *
+ * This is a validate-and-return, not a create: a recovery must NOT branch off a
+ * fresh integration tip (that would discard the origin's in-progress work). So
+ * if the origin worktree is absent — directory gone, or no live registration on
+ * the expected branch — we throw {@link OriginWorktreeMissingError} for the
+ * caller to escalate, rather than recreating it.
+ */
+export const attachToOriginWorktree = async (
+  args: AttachToOriginWorktreeArgs,
+): Promise<WorktreeRef> => {
+  const { originTaskId, originBranch: branch, originWorktreePath: path } = args
+  const setupCtx: TraceCtx | undefined = args.traceCtx
+    ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'setup' }
+    : undefined
+
+  // Prune stale registrations so a worktree dir removed out-of-band is not
+  // reported as still-registered below.
+  await execProbe(
+    resolveGitBin(),
+    ['worktree', 'prune'],
+    { cwd: repoRoot(), timeout: WORKTREE_GIT_TIMEOUT_MS },
+    setupCtx,
+  ).catch(() => {})
+
+  const registered = await listRegisteredWorktrees(setupCtx).catch(
+    () => [] as RegisteredWorktree[],
+  )
+
+  // `git worktree list --porcelain` reports the canonical realpath of each
+  // worktree (e.g. macOS resolves /tmp → /private/tmp), while the recorded
+  // origin path is whatever form the task row stored. Compare on realpath so a
+  // symlinked path prefix doesn't make a present worktree look missing.
+  const canonical = async (p: string): Promise<string> =>
+    realpath(p).catch(() => p)
+  const dirPresent = await pathExists(path)
+  const targetReal = dirPresent ? await canonical(path) : path
+  let registration: RegisteredWorktree | undefined
+  for (const w of registered) {
+    if ((await canonical(w.path)) === targetReal) {
+      registration = w
+      break
+    }
+  }
+  const onExpectedBranch = registration?.branch === branch
+
+  if (!dirPresent || registration === undefined || !onExpectedBranch) {
+    throw new OriginWorktreeMissingError({
+      originTaskId,
+      expectedPath: path,
+      expectedBranch: branch,
+    })
+  }
+
   return { path, branch }
 }
 
