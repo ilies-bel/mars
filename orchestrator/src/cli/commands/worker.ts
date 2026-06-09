@@ -12,7 +12,7 @@ import {
 import type { Command } from '../command'
 
 const WORKER_ADD_USAGE =
-  'usage: mars worker add <name> --model <model> [--effort high|medium|...] [--permission-mode default|bypassPermissions] [--max-messages <n>] [--tag <tag> ...]'
+  'usage: mars worker add <name> --model <model> [--effort high|medium|...] [--permission-mode default|bypassPermissions] [--tag <tag> ...]'
 
 const workerList: Command = {
   path: 'worker list',
@@ -71,17 +71,6 @@ const workerAdd: Command = {
       return { code: 1 }
     }
 
-    let maxMessages = 0
-    const maxRaw = args.flags['--max-messages']
-    if (maxRaw !== undefined) {
-      const n = Number(maxRaw)
-      if (!Number.isInteger(n) || n < 0) {
-        deps.err(`max-messages must be a non-negative integer; got '${maxRaw}'`)
-        return { code: 1 }
-      }
-      maxMessages = n
-    }
-
     const tags = args.multiFlags['--tag']
 
     addWorkerToRegistry(deps.ctx.stateDir, {
@@ -98,7 +87,6 @@ const workerAdd: Command = {
       bare: false,
       disallowedTools: [],
       outputFormat: 'stream-json',
-      maxMessages,
       runtime: 'headless',
       ...(tags !== undefined && tags.length > 0 ? { tags } : {}),
     })

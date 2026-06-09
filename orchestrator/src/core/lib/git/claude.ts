@@ -153,20 +153,17 @@ export interface RunClaudeArgs {
   bare?: boolean
   agent?: string
   disallowedTools?: ReadonlyArray<string>
-  // Per-invocation override for the message cap enforced inside runClaudeCode.
-  // When omitted, defaults to DEFAULT_CLAUDE_MAX_MESSAGES (0 = unbounded).
-  maxMessages?: number
   // Per-invocation context token budget. When the LATEST assistant event's
   // input-side token count (input + cache_read + cache_creation) crosses this
   // value, runClaudeCode warns once at 80% and aborts (exit 138, distinct
-  // stderr) at 100%. 0 = disabled, same convention as DEFAULT_CLAUDE_MAX_MESSAGES.
+  // stderr) at 100%. 0 = disabled.
   maxContextTokens?: number
   /**
    * Optional caller-supplied abort signal. When fired, runClaudeCode
    * SIGKILLs the child and returns a `exitCode: 137` result. Used by the
    * read/grep span watcher to terminate sessions that have stalled on
-   * reads. The signal is ORed with the internal timeout + message-cap
-   * abort, so either side can trigger termination.
+   * reads. The signal is ORed with the internal timeout abort, so either
+   * side can trigger termination.
    */
   externalAbort?: AbortSignal
 }
@@ -291,12 +288,6 @@ export const claudeStreamArgs = (
   // failures.
 ]
 
-// 0 = no message cap (unbounded). runClaudeCode treats cap<=0 as "capEnabled
-// = false" and never aborts on message count. A Worker that needs a hard
-// ceiling sets one explicitly (e.g. Triager=40); everything else runs to
-// natural completion. The 100 default was cutting Coders off mid-implementation.
-const DEFAULT_CLAUDE_MAX_MESSAGES = 0
-
 // Strip the host claude session's identity vars so a daemon launched from
 // inside an interactive `claude` shell cannot contaminate dispatched workers.
 export const buildWorkerEnv = (): NodeJS.ProcessEnv => {
@@ -368,17 +359,10 @@ export const resolveClaudeBin = (): string => {
   return 'claude'
 }
 
-const resolveClaudeMessageCap = (override?: number): number => {
-  if (override !== undefined && Number.isInteger(override) && override >= 0) {
-    return override
-  }
-  return DEFAULT_CLAUDE_MAX_MESSAGES
-}
-
 // Resolve the effective context token budget for runClaudeCode. A positive
-// override enables the guard; 0 or absent disables it (same convention as
-// DEFAULT_CLAUDE_MAX_MESSAGES). Workers supply their per-worker default via
-// WorkerConfig.maxContextTokens, which is threaded in by buildWorker.
+// override enables the guard; 0 or absent disables it. Workers supply their
+// per-worker default via WorkerConfig.maxContextTokens, which is threaded
+// in by buildWorker.
 const resolveContextTokenBudget = (override?: number): number => {
   if (override !== undefined && Number.isInteger(override) && override > 0) {
     return override
@@ -399,16 +383,10 @@ export const runClaudeCode = async ({
   bare,
   agent,
   disallowedTools,
-  maxMessages,
   maxContextTokens,
   externalAbort,
 }: RunClaudeArgs): Promise<RunClaudeResult> => {
   const conversation: ClaudeEvent[] = []
-  const cap = resolveClaudeMessageCap(maxMessages)
-  const capEnabled = cap > 0
-  const warnAt = capEnabled ? Math.floor(cap * 0.6) : Number.POSITIVE_INFINITY
-  let warned = false
-  let capHit = false
   const budget = resolveContextTokenBudget(maxContextTokens)
   const budgetEnabled = budget > 0
   const ctxWarnAt = budgetEnabled ? Math.floor(budget * 0.8) : Number.POSITIVE_INFINITY
@@ -449,8 +427,7 @@ export const runClaudeCode = async ({
   // Only arm the wall-clock timeout when the caller supplies a positive value.
   // Omitting timeoutMs (or passing ≤ 0) means the subprocess runs to
   // completion — the reflect synthesis path uses this to avoid killing a slow
-  // Claude generation mid-flight. The message-cap (exit 137) path below is
-  // independent and always active when a maxMessages cap is set.
+  // Claude generation mid-flight.
   const timeoutHandle =
     timeoutMs !== undefined && timeoutMs > 0
       ? setTimeout(() => {
@@ -475,27 +452,11 @@ export const runClaudeCode = async ({
       if (stream !== 'stdout') return
       const event = parseClaudeStreamLine(line)
       if (!event) return
-      // Once the cap or context budget has fired, drop any late-arriving events
-      // still buffered from the child between abort() and process death. The
-      // conversation length must equal exactly `cap` for cap-hit runs.
-      if (capHit || ctxExhausted) return
+      // Once the context budget has fired, drop any late-arriving events
+      // still buffered from the child between abort() and process death.
+      if (ctxExhausted) return
       conversation.push(event)
       if (onEvent) await onEvent(event)
-      if (capEnabled) {
-        if (!warned && conversation.length === warnAt) {
-          warned = true
-          const sid =
-            extractSessionIdFromConversation(conversation) ?? sessionId ?? '?'
-          console.warn(
-            `[mars] claude session ${sid} crossed ${warnAt} messages (cap ${cap})`,
-          )
-        }
-        if (conversation.length >= cap) {
-          capHit = true
-          abort.abort()
-          return
-        }
-      }
       if (budgetEnabled) {
         const contextSize = getLatestContextSize(conversation)
         if (!ctxWarned && contextSize >= ctxWarnAt) {
@@ -521,15 +482,6 @@ export const runClaudeCode = async ({
     extractSessionId(result.stdout) ??
     sessionId ??
     null
-  if (capHit) {
-    return {
-      exitCode: 137,
-      stdout: result.stdout,
-      stderr: `claude -p hit message cap of ${cap}`,
-      sessionId: detectedSessionId,
-      conversation,
-    }
-  }
   if (timedOut) {
     return {
       exitCode: 124,

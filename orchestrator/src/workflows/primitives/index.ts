@@ -566,7 +566,6 @@ export const runAgent = async (args: RunAgentArgs): Promise<RunAgentResult> => {
         bare: decl.bare,
         disallowedTools: decl.disallowedTools,
         outputFormat: decl.outputFormat,
-        maxMessages: decl.maxMessages,
         maxContextTokens: 0,
         runtime: decl.runtime,
         provider: 'claude',

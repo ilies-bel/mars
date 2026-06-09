@@ -1798,8 +1798,6 @@ export const startDaemon = async (
               model: 'claude-haiku-4-5-20251001',
               // Read-only: use default permission mode so no file edits are allowed.
               permissionMode: 'default',
-              // Cap turns to keep cost low — Haiku only needs one turn to summarise.
-              maxMessages: 5,
             })
 
             // Extract the final text from the conversation. Prefer the 'result'
@@ -1944,8 +1942,6 @@ export const startDaemon = async (
           model: 'claude-sonnet-4-6',
           // Read-only: default permission mode disallows file edits.
           permissionMode: 'default',
-          // A few turns so it can read the worktree / trace if needed.
-          maxMessages: 12,
         })
 
         let diagnosis = '(no diagnosis generated)'

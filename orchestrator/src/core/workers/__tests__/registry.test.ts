@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { claudeStreamArgs } from '../../lib/git/claude'
 import {
   CODER_MODEL,
-  DEFAULT_MAX_MESSAGES,
   FIXER_BACKLOG_DENIED_TOOLS,
   READ_ONLY_DENIED_TOOLS,
   WORKER_CONFIGS,
@@ -10,7 +9,6 @@ import {
   createWorker,
   getWorker,
   pickWorkerForTags,
-  resolveWorkerMaxMessages,
   resolveWorkerMaxContextTokens,
   type Worker,
   type WorkerConfig,
@@ -75,7 +73,6 @@ describe('Worker runtime field', () => {
       bare: false,
       disallowedTools: [],
       outputFormat: 'stream-json',
-      maxMessages: 0,
       maxContextTokens: 0,
       runtime: 'headless',
       provider: 'claude',
@@ -119,20 +116,6 @@ describe('Worker registry', () => {
     expect(getWorker('Fixer')).toBe(Workers.Fixer)
   })
 
-  it("pins Triager's message cap at 40 (tighter than the unbounded default)", () => {
-    expect(WORKER_CONFIGS.Triager.maxMessages).toBe(40)
-    // Coder runs uncapped (0 = unbounded) so it can explore + implement +
-    // commit without being cut off mid-run.
-    expect(WORKER_CONFIGS.Coder.maxMessages).toBe(0)
-  })
-
-  it("pins Slicer's message cap at 250 so it can finish orienting before emitting slice JSON", () => {
-    // The Slicer is a read-heavy, one-shot analysis pass. Before the 250 cap
-    // was introduced it was SIGKILLed at ~100 messages before emitting the
-    // slice JSON output. 250 gives ~4x headroom while keeping a hard ceiling
-    // so a looping slicer can't burn unbounded tokens.
-    expect(WORKER_CONFIGS.Slicer.maxMessages).toBe(250)
-  })
 })
 
 describe('Coder pinned config', () => {
@@ -280,7 +263,6 @@ describe('pickWorkerForTags', () => {
       bare: false,
       disallowedTools: [],
       outputFormat: 'stream-json',
-      maxMessages: 0,
       maxContextTokens: 0,
       runtime: 'headless',
       provider: 'claude',
@@ -300,7 +282,6 @@ describe('pickWorkerForTags', () => {
       bare: false,
       disallowedTools: [],
       outputFormat: 'stream-json',
-      maxMessages: 0,
       maxContextTokens: 0,
       runtime: 'headless',
       provider: 'claude',
@@ -360,7 +341,6 @@ describe('audit surface — full role-pinned config exposed via WORKER_CONFIGS',
       'bare',
       'disallowedTools',
       'outputFormat',
-      'maxMessages',
       'runtime',
     ]
     for (const name of Object.keys(WORKER_CONFIGS) as WorkerName[]) {
@@ -387,7 +367,6 @@ describe('systemPrompt / appendSystemPrompt mutual exclusion', () => {
     bare: false,
     disallowedTools: [],
     outputFormat: 'stream-json',
-    maxMessages: 100,
     maxContextTokens: 0,
     runtime: 'headless',
     provider: 'claude',
@@ -422,21 +401,6 @@ describe('systemPrompt / appendSystemPrompt mutual exclusion', () => {
       const bothSet = c.systemPrompt !== undefined && c.appendSystemPrompt !== undefined
       expect(bothSet, `${name} pins both system-prompt fields`).toBe(false)
     }
-  })
-})
-
-describe('resolveWorkerMaxMessages — explicit override → DEFAULT_MAX_MESSAGES', () => {
-  it('returns the explicit override when one is provided', () => {
-    expect(resolveWorkerMaxMessages(42)).toBe(42)
-  })
-
-  it('returns 0 for an explicit override of 0 (unbounded)', () => {
-    expect(resolveWorkerMaxMessages(0)).toBe(0)
-  })
-
-  it('falls back to DEFAULT_MAX_MESSAGES (0 = unbounded) when no override is given', () => {
-    expect(resolveWorkerMaxMessages()).toBe(DEFAULT_MAX_MESSAGES)
-    expect(DEFAULT_MAX_MESSAGES).toBe(0)
   })
 })
 

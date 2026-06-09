@@ -56,17 +56,15 @@ describe('PRD 948691d0 slice 3 — Coder Worker can be constructed once and invo
 
 describe('PRD 948691d0 slice 3 — Coder pinned config visible from a single registry file', () => {
   it("WORKER_CONFIGS.Coder exposes every field the PRD calls out as 'visible' day-one defaults", () => {
-    // AC2: model, effort, permission mode, message cap, denials of
-    // agent-to-user tools — all readable from one place without chasing
-    // call sites. Day-one defaults agreed in the grill: Sonnet, high
-    // effort, bypassPermissions, unbounded messages, no per-Worker denial
-    // list beyond the wrapper-layer agent-to-user pair.
+    // AC2: model, effort, permission mode, tool denials — all readable
+    // from one place without chasing call sites. Day-one defaults agreed
+    // in the grill: Sonnet, high effort, bypassPermissions, no per-Worker
+    // denial list beyond the wrapper-layer agent-to-user pair.
     const cfg = WORKER_CONFIGS.Coder
     expect(cfg.name).toBe('Coder')
     expect(cfg.model).toBe(CODER_MODEL)
     expect(cfg.effort).toBe('high')
     expect(cfg.permissionMode).toBe('bypassPermissions')
-    expect(cfg.maxMessages).toBe(0) // 0 = unbounded
     expect(cfg.disallowedTools).toEqual([]) // wrapper-layer adds the agent-to-user pair
     expect(cfg.outputFormat).toBe('stream-json')
     expect(cfg.runtime).toBe('headless')

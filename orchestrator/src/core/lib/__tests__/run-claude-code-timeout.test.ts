@@ -102,8 +102,7 @@ describe('runClaudeCode timeout aborts the subprocess', () => {
     markerDir = mkdtempSync(resolve(tmpdir(), 'mars-claude-timeout-marker-'))
     originalPath = process.env.PATH
     process.env.PATH = `${stubDir}:${originalPath ?? ''}`
-    // No message cap is set: DEFAULT_CLAUDE_MAX_MESSAGES=0 means the run is
-    // unbounded and the wall-clock timeout is the only abort path.
+    // No message cap: the wall-clock timeout is the only abort path.
 
     // Warm up against a throwaway marker dir, then start the real test
     // from a clean markerDir so the before/after marker count is exact.

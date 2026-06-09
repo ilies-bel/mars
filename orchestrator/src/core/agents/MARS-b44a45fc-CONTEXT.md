@@ -49,7 +49,7 @@ Search the whole `orchestrator/src` tree.
 The existing capital-W `Writer` in
 `orchestrator/src/core/workers/index.ts` (`WorkerName = ... | 'Writer'`)
 is a different thing: a Worker is the pinned `claude -p` configuration
-(model / effort / permissionMode / disallowedTools / message cap) used by
+(model / effort / permissionMode / disallowedTools) used by
 the implement workflow to dispatch a stage. It carries **no** system
 prompt — that comes from `WRITER_SYSTEM_PROMPT` injected per-invocation.
 
