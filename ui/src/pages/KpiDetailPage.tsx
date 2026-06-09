@@ -1,7 +1,7 @@
 import type { KpiKey } from '@/shared/schemas'
 import { useKpis } from '@/entities/kpi/useKpis'
 import { useKpiArcs } from '@/entities/kpi/useKpiArcs'
-import { kpiBand } from '@/entities/kpi/bands'
+import { kpiBand, kpiBandCue } from '@/entities/kpi/bands'
 import { formatKpiValue } from '@/widgets/KpiTile'
 import { Sparkline } from '@/widgets/Sparkline'
 import { taskHash } from '@/shared/routing'
@@ -11,18 +11,6 @@ const KPI_LABELS: Record<KpiKey, string> = {
   failure_rate: 'Failure Rate',
   autonomous_completion_rate: 'Autonomous Completion',
   recovery_success_rate: 'Recovery Success',
-}
-
-const BAND_COLOR_CLASS: Record<'good' | 'warn' | 'bad', string> = {
-  good: 'text-green-600',
-  warn: 'text-amber-500',
-  bad: 'text-red-600',
-}
-
-const BAND_BORDER_CLASS: Record<'good' | 'warn' | 'bad', string> = {
-  good: 'border-l-4 border-l-green-500',
-  warn: 'border-l-4 border-l-amber-400',
-  bad: 'border-l-4 border-l-red-500',
 }
 
 interface KpiDetailPageProps {
@@ -38,6 +26,9 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
 
   const isLoading = kpisLoading || arcsLoading
   const error = kpisError ?? arcsError
+
+  const band = kpi && !kpi.lowConfidence ? kpiBand(kpiKey, kpi.currentValue) : null
+  const cue = band ? kpiBandCue(band) : null
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg">
@@ -56,15 +47,15 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         {/* KPI summary card */}
-        {kpi && !kpi.lowConfidence ? (
-          <div
-            className={`mb-6 flex flex-col gap-2 rounded border border-iron/20 bg-surface p-4 ${BAND_BORDER_CLASS[kpiBand(kpiKey, kpi.currentValue)]}`}
-          >
+        {kpi && !kpi.lowConfidence && cue ? (
+          <div className="mb-6 flex flex-col gap-2 rounded border border-iron/20 bg-surface p-4">
             <div className="flex items-baseline gap-4">
-              <span
-                className={`font-mono text-3xl font-bold ${BAND_COLOR_CLASS[kpiBand(kpiKey, kpi.currentValue)]}`}
-              >
+              <span className="font-mono text-3xl font-bold text-fg">
                 {formatKpiValue(kpiKey, kpi.currentValue)}
+              </span>
+              <span className={`flex items-center gap-1 text-sm ${cue.colorClass}`}>
+                <span aria-hidden="true">{cue.glyph}</span>
+                <span>{cue.label}</span>
               </span>
               <span className="text-sm text-muted">
                 {kpi.delta >= 0 ? '+' : ''}
@@ -96,7 +87,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
           )}
 
           {error && !isLoading && (
-            <p className="text-sm text-red-500">
+            <p className="text-sm text-error">
               Failed to load arcs: {error.message}
             </p>
           )}
@@ -134,7 +125,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                     ) : (
                       <td className="py-1.5 pr-3">
                         <span
-                          className={arc.passed ? 'text-green-600' : 'text-red-500'}
+                          className={arc.passed ? 'text-success' : 'text-error'}
                           title={arc.passed ? 'PASS' : 'FAIL'}
                         >
                           {arc.passed ? '✓ PASS' : '✗ FAIL'}

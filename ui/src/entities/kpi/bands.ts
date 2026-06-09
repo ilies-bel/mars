@@ -34,6 +34,32 @@ import type { KpiKey } from './types'
  */
 export type KpiBand = 'good' | 'warn' | 'bad'
 
+export interface KpiBandCue {
+  /** Shape glyph — communicates band without relying on hue alone. */
+  glyph: string
+  /** Text label — legible without colour (accessible to red/green-blind users). */
+  label: string
+  /** Semantic Tailwind token class from --color-* CSS vars; never a raw palette colour. */
+  colorClass: string
+}
+
+const BAND_CUES: Record<KpiBand, KpiBandCue> = {
+  good: { glyph: '✓', label: 'Good', colorClass: 'text-success' },
+  warn: { glyph: '⚠', label: 'Warn', colorClass: 'text-warn' },
+  bad:  { glyph: '✕', label: 'Bad',  colorClass: 'text-error' },
+}
+
+/**
+ * Returns a display cue for a KPI band: a glyph + text label (non-color cue)
+ * and a semantic color token class (no raw Tailwind palette colors).
+ *
+ * Both the shape (glyph) and the label are color-independent so the band is
+ * legible without relying on hue (red/green-colorblind accessibility).
+ */
+export function kpiBandCue(band: KpiBand): KpiBandCue {
+  return BAND_CUES[band]
+}
+
 export function kpiBand(key: KpiKey, value: number): KpiBand {
   switch (key) {
     case 'failure_rate':

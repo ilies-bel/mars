@@ -1,5 +1,5 @@
 import type { Kpi, KpiKey } from '@/entities/kpi/types'
-import { kpiBand } from '@/entities/kpi/bands'
+import { kpiBand, kpiBandCue } from '@/entities/kpi/bands'
 import { kpiHash } from '@/shared/routing'
 import { Sparkline } from './Sparkline'
 
@@ -28,18 +28,6 @@ export function formatKpiValue(key: KpiKey, value: number): string {
   return `${(value * 100).toFixed(1)}%`
 }
 
-/**
- * Maps a KpiBand to display cues: a glyph + text label (non-color cue) and
- * a semantic color token class (no raw Tailwind palette colors).
- *
- * Both the shape (glyph) and the label are color-independent so the band is
- * legible without relying on hue (red/green-colorblind accessibility).
- */
-const BAND_CUES: Record<'good' | 'warn' | 'bad', { glyph: string; label: string; colorClass: string }> = {
-  good: { glyph: '✓', label: 'Good', colorClass: 'text-success' },
-  warn: { glyph: '⚠', label: 'Warn', colorClass: 'text-warn' },
-  bad:  { glyph: '✕', label: 'Bad',  colorClass: 'text-error' },
-}
 
 interface KpiTileProps {
   kpi: Kpi
@@ -61,7 +49,7 @@ export const KpiTile = ({ kpi }: KpiTileProps) => {
   }
 
   const band = kpiBand(kpi.key, kpi.currentValue)
-  const cue = BAND_CUES[band]
+  const cue = kpiBandCue(band)
   const seriesPoints = (kpi.series ?? []).map((p) => p.value)
 
   return (
