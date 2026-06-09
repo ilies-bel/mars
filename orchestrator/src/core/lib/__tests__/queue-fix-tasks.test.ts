@@ -448,7 +448,10 @@ describe('queue-fix-tasks', () => {
     delete rc.recipes['shared-sig']
   })
 
-  it('fails dependent task at unblock time when retry budget already exhausted', async () => {
+  it('propagates origin to done when retry budget exhausted but recovery task reached done', async () => {
+    // Budget=1, retryCount=1 => retryBudgetExhausted fires. But the recovery fix
+    // task is done, so the origin must be reconciled to done (not failed) and the
+    // unblock outcome must be 'noop' (propagateRecoveryDone handles it).
     process.env.MARS_FIX_RETRY_BUDGET = '1'
     const { q, ft, br, rc } = await loadModules(repo)
     const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
@@ -464,11 +467,65 @@ describe('queue-fix-tasks', () => {
     await q.updateTask(f.fixTaskId!, { status: 'done' })
     const result = await br.onBlockerTaskCompleted(f.fixTaskId!)
     expect(result.outcomes).toHaveLength(1)
-    expect(result.outcomes[0].outcome).toBe('failed')
+    // Recovery task is done → origin reconciled to done instead of failed.
+    expect(result.outcomes[0].outcome).toBe('noop')
 
     const reloaded = await q.getTask(t.id)
-    expect(reloaded?.status).toBe('failed')
-    expect(reloaded?.failureReason).toBe('retry_budget_exhausted_at_unblock')
+    expect(reloaded?.status).toBe('done')
+    cleanup()
+  })
+
+  it('propagates origin to done and unblocks dependents when default budget=0 recovery reached done', async () => {
+    // Reproduces the observed incident (mars-63196f8e): DEFAULT_RETRY_BUDGET=0,
+    // one failure → retryCount=1, retryBudgetExhausted(1,0)=true. The recovery
+    // fix task is done, so the origin must be reconciled to done (NOT failed with
+    // retry_budget_exhausted_at_unblock), and downstream tasks blocked on the
+    // origin must be released to queued via the propagateRecoveryDone cascade.
+    const { q, ft, br, rc } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
+
+    const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+
+    // A downstream task blocked on the origin — should be unblocked when the
+    // origin reaches done through propagateRecoveryDone.
+    const downstream = await q.enqueueTask('downstream', undefined, { skipTriage: true })
+    const now = new Date().toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+      args: [downstream.id, origin.id, now],
+    })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [downstream.id],
+    })
+
+    // Fail origin once — retryCount becomes 1, fix task spawned. budget=0, so
+    // retryBudgetExhausted(1, 0) will fire at unblock time.
+    const f = await ft.handleTaskFailureWithFixTask({
+      taskId: origin.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'err',
+    })
+    expect(f.outcome).toBe('blocked')
+    expect(f.retryCount).toBe(1)
+
+    // Recovery fix task completes.
+    await q.updateTask(f.fixTaskId!, { status: 'done' })
+    const result = await br.onBlockerTaskCompleted(f.fixTaskId!)
+
+    // Budget is exhausted but recovery is done: outcome is noop (not failed).
+    expect(result.outcomes).toHaveLength(1)
+    expect(result.outcomes[0].outcome).toBe('noop')
+
+    // Origin is reconciled to done via propagateRecoveryDone.
+    const reloadedOrigin = await q.getTask(origin.id)
+    expect(reloadedOrigin?.status).toBe('done')
+    expect(reloadedOrigin?.failureReason).toBeFalsy()
+
+    // Downstream task is unblocked because origin reached done.
+    const reloadedDownstream = await q.getTask(downstream.id)
+    expect(reloadedDownstream?.status).toBe('queued')
+
     cleanup()
   })
 
