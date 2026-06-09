@@ -767,6 +767,7 @@ export class Arc {
       sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at) VALUES (?, ?, 'done', ?, ?, ?)`,
       args: [id, prompt, id, now, now],
     })
+    await Arc.maybeAssertArcInvariant(id, this.store)
     return id
   }
 

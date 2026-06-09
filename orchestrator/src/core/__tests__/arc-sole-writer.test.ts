@@ -239,6 +239,25 @@ describe('ADR-0052: the Arc aggregate is the sole task-table writer', () => {
         'the sole writer must emit its lifecycle event in the same transaction (ADR-0030)',
     ).toBe(true)
   })
+
+  it('insertReflection calls maybeAssertArcInvariant after its INSERT (ADR-0052 write-path coverage)', () => {
+    // Every Arc write path must call maybeAssertArcInvariant after its INSERT so
+    // a future change cannot strand an entity without tripping the structural
+    // assert. createOrigin and spawnRecovery both call it; this guards
+    // insertReflection from regressing silently.
+    const arcPath = resolve(SRC_ROOT, 'core', 'arc.ts')
+    const raw = readFileSync(arcPath, 'utf8')
+    const idx = raw.indexOf('async insertReflection(')
+    expect(idx, 'insertReflection method not found in core/arc.ts').toBeGreaterThan(-1)
+    // 600 chars covers any realistic method body (the method is ~15 lines).
+    const methodWindow = raw.slice(idx, idx + 600)
+    expect(
+      methodWindow.includes('maybeAssertArcInvariant'),
+      'insertReflection must call maybeAssertArcInvariant after its INSERT INTO tasks ' +
+        '(ADR-0052: every Arc write path runs assertArcInvariant; createOrigin and ' +
+        'spawnRecovery both do — insertReflection must too)',
+    ).toBe(true)
+  })
 })
 
 describe('ADR-0052: the Arc aggregate is the sole task_blockers writer', () => {
