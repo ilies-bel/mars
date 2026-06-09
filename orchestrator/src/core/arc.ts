@@ -65,12 +65,14 @@ import {
 import {
   CANCELLED_CASCADE_ACTION_QUEUE_KIND,
   CANCELLED_CASCADE_FAILURE_REASON,
+  ORPHANED_ORIGIN_FAILURE_REASON,
   PREREQUISITE_FAILED_ACTION_QUEUE_KIND,
   RETRY_BUDGET_FAILURE_REASON,
   WORKTREE_AHEAD_FAILURE_REASON,
   WorktreeAheadOfIntegrationError,
   integrationBranchName,
   raiseActionQueueForBlockedTask,
+  raiseOrphanedOriginActionQueue,
   raiseWorktreeAheadActionQueue,
   resetDependentWorktreeToIntegration,
   retryBudgetExhausted,
@@ -1868,10 +1870,29 @@ export class Arc {
         outcomes.push({ taskId: row.id, outcome: 'noop', retryCount })
         continue
       }
+      // Fetch the dependent task once; the same row is used for both the
+      // orphaned-origin guard below and the worktree-reset path further down.
+      const dep = await getTask(row.id)
+      // Guard: if the dependent's origin_id points at a different task that no
+      // longer exists in the tasks table, fail it rather than re-dispatching a
+      // coder against a vanished target.
+      if (dep?.originId && dep.originId !== dep.id) {
+        const originTask = await getTask(dep.originId)
+        if (!originTask) {
+          await raiseOrphanedOriginActionQueue(row.id, dep.originId)
+          await markTaskFailed(row.id, ORPHANED_ORIGIN_FAILURE_REASON)
+          outcomes.push({
+            taskId: row.id,
+            outcome: 'failed',
+            retryCount,
+            failureReason: ORPHANED_ORIGIN_FAILURE_REASON,
+          })
+          continue
+        }
+      }
       // Reset the dependent's worktree to integration HEAD BEFORE flipping it
       // to 'queued' — if the reset is refused (commits ahead) the dependent must
       // never enter the dispatch queue.
-      const dep = await getTask(row.id)
       try {
         await resetDependentWorktreeToIntegration(
           row.id,

@@ -51,6 +51,10 @@ export const ACTION_QUEUE_KINDS = [
   // The observability store (observability.duckdb) has exceeded 500 MB.
   // Raised by the daemon's periodic size watchdog; never triggers pruning.
   'observability-store-oversize',
+  // A blocked dependent's origin_id pointed at a task that no longer exists
+  // in the tasks table (deleted/purged). The dependent is failed rather than
+  // re-dispatched against a vanished target.
+  'orphaned-origin',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

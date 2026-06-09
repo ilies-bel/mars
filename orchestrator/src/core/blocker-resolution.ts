@@ -180,6 +180,43 @@ export interface BlockedDependentRow {
 
 export const RETRY_BUDGET_FAILURE_REASON = 'retry_budget_exhausted_at_unblock'
 
+export const ORPHANED_ORIGIN_FAILURE_REASON = 'orphaned_origin_at_unblock'
+export const ORPHANED_ORIGIN_ACTION_QUEUE_KIND: ActionQueueKind = 'orphaned-origin'
+
+export const raiseOrphanedOriginActionQueue = async (
+  taskId: string,
+  originId: string,
+): Promise<void> => {
+  try {
+    await raiseActionQueueItem({
+      kind: ORPHANED_ORIGIN_ACTION_QUEUE_KIND,
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Task ${taskId} unblocked but its origin ${originId} no longer exists`,
+      body:
+        `Task ${taskId} was about to be re-dispatched after its blocker(s) resolved, ` +
+        `but its origin_id points at ${originId} which no longer exists in the tasks table. ` +
+        `The dependent has been failed to prevent running a coder against a vanished target.\n\n` +
+        `Resolve manually: decide whether to drop the task or restart it with a valid origin.`,
+      payload: {
+        taskId,
+        originId,
+        failureReason: ORPHANED_ORIGIN_FAILURE_REASON,
+      },
+      context: { repoRoot: process.env.MARS_REPO ?? null },
+      raisedBy: 'agent:blocker-resolution',
+      signature: `${taskId}:orphaned-origin`,
+      originTaskId: taskId,
+      occurrence: {
+        at: new Date().toISOString(),
+        originId,
+      },
+    })
+  } catch {
+    /* best-effort: actionQueue failure must not block the cascade */
+  }
+}
+
 /**
  * A blocked dependent is failed at unblock time only when its retry
  * budget is actually spent: it has burned at least one retry
