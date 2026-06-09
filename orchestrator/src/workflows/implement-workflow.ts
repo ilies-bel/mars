@@ -35,6 +35,7 @@ import { handleTaskFailureWithFixTask } from '../core/queue-fix-tasks'
 import { computeFailureSignature } from '../core/lib/failure-signature'
 import { resolveOriginIdForTask } from '../core/lib/origin'
 import { type DomainTaskStore as TaskStore } from '../core/store/task-store'
+import { raiseActionQueueItem } from '../core/lib/action-queue'
 
 export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} has incomplete blockers; aborting dispatch (task remains queued)`
@@ -1320,37 +1321,73 @@ export const implementWorkflow = defineWorkflow<
           )
         }
         if (targetStatus.kind === 'dirty') {
-          const errorMsg = `merge target has uncommitted changes; cannot fast-forward into ${input.integrationBranch}`
+          // Dirty merge target is an OPERATOR/ENVIRONMENT condition, not a
+          // task defect. We must NOT consume the arc's single recovery budget
+          // (no handleTaskFailureWithFixTask call) — doing so terminal-fails
+          // recovery tasks whose committed work is correct, just because main
+          // happened to be dirty at merge time (see task mars-04599d9a).
+          //
+          // Instead: park the task as failed with failedPhase='merge' so
+          // `mars continue <id>` can re-attempt just the merge step once the
+          // operator has cleaned main. Raise a dedicated operator action-queue
+          // item with clear instructions. Real merge CONFLICTS (content-level)
+          // still route through mergeBranch → Vega unchanged.
+          const DIRTY_TARGET_SIGNATURE = 'merge:preflight/uncommitted-changes'
+          const errorMsg = `merge target ${targetStatus.targetPath} has uncommitted changes blocking fast-forward\n${targetStatus.statusOutput}`
           await updateTask(input.taskId, {
             status: 'failed',
             error: errorMsg,
             failedPhase: 'merge',
-            failureReason: 'verify:main-dirty',
-            failureReasonCode: 'verify:main-dirty',
+            failureReason: DIRTY_TARGET_SIGNATURE,
+            failureReasonCode: DIRTY_TARGET_SIGNATURE,
+            failureSignature: DIRTY_TARGET_SIGNATURE,
           }, store)
-          await handleTaskFailureWithFixTask({
-            taskId: input.taskId,
-            failingStep: 'merge:preflight',
-            // Classifier-friendly lead line; raw porcelain via recipeContext.
-            errorOutput: `merge target ${targetStatus.targetPath} has uncommitted changes blocking fast-forward\n${targetStatus.statusOutput}`,
-            branch,
-            store,
-            recipeContext: {
+          // Raise a targeted operator item — NOT recovery-failed — so the
+          // action queue clearly signals "clean main, then mars continue <id>".
+          raiseActionQueueItem({
+            kind: 'failed',
+            category: 'orchestrator',
+            priority: 'high',
+            title: `Merge blocked: ${input.integrationBranch} has uncommitted changes — clean and continue ${input.taskId}`,
+            body: [
+              `Task \`${input.taskId}\` reached the merge step with committed work on branch \`${branch}\`, but the merge target (\`${input.integrationBranch}\`) has uncommitted tracked changes on paths that the fast-forward would update.`,
+              '',
+              `This is an operator/environment condition, not a code defect. The task's committed work is intact on branch \`${branch}\`.`,
+              '',
+              `**To unblock:**`,
+              `1. Clean \`${input.integrationBranch}\`: commit, stash, or discard the uncommitted changes listed below.`,
+              `2. Run \`mars continue ${input.taskId}\` — this re-attempts just the merge step without re-running the coder.`,
+              `   (\`mars restart ${input.taskId}\` also works but discards the committed branch and re-runs from scratch.)`,
+              '',
+              `Dirty paths at failure time (may be stale — re-check before acting):`,
+              '```',
+              targetStatus.statusOutput,
+              '```',
+            ].join('\n'),
+            payload: {
+              taskId: input.taskId,
+              branch,
+              integrationBranch: input.integrationBranch,
               targetPath: targetStatus.targetPath,
               statusOutput: targetStatus.statusOutput,
-              targetBranch: input.integrationBranch,
-              // Handler backfills from task.prompt when '' is passed.
-              originalPrompt: '',
+            },
+            context: { repoRoot: process.env.MARS_REPO ?? null },
+            raisedBy: 'merge:preflight:dirty-target',
+            // Key on (taskId, signature) so repeated merge attempts for the
+            // same task collapse into one action-queue row.
+            signature: `${input.taskId}:${DIRTY_TARGET_SIGNATURE}`,
+            originTaskId: input.taskId,
+            occurrence: {
+              at: new Date().toISOString(),
+              taskId: input.taskId,
+              integrationBranch: input.integrationBranch,
             },
           }).catch((err) => {
             console.error(
-              `[failure-handler] task ${input.taskId} dirty-merge-target handling errored:`,
+              `[merge:preflight] task ${input.taskId} dirty-target action-queue raise errored:`,
               err,
             )
           })
-          // Throw instead of returning `{success:false}`: the engine records
-          // merge `failed`. The self-heal handler above already spawned the
-          // recovery task and parked the source `blocked`/`failed`.
           throw new Error(
             `task ${input.taskId} merge:preflight detected dirty target ${input.integrationBranch}`,
           )
