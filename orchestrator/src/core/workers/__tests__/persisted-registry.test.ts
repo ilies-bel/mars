@@ -167,6 +167,20 @@ describe('WorkerDeclaration tags', () => {
   })
 })
 
+describe('WorkerDeclaration runtime:pty round-trip', () => {
+  it('persists and reloads a pty runtime declaration without throwing', () => {
+    const ptyDecl: WorkerDeclaration = {
+      ...MINIMUM_DECL,
+      name: 'PtyWorker',
+      runtime: 'pty',
+    }
+    addWorkerToRegistry(stateDir, ptyDecl)
+    const loaded = loadWorkerRegistry(stateDir)
+    const found = loaded.find((d) => d.name === 'PtyWorker')
+    expect(found?.runtime).toBe('pty')
+  })
+})
+
 describe('listMergedWorkers', () => {
   it('returns exactly the five default workers when no registry file exists', () => {
     const workers = listMergedWorkers(stateDir)

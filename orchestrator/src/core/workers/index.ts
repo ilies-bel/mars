@@ -40,11 +40,12 @@ export const FIXER_BACKLOG_DENIED_TOOLS: readonly string[] = [
 
 export type WorkerName = 'Coder' | 'Planner' | 'Slicer' | 'Triager' | 'Fixer'
 
-// Execution runtime for a Worker. 'headless' is the current default and only
-// supported value — the Worker runs via `claude -p` in a non-interactive
-// subprocess. Future values (e.g. 'tmux') are reserved for later PRDs; no
-// dispatch logic branches on this field yet.
-export type WorkerRuntime = 'headless'
+// Execution runtime for a Worker. 'headless' runs via `claude -p` in a
+// non-interactive subprocess (current default for all built-in Workers).
+// 'pty' drives the agent under node-pty — non-attachable (no operator terminal
+// access; the operator reads traces/logs after the fact). No dispatch logic
+// branches on this field yet.
+export type WorkerRuntime = 'headless' | 'pty'
 
 export type ClaudeOutputFormat = 'stream-json' | 'json' | 'text'
 
@@ -103,9 +104,10 @@ export interface WorkerConfig {
   // induced kill is treated as a FAILURE (reason: context-exhausted) and
   // routed through the normal recovery flow.
   readonly maxContextTokens: number
-  // Execution runtime for this Worker. Always 'headless' for existing Workers —
-  // dispatched via `claude -p` in a non-interactive subprocess. Reserved for
-  // future runtimes (e.g. 'tmux'); no dispatch logic branches on this field yet.
+  // Execution runtime for this Worker. All built-in Workers use 'headless'
+  // (dispatched via `claude -p` in a non-interactive subprocess). 'pty' is the
+  // node-pty harness — non-attachable; the operator reads traces/logs after the
+  // fact. No dispatch logic branches on this field yet.
   readonly runtime: WorkerRuntime
   // Tags this Worker handles. pickWorkerForTags returns this Worker when the
   // task's tag list intersects this set. Workers with no tags entry are never
