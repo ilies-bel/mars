@@ -29,14 +29,16 @@ export function formatKpiValue(key: KpiKey, value: number): string {
 }
 
 /**
- * Maps a KpiBand to a left-border accent color class.
- * Uses the existing Tailwind palette (green/amber/red).
- * The neutral (low-confidence) variant has no colored border.
+ * Maps a KpiBand to display cues: a glyph + text label (non-color cue) and
+ * a semantic color token class (no raw Tailwind palette colors).
+ *
+ * Both the shape (glyph) and the label are color-independent so the band is
+ * legible without relying on hue (red/green-colorblind accessibility).
  */
-const BAND_BORDER: Record<'good' | 'warn' | 'bad', string> = {
-  good: 'border-l-4 border-l-green-500',
-  warn: 'border-l-4 border-l-amber-400',
-  bad: 'border-l-4 border-l-red-500',
+const BAND_CUES: Record<'good' | 'warn' | 'bad', { glyph: string; label: string; colorClass: string }> = {
+  good: { glyph: '✓', label: 'Good', colorClass: 'text-success' },
+  warn: { glyph: '⚠', label: 'Warn', colorClass: 'text-warn' },
+  bad:  { glyph: '✕', label: 'Bad',  colorClass: 'text-error' },
 }
 
 interface KpiTileProps {
@@ -59,18 +61,24 @@ export const KpiTile = ({ kpi }: KpiTileProps) => {
   }
 
   const band = kpiBand(kpi.key, kpi.currentValue)
-  const borderClass = BAND_BORDER[band]
+  const cue = BAND_CUES[band]
   const seriesPoints = (kpi.series ?? []).map((p) => p.value)
 
   return (
     <a
       href={kpiHash(kpi.key)}
-      className={`flex w-[180px] min-h-[120px] flex-col items-center justify-between rounded border border-iron/20 bg-surface px-4 py-2 font-mono no-underline hover:bg-iron/5 focus:outline-none focus:ring-2 focus:ring-iron/40 ${borderClass}`}
-      aria-label={`View ${label} details`}
+      className="flex w-[180px] min-h-[120px] flex-col items-center justify-between rounded border border-iron/20 bg-surface px-4 py-2 font-mono no-underline hover:bg-iron/5 focus:outline-none focus:ring-2 focus:ring-iron/40"
+      aria-label={`View ${label} details — ${cue.label}`}
     >
       <span className="text-[10px] uppercase tracking-wide text-muted">{label}</span>
       <Sparkline points={seriesPoints} />
-      <span className="text-lg font-semibold text-fg">{formatKpiValue(kpi.key, kpi.currentValue)}</span>
+      <div className="flex flex-col items-center gap-0.5">
+        <span className="text-lg font-semibold text-fg">{formatKpiValue(kpi.key, kpi.currentValue)}</span>
+        <span className={`flex items-center gap-1 text-[10px] ${cue.colorClass}`}>
+          <span aria-hidden="true">{cue.glyph}</span>
+          <span>{cue.label}</span>
+        </span>
+      </div>
     </a>
   )
 }

@@ -190,6 +190,104 @@ describe('KpiTile — sparkline rendering', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Band indicator — non-color cue + semantic tokens
+// ---------------------------------------------------------------------------
+
+describe('KpiTile — band indicator', () => {
+  it('renders a text label "Good" for a good-band KPI (cost_per_arc < 50k)', () => {
+    // cost_per_arc=2.5 → kpiBand → 'good'
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5 })} />,
+    )
+    expect(html).toContain('Good')
+  })
+
+  it('renders the ✓ glyph for a good-band KPI', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5 })} />,
+    )
+    expect(html).toContain('✓')
+  })
+
+  it('renders a text label "Warn" for a warn-band KPI (failure_rate at boundary 0.05)', () => {
+    // failure_rate=0.05 → kpiBand → 'warn' (0.02 <= 0.05 <= 0.05)
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.05 })} />,
+    )
+    expect(html).toContain('Warn')
+  })
+
+  it('renders the ⚠ glyph for a warn-band KPI', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.05 })} />,
+    )
+    expect(html).toContain('⚠')
+  })
+
+  it('renders a text label "Bad" for a bad-band KPI (failure_rate > 0.05)', () => {
+    // failure_rate=0.10 → kpiBand → 'bad'
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.10 })} />,
+    )
+    expect(html).toContain('Bad')
+  })
+
+  it('renders the ✕ glyph for a bad-band KPI', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.10 })} />,
+    )
+    expect(html).toContain('✕')
+  })
+
+  it('does not render a left-border stripe (no border-l-4 class)', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.05 })} />,
+    )
+    expect(html).not.toContain('border-l-4')
+  })
+
+  it('uses semantic token class text-success for good band, not raw green-500', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5 })} />,
+    )
+    expect(html).toContain('text-success')
+    expect(html).not.toContain('green-500')
+  })
+
+  it('uses semantic token class text-warn for warn band, not raw amber-400', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.05 })} />,
+    )
+    expect(html).toContain('text-warn')
+    expect(html).not.toContain('amber-400')
+  })
+
+  it('uses semantic token class text-error for bad band, not raw red-500', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.10 })} />,
+    )
+    expect(html).toContain('text-error')
+    expect(html).not.toContain('red-500')
+  })
+
+  it('band indicator is not rendered in the low-confidence path', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, lowConfidence: true })} />,
+    )
+    expect(html).not.toContain('Good')
+    expect(html).not.toContain('✓')
+  })
+
+  it('aria-label includes the band status label', () => {
+    // good band — aria-label should mention "Good"
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5 })} />,
+    )
+    expect(html).toContain('Good')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Low-confidence path
 // ---------------------------------------------------------------------------
 

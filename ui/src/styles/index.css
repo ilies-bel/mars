@@ -50,9 +50,10 @@
   --color-dune:      #B49B63;
   --color-ice:       #D9E4E8;
 
-  /* Semantic error / warn — replace all hardcoded #ff4f4f / #ff944d */
+  /* Semantic error / warn / success — replace all hardcoded #ff4f4f / #ff944d */
   --color-error:     #B91C1C;  /* 5.3:1 on bg */
   --color-warn:      #92400E;  /* 5.6:1 on bg */
+  --color-success:   #166534;  /* 6.1:1 on bg */
 
   /* DAG cluster chip colours — consumed via CSS var() in SVG style props */
   --color-dag-proposal-fill:       #2e1065;
