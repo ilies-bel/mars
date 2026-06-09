@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
+  chmodSync,
   mkdtempSync,
   mkdirSync,
   writeFileSync,
@@ -16,6 +17,7 @@ import {
   selectVerifySteps,
   getChangedFiles,
   checkBranchHasDiff,
+  TSC_DECOY_MARKER,
   type VerifyScope,
 } from '../git/verify'
 import {
@@ -495,5 +497,101 @@ describe('main-commiter recovery — verify step exemption', () => {
         ? []
         : selectVerifySteps(scopeWithSteps, changedFiles)
     expect(steps.map((s) => s.name)).toEqual(['test', 'typecheck', 'lint'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Typecheck step — tsc-presence guard (regression for spurious
+// verify:typecheck failures in non-TypeScript repos such as gustave).
+//
+// When a supervisors manifest includes an `npx tsc --noEmit` step but the
+// verify target has no real TypeScript toolchain installed (Kotlin/Gradle
+// repos, cross-repo tasks, repos where node_modules was never installed),
+// the step must be SKIPPED rather than run. Running it would invoke the npm
+// decoy package and produce "This is not the tsc command you are looking
+// for" — a misconfiguration signal, not a code-level typecheck failure.
+// ---------------------------------------------------------------------------
+describe('typecheck step — no-tsc-toolchain skip guard', () => {
+  const typecheckStep = {
+    name: 'typecheck',
+    cmd: 'npx',
+    args: ['tsc', '--noEmit'],
+    required: true,
+  }
+
+  it('skips and passes (no failure) when the step dir has no tsconfig.json', async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'mars-tsc-skip-no-tsconfig-'))
+    try {
+      // Neither tsconfig.json nor node_modules/.bin/tsc — a pure Kotlin repo.
+      const r = await verifyChanges({ cwd: dir, steps: [typecheckStep] })
+      expect(r.passed).toBe(true)
+      expect(r.steps).toHaveLength(1)
+      expect(r.steps[0].passed).toBe(true)
+      expect(r.steps[0].output).toMatch(/skipped/i)
+      // The guard must NOT report a verify:typecheck/unclassified style failure.
+      expect(r.steps[0].output).not.toContain(TSC_DECOY_MARKER)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('skips and passes when tsconfig.json is present but node_modules/.bin/tsc is absent', async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'mars-tsc-skip-no-bin-'))
+    try {
+      writeFileSync(resolve(dir, 'tsconfig.json'), '{}')
+      // tsconfig exists but TypeScript is not npm-installed — decoy risk.
+      const r = await verifyChanges({ cwd: dir, steps: [typecheckStep] })
+      expect(r.passed).toBe(true)
+      expect(r.steps[0].passed).toBe(true)
+      expect(r.steps[0].output).toMatch(/skipped/i)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('does NOT skip when both tsconfig.json and node_modules/.bin/tsc are present', async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'mars-tsc-runs-'))
+    try {
+      writeFileSync(resolve(dir, 'tsconfig.json'), '{}')
+      const binDir = resolve(dir, 'node_modules', '.bin')
+      mkdirSync(binDir, { recursive: true })
+      // Fake tsc that exits 0 — the presence guard should not fire.
+      const fakeTsc = resolve(binDir, 'tsc')
+      writeFileSync(fakeTsc, '#!/bin/sh\nexit 0\n')
+      chmodSync(fakeTsc, 0o755)
+      const r = await verifyChanges({ cwd: dir, steps: [typecheckStep] })
+      expect(r.passed).toBe(true)
+      // The step should have ACTUALLY run (not been silently skipped by the
+      // pre-flight guard), so the output must not contain "skipped".
+      expect(r.steps[0].output).not.toMatch(/skipped/i)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('treats decoy-tsc output as a skip signal rather than a typecheck failure', async () => {
+    // Represents the scenario where the pre-flight guard passes (tsconfig.json
+    // + local tsc binary both present) but the binary itself is the npm decoy
+    // — it outputs the well-known marker and exits non-zero.
+    const dir = mkdtempSync(resolve(tmpdir(), 'mars-tsc-decoy-'))
+    try {
+      writeFileSync(resolve(dir, 'tsconfig.json'), '{}')
+      const binDir = resolve(dir, 'node_modules', '.bin')
+      mkdirSync(binDir, { recursive: true })
+      // Decoy: outputs the marker and exits 1 — mirrors the real npm placeholder.
+      const decoyTsc = resolve(binDir, 'tsc')
+      writeFileSync(
+        decoyTsc,
+        `#!/bin/sh\necho "${TSC_DECOY_MARKER}"\nexit 1\n`,
+      )
+      chmodSync(decoyTsc, 0o755)
+      const r = await verifyChanges({ cwd: dir, steps: [typecheckStep] })
+      // Must not produce a verify:typecheck failure — the step passes as a skip.
+      expect(r.passed).toBe(true)
+      expect(r.steps[0].passed).toBe(true)
+      expect(r.steps[0].output).toMatch(/decoy|skipped/i)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

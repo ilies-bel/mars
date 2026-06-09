@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import {
@@ -6,6 +7,20 @@ import {
   resolveGitBin,
   type TraceCtx,
 } from './internal'
+
+/**
+ * The output marker emitted by the npm decoy `tsc` placeholder when
+ * `npx tsc` is invoked without TypeScript properly installed. When this
+ * string appears in a failing typecheck step's output, the step should be
+ * treated as a skip rather than a real typecheck failure.
+ */
+export const TSC_DECOY_MARKER = 'This is not the tsc command you are looking for'
+
+// True when the step is an `npx tsc …` invocation. Used in two places
+// inside verifyChanges: the pre-flight presence guard and the post-flight
+// decoy-output guard.
+const isNpxTscStep = (spec: VerifyStepSpec): boolean =>
+  spec.cmd === 'npx' && spec.args.length > 0 && spec.args[0] === 'tsc'
 
 export interface VerifyStep {
   name: string
@@ -358,6 +373,34 @@ export const verifyChanges = async (
     // the verify root; a narrower scope runs in its subdirectory.
     const stepCwd =
       spec.dir && spec.dir !== '.' ? resolve(args.cwd, spec.dir) : args.cwd
+
+    // Pre-flight tsc-presence guard: skip `npx tsc` steps when no real
+    // TypeScript toolchain is detected in the step directory. A real
+    // toolchain requires both a tsconfig.json (the project is configured
+    // for TypeScript) and a locally-installed tsc binary. Without the
+    // local binary, `npx tsc` resolves to the npm decoy package and emits
+    // "This is not the tsc command you are looking for" rather than
+    // running an actual typecheck. Skipping avoids a spurious required-
+    // step failure in Kotlin/Gradle or other non-TypeScript repos.
+    if (isNpxTscStep(spec)) {
+      const hasTsconfig = existsSync(resolve(stepCwd, 'tsconfig.json'))
+      // Check both the step dir and one level up (workspace/monorepo hoist).
+      const hasBin =
+        existsSync(resolve(stepCwd, 'node_modules', '.bin', 'tsc')) ||
+        existsSync(resolve(stepCwd, '..', 'node_modules', '.bin', 'tsc'))
+      if (!hasTsconfig || !hasBin) {
+        results.push({
+          name: spec.name,
+          passed: true,
+          output: `typecheck skipped: no real TypeScript toolchain detected in ${stepCwd} (tsconfig.json present: ${hasTsconfig}, local tsc binary found: ${hasBin})`,
+          cmd: spec.cmd,
+          args: [...spec.args],
+          stepDir: stepCwd,
+        })
+        continue
+      }
+    }
+
     const result = await runVerifyStep(
       spec.name,
       spec.cmd,
@@ -365,6 +408,21 @@ export const verifyChanges = async (
       stepCwd,
       verifyCtx,
     )
+
+    // Post-flight decoy guard: if `npx tsc` exited non-zero with the
+    // well-known placeholder message, treat it as a skip rather than a
+    // code-level typecheck failure. This is a misconfiguration signal —
+    // the TypeScript package is not properly installed — not an actual
+    // type error that the agent should attempt to fix.
+    if (isNpxTscStep(spec) && !result.passed && result.output.includes(TSC_DECOY_MARKER)) {
+      results.push({
+        ...result,
+        passed: true,
+        output: `typecheck skipped (decoy tsc detected — TypeScript not installed): ${result.output}`,
+      })
+      continue
+    }
+
     results.push(result)
     if (!result.passed && spec.required) {
       stoppedOnRequired = true
