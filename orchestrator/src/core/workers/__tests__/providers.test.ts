@@ -98,6 +98,61 @@ describe('PROVIDERS registry', () => {
     expect(signal.promptPrefix).toBeTruthy()
     expect(signal.spinnerOverride).toBeInstanceOf(RegExp)
   })
+
+  it("contains the 'codex' entry", () => {
+    expect(Object.keys(PROVIDERS)).toContain('codex')
+  })
+
+  it("'codex' provider has a name matching its key", () => {
+    expect(PROVIDERS.codex.name).toBe('codex')
+  })
+
+  it("'codex' provider spawnArgv starts with 'codex' and has no '-p' flag", () => {
+    const argv = PROVIDERS.codex.spawnArgv({})
+    expect(argv[0]).toBe('codex')
+    expect(argv).not.toContain('-p')
+  })
+
+  it("'codex' provider spawnArgv includes '--model' when model is supplied", () => {
+    const argv = PROVIDERS.codex.spawnArgv({ model: 'o4-mini' })
+    expect(argv).toContain('--model')
+    expect(argv).toContain('o4-mini')
+  })
+
+  it("'codex' provider spawnArgv omits '--model' when model is absent", () => {
+    const argv = PROVIDERS.codex.spawnArgv({})
+    expect(argv).not.toContain('--model')
+  })
+
+  it("'codex' provider feedPrompt writes the prompt body then the CR terminator", async () => {
+    const written: string[] = []
+    const fakePtyHandle = {
+      write(data: string): void {
+        written.push(data)
+      },
+    }
+
+    await PROVIDERS.codex.feedPrompt(fakePtyHandle, 'build this feature')
+
+    expect(written).toHaveLength(2)
+    expect(written[0]).toBe('build this feature')
+    expect(written[1]).toBe('\r')
+  })
+
+  it("'codex' provider doneSignal is a prompt-scan signal with promptPrefix 'codex>' and spinnerOverride regex", () => {
+    expect(PROVIDERS.codex.doneSignal).toBeDefined()
+    expect(PROVIDERS.codex.doneSignal?.kind).toBe('prompt-scan')
+    const signal = PROVIDERS.codex.doneSignal as { kind: string; promptPrefix?: unknown; spinnerOverride?: unknown }
+    expect(signal.promptPrefix).toBe('codex>')
+    expect(signal.spinnerOverride).toBeInstanceOf(RegExp)
+  })
+
+  it("'codex' doneSignal spinnerOverride matches all braille spinner characters followed by space and text", () => {
+    const ds = PROVIDERS.codex.doneSignal as { kind: string; spinnerOverride: RegExp }
+    for (const spinner of ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']) {
+      expect(ds.spinnerOverride.test(`${spinner} processing...`)).toBe(true)
+    }
+  })
 })
 
 describe('WORKER_CONFIGS provider field', () => {

@@ -28,6 +28,7 @@ vi.mock('../../lib/pty/spawn', () => ({
 import { spawnPty } from '../../lib/pty/spawn'
 import { runPtySession } from '../run-pty-session'
 import { createWorker, WORKER_CONFIGS } from '..'
+import { PROVIDERS } from '../providers'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -478,5 +479,65 @@ describe('runPtySession — pty.log and events.jsonl persistence', () => {
     // Log file must exist and be readable (even if empty)
     const logPath = pathMod.join(tmpDir, '.mars', 'pty', `${sessionId}.log`)
     expect(fs.existsSync(logPath)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Integration: codex provider with prompt-scan done signal (slice 9)
+//
+// Runs PROVIDERS.codex end-to-end through runPtySession against a stubbed pty
+// whose buffer emits the configured spinner pattern then the 'codex>' prompt
+// prefix. Asserts the run resolves cleanly with exitCode 0.
+// ---------------------------------------------------------------------------
+
+describe('runPtySession — codex provider (prompt-scan done signal)', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'codex-pty-test-'))
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('resolves with exitCode 0 when the pty buffer emits the codex spinner then the prompt prefix', async () => {
+    const dataListeners: Array<(chunk: string) => void> = []
+    let currentBuffer = ''
+
+    const codexHandle = {
+      write: vi.fn(),
+      kill: vi.fn(),
+      buffer: vi.fn<() => string>().mockImplementation(() => currentBuffer),
+      onData(cb: (chunk: string) => void): void {
+        dataListeners.push(cb)
+      },
+      onExit: vi.fn(),
+    }
+
+    vi.mocked(spawnPty).mockReturnValue(codexHandle as unknown as ReturnType<typeof makeFakeHandle>)
+
+    const runPromise = runPtySession({
+      provider: PROVIDERS.codex,
+      prompt: 'scaffold the feature',
+      cwd: tmpDir,
+      sessionId: 'codex-integration-sess',
+      model: 'o4-mini',
+    })
+
+    // Emit spinner then prompt prefix after feedPrompt resolves.
+    // watchPromptScan registers its onData listener after feedPrompt, so a
+    // macrotask boundary (setTimeout 0) guarantees both listeners are in place
+    // before we fire the simulated pty output.
+    setTimeout(() => {
+      currentBuffer = '⠋ thinking...'
+      for (const cb of dataListeners) cb('⠋ thinking...')
+      currentBuffer += '\ncodex>'
+      for (const cb of dataListeners) cb('\ncodex>')
+    }, 0)
+
+    const result = await runPromise
+    expect(result.exitCode).toBe(0)
   })
 })

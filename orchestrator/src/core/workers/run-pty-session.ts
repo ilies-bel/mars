@@ -10,6 +10,7 @@ import path from 'node:path'
 import { spawnPty } from '../lib/pty/spawn'
 import type { Provider } from './providers'
 import type { RunClaudeResult } from '../lib/git/claude'
+import { watchPromptScan } from './prompt-scan-done'
 
 export interface RunPtySessionArgs {
   readonly provider: Provider
@@ -70,17 +71,18 @@ export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeR
 
     // Settle on the Provider's done-signal if one is registered, otherwise fall
     // back to waiting for the pty process to exit naturally.
-    // Narrow the ProviderDoneSignal union: only 'status-file' exposes a wait()
-    // method; 'prompt-scan' signals are detected by scanning the pty buffer
-    // (reserved for a future slice). Both unrecognised kinds fall through to
-    // process-exit.
+    //   status-file  — wait() watches for a sentinel file written by the Stop hook.
+    //   prompt-scan  — watchPromptScan scans the pty buffer for the spinner+prompt.
+    //   (none)       — fall back to process-exit.
     const ds = provider.doneSignal
     const waitDone: Promise<void> =
       ds?.kind === 'status-file'
         ? ds.wait(sessionId ?? '', cwd, innerAbort.signal)
-        : new Promise<void>((resolve) => {
-            handle.onExit(() => resolve())
-          })
+        : ds?.kind === 'prompt-scan'
+          ? watchPromptScan(handle, ds, innerAbort.signal)
+          : new Promise<void>((resolve) => {
+              handle.onExit(() => resolve())
+            })
 
     try {
       // Handle an already-fired abort up front so we don't enter the race.
