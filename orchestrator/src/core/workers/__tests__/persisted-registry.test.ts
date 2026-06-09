@@ -176,6 +176,20 @@ describe('WorkerDeclaration runtime:pty round-trip', () => {
     const found = loaded.find((d) => d.name === 'PtyWorker')
     expect(found?.runtime).toBe('pty')
   })
+
+  it('persists and reloads a provider:gemini + runtime:pty declaration', () => {
+    const geminiDecl: WorkerDeclaration = {
+      ...MINIMUM_DECL,
+      name: 'GeminiWorker',
+      provider: 'gemini',
+      runtime: 'pty',
+    }
+    addWorkerToRegistry(stateDir, geminiDecl)
+    const loaded = loadWorkerRegistry(stateDir)
+    const found = loaded.find((d) => d.name === 'GeminiWorker')
+    expect(found?.provider).toBe('gemini')
+    expect(found?.runtime).toBe('pty')
+  })
 })
 
 describe('listMergedWorkers', () => {

@@ -60,6 +60,44 @@ describe('PROVIDERS registry', () => {
     expect(PROVIDERS.claude.doneSignal).toHaveProperty('wait')
     expect(typeof (PROVIDERS.claude.doneSignal as { wait?: unknown })?.wait).toBe('function')
   })
+
+  it("contains the 'gemini' entry", () => {
+    expect(Object.keys(PROVIDERS)).toContain('gemini')
+  })
+
+  it("'gemini' provider has a name matching its key", () => {
+    expect(PROVIDERS.gemini.name).toBe('gemini')
+  })
+
+  it("'gemini' provider spawnArgv starts with 'gemini' and has no '-p' flag", () => {
+    const argv = PROVIDERS.gemini.spawnArgv({})
+    expect(argv[0]).toBe('gemini')
+    expect(argv).not.toContain('-p')
+  })
+
+  it("'gemini' provider feedPrompt writes the prompt body then the CR terminator", async () => {
+    const written: string[] = []
+    const fakePtyHandle = {
+      write(data: string): void {
+        written.push(data)
+      },
+    }
+
+    await PROVIDERS.gemini.feedPrompt(fakePtyHandle, 'do something')
+
+    expect(written).toHaveLength(2)
+    expect(written[0]).toBe('do something')
+    expect(written[1]).toBe('\r')
+  })
+
+  it("'gemini' provider doneSignal is a prompt-scan signal with promptPrefix and spinnerOverride", () => {
+    expect(PROVIDERS.gemini.doneSignal).toBeDefined()
+    expect(PROVIDERS.gemini.doneSignal?.kind).toBe('prompt-scan')
+    const signal = PROVIDERS.gemini.doneSignal as { kind: string; promptPrefix?: unknown; spinnerOverride?: unknown }
+    expect(typeof signal.promptPrefix).toBe('string')
+    expect(signal.promptPrefix).toBeTruthy()
+    expect(signal.spinnerOverride).toBeInstanceOf(RegExp)
+  })
 })
 
 describe('WORKER_CONFIGS provider field', () => {

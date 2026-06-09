@@ -1,14 +1,10 @@
 // Provider registry — one auditable location for how a Worker spawns and
 // feeds prompts to an agent CLI. Each Provider bundles the spawn argv
 // builder, the prompt-feed method, and an optional done-signal hook.
-//
-// Currently only 'claude' is registered. Future slices will add runtimes
-// that drive other CLIs or interactive harnesses; dispatch branching on
-// provider is reserved for those slices — this slice is data-only.
 
 import { waitForClaudeDone } from './claude-done-signal'
 
-export type ProviderName = 'claude'
+export type ProviderName = 'claude' | 'gemini'
 
 // Runtime options forwarded to spawnArgv when the orchestrator launches
 // a Provider process. Typed as a plain record so future slices can widen
@@ -86,6 +82,29 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       kind: 'status-file' as const,
       wait: (sessionId: string, cwd: string, signal: AbortSignal): Promise<void> =>
         waitForClaudeDone(cwd, sessionId, signal),
+    },
+  },
+  gemini: {
+    name: 'gemini',
+    // Argv for interactive gemini invocations under the native TTY harness.
+    // No headless/pipe flag — the agent runs interactively and receives the
+    // task prompt via feedPrompt below.
+    spawnArgv: (_opts: SpawnOpts): readonly string[] => ['gemini'],
+    // Write the prompt into the running pty followed by the submit key
+    // sequence (CR) so the interactive harness starts execution.
+    feedPrompt: async (handle: ProcessHandle, prompt: string): Promise<void> => {
+      handle.write(prompt)
+      handle.write('\r')
+    },
+    // Prompt-scan done-signal: the orchestrator watches the pty output buffer
+    // for the gemini shell prompt returning after the spinner clears.
+    doneSignal: {
+      kind: 'prompt-scan' as const,
+      // Gemini CLI returns to this prefix once it is ready for the next input.
+      promptPrefix: '> ',
+      // Braille spinner characters emitted by gemini while processing a task,
+      // followed by optional whitespace / ANSI clear sequences.
+      spinnerOverride: /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/,
     },
   },
 } as const

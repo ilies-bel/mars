@@ -15,6 +15,7 @@ import {
   type ClaudeOutputFormat,
   type WorkerRuntime,
 } from './index'
+import type { ProviderName } from './providers'
 
 // A Worker declaration as stored in the registry file. Same shape as
 // WorkerConfig but name is a plain string — not constrained to the built-in
@@ -30,6 +31,9 @@ export interface WorkerDeclaration {
   readonly disallowedTools: readonly string[]
   readonly outputFormat: ClaudeOutputFormat
   readonly runtime: WorkerRuntime
+  // Which agent CLI this Worker drives. Defaults to 'claude' when absent for
+  // backwards-compat with pre-provider registry entries.
+  readonly provider?: ProviderName
   // Free-form list of routing tags. pickWorkerForTags routes a task to this
   // Worker when the task's tag list intersects this set. Any string is valid;
   // well-known values mirror the built-in Worker names (e.g. 'coder',
@@ -67,6 +71,7 @@ const configToDeclaration = (
   disallowedTools: [...config.disallowedTools],
   outputFormat: config.outputFormat,
   runtime: config.runtime,
+  provider: config.provider,
   ...(config.tags !== undefined ? { tags: [...config.tags] } : {}),
 })
 
