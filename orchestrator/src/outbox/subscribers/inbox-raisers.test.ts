@@ -2,21 +2,21 @@
  * Inbox-raiser Outbox Subscribers — behaviour tests.
  *
  * These tests drive the subscriber handlers directly (without a running
- * dispatcher) so every assertion is synchronous and deterministic. The
- * file-backed SQLite client mirrors the real daemon setup: a single
- * `mars.db` that holds both the outbox `events` table and the
- * `action_queue_items` table, so the processedOnce dedup row and the
- * inbox write are co-located and covered by the same write transaction.
+ * dispatcher) so every assertion is synchronous and deterministic.
+ *
+ * The test setup mirrors the pattern used in action-queue.test.ts: a real
+ * git repo is created in a temp directory, MARS_REPO is set to point to it,
+ * and vi.resetModules() ensures stateClient() (used by raiseActionQueueItem)
+ * opens the same `mars.db` file as the test client. All writes — the
+ * processedOnce dedup row and the action_queue_items row — land in the same
+ * file, so assertions on the test client see the rows raised by the handler.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createClient, type Client } from '@libsql/client';
-import {
-  buildInboxRaiserSubscribers,
-  ensureInboxRaiserSchema,
-} from './inbox-raisers.js';
 import type { BusEvent } from '../../bus/events.js';
 
 // ---------------------------------------------------------------------------
@@ -24,24 +24,28 @@ import type { BusEvent } from '../../bus/events.js';
 // ---------------------------------------------------------------------------
 
 /**
- * File-backed libsql client with all tables required by the inbox-raiser
- * subscriber. In-memory URLs are unsuitable because libsql's local backend
- * opens a fresh connection per transaction and would see empty tables.
+ * Create a minimal git repo in a temp directory so resolveContext() (used by
+ * stateClient()) can locate the repo root. Sets MARS_REPO so the repo is
+ * found without git, then resets all module caches so stateClient() and
+ * resolveOriginIdForTask() open the fresh test DB.
  */
-async function makeClient(dir: string): Promise<Client> {
-  const client = createClient({ url: `file:${join(dir, 'mars.db')}` });
+function setupRepo(): string {
+  const repo = mkdtempSync(join(tmpdir(), 'mars-inbox-raisers-test-'));
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  mkdirSync(join(repo, '.mars'), { recursive: true });
+  return repo;
+}
 
-  // Outbox events table (the subscriber cursor lives here).
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS events (
-      id      INTEGER PRIMARY KEY AUTOINCREMENT,
-      type    TEXT    NOT NULL,
-      payload TEXT    NOT NULL,
-      ts      INTEGER NOT NULL DEFAULT (unixepoch())
-    )
-  `);
+/**
+ * File-backed libsql client pointing at the same path stateClient() would
+ * use for the given repo root. Includes all tables the inbox-raiser subscriber
+ * writes to or reads from.
+ */
+async function makeClient(repo: string): Promise<Client> {
+  const dbPath = resolve(repo, '.mars', 'mars.db');
+  const client = createClient({ url: `file:${dbPath}` });
 
-  // Action-queue inbox tables (the subscriber's side-effect destination).
+  // Action-queue inbox tables (written by raiseActionQueueItem).
   await client.execute(`
     CREATE TABLE IF NOT EXISTS action_queue_items (
       id              TEXT    PRIMARY KEY,
@@ -76,6 +80,19 @@ async function makeClient(dir: string): Promise<Client> {
       to_state   TEXT NOT NULL,
       by         TEXT,
       note       TEXT
+    )
+  `);
+
+  // Minimal tasks table for origin-resolution tests.
+  // resolveOriginIdForTask queries: SELECT origin_id, id FROM tasks WHERE id = ?
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id         TEXT PRIMARY KEY,
+      prompt     TEXT NOT NULL DEFAULT '',
+      status     TEXT NOT NULL DEFAULT 'queued',
+      created_at TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT '',
+      origin_id  TEXT
     )
   `);
 
@@ -142,15 +159,36 @@ async function openRowForTask(
 describe('inbox-raiser:task.blocked subscriber', () => {
   let tmpDir: string;
   let client: Client;
+  let buildInboxRaiserSubscribers: typeof import('./inbox-raisers.js').buildInboxRaiserSubscribers;
+  let ensureInboxRaiserSchema: typeof import('./inbox-raisers.js').ensureInboxRaiserSchema;
 
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'mars-inbox-raisers-test-'));
+    tmpDir = setupRepo();
+
+    // Set MARS_REPO before resetting modules so stateClient() and
+    // resolveOriginIdForTask() both open the test repo's mars.db on first use.
+    process.env.MARS_REPO = tmpDir;
+
+    // Reset all module-level singletons (stateClient, queueClient, context
+    // cache, action-queue initialised flag, etc.) so each test gets a clean
+    // module environment pointed at the fresh tmpDir.
+    vi.resetModules();
+
+    // Create the test DB at the same path stateClient() will use.
     client = await makeClient(tmpDir);
+
+    // Dynamic import AFTER resetModules so we get the fresh module instances.
+    const mod = await import('./inbox-raisers.js');
+    buildInboxRaiserSubscribers = mod.buildInboxRaiserSubscribers;
+    ensureInboxRaiserSchema = mod.ensureInboxRaiserSchema;
+
+    // Create the subscriber_processed_events dedup table on the shared client.
     await ensureInboxRaiserSchema(client);
   });
 
   afterEach(() => {
     client.close();
+    delete process.env.MARS_REPO;
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -205,7 +243,7 @@ describe('inbox-raiser:task.blocked subscriber', () => {
     expect(await openRowCount(client)).toBe(1);
     const row = await openRowForTask(client, 'task-charlie');
     // seen_count must NOT have changed — processedOnce blocked re-entry
-    // before the sideEffect even ran.
+    // before raiseActionQueueItem even ran.
     expect(row!.seenCount).toBe(1);
   });
 
@@ -228,10 +266,10 @@ describe('inbox-raiser:task.blocked subscriber', () => {
 
   it('processedOnce dedup persists across subscriber instances, preventing a double-raise on restart', async () => {
     // Simulates: first subscriber instance processes the event successfully
-    // (processedOnce commits dedup row + inbox row) but the cursor advance
-    // fails before the daemon dies. On restart a second subscriber instance
-    // sees the same event (cursor still behind). The persisted dedup row
-    // must prevent a second inbox raise.
+    // (processedOnce commits dedup row) but the cursor advance fails before
+    // the daemon dies. On restart a second subscriber instance sees the same
+    // event (cursor still behind). The persisted dedup row must prevent a
+    // second raise.
     const event = blockedEvent(7, 'task-echo');
 
     const [sub1] = buildInboxRaiserSubscribers(client);
@@ -254,7 +292,7 @@ describe('inbox-raiser:task.blocked subscriber', () => {
     const [subscriber] = buildInboxRaiserSubscribers(client);
 
     // Different event ids → processedOnce allows both, but origin-fingerprint
-    // dedup inside the sideEffect collapses them into one row.
+    // dedup inside raiseActionQueueItem collapses them into one row.
     await subscriber.handler(blockedEvent(10, 'task-foxtrot'));
     await subscriber.handler(blockedEvent(11, 'task-foxtrot'));
 
@@ -317,5 +355,56 @@ describe('inbox-raiser:task.blocked subscriber', () => {
     const rowForOrigin = await openRowForTask(client, 'origin-juliet');
     expect(rowForOrigin).not.toBeNull();
     expect(rowForOrigin!.originTaskId).toBe('origin-juliet');
+  });
+
+  // ── DB-based arc-origin resolution (ADR-0051 violation fix) ───────────
+  // When originId is absent from the event payload but the task row in the DB
+  // carries an origin_id, raiseActionQueueItem must resolve through the DB so
+  // the inbox row is keyed on the true arc root — not the raw (fix/descendant)
+  // task id.
+
+  it('a raiser called with a fix/descendant taskId whose task row has origin_id resolves to the arc origin', async () => {
+    // Insert a task row: fix-task is a descendant of arc-root.
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id)
+            VALUES ('fix-task-kilo', '', 'blocked', '', '', 'arc-root-kilo')`,
+    });
+
+    const [subscriber] = buildInboxRaiserSubscribers(client);
+
+    // Fire event with the fix task id; no originId in the payload (simulates
+    // older events where the field was not yet threaded in).
+    await subscriber.handler(blockedEvent(100, 'fix-task-kilo'));
+
+    expect(await openRowCount(client)).toBe(1);
+
+    // Row must be keyed on the arc root, NOT on the fix task id.
+    const rowForArc = await openRowForTask(client, 'arc-root-kilo');
+    expect(rowForArc).not.toBeNull();
+    expect(rowForArc!.originTaskId).toBe('arc-root-kilo');
+
+    const rowForFix = await openRowForTask(client, 'fix-task-kilo');
+    expect(rowForFix).toBeNull();
+  });
+
+  it('two events for different fix tasks from the same arc collapse onto one row keyed on the arc origin', async () => {
+    // Both fix tasks share the same arc root.
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id)
+            VALUES ('fix-lima-1', '', 'blocked', '', '', 'arc-root-lima'),
+                   ('fix-lima-2', '', 'blocked', '', '', 'arc-root-lima')`,
+    });
+
+    const [subscriber] = buildInboxRaiserSubscribers(client);
+
+    await subscriber.handler(blockedEvent(200, 'fix-lima-1'));
+    await subscriber.handler(blockedEvent(201, 'fix-lima-2'));
+
+    // Both events resolve to the same arc root → one row, seenCount=2.
+    expect(await openRowCount(client)).toBe(1);
+    const row = await openRowForTask(client, 'arc-root-lima');
+    expect(row).not.toBeNull();
+    expect(row!.originTaskId).toBe('arc-root-lima');
+    expect(row!.seenCount).toBe(2);
   });
 });
