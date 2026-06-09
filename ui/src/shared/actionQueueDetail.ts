@@ -14,28 +14,56 @@ import type { TraceEvent } from './schemas'
 /**
  * Build a one-line summary of a trace event payload. Defers to the kind so
  * the Traces section reads more like a timeline than a JSON dump.
+ *
+ * Every line is a natural-language clause an operator can scan at a glance:
+ * non-zero exits, failures, and blocks all read as short sentences rather than
+ * raw telemetry fragments.
  */
 export const summarizeTraceEvent = (event: TraceEvent): string => {
   const p = event.payload
-  if (event.kind === 'step_started' || event.kind === 'step_ended') {
+
+  if (event.kind === 'step_started') {
+    return typeof p.stepName === 'string' ? p.stepName : '(unknown step)'
+  }
+
+  if (event.kind === 'step_ended') {
     const name = typeof p.stepName === 'string' ? p.stepName : '(unknown step)'
-    const outcome = typeof p.outcome === 'string' ? ` (${p.outcome})` : ''
-    return `${name}${outcome}`
+    const raw = typeof p.outcome === 'string' ? p.outcome : null
+    const outcome = raw === 'failure' ? 'failed' : raw === 'completed' ? 'completed' : (raw ?? 'ended')
+    return `${name} step ${outcome}`
   }
+
   if (event.kind === 'tool_invoked') {
-    const tool = typeof p.tool === 'string' ? p.tool : '(tool)'
-    const exit = typeof p.exitCode === 'number' ? ` (exit ${p.exitCode})` : ''
-    return `${tool}${exit}`
+    const rawTool = typeof p.tool === 'string' ? p.tool : '(tool)'
+    // Use the basename when the tool is a full path (e.g. /usr/bin/git → git).
+    const tool = rawTool.includes('/') ? (rawTool.split('/').pop() || rawTool) : rawTool
+    const exitCode = typeof p.exitCode === 'number' ? p.exitCode : null
+    if (exitCode !== null && exitCode !== 0) {
+      const phase = typeof event.phase === 'string' ? event.phase : null
+      return phase
+        ? `${tool} exited ${exitCode} during the ${phase} step`
+        : `${tool} exited ${exitCode}`
+    }
+    return `ran ${tool}`
   }
+
   if (event.kind === 'task_failed') {
-    const reason =
-      typeof p.failureReasonCode === 'string'
-        ? p.failureReasonCode
-        : typeof p.failureReason === 'string'
-          ? p.failureReason
-          : null
-    return reason ?? 'task failed'
+    // Prefer human-readable prose; only fall through to the machine code when
+    // no prose is available, and humanize even then.
+    if (typeof p.failureReason === 'string') return p.failureReason
+    if (typeof p.failureReasonCode === 'string') {
+      const code = p.failureReasonCode
+      const colonIdx = code.indexOf(':')
+      if (colonIdx !== -1) {
+        // 'verify:typecheck' → 'typecheck (verify step)'
+        return `${code.slice(colonIdx + 1)} (${code.slice(0, colonIdx)} step)`
+      }
+      // 'tool_timeout' → 'tool timeout'
+      return code.replace(/[_-]/g, ' ')
+    }
+    return 'task failed'
   }
+
   if (event.kind === 'task_blocked') {
     const blockedBy =
       typeof p.blockerTaskId === 'string'
@@ -43,16 +71,19 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
         : Array.isArray(p.blockedBy)
           ? (p.blockedBy as unknown[]).filter((s) => typeof s === 'string').join(', ')
           : null
-    return blockedBy ? `blocked by ${blockedBy}` : 'blocked'
+    return blockedBy ? `waiting on ${blockedBy}` : 'blocked'
   }
+
   if (event.kind === 'recovery_spawned') {
     const recoveryId =
       typeof p.recoveryTaskId === 'string' ? p.recoveryTaskId : null
     return recoveryId ? `recovery ${recoveryId}` : 'recovery spawned'
   }
+
   if (event.kind === 'origin_created') {
     return typeof p.source === 'string' ? `origin (${p.source})` : 'origin'
   }
+
   // Unknown kind — fall back to the kind name itself.
   return event.kind
 }
