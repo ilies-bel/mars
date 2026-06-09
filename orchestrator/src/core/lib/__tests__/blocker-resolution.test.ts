@@ -835,6 +835,104 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(r.outcomes[0].outcome).toBe('queued')
       expect((await q.getTask(dep.id))?.status).toBe('queued')
     })
+
+    // -----------------------------------------------------------------------
+    // On-main lean line (PRD cbb37ea7 slice 1)
+    // -----------------------------------------------------------------------
+
+    it('appends "lean PURGE" when the worktree branch tip is already reachable from the integration branch', async () => {
+      // Scenario: the parked worktree's HEAD is an ancestor of main (its work
+      // was merged through some other path while the task sat blocked). The
+      // operator should purge rather than restart.
+      vi.resetModules()
+      process.env.MARS_REPO = repo
+      const q2 = (await import('../../queue')) as unknown as QueueModule
+      await q2.migrateQueueSchema()
+      const { raiseWorktreeAheadActionQueue } = await import('../../blocker-resolution')
+      const { listActionQueueItems } = (await import('../action-queue')) as unknown as ActionQueueModule
+
+      const taskId = 'lean-purge-test'
+      const { worktreePath } = setupTaskWorktree(repo, taskId)
+      // Add a commit on the task branch so the branch is ahead of where it branched.
+      writeFileSync(resolve(worktreePath, 'work.txt'), 'work\n')
+      execFileSync('git', ['add', 'work.txt'], { cwd: worktreePath })
+      execFileSync('git', ['commit', '-q', '-m', 'task work'], { cwd: worktreePath })
+      // Fast-forward main to include that commit: now the branch tip IS an
+      // ancestor of main (the branch tip == main tip after the fast-forward).
+      execFileSync('git', ['merge', '--ff-only', `task/${taskId}`], { cwd: repo })
+
+      await raiseWorktreeAheadActionQueue(taskId, worktreePath, 1, 'main')
+
+      const open = await listActionQueueItems('open')
+      const item = open.find((i) => i.kind === 'worktree-ahead' && i.payload.taskId === taskId)
+      expect(item).toBeDefined()
+      expect(item!.body).toContain('lean PURGE')
+      expect(item!.body).not.toContain('lean RESTART')
+      // Payload schema is unchanged.
+      expect(item!.payload.failureReason).toBe('worktree_ahead_of_integration_at_unblock')
+      expect(item!.payload.worktreePath).toBe(worktreePath)
+      expect(item!.payload.aheadCount).toBe(1)
+      expect(item!.payload.integrationBranch).toBe('main')
+    })
+
+    it('appends "lean RESTART" when the worktree branch tip is NOT reachable from the integration branch', async () => {
+      // Scenario: the parked worktree has commits not yet on main (diverged).
+      // The operator must restart so those commits can be re-run through verify.
+      vi.resetModules()
+      process.env.MARS_REPO = repo
+      const q2 = (await import('../../queue')) as unknown as QueueModule
+      await q2.migrateQueueSchema()
+      const { raiseWorktreeAheadActionQueue } = await import('../../blocker-resolution')
+      const { listActionQueueItems } = (await import('../action-queue')) as unknown as ActionQueueModule
+
+      const taskId = 'lean-restart-test'
+      const { worktreePath } = setupTaskWorktree(repo, taskId)
+      // Add a commit on the task branch (branch diverges from main here).
+      writeFileSync(resolve(worktreePath, 'task-work.txt'), 'task\n')
+      execFileSync('git', ['add', 'task-work.txt'], { cwd: worktreePath })
+      execFileSync('git', ['commit', '-q', '-m', 'task work'], { cwd: worktreePath })
+      // Add a different commit on main so the histories diverge.
+      writeFileSync(resolve(repo, 'main-advance.txt'), 'main\n')
+      execFileSync('git', ['add', 'main-advance.txt'], { cwd: repo })
+      execFileSync('git', ['commit', '-q', '-m', 'main advance'], { cwd: repo })
+      // Branch tip is NOT in main's ancestry.
+
+      await raiseWorktreeAheadActionQueue(taskId, worktreePath, 1, 'main')
+
+      const open = await listActionQueueItems('open')
+      const item = open.find((i) => i.kind === 'worktree-ahead' && i.payload.taskId === taskId)
+      expect(item).toBeDefined()
+      expect(item!.body).toContain('lean RESTART')
+      expect(item!.body).not.toContain('lean PURGE')
+      // Payload schema is unchanged.
+      expect(item!.payload.failureReason).toBe('worktree_ahead_of_integration_at_unblock')
+    })
+
+    it('omits the lean line and still raises the item when the worktree path is missing on disk', async () => {
+      // Failure-tolerance: a missing worktree must not prevent the action queue
+      // item from being raised — the operator still needs to see the alert.
+      vi.resetModules()
+      process.env.MARS_REPO = repo
+      const q2 = (await import('../../queue')) as unknown as QueueModule
+      await q2.migrateQueueSchema()
+      const { raiseWorktreeAheadActionQueue } = await import('../../blocker-resolution')
+      const { listActionQueueItems } = (await import('../action-queue')) as unknown as ActionQueueModule
+
+      const taskId = 'lean-unknown-test'
+      const missingPath = resolve(repo, '.mars', 'worktrees', taskId)
+      // missingPath does not exist on disk.
+
+      await raiseWorktreeAheadActionQueue(taskId, missingPath, 1, 'main')
+
+      const open = await listActionQueueItems('open')
+      const item = open.find((i) => i.kind === 'worktree-ahead' && i.payload.taskId === taskId)
+      expect(item).toBeDefined()
+      expect(item!.body).not.toContain('lean PURGE')
+      expect(item!.body).not.toContain('lean RESTART')
+      // The item is still fully formed.
+      expect(item!.payload.failureReason).toBe('worktree_ahead_of_integration_at_unblock')
+      expect(item!.payload.aheadCount).toBe(1)
+    })
   })
 
   // -----------------------------------------------------------------------

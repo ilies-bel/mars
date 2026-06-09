@@ -109,12 +109,61 @@ export const resetDependentWorktreeToIntegration = async (
   return { reset: true, reason: 'reset' }
 }
 
+/**
+ * Best-effort check: is the worktree's current HEAD commit reachable from the
+ * integration branch (i.e. already landed on main)?
+ *
+ * Returns:
+ *  - 'on-main'     — HEAD is an ancestor of integrationBranch (git exit 0)
+ *  - 'not-on-main' — HEAD is NOT an ancestor (git exit 1)
+ *  - 'unknown'     — worktree missing, rev-parse failed, or unexpected git error
+ *
+ * Never throws. Fetch failure is silently swallowed (same as
+ * resetDependentWorktreeToIntegration) so local-only test repos work.
+ */
+const computeOnMainLean = async (
+  worktreePath: string,
+  integrationBranch: string,
+): Promise<'on-main' | 'not-on-main' | 'unknown'> => {
+  try {
+    if (!(await worktreeExists(worktreePath))) return 'unknown'
+    try {
+      await execFileP('git', ['fetch', 'origin', integrationBranch], { cwd: worktreePath })
+    } catch {
+      /* local-only repo / transient remote error — proceed with local ref */
+    }
+    const { stdout } = await execFileP('git', ['rev-parse', 'HEAD'], { cwd: worktreePath })
+    const tipSha = stdout.trim()
+    try {
+      await execFileP(
+        'git',
+        ['merge-base', '--is-ancestor', tipSha, integrationBranch],
+        { cwd: worktreePath },
+      )
+      return 'on-main'
+    } catch (err) {
+      // exit 1 → definitive "not an ancestor"; anything else is an error
+      if ((err as { code?: unknown }).code === 1) return 'not-on-main'
+      return 'unknown'
+    }
+  } catch {
+    return 'unknown'
+  }
+}
+
 export const raiseWorktreeAheadActionQueue = async (
   taskId: string,
   worktreePath: string,
   aheadCount: number,
   integrationBranch: string,
 ): Promise<void> => {
+  const lean = await computeOnMainLean(worktreePath, integrationBranch)
+  const leanLine =
+    lean === 'on-main'
+      ? '\n\nThis work appears to already be on main — lean PURGE.'
+      : lean === 'not-on-main'
+        ? '\n\nThis work is NOT on main — lean RESTART.'
+        : ''
   try {
     await raiseActionQueueItem({
       kind: WORKTREE_AHEAD_ACTION_QUEUE_KIND,
@@ -127,7 +176,8 @@ export const raiseWorktreeAheadActionQueue = async (
         `${integrationBranch}. Mars refuses to auto-rebase a dependent that has ` +
         `its own work on the branch.\n\n` +
         `Resolve manually: inspect the worktree and decide whether to land or drop ` +
-        `those commits before retrying.`,
+        `those commits before retrying.` +
+        leanLine,
       payload: {
         taskId,
         worktreePath,
