@@ -21,7 +21,7 @@ The full tree of work sharing a single originId, from the first proposal or dire
 A read-only, passive activity feed in the ui/ frontend tracking progress of completed tasks (and other terminal-state lifecycle moments) for situational awareness, with no acknowledgement or action required from the user.
 
 **Worker**:
-A preconfigured claude -p invocation bound to a class (model, effort, permission-mode, disallowed tools, message cap); the six classes are Coder, Planner, Slicer, Triager, Fixer, Writer.
+A preconfigured agent invocation bound to a class (model, effort, permission-mode, disallowed tools, message cap), a Provider (which agent CLI), and a Runtime (headless or pty); the six classes are Coder, Planner, Slicer, Triager, Fixer, Writer.
 _Avoid_: Slot, dispatch slot
 
 **Slot**:
