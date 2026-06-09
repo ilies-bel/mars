@@ -11,6 +11,7 @@ import {
   projectsResponseSchema,
   proposalDetailSchema,
   proposalsResponseSchema,
+  releaseNotesResponseSchema,
   staleWorktreesResponseSchema,
   tasksResponseSchema,
   workerSessionsResponseSchema,
@@ -27,6 +28,7 @@ import {
   type Project,
   type ProposalDetail,
   type ProposalsPayload,
+  type ReleaseNoteEntry,
   type StaleWorktreesPayload,
   type Task,
   type WorkerSession,
@@ -371,6 +373,14 @@ export const startProject = async (projectId: string): Promise<void> => {
   }
 }
 
+/**
+ * Fetch the arc-grouped release-notes feed. Entries are returned newest-first.
+ * Each entry covers one landed arc (origin task + any recovery tasks folded in).
+ */
+export const fetchReleaseNotes = async (projectId?: string): Promise<ReleaseNoteEntry[]> => {
+  return fetchJson(appendProject('/api/release-notes', projectId), releaseNotesResponseSchema)
+}
+
 export const dismissTodoItem = async (
   id: string,
   kind: 'draft' | 'stale',
@@ -404,6 +414,8 @@ export type {
   Project,
   ProposalDetail,
   ProposalsPayload,
+  ReleaseNoteEntry,
+  ReleaseNoteSpec,
   SessionOutcome,
   StaleWorktree,
   StaleWorktreesPayload,

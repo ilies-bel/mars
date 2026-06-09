@@ -632,3 +632,32 @@ export type ProgressProposalNode = z.infer<typeof progressProposalNodeSchema>
 export type StaleWorktree = z.infer<typeof staleWorktreeSchema>
 export type ProposalsPayload = z.infer<typeof proposalsResponseSchema>
 export type StaleWorktreesPayload = z.infer<typeof staleWorktreesResponseSchema>
+
+// ----------------------------------------------------------------------------
+// Release notes (GET /api/release-notes). Arc-grouped landed tasks, newest
+// first. Mirrors the ReleaseNoteEntry / ReleaseNoteSpec interfaces in
+// ui/server/releaseNotes.ts.
+// ----------------------------------------------------------------------------
+
+const releaseNoteSpecSchema = z.object({
+  files: z.array(z.string()),
+  verifyCmd: z.string().nullable(),
+  doneCriteria: z.array(z.string()),
+  taskType: z.string(),
+})
+
+export const releaseNoteEntrySchema = z.object({
+  originId: z.string(),
+  title: z.string(),
+  landedAt: z.string(),
+  detail: z.object({
+    prompt: z.string(),
+    spec: releaseNoteSpecSchema.nullable(),
+    recoveryCount: z.number(),
+  }),
+})
+
+export const releaseNotesResponseSchema = z.array(releaseNoteEntrySchema)
+
+export type ReleaseNoteSpec = z.infer<typeof releaseNoteSpecSchema>
+export type ReleaseNoteEntry = z.infer<typeof releaseNoteEntrySchema>

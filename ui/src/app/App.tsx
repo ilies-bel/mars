@@ -2,11 +2,13 @@ import { NavBar } from '@/widgets/NavBar'
 import { TaskDetailDrawer } from '@/widgets/TaskDetailDrawer'
 import { ProposalDetailDrawer } from '@/widgets/ProposalDetailDrawer'
 import { ProposalNodeDrawer } from '@/widgets/ProposalNodeDrawer'
+import { ReleaseNotesDrawer } from '@/widgets/ReleaseNotesDrawer'
 import { useHashRoute } from '@/shared/useHashRoute'
 import {
   parseKpiRoute,
   parseProposalRoute,
   parseProposalNodeRoute,
+  parseReleaseNotesRoute,
   parseTaskOrigin,
   parseTaskRoute,
   parseTaskStep,
@@ -46,6 +48,7 @@ const AppInner = () => {
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
   const proposalNodeId = parseProposalNodeRoute(hash)
+  const showReleaseNotes = parseReleaseNotesRoute(hash)
   const kpiKey = parseKpiRoute(hash)
   const activeStepName = parseTaskStep(hash) ?? undefined
   // Proposal fields come from the `/api/proposals` fetch — no new
@@ -96,6 +99,13 @@ const AppInner = () => {
           proposalId={proposalNodeId}
           proposals={proposals}
           tasks={tasks ?? []}
+          onClose={() => {
+            if (typeof window !== 'undefined') window.location.hash = '#/progress'
+          }}
+        />
+      ) : null}
+      {showReleaseNotes ? (
+        <ReleaseNotesDrawer
           onClose={() => {
             if (typeof window !== 'undefined') window.location.hash = '#/progress'
           }}

@@ -170,6 +170,20 @@ export const parseProposalNodeRoute = (hash: string): string | null => {
 }
 
 /**
+ * Returns the constant `#/release-notes` hash for the Release Notes overlay.
+ */
+export const releaseNotesHash = (): string => '#/release-notes'
+
+/**
+ * Returns true when the hash matches the `#/release-notes` overlay route.
+ *
+ * The release-notes drawer is an overlay on top of the Progress page —
+ * closing it returns to `#/progress`, mirroring the proposal overlay.
+ */
+export const parseReleaseNotesRoute = (hash: string): boolean =>
+  hash === '#/release-notes'
+
+/**
  * Badge count for the Action queue nav entry — stale worktrees only.
  * Drafts are surfaced inline in the Action queue and must not appear here.
  */
@@ -204,6 +218,9 @@ export const resolvePageRoute = (hash: string): RouteName => {
   }
   const proposalNodeId = parseProposalNodeRoute(hash)
   if (proposalNodeId !== null) {
+    return 'progress'
+  }
+  if (parseReleaseNotesRoute(hash)) {
     return 'progress'
   }
   const kpiKey = parseKpiRoute(hash)

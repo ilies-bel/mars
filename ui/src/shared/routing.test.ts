@@ -7,6 +7,8 @@ import {
   parseTaskStep,
   parseProposalRoute,
   parseProposalNodeRoute,
+  parseReleaseNotesRoute,
+  releaseNotesHash,
   resolvePageRoute,
   taskHash,
 } from './routing'
@@ -277,6 +279,33 @@ describe('resolvePageRoute', () => {
 
   it('returns progress when a proposal-node overlay hash is present', () => {
     expect(resolvePageRoute('#/proposal-node/p-abc')).toBe('progress')
+  })
+
+  it('returns progress when the release-notes overlay hash is present', () => {
+    expect(resolvePageRoute('#/release-notes')).toBe('progress')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// releaseNotesHash + parseReleaseNotesRoute
+// ---------------------------------------------------------------------------
+
+describe('releaseNotesHash', () => {
+  it('returns the constant release-notes hash', () => {
+    expect(releaseNotesHash()).toBe('#/release-notes')
+  })
+})
+
+describe('parseReleaseNotesRoute', () => {
+  it('returns true for the exact #/release-notes hash', () => {
+    expect(parseReleaseNotesRoute('#/release-notes')).toBe(true)
+  })
+
+  it('returns false for other hashes', () => {
+    expect(parseReleaseNotesRoute('#/progress')).toBe(false)
+    expect(parseReleaseNotesRoute('')).toBe(false)
+    expect(parseReleaseNotesRoute('#/task/abc')).toBe(false)
+    expect(parseReleaseNotesRoute('#/release-notes/extra')).toBe(false)
   })
 })
 
