@@ -13,10 +13,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { resolve, dirname } from 'node:path'
+import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolvePromptSource } from '../args'
 import {
   runCommandInProcess,
   makeFakeDaemon,
@@ -160,5 +161,119 @@ describe('task add intent derivation (no --intent flag)', () => {
     expect((req as { intent?: string }).intent).toBe(
       'No terminator here so take the whole thing',
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Prompt input channels: @file / --prompt-file / stdin / conflicts
+// ---------------------------------------------------------------------------
+
+describe('task add prompt input channels', () => {
+  // (a) positional @file reads file contents into prompt
+  it('@file reads file contents verbatim into prompt', async () => {
+    const filePath = join(repo, 'prompt.txt')
+    writeFileSync(filePath, 'prompt from file\n')
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-file', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', `@${filePath}`],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect((fake.calls[0] as { prompt?: string }).prompt).toBe('prompt from file')
+  })
+
+  // (b) missing @file exits non-zero and enqueues nothing
+  it('missing @file exits non-zero and enqueues nothing', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-x', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '@/nonexistent/mars-test-path.txt'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('/nonexistent/mars-test-path.txt')
+  })
+
+  // (c) --prompt-file reads file contents
+  it('--prompt-file reads file contents verbatim into prompt', async () => {
+    const filePath = join(repo, 'prompt-flag.txt')
+    writeFileSync(filePath, 'from prompt-file flag\n')
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-pf', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--prompt-file', filePath],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect((fake.calls[0] as { prompt?: string }).prompt).toBe('from prompt-file flag')
+  })
+
+  // (d) stdin - reads from the provided reader (injectable, avoids blocking on real fd 0)
+  it('stdin - reads from the injected reader and trims trailing newline', () => {
+    const result = resolvePromptSource(['-'], {}, () => 'stdin content\n')
+    expect(result).toEqual({ ok: true, value: 'stdin content' })
+  })
+
+  it('stdin - preserves internal whitespace and only strips one trailing newline', () => {
+    const result = resolvePromptSource(['-'], {}, () => 'line one\nline two\n')
+    expect(result).toEqual({ ok: true, value: 'line one\nline two' })
+  })
+
+  // (e) supplying two channels at once is a hard error
+  it('@file and --prompt-file together is a hard error', async () => {
+    const filePath = join(repo, 'prompt.txt')
+    writeFileSync(filePath, 'content\n')
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-x', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', `@${filePath}`, '--prompt-file', filePath],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('multiple prompt sources')
+  })
+
+  it('--prompt-file and a literal positional together is a hard error', async () => {
+    const filePath = join(repo, 'prompt.txt')
+    writeFileSync(filePath, 'content\n')
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-x', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'literal prompt', '--prompt-file', filePath],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('multiple prompt sources')
+  })
+
+  // (f) ${FOO} and backtick content round-trips byte-for-byte through @file
+  it('${FOO} and backtick content round-trips through @file without shell expansion', async () => {
+    const shellSpecial = 'Fix the ${FOO} and `backtick` and $(cmd) parsing'
+    const filePath = join(repo, 'special.txt')
+    writeFileSync(filePath, shellSpecial + '\n')
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-sp', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', `@${filePath}`],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect((fake.calls[0] as { prompt?: string }).prompt).toBe(shellSpecial)
+  })
+
+  // (g) inline literal positional still works unchanged
+  it('inline literal positional still works unchanged', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-lit', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'inline literal prompt here'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect((fake.calls[0] as { prompt?: string }).prompt).toBe('inline literal prompt here')
   })
 })

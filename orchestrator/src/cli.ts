@@ -62,9 +62,14 @@ Commands:
                                 removed from the init manifest is left
                                 untouched. --yes runs non-interactively and
                                 defaults to skip-on-conflict (for CI).
-  task add "<prompt>" [--author kind:name] [--blocked-by <id>] [--tag <tag>] [plan flags]
+  task add ("<prompt>" | @<file> | --prompt-file <path> | -)
                                 enqueue a runnable task directly (status='queued',
                                 skips triage; can be picked up by agent runners).
+                                Prompt body: inline string, @path/to/file (reads
+                                file verbatim — safe for \${...}/backticks),
+                                --prompt-file <path> (same), or - (reads stdin).
+                                Missing @file / --prompt-file is a hard error.
+                                [--author kind:name] [--blocked-by <id>] [--tag <tag>] [plan flags]
                                 --blocked-by <id> is repeatable; every id must
                                 already exist. The task will not dispatch until
                                 every listed blocker reaches 'done'. --tag is
@@ -479,14 +484,22 @@ Plan flags:
   task: `mars task <subcommand> ...
 
 Subcommands:
-  add "<prompt>" [--intent <text>] [plan flags] [--author kind:name] [--blocked-by <id> ...]
+  add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [plan flags] [--author kind:name] [--blocked-by <id> ...]
       Enqueue a runnable task directly (status='queued'; skips triage).
       Agent runners can pick it up immediately via 'mars run' / the
       orchestrator. Plan flags and --author behave like 'mars add'.
       --blocked-by <id> may be repeated; each <id> must already exist.
       The new task will not dispatch until every blocker reaches 'done'.
       --intent <text>  one-line summary stored on the task; derived from the
-                       first sentence of the prompt when omitted.`,
+                       first sentence of the prompt when omitted.
+
+  Prompt input channels (exactly one):
+    "<prompt>"              inline literal string
+    @<file>                 read prompt body from file verbatim (no shell expansion;
+                            safe for \${...}, backticks, \$(...)). Missing file is
+                            a hard error.
+    --prompt-file <path>    same as @<file>, explicit flag form
+    -                       read prompt body from stdin`,
   proposal: `mars proposal <subcommand> ...
 
 Subcommands:

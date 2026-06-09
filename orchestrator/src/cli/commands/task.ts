@@ -17,13 +17,14 @@ import {
   parseBlockedBy,
   parseTags,
   resolvePlanText,
+  resolvePromptSource,
   type TaskSpec,
 } from '../args'
 import type { Command, CommandDeps, CommandResult } from '../command'
 import { errorMessage, spawnNoticeOut } from './shared'
 
 const TASK_ADD_USAGE =
-  'usage: mars task add "<prompt>" [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [plan flags]'
+  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [plan flags]'
 
 interface EnqueueParams {
   prompt: string
@@ -103,7 +104,12 @@ export const taskAdd: Command = {
   summary: 'enqueue a runnable task directly (skips triage)',
   usage: TASK_ADD_USAGE,
   run: async (args, deps) => {
-    const prompt = args.positional.join(' ')
+    const promptResult = resolvePromptSource(args.positional, args.flags)
+    if (!promptResult.ok) {
+      deps.err(promptResult.message)
+      return { code: 1 }
+    }
+    const prompt = promptResult.value
     if (!prompt) {
       deps.err(TASK_ADD_USAGE)
       return { code: 1 }

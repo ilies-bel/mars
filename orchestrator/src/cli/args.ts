@@ -60,6 +60,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--path',
   '--config',
   '--intent',
+  '--prompt-file',
   // mars init wizard non-interactive parity (ADR-0058). One value flag per
   // string/enum WizardPrompt in src/init/wizard.ts; the parity build-guard
   // (init/__tests__/wizard-parity.test.ts) fails if a prompt lacks its flag.
@@ -174,6 +175,82 @@ export const resolvePlanText = (
   const filePath = flags[fileKey]
   if (filePath !== undefined) return readFileSync(filePath, 'utf8')
   return undefined
+}
+
+/**
+ * Resolve the prompt body from exactly one of four input channels:
+ *
+ *   - positional `@<file>`    — reads file verbatim, trims one trailing newline
+ *   - `--prompt-file <path>`  — same, explicit-flag form
+ *   - positional `-`          — reads stdin (via `readStdin`), trims one trailing newline
+ *   - positional literal      — returned as-is (the existing inline path)
+ *
+ * Supplying more than one channel is a hard error. Returns
+ * `{ ok: true, value: '' }` when no channel is provided so the caller can
+ * emit the "prompt required" usage message. Returns `{ ok: false, message }`
+ * on any hard error (missing file, multiple sources).
+ *
+ * `readStdin` is injectable so tests can supply a pure function instead of
+ * reading fd 0 (`readFileSync(0, 'utf8')`).
+ */
+export const resolvePromptSource = (
+  positional: readonly string[],
+  flags: Record<string, string>,
+  readStdin: () => string = () => readFileSync(0, 'utf8'),
+): FlagResult<string> => {
+  const promptFile = flags['--prompt-file']
+  const singlePos = positional.length === 1 ? positional[0] : undefined
+  const isFileRef = singlePos !== undefined && singlePos.startsWith('@')
+  const isStdin = singlePos === '-'
+  const isLiteral = positional.length > 0 && !isFileRef && !isStdin
+
+  const sourceCount =
+    (promptFile !== undefined ? 1 : 0) +
+    (isFileRef ? 1 : 0) +
+    (isStdin ? 1 : 0) +
+    (isLiteral ? 1 : 0)
+
+  if (sourceCount > 1) {
+    return {
+      ok: false,
+      message:
+        '[mars] error: multiple prompt sources supplied; use exactly one of: "<prompt>", @<file>, --prompt-file <path>, or - (stdin)',
+    }
+  }
+
+  if (promptFile !== undefined) {
+    try {
+      const content = readFileSync(promptFile, 'utf8')
+      return { ok: true, value: content.endsWith('\n') ? content.slice(0, -1) : content }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { ok: false, message: `[mars] error: cannot read --prompt-file '${promptFile}': ${msg}` }
+    }
+  }
+
+  if (isFileRef) {
+    const filePath = singlePos!.slice(1)
+    try {
+      const content = readFileSync(filePath, 'utf8')
+      return { ok: true, value: content.endsWith('\n') ? content.slice(0, -1) : content }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { ok: false, message: `[mars] error: cannot read prompt file '${filePath}': ${msg}` }
+    }
+  }
+
+  if (isStdin) {
+    try {
+      const content = readStdin()
+      return { ok: true, value: content.endsWith('\n') ? content.slice(0, -1) : content }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { ok: false, message: `[mars] error: cannot read stdin: ${msg}` }
+    }
+  }
+
+  // Literal or empty
+  return { ok: true, value: positional.join(' ') }
 }
 
 // ── Per-flag validators ─────────────────────────────────────────────────────
