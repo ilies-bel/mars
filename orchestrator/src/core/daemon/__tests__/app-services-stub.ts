@@ -40,6 +40,7 @@ export const stubAppServices = (
   viewStepSpans: async () => ({ spans: [] }),
   viewSessions: async () => ({ sessions: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
+  viewReleaseNotes: async () => ({ entries: [] }),
   viewReflect: async () => ({
     entries: [],
     costSummary: {

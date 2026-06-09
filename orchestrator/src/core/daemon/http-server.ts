@@ -667,6 +667,18 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/release-notes — reverse-chronological arc-grouped feed of
+    // landed tasks (status='done'). Recovery/fix tasks are folded into their
+    // origin arc entry. The UI server proxies this endpoint rather than
+    // querying the DB directly. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/release-notes') {
+      deps.appServices
+        .viewReleaseNotes()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/action-queue/history?cursor=...&limit=... — resolved rows,
     // cursor-paged newest-first. Pure read; no draining gate.
     if (

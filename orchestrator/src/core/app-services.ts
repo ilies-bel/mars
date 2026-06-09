@@ -41,6 +41,7 @@ import {
 } from './store/task-store'
 import { buildSessionsView } from './daemon/view/sessions'
 import { listTerminalEvents } from './daemon/view/terminal-events'
+import { listReleaseNotes } from './daemon/view/release-notes'
 import { getProposal } from './proposals'
 import { MARS_VERSION } from '../version'
 import { classifyInstallRoute } from './daemon/install-route'
@@ -59,6 +60,7 @@ import type { TraceEventStore } from './lib/trace-events-store'
 import type { Proposal } from './proposals'
 import type { ActionQueueRow, DerivedActionQueueFilter } from './daemon/view/action-queue'
 import type { TerminalEvent } from './daemon/view/terminal-events'
+import type { ReleaseNoteEntry } from './daemon/view/release-notes'
 import type { Session } from './daemon/view/sessions'
 import type { ProgressTask, ProposalNode } from './daemon/view/progress'
 import type {
@@ -119,6 +121,7 @@ export interface AppServices {
   viewStepSpans: (originId: string) => Promise<{ spans: StepSpan[] }>
   viewSessions: (agentName: string) => Promise<{ sessions: Session[] }>
   viewTerminalEvents: () => Promise<{ events: TerminalEvent[] }>
+  viewReleaseNotes: () => Promise<{ entries: ReleaseNoteEntry[] }>
   // ── reflect / arcs ──────────────────────────────────────────────────────────
   viewReflect: (opts?: LoadCorpusOptions) => Promise<ReflectCorpus>
   viewArcs: (opts?: { limit?: number; withTranscriptOnly?: boolean }) => Promise<ArcCandidate[]>
@@ -520,6 +523,15 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const viewTerminalEvents: AppServices['viewTerminalEvents'] = () =>
     listTerminalEvents(getDefaultDomainTaskStore()).then((events) => ({ events }))
 
+  const viewReleaseNotes: AppServices['viewReleaseNotes'] = async () => {
+    try {
+      const entries = await listReleaseNotes(getDefaultDomainTaskStore())
+      return { entries }
+    } catch {
+      return { entries: [] }
+    }
+  }
+
   const viewReflect: AppServices['viewReflect'] = (opts) =>
     loadRecentTaskCorpus(opts)
 
@@ -548,6 +560,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewStepSpans,
     viewSessions,
     viewTerminalEvents,
+    viewReleaseNotes,
     viewReflect,
     viewArcs,
     viewFrameworkUpdate,

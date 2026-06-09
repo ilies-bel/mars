@@ -249,6 +249,11 @@ export const startServer = async (
           return jsonResponse(result.status, result.body)
         }
 
+        if (path === '/api/release-notes') {
+          const r = await proxyGet(ctx.stateDir, '/view/release-notes')
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/trace-events — proxy the daemon's unified trace surface.
         // The path differs from the daemon's `/events` so it doesn't collide
         // with the UI server's existing `/events` SSE endpoint.
