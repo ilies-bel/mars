@@ -1462,8 +1462,11 @@ export class Arc {
   async drop(): Promise<DropTaskResult> {
     await migrateQueueSchema()
     const id = this.arcId
+    // Populated inside the atomic; consumed after so the action-queue raise
+    // remains best-effort and is intentionally separated from the DB transaction.
+    const orphanedDeps: { depId: string; originId: string }[] = []
 
-    return this.store.atomic(async (scope) => {
+    const result = await this.store.atomic(async (scope) => {
       const before = await scope.execute({
         sql: `SELECT status FROM tasks WHERE id = ?`,
         args: [id],
@@ -1536,8 +1539,53 @@ export class Arc {
       const dependentIds = depRows.rows.map(
         (r) => (r as unknown as { task_id: string }).task_id,
       )
+      // Pre-pass: any blocked dependent whose origin_id === id (the purged
+      // task) is an orphan — its arc root is being deleted. Fail it inline
+      // rather than re-queueing it, so the operator gets one action-queue
+      // item and a coder is never dispatched against a vanished target.
+      // Self-origin dependents (origin_id === dep.id) are arc roots and
+      // follow the normal re-queue path (ADR-0040).
+      const orphanedDepIds = new Set<string>()
+      const failNow = new Date().toISOString()
+      for (const depId of dependentIds) {
+        const depRow = await scope.execute({
+          sql: `SELECT origin_id FROM tasks WHERE id = ? AND status = 'blocked'`,
+          args: [depId],
+        })
+        if (depRow.rows.length === 0) continue
+        const originId = (depRow.rows[0] as unknown as { origin_id: string | null }).origin_id
+        // Not orphaned: NULL origin (treat as self), self-origin, or origin ≠ purged task.
+        if (!originId || originId === depId || originId !== id) continue
+        // Orphaned: remove the blocker edge, mark failed, emit terminal events,
+        // and clear remaining outbound edges (mirrors markTaskFailed/clearBlockers).
+        await scope.execute({
+          sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+          args: [depId, id],
+        })
+        await scope.execute({
+          sql: `UPDATE tasks SET updated_at = ?, status = 'failed', failure_reason = ? WHERE id = ? AND status = 'blocked'`,
+          args: [failNow, ORPHANED_ORIGIN_FAILURE_REASON, depId],
+        })
+        await scope.execute(
+          buildEventInsert('task.failed', {
+            taskId: depId,
+            error: ORPHANED_ORIGIN_FAILURE_REASON,
+          }),
+        )
+        await scope.execute(
+          buildEventInsert('task.terminal', { taskId: depId, reason: 'failed' }),
+        )
+        await scope.execute({
+          sql: `DELETE FROM task_blockers WHERE task_id = ?`,
+          args: [depId],
+        })
+        orphanedDepIds.add(depId)
+        orphanedDeps.push({ depId, originId: id })
+      }
       const releaseNow = new Date().toISOString()
       for (const depId of dependentIds) {
+        // Already failed as an orphaned dependent — skip the re-queue path.
+        if (orphanedDepIds.has(depId)) continue
         // Remove this specific edge so the NOT-EXISTS subquery below does not
         // count the dropped task as an active blocker when deciding to re-queue.
         await scope.execute({
@@ -1665,6 +1713,17 @@ export class Arc {
         cascadedFixTaskIds,
       }
     })
+
+    // Best-effort: push one action-queue item per orphaned dependent so the
+    // operator is notified. This intentionally runs AFTER the atomic so a
+    // transient action-queue failure never rolls back the drop itself.
+    for (const { depId, originId } of orphanedDeps) {
+      await raiseOrphanedOriginActionQueue(depId, originId).catch(() => {
+        /* best-effort — action-queue failure must not surface to the caller */
+      })
+    }
+
+    return result
   }
 
   /**
