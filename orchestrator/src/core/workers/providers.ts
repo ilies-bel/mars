@@ -13,11 +13,11 @@ export type ProviderName = 'claude'
 // the shape without breaking existing call sites.
 export type SpawnOpts = Readonly<Record<string, string | undefined>>
 
-// Minimal handle to a running provider process. Exposed to feedPrompt and
-// doneSignal so they can interact with the process without owning its full
-// lifecycle.
+// Minimal handle to a running provider process exposed to feedPrompt and
+// doneSignal. Matches the write-side of PtyHandle so the interactive harness
+// can supply the concrete pty handle directly without adaptation.
 export interface ProcessHandle {
-  readonly stdin: NodeJS.WritableStream
+  write(data: string): void
 }
 
 // Discriminated union describing how the orchestrator should detect that a
@@ -60,20 +60,19 @@ export interface Provider {
 export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
   claude: {
     name: 'claude',
-    // Base argv for headless `claude -p` invocations. Callers append model,
-    // effort, permission, and output-format flags on top of this.
-    spawnArgv: (_opts: SpawnOpts): readonly string[] => ['claude', '-p'],
-    // Write the prompt to stdin then close the write side so the process
-    // sees EOF and begins execution.
-    feedPrompt: (handle: ProcessHandle, prompt: string): Promise<void> =>
-      new Promise<void>((resolve, reject) => {
-        handle.stdin.write(prompt, (err) => {
-          if (err) {
-            reject(err)
-            return
-          }
-          handle.stdin.end(() => resolve())
-        })
-      }),
+    // Argv for interactive (non-headless) claude invocations under the native
+    // TTY harness. No `-p` flag — the agent runs in interactive mode and
+    // receives the task prompt via feedPrompt below.
+    spawnArgv: ({ sessionId, model }: SpawnOpts): readonly string[] => [
+      'claude',
+      ...(model ? ['--model', model] : []),
+      ...(sessionId ? ['--resume', sessionId] : []),
+    ],
+    // Write the prompt into the running pty followed by the submit key
+    // sequence (CR) so the interactive harness starts execution.
+    feedPrompt: async (handle: ProcessHandle, prompt: string): Promise<void> => {
+      handle.write(prompt)
+      handle.write('\r')
+    },
   },
 } as const

@@ -11,33 +11,47 @@ describe('PROVIDERS registry', () => {
     expect(PROVIDERS.claude.name).toBe('claude')
   })
 
-  it("'claude' provider spawnArgv starts with 'claude'", () => {
+  it("'claude' provider spawnArgv starts with 'claude' and has no '-p' flag", () => {
     const argv = PROVIDERS.claude.spawnArgv({})
     expect(argv[0]).toBe('claude')
-    expect(argv).toContain('-p')
+    expect(argv).not.toContain('-p')
   })
 
-  it("'claude' provider feedPrompt writes to stdin and closes it", async () => {
-    const chunks: Buffer[] = []
-    let ended = false
-    const fakeStdin = {
-      write(data: string, cb: (err?: Error | null) => void) {
-        chunks.push(Buffer.from(data))
-        cb()
-      },
-      end(cb: () => void) {
-        ended = true
-        cb()
+  it("'claude' provider spawnArgv includes '--model' when model is supplied", () => {
+    const argv = PROVIDERS.claude.spawnArgv({ model: 'claude-sonnet-4-6' })
+    expect(argv).toContain('--model')
+    expect(argv).toContain('claude-sonnet-4-6')
+  })
+
+  it("'claude' provider spawnArgv omits '--model' when model is absent", () => {
+    const argv = PROVIDERS.claude.spawnArgv({})
+    expect(argv).not.toContain('--model')
+  })
+
+  it("'claude' provider spawnArgv includes '--resume' when sessionId is supplied", () => {
+    const argv = PROVIDERS.claude.spawnArgv({ sessionId: 'sess-abc123' })
+    expect(argv).toContain('--resume')
+    expect(argv).toContain('sess-abc123')
+  })
+
+  it("'claude' provider spawnArgv omits '--resume' when sessionId is absent", () => {
+    const argv = PROVIDERS.claude.spawnArgv({})
+    expect(argv).not.toContain('--resume')
+  })
+
+  it("'claude' provider feedPrompt writes the prompt body then the CR terminator", async () => {
+    const written: string[] = []
+    const fakePtyHandle = {
+      write(data: string): void {
+        written.push(data)
       },
     }
 
-    await PROVIDERS.claude.feedPrompt(
-      { stdin: fakeStdin as unknown as NodeJS.WritableStream },
-      'hello world',
-    )
+    await PROVIDERS.claude.feedPrompt(fakePtyHandle, 'hello world')
 
-    expect(Buffer.concat(chunks).toString()).toBe('hello world')
-    expect(ended).toBe(true)
+    expect(written).toHaveLength(2)
+    expect(written[0]).toBe('hello world')
+    expect(written[1]).toBe('\r')
   })
 
   it("'claude' provider has no doneSignal (tracer-bullet stage)", () => {
