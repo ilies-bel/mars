@@ -222,6 +222,13 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
       {
+        signature: 'verify:has-diff/worktree-missing',
+        warmTitle: 'Task worktree disappeared before verify could run',
+        verboseReason:
+          "The verify step could not inspect a diff because the task's worktree was gone (likely pruned by a daemon restart or recover sweep while the task was in flight). This is an infrastructure condition, not a coder error — the task can be restarted.",
+        actions: DEFAULT_ACTIONS,
+      },
+      {
         signature: 'verify:has-diff/unclassified',
         warmTitle: 'The coder did not produce any changes',
         verboseReason:

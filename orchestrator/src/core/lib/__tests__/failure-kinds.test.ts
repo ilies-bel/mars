@@ -26,6 +26,12 @@ describe('FAILURE_KINDS registry', () => {
     )
   })
 
+  it('contains an entry for verify:has-diff/worktree-missing', () => {
+    expect(FAILURE_KINDS.map((k) => k.signature)).toContain(
+      'verify:has-diff/worktree-missing',
+    )
+  })
+
   it('contains one entry for the code:timeout SIGKILL/137 class', () => {
     const entry = FAILURE_KINDS.find((k) =>
       k.signature.startsWith('code:timeout/'),
@@ -276,5 +282,26 @@ describe('new catalog entries for previously-unmatched signatures', () => {
     const entry = lookupFailureKind('verify:has-diff/unclassified')
     expect(entry).not.toBeNull()
     expect(entry!.verboseReason).not.toContain('unrecognised')
+  })
+
+  it('verify:has-diff/worktree-missing has the infrastructure-condition warm title', () => {
+    const entry = lookupFailureKind('verify:has-diff/worktree-missing')
+    expect(entry).not.toBeNull()
+    expect(entry!.warmTitle).toBe('Task worktree disappeared before verify could run')
+  })
+
+  it('verify:has-diff/worktree-missing verboseReason mentions infrastructure and restart, not coder error', () => {
+    const entry = lookupFailureKind('verify:has-diff/worktree-missing')
+    expect(entry).not.toBeNull()
+    expect(entry!.verboseReason.toLowerCase()).toContain('infrastructure')
+    expect(entry!.verboseReason.toLowerCase()).toContain('restart')
+    expect(entry!.verboseReason.toLowerCase()).not.toContain('coder may have')
+  })
+
+  it('verify:has-diff/worktree-missing does NOT render the misleading "did not produce any changes" copy', () => {
+    const entry = lookupFailureKind('verify:has-diff/worktree-missing')
+    expect(entry).not.toBeNull()
+    expect(entry!.warmTitle).not.toBe('The coder did not produce any changes')
+    expect(entry!.verboseReason).not.toContain('The coder may have encountered an error')
   })
 })

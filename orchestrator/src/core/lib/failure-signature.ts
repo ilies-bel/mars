@@ -87,6 +87,16 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     match: /no commits ahead of integration branch/i,
   },
   {
+    // verify:has-diff fires this when the git spawn's working directory is
+    // absent — the worktree was pruned (e.g. daemon restart / recover sweep)
+    // while the task was still in flight. Distinguishable from a genuine
+    // empty-diff because the error output contains "worktree path … no longer
+    // exists" rather than the commit-count check output. The first non-blank
+    // line of the output produced by captureHasDiff starts with this phrase.
+    errorClass: 'worktree-missing',
+    match: /worktree path .+ no longer exists/i,
+  },
+  {
     errorClass: 'uncommitted-changes',
     // Matches both legacy wording (`merge target ... has uncommitted changes`)
     // and the new fast-forward-feasibility wording emitted by
@@ -342,6 +352,9 @@ const causeSentencesBySignature: Readonly<Record<string, CauseRenderer>> = {
   // Agent-owned: the coder ran but produced no commits on the task branch.
   'verify:has-diff/no-commits-ahead': () =>
     `task branch has no commits ahead of integration — the agent didn't commit; needs a new task or restart`,
+  // Infrastructure-owned: the worktree was pruned before verify could inspect it.
+  'verify:has-diff/worktree-missing': (taskId) =>
+    `task worktree was pruned before verify could run (likely a daemon restart) — infrastructure condition; mars restart ${taskId}`,
 }
 
 /**
