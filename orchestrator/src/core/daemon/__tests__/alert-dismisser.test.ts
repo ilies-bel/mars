@@ -329,71 +329,69 @@ describe('alert-dismisser outbox subscriber', () => {
     expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
   })
 
-  describe('task.under_investigation status mutation', () => {
-    it('(a) updateTask under_investigation inserts a task.under_investigation event in the same tx', async () => {
+  describe('ADR-0054: task.under_investigation does NOT close the alert (level-triggered)', () => {
+    it('updateTask under_investigation inserts a task.under_investigation event in the outbox', async () => {
+      // The event is still emitted — it just no longer drives alert dismissal.
       const { q, ad } = await loadModules(repo)
       const client = q.resolveQueueClient()
 
-      // Create a queued task so updateTask has a row to modify.
       const task = await q.enqueueTask('stale worktree task', undefined, { skipTriage: true })
       const taskId = task.id
 
       await ad.ensureAlertDismisser(client)
       await q.updateTask(taskId, { status: 'under_investigation' })
 
-      // The events table must contain a task.under_investigation row for this task.
       const found = await findEventRow(client, 'task.under_investigation', taskId)
       expect(found).toBe(true)
     })
 
-    it('(b) alert-dismisser resolves the open stale-worktree inbox item on task.under_investigation drain', async () => {
-      const { q, actionQueue, ad } = await loadModules(repo)
+    it('alert stays OPEN when task flips to under_investigation — investigation is an annotation, not an entity mutation', async () => {
+      // ADR-0054: the stale-worktree alert is a level-triggered projection.
+      // It must clear ONLY when the underlying worktree is actually
+      // mutated/removed (entity reaches terminal state), NOT because an
+      // operator-investigation annotation was attached.
+      const { q, actionQueue, ad, pub } = await loadModules(repo)
       const client = q.resolveQueueClient()
 
       const task = await q.enqueueTask('stale worktree', undefined, { skipTriage: true })
       const taskId = task.id
       const itemId = await raiseOpenItemFor(actionQueue, taskId)
 
-      // Register the subscriber BEFORE the status mutation so the cursor
-      // is positioned at the current event head (replay: false default).
       await ad.ensureAlertDismisser(client)
+      await publish(pub, client, 'task.under_investigation', { taskId })
 
-      // Flip via updateTask — emits task.under_investigation into the outbox.
-      await q.updateTask(taskId, { status: 'under_investigation' })
-
-      // Drain: the subscriber should consume the event and resolve the item.
+      // The Invalidator must treat task.under_investigation as a no-op.
       const { processed } = await ad.drainAlertDismissals(client)
 
-      expect(processed).toBe(1)
+      expect(processed).toBe(0)
       const item = await actionQueue.getActionQueueItem(itemId)
       expect(item).not.toBeNull()
-      expect(item!.state).toBe('resolved')
+      expect(item!.state).toBe('open')
     })
 
-    it('(c) a subsequent raiseInboxItem for the same origin creates a FRESH open row (reappear-if-still-stale)', async () => {
-      const { q, actionQueue, ad } = await loadModules(repo)
+    it('alert DOES close when the entity mutates to done (terminal state clears the row)', async () => {
+      // Confirm the positive case: the alert clears when the entity reaches
+      // a terminal status, not when the investigation annotation is added.
+      const { q, actionQueue, ad, pub } = await loadModules(repo)
       const client = q.resolveQueueClient()
 
-      const task = await q.enqueueTask('stale worktree revisit', undefined, { skipTriage: true })
+      const task = await q.enqueueTask('stale worktree done', undefined, { skipTriage: true })
       const taskId = task.id
-      const firstItemId = await raiseOpenItemFor(actionQueue, taskId)
+      const itemId = await raiseOpenItemFor(actionQueue, taskId)
 
       await ad.ensureAlertDismisser(client)
-      await q.updateTask(taskId, { status: 'under_investigation' })
-      await ad.drainAlertDismissals(client)
 
-      // Verify the first item was resolved.
-      expect((await actionQueue.getActionQueueItem(firstItemId))!.state).toBe('resolved')
+      // Investigation arrives first — alert must stay open.
+      await publish(pub, client, 'task.under_investigation', { taskId })
+      const afterInvestigation = await ad.drainAlertDismissals(client)
+      expect(afterInvestigation.processed).toBe(0)
+      expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
 
-      // Simulate the stale-worktree sweep re-detecting the stale worktree and
-      // re-raising the alert. raiseInboxItem de-dups only on state='open', so a
-      // new row is created (not the old resolved one).
-      const secondItemId = await raiseOpenItemFor(actionQueue, taskId)
-
-      expect(secondItemId).not.toBe(firstItemId) // distinct row
-      expect((await actionQueue.getActionQueueItem(secondItemId))!.state).toBe('open')
-      // The original resolved item remains untouched.
-      expect((await actionQueue.getActionQueueItem(firstItemId))!.state).toBe('resolved')
+      // Entity mutates to done — NOW the alert clears.
+      await publish(pub, client, 'task.completed', { taskId, result: { status: 'done' } })
+      const afterDone = await ad.drainAlertDismissals(client)
+      expect(afterDone.processed).toBe(1)
+      expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
     })
   })
 })

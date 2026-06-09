@@ -1711,8 +1711,8 @@ export const startDaemon = async (
         const { promisify } = await import('node:util')
         const { getRepoRoot } = await import('../context')
         const { runClaudeCode } = await import('../lib/git/claude')
-        const { getTask, updateTask, resolveQueueClient } = await import('../queue')
-        const { dismissAlertsOnStatusChange } = await import('../lib/action-queue')
+        const { getTask } = await import('../queue')
+        const { patchOpenActionQueuePayload } = await import('../lib/action-queue')
 
         const repoRoot = getRepoRoot()
         const worktreePath = join(repoRoot, '.mars', 'worktrees', id)
@@ -1724,29 +1724,12 @@ export const startDaemon = async (
         const task = await getTask(id)
         const taskPrompt = task?.prompt ?? null
 
-        // SYNCHRONOUS STATUS FLIP: flip to 'under_investigation' before starting
-        // Haiku so the outbox event fires immediately. The Invalidator (alert-
-        // dismisser) subscribes to task.under_investigation and resolves the open
-        // action-queue row on its next drain — the alert disappears from the queue
-        // right away, without waiting for the Haiku analysis to finish.
-        //
-        // Guard: only flip when a task row exists (orphan worktrees have no task).
-        // For orphan worktrees, fall back to direct inbox resolution so the alert
-        // still disappears.
-        if (task != null) {
-          await updateTask(id, { status: 'under_investigation' })
-        } else {
-          // No task row for this worktree (orphan). Resolve the open inbox item
-          // directly so the alert disappears without an outbox event.
-          await dismissAlertsOnStatusChange(id, 'under_investigation')
-        }
-
         // FIRE-AND-FORGET HAIKU: runs in the background after the response
-        // returns. Errors are swallowed — the status flip already happened; the
-        // explanation is best-effort. inProgress is cleared in the outer finally
-        // (synchronous with the return), so a second call can start a new
-        // investigation if needed (the status is already under_investigation, so
-        // updateTask would be a no-op for the flip but Haiku would re-run).
+        // returns. Per ADR-0054 (level-triggered alerts), the alert stays OPEN
+        // while Haiku runs — it clears only when the entity itself mutates (task
+        // reaches a terminal state or the worktree is pruned). Errors are
+        // swallowed — the investigation is best-effort. inProgress is cleared in
+        // the outer finally so a second call can start a new investigation.
         ;(async () => {
           try {
             // Compute the diff against the branch point on main.
@@ -1832,39 +1815,21 @@ export const startDaemon = async (
               }
             }
 
-            // Persist the explanation onto the action_queue_items row. By the time
-            // Haiku finishes the item is likely already 'resolved' (the alert-
-            // dismisser drained the task.under_investigation event), so
-            // patchOpenActionQueuePayload would be a no-op. We instead do a
-            // direct UPDATE by origin_task_id, which works regardless of state
-            // and ensures the explanation is always retrievable on the resolved
-            // item (visible via the all/resolved filter in the companion task
-            // mars-e10f557a). Both mars.db and the action_queue_items table are
-            // accessible via resolveQueueClient (ADR-0034: single mars.db file).
-            const qc = resolveQueueClient()
-            const existing = await qc.execute({
-              sql: `SELECT id, payload FROM action_queue_items WHERE origin_task_id = ? ORDER BY raised_at DESC LIMIT 1`,
-              args: [id],
+            // Persist the explanation onto the OPEN action_queue_items row.
+            // Per ADR-0054, the row is still open (the investigation does not
+            // dismiss it). patchOpenActionQueuePayload is a no-op when no open
+            // row exists (e.g. if the worktree was pruned while Haiku was
+            // running), which is the correct behaviour — the alert is gone
+            // because the entity was mutated, so there is nothing to annotate.
+            await patchOpenActionQueuePayload(id, {
+              investigation: { text: explanation, investigatedAt: new Date().toISOString() },
             })
-            if (existing.rows.length > 0) {
-              const row = existing.rows[0] as unknown as { id: string; payload: string | null }
-              let payload: Record<string, unknown> = {}
-              try {
-                payload = JSON.parse(row.payload ?? '{}') as Record<string, unknown>
-              } catch { /* ignore malformed payload */ }
-              payload.investigation = { text: explanation, investigatedAt: new Date().toISOString() }
-              await qc.execute({
-                sql: `UPDATE action_queue_items SET payload = ? WHERE id = ?`,
-                args: [JSON.stringify(payload), row.id],
-              })
-            }
           } catch { /* background errors are suppressed — flip already happened */ }
         })().catch(() => { /* suppress unhandled rejection */ })
 
-        // Return immediately — the response triggers the client's query
-        // invalidation so the row disappears from the action queue right away.
-        // Haiku continues in the background; the explanation appears on the
-        // resolved item once Haiku finishes.
+        // Return immediately — Haiku continues in the background. The alert
+        // stays OPEN in the action queue (ADR-0054: level-triggered); the
+        // investigation annotation appears on the live row once Haiku finishes.
         return { explanation: '' }
       } finally {
         inProgress.delete(id)

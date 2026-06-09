@@ -14,7 +14,7 @@ import { drainWithStall } from './subscriber-drain.js'
  * or a writer that never went through updateTask — the staleness class this
  * design removes.
  *
- * Closing policy (ADR-0028, ADR-0048):
+ * Closing policy (ADR-0028, ADR-0048, ADR-0054):
  *   - `task.completed` / `task.dropped` → resolve ALL open rows for the task
  *     via `resolveAllRowsForTask`. An operator never sees a stale failure alert
  *     for work that finished cleanly. A restarted-then-re-failed task re-raises
@@ -28,6 +28,12 @@ import { drainWithStall } from './subscriber-drain.js'
  *   - `task.terminal` with reason 'failed' → NO-OP (same as the discrete event).
  *   - `task.queued` / `task.unblocked` → evict any stale failure row for a
  *     task that is live again.
+ *   - `task.under_investigation` → NO-OP (ADR-0054 level-triggered). The alert
+ *     is a level-triggered projection of entity state; it must clear ONLY when
+ *     the underlying worktree is actually mutated/removed, not because an
+ *     operator-investigation annotation was attached. The investigation text is
+ *     persisted onto the OPEN row via `patchOpenActionQueuePayload`; the row
+ *     stays open until the entity reaches a terminal state.
  */
 export const ALERT_DISMISSER_SUBSCRIBER = 'alert-dismisser'
 
@@ -96,16 +102,6 @@ export async function drainAlertDismissals(
       if (event.type === 'task.completed' || event.type === 'task.dropped') {
         const { taskId } = event.payload as { taskId: string }
         await resolveAllRowsForTask(taskId)
-        return true
-      }
-
-      // Operator-triggered investigation: resolve the open stale-worktree row.
-      // The row disappears from the action queue immediately; if the stale-
-      // worktree sweep later re-detects the worktree as stale it creates a
-      // FRESH open row (raiseInboxItem de-dups only on state='open').
-      if (event.type === 'task.under_investigation') {
-        const { taskId } = event.payload as { taskId: string }
-        await dismissAlertsOnStatusChange(taskId, 'under_investigation')
         return true
       }
 
