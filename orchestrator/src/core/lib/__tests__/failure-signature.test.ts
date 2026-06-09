@@ -121,6 +121,19 @@ describe('computeFailureSignature', () => {
     const b = computeFailureSignature('merge:crashed', 'mystery boom')
     expect(a).not.toBe(b)
   })
+
+  it('classifies a missing-worktree has-diff failure as verify:has-diff/worktree-missing', () => {
+    // The verify step emits the literal line below when the spawn's cwd has
+    // been pruned out from under an in-flight task (e.g. by a daemon restart
+    // / recover sweep). It must not collapse to /unclassified and render as
+    // "The coder did not produce any changes" — the worktree disappeared
+    // before the diff could even be inspected.
+    const errMsg =
+      'has-diff: worktree path /Users/dev/mars/.mars/worktrees/mars-6220813b no longer exists'
+    expect(computeFailureSignature('verify:has-diff', errMsg)).toBe(
+      'verify:has-diff/worktree-missing',
+    )
+  })
 })
 
 describe('classifyError', () => {

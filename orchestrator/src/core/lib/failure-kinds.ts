@@ -228,6 +228,18 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
           'The verify step could not confirm that file changes were produced. The coder may have encountered an error or misunderstood the task.',
         actions: DEFAULT_ACTIONS,
       },
+      {
+        // Distinct from /unclassified above: the worktree path was gone when
+        // verify ran (typically pruned by a daemon restart / recover sweep
+        // while the coder was in flight), so verify could not inspect a diff
+        // at all. The coder produced nothing because there was nowhere to
+        // produce — this is an infrastructure condition, not a coder mistake.
+        signature: 'verify:has-diff/worktree-missing',
+        warmTitle: 'Task worktree disappeared before verify could run',
+        verboseReason:
+          "The verify step could not inspect a diff because the task's worktree was gone (likely pruned by a daemon restart or recover sweep while the task was in flight). This is an infrastructure condition, not a coder error — the task can be restarted.",
+        actions: DEFAULT_ACTIONS,
+      },
 
       // ── code:timeout ─────────────────────────────────────────────────────
       // One entry covers the SIGKILL / exit-137 class: the coding worker was
