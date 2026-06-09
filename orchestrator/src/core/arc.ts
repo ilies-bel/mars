@@ -56,6 +56,7 @@ import {
 } from './lib/main-dirty'
 import type { TraceEventStore } from './lib/trace-events-store'
 import { internalBus } from '../internal-bus'
+import { getProposal } from './proposals'
 import { getRetryBudget, markTaskFailed } from './queue-retry'
 import { computeFailureSignature } from './lib/failure-signature'
 import {
@@ -1978,18 +1979,27 @@ export class Arc {
       // Guard: if the dependent's origin_id points at a different task that no
       // longer exists in the tasks table, fail it rather than re-dispatching a
       // coder against a vanished target.
+      //
+      // NOTE: origin_id intentionally has no FK and may hold proposal ids (or
+      // other non-task arc identifiers) — tasks produced by `mars proposal
+      // slice` carry origin_id = proposal_id. Check the proposals table before
+      // declaring the origin orphaned; only fail when neither namespace owns
+      // the id.
       if (dep?.originId && dep.originId !== dep.id) {
         const originTask = await getTask(dep.originId)
         if (!originTask) {
-          await raiseOrphanedOriginActionQueue(row.id, dep.originId)
-          await markTaskFailed(row.id, ORPHANED_ORIGIN_FAILURE_REASON)
-          outcomes.push({
-            taskId: row.id,
-            outcome: 'failed',
-            retryCount,
-            failureReason: ORPHANED_ORIGIN_FAILURE_REASON,
-          })
-          continue
+          const originProposal = await getProposal(dep.originId)
+          if (!originProposal) {
+            await raiseOrphanedOriginActionQueue(row.id, dep.originId)
+            await markTaskFailed(row.id, ORPHANED_ORIGIN_FAILURE_REASON)
+            outcomes.push({
+              taskId: row.id,
+              outcome: 'failed',
+              retryCount,
+              failureReason: ORPHANED_ORIGIN_FAILURE_REASON,
+            })
+            continue
+          }
         }
       }
       // Reset the dependent's worktree to integration HEAD BEFORE flipping it

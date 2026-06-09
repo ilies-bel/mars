@@ -24,6 +24,11 @@ interface BlockerResolutionModule {
   ORPHANED_ORIGIN_FAILURE_REASON: typeof import('./blocker-resolution').ORPHANED_ORIGIN_FAILURE_REASON
 }
 
+interface ProposalsModule {
+  initProposals: typeof import('./proposals').initProposals
+  createProposal: typeof import('./proposals').createProposal
+}
+
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-orphan-origin-test-'))
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
@@ -35,15 +40,17 @@ const setupRepo = (): string => {
 
 const loadModules = async (
   repo: string,
-): Promise<{ q: QueueModule; arc: ArcModule; actionQueue: ActionQueueModule; br: BlockerResolutionModule }> => {
+): Promise<{ q: QueueModule; arc: ArcModule; actionQueue: ActionQueueModule; br: BlockerResolutionModule; proposals: ProposalsModule }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('./queue')) as unknown as QueueModule
   await q.migrateQueueSchema()
+  const proposals = (await import('./proposals')) as unknown as ProposalsModule
+  await proposals.initProposals()
   const arc = (await import('./arc')) as unknown as ArcModule
   const actionQueue = (await import('./lib/action-queue')) as unknown as ActionQueueModule
   const br = (await import('./blocker-resolution')) as unknown as BlockerResolutionModule
-  return { q, arc, actionQueue, br }
+  return { q, arc, actionQueue, br, proposals }
 }
 
 const blockTask = async (
@@ -175,6 +182,44 @@ describe('Arc.unblockByCompletion — orphaned origin guard', () => {
 
     const reloaded = await q.getTask(D.id)
     expect(reloaded?.status).toBe('queued')
+    expect(result.outcomes[0].outcome).toBe('queued')
+  })
+
+  it('re-queues a sliced task whose origin_id is a valid proposal id (not orphaned)', async () => {
+    // Regression guard for the false-positive: tasks produced by
+    // `mars proposal slice` carry origin_id = proposal_id. The proposals table
+    // has no FK in the tasks schema, so getTask(origin_id) returns null —
+    // but that must NOT trigger the orphaned-origin guard. The task must be
+    // re-queued, not failed.
+
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, arc, proposals } = await loadModules(repo)
+
+    // Create a proposal; its id becomes the origin for the sliced task.
+    const proposal = await proposals.createProposal('group the task detail step timeline', {
+      source: 'human',
+    })
+
+    const B = await q.enqueueTask('blocker task', undefined, { skipTriage: true })
+    // D is a slice of the proposal: origin_id = proposal.id (not a task id).
+    const D = await q.enqueueTask('sliced dependent task', undefined, {
+      skipTriage: true,
+      originId: proposal.id,
+    })
+
+    await blockTask(q, D.id, B.id, 0)
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [B.id],
+    })
+
+    const result = await arc.Arc.unblockByCompletion(B.id)
+
+    // D must be queued (proposal origin is valid), NOT failed with orphaned-origin.
+    const reloaded = await q.getTask(D.id)
+    expect(reloaded?.status).toBe('queued')
+    expect(result.outcomes).toHaveLength(1)
+    expect(result.outcomes[0].taskId).toBe(D.id)
     expect(result.outcomes[0].outcome).toBe('queued')
   })
 })
