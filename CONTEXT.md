@@ -380,3 +380,7 @@ _Avoid_: retry, re-run, recovery attempt
 **Provider**:
 A Worker attribute naming which agent CLI a Session drives (claude, codex, gemini, ...); each Provider is one adapter at the provider seam knowing how to spawn that CLI, pass the prompt, and parse its output, session id, and exit. Orthogonal to Runtime: a Provider can run under either Runtime.
 _Avoid_: agent backend, vendor, model provider, cli backend
+
+**Dangling origin**:
+An Arc whose originId has no backing Task row: member tasks carry it as origin_id but no Task has it as its own id, so any lookup keyed on the originId (task detail, arc title) finds nothing.
+_Avoid_: orphan origin, missing origin task, headless arc
