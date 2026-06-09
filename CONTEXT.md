@@ -145,7 +145,8 @@ _Avoid_: short id, raw id, hex id
 Local frontend for inspecting Mars runs (Topology / Runs / Run timeline views), served on port 7777. Lives in `ui/`.
 
 **Runtime**:
-A Worker attribute, valued either 'headless' (today's claude -p, the default) or 'tmux' (a window inside a per-repo tmux session the operator can attach to and type into), that says how that Worker's Sessions execute. Runtime is set on the Worker, not per Task: Tasks route to a Worker via tag matching and then inherit its Runtime.
+A Worker attribute, valued either 'headless' (the agent's print/non-interactive mode, e.g. 'claude -p', the default) or 'pty' (the agent's native interactive harness driven under a non-attachable node-pty, captured to traces/logs — no human attach), that says how that Worker's Sessions execute. Orthogonal to Provider. Set on the Worker, not per Task: Tasks route to a Worker via tag matching and inherit its Runtime.
+_Avoid_: tmux, attachable runtime, interactive runtime
 
 **Workflow**:
 A named, declarative pipeline of typed TypeScript steps composed via the in-house engine's fluent builder (createWorkflow({...}).then(step).then(step).commit()). The Workflow is the runtime contract under which a Task executes: it owns the step shape, the input/output schemas, the order of steps, and the logging surface. In v1 the composition primitive is linear .then chaining only; richer primitives (branching, parallel, foreach, dountil, dowhile) are added when a real pipeline demands them. Workflows are domain-agnostic and introspectable as plain data so future tooling can render them without importing the engine at runtime.
