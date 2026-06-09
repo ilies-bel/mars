@@ -19,6 +19,8 @@ import {
 } from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import type { ProviderName } from './providers'
+import { PROVIDERS } from './providers'
+import { runPtySession } from './run-pty-session'
 
 // Mutation tools denied for read-only Workers (Planner, Slicer, Triager).
 // A confused agent dispatched into one of those stages cannot silently mutate
@@ -297,21 +299,30 @@ const buildWorker = (config: WorkerConfig): Worker => {
     config,
     runtime: config.runtime,
     run: (prompt, options) =>
-      runClaudeCode({
-        cwd: options.cwd,
-        prompt,
-        model: config.model,
-        systemPrompt: options.systemPrompt ?? config.systemPrompt ?? config.appendSystemPrompt,
-        sessionId: options.sessionId,
-        onEvent: options.onEvent,
-        effort: config.effort,
-        permissionMode: config.permissionMode,
-        bare: config.bare,
-        agent: config.agent,
-        disallowedTools: config.disallowedTools,
-        maxContextTokens: config.maxContextTokens,
-        externalAbort: options.externalAbort,
-      }),
+      config.runtime === 'pty'
+        ? runPtySession({
+            provider: PROVIDERS[config.provider],
+            prompt,
+            cwd: options.cwd,
+            sessionId: options.sessionId,
+            externalAbort: options.externalAbort,
+            model: config.model,
+          })
+        : runClaudeCode({
+            cwd: options.cwd,
+            prompt,
+            model: config.model,
+            systemPrompt: options.systemPrompt ?? config.systemPrompt ?? config.appendSystemPrompt,
+            sessionId: options.sessionId,
+            onEvent: options.onEvent,
+            effort: config.effort,
+            permissionMode: config.permissionMode,
+            bare: config.bare,
+            agent: config.agent,
+            disallowedTools: config.disallowedTools,
+            maxContextTokens: config.maxContextTokens,
+            externalAbort: options.externalAbort,
+          }),
   }
 }
 
