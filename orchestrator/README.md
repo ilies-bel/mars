@@ -344,9 +344,6 @@ CLI surface:
 | ---------------------------------------- | -------------------------------------------------------- |
 | `mars action-queue` / `mars action-queue list [state]` | List items by state (default `open`).                    |
 | `mars action-queue show <id>`                   | Full detail for one item.                                |
-| `mars action-queue ack <id>`                    | Mark an item acknowledged.                               |
-| `mars action-queue resolve <id>`                | Mark an item resolved (`--note`, `--root-cause`).        |
-| `mars action-queue dismiss <id>`                | Mark an item dismissed (`--note`).                       |
 | `mars action-queue raise --from <-\|path>`      | File a new item from a JSON document.                    |
 | `mars action-queue watch`                       | Live ink TUI.                                            |
 
