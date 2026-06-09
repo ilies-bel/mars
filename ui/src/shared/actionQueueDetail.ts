@@ -99,6 +99,20 @@ export const severityColor = (severity: TraceEvent['severity']): string => {
   return 'text-iron/70'
 }
 
+/**
+ * Severity-to-tailwind border+background token for trace-event rows.
+ * WARN/ERROR rows get a tinted border and faint background so they stand
+ * out from the surrounding INFO majority. INFO stays calm (existing neutral).
+ *
+ * Returns only the border-color and bg parts; the caller is responsible for
+ * the `border` width utility (e.g. `border ${severityRowClass(s)}`).
+ */
+export const severityRowClass = (severity: TraceEvent['severity']): string => {
+  if (severity === 'error') return 'border-error/40 bg-error/5'
+  if (severity === 'warn') return 'border-warn/40 bg-warn/5'
+  return 'border-iron/30 bg-iron/5'
+}
+
 /** Kinds the UI labels distinctly in the Origins tree badge. */
 export const originKindLabel = (kind: string): string => {
   if (kind === 'proposal') return 'PROPOSAL'

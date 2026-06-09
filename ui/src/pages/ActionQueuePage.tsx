@@ -14,6 +14,7 @@ import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import {
   kindBadgeLabel,
   severityColor,
+  severityRowClass,
   summarizeTraceEvent,
 } from '@/shared/actionQueueDetail'
 import type {
@@ -460,9 +461,9 @@ const TracesSection = ({ taskId }: TracesProps) => {
         <div className="max-h-64 overflow-y-auto pr-1">
           <ul className="flex flex-col gap-1">
             {events.map((e) => (
-              <li key={e.id} className="text-fg">
+              <li key={e.id} className={`rounded border ${severityRowClass(e.severity)} px-2 py-1 text-fg`}>
                 <span className="text-iron/60">{relativeTime(e.timestamp)}</span>{' '}
-                <span className={`font-mono text-[10px] uppercase ${severityColor(e.severity)}`}>
+                <span className={`font-mono text-[10px] uppercase ${e.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(e.severity)}`}>
                   [{e.severity}]
                 </span>{' '}
                 <span className="font-mono text-[10px] text-iron">{e.kind}</span>

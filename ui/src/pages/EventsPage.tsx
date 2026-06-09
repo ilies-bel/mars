@@ -3,7 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
 import { getFallbackCopy, logFallbackError } from '@/shared/uiFallback'
-import { severityColor, summarizeTraceEvent } from '@/shared/actionQueueDetail'
+import { severityColor, severityRowClass, summarizeTraceEvent } from '@/shared/actionQueueDetail'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { TraceEvent } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
@@ -233,7 +233,7 @@ const EventRow = memo(({ event }: EventRowProps) => {
     <>
       <span className="text-iron/60">{relativeTime(event.timestamp)}</span>{' '}
       <span
-        className={`font-mono text-[10px] uppercase ${severityColor(event.severity)}`}
+        className={`font-mono text-[10px] uppercase ${event.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(event.severity)}`}
       >
         [{event.severity}]
       </span>{' '}
@@ -255,7 +255,7 @@ const EventRow = memo(({ event }: EventRowProps) => {
   if (href === undefined) {
     return (
       <div
-        className="block rounded border border-iron/30 bg-iron/5 px-3 py-1.5 font-mono text-[12px] text-fg"
+        className={`block rounded border ${severityRowClass(event.severity)} px-3 py-1.5 font-mono text-[12px] text-fg`}
         data-testid={`event-row-${event.id}`}
       >
         {body}
@@ -266,7 +266,7 @@ const EventRow = memo(({ event }: EventRowProps) => {
     <div>
       <a
         href={href}
-        className="block rounded border border-iron/30 bg-iron/5 px-3 py-1.5 font-mono text-[12px] text-fg hover:bg-iron/15"
+        className={`block rounded border ${severityRowClass(event.severity)} px-3 py-1.5 font-mono text-[12px] text-fg hover:bg-iron/15`}
         data-testid={`event-row-${event.id}`}
       >
         {body}

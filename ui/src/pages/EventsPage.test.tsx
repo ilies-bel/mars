@@ -345,6 +345,103 @@ describe('EventsPage render', () => {
 })
 
 // ---------------------------------------------------------------------------
+// 2b. EventRow severity-based visual weight
+//
+// WARN/ERROR rows must be visually distinct from INFO rows via both a
+// colour-derived border/background tint AND a non-colour cue (font weight).
+// INFO rows must stay calm — no error/warn tinting.
+// ---------------------------------------------------------------------------
+
+describe('EventRow severity styling', () => {
+  it('ERROR row has error-tinted border and background', () => {
+    const qc = makeClient(
+      makeResponse([makeEvent({ id: 'ev-err', severity: 'error', taskId: null })]),
+    )
+    const html = renderPage(qc)
+    expect(html).toContain('border-error/40')
+    expect(html).toContain('bg-error/5')
+  })
+
+  it('WARN row has warn-tinted border and background', () => {
+    const qc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-warn',
+          severity: 'warn',
+          kind: 'task_blocked',
+          taskId: null,
+          payload: {},
+        }),
+      ]),
+    )
+    const html = renderPage(qc)
+    expect(html).toContain('border-warn/40')
+    expect(html).toContain('bg-warn/5')
+  })
+
+  it('INFO row keeps calm neutral styling and has no error/warn tinting', () => {
+    const qc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-info',
+          severity: 'info',
+          kind: 'origin_created',
+          taskId: null,
+          phase: null,
+          payload: { source: 'planner' },
+        }),
+      ]),
+    )
+    const html = renderPage(qc)
+    expect(html).toContain('border-iron/30')
+    expect(html).toContain('bg-iron/5')
+    expect(html).not.toContain('border-error')
+    expect(html).not.toContain('border-warn')
+  })
+
+  it('WARN/ERROR severity badge is font-semibold (non-colour weight cue)', () => {
+    const warnQc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-warn-bold',
+          severity: 'warn',
+          kind: 'task_blocked',
+          taskId: null,
+          payload: {},
+        }),
+      ]),
+    )
+    const warnHtml = renderPage(warnQc)
+    // The [warn] badge must carry a weight cue so severity is not signalled
+    // by colour alone (accessibility requirement).
+    expect(warnHtml).toContain('font-semibold')
+
+    const errQc = makeClient(
+      makeResponse([makeEvent({ id: 'ev-err-bold', severity: 'error', taskId: null })]),
+    )
+    const errHtml = renderPage(errQc)
+    expect(errHtml).toContain('font-semibold')
+  })
+
+  it('INFO severity badge is NOT font-semibold (stays visually quiet)', () => {
+    const qc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-info-quiet',
+          severity: 'info',
+          kind: 'origin_created',
+          taskId: null,
+          phase: null,
+          payload: { source: 'planner' },
+        }),
+      ]),
+    )
+    const html = renderPage(qc)
+    expect(html).not.toContain('font-semibold')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // 3. Network shape — fetchEvents is called with the wire filter we built.
 //
 // Render-side mounting won't trigger queryFn under renderToStaticMarkup
