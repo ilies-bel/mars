@@ -1832,6 +1832,19 @@ export class Arc {
     for (const row of r.rows as unknown as BlockedDependentRow[]) {
       const retryCount = Number(row.retry_count ?? 0)
       if (retryBudgetExhausted(retryCount, budget)) {
+        // Before failing on budget, check whether this dependent has its own
+        // non-failed recovery task.  If so, defer to that recovery rather than
+        // racing it with a spurious budget-fail.
+        const ownRecovery = await Arc.queryNonFailedOwnRecovery(row.id, store)
+        if (ownRecovery) {
+          if (ownRecovery.status === 'done') {
+            // Recovery already shipped — reconcile origin to done now.
+            await Arc.load(row.id).propagateRecoveryDone()
+          }
+          outcomes.push({ taskId: row.id, outcome: 'noop', retryCount })
+          continue
+        }
+        // Genuinely no recovery coming — fail as before.
         await raiseActionQueueForBlockedTask(row.id)
         await markTaskFailed(row.id, RETRY_BUDGET_FAILURE_REASON)
         outcomes.push({
@@ -2135,13 +2148,29 @@ export class Arc {
 
     const retryCount = task.retryCount ?? 0
     const budget = getRetryBudget()
+    const store = await getDefaultTaskStore()
+
     if (retryBudgetExhausted(retryCount, budget)) {
+      // Before failing on budget, check whether this task has its own
+      // non-failed recovery task in-flight or already done.  If it does,
+      // the budget guard must not fire: the recovery is the authoritative
+      // path to resolution (ADR-0040 / propagateRecoveryDone).
+      const ownRecovery = await Arc.queryNonFailedOwnRecovery(taskId, store)
+      if (ownRecovery) {
+        if (ownRecovery.status === 'done') {
+          // Recovery already shipped — reconcile origin to done now.
+          await this.propagateRecoveryDone()
+        }
+        // Recovery in-flight (or just reconciled above) — let propagateRecoveryDone
+        // handle the terminal transition; do NOT fail on budget.
+        return { taskId, outcome: 'noop', retryCount }
+      }
+      // Genuinely no recovery coming — fail as before.
       await raiseActionQueueForBlockedTask(taskId)
       await markTaskFailed(taskId, RETRY_BUDGET_FAILURE_REASON)
       return { taskId, outcome: 'failed', retryCount, failureReason: RETRY_BUDGET_FAILURE_REASON }
     }
 
-    const store = await getDefaultTaskStore()
     const now = new Date().toISOString()
 
     // Any confirmed/pending-review blocker edge whose blocker is not yet done?
@@ -2515,5 +2544,34 @@ export class Arc {
     if (process.env.MARS_ARC_INVARIANT_CHECK === '1') {
       await Arc.assertArcInvariant(arcId, store)
     }
+  }
+
+  /**
+   * Return the most-recent non-failed recovery task (kind='fix',
+   * fix_for_task_id=taskId) for the given blocked task, or null if none
+   * exists.  "Non-failed" means status is NOT in ('failed', 'dropped') —
+   * i.e. either in-flight (queued/running/verifying/merging/…) or already
+   * done.
+   *
+   * Used by the retry-budget guard in {@link Arc.recoverBlocked} and the
+   * {@link Arc.unblockByCompletion} per-row loop to avoid racing
+   * {@link Arc.propagateRecoveryDone}: a blocked task whose own recovery is
+   * still working or has already shipped must never be failed on budget.
+   */
+  private static async queryNonFailedOwnRecovery(
+    taskId: string,
+    store: DomainTaskStore,
+  ): Promise<{ id: string; status: string } | null> {
+    const r = await store.query({
+      sql: `SELECT id, status FROM tasks
+             WHERE kind = 'fix'
+               AND fix_for_task_id = ?
+               AND status NOT IN ('failed', 'dropped')
+             ORDER BY created_at DESC
+             LIMIT 1`,
+      args: [taskId],
+    })
+    if (r.rows.length === 0) return null
+    return r.rows[0] as unknown as { id: string; status: string }
   }
 }
