@@ -18,6 +18,7 @@ import {
   type RunClaudeResult,
 } from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'
+import type { ProviderName } from './providers'
 
 // Mutation tools denied for read-only Workers (Planner, Slicer, Triager).
 // A confused agent dispatched into one of those stages cannot silently mutate
@@ -109,6 +110,10 @@ export interface WorkerConfig {
   // node-pty harness — non-attachable; the operator reads traces/logs after the
   // fact. No dispatch logic branches on this field yet.
   readonly runtime: WorkerRuntime
+  // Agent CLI Provider that drives this Worker. Names an entry in the PROVIDERS
+  // registry (currently only 'claude'). Dispatch behaviour is unchanged — the
+  // field is read but not yet branched on; future slices will wire it up.
+  readonly provider: ProviderName
   // Tags this Worker handles. pickWorkerForTags returns this Worker when the
   // task's tag list intersects this set. Workers with no tags entry are never
   // selected by tag (they are dispatched by kind or as the fallback).
@@ -226,6 +231,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     maxMessages: resolveWorkerMaxMessages(),
     maxContextTokens: CODER_CONTEXT_TOKENS,
     runtime: 'headless',
+    provider: 'claude',
     tags: ['coder'],
   },
   Planner: {
@@ -240,6 +246,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     maxMessages: resolveWorkerMaxMessages(),
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
+    provider: 'claude',
     tags: ['planner'],
   },
   Slicer: {
@@ -259,6 +266,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     maxMessages: resolveWorkerMaxMessages(250),
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
+    provider: 'claude',
     tags: ['slicer'],
   },
   Triager: {
@@ -272,6 +280,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     maxMessages: resolveWorkerMaxMessages(40),
     maxContextTokens: TRIAGER_CONTEXT_TOKENS,
     runtime: 'headless',
+    provider: 'claude',
     tags: ['triager'],
   },
   Fixer: {
@@ -285,6 +294,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     maxMessages: resolveWorkerMaxMessages(),
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
+    provider: 'claude',
     tags: ['fixer'],
   },
 } as const

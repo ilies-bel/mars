@@ -25,6 +25,7 @@ const makeWorkerConfig = (name: WorkerConfig['name']): WorkerConfig => ({
   maxMessages: 0,
   maxContextTokens: 0,
   runtime: 'headless',
+  provider: 'claude',
 })
 
 // Build a mock Worker whose run() resolves to a controlled result without

@@ -168,6 +168,7 @@ tick();
       maxMessages: 3,
       maxContextTokens: 0,
       runtime: 'headless',
+      provider: 'claude',
     }
     const capper = createWorker(capCfg)
     const r = await capper.run('noop', {

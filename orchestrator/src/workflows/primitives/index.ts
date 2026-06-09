@@ -569,6 +569,7 @@ export const runAgent = async (args: RunAgentArgs): Promise<RunAgentResult> => {
         maxMessages: decl.maxMessages,
         maxContextTokens: 0,
         runtime: decl.runtime,
+        provider: 'claude',
         ...(decl.tags !== undefined ? { tags: decl.tags } : {}),
       })
     }

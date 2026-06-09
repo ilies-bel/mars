@@ -78,6 +78,7 @@ describe('Worker runtime field', () => {
       maxMessages: 0,
       maxContextTokens: 0,
       runtime: 'headless',
+      provider: 'claude',
     }
     expect(createWorker(cfg).runtime).toBe('headless')
   })
@@ -282,6 +283,7 @@ describe('pickWorkerForTags', () => {
       maxMessages: 0,
       maxContextTokens: 0,
       runtime: 'headless',
+      provider: 'claude',
       tags: ['scaffold'],
     })
     const allWorkers: Record<string, Worker> = { ...Workers, ScaffoldWorker: customWorker }
@@ -301,6 +303,7 @@ describe('pickWorkerForTags', () => {
       maxMessages: 0,
       maxContextTokens: 0,
       runtime: 'headless',
+      provider: 'claude',
       tags: ['scaffold'],
     })
     const allWorkers: Record<string, Worker> = { ...Workers, ScaffoldWorker: customWorker }
@@ -387,6 +390,7 @@ describe('systemPrompt / appendSystemPrompt mutual exclusion', () => {
     maxMessages: 100,
     maxContextTokens: 0,
     runtime: 'headless',
+    provider: 'claude',
   }
 
   it('createWorker throws when both systemPrompt and appendSystemPrompt are pinned', () => {
