@@ -5,6 +5,8 @@
 //
 // See PRD 4cf68f4f — slice 7/13.
 
+import fs from 'node:fs'
+import path from 'node:path'
 import { spawnPty } from '../lib/pty/spawn'
 import type { Provider } from './providers'
 import type { RunClaudeResult } from '../lib/git/claude'
@@ -27,77 +29,115 @@ export interface RunPtySessionArgs {
  *   0   — clean completion (done-signal fired)
  *   137 — aborted via externalAbort
  *   1   — unexpected error in the done-signal path
+ *
+ * Trace files written to <cwd>/.mars/pty/:
+ *   <sessionId>.log          — raw pty byte stream (appended on every onData)
+ *   <sessionId>.events.jsonl — lifecycle events with ISO timestamps
  */
 export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeResult> => {
   const { provider, prompt, cwd, sessionId, externalAbort, model } = args
 
-  const argv = provider.spawnArgv({ sessionId, model })
-  const [cmd, ...rest] = argv as string[]
-  const handle = spawnPty(cmd!, rest, { cwd })
-
-  await provider.feedPrompt(handle, prompt)
-
-  let exitCode = 0
-
-  // AbortController that lets us cancel the done-signal watcher when the
-  // external abort fires first, so the watcher's internal resources are freed.
-  const innerAbort = new AbortController()
-
-  // Settle on the Provider's done-signal if one is registered, otherwise fall
-  // back to waiting for the pty process to exit naturally.
-  // Narrow the ProviderDoneSignal union: only 'status-file' exposes a wait()
-  // method; 'prompt-scan' signals are detected by scanning the pty buffer
-  // (reserved for a future slice). Both unrecognised kinds fall through to
-  // process-exit.
-  const ds = provider.doneSignal
-  const waitDone: Promise<void> =
-    ds?.kind === 'status-file'
-      ? ds.wait(sessionId ?? '', cwd, innerAbort.signal)
-      : new Promise<void>((resolve) => {
-          handle.onExit(() => resolve())
-        })
-
-  try {
-    // Handle an already-fired abort up front so we don't enter the race.
-    if (externalAbort?.aborted) {
-      innerAbort.abort()
-      throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
-    }
-
-    if (externalAbort) {
-      // Race the done-signal against the external abort. The abort listener
-      // cancels the inner watcher so it releases its resources promptly.
-      await Promise.race([
-        waitDone,
-        new Promise<never>((_, reject) => {
-          externalAbort.addEventListener(
-            'abort',
-            () => {
-              innerAbort.abort()
-              reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }))
-            },
-            { once: true },
-          )
-        }),
-      ])
-    } else {
-      await waitDone
-    }
-  } catch (err: unknown) {
-    if ((err as { name?: string }).name === 'AbortError') {
-      exitCode = 137
-    } else {
-      exitCode = 1
-    }
+  // Set up trace logging under <cwd>/.mars/pty/
+  const logDir = path.join(cwd, '.mars', 'pty')
+  fs.mkdirSync(logDir, { recursive: true })
+  const fileId = sessionId ?? 'anon'
+  const rawLog = fs.createWriteStream(path.join(logDir, `${fileId}.log`), { flags: 'a' })
+  const eventLog = fs.createWriteStream(path.join(logDir, `${fileId}.events.jsonl`), { flags: 'a' })
+  const writeEvent = (event: string): void => {
+    eventLog.write(JSON.stringify({ ts: new Date().toISOString(), event }) + '\n')
   }
 
-  handle.kill('SIGTERM')
+  try {
+    const argv = provider.spawnArgv({ sessionId, model })
+    const [cmd, ...rest] = argv as string[]
+    const handle = spawnPty(cmd!, rest, { cwd })
 
-  return {
-    exitCode,
-    stdout: handle.buffer(),
-    stderr: '',
-    sessionId: sessionId ?? null,
-    conversation: [],
+    // Stream raw pty output to the log file
+    handle.onData((chunk: string) => {
+      rawLog.write(chunk)
+    })
+
+    writeEvent('started')
+    await provider.feedPrompt(handle, prompt)
+    writeEvent('prompt-fed')
+
+    let exitCode = 0
+    let doneDetected = false
+
+    // AbortController that lets us cancel the done-signal watcher when the
+    // external abort fires first, so the watcher's internal resources are freed.
+    const innerAbort = new AbortController()
+
+    // Settle on the Provider's done-signal if one is registered, otherwise fall
+    // back to waiting for the pty process to exit naturally.
+    // Narrow the ProviderDoneSignal union: only 'status-file' exposes a wait()
+    // method; 'prompt-scan' signals are detected by scanning the pty buffer
+    // (reserved for a future slice). Both unrecognised kinds fall through to
+    // process-exit.
+    const ds = provider.doneSignal
+    const waitDone: Promise<void> =
+      ds?.kind === 'status-file'
+        ? ds.wait(sessionId ?? '', cwd, innerAbort.signal)
+        : new Promise<void>((resolve) => {
+            handle.onExit(() => resolve())
+          })
+
+    try {
+      // Handle an already-fired abort up front so we don't enter the race.
+      if (externalAbort?.aborted) {
+        innerAbort.abort()
+        throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+      }
+
+      if (externalAbort) {
+        // Race the done-signal against the external abort. The abort listener
+        // cancels the inner watcher so it releases its resources promptly.
+        await Promise.race([
+          waitDone,
+          new Promise<never>((_, reject) => {
+            externalAbort.addEventListener(
+              'abort',
+              () => {
+                innerAbort.abort()
+                reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+              },
+              { once: true },
+            )
+          }),
+        ])
+        doneDetected = true
+      } else {
+        await waitDone
+        doneDetected = true
+      }
+    } catch (err: unknown) {
+      if ((err as { name?: string }).name === 'AbortError') {
+        exitCode = 137
+      } else {
+        exitCode = 1
+      }
+    }
+
+    if (doneDetected) {
+      writeEvent('done-detected')
+    }
+
+    handle.kill('SIGTERM')
+    writeEvent('killed')
+
+    return {
+      exitCode,
+      stdout: handle.buffer(),
+      stderr: '',
+      sessionId: sessionId ?? null,
+      conversation: [],
+    }
+  } finally {
+    // Flush both trace streams before returning — callers can read the files
+    // immediately after runPtySession resolves.
+    await Promise.all([
+      new Promise<void>((resolve) => rawLog.end(resolve)),
+      new Promise<void>((resolve) => eventLog.end(resolve)),
+    ])
   }
 }
