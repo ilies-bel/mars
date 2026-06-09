@@ -152,14 +152,14 @@ describe('ProjectSelector – trigger shows focused project', () => {
     expect(html).toContain('aria-label="Down Project — down"')
   })
 
-  it('trigger glyph has the live color class for a live focused project', () => {
+  it('trigger glyph has the live semantic color class for a live focused project', () => {
     const html = renderClosed('proj-live')
-    expect(html).toContain('text-green-400')
+    expect(html).toContain('text-success')
   })
 
-  it('trigger glyph has the down color class for a down focused project', () => {
+  it('trigger glyph has the down semantic color class for a down focused project', () => {
     const html = renderClosed('proj-down')
-    expect(html).toContain('text-red-400')
+    expect(html).toContain('text-error')
   })
 
   it('trigger does not render an old text health-badge pill', () => {
@@ -209,19 +209,19 @@ describe('ProjectSelector – opening reveals all projects', () => {
     expect(html).toContain('aria-label="Down Project — down"')
   })
 
-  it('live project glyph has green color class', () => {
+  it('live project glyph has semantic success color class', () => {
     const html = renderOpen()
-    expect(html).toContain('text-green-400')
+    expect(html).toContain('text-success')
   })
 
-  it('degraded project glyph has yellow color class', () => {
+  it('degraded project glyph has semantic warn color class', () => {
     const html = renderOpen()
-    expect(html).toContain('text-yellow-400')
+    expect(html).toContain('text-warn')
   })
 
-  it('down project glyph has red color class', () => {
+  it('down project glyph has semantic error color class', () => {
     const html = renderOpen()
-    expect(html).toContain('text-red-400')
+    expect(html).toContain('text-error')
   })
 
   it('does not render old text health-badge pills', () => {
@@ -229,6 +229,18 @@ describe('ProjectSelector – opening reveals all projects', () => {
     expect(html).not.toContain('data-testid="health-badge-proj-live"')
     expect(html).not.toContain('data-testid="health-badge-proj-degraded"')
     expect(html).not.toContain('data-testid="health-badge-proj-down"')
+  })
+
+  it('each health state has a distinct glyph shape (non-colour cue)', () => {
+    const htmlLive = renderClosed('proj-live')
+    const htmlDegraded = renderClosed('proj-degraded')
+    const htmlDown = renderClosed('proj-down')
+    // Extract the glyph inside the role="img" span — health states must differ
+    // in shape, not just colour, so sighted users without colour vision can
+    // distinguish them.
+    expect(htmlLive).not.toEqual(htmlDegraded)
+    expect(htmlLive).not.toEqual(htmlDown)
+    expect(htmlDegraded).not.toEqual(htmlDown)
   })
 })
 

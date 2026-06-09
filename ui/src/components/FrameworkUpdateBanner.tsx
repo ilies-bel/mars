@@ -61,7 +61,12 @@ export const FrameworkUpdateBannerInner = ({
         </a>
       ) : null}
       {updateError ? (
-        <span className="text-xs text-red-500">{updateError}</span>
+        <span className="text-xs text-error">
+          Couldn&apos;t start the update — try again, or update manually.
+          {import.meta.env.DEV && (
+            <span className="ml-1 opacity-60">({updateError})</span>
+          )}
+        </span>
       ) : null}
       <button
         type="button"

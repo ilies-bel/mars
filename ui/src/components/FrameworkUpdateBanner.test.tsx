@@ -122,14 +122,15 @@ describe('FrameworkUpdateBannerInner – Update now button', () => {
     expect(html).toContain('disabled')
   })
 
-  it('shows an error message when updateError is set', () => {
+  it('shows a natural-language error message when update fails', () => {
     const html = renderToStaticMarkup(
       <FrameworkUpdateBannerInner
         {...defaultProps}
         updateError="self-update failed: permission denied"
       />,
     )
-    expect(html).toContain('self-update failed: permission denied')
+    // User-facing message is always calm natural language, not the raw thrown string
+    expect(html).toContain('try again, or update manually')
   })
 
   it('shows no error message when updateError is null', () => {

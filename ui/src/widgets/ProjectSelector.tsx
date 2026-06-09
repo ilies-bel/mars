@@ -22,10 +22,18 @@ import { projectIdentity } from '@/shared/projectIdentity'
 import { startProject } from '@/shared/api'
 import type { DaemonHealth, Project } from '@/shared/schemas'
 
-const healthGlyphClass = (health: DaemonHealth): string => {
-  if (health === 'live') return 'text-green-400'
-  if (health === 'degraded') return 'text-yellow-400'
-  return 'text-red-400'
+const healthColorClass = (health: DaemonHealth): string => {
+  if (health === 'live') return 'text-success'
+  if (health === 'degraded') return 'text-warn'
+  return 'text-error'
+}
+
+// Distinct shape per health state — non-colour cue so health is not hue-only
+// for sighted users (WCAG 1.4.1: Use of Colour).
+const HEALTH_GLYPH: Record<DaemonHealth, string> = {
+  live: '●',
+  degraded: '◑',
+  down: '○',
 }
 
 interface ProjectSelectorInnerProps {
@@ -69,10 +77,11 @@ export const ProjectSelectorInner = ({
           role="img"
           aria-label={`${focusedName} — ${focusedProject.health}`}
           title={`${focusedName} — ${focusedProject.health}`}
-          className={healthGlyphClass(focusedProject.health)}
+          className={healthColorClass(focusedProject.health)}
         >
-          {focusedIcon}
+          {HEALTH_GLYPH[focusedProject.health]}
         </span>
+        <span aria-hidden="true">{focusedIcon}</span>
         {focusedName}
         <span aria-hidden="true" className="ml-1 text-iron">
           {open ? '▲' : '▼'}
@@ -108,10 +117,11 @@ export const ProjectSelectorInner = ({
                   role="img"
                   aria-label={`${name} — ${p.health}`}
                   title={`${name} — ${p.health}`}
-                  className={healthGlyphClass(p.health)}
+                  className={healthColorClass(p.health)}
                 >
-                  {icon}
+                  {HEALTH_GLYPH[p.health]}
                 </span>
+                <span aria-hidden="true">{icon}</span>
                 {name}
                 {p.health === 'down' ? (
                   <button
