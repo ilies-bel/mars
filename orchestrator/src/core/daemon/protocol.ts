@@ -57,6 +57,8 @@ export type DaemonRequest =
   | { op: 'shutdown'; force?: boolean; drain?: boolean }
   | { op: 'kill' }
   | { op: 'ping' }
+  | { op: 'investigate'; id: string }
+  | { op: 'diagnose-failure'; id: string }
 
 export type DaemonResponse =
   | { ok: true; data?: unknown }

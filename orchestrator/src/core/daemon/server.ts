@@ -1664,6 +1664,324 @@ export const startDaemon = async (
     await runStartupReconcile({ log, bus, traceStore, handleProposalSlice })
   }
 
+  // ── Investigate / diagnose-failure handlers (shared by HTTP and RPC) ────────
+  // Defined here — before handleRequest — so the RPC switch can call them
+  // directly without going through the HTTP layer.
+
+  const investigateWorktree = (() => {
+    // One active investigation per worktree id. A second concurrent request for
+    // the same id returns immediately with a "already running" explanation
+    // rather than spawning a second Haiku process and melting the host.
+    const inProgress = new Set<string>()
+
+    return async (id: string): Promise<{ explanation: string }> => {
+      if (inProgress.has(id)) {
+        return { explanation: '(investigation already in progress — try again shortly)' }
+      }
+      inProgress.add(id)
+      try {
+        const { join } = await import('node:path')
+        const { execFile } = await import('node:child_process')
+        const { promisify } = await import('node:util')
+        const { getRepoRoot } = await import('../context')
+        const { runClaudeCode } = await import('../lib/git/claude')
+        const { getTask, updateTask, resolveQueueClient } = await import('../queue')
+        const { dismissAlertsOnStatusChange } = await import('../lib/action-queue')
+
+        const repoRoot = getRepoRoot()
+        const worktreePath = join(repoRoot, '.mars', 'worktrees', id)
+        const localExec = promisify(execFile)
+
+        // Look up the originating task prompt (may not exist for absent tasks).
+        // 'id' is the task id, which equals the worktree directory name under
+        // .mars/worktrees/ — both the task row and the worktree use the same id.
+        const task = await getTask(id)
+        const taskPrompt = task?.prompt ?? null
+
+        // SYNCHRONOUS STATUS FLIP: flip to 'under_investigation' before starting
+        // Haiku so the outbox event fires immediately. The Invalidator (alert-
+        // dismisser) subscribes to task.under_investigation and resolves the open
+        // action-queue row on its next drain — the alert disappears from the queue
+        // right away, without waiting for the Haiku analysis to finish.
+        //
+        // Guard: only flip when a task row exists (orphan worktrees have no task).
+        // For orphan worktrees, fall back to direct inbox resolution so the alert
+        // still disappears.
+        if (task != null) {
+          await updateTask(id, { status: 'under_investigation' })
+        } else {
+          // No task row for this worktree (orphan). Resolve the open inbox item
+          // directly so the alert disappears without an outbox event.
+          await dismissAlertsOnStatusChange(id, 'under_investigation')
+        }
+
+        // FIRE-AND-FORGET HAIKU: runs in the background after the response
+        // returns. Errors are swallowed — the status flip already happened; the
+        // explanation is best-effort. inProgress is cleared in the outer finally
+        // (synchronous with the return), so a second call can start a new
+        // investigation if needed (the status is already under_investigation, so
+        // updateTask would be a no-op for the flip but Haiku would re-run).
+        ;(async () => {
+          try {
+            // Compute the diff against the branch point on main.
+            let mergeBase = 'main'
+            try {
+              const { stdout } = await localExec(
+                'git',
+                ['merge-base', `task/${id}`, 'main'],
+                { cwd: repoRoot },
+              )
+              mergeBase = stdout.trim() || 'main'
+            } catch { /* fall back to main */ }
+
+            let diffStat = ''
+            let diffBody = ''
+            let untrackedFiles = ''
+            try {
+              const { stdout } = await localExec(
+                'git',
+                ['diff', '--stat', mergeBase],
+                { cwd: worktreePath },
+              )
+              diffStat = stdout.trim()
+            } catch { /* ignore */ }
+            try {
+              const { stdout } = await localExec(
+                'git',
+                ['diff', mergeBase],
+                { cwd: worktreePath },
+              )
+              // Cap diff at 20 KB to keep the Haiku prompt small and cheap.
+              diffBody = stdout.slice(0, 20_000)
+            } catch { /* ignore */ }
+            try {
+              const { stdout } = await localExec(
+                'git',
+                ['ls-files', '--others', '--exclude-standard'],
+                { cwd: worktreePath },
+              )
+              untrackedFiles = stdout.trim()
+            } catch { /* ignore */ }
+
+            const promptParts: string[] = []
+            if (taskPrompt) {
+              promptParts.push(`ORIGINAL TASK PROMPT:\n${taskPrompt}\n`)
+            }
+            promptParts.push(
+              `DIFF STAT (changes vs main branch point):\n${diffStat || '(no committed changes)'}\n`,
+            )
+            if (diffBody) {
+              promptParts.push(`DIFF:\n${diffBody}\n`)
+            }
+            if (untrackedFiles) {
+              promptParts.push(`UNTRACKED FILES IN WORKTREE:\n${untrackedFiles}\n`)
+            }
+            promptParts.push(
+              'In one short paragraph, explain what this abandoned task was trying ' +
+                'to do and what the diff actually changed. Be terse — this is a ' +
+                'cheap triage aid, not a code review.',
+            )
+            const investigatePrompt = promptParts.join('\n')
+
+            const result = await runClaudeCode({
+              cwd: worktreePath,
+              prompt: investigatePrompt,
+              model: 'claude-haiku-4-5-20251001',
+              // Read-only: use default permission mode so no file edits are allowed.
+              permissionMode: 'default',
+              // Cap turns to keep cost low — Haiku only needs one turn to summarise.
+              maxMessages: 5,
+            })
+
+            // Extract the final text from the conversation. Prefer the 'result'
+            // event (the model's final answer), fall back to the last assistant text.
+            let explanation = '(no explanation generated)'
+            for (const event of result.conversation) {
+              if (
+                event.type === 'result' &&
+                typeof event.result === 'string' &&
+                !event.is_error
+              ) {
+                explanation = event.result as string
+              }
+            }
+
+            // Persist the explanation onto the action_queue_items row. By the time
+            // Haiku finishes the item is likely already 'resolved' (the alert-
+            // dismisser drained the task.under_investigation event), so
+            // patchOpenActionQueuePayload would be a no-op. We instead do a
+            // direct UPDATE by origin_task_id, which works regardless of state
+            // and ensures the explanation is always retrievable on the resolved
+            // item (visible via the all/resolved filter in the companion task
+            // mars-e10f557a). Both mars.db and the action_queue_items table are
+            // accessible via resolveQueueClient (ADR-0034: single mars.db file).
+            const qc = resolveQueueClient()
+            const existing = await qc.execute({
+              sql: `SELECT id, payload FROM action_queue_items WHERE origin_task_id = ? ORDER BY raised_at DESC LIMIT 1`,
+              args: [id],
+            })
+            if (existing.rows.length > 0) {
+              const row = existing.rows[0] as unknown as { id: string; payload: string | null }
+              let payload: Record<string, unknown> = {}
+              try {
+                payload = JSON.parse(row.payload ?? '{}') as Record<string, unknown>
+              } catch { /* ignore malformed payload */ }
+              payload.investigation = { text: explanation, investigatedAt: new Date().toISOString() }
+              await qc.execute({
+                sql: `UPDATE action_queue_items SET payload = ? WHERE id = ?`,
+                args: [JSON.stringify(payload), row.id],
+              })
+            }
+          } catch { /* background errors are suppressed — flip already happened */ }
+        })().catch(() => { /* suppress unhandled rejection */ })
+
+        // Return immediately — the response triggers the client's query
+        // invalidation so the row disappears from the action queue right away.
+        // Haiku continues in the background; the explanation appears on the
+        // resolved item once Haiku finishes.
+        return { explanation: '' }
+      } finally {
+        inProgress.delete(id)
+      }
+    }
+  })()
+
+  const diagnoseFailure = (() => {
+    // One active diagnosis per task id — a second concurrent request returns
+    // immediately rather than spawning a second Sonnet process.
+    const inProgress = new Set<string>()
+
+    return async (id: string): Promise<{ diagnosis: string }> => {
+      if (inProgress.has(id)) {
+        return {
+          diagnosis: '(diagnosis already in progress — try again shortly)',
+        }
+      }
+      inProgress.add(id)
+      try {
+        const { join } = await import('node:path')
+        const { execFile } = await import('node:child_process')
+        const { promisify } = await import('node:util')
+        const { existsSync } = await import('node:fs')
+        const { getRepoRoot } = await import('../context')
+        const { runClaudeCode } = await import('../lib/git/claude')
+        const { getTask } = await import('../queue')
+        const { patchOpenActionQueuePayload, supersedeActionQueueItemsForOrigin } = await import('../lib/action-queue')
+
+        const repoRoot = getRepoRoot()
+        const worktreePath = join(repoRoot, '.mars', 'worktrees', id)
+        const localExec = promisify(execFile)
+
+        const task = await getTask(id)
+
+        if (!task) {
+          // Task is gone — resolve any orphaned action-queue card so it
+          // doesn't stay stuck, and return a clear not-found diagnosis.
+          await supersedeActionQueueItemsForOrigin(id, 'origin-purged', 'diagnose-failure:task-already-gone')
+          return { diagnosis: `task ${id} not found; nothing to diagnose` }
+        }
+
+        // The worktree may have been cleaned up on a terminal failure. When
+        // it exists, run the diagnosis from inside it (the model can read the
+        // failing code); otherwise fall back to the repo root and diagnose
+        // from the stored failure context + session trace alone.
+        const worktreeExists = existsSync(worktreePath)
+        const cwd = worktreeExists ? worktreePath : repoRoot
+
+        let diffBody = ''
+        if (worktreeExists) {
+          let mergeBase = 'main'
+          try {
+            const { stdout } = await localExec(
+              'git',
+              ['merge-base', `task/${id}`, 'main'],
+              { cwd: repoRoot },
+            )
+            mergeBase = stdout.trim() || 'main'
+          } catch {
+            /* fall back to main */
+          }
+          try {
+            const { stdout } = await localExec('git', ['diff', mergeBase], {
+              cwd: worktreePath,
+            })
+            diffBody = stdout.slice(0, 20_000)
+          } catch {
+            /* ignore */
+          }
+        }
+
+        const promptParts: string[] = [
+          'You are diagnosing why a Mars task failed. This failure has no ' +
+            'registered recovery recipe, so a human asked for a root-cause ' +
+            'diagnosis. You are READ-ONLY: do not edit any files.',
+          '',
+        ]
+        if (task?.prompt) {
+          promptParts.push(`ORIGINAL TASK PROMPT:\n${task.prompt}\n`)
+        }
+        promptParts.push(
+          `FAILURE SIGNATURE: ${task?.failureSignature ?? '(unknown)'}`,
+        )
+        if (task?.error) {
+          promptParts.push(`STORED FAILURE REASON:\n${task.error}\n`)
+        }
+        if (worktreeExists && diffBody) {
+          promptParts.push(`WORKTREE DIFF (vs main branch point):\n${diffBody}\n`)
+        } else {
+          promptParts.push(
+            'The failing task worktree is no longer on disk. Diagnose from ' +
+              'the failure reason and original prompt above.\n',
+          )
+        }
+        if (task?.claudeSessionId) {
+          promptParts.push(
+            `If the failure reason is insufficient, the failing run's session ` +
+              `id is ${task.claudeSessionId} — reference its trace only if you ` +
+              `cannot otherwise explain the failure.\n`,
+          )
+        }
+        promptParts.push(
+          'Give a terse root-cause diagnosis: what failed, the most likely ' +
+            'cause, and whether a restart is likely to help or the task needs ' +
+            'reshaping. A short paragraph — this is a triage aid, not a fix.',
+        )
+
+        const result = await runClaudeCode({
+          cwd,
+          prompt: promptParts.join('\n'),
+          model: 'claude-sonnet-4-6',
+          // Read-only: default permission mode disallows file edits.
+          permissionMode: 'default',
+          // A few turns so it can read the worktree / trace if needed.
+          maxMessages: 12,
+        })
+
+        let diagnosis = '(no diagnosis generated)'
+        for (const event of result.conversation) {
+          if (
+            event.type === 'result' &&
+            typeof event.result === 'string' &&
+            !event.is_error
+          ) {
+            diagnosis = event.result as string
+          }
+        }
+
+        await patchOpenActionQueuePayload(id, {
+          diagnosis: {
+            text: diagnosis,
+            diagnosedAt: new Date().toISOString(),
+          },
+        })
+
+        return { diagnosis }
+      } finally {
+        inProgress.delete(id)
+      }
+    }
+  })()
+
   // ── Network: UDS server ───────────────────────────────────────────────────
 
   // Ops that spawn or schedule new work. Refused while the daemon is
@@ -1679,6 +1997,10 @@ export const startDaemon = async (
     'glossary-write',
     'adr-add',
     'init',
+    // investigate and diagnose-failure spawn Claude processes; consistent with
+    // the HTTP handler which gates all POST /actions/:op/:id on isAcceptingWork.
+    'investigate',
+    'diagnose-failure',
   ])
 
   const handleRequest = async (req: DaemonRequest): Promise<DaemonResponse> => {
@@ -1892,6 +2214,14 @@ export const startDaemon = async (
         }
         case 'ping': {
           return { ok: true, data: { pid: process.pid } }
+        }
+        case 'investigate': {
+          const result = await investigateWorktree(req.id)
+          return { ok: true, data: result }
+        }
+        case 'diagnose-failure': {
+          const result = await diagnoseFailure(req.id)
+          return { ok: true, data: result }
         }
         case 'shutdown': {
           // Three modes:
@@ -2250,318 +2580,8 @@ export const startDaemon = async (
       const { rejectProposal } = await import('../proposals')
       await rejectProposal(id)
     },
-    investigateWorktree: (() => {
-      // One active investigation per worktree id. A second concurrent POST for
-      // the same id returns immediately with a "already running" explanation
-      // rather than spawning a second Haiku process and melting the host.
-      const inProgress = new Set<string>()
-
-      return async (id: string): Promise<{ explanation: string }> => {
-        if (inProgress.has(id)) {
-          return { explanation: '(investigation already in progress — try again shortly)' }
-        }
-        inProgress.add(id)
-        try {
-          const { join } = await import('node:path')
-          const { execFile } = await import('node:child_process')
-          const { promisify } = await import('node:util')
-          const { getRepoRoot } = await import('../context')
-          const { runClaudeCode } = await import('../lib/git/claude')
-          const { getTask, updateTask, resolveQueueClient } = await import('../queue')
-          const { dismissAlertsOnStatusChange } = await import('../lib/action-queue')
-
-          const repoRoot = getRepoRoot()
-          const worktreePath = join(repoRoot, '.mars', 'worktrees', id)
-          const localExec = promisify(execFile)
-
-          // Look up the originating task prompt (may not exist for absent tasks).
-          // 'id' is the task id, which equals the worktree directory name under
-          // .mars/worktrees/ — both the task row and the worktree use the same id.
-          const task = await getTask(id)
-          const taskPrompt = task?.prompt ?? null
-
-          // SYNCHRONOUS STATUS FLIP: flip to 'under_investigation' before starting
-          // Haiku so the outbox event fires immediately. The Invalidator (alert-
-          // dismisser) subscribes to task.under_investigation and resolves the open
-          // action-queue row on its next drain — the alert disappears from the queue
-          // right away, without waiting for the Haiku analysis to finish.
-          //
-          // Guard: only flip when a task row exists (orphan worktrees have no task).
-          // For orphan worktrees, fall back to direct inbox resolution so the alert
-          // still disappears.
-          if (task != null) {
-            await updateTask(id, { status: 'under_investigation' })
-          } else {
-            // No task row for this worktree (orphan). Resolve the open inbox item
-            // directly so the alert disappears without an outbox event.
-            await dismissAlertsOnStatusChange(id, 'under_investigation')
-          }
-
-          // FIRE-AND-FORGET HAIKU: runs in the background after the HTTP response
-          // returns. Errors are swallowed — the status flip already happened; the
-          // explanation is best-effort. inProgress is cleared in the outer finally
-          // (synchronous with the HTTP return), so a second click can start a new
-          // investigation if needed (the status is already under_investigation, so
-          // updateTask would be a no-op for the flip but Haiku would re-run).
-          ;(async () => {
-            try {
-              // Compute the diff against the branch point on main.
-              let mergeBase = 'main'
-              try {
-                const { stdout } = await localExec(
-                  'git',
-                  ['merge-base', `task/${id}`, 'main'],
-                  { cwd: repoRoot },
-                )
-                mergeBase = stdout.trim() || 'main'
-              } catch { /* fall back to main */ }
-
-              let diffStat = ''
-              let diffBody = ''
-              let untrackedFiles = ''
-              try {
-                const { stdout } = await localExec(
-                  'git',
-                  ['diff', '--stat', mergeBase],
-                  { cwd: worktreePath },
-                )
-                diffStat = stdout.trim()
-              } catch { /* ignore */ }
-              try {
-                const { stdout } = await localExec(
-                  'git',
-                  ['diff', mergeBase],
-                  { cwd: worktreePath },
-                )
-                // Cap diff at 20 KB to keep the Haiku prompt small and cheap.
-                diffBody = stdout.slice(0, 20_000)
-              } catch { /* ignore */ }
-              try {
-                const { stdout } = await localExec(
-                  'git',
-                  ['ls-files', '--others', '--exclude-standard'],
-                  { cwd: worktreePath },
-                )
-                untrackedFiles = stdout.trim()
-              } catch { /* ignore */ }
-
-              const promptParts: string[] = []
-              if (taskPrompt) {
-                promptParts.push(`ORIGINAL TASK PROMPT:\n${taskPrompt}\n`)
-              }
-              promptParts.push(
-                `DIFF STAT (changes vs main branch point):\n${diffStat || '(no committed changes)'}\n`,
-              )
-              if (diffBody) {
-                promptParts.push(`DIFF:\n${diffBody}\n`)
-              }
-              if (untrackedFiles) {
-                promptParts.push(`UNTRACKED FILES IN WORKTREE:\n${untrackedFiles}\n`)
-              }
-              promptParts.push(
-                'In one short paragraph, explain what this abandoned task was trying ' +
-                  'to do and what the diff actually changed. Be terse — this is a ' +
-                  'cheap triage aid, not a code review.',
-              )
-              const investigatePrompt = promptParts.join('\n')
-
-              const result = await runClaudeCode({
-                cwd: worktreePath,
-                prompt: investigatePrompt,
-                model: 'claude-haiku-4-5-20251001',
-                // Read-only: use default permission mode so no file edits are allowed.
-                permissionMode: 'default',
-                // Cap turns to keep cost low — Haiku only needs one turn to summarise.
-                maxMessages: 5,
-              })
-
-              // Extract the final text from the conversation. Prefer the 'result'
-              // event (the model's final answer), fall back to the last assistant text.
-              let explanation = '(no explanation generated)'
-              for (const event of result.conversation) {
-                if (
-                  event.type === 'result' &&
-                  typeof event.result === 'string' &&
-                  !event.is_error
-                ) {
-                  explanation = event.result as string
-                }
-              }
-
-              // Persist the explanation onto the action_queue_items row. By the time
-              // Haiku finishes the item is likely already 'resolved' (the alert-
-              // dismisser drained the task.under_investigation event), so
-              // patchOpenActionQueuePayload would be a no-op. We instead do a
-              // direct UPDATE by origin_task_id, which works regardless of state
-              // and ensures the explanation is always retrievable on the resolved
-              // item (visible via the all/resolved filter in the companion task
-              // mars-e10f557a). Both mars.db and the action_queue_items table are
-              // accessible via resolveQueueClient (ADR-0034: single mars.db file).
-              const qc = resolveQueueClient()
-              const existing = await qc.execute({
-                sql: `SELECT id, payload FROM action_queue_items WHERE origin_task_id = ? ORDER BY raised_at DESC LIMIT 1`,
-                args: [id],
-              })
-              if (existing.rows.length > 0) {
-                const row = existing.rows[0] as unknown as { id: string; payload: string | null }
-                let payload: Record<string, unknown> = {}
-                try {
-                  payload = JSON.parse(row.payload ?? '{}') as Record<string, unknown>
-                } catch { /* ignore malformed payload */ }
-                payload.investigation = { text: explanation, investigatedAt: new Date().toISOString() }
-                await qc.execute({
-                  sql: `UPDATE action_queue_items SET payload = ? WHERE id = ?`,
-                  args: [JSON.stringify(payload), row.id],
-                })
-              }
-            } catch { /* background errors are suppressed — flip already happened */ }
-          })().catch(() => { /* suppress unhandled rejection */ })
-
-          // Return immediately — the HTTP response triggers the client's query
-          // invalidation so the row disappears from the action queue right away.
-          // Haiku continues in the background; the explanation appears on the
-          // resolved item once Haiku finishes.
-          return { explanation: '' }
-        } finally {
-          inProgress.delete(id)
-        }
-      }
-    })(),
-    diagnoseFailure: (() => {
-      // One active diagnosis per task id — a second concurrent POST returns
-      // immediately rather than spawning a second Sonnet process.
-      const inProgress = new Set<string>()
-
-      return async (id: string): Promise<{ diagnosis: string }> => {
-        if (inProgress.has(id)) {
-          return {
-            diagnosis: '(diagnosis already in progress — try again shortly)',
-          }
-        }
-        inProgress.add(id)
-        try {
-          const { join } = await import('node:path')
-          const { execFile } = await import('node:child_process')
-          const { promisify } = await import('node:util')
-          const { existsSync } = await import('node:fs')
-          const { getRepoRoot } = await import('../context')
-          const { runClaudeCode } = await import('../lib/git/claude')
-          const { getTask } = await import('../queue')
-          const { patchOpenActionQueuePayload, supersedeActionQueueItemsForOrigin } = await import('../lib/action-queue')
-
-          const repoRoot = getRepoRoot()
-          const worktreePath = join(repoRoot, '.mars', 'worktrees', id)
-          const localExec = promisify(execFile)
-
-          const task = await getTask(id)
-
-          if (!task) {
-            // Task is gone — resolve any orphaned action-queue card so it
-            // doesn't stay stuck, and return a clear not-found diagnosis.
-            await supersedeActionQueueItemsForOrigin(id, 'origin-purged', 'diagnose-failure:task-already-gone')
-            return { diagnosis: `task ${id} not found; nothing to diagnose` }
-          }
-
-          // The worktree may have been cleaned up on a terminal failure. When
-          // it exists, run the diagnosis from inside it (the model can read the
-          // failing code); otherwise fall back to the repo root and diagnose
-          // from the stored failure context + session trace alone.
-          const worktreeExists = existsSync(worktreePath)
-          const cwd = worktreeExists ? worktreePath : repoRoot
-
-          let diffBody = ''
-          if (worktreeExists) {
-            let mergeBase = 'main'
-            try {
-              const { stdout } = await localExec(
-                'git',
-                ['merge-base', `task/${id}`, 'main'],
-                { cwd: repoRoot },
-              )
-              mergeBase = stdout.trim() || 'main'
-            } catch {
-              /* fall back to main */
-            }
-            try {
-              const { stdout } = await localExec('git', ['diff', mergeBase], {
-                cwd: worktreePath,
-              })
-              diffBody = stdout.slice(0, 20_000)
-            } catch {
-              /* ignore */
-            }
-          }
-
-          const promptParts: string[] = [
-            'You are diagnosing why a Mars task failed. This failure has no ' +
-              'registered recovery recipe, so a human asked for a root-cause ' +
-              'diagnosis. You are READ-ONLY: do not edit any files.',
-            '',
-          ]
-          if (task?.prompt) {
-            promptParts.push(`ORIGINAL TASK PROMPT:\n${task.prompt}\n`)
-          }
-          promptParts.push(
-            `FAILURE SIGNATURE: ${task?.failureSignature ?? '(unknown)'}`,
-          )
-          if (task?.error) {
-            promptParts.push(`STORED FAILURE REASON:\n${task.error}\n`)
-          }
-          if (worktreeExists && diffBody) {
-            promptParts.push(`WORKTREE DIFF (vs main branch point):\n${diffBody}\n`)
-          } else {
-            promptParts.push(
-              'The failing task worktree is no longer on disk. Diagnose from ' +
-                'the failure reason and original prompt above.\n',
-            )
-          }
-          if (task?.claudeSessionId) {
-            promptParts.push(
-              `If the failure reason is insufficient, the failing run's session ` +
-                `id is ${task.claudeSessionId} — reference its trace only if you ` +
-                `cannot otherwise explain the failure.\n`,
-            )
-          }
-          promptParts.push(
-            'Give a terse root-cause diagnosis: what failed, the most likely ' +
-              'cause, and whether a restart is likely to help or the task needs ' +
-              'reshaping. A short paragraph — this is a triage aid, not a fix.',
-          )
-
-          const result = await runClaudeCode({
-            cwd,
-            prompt: promptParts.join('\n'),
-            model: 'claude-sonnet-4-6',
-            // Read-only: default permission mode disallows file edits.
-            permissionMode: 'default',
-            // A few turns so it can read the worktree / trace if needed.
-            maxMessages: 12,
-          })
-
-          let diagnosis = '(no diagnosis generated)'
-          for (const event of result.conversation) {
-            if (
-              event.type === 'result' &&
-              typeof event.result === 'string' &&
-              !event.is_error
-            ) {
-              diagnosis = event.result as string
-            }
-          }
-
-          await patchOpenActionQueuePayload(id, {
-            diagnosis: {
-              text: diagnosis,
-              diagnosedAt: new Date().toISOString(),
-            },
-          })
-
-          return { diagnosis }
-        } finally {
-          inProgress.delete(id)
-        }
-      }
-    })(),
+    investigateWorktree,
+    diagnoseFailure,
     restartDaemon: async () => {
       // Re-exec a detached `mars daemon start` and let this process drain +
       // exit. Spawned detached so it survives our shutdown.

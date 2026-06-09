@@ -104,20 +104,86 @@ const diagnoseShow: Command = {
   },
 }
 
+const diagnoseRun: Command = {
+  path: 'diagnose run',
+  summary: 'trigger daemon-side failure diagnosis for a task (Sonnet)',
+  usage: 'usage: mars diagnose run <task-id>',
+  run: async (args, deps) => {
+    const taskId = args.positional[0]
+    if (!taskId) {
+      deps.err('usage: mars diagnose run <task-id>')
+      return { code: 2 }
+    }
+    let result: unknown
+    try {
+      result = await deps.daemon.sendRequest(
+        { op: 'diagnose-failure', id: taskId },
+        { autoSpawn: false },
+      )
+    } catch (err) {
+      deps.err(`diagnose run: ${errorMessage(err)}`)
+      return { code: 1 }
+    }
+    const diagnosis =
+      result !== null &&
+      typeof result === 'object' &&
+      'diagnosis' in result &&
+      typeof (result as { diagnosis: unknown }).diagnosis === 'string'
+        ? (result as { diagnosis: string }).diagnosis
+        : String(result)
+    deps.out(diagnosis)
+    return { code: 0 }
+  },
+}
+
+const diagnoseInvestigate: Command = {
+  path: 'diagnose investigate',
+  summary: 'trigger daemon-side worktree investigation for a task (Haiku)',
+  usage: 'usage: mars diagnose investigate <task-id>',
+  run: async (args, deps) => {
+    const taskId = args.positional[0]
+    if (!taskId) {
+      deps.err('usage: mars diagnose investigate <task-id>')
+      return { code: 2 }
+    }
+    let result: unknown
+    try {
+      result = await deps.daemon.sendRequest(
+        { op: 'investigate', id: taskId },
+        { autoSpawn: false },
+      )
+    } catch (err) {
+      deps.err(`diagnose investigate: ${errorMessage(err)}`)
+      return { code: 1 }
+    }
+    const explanation =
+      result !== null &&
+      typeof result === 'object' &&
+      'explanation' in result &&
+      typeof (result as { explanation: unknown }).explanation === 'string'
+        ? (result as { explanation: string }).explanation
+        : String(result)
+    deps.out(explanation)
+    return { code: 0 }
+  },
+}
+
 const diagnoseGroup: Command = {
   path: 'diagnose',
   summary: 'diagnose subcommands',
   usage:
-    'usage: mars diagnose <set <task-id> --from <-|path> | show <task-id> [--json]>',
+    'usage: mars diagnose <run <task-id> | investigate <task-id> | set <task-id> --from <-|path> | show <task-id> [--json]>',
   run: (_args, deps) => {
     deps.err(
-      'usage: mars diagnose <set <task-id> --from <-|path> | show <task-id> [--json]>',
+      'usage: mars diagnose <run <task-id> | investigate <task-id> | set <task-id> --from <-|path> | show <task-id> [--json]>',
     )
     return { code: 1 }
   },
 }
 
 export const diagnoseCommands: readonly Command[] = [
+  diagnoseRun,
+  diagnoseInvestigate,
   diagnoseSet,
   diagnoseShow,
   diagnoseGroup,
