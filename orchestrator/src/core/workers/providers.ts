@@ -6,6 +6,8 @@
 // that drive other CLIs or interactive harnesses; dispatch branching on
 // provider is reserved for those slices — this slice is data-only.
 
+import { waitForClaudeDone } from './claude-done-signal'
+
 export type ProviderName = 'claude'
 
 // Runtime options forwarded to spawnArgv when the orchestrator launches
@@ -23,14 +25,18 @@ export interface ProcessHandle {
 // Discriminated union describing how the orchestrator should detect that a
 // Provider's agent has finished a task cycle.
 //
-//   status-file  — the agent writes a sentinel file; the orchestrator polls
-//                  or watches that path. (future slice)
+//   status-file  — the agent writes a sentinel file; the orchestrator watches
+//                  that path. Implemented in claude-done-signal.ts.
 //   prompt-scan  — the pty buffer is scanned for a spinnerOverride sequence
 //                  followed by the shell promptPrefix returning.
 export interface StatusFileDoneSignal {
   readonly kind: 'status-file'
-  /** Absolute path the agent writes when it completes a task cycle. */
-  readonly path: string
+  /**
+   * Watches <cwd>/.mars/pty-status/<sessionId>.json and resolves when the
+   * file appears (written by the Stop hook). Rejects with an AbortError
+   * when the signal fires.
+   */
+  wait(sessionId: string, cwd: string, signal: AbortSignal): Promise<void>
 }
 
 export interface PromptScanDoneSignal {
@@ -73,6 +79,13 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
     feedPrompt: async (handle: ProcessHandle, prompt: string): Promise<void> => {
       handle.write(prompt)
       handle.write('\r')
+    },
+    // Status-file done-signal: the Stop hook installed by installClaudeStopHook
+    // writes a sentinel file; waitForClaudeDone watches for it.
+    doneSignal: {
+      kind: 'status-file' as const,
+      wait: (sessionId: string, cwd: string, signal: AbortSignal): Promise<void> =>
+        waitForClaudeDone(cwd, sessionId, signal),
     },
   },
 } as const

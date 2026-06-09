@@ -54,8 +54,11 @@ describe('PROVIDERS registry', () => {
     expect(written[1]).toBe('\r')
   })
 
-  it("'claude' provider has no doneSignal (tracer-bullet stage)", () => {
-    expect(PROVIDERS.claude.doneSignal).toBeUndefined()
+  it("'claude' provider doneSignal is a status-file signal with a wait function", () => {
+    expect(PROVIDERS.claude.doneSignal).toBeDefined()
+    expect(PROVIDERS.claude.doneSignal?.kind).toBe('status-file')
+    expect(PROVIDERS.claude.doneSignal).toHaveProperty('wait')
+    expect(typeof (PROVIDERS.claude.doneSignal as { wait?: unknown })?.wait).toBe('function')
   })
 })
 
