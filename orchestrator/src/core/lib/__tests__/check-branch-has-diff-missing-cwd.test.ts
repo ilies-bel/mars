@@ -6,8 +6,14 @@
  * message that looked identical to "git binary not on PATH". Post-mortem required
  * manual re-derivation to tell the two apart.
  *
- * After the fix, the output reads `has-diff: worktree path <cwd> no longer
- * exists` so the failure cause is immediately clear in the task error field.
+ * After the fix, the output reads `worktree path <cwd> no longer exists` so
+ * the failure cause is immediately clear in the task error field. The check
+ * name is NOT repeated in the output because the failure-summary composer in
+ * primitives/index.ts already prepends `${s.name}:` — outputting it again
+ * would produce the doubled "has-diff: has-diff:" visible in the operator UI.
+ *
+ * The `)` that previously trailed the path (from run-tool.ts wrapping the
+ * detail in `(${detail})`) is also stripped.
  */
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -49,5 +55,17 @@ describe('checkBranchHasDiff — worktree removed during verify', () => {
     // Must NOT contain the old opaque error that looks like a PATH problem.
     expect(result.output).not.toContain('spawn git ENOENT')
     expect(result.output).not.toContain('git rev-list failed')
+  })
+
+  it('output does not self-prefix the check name (no leading "has-diff:")', async () => {
+    const result = await checkBranchHasDiff(repo, 'task/test-branch', 'main')
+
+    // The failure-summary composer in primitives/index.ts prepends "${s.name}:"
+    // before the output. If the output itself starts with "has-diff:" the
+    // operator sees "has-diff: has-diff: worktree path …" in the UI.
+    expect(result.output).not.toMatch(/^has-diff:/)
+    // The path should be embedded cleanly — no trailing ')' leaking from the
+    // run-tool.ts error-wrapper template `(${detail})`.
+    expect(result.output).not.toContain(`${repo})`)
   })
 })

@@ -244,7 +244,7 @@ export const checkBranchHasDiff = async (
       return {
         name: 'has-diff',
         passed: false,
-        output: `has-diff: worktree path ${cwdMissingMatch[1]} no longer exists`,
+        output: `worktree path ${cwdMissingMatch[1].replace(/\)$/, '')} no longer exists`,
       }
     }
     return {
