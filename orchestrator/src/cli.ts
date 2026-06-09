@@ -76,6 +76,10 @@ Commands:
                                 repeatable; collected values form the tags list.
                                 The first tag routes to a Worker ('coder' is
                                 the default). Unknown tags fall back to Coder.
+  task show <id>                show a single task by id (or unique 8-char prefix)
+  task priority <id> <0..3>     set the dispatch priority of a queued or blocked
+                                task (0 = lowest, 3 = highest; takes effect on
+                                the next drain cycle without a daemon restart)
   proposal add "<goal>" [--author kind:name]
                                 create a proposal/plan in .mars/mars.db. Author
                                 is detected from env/git when omitted: human if
@@ -97,6 +101,8 @@ Commands:
                                 the proposal's status from 'draft' to 'prd-ready'.
                                 The slicer creates one task per vertical slice
                                 separately; this verb does NOT enqueue a task.
+  proposal reject <id>          reject a draft proposal (flips status to
+                                'rejected'; no tasks are dispatched)
   proposal slice <id>           decompose a 'prd-ready' proposal into N
                                 tracer-bullet vertical-slice tasks (one per
                                 user-observable behaviour) and queue them with
@@ -123,6 +129,10 @@ Commands:
                                 remove the listed task->proposal edges only.
   proposal task-blockers <task-id>
                                 list the proposals <task-id> is blocked by.
+  proposal ship-summary <id> [--json]
+                                print a summary of the landed arc for a proposal:
+                                each task's id, status, merge commit sha, and
+                                commit subject. --json emits the raw object.
   add "<prompt>" [plan flags]   (deprecated) draft a task; lands in 'draft' state
                                 so triage can promote to 'queued'. Prefer
                                 'mars task add' or 'mars proposal add'.
@@ -172,6 +182,11 @@ Commands:
                                 <blocker-id> to reach 'done' before dispatch.
                                 All ids must already exist; self-blocking is
                                 rejected.
+  recover [<id>]                re-evaluate blocked task(s) on the running daemon
+                                and re-queue any whose blockers are all resolved —
+                                the on-demand equivalent of the boot-time recovery
+                                scan (no daemon restart needed). With <id>, recovers
+                                just that task; with no id, sweeps every 'blocked' task.
   sweep                         enumerate local task/<id> branches whose id
                                 is absent from the queue and interactively
                                 resolve each one. For each orphan branch,
@@ -259,6 +274,11 @@ Commands:
                                 collapses to that single transcript). Writes
                                 report to
                                 .mars/deep-reflections/arc-<id>-<iso>.json.
+  arc purge <id> [--force]      purge a whole task arc (origin + all same-origin
+                                siblings: worktree + branch + row for each).
+                                Refuses if any arc branch has unique commits
+                                ahead of the integration branch unless --force
+                                is passed.
   action-queue                         alias for 'action-queue list open'
   action-queue list [state] [--kind <kind>] [--lean]
                                 list action queue items. state one of:
@@ -289,6 +309,10 @@ Commands:
                                 dropped. Items about failed or live tasks
                                 are left open. Idempotent — re-running is
                                 a no-op. Prints how many items were closed.
+  alert list                    list arc-rooted alerts (failed arcs + stale
+                                worktrees). Requires a running daemon.
+  alert show <arc-id>           show full detail for a single alert by arc id.
+                                Requires a running daemon.
   diagnose run <task-id>        trigger daemon-side failure diagnosis (Sonnet
                                 root-cause); prints the diagnosis text. The
                                 daemon must already be running (--no-spawn).
@@ -311,6 +335,8 @@ Commands:
   ui [--repo <path>] [--port <n>] [--host <h>]
                                 launch the read-only Kanban viewer
                                 (defaults: port 7777, host 127.0.0.1)
+  ui stop                       stop the running UI server
+  ui status                     print UI server status (running/stopped + port)
   uninstall [--yes|-y] [--wrapper <path>]
                                 remove the installed mars wrapper and source
                                 clone. Resolves the wrapper from the running
@@ -321,6 +347,12 @@ Commands:
                                 .worktrees/ directories are never touched.
                                 --yes / -y skips the confirmation prompt
                                 (required from a non-TTY stdin).
+  plugin activate <plugin-dir>  register the Mars Claude Code plugin into
+                                ~/.claude/settings.json (idempotent; 'mars init'
+                                runs this automatically — use this verb to repair
+                                a broken or manually removed plugin entry)
+  plugin deactivate             deregister the Mars Claude Code plugin from
+                                ~/.claude/settings.json
   cut verify <drain|reset|recreate>
                                 gate checks for the hard-cut to 4-letter id
                                 tags (PRD 52ec700f). drain: exits 0 only when
@@ -334,6 +366,15 @@ Commands:
                                 Pass 0 to wipe all rows. Prints the number
                                 of rows removed. Safe to run while the
                                 daemon is running.
+  kpi snapshot                  take a KPI snapshot (task throughput + cycle
+                                time) and print it as JSON to stdout
+  kpi show                      print the KPI window comparison (previous
+                                window vs current window) as JSON to stdout
+  project add <path> [--name <label>]
+                                register a project path in the global project
+                                registry (~/.mars/projects.json)
+  project list                  list registered projects
+  project remove <projectId>    remove a project from the global registry
   worker list                   print all known Workers (hard-coded defaults
                                 merged with any persisted registry)
   worker add <name> --model <model> [flags]
