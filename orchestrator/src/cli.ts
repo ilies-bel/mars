@@ -72,14 +72,14 @@ Commands:
                                 The first tag routes to a Worker ('coder' is
                                 the default). Unknown tags fall back to Coder.
   proposal add "<goal>" [--author kind:name]
-                                create a proposal/plan in .mars/state.db. Author
+                                create a proposal/plan in .mars/mars.db. Author
                                 is detected from env/git when omitted: human if
                                 running interactively, agent if MARS_AGENT_NAME
                                 or CLAUDE_CODE/CLAUDECODE is set.
   proposal list [--source reflection|human|planner] [--status <status>]
                                 list proposals; filter by source and/or status
-  proposal show <id>            show a proposal from .mars/state.db
-  proposal delete <id>          remove a proposal row from .mars/state.db
+  proposal show <id>            show a proposal from .mars/mars.db
+  proposal delete <id>          remove a proposal row from .mars/mars.db
                                 (cascades proposal_user_stories rows). No
                                 worktree, no merge — pure local DB write.
   proposal set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"
@@ -101,7 +101,7 @@ Commands:
                                 ADR-0008 planning-graph edge: <proposal-id> waits
                                 on each <blocker-id>. Both endpoints must
                                 exist; self-blocking is rejected. Stored in
-                                proposal_dependencies (.mars/state.db).
+                                proposal_dependencies (.mars/mars.db).
   proposal unblock <proposal-id> <blocker-id> [<blocker-id> ...]
                                 remove the listed planning-graph edges only;
                                 the proposal's status is left untouched.
@@ -111,7 +111,7 @@ Commands:
                                 ADR-0015 cross-graph edge: <task-id> cannot
                                 dispatch until each <proposal-id> is promoted.
                                 Stored in task_proposal_blockers
-                                (.mars/queue.db). Transferred onto a real
+                                (.mars/mars.db). Transferred onto a real
                                 task_blockers edge atomically when the proposal
                                 is sliced.
   proposal unblock-task <task-id> <proposal-id> [<proposal-id> ...]
@@ -125,8 +125,8 @@ Commands:
                                 set the functional plan on a draft/queued task
   set-technical <id> <text|@file>
                                 set the technical plan on a draft/queued task
-  show <id>                     print full detail for an id; tries tasks
-                                (.mars/queue.db), then proposals (.mars/state.db)
+  show <id>                     print full detail for an id; looks up tasks
+                                first, then proposals (both in .mars/mars.db)
   list [status]                 list tasks (draft|queued|running|verifying|merging|vega-reconciling|done|failed|dropped)
   continue <id> [<id> ...]      resume failed task(s) on their existing
                                 worktree+branch, jumping straight into the
@@ -183,7 +183,7 @@ Commands:
                                 Requires an interactive terminal (TTY).
   worktree clean [--dry-run] [--force-orphans]
                                 classify every directory under .mars/worktrees/
-                                (and legacy .worktrees/) against queue.db and
+                                (and legacy .worktrees/) against mars.db and
                                 remove the safe ones: done+merged branches,
                                 failed/dropped+zero-commit branches, and orphan
                                 rows whose branch never advanced. Skips
@@ -235,7 +235,7 @@ Commands:
   reflect [--since <iso>] [--limit <n>]
                                 synthesize draft proposals (source='reflection') from
                                 recent completed tasks. Reads token + scorer
-                                signals from .mars/queue.db. Default: last 10
+                                signals from .mars/mars.db. Default: last 10
                                 completed tasks. Proposals are
                                 inserted as drafts — never auto-run. Disable
                                 signal capture entirely with the env var
@@ -491,14 +491,14 @@ Subcommands:
 
 Subcommands:
   add "<goal>" [--author kind:name]
-      Create a plan/proposal in .mars/state.db. Author is detected from env
+      Create a plan/proposal in .mars/mars.db. Author is detected from env
       and git when omitted (agent if MARS_AGENT_NAME/CLAUDE_CODE is set,
       otherwise human with git user.email). Use --author to override,
       e.g. --author agent:vega.
   list [--source reflection|human|planner] [--status <status>]
       List proposals. Filter by source and/or status.
   show <id>
-      Show a proposal from .mars/state.db. <id> must be the full proposal slug.
+      Show a proposal from .mars/mars.db. <id> must be the full proposal slug.
   set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"
       Update a single field on an existing proposal. Replaces the field; does
       not append.
@@ -532,8 +532,8 @@ Set the technical plan on a draft/queued task. Use @path to read from a
 file.`,
   show: `mars show <id>
 
-Print full detail for an id. Looks up tasks first (.mars/queue.db),
-then proposals (.mars/state.db).`,
+Print full detail for an id. Looks up tasks first, then proposals
+(both in .mars/mars.db).`,
   list: `mars list [status]
 
 List tasks. Status one of: draft, queued, running, verifying, merging,
@@ -634,7 +634,7 @@ there are none.`,
 mars worktree prune [--dry-run]
 
 Walk .mars/worktrees/ (and legacy .worktrees/), classify each directory
-by joining against the matching queue.db row, and remove the safe ones.
+by joining against the matching mars.db row, and remove the safe ones.
 
 'clean' classifications:
   done + branch merged into main          → remove
@@ -810,7 +810,7 @@ Subcommands:
   reflect: `mars reflect [--since <iso>] [--limit <n>]
 
 Synthesize draft task suggestions from recent completed tasks. Reads
-token + scorer signals from .mars/queue.db. Default: last 10 completed
+token + scorer signals from .mars/mars.db. Default: last 10 completed
 tasks. Suggestions are inserted as proposals — never auto-run. Disable
 signal capture entirely with the env var MARS_REFLECT_DISABLED=1.
 
