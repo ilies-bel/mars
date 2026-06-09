@@ -20,7 +20,7 @@ describe('mars --help — continue verb', () => {
   it('lists continue alongside restart in top-level help', () => {
     const result = runCli(['--help'])
     expect(result.status).toBe(0)
-    expect(result.stdout).toMatch(/^\s*continue\s+<id>/m)
+    expect(result.stdout).toMatch(/^  continue\s{2,}/m)
   })
 
   it('continue description contrasts with restart (mentions restart as the alternative)', () => {
@@ -33,7 +33,7 @@ describe('mars --help — continue verb', () => {
   it('restart is still present alongside continue', () => {
     const result = runCli(['--help'])
     expect(result.status).toBe(0)
-    expect(result.stdout).toMatch(/^\s*restart\s+<id>/m)
+    expect(result.stdout).toMatch(/^  restart\s{2,}/m)
   })
 })
 
