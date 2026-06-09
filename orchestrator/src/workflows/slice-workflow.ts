@@ -919,6 +919,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       stepName: 'generate-slices',
       workflowInstanceId: ctx.runId,
       originId: inputData.proposalId,
+      taskId: null,
       getExtraPayload: () => ({ slicedTaskCount }),
     })
     if (r.exitCode !== 0) {
@@ -943,6 +944,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
         stepName: 'auto-linker-direction',
         workflowInstanceId: ctx.runId,
         originId: inputData.proposalId,
+        taskId: null,
       }).catch(() => null)
       if (!rr || rr.exitCode !== 0) return { hasDependency: false }
       try {
@@ -977,6 +979,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
         stepName: 'action-quality-reprompt',
         workflowInstanceId: ctx.runId,
         originId: inputData.proposalId,
+        taskId: null,
       }).catch(() => null)
       if (!rr || rr.exitCode !== 0) return null
       try {

@@ -89,6 +89,7 @@ export const planWorkflow = defineWorkflow<PlanInput, RunPlanResult, PlanService
         stepName: 'generate-plan',
         workflowInstanceId: ctx.runId,
         originId: input.taskId,
+        taskId: input.taskId,
       })
       if (r.exitCode !== 0) {
         throw new Error(

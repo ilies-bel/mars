@@ -106,6 +106,12 @@ export interface PrimitiveTraceArgs {
   workflowInstanceId: string
   /** Stable origin attribution for every trace event. */
   originId: string
+  /**
+   * The owning task id stamped on each span. Pass the concrete child task id
+   * for implement-arc steps and `null` for slicer-level steps (generate-slices,
+   * auto-linker-direction, action-quality-reprompt) that have no direct task.
+   */
+  taskId: string | null
   /** Workflow-level trace store; `nullTraceStore` disables span/event capture. */
   traceStore: TraceEventStore
 }
@@ -133,7 +139,7 @@ export const buildPrimitiveTrace = async (
     (await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)) ??
     nullTraceStore
   const originId = await resolveOriginIdForTask(taskId).catch(() => taskId)
-  return { workflowInstanceId, originId, traceStore }
+  return { workflowInstanceId, originId, taskId, traceStore }
 }
 
 /** Build the per-phase {@link TraceCtx} a primitive threads into git shell-outs. */
@@ -298,6 +304,7 @@ export const setupWorktree = async (
     stepName: 'setup-worktree',
     workflowInstanceId: trace.workflowInstanceId,
     originId: trace.originId,
+    taskId: taskId,
     phase: 'setup',
     traceStore: spanStore(trace),
     fn: async (): Promise<SetupWorktreeResult> => {
@@ -578,6 +585,7 @@ export const runAgent = async (args: RunAgentArgs): Promise<RunAgentResult> => {
     stepName: 'run-claude-code',
     workflowInstanceId: trace.workflowInstanceId,
     originId,
+    taskId,
     phase: 'code',
   })
 
@@ -697,6 +705,7 @@ export const verify = async (args: VerifyArgs): Promise<VerifyResult> => {
     stepName: 'verify',
     workflowInstanceId: trace.workflowInstanceId,
     originId: trace.originId,
+    taskId: taskId,
     phase: 'verify',
     traceStore: spanStore(trace),
     getCommandOutput: () => capturedVerifyOutput,
@@ -843,6 +852,7 @@ export const verify = async (args: VerifyArgs): Promise<VerifyResult> => {
           stepName: 'recovery-dispatch',
           workflowInstanceId: trace.workflowInstanceId,
           originId: trace.originId,
+          taskId: taskId,
           phase: 'verify',
           traceStore: spanStore(trace),
           fn: () =>
@@ -936,6 +946,7 @@ export const merge = async (args: MergeArgs): Promise<MergeOutput> => {
     stepName: 'merge',
     workflowInstanceId: trace.workflowInstanceId,
     originId: trace.originId,
+    taskId: taskId,
     phase: 'merge',
     traceStore: spanStore(trace),
     getVegaInfo: () => vegaSpanInfo,

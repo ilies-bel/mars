@@ -79,6 +79,7 @@ describe('runWorkerWithSpan — Coder run', () => {
       stepName: 'run-claude-code',
       workflowInstanceId: 'wf-coder-001',
       originId: 'task-coder-abc',
+      taskId: 'task-coder-abc',
     })
 
     const events = await traceStore.query({ taskId: 'task-coder-abc' })
@@ -102,6 +103,7 @@ describe('runWorkerWithSpan — Coder run', () => {
       stepName: 'run-claude-code',
       workflowInstanceId: 'wf-coder-002',
       originId: 'task-coder-def',
+      taskId: 'task-coder-def',
     })
 
     const ended = (await traceStore.query({ taskId: 'task-coder-def', kind: ['step_ended'] }))[0]
@@ -120,6 +122,7 @@ describe('runWorkerWithSpan — Coder run', () => {
       stepName: 'run-claude-code',
       workflowInstanceId: 'wf-coder-003',
       originId: 'task-coder-ghi',
+      taskId: 'task-coder-ghi',
     })
 
     const ended = (await traceStore.query({ taskId: 'task-coder-ghi', kind: ['step_ended'] }))[0]
@@ -140,6 +143,7 @@ describe('runWorkerWithSpan — Coder run', () => {
       stepName: 'run-claude-code',
       workflowInstanceId: 'wf-coder-004',
       originId: 'task-coder-jkl',
+      taskId: 'task-coder-jkl',
     })
 
     const ended = (await traceStore.query({ taskId: 'task-coder-jkl', kind: ['step_ended'] }))[0]
@@ -169,6 +173,7 @@ describe('runWorkerWithSpan — Coder run', () => {
       stepName: 'run-claude-code',
       workflowInstanceId: 'wf-coder-005',
       originId: 'task-coder-mno',
+      taskId: 'task-coder-mno',
     })
 
     const ended = (await traceStore.query({ taskId: 'task-coder-mno', kind: ['step_ended'] }))[0]
@@ -195,6 +200,7 @@ describe('runWorkerWithSpan — Planner / Slicer / Triager / Fixer runs', () => 
       stepName,
       workflowInstanceId: `wf-${name}-001`,
       originId,
+      taskId: originId,
     })
 
     const ended = (await traceStore.query({ taskId: originId, kind: ['step_ended'] }))[0]
@@ -217,6 +223,7 @@ describe('runWorkerWithSpan — failed worker run', () => {
       stepName: 'run-claude-code',
       workflowInstanceId: 'wf-fail-001',
       originId: 'task-fail-abc',
+      taskId: 'task-fail-abc',
     })
 
     const ended = (await traceStore.query({ taskId: 'task-fail-abc', kind: ['step_ended'] }))[0]
@@ -244,6 +251,7 @@ describe('runWorkerWithSpan — failed worker run', () => {
         stepName: 'run-claude-code',
         workflowInstanceId: 'wf-throw-001',
         originId: 'task-throw-abc',
+        taskId: 'task-throw-abc',
       }),
     ).rejects.toThrow('subprocess unexpectedly died')
 
@@ -265,6 +273,7 @@ describe('runWorkerWithSpan — failed worker run', () => {
       stepName: 'run-claude-code',
       workflowInstanceId: 'wf-killed-001',
       originId: 'task-killed-abc',
+      taskId: 'task-killed-abc',
     })
 
     const ended = (await traceStore.query({ taskId: 'task-killed-abc', kind: ['step_ended'] }))[0]
@@ -303,6 +312,7 @@ describe('runWorkerWithSpan — failed worker run', () => {
         stepName: 'run-claude-code',
         workflowInstanceId: 'wf-rethrow-001',
         originId: 'task-rethrow-abc',
+        taskId: 'task-rethrow-abc',
       }),
     ).rejects.toBe(thrownError)
   })
@@ -327,6 +337,7 @@ describe('runWorkerWithSpan — trace store write errors are non-fatal', () => {
       stepName: 'run-claude-code',
       workflowInstanceId: 'wf-broken-001',
       originId: 'task-broken-abc',
+      taskId: 'task-broken-abc',
     })
 
     expect(result.exitCode).toBe(0)
@@ -347,6 +358,7 @@ describe('runWorkerWithSpan — phase tag', () => {
       stepName: 'run-claude-code',
       workflowInstanceId: 'wf-phase-001',
       originId: 'task-phase',
+      taskId: 'task-phase',
       phase: 'code',
     })
 
@@ -367,6 +379,7 @@ describe('runNonLlmStepWithSpan — successful step', () => {
       stepName: 'setup-worktree',
       workflowInstanceId: 'wf-nonllm-001',
       originId: 'task-nonllm-abc',
+      taskId: 'task-nonllm-abc',
       phase: 'setup',
       traceStore,
       fn: async () => 'done',
@@ -384,6 +397,7 @@ describe('runNonLlmStepWithSpan — successful step', () => {
       stepName: 'setup-worktree',
       workflowInstanceId: 'wf-nonllm-002',
       originId: 'task-nonllm-payload',
+      taskId: 'task-nonllm-payload',
       phase: 'setup',
       traceStore,
       fn: async () => undefined,
@@ -403,6 +417,7 @@ describe('runNonLlmStepWithSpan — successful step', () => {
       stepName: 'merge',
       workflowInstanceId: 'wf-nonllm-003',
       originId: 'task-nonllm-nosession',
+      taskId: 'task-nonllm-nosession',
       phase: 'merge',
       traceStore,
       fn: async () => undefined,
@@ -422,6 +437,7 @@ describe('runNonLlmStepWithSpan — successful step', () => {
       stepName: 'verify',
       workflowInstanceId: 'wf-nonllm-004',
       originId: 'task-nonllm-completed',
+      taskId: 'task-nonllm-completed',
       phase: 'verify',
       traceStore,
       fn: async () => 42,
@@ -442,6 +458,7 @@ describe('runNonLlmStepWithSpan — successful step', () => {
       stepName: 'merge',
       workflowInstanceId: 'wf-nonllm-phase',
       originId: 'task-nonllm-phase',
+      taskId: 'task-nonllm-phase',
       phase: 'merge',
       traceStore,
       fn: async () => undefined,
@@ -460,6 +477,7 @@ describe('runNonLlmStepWithSpan — successful step', () => {
       stepName: 'setup-worktree',
       workflowInstanceId: 'wf-nonllm-ret',
       originId: 'task-nonllm-ret',
+      taskId: 'task-nonllm-ret',
       phase: 'setup',
       traceStore,
       fn: async () => ({ path: '/tmp/wt', branch: 'task/abc' }),
@@ -479,6 +497,7 @@ describe('runNonLlmStepWithSpan — live in-flight state', () => {
       stepName: 'setup-worktree',
       workflowInstanceId: 'wf-inflight',
       originId: 'task-inflight',
+      taskId: 'task-inflight',
       phase: 'setup',
       traceStore,
       fn: async () => {
@@ -508,6 +527,7 @@ describe('runNonLlmStepWithSpan — failed step', () => {
         stepName: 'setup-worktree',
         workflowInstanceId: 'wf-fail-nonllm',
         originId: 'task-fail-nonllm',
+        taskId: 'task-fail-nonllm',
         phase: 'setup',
         traceStore,
         fn: async () => {
@@ -532,6 +552,7 @@ describe('runNonLlmStepWithSpan — failed step', () => {
         stepName: 'verify',
         workflowInstanceId: 'wf-fail-verify',
         originId: 'task-fail-verify',
+        taskId: 'task-fail-verify',
         phase: 'verify',
         traceStore,
         fn: async () => {
@@ -553,6 +574,7 @@ describe('runNonLlmStepWithSpan — Vega upgrade (conflicted merge)', () => {
       stepName: 'merge',
       workflowInstanceId: 'wf-vega-001',
       originId: 'task-vega-abc',
+      taskId: 'task-vega-abc',
       phase: 'merge',
       traceStore,
       getVegaInfo: () => ({ workerName: 'Vega', sessionId: 'sess-vega-xyz' }),
@@ -572,6 +594,7 @@ describe('runNonLlmStepWithSpan — Vega upgrade (conflicted merge)', () => {
       stepName: 'merge',
       workflowInstanceId: 'wf-ff-001',
       originId: 'task-ff-abc',
+      taskId: 'task-ff-abc',
       phase: 'merge',
       traceStore,
       getVegaInfo: () => null,
@@ -592,6 +615,7 @@ describe('runNonLlmStepWithSpan — Vega upgrade (conflicted merge)', () => {
       stepName: 'merge',
       workflowInstanceId: 'wf-vega-single-span',
       originId: 'task-vega-single',
+      taskId: 'task-vega-single',
       phase: 'merge',
       traceStore,
       getVegaInfo: () => ({ workerName: 'Vega', sessionId: 'sess-vega-single' }),
@@ -611,6 +635,7 @@ describe('runNonLlmStepWithSpan — Vega upgrade (conflicted merge)', () => {
       stepName: 'merge',
       workflowInstanceId: 'wf-invariant-conflict',
       originId: 'task-invariant-conflict',
+      taskId: 'task-invariant-conflict',
       phase: 'merge',
       traceStore,
       getVegaInfo: () => ({ workerName: 'Vega', sessionId: 'sess-invariant' }),
@@ -622,6 +647,7 @@ describe('runNonLlmStepWithSpan — Vega upgrade (conflicted merge)', () => {
       stepName: 'merge',
       workflowInstanceId: 'wf-invariant-ff',
       originId: 'task-invariant-ff',
+      taskId: 'task-invariant-ff',
       phase: 'merge',
       traceStore,
       fn: async () => undefined,
@@ -655,6 +681,7 @@ describe('runNonLlmStepWithSpan — trace store write errors are non-fatal', () 
       stepName: 'merge',
       workflowInstanceId: 'wf-broken-nonllm',
       originId: 'task-broken-nonllm',
+      taskId: 'task-broken-nonllm',
       phase: 'merge',
       traceStore: brokenStore,
       fn: async () => 'success',
@@ -677,6 +704,7 @@ describe('runNonLlmStepWithSpan — trace store write errors are non-fatal', () 
         stepName: 'merge',
         workflowInstanceId: 'wf-broken-throw',
         originId: 'task-broken-throw',
+        taskId: 'task-broken-throw',
         phase: 'merge',
         traceStore: brokenStore,
         fn: async () => {
@@ -697,6 +725,7 @@ describe('runNonLlmStepWithSpan — command output', () => {
       stepName: 'verify',
       workflowInstanceId: 'wf-cmdout-001',
       originId: 'task-cmdout-pass',
+      taskId: 'task-cmdout-pass',
       phase: 'verify',
       traceStore,
       getCommandOutput: () => '=== typecheck (pass) ===\n0 errors',
@@ -715,6 +744,7 @@ describe('runNonLlmStepWithSpan — command output', () => {
         stepName: 'verify',
         workflowInstanceId: 'wf-cmdout-002',
         originId: 'task-cmdout-fail',
+        taskId: 'task-cmdout-fail',
         phase: 'verify',
         traceStore,
         getCommandOutput: () => '=== typecheck (fail) ===\nerror TS2345: bad type',
@@ -735,6 +765,7 @@ describe('runNonLlmStepWithSpan — command output', () => {
       stepName: 'setup-worktree',
       workflowInstanceId: 'wf-cmdout-003',
       originId: 'task-cmdout-absent',
+      taskId: 'task-cmdout-absent',
       phase: 'setup',
       traceStore,
       fn: async () => undefined,
@@ -753,6 +784,7 @@ describe('runNonLlmStepWithSpan — command output', () => {
       stepName: 'verify',
       workflowInstanceId: 'wf-cmdout-004',
       originId: 'task-cmdout-undef',
+      taskId: 'task-cmdout-undef',
       phase: 'verify',
       traceStore,
       getCommandOutput: () => undefined,
@@ -772,6 +804,7 @@ describe('runNonLlmStepWithSpan — command output', () => {
       stepName: 'verify',
       workflowInstanceId: 'wf-cmdout-005',
       originId: 'task-cmdout-started',
+      taskId: 'task-cmdout-started',
       phase: 'verify',
       traceStore,
       getCommandOutput: () => 'some output',
@@ -797,6 +830,7 @@ describe('runNonLlmStepWithSpan — three verify attempts produce three spans', 
         stepName: 'verify',
         workflowInstanceId: `wf-triple-${i}`,
         originId,
+        taskId: originId,
         phase: 'verify',
         traceStore,
         fn: async () => undefined,
@@ -819,6 +853,7 @@ describe('runNonLlmStepWithSpan — three verify attempts produce three spans', 
         stepName: 'verify',
         workflowInstanceId: `wf-triple-distinct-${i}`,
         originId,
+        taskId: originId,
         phase: 'verify',
         traceStore,
         fn: async () => undefined,
@@ -841,6 +876,7 @@ describe('runNonLlmStepWithSpan — three verify attempts produce three spans', 
         stepName: 'verify',
         workflowInstanceId: `wf-triple-out-${i}`,
         originId,
+        taskId: originId,
         phase: 'verify',
         traceStore,
         getCommandOutput: () => output,
@@ -853,6 +889,76 @@ describe('runNonLlmStepWithSpan — three verify attempts produce three spans', 
     const outputs = ended.map((e) => e.payload.commandOutput as string)
     // Each attempt has distinct output
     expect(new Set(outputs).size).toBe(3)
+  })
+})
+
+// ── taskId is distinct from originId ──────────────────────────────────────
+
+describe('runWorkerWithSpan — taskId stamps spans with the real task id', () => {
+  it('attributes spans to taskId, not originId, when they differ', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const worker = makeWorker('Coder', successResult())
+
+    await runWorkerWithSpan({
+      worker,
+      prompt: 'implement the thing',
+      runOptions: { cwd: '/tmp' },
+      traceStore,
+      stepName: 'run-claude-code',
+      workflowInstanceId: 'wf-taskid-distinct-001',
+      originId: 'origin-proposal-aaa',
+      taskId: 'task-child-bbb',
+    })
+
+    // Spans attributed to the real task id
+    const byTaskId = await traceStore.query({ taskId: 'task-child-bbb' })
+    expect(byTaskId).toHaveLength(2)
+
+    // NOT attributed to the origin id
+    const byOriginId = await traceStore.query({ taskId: 'origin-proposal-aaa' })
+    expect(byOriginId).toHaveLength(0)
+  })
+
+  it('attributes slicer spans with null taskId — not attributed to the proposal id', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const worker = makeWorker('Slicer', successResult())
+
+    await runWorkerWithSpan({
+      worker,
+      prompt: 'slice the proposal',
+      runOptions: { cwd: '/tmp' },
+      traceStore,
+      stepName: 'generate-slices',
+      workflowInstanceId: 'wf-slicer-taskid-001',
+      originId: 'proposal-xyz',
+      taskId: null,
+    })
+
+    // Slicer spans are NOT attributed to the proposal id
+    const byProposalId = await traceStore.query({ taskId: 'proposal-xyz' })
+    expect(byProposalId).toHaveLength(0)
+  })
+})
+
+describe('runNonLlmStepWithSpan — taskId stamps spans with the real task id', () => {
+  it('attributes spans to taskId, not originId, when they differ', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+
+    await runNonLlmStepWithSpan({
+      stepName: 'setup-worktree',
+      workflowInstanceId: 'wf-taskid-nonllm-distinct-001',
+      originId: 'origin-proposal-ccc',
+      taskId: 'task-child-ddd',
+      phase: 'setup',
+      traceStore,
+      fn: async () => undefined,
+    })
+
+    const byTaskId = await traceStore.query({ taskId: 'task-child-ddd' })
+    expect(byTaskId).toHaveLength(2)
+
+    const byOriginId = await traceStore.query({ taskId: 'origin-proposal-ccc' })
+    expect(byOriginId).toHaveLength(0)
   })
 })
 
@@ -870,6 +976,7 @@ describe('runNonLlmStepWithSpan — recovery dispatch produces distinct span', (
         stepName: 'verify',
         workflowInstanceId: wfId,
         originId,
+        taskId: originId,
         phase: 'verify',
         traceStore,
         fn: async () => {
@@ -878,6 +985,7 @@ describe('runNonLlmStepWithSpan — recovery dispatch produces distinct span', (
             stepName: 'recovery-dispatch',
             workflowInstanceId: wfId,
             originId,
+            taskId: originId,
             phase: 'verify',
             traceStore,
             fn: async () => ({ fixTaskId: 'fix-001', created: true }),
@@ -905,6 +1013,7 @@ describe('runNonLlmStepWithSpan — recovery dispatch produces distinct span', (
         stepName: 'verify',
         workflowInstanceId: wfId,
         originId,
+        taskId: originId,
         phase: 'verify',
         traceStore,
         fn: async () => {
@@ -912,6 +1021,7 @@ describe('runNonLlmStepWithSpan — recovery dispatch produces distinct span', (
             stepName: 'recovery-dispatch',
             workflowInstanceId: wfId,
             originId,
+            taskId: originId,
             phase: 'verify',
             traceStore,
             fn: async () => ({ fixTaskId: 'fix-002', created: true }),
@@ -939,6 +1049,7 @@ describe('runNonLlmStepWithSpan — recovery dispatch produces distinct span', (
         stepName: 'verify',
         workflowInstanceId: wfId,
         originId,
+        taskId: originId,
         phase: 'verify',
         traceStore,
         fn: async () => {
@@ -946,6 +1057,7 @@ describe('runNonLlmStepWithSpan — recovery dispatch produces distinct span', (
             stepName: 'recovery-dispatch',
             workflowInstanceId: wfId,
             originId,
+            taskId: originId,
             phase: 'verify',
             traceStore,
             fn: async () => undefined,

@@ -135,6 +135,7 @@ export const implementWorkflow = defineWorkflow<
     const trace: PrimitiveTraceArgs = {
       workflowInstanceId: ctx.runId,
       originId: workflowOriginId,
+      taskId: input.taskId,
       traceStore: workflowTraceStore,
     }
 

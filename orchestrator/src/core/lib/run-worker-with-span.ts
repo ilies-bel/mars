@@ -35,6 +35,13 @@ export interface RunWorkerWithSpanOptions {
   stepName: string
   workflowInstanceId: string
   originId: string
+  /**
+   * The owning task id stamped on every span emitted by this call. Pass the
+   * concrete child task id for implement-arc steps (`run-claude-code`, etc.) and
+   * `null` for slicer-level steps (`generate-slices`, `auto-linker-direction`,
+   * `action-quality-reprompt`) that have no direct task owner.
+   */
+  taskId: string | null
   /** Optional phase tag (`code`, `verify`, …) attached to both events. */
   phase?: TraceEventPhase
   /**
@@ -85,6 +92,7 @@ export const runWorkerWithSpan = async (
     stepName,
     workflowInstanceId,
     originId,
+    taskId,
     phase,
     getExtraPayload,
   } = options
@@ -92,7 +100,7 @@ export const runWorkerWithSpan = async (
   const startedAt = Date.now()
   await safeRecord(traceStore, {
     kind: 'step_started',
-    taskId: originId,
+    taskId,
     originId,
     phase: phase ?? null,
     payload: {
@@ -118,7 +126,7 @@ export const runWorkerWithSpan = async (
     const failureEvalResults = evaluateStep(stepName, failurePayload)
     await safeRecord(traceStore, {
       kind: 'step_ended',
-      taskId: originId,
+      taskId,
       originId,
       phase: phase ?? null,
       payload: {
@@ -170,7 +178,7 @@ export const runWorkerWithSpan = async (
   const evalResults = evaluateStep(stepName, successPayload)
   await safeRecord(traceStore, {
     kind: 'step_ended',
-    taskId: originId,
+    taskId,
     originId,
     phase: phase ?? null,
     payload: {
@@ -186,6 +194,12 @@ export interface RunNonLlmStepOptions<T> {
   stepName: string
   workflowInstanceId: string
   originId: string
+  /**
+   * The owning task id stamped on every span emitted by this call. Pass the
+   * concrete child task id for implement-arc steps and `null` for slicer-level
+   * steps that have no direct task owner.
+   */
+  taskId: string | null
   phase: TraceEventPhase
   /**
    * Optional — when absent (or when `record` fails) no trace events are
@@ -241,6 +255,7 @@ export const runNonLlmStepWithSpan = async <T>(
     stepName,
     workflowInstanceId,
     originId,
+    taskId,
     phase,
     traceStore,
     fn,
@@ -251,7 +266,7 @@ export const runNonLlmStepWithSpan = async <T>(
   const startedAt = Date.now()
   await safeRecord(traceStore, {
     kind: 'step_started',
-    taskId: originId,
+    taskId,
     originId,
     phase,
     payload: { stepName, workflowInstanceId },
@@ -274,7 +289,7 @@ export const runNonLlmStepWithSpan = async <T>(
     const nonLlmSuccessEvalResults = evaluateStep(stepName, nonLlmSuccessPayload)
     await safeRecord(traceStore, {
       kind: 'step_ended',
-      taskId: originId,
+      taskId,
       originId,
       phase,
       payload: {
@@ -297,7 +312,7 @@ export const runNonLlmStepWithSpan = async <T>(
     const nonLlmFailureEvalResults = evaluateStep(stepName, nonLlmFailurePayload)
     await safeRecord(traceStore, {
       kind: 'step_ended',
-      taskId: originId,
+      taskId,
       originId,
       phase,
       payload: {

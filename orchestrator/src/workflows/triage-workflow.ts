@@ -111,6 +111,7 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
         stepName: 'generate-triage',
         workflowInstanceId: ctx.runId,
         originId: input.taskId,
+        taskId: input.taskId,
       })
       if (r.exitCode !== 0) {
         throw new Error(
