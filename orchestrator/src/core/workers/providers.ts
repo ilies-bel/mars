@@ -20,15 +20,35 @@ export interface ProcessHandle {
   readonly stdin: NodeJS.WritableStream
 }
 
-// Optional hook a Provider installs to detect completion beyond a normal
-// process exit (e.g. watching stdout for a sentinel line). When present
-// the orchestrator awaits it before declaring the session done.
-export type ProviderDoneSignal = (handle: ProcessHandle) => Promise<void>
+// Discriminated union describing how the orchestrator should detect that a
+// Provider's agent has finished a task cycle.
+//
+//   status-file  — the agent writes a sentinel file; the orchestrator polls
+//                  or watches that path. (future slice)
+//   prompt-scan  — the pty buffer is scanned for a spinnerOverride sequence
+//                  followed by the shell promptPrefix returning.
+export interface StatusFileDoneSignal {
+  readonly kind: 'status-file'
+  /** Absolute path the agent writes when it completes a task cycle. */
+  readonly path: string
+}
+
+export interface PromptScanDoneSignal {
+  readonly kind: 'prompt-scan'
+  /** Fixed string the agent shell prints when it returns to the prompt. */
+  readonly promptPrefix: string
+  /** Regex matching the spinner-override/clear sequence the agent emits on
+   *  task completion, before the prompt reappears. */
+  readonly spinnerOverride: RegExp
+}
+
+export type ProviderDoneSignal = StatusFileDoneSignal | PromptScanDoneSignal
 
 // Descriptor for a single agent CLI. Bundles:
 //   - spawnArgv  : build the argv array used to launch the process;
 //   - feedPrompt : write the task prompt into a running process handle;
-//   - doneSignal : optional hook that fires when the process completes.
+//   - doneSignal : optional descriptor that tells the orchestrator how to
+//                  detect session completion beyond a normal process exit.
 export interface Provider {
   readonly name: ProviderName
   spawnArgv(opts: SpawnOpts): readonly string[]
