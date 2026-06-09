@@ -24,6 +24,7 @@ import { taskSchema } from '@/shared/schemas'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 import { dagClusterStyle, DAG_EDGE_BLOCKER, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
 import { relativeTime } from '@/shared/time'
+import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { OriginTree } from './OriginTree'
 
 /** A single step execution span — one step_started event paired with its step_ended (if any). */
@@ -347,15 +348,32 @@ export const TaskDetailBody = ({
               {task.blockedBy.length === 1 ? '' : 's'}.
             </p>
           ) : null}
-          {task.error != null ? (
-            <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-error">
-              {task.error}
-            </pre>
-          ) : null}
+          {/* Lead with humanized cause — same source as the Action Queue banner. */}
           {task.failureSignature != null ? (
-            <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em] text-error/70">
-              {task.failureSignature}
+            <p
+              data-testid="task-detail-failure-cause"
+              className="mt-1 text-[11px] text-error"
+            >
+              {humanizeFailureCode(task.failureSignature)}
             </p>
+          ) : null}
+          {/* Raw error and signature demoted to a secondary technical detail. */}
+          {(task.error != null || task.failureSignature != null) ? (
+            <details className="mt-1">
+              <summary className="cursor-pointer font-mono text-[10px] text-muted">
+                Technical details
+              </summary>
+              {task.error != null ? (
+                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-error/80">
+                  {task.error}
+                </pre>
+              ) : null}
+              {task.failureSignature != null ? (
+                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em] text-error/50">
+                  {task.failureSignature}
+                </p>
+              ) : null}
+            </details>
           ) : null}
         </div>
       ) : null}
@@ -506,10 +524,25 @@ export const TaskDetailBody = ({
   )
 }
 
+/**
+ * Human-readable descriptions for known eval metric labels. Used as tooltip
+ * titles and aria-labels so screen-reader users and hovering operators can
+ * understand what each chip measures — especially ctx%, which is the root cause
+ * of over-budget failures when it exceeds 100%.
+ */
+const EVAL_METRIC_DESC: Record<string, string> = {
+  'ctx%': 'Context window used — 100% = full budget; above 100% means the run overran its context limit',
+  'out/in': 'Output-to-input token ratio — higher values mean the model generated more relative to its input',
+  'msgs': 'Number of messages in the conversation',
+}
+
 const EvalChip = ({ label, value, warn }: { label: string; value: number | string | null; warn: boolean }) => {
   if (value === null) return null
+  const desc = EVAL_METRIC_DESC[label]
   return (
     <span
+      title={desc}
+      aria-label={desc != null ? `${label} ${String(value)}: ${desc}` : undefined}
       className={`rounded border px-1 py-0.5 font-mono text-[10px] ${
         warn
           ? 'border-warn/40 bg-warn/5 text-warn'

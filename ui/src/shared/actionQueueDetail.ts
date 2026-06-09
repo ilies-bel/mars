@@ -12,6 +12,28 @@
 import type { TraceEvent } from './schemas'
 
 /**
+ * Convert a machine-readable failure signature / reason code into a short,
+ * operator-readable phrase. This is the single client-side humanization
+ * function for failure codes — both the Action Queue trace summary and the
+ * Task Detail Drawer banner call it so the two surfaces can never drift.
+ *
+ * Examples:
+ *   'verify:has-diff'  → 'has-diff (verify step)'
+ *   'code:over-budget' → 'over-budget (code step)'
+ *   'daemon-killed'    → 'daemon killed'
+ *   'tool_timeout'     → 'tool timeout'
+ */
+export const humanizeFailureCode = (code: string): string => {
+  const colonIdx = code.indexOf(':')
+  if (colonIdx !== -1) {
+    // 'verify:typecheck' → 'typecheck (verify step)'
+    return `${code.slice(colonIdx + 1)} (${code.slice(0, colonIdx)} step)`
+  }
+  // 'tool_timeout' → 'tool timeout'
+  return code.replace(/[_-]/g, ' ')
+}
+
+/**
  * Build a one-line summary of a trace event payload. Defers to the kind so
  * the Traces section reads more like a timeline than a JSON dump.
  *
@@ -51,16 +73,7 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
     // Prefer human-readable prose; only fall through to the machine code when
     // no prose is available, and humanize even then.
     if (typeof p.failureReason === 'string') return p.failureReason
-    if (typeof p.failureReasonCode === 'string') {
-      const code = p.failureReasonCode
-      const colonIdx = code.indexOf(':')
-      if (colonIdx !== -1) {
-        // 'verify:typecheck' → 'typecheck (verify step)'
-        return `${code.slice(colonIdx + 1)} (${code.slice(0, colonIdx)} step)`
-      }
-      // 'tool_timeout' → 'tool timeout'
-      return code.replace(/[_-]/g, ' ')
-    }
+    if (typeof p.failureReasonCode === 'string') return humanizeFailureCode(p.failureReasonCode)
     return 'task failed'
   }
 

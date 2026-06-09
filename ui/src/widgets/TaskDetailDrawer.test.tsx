@@ -1089,3 +1089,121 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     expect(html).toContain('bg-warn')
   })
 })
+
+// ── Failure banner humanization ───────────────────────────────────────────────
+
+/**
+ * The failure banner must lead with the humanized cause phrase produced by
+ * humanizeFailureCode (the same helper the Action Queue uses), not raw machine
+ * signatures.  The raw signature is still present but demoted so Action Queue
+ * and drawer can never drift.
+ */
+describe('TaskDetailBody – failure banner humanization', () => {
+  const failedWithSig = fullTask({
+    id: 'task-sig',
+    status: 'failed',
+    failureSignature: 'verify:has-diff',
+    error: 'worktree /tmp/mars-abc no longer exists',
+  })
+
+  it('banner leads with the humanized cause, not the raw signature', () => {
+    const html = renderBody(failedWithSig)
+    // Humanized form must be present
+    expect(html).toContain('has-diff (verify step)')
+    // Raw uppercase badge must NOT be the headline (it's demoted inside <details>)
+    // We confirm the testid for the humanized cause exists
+    expect(html).toContain('data-testid="task-detail-failure-cause"')
+  })
+
+  it('raw signature still appears in the technical-details section', () => {
+    const html = renderBody(failedWithSig)
+    // The machine signature should still be in the DOM (demoted)
+    expect(html).toContain('verify:has-diff')
+    // The raw error should still be accessible inside <details>
+    expect(html).toContain('worktree /tmp/mars-abc no longer exists')
+  })
+
+  it('humanizes daemon-killed to a readable phrase', () => {
+    const t = fullTask({ id: 'task-dk', status: 'failed', failureSignature: 'daemon-killed' })
+    const html = renderBody(t)
+    expect(html).toContain('daemon killed')
+  })
+
+  it('humanizes code:over-budget to a readable phrase', () => {
+    const t = fullTask({ id: 'task-ob', status: 'failed', failureSignature: 'code:over-budget' })
+    const html = renderBody(t)
+    expect(html).toContain('over-budget (code step)')
+  })
+
+  it('shows no humanized-cause line when failureSignature is null', () => {
+    const t = fullTask({ id: 'task-noSig', status: 'failed', error: 'raw error only' })
+    const html = renderBody(t)
+    expect(html).not.toContain('data-testid="task-detail-failure-cause"')
+    // Raw error still surfaces in the technical-details section
+    expect(html).toContain('raw error only')
+  })
+})
+
+// ── EvalChip accessibility ────────────────────────────────────────────────────
+
+/**
+ * EvalChip metrics that explain WHY a run failed should carry accessible
+ * title/aria-label attributes so screen-reader users and hovering operators
+ * can understand what each metric measures — especially ctx%, which directly
+ * indicates a context-budget overrun when its value exceeds 100%.
+ */
+describe('TaskDetailDrawer – EvalChip accessibility', () => {
+  const spanWithCtx = span({
+    stepName: 'run-claude-code',
+    workflowInstanceId: 'wf-1',
+    outcome: 'failed',
+    evalResults: [
+      { label: 'ctx%', value: '206.4%', warn: true },
+      { label: 'out/in', value: '30.37', warn: false },
+      { label: 'msgs', value: 27, warn: false },
+    ],
+  })
+
+  it('ctx% chip carries a title explaining the context-window metric', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[spanWithCtx]} />,
+    )
+    expect(html).toContain('Context window used')
+    expect(html).toContain('above 100% means the run overran')
+  })
+
+  it('ctx% chip carries an aria-label including its value and description', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[spanWithCtx]} />,
+    )
+    expect(html).toContain('aria-label="ctx% 206.4%:')
+  })
+
+  it('out/in chip carries a title explaining the token-ratio metric', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[spanWithCtx]} />,
+    )
+    expect(html).toContain('Output-to-input token ratio')
+  })
+
+  it('msgs chip carries a title explaining the message-count metric', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[spanWithCtx]} />,
+    )
+    expect(html).toContain('Number of messages in the conversation')
+  })
+
+  it('an unknown metric label does not crash and renders without aria-label', () => {
+    const s = span({
+      stepName: 'code',
+      workflowInstanceId: 'wf-1',
+      evalResults: [{ label: 'unknown-metric', value: '42', warn: false }],
+    })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[s]} />,
+    )
+    expect(html).toContain('unknown-metric')
+    // No aria-label injected for unlisted metrics
+    expect(html).not.toContain('aria-label="unknown-metric')
+  })
+})
