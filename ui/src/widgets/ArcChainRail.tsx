@@ -5,6 +5,7 @@ import { fetchEvents } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { relativeTime } from '@/shared/time'
 import { severityColor, summarizeTraceEvent, marsToolTextClass } from '@/shared/actionQueueDetail'
+import { traceEventRowClass } from '@/shared/traceSeverity'
 
 export interface ArcChainRailProps {
   chain: AlertChainNode[]
@@ -42,7 +43,7 @@ function TaskTracePanel({ taskId }: { taskId: string }) {
   return (
     <ul className="flex flex-col gap-0.5">
       {data.events.map((e) => (
-        <li key={e.id} className="font-mono text-[10px] text-fg">
+        <li key={e.id} className={`font-mono text-[10px] ${traceEventRowClass(e.severity)}`}>
           <span className="text-iron/60">{relativeTime(e.timestamp)}</span>{' '}
           <span className={`uppercase ${severityColor(e.severity)}`}>
             [{e.severity}]
