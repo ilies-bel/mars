@@ -303,6 +303,18 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/release-notes-cursor — proxy the daemon's last-viewed
+        // release-notes timestamp. POST marks it as viewed (server-clock now).
+        if (path === '/api/release-notes-cursor' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/release-notes-cursor')
+          return jsonResponse(r.status, r.body)
+        }
+
+        if (path === '/api/release-notes-cursor' && req.method === 'POST') {
+          const result = await proxyPost(ctx.stateDir, '/view/release-notes-cursor', {})
+          return jsonResponse(result.status, result.body)
+        }
+
         // GET /api/kpis/:key/arcs — per-arc breakdown for a single KPI.
         // Must be matched before /api/kpis so the longer path wins.
         if (path.startsWith('/api/kpis/') && path.endsWith('/arcs') && req.method === 'GET') {

@@ -18,6 +18,12 @@ import { SelfUpdateError, SELF_UPDATE_ERRORS } from './self-update'
 import type { ViewStreamHub } from './view/stream-hub'
 import type { LoadCorpusOptions } from '../lib/reflect-query'
 import type { AppServices } from '../app-services'
+import {
+  getSetting,
+  setSetting,
+  RELEASE_NOTES_LAST_VIEWED_KEY,
+} from '../lib/settings'
+import { resolveStateClient } from '../store/state-client'
 
 /** Wire shape for a single step span, returned by GET /view/step-spans. */
 export interface StepSpan {
@@ -734,6 +740,28 @@ export const startHttpServer = async (
         .then((alerts) => sendJson(res, 200, alerts))
         .catch((err: unknown) => sendError(res, err))
       return
+    }
+
+    // GET /view/release-notes-cursor — returns the last-viewed-release-notes
+    // timestamp stored in app_settings, or null when never viewed.
+    // POST /view/release-notes-cursor — stamps "now" as the last-viewed
+    // timestamp (mark-viewed gesture). Handled here (before the POST-only
+    // guard below) so both verbs are adjacent and the POST bypasses the
+    // draining gate — this is a lightweight preference write, not task work.
+    if (req.url === '/view/release-notes-cursor') {
+      if (req.method === 'GET') {
+        getSetting(resolveStateClient(), RELEASE_NOTES_LAST_VIEWED_KEY)
+          .then((lastViewedAt) => sendJson(res, 200, { lastViewedAt }))
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+      if (req.method === 'POST') {
+        const now = new Date().toISOString()
+        setSetting(resolveStateClient(), RELEASE_NOTES_LAST_VIEWED_KEY, now)
+          .then(() => sendJson(res, 200, { lastViewedAt: now }))
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
     }
 
     if (req.method !== 'POST') {
