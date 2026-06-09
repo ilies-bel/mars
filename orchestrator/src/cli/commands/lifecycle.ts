@@ -1,7 +1,7 @@
 /**
  * Task-lifecycle and top-level query commands: `show`, `set-functional`,
- * `set-technical`, `retry`, `continue`, `restart`, `purge`, `unblock`,
- * `recover`, `sync`, `drop`, `block`, `list`, `watch`.
+ * `set-technical`, `continue`, `restart`, `purge`, `unblock`,
+ * `recover`, `sync`, `drop`, `block`, `list`, `update`.
  *
  * Mutations route through `deps.daemon`; reads through `deps.store`.
  */
@@ -79,18 +79,6 @@ const makeSetPlan = (kind: 'functional' | 'technical'): Command => ({
     return { code: 0 }
   },
 })
-
-const retry: Command = {
-  path: 'retry',
-  summary: '(removed) use continue/restart',
-  usage: "use 'mars continue <id>' or 'mars restart <id>'",
-  run: (_args, deps) => {
-    deps.err(
-      `unknown command: retry. Use 'mars continue <id> [<id> ...]' to resume on the existing worktree, or 'mars restart <id> [<id> ...]' to wipe and re-run.`,
-    )
-    return { code: 1 }
-  },
-}
 
 const makeContinueRestart = (verb: 'continue' | 'restart'): Command => ({
   path: verb,
@@ -438,18 +426,6 @@ const list: Command = {
   },
 }
 
-const watch: Command = {
-  path: 'watch',
-  summary: '(renamed) use mars daemon',
-  usage: 'use `mars daemon --help`',
-  run: (_args, deps) => {
-    deps.err(
-      'mars watch has been renamed to mars daemon — run `mars daemon --help` for usage.',
-    )
-    return { code: 2 }
-  },
-}
-
 const update: Command = {
   path: 'update',
   summary: 'refresh framework files; diff (never clobber) user-owned workflows',
@@ -541,7 +517,6 @@ export const lifecycleCommands: readonly Command[] = [
   show,
   makeSetPlan('functional'),
   makeSetPlan('technical'),
-  retry,
   makeContinueRestart('continue'),
   makeContinueRestart('restart'),
   purge,
@@ -551,6 +526,5 @@ export const lifecycleCommands: readonly Command[] = [
   drop,
   block,
   list,
-  watch,
   update,
 ]

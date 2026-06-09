@@ -24,6 +24,40 @@ describe('mars blockers — removed verb', () => {
   })
 })
 
+describe('mars add — removed deprecated alias', () => {
+  it('exits non-zero with unknown-command error when invoked', () => {
+    const result = runCli(['add', 'some prompt'], { MARS_REPO: '/tmp' })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toMatch(/unknown command: add/)
+  })
+})
+
+describe('mars retry — removed tombstone verb', () => {
+  it('exits non-zero with unknown-command error when invoked', () => {
+    const result = runCli(['retry', 'some-task-id'], { MARS_REPO: '/tmp' })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toMatch(/unknown command: retry/)
+  })
+})
+
+describe('mars watch — removed tombstone verb', () => {
+  it('exits non-zero with unknown-command error when invoked', () => {
+    const result = runCli(['watch'], { MARS_REPO: '/tmp' })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toMatch(/unknown command: watch/)
+  })
+})
+
+describe('mars proposal new — removed duplicate verb', () => {
+  it('exits non-zero when invoked (falls through to group usage, not a valid subcommand)', () => {
+    const result = runCli(['proposal', 'new', 'some goal'], { MARS_REPO: '/tmp' })
+    expect(result.status).not.toBe(0)
+    // 'proposal new' is removed; the group usage is shown and does NOT list 'new'
+    expect(result.stderr).toContain('usage: mars proposal')
+    expect(result.stderr).not.toMatch(/\bnew\b/)
+  })
+})
+
 describe('mars --help — no question-listing verb', () => {
   it('does not reference a blockers question-listing verb in top-level help', () => {
     const result = runCli(['--help'])

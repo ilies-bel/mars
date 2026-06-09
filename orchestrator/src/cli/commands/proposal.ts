@@ -94,27 +94,6 @@ const proposalAdd: Command = {
   },
 }
 
-const proposalNew: Command = {
-  path: 'proposal new',
-  summary: 'create a proposal (no author resolution)',
-  usage: 'usage: mars proposal new "<goal>"',
-  run: async (args, deps) => {
-    const goal = args.positional.join(' ')
-    if (!goal) {
-      deps.err('usage: mars proposal new "<goal>"')
-      return { code: 1 }
-    }
-    try {
-      const idea = await createProposal(goal)
-      deps.out(idea.id)
-    } catch (error: unknown) {
-      deps.err(errorMessage(error))
-      return { code: 1 }
-    }
-    return { code: 0 }
-  },
-}
-
 const proposalShow: Command = {
   path: 'proposal show',
   summary: 'show a proposal',
@@ -653,10 +632,10 @@ const proposalGroup: Command = {
   path: 'proposal',
   summary: 'proposal subcommands',
   usage:
-    'usage: mars proposal <add|new|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
+    'usage: mars proposal <add|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
   run: (_args, deps) => {
     deps.err(
-      'usage: mars proposal <add|new|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
+      'usage: mars proposal <add|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
     )
     return { code: 1 }
   },
@@ -664,7 +643,6 @@ const proposalGroup: Command = {
 
 export const proposalCommands: readonly Command[] = [
   proposalAdd,
-  proposalNew,
   proposalShow,
   proposalSet,
   proposalAddUserStory,

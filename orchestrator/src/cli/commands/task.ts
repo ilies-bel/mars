@@ -1,11 +1,10 @@
 /**
  * `task` command group: `task add`, `task show`, `task priority`, plus the
- * group-usage fallback ('task' with no/unknown subcommand) and the deprecated
- * top-level `add` alias.
+ * group-usage fallback ('task' with no/unknown subcommand).
  *
  * Daemon-routed mutations (`add`, `priority`) go through `deps.daemon`; reads
  * (`show`) go through `deps.store`. The shared `enqueueViaDaemon` helper backs
- * both `task add` and the legacy `add`.
+ * `task add`.
  */
 
 import { resolveAuthor, formatAuthor, type Author } from '../../core/author'
@@ -137,24 +136,6 @@ export const taskAdd: Command = {
       tags: parseTags(args),
       spec: specResult.value,
     })
-  },
-}
-
-/** Deprecated top-level `add` — drafts a task (does not skip triage). */
-export const addDeprecated: Command = {
-  path: 'add',
-  summary: "(deprecated) draft a task; prefer 'mars task add'",
-  usage: 'usage: mars add "<prompt>" [plan flags]',
-  run: async (args, deps) => {
-    deps.err(
-      `[mars] 'mars add' is deprecated; use 'mars task add' (skip refinement) or 'mars proposal add' (plan with author).`,
-    )
-    const prompt = args.positional.join(' ')
-    if (!prompt) {
-      deps.err('prompt required')
-      return { code: 1 }
-    }
-    return enqueueViaDaemon(deps, args.flags, { prompt, skipTriage: false })
   },
 }
 
@@ -312,5 +293,4 @@ export const taskCommands: readonly Command[] = [
   taskShow,
   taskPriority,
   taskGroup,
-  addDeprecated,
 ]
