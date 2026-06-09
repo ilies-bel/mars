@@ -58,7 +58,7 @@ A queued unit of work expected to produce one or more commits on a task/<id> bra
 _Avoid_: job, run
 
 **Session**:
-A single live claude -p execution of a Worker, identified by a Claude session id; the runtime instance of a Worker (Worker is the class, Session is the instance).
+A single live execution of a Worker — one agent process driving one Task — identified by the Provider's session identifier where it exposes one; the runtime instance of a Worker (Worker is the class, Session is the instance).
 
 **Blocker**:
 A row in task_blockers asserting that a Task cannot be dispatched until another Task terminates (merge or failure); written by the Linker (lexical overlap), the slicer (intra-cohort wave intent), the fix-task pipeline, or by an operator via mars block.
