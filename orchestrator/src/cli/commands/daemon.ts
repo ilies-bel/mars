@@ -262,7 +262,7 @@ const daemonGroup: Command = {
     deps.err(
       'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag> [flags]',
     )
-    return { code: 2 }
+    return { code: 1 }
   },
 }
 

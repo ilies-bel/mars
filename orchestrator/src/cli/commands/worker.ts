@@ -113,7 +113,7 @@ const workerGroup: Command = {
   usage: 'usage: mars worker <list|add>',
   run: (_args, deps) => {
     deps.err('usage: mars worker <list|add>')
-    return { code: 2 }
+    return { code: 1 }
   },
 }
 

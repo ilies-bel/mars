@@ -987,6 +987,132 @@ Subcommands:
 
 Show top-level help, or detailed help for a single command. Equivalent
 to 'mars <command> --help'.`,
+  alert: `mars alert <subcommand> ...
+
+List arc-rooted alerts derived from failed arcs and stale worktrees. Read
+through the daemon's Alert endpoints (GET /alerts, GET /alerts/:arcId) so
+the CLI and UI render the same pure derivation (ADR-0054). The alert read
+aggregate is never persisted — there is no row to close and no operator
+dismiss verb; an alert disappears only when the arc leaves its failed
+state (or the stale worktree is gone). If the daemon is not running,
+both subcommands fail fast (exit 1).
+
+Subcommands:
+  (no args)                  alias for 'alert list'
+  list                       list arc-rooted alerts (one tab-separated row
+                             per alert: arcId, kind, goal, reason)
+  show <arc-id>              show one alert's goal → reason → technical
+                             hierarchy. Exits 1 with 'no alert for arc
+                             <id>' when the arc has no live alert.`,
+  diagnose: `mars diagnose <subcommand> ...
+
+Trigger a daemon-side failure diagnosis or record/inspect a stored verdict
+for a stuck task. The 'run' and 'investigate' subcommands require a live
+daemon (--no-spawn); 'set' and 'show' read/write the local verdict store
+directly.
+
+Subcommands:
+  run <task-id>
+      Trigger daemon-side failure diagnosis (Sonnet root-cause). Prints
+      the diagnosis text on stdout. Exits 1 if the daemon is unreachable
+      or returns an error; exits 2 if <task-id> is missing.
+  investigate <task-id>
+      Trigger daemon-side worktree investigation (Haiku triage). Prints
+      the explanation on stdout. Exit codes as for 'run'.
+  set <task-id> --from <-|path>
+      Record a diagnose Chore's verdict against a stuck task. Reads a
+      JSON object from stdin (when path is '-') or a file. The JSON must
+      have kind = "root-cause-found" (evidence, involvedFiles,
+      fixDirection) or "inconclusive" (whatChecked, whyUnscoped).
+      Overwrites any prior verdict for the same id. Exit codes: 0 ok,
+      1 library error, 2 parse/validation error.
+  show <task-id> [--json]
+      Read the recorded verdict. Prints structured fields by default;
+      --json emits the raw StoredDiagnosis object. An unrecorded task
+      surfaces as kind="no-verdict".`,
+  install: `mars install
+
+Install the framework templates into a consumer repo. Resolves the
+framework root from the running CLI's entry path, reads manifest.json,
+and copies every file the manifest declares into the consumer repo
+(resolved via the standard --repo > MARS_REPO > git toplevel chain).
+
+This is the consumer-side install verb. For the dev clone install path,
+use install-dev.sh from the framework checkout instead.
+
+The runner reports the install outcome and the number of files written on
+stdout. Exits 1 on a missing or malformed manifest, or on any
+file-system error during the copy.`,
+  kpi: `mars kpi [snapshot|show]
+
+Read-only KPI window comparison. The bare 'mars kpi' is an alias for
+'mars kpi show' — the obvious default read — following the bare-alias
+pattern used by 'action-queue' and 'alert'.
+
+Subcommands:
+  (no args)        alias for 'kpi show'
+  snapshot         take a fresh KPI snapshot from the task store and
+                   print it as JSON on stdout. Side effect: writes the
+                   snapshot row to .mars/mars.db so subsequent 'show'
+                   calls can compare windows.
+  show             print the current-vs-prior KPI window comparison as
+                   JSON (failure rate, autonomous-completion rate,
+                   recovery-success rate, cost-per-arc p50/p90, plus
+                   deltas vs the prior window).`,
+  plugin: `mars plugin <activate <plugin-dir> | deactivate>
+
+Register or deregister the Mars Claude Code plugin in the user's Claude
+Code settings file (~/.claude/settings.json). Idempotent — running the
+same subcommand twice is safe.
+
+Subcommands:
+  activate <plugin-dir>
+      Register the plugin so its skills, agents, and hooks become
+      available in Claude Code. <plugin-dir> is required; exits 1 with
+      usage on a missing argument.
+  deactivate
+      Remove the plugin from Claude Code settings. Leaves the plugin
+      directory on disk untouched.`,
+  recover: `mars recover [<id>]
+
+Re-evaluate blocker edges and re-queue any blocked tasks whose blockers
+have all reached 'done'. Without an <id>, processes every blocked task in
+the queue and prints a summary (queued / still blocked / failed at
+unblock). With an <id>, recovers that single task and prints its outcome:
+
+  queued        → re-queued for dispatch
+  noop          → still has unmet blockers
+  not-blocked   → not in 'blocked' status; nothing to recover
+  failed        → unblock attempt failed (failure reason printed)
+
+Routes through the daemon; auto-spawns the daemon when needed.`,
+  statusline: `mars statusline
+
+Print a one-line status segment for Claude Code's statusline. Reads
+optional session JSON from stdin (tolerated but not required) and the
+.mars/update.json file for an update nudge — never hits the network.
+
+When .mars/update.json reports available===true, appends
+"⚡ v<latest> available" to the segment; otherwise the segment is silent
+on updates. Exits 0 unconditionally.`,
+  sync: `mars sync
+
+Run the daemon's startup reconcile on demand: re-queue orphaned-blocked
+tasks (blocked with no live blocker edges), finalize landed merges,
+re-queue stale-running tasks, repair blocker drift, sweep orphan spans,
+and (when the daemon is alive) slice stalled prd-ready proposals.
+
+Routing (single-writer invariant):
+  daemon alive  → routes via daemon RPC ('op: sync'); the daemon owns
+                  every write.
+  daemon down   → runs the reconcile standalone in this process against
+                  .mars/mars.db. The output is annotated 'standalone —
+                  daemon not running' so the operator knows tasks may
+                  have been re-queued but nothing will dispatch them
+                  until the daemon is started.
+
+Both modes print one line per action taken (or 'nothing to reconcile —
+queue is consistent' on a no-op). Exits 0 unconditionally.`,
 }
 
 const printCommandHelp = (cmd: string): boolean => {

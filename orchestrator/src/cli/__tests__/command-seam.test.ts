@@ -279,9 +279,9 @@ describe('worker (store-dir-backed)', () => {
     expect(list.out.join('\n')).toContain('SeamWorker')
   })
 
-  it('`worker` with an unknown subcommand returns code 2', async () => {
+  it('`worker` with an unknown subcommand returns code 1 (group-fallback convention)', async () => {
     const r = await runCommandInProcess(['worker', 'bogus'], await baseOpts())
-    expect(r.code).toBe(2)
+    expect(r.code).toBe(1)
     expect(r.err.join('\n')).toContain('usage: mars worker')
   })
 })

@@ -249,9 +249,9 @@ describe('mars worker add', () => {
 // ---------------------------------------------------------------------------
 
 describe('mars worker — unknown subcommand', () => {
-  it('exits 2 with usage error', () => {
+  it('exits 1 with usage error (group-fallback convention; matches top-level unknown-command)', () => {
     const result = runCli(['worker', 'bogus'], ENV())
-    expect(result.status).toBe(2)
+    expect(result.status).toBe(1)
     expect(result.stderr).toContain('usage: mars worker')
   })
 })
