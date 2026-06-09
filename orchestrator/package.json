@@ -23,7 +23,8 @@
     "build:binary": "tsx scripts/build-binary.ts",
     "pretypecheck": "pnpm --dir ../packages/workflow run build || (ls ../packages/workflow/dist/index.d.ts > /dev/null 2>&1 && echo '[pretypecheck] workflow node_modules absent, using existing dist' || (echo '[pretypecheck] workflow dist missing — run: (cd ../packages/workflow && pnpm install && pnpm run build)' && exit 1))",
     "typecheck": "tsc --noEmit",
-    "knip": "knip --no-exit-code"
+    "knip": "knip --no-exit-code",
+    "postinstall": "node scripts/fix-pty-perms.mjs"
   },
   "keywords": [],
   "author": "",
@@ -37,6 +38,7 @@
     "@mars/workflow": "file:../packages/workflow",
     "ink": "^7.0.2",
     "js-yaml": "^4.1.1",
+    "node-pty": "^1.1.0",
     "react": "^19.2.0",
     "smol-toml": "^1.6.1",
     "tsx": "^4.21.0",
@@ -53,6 +55,9 @@
     "vitest": "^2.1.9"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@mars/workflow"]
+    "onlyBuiltDependencies": [
+      "@mars/workflow",
+      "node-pty"
+    ]
   }
 }
