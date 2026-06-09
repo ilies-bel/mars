@@ -223,6 +223,98 @@ describe('corePurgeTask — task.dropped emitted before DELETE', () => {
   })
 })
 
+describe('corePurgeTask — inline action-queue row resolution (no event drain needed)', () => {
+  // These tests verify the belt-and-suspenders inline close added to corePurgeTask
+  // for existing tasks. Unlike the event-driven path (drainAlertDismissals), the
+  // inline call resolves the row synchronously before dropTask deletes the task
+  // row — so the card disappears immediately, even if the daemon event drain is
+  // delayed or the daemon is briefly down.
+
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    vi.resetModules()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('resolves the action-queue row for an existing task inline, without needing event drain', async () => {
+    const { q, actionQueue, pt } = await loadModules(repo)
+
+    // Seed a failed task — purge is only allowed from terminal status.
+    const task = await q.enqueueTask('inline-resolve test', undefined, { skipTriage: true })
+    await q.updateTask(task.id, { status: 'failed', error: 'test failure' })
+
+    // Raise an open action-queue row for the task.
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Task ${task.id} failed`,
+      body: 'stuck',
+      payload: {},
+      context: { task_id: task.id },
+      raisedBy: 'orchestrator:test',
+      signature: `sig-inline-${task.id}`,
+      originTaskId: task.id,
+    })
+
+    // Confirm the row is open before the purge.
+    const before = await actionQueue.getActionQueueItem(itemId)
+    expect(before!.state).toBe('open')
+
+    // Purge with force=true (no branch exists; git branch -D fails silently).
+    await pt.corePurgeTask(task.id, true, 'main', repo)
+
+    // The row must be resolved WITHOUT a separate drainAlertDismissals call —
+    // the inline resolveAllRowsForTask + supersedeActionQueueItemsForOrigin
+    // inside corePurgeTask close it synchronously.
+    const after = await actionQueue.getActionQueueItem(itemId)
+    expect(after!.state).toBe('resolved')
+  })
+
+  it('resolving rows inline is idempotent with a subsequent event drain', async () => {
+    // Verify that running drainAlertDismissals AFTER corePurgeTask (which already
+    // closed the row inline) produces no double-resolution error and the row
+    // stays resolved.
+    const { q, actionQueue, ad, pt } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    const task = await q.enqueueTask('idem-inline test', undefined, { skipTriage: true })
+    await q.updateTask(task.id, { status: 'failed', error: 'test failure' })
+
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Task ${task.id} failed`,
+      body: 'stuck',
+      payload: {},
+      context: {},
+      raisedBy: 'orchestrator:test',
+      signature: `sig-idem-${task.id}`,
+      originTaskId: task.id,
+    })
+
+    // Register the subscriber AFTER seeding so its cursor starts past the pre-purge events.
+    await ad.ensureAlertDismisser(client)
+
+    // Purge closes the row inline.
+    await pt.corePurgeTask(task.id, true, 'main', repo)
+
+    // Drain processes the task.dropped event emitted by dropTask.
+    // The row is already closed — the drain must not throw and the row stays resolved.
+    await expect(ad.drainAlertDismissals(client)).resolves.toBeDefined()
+
+    const after = await actionQueue.getActionQueueItem(itemId)
+    expect(after!.state).toBe('resolved')
+  })
+})
+
 describe('corePurgeTask — non-existent task (already-gone idempotency)', () => {
   let repo: string
 

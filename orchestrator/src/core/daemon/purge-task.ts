@@ -12,7 +12,7 @@ import {
   listUniqueCommitsAhead,
   type OrphanCommit,
 } from '../lib/sweep'
-import { supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
+import { supersedeActionQueueItemsForOrigin, resolveAllRowsForTask } from '../lib/action-queue'
 
 const exec = promisify(execFile)
 
@@ -109,6 +109,17 @@ export const corePurgeTask = async (
     }
     await exec('git', ['branch', '-D', fixBranch], { cwd: repoRoot }).catch(() => {})
   }
+
+  // Belt-and-suspenders: close action-queue rows for this task inline, before
+  // the task row is deleted. The primary path is event-driven:
+  // dropTask emits task.dropped{dropReason:'purged'} in the same atomic
+  // transaction as DELETE FROM tasks, and both the Invalidator (alert-dismisser)
+  // and the repopulator drain that event to resolve open rows. This inline call
+  // is a synchronous backstop — it ensures stale cards clear immediately even if
+  // the daemon's event drain has not run yet. Both calls are idempotent with the
+  // event-based closures (a row already resolved is a silent no-op).
+  await resolveAllRowsForTask(id)
+  await supersedeActionQueueItemsForOrigin(id, 'origin-purged', 'purge:pre-delete')
 
   return dropTask(id)
 }
