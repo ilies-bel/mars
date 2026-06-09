@@ -12,10 +12,13 @@ import { resolve } from 'node:path'
 import type { ClaudeEffort, ClaudePermissionMode } from '../lib/git/claude'
 import {
   WORKER_CONFIGS,
+  createWorker,
   type ClaudeOutputFormat,
+  type Worker,
   type WorkerRuntime,
 } from './index'
 import type { ProviderName } from './providers'
+import { PROVIDERS } from './providers'
 
 // A Worker declaration as stored in the registry file. Same shape as
 // WorkerConfig but name is a plain string — not constrained to the built-in
@@ -47,12 +50,22 @@ const REGISTRY_FILENAME = 'worker-registry.json'
 
 // Load the persisted Worker registry from stateDir. Returns the declarations
 // stored in the registry file, or an empty array when the file is absent.
+// Throws if any declaration specifies a provider not in the PROVIDERS registry.
 export const loadWorkerRegistry = (stateDir: string): WorkerDeclaration[] => {
   const filePath = resolve(stateDir, REGISTRY_FILENAME)
   if (!existsSync(filePath)) return []
   const raw = readFileSync(filePath, 'utf8')
   const parsed = JSON.parse(raw) as Record<string, WorkerDeclaration>
-  return Object.values(parsed)
+  const knownProviders = Object.keys(PROVIDERS)
+  const decls = Object.values(parsed)
+  for (const decl of decls) {
+    if (decl.provider !== undefined && !knownProviders.includes(decl.provider)) {
+      throw new Error(
+        `Unknown provider '${decl.provider}' in worker-registry.json — known: ${knownProviders.join(', ')}`,
+      )
+    }
+  }
+  return decls
 }
 
 // Produce a WorkerDeclaration from a hard-coded WORKER_CONFIGS entry.
@@ -75,28 +88,52 @@ const configToDeclaration = (
   ...(config.tags !== undefined ? { tags: [...config.tags] } : {}),
 })
 
+// Build a Worker from a WorkerDeclaration via createWorker. Missing
+// WorkerConfig fields (maxContextTokens, etc.) are filled with safe
+// defaults — operator-declared workers in the registry do not carry a
+// context budget (0 = disabled). The provider defaults to 'claude' for
+// backwards-compat with registry entries written before the provider field
+// was added.
+const declarationToWorker = (decl: WorkerDeclaration): Worker =>
+  createWorker({
+    name: decl.name,
+    model: decl.model,
+    ...(decl.fallbackModel !== undefined ? { fallbackModel: decl.fallbackModel } : {}),
+    effort: decl.effort,
+    permissionMode: decl.permissionMode,
+    bare: decl.bare,
+    disallowedTools: [...decl.disallowedTools],
+    outputFormat: decl.outputFormat,
+    maxContextTokens: 0,
+    runtime: decl.runtime,
+    provider: decl.provider ?? 'claude',
+    ...(decl.tags !== undefined ? { tags: [...decl.tags] } : {}),
+  })
+
 // Returns all known Workers: hard-coded defaults merged with registry entries.
 // Registry entries override defaults for matching names; novel names from the
 // registry are appended after the defaults. When no registry file exists,
 // only the hard-coded defaults are returned.
-export const listMergedWorkers = (stateDir: string): WorkerDeclaration[] => {
+// Each declaration is converted to a fully-constructed Worker via createWorker
+// so the result can be passed directly to pickWorkerForTags.
+export const listMergedWorkers = (stateDir: string): Worker[] => {
   const registered = loadWorkerRegistry(stateDir)
   const byName = new Map(registered.map((d) => [d.name, d]))
   const defaultNames = new Set(Object.keys(WORKER_CONFIGS))
 
   // Start with defaults, overriding with registry entries where names match.
-  const result: WorkerDeclaration[] = Object.values(WORKER_CONFIGS).map(
+  const decls: WorkerDeclaration[] = Object.values(WORKER_CONFIGS).map(
     (c) => byName.get(c.name) ?? configToDeclaration(c),
   )
 
   // Append registry entries whose names are not in the defaults.
   for (const decl of registered) {
     if (!defaultNames.has(decl.name)) {
-      result.push(decl)
+      decls.push(decl)
     }
   }
 
-  return result
+  return decls.map(declarationToWorker)
 }
 
 // Add or update a Worker declaration in the registry file. Seeds the registry

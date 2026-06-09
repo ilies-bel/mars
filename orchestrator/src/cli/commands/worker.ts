@@ -25,9 +25,9 @@ const workerList: Command = {
     deps.out(header)
     for (const w of workers) {
       const perm =
-        w.permissionMode === 'bypassPermissions' ? 'bypass' : w.permissionMode
+        w.config.permissionMode === 'bypassPermissions' ? 'bypass' : w.config.permissionMode
       deps.out(
-        w.name.padEnd(20) + w.model.padEnd(36) + w.effort.padEnd(10) + perm,
+        w.config.name.padEnd(20) + w.config.model.padEnd(36) + w.config.effort.padEnd(10) + perm,
       )
     }
     return { code: 0 }

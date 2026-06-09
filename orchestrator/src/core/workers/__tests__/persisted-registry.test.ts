@@ -60,6 +60,24 @@ describe('loadWorkerRegistry', () => {
     const found = loaded.find((d) => d.name === 'RoundTripWorker')
     expect(found?.model).toBe('claude-opus-4-7')
   })
+
+  it('throws when a declaration specifies an unknown provider', () => {
+    const filePath = resolve(stateDir, 'worker-registry.json')
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        BadWorker: {
+          ...MINIMUM_DECL,
+          name: 'BadWorker',
+          provider: 'unknown-agent',
+        },
+      }, null, 2) + '\n',
+      'utf8',
+    )
+    expect(() => loadWorkerRegistry(stateDir)).toThrow(
+      "Unknown provider 'unknown-agent' in worker-registry.json",
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -151,16 +169,16 @@ describe('WorkerDeclaration tags', () => {
   it('seeded default Workers carry their tag sets when the registry is initialised', () => {
     addWorkerToRegistry(stateDir, MINIMUM_DECL) // triggers seed
     const workers = listMergedWorkers(stateDir)
-    const coder = workers.find((w) => w.name === 'Coder')
-    const planner = workers.find((w) => w.name === 'Planner')
-    const slicer = workers.find((w) => w.name === 'Slicer')
-    const triager = workers.find((w) => w.name === 'Triager')
-    const fixer = workers.find((w) => w.name === 'Fixer')
-    expect(coder?.tags).toContain('coder')
-    expect(planner?.tags).toContain('planner')
-    expect(slicer?.tags).toContain('slicer')
-    expect(triager?.tags).toContain('triager')
-    expect(fixer?.tags).toContain('fixer')
+    const coder = workers.find((w) => w.config.name === 'Coder')
+    const planner = workers.find((w) => w.config.name === 'Planner')
+    const slicer = workers.find((w) => w.config.name === 'Slicer')
+    const triager = workers.find((w) => w.config.name === 'Triager')
+    const fixer = workers.find((w) => w.config.name === 'Fixer')
+    expect(coder?.config.tags).toContain('coder')
+    expect(planner?.config.tags).toContain('planner')
+    expect(slicer?.config.tags).toContain('slicer')
+    expect(triager?.config.tags).toContain('triager')
+    expect(fixer?.config.tags).toContain('fixer')
   })
 })
 
@@ -195,7 +213,7 @@ describe('WorkerDeclaration runtime:pty round-trip', () => {
 describe('listMergedWorkers', () => {
   it('returns exactly the five default workers when no registry file exists', () => {
     const workers = listMergedWorkers(stateDir)
-    const names = workers.map((w) => w.name)
+    const names = workers.map((w) => w.config.name)
     expect(names).toContain('Coder')
     expect(names).toContain('Planner')
     expect(names).toContain('Slicer')
@@ -210,9 +228,9 @@ describe('listMergedWorkers', () => {
       name: 'NovelWorker',
     })
     const workers = listMergedWorkers(stateDir)
-    expect(workers.some((w) => w.name === 'NovelWorker')).toBe(true)
+    expect(workers.some((w) => w.config.name === 'NovelWorker')).toBe(true)
     // All five defaults still present.
-    expect(workers.some((w) => w.name === 'Coder')).toBe(true)
+    expect(workers.some((w) => w.config.name === 'Coder')).toBe(true)
     expect(workers.length).toBeGreaterThan(5)
   })
 
@@ -225,14 +243,29 @@ describe('listMergedWorkers', () => {
       model: 'registry-overridden-model',
     })
     const workers = listMergedWorkers(stateDir)
-    const coder = workers.find((w) => w.name === 'Coder')
-    expect(coder?.model).toBe('registry-overridden-model')
+    const coder = workers.find((w) => w.config.name === 'Coder')
+    expect(coder?.config.model).toBe('registry-overridden-model')
   })
 
   it('does not duplicate the default when the registry contains a matching entry', () => {
     addWorkerToRegistry(stateDir, { ...MINIMUM_DECL, name: 'Coder' })
     const workers = listMergedWorkers(stateDir)
-    const coderEntries = workers.filter((w) => w.name === 'Coder')
+    const coderEntries = workers.filter((w) => w.config.name === 'Coder')
     expect(coderEntries).toHaveLength(1)
+  })
+
+  it('builds a Worker with the declared provider and runtime for a codex/pty entry', () => {
+    addWorkerToRegistry(stateDir, {
+      ...MINIMUM_DECL,
+      name: 'CodexWorker',
+      provider: 'codex',
+      runtime: 'pty',
+      tags: ['codex'],
+    })
+    const workers = listMergedWorkers(stateDir)
+    const found = workers.find((w) => w.config.name === 'CodexWorker')
+    expect(found?.config.provider).toBe('codex')
+    expect(found?.runtime).toBe('pty')
+    expect(found?.config.tags).toContain('codex')
   })
 })

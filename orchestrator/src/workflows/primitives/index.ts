@@ -551,26 +551,14 @@ export const runAgent = async (args: RunAgentArgs): Promise<RunAgentResult> => {
   )
 
   // Registry workers: merge operator-declared Workers so their tag sets are
-  // visible to pickWorkerForTags.
+  // visible to pickWorkerForTags. listMergedWorkers now returns fully-
+  // constructed Worker instances, so no createWorker call is needed here.
   const { listMergedWorkers } = await import('../../core/workers/persisted-registry')
-  const declarations = listMergedWorkers(resolveContext().stateDir)
+  const mergedWorkers = listMergedWorkers(resolveContext().stateDir)
   const allWorkers: Record<string, Worker> = { ...Workers }
-  for (const decl of declarations) {
-    if (!(decl.name in allWorkers)) {
-      allWorkers[decl.name] = createWorker({
-        name: decl.name,
-        model: decl.model,
-        ...(decl.fallbackModel !== undefined ? { fallbackModel: decl.fallbackModel } : {}),
-        effort: decl.effort,
-        permissionMode: decl.permissionMode,
-        bare: decl.bare,
-        disallowedTools: decl.disallowedTools,
-        outputFormat: decl.outputFormat,
-        maxContextTokens: 0,
-        runtime: decl.runtime,
-        provider: 'claude',
-        ...(decl.tags !== undefined ? { tags: decl.tags } : {}),
-      })
+  for (const worker of mergedWorkers) {
+    if (!(worker.config.name in allWorkers)) {
+      allWorkers[worker.config.name] = worker
     }
   }
   const worker =
