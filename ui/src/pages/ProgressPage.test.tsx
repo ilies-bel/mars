@@ -154,3 +154,64 @@ describe('ProgressPage – SSE connection indicator', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Header stats: the TopStripe must show the correct counts so that operators
+// can trust the numbers at a glance.
+// ---------------------------------------------------------------------------
+
+describe('ProgressPage – header stats', () => {
+  const makeTask = (id: string, status: ProgressTask['status']): ProgressTask =>
+    ({ id, status, prompt: 'p', branch: null, parentProposalId: null }) as unknown as ProgressTask
+
+  it('DONE stat reflects tasks whose status is "done", not the failed count', () => {
+    const doneTasks = [makeTask('d1', 'done'), makeTask('d2', 'done')]
+    const failedTasks = [makeTask('f1', 'failed')]
+    mockUseProgress.mockImplementation(() => ({
+      ...baseState([]),
+      tasks: [...doneTasks, ...failedTasks],
+      byCluster: { ...emptyByCluster(), Failed: failedTasks },
+    }))
+    try {
+      const html = renderToStaticMarkup(<ProgressPage />)
+      // Two done tasks → DONE must read 2
+      expect(html).toContain('2 DONE')
+      // Must not use the failed count (1) for the DONE slot
+      expect(html).not.toContain('1 DONE')
+    } finally {
+      mockUseProgress.mockImplementation(() => baseState([]))
+    }
+  })
+
+  it('FAILED stat surfaces the failed count — failures are never hidden under DONE', () => {
+    const failedTasks = [makeTask('f1', 'failed'), makeTask('f2', 'failed')]
+    mockUseProgress.mockImplementation(() => ({
+      ...baseState([]),
+      tasks: failedTasks,
+      byCluster: { ...emptyByCluster(), Failed: failedTasks },
+    }))
+    try {
+      const html = renderToStaticMarkup(<ProgressPage />)
+      expect(html).toContain('2 FAILED')
+      // DONE must not be 2 (the failed count)
+      expect(html).not.toContain('2 DONE')
+    } finally {
+      mockUseProgress.mockImplementation(() => baseState([]))
+    }
+  })
+
+  it('with zero done tasks and zero failed tasks both stats show 0', () => {
+    mockUseProgress.mockImplementation(() => ({
+      ...baseState([]),
+      tasks: [],
+      byCluster: emptyByCluster(),
+    }))
+    try {
+      const html = renderToStaticMarkup(<ProgressPage />)
+      expect(html).toContain('0 DONE')
+      expect(html).toContain('0 FAILED')
+    } finally {
+      mockUseProgress.mockImplementation(() => baseState([]))
+    }
+  })
+})

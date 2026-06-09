@@ -69,16 +69,16 @@ export const ProgressPage = () => {
   }, [activeTab, searchQuery, selectedProposalId])
 
   const inProgressCount = byCluster['In progress'].length
-  const blockedCount = byCluster.Blocked.length
   const failedCount = byCluster.Failed.length
+  const doneCount = (tasks ?? []).filter((t) => t.status === 'done').length
 
   return (
     <div className="flex h-full w-full min-h-0 overflow-hidden bg-bg">
       <div className="flex min-w-0 flex-1 flex-col">
         <TopStripe
           inProgress={inProgressCount}
-          todo={blockedCount}
-          done={failedCount}
+          done={doneCount}
+          failed={failedCount}
           connected={connected}
         />
         <TabStrip active={activeTab} onSelect={setActiveTab} />
