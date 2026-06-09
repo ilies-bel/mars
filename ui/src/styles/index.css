@@ -87,6 +87,31 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+/* ── Global keyboard focus ring ─────────────────────────────────────────────
+ * Replaces the UA default outline (browser blue, off-brand, inconsistent)
+ * with a single Mars brand ring on every interactive element.
+ *
+ * :focus-visible  — keyboard only; suppressed for mouse/touch clicks.
+ * :where()        — zero specificity; component-level overrides still win.
+ *
+ * Color choices (both pass WCAG non-text contrast 3:1 on their surface):
+ *   --color-flame  (#9A4F00)  →  4.7:1 on --color-bg (#F5EDE4)   light surface
+ *   --color-amber  (#E8A33D)  →  8.3:1 on --color-surface-dark (#251812)  dark DAG canvas
+ *   (amber fails on light bg at 1.9:1, so it is scoped to .dag-canvas only.)
+ * ---------------------------------------------------------------------------*/
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-flame);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Dark-surface override — the G6 DAG canvas (.dag-canvas) has a near-black
+ * background (#251812); --color-flame would give only ~2.9:1 there, below the
+ * 3:1 target. --color-amber gives 8.3:1 on that dark surface instead. */
+.dag-canvas :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline-color: var(--color-amber);
+}
+
 html, body, #root {
   height: 100%;
   margin: 0;

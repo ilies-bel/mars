@@ -781,7 +781,7 @@ export const TopologyView = ({
     <main className="relative flex min-h-0 flex-1 overflow-hidden bg-bg">
       <div
         ref={containerRef}
-        className="absolute inset-0 h-full w-full"
+        className="dag-canvas absolute inset-0 h-full w-full"
         style={{ background: CANVAS_SURFACE }}
         aria-label="Task dependency graph"
       />
