@@ -204,6 +204,41 @@ describe('slicer prompt: readFirst and prescriptiveAction instructions', () => {
   })
 })
 
+describe('slicer prompt: size-aware splitting', () => {
+  const sampleProposal = {
+    id: 'idea-1',
+    title: 'Some PRD',
+    problem: '',
+    solution: '',
+    outOfScope: '',
+    notes: '',
+    userStories: [],
+  }
+
+  it('includes the size-aware slicing section header', () => {
+    const brief = buildSlicerPrompt(sampleProposal)
+    expect(brief).toContain('Size-aware slicing')
+  })
+
+  it('names files touched and distinct steps as countable size proxies', () => {
+    const brief = buildSlicerPrompt(sampleProposal)
+    expect(brief).toContain('files touched')
+    expect(brief).toContain('distinct steps')
+  })
+
+  it('instructs the model to split large slices and wire blockedBy for dependent pieces', () => {
+    const brief = buildSlicerPrompt(sampleProposal)
+    expect(brief).toContain('blockedBy')
+    expect(brief).toMatch(/split/i)
+  })
+
+  it('states the size estimate is not emitted as a field and not a dispatch-time gate', () => {
+    const brief = buildSlicerPrompt(sampleProposal)
+    expect(brief).toContain('MUST NOT appear as a field')
+    expect(brief).toContain('dispatch-time gate')
+  })
+})
+
 describe('composeTaskPrompt: readFirst and prescriptiveAction sections', () => {
   const proposal = {
     id: 'idea-brief',

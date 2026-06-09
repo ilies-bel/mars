@@ -189,6 +189,22 @@ guidance only. Just decompose the remaining real work and leave the
 structured-write out, because it should already have happened during
 grilling.
 
+Size-aware slicing — split before emitting
+------------------------------------------
+Before emitting the final list, estimate each candidate slice's size
+relative to ONE coder's context budget. Anchor the estimate on countable
+proxies — files touched and distinct steps — not raw token counts, because
+raw-token self-estimates are unreliable.
+
+If a slice looks too large (too many files touched, too many distinct steps),
+split it into two or more smaller slices BEFORE returning the list. When a
+split produces dependent pieces, the dependent piece MUST list the slice it
+builds on in \`blockedBy\` (1-based index into the same response).
+
+IMPORTANT: The size estimate is internal reasoning only. It MUST NOT appear as a field
+in the JSON output, MUST NOT be persisted, and MUST NOT be treated as a dispatch-time gate.
+The existing watchdog kill plus single recovery remain the only back-stop.
+
 Output shape
 ------------
 For each slice, produce:
