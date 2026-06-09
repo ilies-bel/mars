@@ -246,6 +246,89 @@ describe('alert-dismisser outbox subscriber', () => {
     expect(second.processed).toBe(0)
   })
 
+  // ── Discrete event paths (task.completed / task.dropped / task.queued) ──────
+  // These cover the ADR-0028 "closing policy" paths added when the Invalidator
+  // was sharpened to handle discrete events alongside the legacy task.terminal
+  // path. The race-condition fix (repopulator vs. Invalidator on purge) depends
+  // on the Invalidator reliably closing rows when task.dropped arrives — these
+  // tests pin that guarantee.
+
+  it('resolves open alert on task.completed (discrete event)', async () => {
+    // task.completed fires when a coder merges successfully. The Invalidator
+    // must close all open rows so the operator never sees a stale failure alert
+    // for work that finished cleanly (ADR-0028).
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-completed-discrete'
+
+    const itemId = await raiseOpenItemFor(actionQueue, taskId)
+    await ad.ensureAlertDismisser(client)
+    await publish(pub, client, 'task.completed', { taskId, result: { status: 'done' } })
+
+    const { processed } = await ad.drainAlertDismissals(client)
+
+    expect(processed).toBe(1)
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+  })
+
+  it('resolves open alert on task.dropped (non-purge drop reason)', async () => {
+    // task.dropped fires when an operator skips/drops a task. The Invalidator
+    // must close all open rows for that task (ADR-0028). This covers the
+    // discrete-event path that resolveAllRowsForTask handles — distinct from the
+    // legacy task.terminal{dropped} path through dismissAlertsOnStatusChange.
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-dropped-skip'
+
+    const itemId = await raiseOpenItemFor(actionQueue, taskId)
+    await ad.ensureAlertDismisser(client)
+    await publish(pub, client, 'task.dropped', { taskId, dropReason: 'user skipped' })
+
+    const { processed } = await ad.drainAlertDismissals(client)
+
+    expect(processed).toBe(1)
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+  })
+
+  it('resolves open alert on task.dropped{purged} (race-condition guard)', async () => {
+    // This is the race-condition path: when a task is purged, dropTask emits
+    // task.dropped{dropReason:'purged'} BEFORE deleting the task row. The
+    // Invalidator must close any open rows via resolveAllRowsForTask so the
+    // repopulator (which also drains task.dropped) cannot create an orphaned
+    // row after the Invalidator has already closed its cursor past that event.
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-purge-invalidator'
+
+    const itemId = await raiseOpenItemFor(actionQueue, taskId)
+    await ad.ensureAlertDismisser(client)
+    await publish(pub, client, 'task.dropped', { taskId, dropReason: 'purged' })
+
+    const { processed } = await ad.drainAlertDismissals(client)
+
+    expect(processed).toBe(1)
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+  })
+
+  it('resolves open alert on task.queued (task restarted/re-queued)', async () => {
+    // task.queued fires when a task is re-queued (e.g. mars restart). The
+    // Invalidator evicts the stale failure row via dismissAlertsOnStatusChange
+    // so an operator does not see a "needs attention" card for a task that is
+    // actively running again.
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-requeued'
+
+    const itemId = await raiseOpenItemFor(actionQueue, taskId)
+    await ad.ensureAlertDismisser(client)
+    await publish(pub, client, 'task.queued', { taskId })
+
+    const { processed } = await ad.drainAlertDismissals(client)
+
+    expect(processed).toBe(1)
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+  })
+
   describe('task.under_investigation status mutation', () => {
     it('(a) updateTask under_investigation inserts a task.under_investigation event in the same tx', async () => {
       const { q, ad } = await loadModules(repo)

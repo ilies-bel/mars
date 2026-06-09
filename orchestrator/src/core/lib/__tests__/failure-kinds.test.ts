@@ -253,36 +253,6 @@ describe('unknownFailureKind — plain-English fallback (no raw step ids, no jar
   })
 })
 
-describe('verify:has-diff/worktree-missing — distinct copy from the empty-diff case', () => {
-  it('is registered with a missing-worktree-themed warm title (not "did not produce any changes")', () => {
-    const entry = lookupFailureKind('verify:has-diff/worktree-missing')
-    expect(entry).not.toBeNull()
-    // The whole point of distinguishing this signature: the operator-facing
-    // copy must NOT say "did not produce any changes" — the coder never had
-    // a chance to produce a diff because the worktree was already gone.
-    expect(entry!.warmTitle).not.toMatch(/did not produce any changes/i)
-    expect(entry!.warmTitle).toMatch(/worktree/i)
-  })
-
-  it('verboseReason explains the worktree disappeared and frames it as infrastructure, not a coder error', () => {
-    const entry = lookupFailureKind('verify:has-diff/worktree-missing')
-    expect(entry).not.toBeNull()
-    expect(entry!.verboseReason).toMatch(/worktree/i)
-    expect(entry!.verboseReason).not.toMatch(/coder.*encountered an error|misunderstood the task/i)
-  })
-
-  it('verify:has-diff/unclassified (true no-diff case) is unchanged — still blames the coder for no changes', () => {
-    // The existing copy is correct for the worktree-present / empty-diff case
-    // and must not regress.
-    const entry = lookupFailureKind('verify:has-diff/unclassified')
-    expect(entry).not.toBeNull()
-    expect(entry!.warmTitle).toBe('The coder did not produce any changes')
-    expect(entry!.verboseReason).toBe(
-      'The verify step could not confirm that file changes were produced. The coder may have encountered an error or misunderstood the task.',
-    )
-  })
-})
-
 describe('new catalog entries for previously-unmatched signatures', () => {
   it('setup:install/unclassified is registered with a plain-English warm title', () => {
     const entry = lookupFailureKind('setup:install/unclassified')

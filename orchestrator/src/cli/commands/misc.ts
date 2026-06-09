@@ -102,16 +102,14 @@ const kpiShow: Command = {
   },
 }
 
-/**
- * The bare `kpi` (no subcommand) is an alias for `kpi show` — the obvious
- * default read for a read-only group. Mirrors `action-queue` / `alert`'s
- * bare-alias default pattern.
- */
-const kpiDefault: Command = {
+const kpiGroup: Command = {
   path: 'kpi',
-  summary: 'show the KPI window comparison (alias for `kpi show`)',
-  usage: 'usage: mars kpi [snapshot|show]',
-  run: (args, deps) => kpiShow.run(args, deps),
+  summary: 'kpi subcommands',
+  usage: 'usage: mars kpi <snapshot|show>',
+  run: (_args, deps) => {
+    deps.err('usage: mars kpi <snapshot|show>')
+    return { code: 1 }
+  },
 }
 
 // ── worktree ────────────────────────────────────────────────────────────────
@@ -268,7 +266,7 @@ const observabilityGroup: Command = {
   usage: 'usage: mars observability prune [<days>]',
   run: (_args, deps) => {
     deps.err('usage: mars observability prune [<days>]')
-    return { code: 1 }
+    return { code: 2 }
   },
 }
 
@@ -445,7 +443,7 @@ export const miscCommands: readonly Command[] = [
   uiStatus,
   kpiSnapshot,
   kpiShow,
-  kpiDefault,
+  kpiGroup,
   worktreePrune,
   worktreeClean,
   worktreeGroup,

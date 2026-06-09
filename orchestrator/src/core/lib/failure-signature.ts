@@ -87,19 +87,6 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     match: /no commits ahead of integration branch/i,
   },
   {
-    // verify:has-diff/worktree-missing fires when the verify step's
-    // `git rev-list` could not even run because its cwd — the task
-    // worktree — was pruned out from under the in-flight task (e.g. by a
-    // daemon restart / recover sweep that ran while the coder was still
-    // working). The first line emitted by checkBranchHasDiff is:
-    //   "has-diff: worktree path <path> no longer exists"
-    // This MUST classify distinctly from /unclassified so the operator-
-    // facing copy says "the worktree disappeared" instead of falsely
-    // blaming the coder for producing no changes.
-    errorClass: 'worktree-missing',
-    match: /worktree path .* no longer exists/i,
-  },
-  {
     errorClass: 'uncommitted-changes',
     // Matches both legacy wording (`merge target ... has uncommitted changes`)
     // and the new fast-forward-feasibility wording emitted by

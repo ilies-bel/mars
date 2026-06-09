@@ -174,21 +174,6 @@ export const detectInstallSites = async (
 /** Extra install attempts after the initial try (mirrors ENOTEMPTY_MAX_RETRIES). */
 const WORKSPACE_DEP_INSTALL_MAX_RETRIES = 2
 
-/**
- * pnpm exit codes that, together with empty stderr, are treated as transient
- * races worth retrying without any cleanup:
- *
- *   254 — generic abort during store-lock/flock contention in parallel runs.
- *   236 — ELIFECYCLE from a lifecycle script (e.g. `prepare` running `tsup`)
- *         that crashed mid-write under disk/IO contention with no error
- *         emitted to stderr.
- *
- * The empty-stderr gate keeps this conservative: real errors emit a message.
- * If stderr is non-empty we surface the failure immediately instead of
- * masking it with retries.
- */
-const TRANSIENT_INSTALL_EXIT_CODES: ReadonlySet<number> = new Set([254, 236])
-
 export const buildWorkspaceDepsForSite = async (
   site: InstallSite,
   worktreeRoot: string,
@@ -241,11 +226,10 @@ export const buildWorkspaceDepsForSite = async (
       : ['install']
     log?.(`[setup:install] installing workspace dep (${rel}) deps before build`)
 
-    // (a) Initial install with retry on a transient exit code + empty stderr.
-    // See TRANSIENT_INSTALL_EXIT_CODES for the gated codes (254 store-lock
-    // race, 236 prepare-script ELIFECYCLE under IO contention). Retrying
-    // without any cleanup is safe — the store is left intact on those aborts
-    // and an empty stderr distinguishes transient races from real errors.
+    // (a) Initial install with retry on transient exit 254 + empty stderr.
+    // pnpm emits exit 254 with no stderr output during brief CI races (store
+    // lock contention, flock timeout). Retrying without any cleanup is safe
+    // because the store is left intact on a 254 abort.
     let installRes = await runner('pnpm', depInstallArgs, depDir, {
       timeoutMs,
       env: { CI: 'true' },
@@ -253,12 +237,12 @@ export const buildWorkspaceDepsForSite = async (
     for (
       let attempt = 1;
       attempt <= WORKSPACE_DEP_INSTALL_MAX_RETRIES &&
-      TRANSIENT_INSTALL_EXIT_CODES.has(installRes.exitCode) &&
+      installRes.exitCode === 254 &&
       installRes.stderr.trim() === '';
       attempt++
     ) {
       log?.(
-        `[setup:install] workspace dep (${rel}) transient exit ${installRes.exitCode} — retrying (attempt ${attempt}/${WORKSPACE_DEP_INSTALL_MAX_RETRIES})`,
+        `[setup:install] workspace dep (${rel}) transient exit 254 — retrying (attempt ${attempt}/${WORKSPACE_DEP_INSTALL_MAX_RETRIES})`,
       )
       installRes = await runner('pnpm', depInstallArgs, depDir, {
         timeoutMs,
