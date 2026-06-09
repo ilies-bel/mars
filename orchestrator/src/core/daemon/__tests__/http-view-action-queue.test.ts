@@ -28,6 +28,7 @@ import {
   type PersistedActionQueueRow,
   type TaskForActionQueue,
 } from '../view/action-queue.js'
+import { stubAppServices } from './app-services-stub'
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -456,41 +457,27 @@ describe('GET /view/action-queue via HTTP server', () => {
   selfUpdate: async () => {},
       recipeCatalog,
       traceStore: nullTraceStore,
-      viewTasks: async () => ({ tasks: [] }),
-      viewProgress: async () => ({ tasks: [], proposals: [] }),
-      viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
-      viewTerminalEvents: async () => ({ events: [] }),
-      viewStepSpans: async () => ({ spans: [] }),
-  viewSessions: async () => ({ sessions: [] }),
-  viewAlerts: async () => [],
-  viewAlert: async () => null,
-      viewFrameworkUpdate: async () => ({
-        installed: '0.1.0',
-        latest: '0.1.0',
-        available: false,
-        checkedAt: null,
-        releaseUrl: null,
-    selfUpdatable: false,
+      appServices: stubAppServices({
+        viewActionQueue: async (filter) => {
+          // Return a predictable payload based on filter.
+          const row: ActionQueueRow = {
+            id: 'test-row',
+            kind: 'failed-task',
+            entityId: 'task-x',
+            priority: 'high',
+            title: `Test row (filter=${filter})`,
+            body: 'body',
+            at: '2024-01-01T00:00:00.000Z',
+            dag: null,
+            errorKind: 'failed-task',
+            actions: [],
+            staleWorktreeDetail: null,
+            diagnosis: null,
+            failureReasonCode: null,
+          }
+          return [row]
+        },
       }),
-      viewActionQueue: async (filter) => {
-        // Return a predictable payload based on filter.
-        const row: ActionQueueRow = {
-          id: 'test-row',
-          kind: 'failed-task',
-          entityId: 'task-x',
-          priority: 'high',
-          title: `Test row (filter=${filter})`,
-          body: 'body',
-          at: '2024-01-01T00:00:00.000Z',
-          dag: null,
-          errorKind: 'failed-task',
-          actions: [],
-          staleWorktreeDetail: null,
-          diagnosis: null,
-          failureReasonCode: null,
-        }
-        return [row]
-      },
     })
   })
 

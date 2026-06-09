@@ -50,10 +50,7 @@ import {
   getCompositionRootClient,
   runCompositionRootMigrations,
 } from '../store/task-store'
-import { listTerminalEvents } from './view/terminal-events'
-import { buildSessionsView } from './view/sessions'
-import { getProposal, listProposals, promoteProposal } from '../proposals'
-import type { DraftFeature, FrameworkUpdateState, StaleWorktreeAlert } from './http-server'
+import { promoteProposal } from '../proposals'
 import {
   CANCELLED_FAILURE_REASON,
   type RecoverAllBlockedTasksResult,
@@ -77,7 +74,6 @@ import { probeDuckDBLock } from './duckdb-lock'
 import {
   assertProposalsSourceFresh,
   captureProposalsStamp,
-  mapDaemonError,
 } from './stale-detection'
 import {
   readLines,
@@ -91,7 +87,9 @@ import {
   createTaskFlightTracker,
   type DispatchKind,
 } from './task-flight-tracker'
-import { MARS_VERSION } from '../../version'
+import { rpcRegistry, dispatchRpc } from './rpc/registry'
+import type { DaemonDeps } from './rpc/types'
+import { createAppServices } from '../app-services'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -1685,6 +1683,13 @@ export const startDaemon = async (
     await runStartupReconcile({ log, bus, traceStore, handleProposalSlice })
   }
 
+  // The 'sync' RPC op: same reconcile as startup, but the summary is returned
+  // to the caller rather than discarded.
+  const runSync = async (): Promise<unknown> => {
+    const { runStartupReconcile } = await import('./startup-reconcile')
+    return runStartupReconcile({ log, bus, traceStore, handleProposalSlice })
+  }
+
   // ── Investigate / diagnose-failure handlers (shared by HTTP and RPC) ────────
   // Defined here — before handleRequest — so the RPC switch can call them
   // directly without going through the HTTP layer.
@@ -2005,366 +2010,61 @@ export const startDaemon = async (
 
   // ── Network: UDS server ───────────────────────────────────────────────────
 
-  // Ops that spawn or schedule new work. Refused while the daemon is
-  // draining (after `mars daemon stop`) so an in-flight drain isn't
-  // chased by fresh task additions.
-  const WORK_SPAWNING_OPS: ReadonlySet<DaemonRequest['op']> = new Set([
-    'add',
-    'continue',
-    'restart',
-    'refine',
-    'proposal.promote',
-    'proposal.slice',
-    'glossary-write',
-    'adr-add',
-    'init',
-    // investigate and diagnose-failure spawn Claude processes; consistent with
-    // the HTTP handler which gates all POST /actions/:op/:id on isAcceptingWork.
-    'investigate',
-    'diagnose-failure',
-  ])
+  // ── RPC command seam (ADR daemon-command-seam; mirrors ADR-0023) ──────────
+  // The 27-case `switch (req.op)` is now a flat op-keyed registry of leaf
+  // handlers in `./rpc/`. `handleRequest` keeps its socket-facing signature and
+  // delegates to `dispatchRpc`, which applies the drain gate + error mapping and
+  // routes to the matched leaf. Per ADR-0024 drain/dispatch/tracker are NOT
+  // extracted — they reach each leaf through the injected `deps` below.
+  //
+  // `deps` is built lazily and memoised: `shutdown` is declared later in this
+  // closure, so the object is assembled on first request (by which point every
+  // captured fn is initialised) rather than at definition time.
+  let rpcDeps: DaemonDeps | undefined
+  const buildRpcDeps = (): DaemonDeps => ({
+    log,
+    bus,
+    tracker,
+    sems: {
+      implement: sems.implement,
+      triage: sems.triage,
+      refine: sems.refine,
+      structuredWrite: structuredWriteSem,
+    },
+    getAcceptingWork: () => acceptingWork,
+    setAcceptingWork: (value: boolean) => {
+      acceptingWork = value
+    },
+    drain: () => drain(),
+    shutdown: (force?: boolean) => shutdown(force),
+    paths: { socketPath, pidFile, httpPortFile },
+    handleAdd,
+    setTaskPriority,
+    handleUpdate,
+    handleContinue,
+    handleRestart,
+    handlePurge,
+    handleArcPurge,
+    handleDrop,
+    handleUnblock,
+    handleBlock,
+    handleRemoveBlockers,
+    handleRecover,
+    runSync,
+    handleProposalPromote,
+    handleProposalSlice,
+    handleRefine,
+    dispatchGlossaryWrite,
+    dispatchAdrAdd,
+    handleInit,
+    handleStatus,
+    investigateWorktree,
+    diagnoseFailure,
+  })
 
   const handleRequest = async (req: DaemonRequest): Promise<DaemonResponse> => {
-    if (!acceptingWork && WORK_SPAWNING_OPS.has(req.op)) {
-      return {
-        ok: false,
-        error: 'daemon draining; new work refused. Use `mars daemon kill` to abort, or wait for shutdown',
-        errorCode: 'DRAINING',
-      }
-    }
-    try {
-      switch (req.op) {
-        case 'add': {
-          if (typeof req.prompt !== 'string') {
-            return {
-              ok: false,
-              error: `add: prompt must be a string; got ${typeof req.prompt}`,
-            }
-          }
-          const task = await handleAdd(
-            req.prompt,
-            req.plan,
-            req.skipTriage,
-            req.author,
-            req.blockerIds,
-            req.priority,
-            req.tags,
-            req.spec,
-            req.intent,
-          )
-          return { ok: true, data: task }
-        }
-        case 'task.priority': {
-          const task = await setTaskPriority(req.id, req.priority)
-          return { ok: true, data: task }
-        }
-        case 'update': {
-          await handleUpdate(req.id, req.patch)
-          return { ok: true }
-        }
-        case 'continue': {
-          const continueResult = await handleContinue(req.id)
-          return { ok: true, data: continueResult }
-        }
-        case 'restart': {
-          await handleRestart(req.id)
-          return { ok: true }
-        }
-        case 'purge': {
-          await handlePurge(req.id, req.force ?? false)
-          return { ok: true }
-        }
-        case 'arc-purge': {
-          const arcResult = await handleArcPurge(req.id, req.force ?? false)
-          return { ok: true, data: arcResult }
-        }
-        case 'drop': {
-          const result = await handleDrop(req.id, req.force ?? false)
-          return { ok: true, data: result }
-        }
-        case 'unblock': {
-          const result = await handleUnblock(req.id)
-          return { ok: true, data: result }
-        }
-        case 'block': {
-          const result = await handleBlock(req.id, req.blockerIds ?? [])
-          return { ok: true, data: result }
-        }
-        case 'remove-blockers': {
-          const result = await handleRemoveBlockers(req.id, req.blockerIds ?? [])
-          return { ok: true, data: result }
-        }
-        case 'recover': {
-          const result = await handleRecover(req.id)
-          return { ok: true, data: result }
-        }
-        case 'sync': {
-          const { runStartupReconcile } = await import('./startup-reconcile')
-          const summary = await runStartupReconcile({
-            log,
-            bus,
-            traceStore,
-            handleProposalSlice,
-          })
-          return { ok: true, data: summary }
-        }
-        case 'proposal.promote': {
-          const r = await handleProposalPromote(req.proposalId)
-          return { ok: true, data: r }
-        }
-        case 'proposal.slice': {
-          const r = await handleProposalSlice(req.proposalId)
-          return { ok: true, data: r }
-        }
-        case 'refine': {
-          await handleRefine(req.id, req.refresh ?? false)
-          return { ok: true }
-        }
-        case 'glossary-write': {
-          if (req.kind !== 'set' && req.kind !== 'remove') {
-            return { ok: false, error: `unknown glossary-write kind: ${req.kind}` }
-          }
-          if (!req.term || req.term.trim().length === 0) {
-            return { ok: false, error: 'glossary-write requires a non-empty term' }
-          }
-          if (req.kind === 'set' && (!req.definition || req.definition.trim().length === 0)) {
-            return { ok: false, error: 'glossary-write set requires a definition' }
-          }
-          void dispatchGlossaryWrite({
-            kind: req.kind,
-            term: req.term,
-            definition: req.definition,
-            aliases: req.aliases,
-          })
-          return { ok: true, data: { enqueued: true } }
-        }
-        case 'adr-add': {
-          if (!req.title || req.title.trim().length === 0) {
-            return { ok: false, error: 'adr-add requires a non-empty title' }
-          }
-          if (!req.body || req.body.trim().length === 0) {
-            return { ok: false, error: 'adr-add requires a non-empty body' }
-          }
-          void dispatchAdrAdd({ title: req.title.trim(), body: req.body })
-          return { ok: true, data: { enqueued: true } }
-        }
-        case 'init': {
-          try {
-            const result = await handleInit(req.opts)
-            return { ok: true, data: result }
-          } catch (err) {
-            const { NestedTechError, WalkAccessError } = await import(
-              '../../init/walk-manifests'
-            )
-            const { InitConfigError } = await import('../../init/init-config')
-            if (err instanceof InitConfigError) {
-              return {
-                ok: false,
-                error: err.message,
-                errorCode: `init-config:${err.configPath}`,
-              }
-            }
-            if (err instanceof NestedTechError) {
-              return {
-                ok: false,
-                error: err.message,
-                errorCode: `nested-tech:${err.outerPath}::${err.innerPath}`,
-              }
-            }
-            if (err instanceof WalkAccessError) {
-              return {
-                ok: false,
-                error: err.message,
-                errorCode: `walk-access:${err.path}`,
-              }
-            }
-            throw err
-          }
-        }
-        case 'status': {
-          return { ok: true, data: await handleStatus() }
-        }
-        case 'reload-config': {
-          const caps = loadDaemonConfig().caps
-          setSemLimit(sems.implement, caps.implement)
-          setSemLimit(sems.triage, caps.triage)
-          setSemLimit(sems.refine, caps.refine)
-          // structuredWriteSem is shared by 'glossary-write' and 'adr-add';
-          // update once via the captured reference.
-          setSemLimit(structuredWriteSem, caps.structuredWrite)
-          log(
-            `concurrency reloaded: implement=${caps.implement} triage=${caps.triage} refine=${caps.refine} structured-write=${caps.structuredWrite}`,
-          )
-          void drain()
-          return {
-            ok: true,
-            data: {
-              caps: {
-                implement: caps.implement,
-                triage: caps.triage,
-                refine: caps.refine,
-                'structured-write': caps.structuredWrite,
-              },
-            },
-          }
-        }
-        case 'set-flag': {
-          // In-memory kill-switch toggle. No persistence — a daemon
-          // restart legitimately re-reads the spawn env. Allowlist is
-          // narrow on purpose; extend deliberately rather than exposing
-          // arbitrary env mutation over IPC.
-          if (req.flag !== 'recovery') {
-            return {
-              ok: false,
-              error: `set-flag: unknown flag '${req.flag}'; supported flags: recovery`,
-            }
-          }
-          if (req.value !== 'on' && req.value !== 'off') {
-            return {
-              ok: false,
-              error: `set-flag: value must be 'on' or 'off'; got '${req.value}'`,
-            }
-          }
-          if (req.value === 'on') {
-            process.env.MARS_RECOVERY_DISABLED = '1'
-          } else {
-            delete process.env.MARS_RECOVERY_DISABLED
-          }
-          log(`set-flag: recovery=${req.value} (MARS_RECOVERY_DISABLED=${process.env.MARS_RECOVERY_DISABLED ?? '<unset>'})`)
-          return { ok: true, data: { flag: req.flag, value: req.value } }
-        }
-        case 'ping': {
-          return { ok: true, data: { pid: process.pid } }
-        }
-        case 'investigate': {
-          const result = await investigateWorktree(req.id)
-          return { ok: true, data: result }
-        }
-        case 'diagnose-failure': {
-          const result = await diagnoseFailure(req.id)
-          return { ok: true, data: result }
-        }
-        case 'shutdown': {
-          // Three modes:
-          //   drain=true  → stop picking new work, wait for in-flight to
-          //                 finish, then exit. No timeout.
-          //   force=true  → exit now and abandon in-flight (legacy
-          //                 fast-path; in-flight tasks remain at
-          //                 running/verifying in the queue).
-          //   neither     → exit only if idle; refuse otherwise so the
-          //                 user can pick drain or kill explicitly.
-          if (req.drain) {
-            if (acceptingWork) {
-              acceptingWork = false
-              tracker.clearPending()
-              log(`drain requested; stopped accepting new work (inFlight=${tracker.inFlightCount()})`)
-            }
-            queueMicrotask(() => {
-              void shutdown(false)
-            })
-            return { ok: true, data: { inFlight: tracker.inFlightCount(), draining: true } }
-          }
-          if (!req.force && tracker.inFlightCount() > 0) {
-            return {
-              ok: false,
-              error: `${tracker.inFlightCount()} task(s) in flight; pass drain=true to wait or use \`mars daemon kill\` to abort`,
-            }
-          }
-          queueMicrotask(() => {
-            void shutdown(req.force === true)
-          })
-          return { ok: true }
-        }
-        case 'kill': {
-          // Hard stop: mark every in-flight task failed, then SIGKILL the
-          // daemon's process group so every spawned `claude -p` (and any
-          // child git/verify processes) dies with it.
-          acceptingWork = false
-          tracker.clearPending()
-          const victims = tracker.inFlightSnapshot()
-          log(
-            `kill requested; aborting ${victims.length} in-flight task(s): ${
-              victims.map((v) => `${v.taskId}(${v.kind})`).join(', ') || '(none)'
-            }`,
-          )
-          // Mark task rows failed so the queue reflects reality after the
-          // children are gone. Best-effort — don't block kill on DB I/O.
-          for (const v of victims) {
-            if (v.kind !== 'implement' && v.kind !== 'triage' && v.kind !== 'refine') continue
-            try {
-              await updateTask(v.taskId, {
-                status: 'failed',
-                error: 'killed by `mars daemon kill`',
-                failureSignature: DAEMON_KILLED_SIGNATURE,
-                failureReason: 'killed by `mars daemon kill`',
-                failureReasonCode: 'unknown',
-              })
-            } catch {
-              // best-effort
-            }
-          }
-          // SIGKILL every tracked child (claude -p + any git/verify
-          // subprocess) explicitly so the work dies even when we can't
-          // safely signal our process group (foreground daemons share the
-          // user's terminal pgid). killAllChildren() is a no-op if nothing
-          // is in flight.
-          const { killAllChildren } = await import('../lib/git/claude')
-          const killedPids = killAllChildren()
-          if (killedPids.length > 0) {
-            log(`SIGKILL'd ${killedPids.length} child pid(s): ${killedPids.join(', ')}`)
-          }
-          // Respond before pulling the rug on the event loop. Use a short
-          // setTimeout so the response flush actually lands on the wire.
-          setTimeout(() => {
-            try {
-              for (const f of [socketPath, pidFile, httpPortFile]) {
-                if (existsSync(f)) {
-                  try {
-                    unlinkSync(f)
-                  } catch {
-                    // best-effort
-                  }
-                }
-              }
-            } finally {
-              // Belt-and-suspenders: SIGKILL our own process group too when
-              // we lead it (detached mode). Catches anything killAllChildren
-              // missed (e.g. a child that spawned its own subprocess and
-              // exited before we got the pid). In foreground mode the pgid
-              // is the user's terminal, so we only kill ourselves.
-              try {
-                // process.getpgrp is POSIX-only and not in @types/node; cast
-                // through unknown so the type checker accepts the lookup.
-                const getpgrp = (process as unknown as {
-                  getpgrp?: () => number
-                }).getpgrp
-                const pgid = typeof getpgrp === 'function' ? getpgrp() : -1
-                if (pgid === process.pid) {
-                  process.kill(-process.pid, 'SIGKILL')
-                } else {
-                  process.kill(process.pid, 'SIGKILL')
-                }
-              } catch {
-                process.kill(process.pid, 'SIGKILL')
-              }
-            }
-          }, 50)
-          return {
-            ok: true,
-            data: {
-              killed: victims.map((v) => ({ taskId: v.taskId, kind: v.kind })),
-              killedPids,
-            },
-          }
-        }
-        default: {
-          const _exhaustive: never = req
-          return { ok: false, error: `unknown op: ${JSON.stringify(_exhaustive)}` }
-        }
-      }
-    } catch (err) {
-      return { ok: false, error: mapDaemonError((err as Error).message) }
-    }
+    rpcDeps ??= buildRpcDeps()
+    return dispatchRpc(rpcRegistry, req, rpcDeps)
   }
 
   const onClient = (sock: Socket): void => {
@@ -2562,6 +2262,20 @@ export const startDaemon = async (
     }
   }
 
+  // The in-process application-service layer (ADR-0055). Every read use-case the
+  // HTTP routes serve now lives in `createAppServices`; the daemon constructs it
+  // once over its trace store and arc-derived alert sources, and the HTTP server
+  // is a thin transport over it. The genuinely daemon-runtime collaborators
+  // (the trace store, the alert-sources builder) are INJECTED here — they stay
+  // daemon-owned, not absorbed into AppServices. The SSE hub and the
+  // update-poller writer are transport/stream concerns and remain on the daemon
+  // (the hub is passed to startHttpServer as `viewStreamHub`; the poller writes
+  // the cache AppServices.viewFrameworkUpdate only reads).
+  const appServices = createAppServices({
+    traceStore,
+    buildAlertSources,
+  })
+
   const httpHandle = await startHttpServer({
     restartTask: async (id) => {
       await coreRestart(id, new Set(['failed']), makeWorkflowStore())
@@ -2683,388 +2397,8 @@ export const startDaemon = async (
     },
     recipeCatalog,
     traceStore,
-    viewTasks: () =>
-      getDefaultDomainTaskStore()
-        .listTasks()
-        .then((tasks) => ({ tasks })),
-    viewProgress: async () => {
-      const {
-        buildProgressView,
-        createProgressTaskStore,
-        createProposalReader,
-      } = await import('./view/progress')
-      const client = getCompositionRootClient()
-      return buildProgressView(
-        createProgressTaskStore(client),
-        createProposalReader(client),
-      )
-    },
-    viewStepSpans: async (originId) => {
-      const [started, ended] = await Promise.all([
-        traceStore.query({ originId, kind: ['step_started'], limit: 1000 }),
-        traceStore.query({ originId, kind: ['step_ended'], limit: 1000 }),
-      ])
-
-      // Map (workflowInstanceId, stepName) → ended event for O(n) pairing.
-      const endedMap = new Map<string, (typeof ended)[0]>()
-      for (const e of ended) {
-        const wfId = e.payload.workflowInstanceId
-        const stepName = e.payload.stepName
-        if (typeof wfId === 'string' && typeof stepName === 'string') {
-          endedMap.set(`${wfId}\0${stepName}`, e)
-        }
-      }
-
-      const spans = started
-        .map((s) => {
-          const wfId = s.payload.workflowInstanceId
-          const stepName = s.payload.stepName
-          const key =
-            typeof wfId === 'string' && typeof stepName === 'string'
-              ? `${wfId}\0${stepName}`
-              : null
-          const endEvent = key ? endedMap.get(key) : undefined
-
-          return {
-            stepName: typeof stepName === 'string' ? stepName : '',
-            phase: s.phase,
-            workflowInstanceId: typeof wfId === 'string' ? wfId : '',
-            workerName:
-              typeof s.payload.workerName === 'string'
-                ? s.payload.workerName
-                : null,
-            outcome: endEvent
-              ? typeof endEvent.payload.outcome === 'string'
-                ? endEvent.payload.outcome
-                : 'completed'
-              : 'running',
-            startedAt: s.timestamp,
-            endedAt: endEvent ? endEvent.timestamp : null,
-            durationMs:
-              endEvent && typeof endEvent.payload.durationMs === 'number'
-                ? endEvent.payload.durationMs
-                : null,
-            taskId: s.taskId,
-            originId: s.originId,
-            evalResults: Array.isArray(endEvent?.payload.evalResults)
-              ? (endEvent.payload.evalResults as Array<{ label: string; value: number | string | null; warn: boolean }>)
-              : undefined,
-          }
-        })
-        // Ascending by startedAt — preserves workflow execution order.
-        .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
-
-      return { spans }
-    },
-    viewSessions: (agentName: string) => buildSessionsView(traceStore, agentName),
-    viewAlerts: async () => {
-      const { listAlerts } = await import('../lib/alert')
-      return listAlerts(await buildAlertSources())
-    },
-    viewAlert: async (arcId) => {
-      const { showAlert } = await import('../lib/alert')
-      return showAlert(arcId, await buildAlertSources())
-    },
     viewStreamHub,
-    viewActionQueue: async (filter) => {
-      const { buildActionQueueView } = await import('./view/action-queue')
-      const { listActionQueueItems } = await import('../lib/action-queue')
-      const { listTasks: qListTasks } = await import('../queue')
-      const getQueueClient = getCompositionRootClient
-      const { getRepoRoot } = await import('../context')
-
-      await runCompositionRootMigrations()
-
-      // Build the state store adapter.
-      const stateStore = {
-        listOpenActionQueueItems: async () => {
-          const items = (await listActionQueueItems('all')).filter(
-            (item) => item.state === 'open',
-          )
-          return items.map((item) => ({
-            id: item.id,
-            kind: item.kind as string,
-            priority: item.priority as string,
-            title: item.title,
-            body: item.body,
-            payload: item.payload,
-            context: item.context,
-            raisedAt: item.raisedAt,
-            lastSeenAt: item.lastSeenAt,
-            signature: item.signature,
-          }))
-        },
-        // Stub — viewActionQueue only needs open rows; history is handled by viewActionQueueHistory.
-        listResolvedActionQueueItems: async () => ({ items: [], nextCursor: null }),
-      }
-
-      // Build the task store adapter: tasks + blocker info + parentProposalId.
-      const taskStore = {
-        listTasks: async () => {
-          const tasks = await qListTasks()
-          const c = getQueueClient()
-          // Build blockedBy map from task_blockers.
-          let blockedByMap = new Map<string, string[]>()
-          let proposalMap = new Map<string, string | null>()
-          try {
-            const blockersResult = await c.execute(
-              `SELECT task_id, blocker_task_id FROM task_blockers`,
-            )
-            for (const row of blockersResult.rows) {
-              const r = row as unknown as { task_id: string; blocker_task_id: string }
-              const arr = blockedByMap.get(r.task_id) ?? []
-              arr.push(r.blocker_task_id)
-              blockedByMap.set(r.task_id, arr)
-            }
-          } catch {
-            // task_blockers may not exist on a fresh repo — empty map.
-          }
-          try {
-            const proposalResult = await c.execute(
-              `SELECT id, parent_proposal_id FROM tasks WHERE parent_proposal_id IS NOT NULL`,
-            )
-            for (const row of proposalResult.rows) {
-              const r = row as unknown as { id: string; parent_proposal_id: string | null }
-              proposalMap.set(r.id, r.parent_proposal_id)
-            }
-          } catch {
-            // Tolerate missing column on legacy repos.
-          }
-          return tasks.map((t) => ({
-            id: t.id,
-            status: t.status,
-            prompt: t.prompt,
-            blockedBy: blockedByMap.get(t.id) ?? [],
-            parentProposalId: proposalMap.get(t.id) ?? null,
-            failureSignature: t.failureSignature,
-            branch: t.branch,
-            updatedAt: t.updatedAt,
-            fixForTaskId: t.fixForTaskId ?? null,
-          }))
-        },
-      }
-
-      return buildActionQueueView({
-        stateStore,
-        taskStore,
-        repoRoot: getRepoRoot(),
-        filter,
-      })
-    },
-    viewActionQueueHistory: async ({ cursor, limit }) => {
-      const { buildActionQueueHistoryView } = await import('./view/action-queue')
-      const { listResolvedActionQueueItems } = await import('../lib/action-queue')
-      const { listTasks: qListTasks } = await import('../queue')
-      const getQueueClient = getCompositionRootClient
-      const { getRepoRoot } = await import('../context')
-
-      await runCompositionRootMigrations()
-
-      const stateStore = {
-        listOpenActionQueueItems: async () => [],
-        listResolvedActionQueueItems: async (opts: {
-          limit?: number
-          cursor?: string | null
-        }) => {
-          const page = await listResolvedActionQueueItems(opts)
-          return {
-            items: page.items.map((item) => ({
-              id: item.id,
-              kind: item.kind as string,
-              priority: item.priority as string,
-              title: item.title,
-              body: item.body,
-              payload: item.payload,
-              context: item.context,
-              raisedAt: item.raisedAt,
-              lastSeenAt: item.lastSeenAt,
-              signature: item.signature,
-              resolvedAt: item.resolvedAt,
-              resolution: item.resolution,
-              resolutionNote: item.resolutionNote,
-              rootCause: item.rootCause,
-              resolvedBy: item.resolutionDetails?.resolvedBy ?? null,
-            })),
-            nextCursor: page.nextCursor,
-          }
-        },
-      }
-
-      const taskStore = {
-        listTasks: async () => {
-          const tasks = await qListTasks()
-          const c = getQueueClient()
-          let blockedByMap = new Map<string, string[]>()
-          let proposalMap = new Map<string, string | null>()
-          try {
-            const blockersResult = await c.execute(
-              `SELECT task_id, blocker_task_id FROM task_blockers`,
-            )
-            for (const row of blockersResult.rows) {
-              const r = row as unknown as { task_id: string; blocker_task_id: string }
-              const arr = blockedByMap.get(r.task_id) ?? []
-              arr.push(r.blocker_task_id)
-              blockedByMap.set(r.task_id, arr)
-            }
-          } catch {
-            // task_blockers may not exist on a fresh repo — empty map.
-          }
-          try {
-            const proposalResult = await c.execute(
-              `SELECT id, parent_proposal_id FROM tasks WHERE parent_proposal_id IS NOT NULL`,
-            )
-            for (const row of proposalResult.rows) {
-              const r = row as unknown as { id: string; parent_proposal_id: string | null }
-              proposalMap.set(r.id, r.parent_proposal_id)
-            }
-          } catch {
-            // Tolerate missing column on legacy repos.
-          }
-          return tasks.map((t) => ({
-            id: t.id,
-            status: t.status,
-            prompt: t.prompt,
-            blockedBy: blockedByMap.get(t.id) ?? [],
-            parentProposalId: proposalMap.get(t.id) ?? null,
-            failureSignature: t.failureSignature,
-            branch: t.branch,
-            updatedAt: t.updatedAt,
-            fixForTaskId: t.fixForTaskId ?? null,
-          }))
-        },
-      }
-
-      return buildActionQueueHistoryView({
-        stateStore,
-        taskStore,
-        repoRoot: getRepoRoot(),
-        limit,
-        cursor,
-      })
-    },
-    viewProposals: async () => {
-      const client = getCompositionRootClient()
-      // Check if the proposals table exists (absent on a fresh repo before
-      // the first `mars init` / daemon run that initialises the schema).
-      const tablesResult = await client.execute(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='proposals'`,
-      )
-      const drafts: DraftFeature[] = []
-      if (tablesResult.rows.length > 0) {
-        const r = await client.execute(
-          `SELECT p.id, p.title, p.problem, p.solution, p.status, p.source,
-                  p.created_at, p.updated_at,
-                  (SELECT COUNT(*) FROM proposal_user_stories s WHERE s.proposal_id = p.id) AS acceptance_count
-           FROM proposals p
-           WHERE p.status = 'draft'
-           ORDER BY p.created_at DESC`,
-        )
-
-        // Load user stories for all draft proposals in one query.
-        const storiesMap = new Map<string, string[]>()
-        if (r.rows.length > 0) {
-          const ids = r.rows.map((row) => (row as unknown as { id: string }).id)
-          const placeholders = ids.map(() => '?').join(', ')
-          const storiesResult = await client.execute({
-            sql: `SELECT proposal_id, text FROM proposal_user_stories
-                  WHERE proposal_id IN (${placeholders})
-                  ORDER BY proposal_id, position ASC`,
-            args: ids,
-          })
-          for (const row of storiesResult.rows) {
-            const r0 = row as unknown as { proposal_id: string; text: string }
-            const arr = storiesMap.get(r0.proposal_id) ?? []
-            arr.push(r0.text)
-            storiesMap.set(r0.proposal_id, arr)
-          }
-        }
-
-        for (const row of r.rows) {
-          const r0 = row as unknown as Record<string, unknown>
-          const src = r0.source
-          const source: DraftFeature['source'] =
-            src === 'reflection' || src === 'planner' || src === 'human' ? src : 'human'
-          drafts.push({
-            id: r0.id as string,
-            title: (r0.title as string | null) ?? '',
-            problem: (r0.problem as string | null) ?? '',
-            solution: (r0.solution as string | null) ?? '',
-            status: (r0.status as string | null) ?? 'draft',
-            source,
-            createdAt: Number(r0.created_at ?? 0),
-            updatedAt: Number(r0.updated_at ?? 0),
-            acceptanceCount: Number(r0.acceptance_count ?? 0),
-            userStories: storiesMap.get(r0.id as string) ?? [],
-          })
-        }
-      }
-
-      const staleWorktrees: StaleWorktreeAlert[] = []
-      try {
-        const r = await client.execute(
-          `SELECT context, payload, last_seen_at, raised_at
-             FROM action_queue_items
-            WHERE kind = 'stale-worktree' AND state = 'open'
-            ORDER BY raised_at DESC`,
-        )
-        for (const row of r.rows) {
-          const r0 = row as unknown as Record<string, unknown>
-          let ctx: Record<string, unknown> = {}
-          let pld: Record<string, unknown> = {}
-          try {
-            const p = JSON.parse(r0.context as string)
-            if (p && typeof p === 'object') ctx = p as Record<string, unknown>
-          } catch { /* ignore */ }
-          try {
-            const p = JSON.parse(r0.payload as string)
-            if (p && typeof p === 'object') pld = p as Record<string, unknown>
-          } catch { /* ignore */ }
-          const taskId = typeof ctx.taskId === 'string' ? ctx.taskId : null
-          if (!taskId) continue
-          staleWorktrees.push({
-            taskId,
-            status: typeof pld.status === 'string' ? pld.status : 'unknown',
-            ageHours: typeof pld.ageHours === 'number' ? pld.ageHours : 0,
-            updatedAt:
-              typeof r0.last_seen_at === 'string'
-                ? r0.last_seen_at
-                : typeof r0.raised_at === 'string'
-                  ? r0.raised_at
-                  : new Date().toISOString(),
-            prompt: typeof pld.prompt === 'string' ? pld.prompt : '',
-            error: typeof pld.error === 'string' ? pld.error : null,
-            branch: typeof pld.branch === 'string' ? pld.branch : null,
-            blockerTaskId: null,
-          })
-        }
-      } catch { /* action_queue_items table may not exist on a fresh repo */ }
-
-      return { drafts, staleWorktrees }
-    },
-    viewProposal: (id: string) => getProposal(id),
-    viewFrameworkUpdate: async (): Promise<FrameworkUpdateState> => {
-      const cacheFile = resolvePath(resolveContext().stateDir, 'update.json')
-      const { classifyInstallRoute: classify } = await import('./install-route')
-      const selfUpdatable = classify() === 'prod'
-      try {
-        const raw = await readFile(cacheFile, 'utf8')
-        const cached = JSON.parse(raw) as Omit<FrameworkUpdateState, 'selfUpdatable'>
-        return { ...cached, selfUpdatable }
-      } catch {
-        return {
-          installed: MARS_VERSION,
-          latest: MARS_VERSION,
-          available: false,
-          checkedAt: null,
-          releaseUrl: null,
-          selfUpdatable,
-        }
-      }
-    },
-    viewTerminalEvents: () =>
-      listTerminalEvents(getDefaultDomainTaskStore()).then((events) => ({
-        events,
-      })),
+    appServices,
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)

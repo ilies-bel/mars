@@ -11,6 +11,8 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { HttpServerDeps, StepSpan } from '../http-server'
+import type { AppServices } from '../../app-services'
+import { stubAppServices } from './app-services-stub'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import type { TraceEventStore } from '../../lib/trace-events-store'
 
@@ -27,7 +29,9 @@ const stubTraceStore: TraceEventStore = {
   close: async () => {},
 }
 
-const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
+const makeDeps = (
+  appServicesOverrides: Partial<AppServices> = {},
+): HttpServerDeps => ({
   restartTask: async () => {},
   unblockTask: async () => {},
   purgeTask: async () => {},
@@ -44,24 +48,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
     ReturnType<typeof loadRecipeCatalog>
   >,
   traceStore: stubTraceStore,
-  viewTasks: async () => ({ tasks: [] }),
-  viewProgress: async () => ({ tasks: [], proposals: [] }),
-  viewActionQueue: async () => [],
-  viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
-  viewTerminalEvents: async () => ({ events: [] }),
-  viewStepSpans: async () => ({ spans: [] }),
-  viewSessions: async () => ({ sessions: [] }),
-  viewAlerts: async () => [],
-  viewAlert: async () => null,
-  viewFrameworkUpdate: async () => ({
-    installed: '0.1.0',
-    latest: '0.1.0',
-    available: false,
-    checkedAt: null,
-    releaseUrl: null,
-    selfUpdatable: false,
-  }),
-  ...overrides,
+  appServices: stubAppServices(appServicesOverrides),
 })
 
 // ── GET /view/step-spans ──────────────────────────────────────────────────────

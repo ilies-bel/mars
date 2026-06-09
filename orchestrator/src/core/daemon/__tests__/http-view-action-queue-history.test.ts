@@ -28,6 +28,7 @@ import {
   type PersistedActionQueueRow,
   type TaskForActionQueue,
 } from '../view/action-queue.js'
+import { stubAppServices } from './app-services-stub'
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -309,26 +310,11 @@ describe('GET /view/action-queue/history via HTTP server', () => {
       selfUpdate: async () => {},
       recipeCatalog,
       traceStore: nullTraceStore,
-      viewTasks: async () => ({ tasks: [] }),
-      viewProgress: async () => ({ tasks: [], proposals: [] }),
-      viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
-      viewTerminalEvents: async () => ({ events: [] }),
-      viewStepSpans: async () => ({ spans: [] }),
-      viewSessions: async () => ({ sessions: [] }),
-      viewAlerts: async () => [],
-      viewAlert: async () => null,
-      viewFrameworkUpdate: async () => ({
-        installed: '0.1.0',
-        latest: '0.1.0',
-        available: false,
-        checkedAt: null,
-        releaseUrl: null,
-        selfUpdatable: false,
-      }),
-      viewActionQueue: async () => [],
-      viewActionQueueHistory: async ({ cursor }) => ({
-        rows: cursor ? [] : [historyRow],
-        nextCursor: cursor ? null : 'cursor-token-1',
+      appServices: stubAppServices({
+        viewActionQueueHistory: async ({ cursor }) => ({
+          rows: cursor ? [] : [historyRow],
+          nextCursor: cursor ? null : 'cursor-token-1',
+        }),
       }),
     })
   })
@@ -361,14 +347,15 @@ describe('GET /view/action-queue/history via HTTP server', () => {
     expect(body.nextCursor).toBeNull()
   })
 
-  it('returns empty page with nextCursor=null when viewActionQueueHistory is absent', async () => {
-    // Build a server without the optional viewActionQueueHistory dep.
+  it('returns an empty page when AppServices.viewActionQueueHistory has no rows', async () => {
+    // The history use-case always exists on AppServices now (ADR-0055); the
+    // route returns whatever it yields. The default stub yields an empty page.
     const { startHttpServer } = await import('../http-server.js')
     const { loadRecipeCatalog } = await import('../../lib/recipes.js')
     const { nullTraceStore } = await import('../../lib/run-tool.js')
     const recipeCatalog = await loadRecipeCatalog(tmpDir)
 
-    const serverWithoutHistory = await startHttpServer({
+    const serverEmptyHistory = await startHttpServer({
       restartTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
@@ -383,35 +370,18 @@ describe('GET /view/action-queue/history via HTTP server', () => {
       selfUpdate: async () => {},
       recipeCatalog,
       traceStore: nullTraceStore,
-      viewTasks: async () => ({ tasks: [] }),
-      viewProgress: async () => ({ tasks: [], proposals: [] }),
-      viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
-      viewTerminalEvents: async () => ({ events: [] }),
-      viewStepSpans: async () => ({ spans: [] }),
-      viewSessions: async () => ({ sessions: [] }),
-      viewAlerts: async () => [],
-      viewAlert: async () => null,
-      viewFrameworkUpdate: async () => ({
-        installed: '0.1.0',
-        latest: '0.1.0',
-        available: false,
-        checkedAt: null,
-        releaseUrl: null,
-        selfUpdatable: false,
-      }),
-      viewActionQueue: async () => [],
-      // viewActionQueueHistory deliberately omitted
+      appServices: stubAppServices(),
     })
 
     try {
-      const url = `http://127.0.0.1:${serverWithoutHistory.port}/view/action-queue/history`
+      const url = `http://127.0.0.1:${serverEmptyHistory.port}/view/action-queue/history`
       const res = await fetch(url)
       expect(res.status).toBe(200)
       const body = (await res.json()) as { rows: unknown[]; nextCursor: null }
       expect(body.rows).toEqual([])
       expect(body.nextCursor).toBeNull()
     } finally {
-      await serverWithoutHistory.close()
+      await serverEmptyHistory.close()
     }
   })
 })

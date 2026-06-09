@@ -7,6 +7,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { FrameworkUpdateState, HttpServerDeps } from '../http-server'
+import type { AppServices } from '../../app-services'
+import { stubAppServices } from './app-services-stub'
 import type { RecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
@@ -15,7 +17,9 @@ const nullRecipeCatalog: RecipeCatalog = {
   list: () => [],
 }
 
-const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
+const makeDeps = (
+  appServicesOverrides: Partial<AppServices> = {},
+): HttpServerDeps => ({
   restartTask: async () => {},
   unblockTask: async () => {},
   purgeTask: async () => {},
@@ -30,24 +34,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   selfUpdate: async () => {},
   recipeCatalog: nullRecipeCatalog,
   traceStore: nullTraceStore,
-  viewTasks: async () => ({ tasks: [] }),
-  viewProgress: async () => ({ tasks: [], proposals: [] }),
-  viewActionQueue: async () => [],
-  viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
-  viewTerminalEvents: async () => ({ events: [] }),
-  viewStepSpans: async () => ({ spans: [] }),
-  viewSessions: async () => ({ sessions: [] }),
-  viewAlerts: async () => [],
-  viewAlert: async () => null,
-  viewFrameworkUpdate: async () => ({
-    installed: '0.1.0',
-    latest: '0.1.0',
-    available: false,
-    checkedAt: null,
-    releaseUrl: null,
-    selfUpdatable: false,
-  }),
-  ...overrides,
+  appServices: stubAppServices(appServicesOverrides),
 })
 
 describe('GET /view/framework-update', () => {

@@ -754,6 +754,49 @@ export class Arc {
   }
 
   /**
+   * Reprioritize a still-queued task (ADR-0052 sole-writer). Relocated
+   * bit-for-bit from `queue.ts:setTaskPriority`: the priority `UPDATE tasks SET
+   * priority = …, updated_at = …` is a non-lifecycle column write (no status
+   * change, no outbox event), but it must still live behind the Arc aggregate
+   * so the task table has exactly one writer (ADR-0052) — `setTaskPriority` in
+   * queue.ts is now a thin wrapper that delegates here.
+   *
+   * Guards mirror the historic body: only a `'queued'` task can be
+   * reprioritized (a running/done/failed task's priority is meaningless), and a
+   * missing id throws. Returns the re-selected {@link Task}.
+   */
+  async reprioritize(priority: number): Promise<Task> {
+    validatePriority(priority)
+    await migrateQueueSchema()
+    const id = this.arcId
+    const s = this.store
+    const before = await s.execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [id],
+    })
+    if (before.rows.length === 0) {
+      throw new Error(`task ${id} not found`)
+    }
+    const status = (before.rows[0] as unknown as { status: string }).status
+    if (status !== 'queued') {
+      throw new Error(
+        `task ${id} is ${status}; only queued tasks can be reprioritized`,
+      )
+    }
+    const now = new Date().toISOString()
+    await s.execute({
+      sql: `UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?`,
+      args: [priority, now, id],
+    })
+    await Arc.maybeAssertArcInvariant(id, s)
+    const r = await s.execute({
+      sql: `${TASK_SEL} WHERE t.id = ?`,
+      args: [id],
+    })
+    return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+  }
+
+  /**
    * Reflection-task insert (ADR-0052). Writes a single self-arc reflection row
    * (`origin_id = self`, status `'done'`) capturing a `mars reflect` run over
    * `corpusSize` task(s). Returns the new task id. Routed through the Arc

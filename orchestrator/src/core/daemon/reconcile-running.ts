@@ -9,81 +9,48 @@
  * Correct behaviour: requeue the task from scratch (discard the stale
  * worktree + branch), preserving the retry count so the restart is invisible
  * to the budget logic.
+ *
+ * The actual scan→cleanup→requeue/block loop lives in the shared
+ * `recoverPhase` module (`phase-recovery.ts`) alongside the verifying/merging
+ * recoveries; this file is the `running`-phase entry point and keeps the
+ * historical `(repoRoot) => Promise<string[]>` contract that the
+ * `requeue-stale-running` reconciler depends on.
  */
 
-import { existsSync } from 'node:fs'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import { hasIncompleteBlockers, listTasks, updateTask } from '../queue'
-import { removeWorktree } from '../lib/git/worktree'
-
-const exec = promisify(execFile)
+import { EventEmitter } from 'node:events'
+import { recoverPhase } from './phase-recovery'
 
 /**
  * Requeue every task that was `running` at the time the prior daemon process
  * died.
  *
- * For each such task:
- *  1. Remove the stale worktree directory if it still exists on disk.
- *  2. Delete the task branch from git (best-effort; ignored if already gone).
- *  3. Reset the task row to `queued` with all in-flight fields cleared —
+ * For each such task the shared `recoverPhase('running', …)` loop:
+ *  1. Removes the stale worktree directory if it still exists on disk.
+ *  2. Deletes the task branch from git (best-effort; ignored if already gone).
+ *  3. Resets the task row to `queued` with all in-flight fields cleared —
  *     `branch`, `worktreePath`, `claudeSessionId`, `error`, `failedPhase` —
  *     so the next dispatch starts a clean setup step.
  *  4. `retryCount` is intentionally NOT touched: the restart is not a fault
  *     and must not consume a retry-budget slot.
+ *  5. A task that still has incomplete blockers is restored to `blocked`
+ *     rather than `queued`, and is omitted from the returned ids.
+ *
+ * The `running` phase emits no `task.queued` bus event from inside the loop —
+ * the `requeue-stale-running` reconciler emits it per id at its call site
+ * after this function returns — and runs the loop `silent`, since that
+ * reconciler also logs each requeue itself. A throwaway `EventEmitter` is
+ * passed because the policy never touches it for this phase.
  *
  * Returns the IDs of every task that was requeued.
  */
 export const requeueRunningTasksFromPriorDaemon = async (
   repoRoot: string,
 ): Promise<string[]> => {
-  const running = await listTasks('running')
-  const requeued: string[] = []
-
-  for (const t of running) {
-    const branch = t.branch ?? `task/${t.id}`
-
-    // Best-effort cleanup: remove worktree dir and stale branch.
-    if (t.worktreePath && existsSync(t.worktreePath)) {
-      await removeWorktree({ path: t.worktreePath, branch }, true).catch(
-        () => {},
-      )
-    }
-    await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(
-      () => {},
-    )
-
-    // Guard: if the task still has incomplete blockers, restore it to blocked
-    // rather than queued. A running task should never have incomplete blockers
-    // (the dispatcher gate prevents it), but a prior bug could leave the DB in
-    // this state. Promoting such a task to 'queued' would re-introduce the
-    // same invariant violation.
-    const hasBlockers = await hasIncompleteBlockers(t.id).catch(() => false)
-    if (hasBlockers) {
-      await updateTask(t.id, {
-        status: 'blocked',
-        branch: null,
-        worktreePath: null,
-        claudeSessionId: null,
-        error: null,
-        failedPhase: null,
-      }).catch(() => {})
-      // Do NOT push to requeued — the task goes back to blocked, not queued.
-      continue
-    }
-
-    // Requeue from setup — do NOT increment retryCount.
-    await updateTask(t.id, {
-      status: 'queued',
-      branch: null,
-      worktreePath: null,
-      claudeSessionId: null,
-      error: null,
-      failedPhase: null,
-    }).catch(() => {})
-
-    requeued.push(t.id)
-  }
-
-  return requeued
+  const result = await recoverPhase('running', {
+    log: () => {},
+    bus: new EventEmitter(),
+    repoRoot,
+    silent: true,
+  })
+  return result.requeued
 }

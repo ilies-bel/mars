@@ -2,9 +2,7 @@ import { createServer, type Server } from 'node:http'
 import { FAILURE_KINDS } from '../lib/failure-kinds'
 import type { RecipeCatalog } from '../lib/recipes'
 import { buildOriginTree } from '../lib/origin-tree'
-import type { ActionQueueRow, DerivedActionQueueFilter } from './view/action-queue'
-import type { TerminalEvent } from './view/terminal-events'
-import type { Session } from './view/sessions'
+import type { DerivedActionQueueFilter } from './view/action-queue'
 import {
   cursorAfter,
   TRACE_EVENT_KINDS,
@@ -14,29 +12,12 @@ import {
   type TraceEventSeverity,
   type TraceEventStore,
 } from '../lib/trace-events-store'
-import {
-  listKpis as defaultListKpis,
-  listKpiArcs as defaultListKpiArcs,
-  type KpiArcsResult,
-  type KpiKey,
-  type KpiRecord,
-} from './kpi-store'
-import { readKpiSeries, type KpiSeries } from '../lib/kpi-snapshots.js'
+import { type KpiKey } from './kpi-store'
 import type { RestartTaskError } from './restart-task'
 import { SelfUpdateError, SELF_UPDATE_ERRORS } from './self-update'
-import type { ProgressTask, ProposalNode } from './view/progress'
 import type { ViewStreamHub } from './view/stream-hub'
-import {
-  loadRecentTaskCorpus,
-  type ReflectCorpus,
-  type LoadCorpusOptions,
-} from '../lib/reflect-query'
-import {
-  listDeepReflectArcCandidates,
-  type ArcCandidate,
-} from '../lib/deep-reflect-query'
-import type { Alert } from '../lib/alert'
-import type { Proposal } from '../proposals'
+import type { LoadCorpusOptions } from '../lib/reflect-query'
+import type { AppServices } from '../app-services'
 
 /** Wire shape for a single step span, returned by GET /view/step-spans. */
 export interface StepSpan {
@@ -170,125 +151,23 @@ export interface HttpServerDeps {
    */
   traceStore: TraceEventStore
   /**
-   * Query the current KPI vector. When omitted, the built-in {@link defaultListKpis}
-   * from `kpi-store.ts` is used. Inject a replacement here in tests or once the
-   * real persistence layer (proposal 9a2ab5f8) is wired in.
-   */
-  listKpis?: () => Promise<KpiRecord[]>
-  /**
-   * Return the KPI time-series for `GET /kpis/series`. When omitted, falls back
-   * to {@link readKpiSeries} from `kpi-snapshots.ts`. Inject in tests to avoid
-   * hitting the real store.
-   */
-  listKpisSeries?: (limit: number) => Promise<KpiSeries>
-  /**
-   * Return the per-arc breakdown for a single KPI key for `GET /kpis/:key/arcs`.
-   * When omitted, falls back to {@link defaultListKpiArcs} from `kpi-store.ts`.
-   * Inject in tests to avoid hitting the real store.
-   */
-  listKpiArcs?: (key: KpiKey) => Promise<KpiArcsResult>
-  /**
-   * Return the full task list from the daemon's DomainTaskStore.
-   * Served by `GET /view/tasks` so the read-only UI renders only what the
-   * daemon exposes — no direct DB access on the UI side.
-   */
-  viewTasks: () => Promise<{ tasks: unknown[] }>
-  /**
-   * Build the Progress-tab view: tasks with cluster tags + referenced proposals.
-   * Called by GET /view/progress; the UI server proxies this endpoint rather
-   * than reading the DB directly. All failed tasks are always in scope — there
-   * is no recency gate on the Failed cluster.
-   */
-  viewProgress: () => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[] }>
-  /**
-   * Build the full arc-rooted Alert list (failed arcs + open stale worktrees).
-   * Backs `GET /alerts`. The Alert read aggregate is a PURE derivation over arc
-   * state (ADR-0054); this handler never writes to any store.
-   */
-  viewAlerts: () => Promise<Alert[]>
-  /**
-   * Build the single arc-rooted Alert for `arcId`, or null when no Alert
-   * applies to that arc. Backs `GET /alerts/:arcId`. Pure read (ADR-0054).
-   */
-  viewAlert: (arcId: string) => Promise<Alert | null>
-  /**
-   * Return the framework update state from the poller cache (.mars/update.json).
-   * When the cache file does not exist yet (e.g. before the first poll
-   * completes), return a safe fallback where `available` is false and
-   * `checkedAt` / `releaseUrl` are null rather than 404.
-   */
-  viewFrameworkUpdate: () => Promise<FrameworkUpdateState>
-  /**
    * SSE hub for `GET /view/stream`. When provided, the stream endpoint
    * registers each connecting client here and delivers invalidation events
    * whenever the daemon mutates a store. Omitting this dep disables fan-out
    * (the endpoint still serves the greeting but broadcasts are no-ops).
+   *
+   * Stream fan-out is a transport concern, not a read use-case, so it stays on
+   * the HTTP transport's deps rather than on {@link AppServices}.
    */
   viewStreamHub?: ViewStreamHub
   /**
-   * Derive the full actionQueue action-queue view. Served by `GET /view/action-queue`.
-   * The daemon builds this from its own database; the read-only UI proxies it.
+   * The in-process application-service layer (ADR-0055). Every read route below
+   * resolves to one named function on this object; the daemon constructs it once
+   * (over its trace store + alert sources) and a future non-daemon consumer can
+   * build its own. The HTTP server is a thin transport over these use-cases — it
+   * never re-implements projection or enrichment logic.
    */
-  viewActionQueue: (filter: DerivedActionQueueFilter) => Promise<ActionQueueRow[]>
-  /**
-   * Return a cursor-paged slice of resolved action-queue rows for the history
-   * accordion. Served by `GET /view/action-queue/history?cursor=...&limit=...`.
-   * Optional — when omitted the route returns an empty page (graceful degradation
-   * for daemons built before this dep was added).
-   */
-  viewActionQueueHistory?: (opts: {
-    cursor?: string | null
-    limit?: number
-  }) => Promise<{ rows: ActionQueueRow[]; nextCursor: string | null }>
-  /**
-   * Return the combined payload for GET /view/proposals: draft proposals + open
-   * stale-worktree alerts. The daemon is the sole reader of its own DB; the
-   * UI server proxies this endpoint instead of querying the DB directly.
-   */
-  viewProposals: () => Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[] }>
-  /**
-   * Return the full Proposal record for GET /view/proposal/:id, or null when
-   * no proposal with that id exists. Serves the detail panel's lazy-load path
-   * so the UI never needs to query state.db directly.
-   * Optional for backward-compat with test fixtures; the route returns 501
-   * when omitted and 404 when the proposal does not exist.
-   */
-  viewProposal?: (id: string) => Promise<Proposal | null>
-  /**
-   * Return the terminal-event feed from the daemon's DomainTaskStore.
-   * Served by `GET /view/terminal-events` so the read-only UI renders only
-   * what the daemon exposes — no direct DB access on the UI side.
-   */
-  viewTerminalEvents: () => Promise<{ events: TerminalEvent[] }>
-  /**
-   * Return step-span pairs for the given originId.
-   * Served by GET /view/step-spans?originId=<id>. Lifts the step_started /
-   * step_ended pairing logic that previously lived in ui/server/index.ts into
-   * the daemon so the UI can proxy rather than opening the trace store directly.
-   */
-  viewStepSpans: (originId: string) => Promise<{ spans: StepSpan[] }>
-  /**
-   * Return the session feed for a given agentName, derived from
-   * step_started / step_ended trace events. Served by
-   * `GET /view/sessions?agentName=<name>` so the read-only UI proxies
-   * this endpoint instead of opening the trace store directly.
-   */
-  viewSessions: (agentName: string) => Promise<{ sessions: Session[] }>
-  /**
-   * Return recent task corpus data for GET /view/reflect. Wraps
-   * {@link loadRecentTaskCorpus} from reflect-query.ts. When omitted, the
-   * built-in default is used. Accepts optional `limit` and `since` (ISO-8601)
-   * query parameters.
-   */
-  viewReflect?: (opts?: LoadCorpusOptions) => Promise<ReflectCorpus>
-  /**
-   * Return arc candidates ranked by failure count and token spend, for
-   * GET /view/arcs. Wraps {@link listDeepReflectArcCandidates} from
-   * deep-reflect-query.ts. When omitted, the built-in default is used.
-   * Accepts optional `limit` (number) and `withTranscriptOnly` (boolean,
-   * default true) query parameters.
-   */
-  viewArcs?: (opts?: { limit?: number; withTranscriptOnly?: boolean }) => Promise<ArcCandidate[]>
+  appServices: AppServices
 }
 
 export interface HttpServerHandle {
@@ -552,8 +431,8 @@ export const startHttpServer = async (
         if (!validKeys.includes(key)) {
           sendJson(res, 400, { error: `Unknown KPI key: ${key}` })
         } else {
-          const fn = deps.listKpiArcs ?? ((k: KpiKey) => defaultListKpiArcs(k))
-          fn(key)
+          deps.appServices
+            .listKpiArcs(key)
             .then((result) => sendJson(res, 200, result))
             .catch((err: unknown) => sendError(res, err))
         }
@@ -569,8 +448,8 @@ export const startHttpServer = async (
       const rawLimit = new URLSearchParams(qs).get('limit')
       const parsedLimit = rawLimit !== null ? Number(rawLimit) : 90
       const limit = Number.isFinite(parsedLimit) && parsedLimit >= 1 ? Math.floor(parsedLimit) : 90
-      const fn = deps.listKpisSeries ?? ((lim: number) => readKpiSeries({ limit: lim }))
-      fn(limit)
+      deps.appServices
+        .listKpisSeries(limit)
         .then((series) => sendJson(res, 200, { series }))
         .catch((err: unknown) => sendError(res, err))
       return
@@ -581,8 +460,8 @@ export const startHttpServer = async (
     // number for the recovery-tasks-are-leaf-nodes ADR — renumbered to 0040
     // during the merge). Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/kpis') {
-      const fn = deps.listKpis ?? defaultListKpis
-      fn()
+      deps.appServices
+        .listKpis()
         .then((kpis) => sendJson(res, 200, { kpis }))
         .catch((err: unknown) => sendError(res, err))
       return
@@ -593,7 +472,7 @@ export const startHttpServer = async (
     // directly, so the daemon is the single reader of its own database.
     // Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/view/tasks') {
-      deps
+      deps.appServices
         .viewTasks()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
@@ -633,7 +512,7 @@ export const startHttpServer = async (
     // The UI server proxies this endpoint rather than computing the view
     // locally. Pure read; no draining gate.
     if (req.method === 'GET' && req.url && req.url.startsWith('/view/progress')) {
-      deps
+      deps.appServices
         .viewProgress()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
@@ -653,7 +532,7 @@ export const startHttpServer = async (
         sendJson(res, 400, { error: 'originId query parameter is required' })
         return
       }
-      deps
+      deps.appServices
         .viewStepSpans(originId)
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
@@ -671,7 +550,7 @@ export const startHttpServer = async (
         sendJson(res, 400, { error: 'agentName query parameter is required' })
         return
       }
-      deps
+      deps.appServices
         .viewSessions(agentName)
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
@@ -683,7 +562,7 @@ export const startHttpServer = async (
     // The daemon is the sole writer of this cache; nothing else calls GitHub.
     // Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/view/framework-update') {
-      deps
+      deps.appServices
         .viewFrameworkUpdate()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
@@ -695,7 +574,7 @@ export const startHttpServer = async (
     // DB; the UI server proxies this endpoint instead of querying state.db
     // directly. Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/view/proposals') {
-      deps
+      deps.appServices
         .viewProposals()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
@@ -711,12 +590,8 @@ export const startHttpServer = async (
           ? req.url.match(/^\/view\/proposal\/([^/?]+)(?:\?.*)?$/)
           : null
       if (proposalMatch && proposalMatch[1]) {
-        if (!deps.viewProposal) {
-          sendJson(res, 501, { ok: false, error: 'viewProposal not implemented' })
-          return
-        }
         const proposalId = decodeURIComponent(proposalMatch[1])
-        deps.viewProposal(proposalId)
+        deps.appServices.viewProposal(proposalId)
           .then((proposal) => {
             if (proposal === null) {
               sendJson(res, 404, { ok: false, error: `Proposal ${proposalId} not found` })
@@ -743,8 +618,8 @@ export const startHttpServer = async (
       }
       const since = parsed.searchParams.get('since')
       if (since) opts.sinceIso = since
-      const fn = deps.viewReflect ?? loadRecentTaskCorpus
-      fn(opts)
+      deps.appServices
+        .viewReflect(opts)
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return
@@ -767,8 +642,8 @@ export const startHttpServer = async (
         opts.withTranscriptOnly =
           withTranscriptOnlyRaw !== 'false' && withTranscriptOnlyRaw !== '0'
       }
-      const fn = deps.viewArcs ?? listDeepReflectArcCandidates
-      fn(opts)
+      deps.appServices
+        .viewArcs(opts)
         .then((candidates) => sendJson(res, 200, candidates))
         .catch((err: unknown) => sendError(res, err))
       return
@@ -779,7 +654,7 @@ export const startHttpServer = async (
     // endpoint instead of opening the DB directly, so the daemon is the single
     // reader of its own database. Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/view/terminal-events') {
-      deps
+      deps.appServices
         .viewTerminalEvents()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
@@ -793,10 +668,6 @@ export const startHttpServer = async (
       req.url &&
       req.url.startsWith('/view/action-queue/history')
     ) {
-      if (!deps.viewActionQueueHistory) {
-        sendJson(res, 200, { rows: [], nextCursor: null })
-        return
-      }
       const parsed = new URL(req.url, 'http://localhost')
       const cursor = parsed.searchParams.get('cursor') ?? null
       const limitRaw = parsed.searchParams.get('limit')
@@ -804,7 +675,7 @@ export const startHttpServer = async (
         limitRaw !== null && Number.isFinite(Number.parseInt(limitRaw, 10))
           ? Math.min(Math.max(1, Number.parseInt(limitRaw, 10)), 200)
           : 50
-      deps
+      deps.appServices
         .viewActionQueueHistory({ cursor, limit })
         .then((result) => sendJson(res, 200, result))
         .catch((err: unknown) => sendError(res, err))
@@ -819,7 +690,7 @@ export const startHttpServer = async (
       const filterRaw = parsed.searchParams.get('filter')
       const filter: DerivedActionQueueFilter =
         filterRaw === 'all' ? filterRaw : 'open'
-      deps
+      deps.appServices
         .viewActionQueue(filter)
         .then((rows) => sendJson(res, 200, rows))
         .catch((err: unknown) => sendError(res, err))
@@ -837,7 +708,7 @@ export const startHttpServer = async (
           : null
       if (alertMatch && alertMatch[1]) {
         const arcId = decodeURIComponent(alertMatch[1])
-        deps
+        deps.appServices
           .viewAlert(arcId)
           .then((alert) => {
             if (alert === null) {
@@ -858,7 +729,7 @@ export const startHttpServer = async (
     // GET /alerts — the full arc-rooted Alert list (failed arcs + open stale
     // worktrees). Pure derivation over arc state (ADR-0054); no draining gate.
     if (req.method === 'GET' && req.url && req.url.startsWith('/alerts')) {
-      deps
+      deps.appServices
         .viewAlerts()
         .then((alerts) => sendJson(res, 200, alerts))
         .catch((err: unknown) => sendError(res, err))

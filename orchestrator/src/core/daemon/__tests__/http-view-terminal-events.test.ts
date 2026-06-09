@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
+import { stubAppServices } from './app-services-stub'
 import type { TerminalEvent, TaskStoreForEvents } from '../view/terminal-events'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
@@ -40,7 +41,7 @@ const ensureCatalogs = async (): Promise<void> => {
 }
 
 const makeDeps = (
-  viewTerminalEvents: HttpServerDeps['viewTerminalEvents'],
+  viewTerminalEvents: HttpServerDeps['appServices']['viewTerminalEvents'],
   overrides: Partial<HttpServerDeps> = {},
 ): HttpServerDeps => ({
   restartTask: async () => {},
@@ -57,23 +58,7 @@ const makeDeps = (
   selfUpdate: async () => {},
   recipeCatalog: cachedRecipeCatalog!,
   traceStore: nullTraceStore,
-  viewTasks: async () => ({ tasks: [] }),
-  viewProgress: async () => ({ tasks: [], proposals: [] }),
-  viewActionQueue: async () => [],
-  viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
-  viewTerminalEvents,
-  viewStepSpans: async () => ({ spans: [] }),
-  viewSessions: async () => ({ sessions: [] }),
-  viewAlerts: async () => [],
-  viewAlert: async () => null,
-  viewFrameworkUpdate: async () => ({
-    installed: '0.1.0',
-    latest: '0.1.0',
-    available: false,
-    checkedAt: null,
-    releaseUrl: null,
-    selfUpdatable: false,
-  }),
+  appServices: stubAppServices({ viewTerminalEvents }),
   ...overrides,
 })
 
@@ -84,7 +69,7 @@ const makeStoreDep =
   (
     listTerminalEvents: typeof import('../view/terminal-events')['listTerminalEvents'],
     tasks: TaskRow[],
-  ): HttpServerDeps['viewTerminalEvents'] =>
+  ): HttpServerDeps['appServices']['viewTerminalEvents'] =>
   () =>
     listTerminalEvents({ listTasks: async () => tasks }).then((events) => ({
       events,

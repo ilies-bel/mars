@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { HttpServerDeps } from '../http-server'
+import { stubAppServices } from './app-services-stub'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import {
   openTraceEventStore,
@@ -39,22 +40,8 @@ const makeDeps = (
   selfUpdate: async () => {},
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: store,
-  viewTasks: async () => ({ tasks: [] }),
-  viewProgress: async () => ({ tasks: [], proposals: [] }),
-  viewActionQueue: async () => [],
-  viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
-  viewTerminalEvents: async () => ({ events: [] }),
-  viewStepSpans: async () => ({ spans: [] }),
-  viewSessions: (agentName: string) => buildSessionsView(store, agentName),
-  viewAlerts: async () => [],
-  viewAlert: async () => null,
-  viewFrameworkUpdate: async () => ({
-    installed: '0.1.0',
-    latest: '0.1.0',
-    available: false,
-    checkedAt: null,
-    releaseUrl: null,
-    selfUpdatable: false,
+  appServices: stubAppServices({
+    viewSessions: (agentName: string) => buildSessionsView(store, agentName),
   }),
   ...overrides,
 })

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
+import { stubAppServices } from './app-services-stub'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
@@ -38,7 +39,7 @@ const ensureCatalogs = async (): Promise<void> => {
 }
 
 const makeDeps = (
-  viewTasks: HttpServerDeps['viewTasks'],
+  viewTasks: HttpServerDeps['appServices']['viewTasks'],
   overrides: Partial<HttpServerDeps> = {},
 ): HttpServerDeps => ({
   restartTask: async () => {},
@@ -55,23 +56,7 @@ const makeDeps = (
   selfUpdate: async () => {},
   recipeCatalog: cachedRecipeCatalog!,
   traceStore: nullTraceStore,
-  viewTasks,
-  viewProgress: async () => ({ tasks: [], proposals: [] }),
-  viewActionQueue: async () => [],
-  viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
-  viewTerminalEvents: async () => ({ events: [] }),
-  viewStepSpans: async () => ({ spans: [] }),
-  viewSessions: async () => ({ sessions: [] }),
-  viewAlerts: async () => [],
-  viewAlert: async () => null,
-  viewFrameworkUpdate: async () => ({
-    installed: '0.1.0',
-    latest: '0.1.0',
-    available: false,
-    checkedAt: null,
-    releaseUrl: null,
-    selfUpdatable: false,
-  }),
+  appServices: stubAppServices({ viewTasks }),
   ...overrides,
 })
 

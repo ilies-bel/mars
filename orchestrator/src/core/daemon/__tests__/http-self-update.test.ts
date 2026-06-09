@@ -6,6 +6,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { HttpServerDeps } from '../http-server'
+import type { AppServices } from '../../app-services'
+import { stubAppServices } from './app-services-stub'
 import { SelfUpdateError, SELF_UPDATE_ERRORS } from '../self-update'
 import type { RecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
@@ -15,7 +17,10 @@ const nullRecipeCatalog: RecipeCatalog = {
   list: () => [],
 }
 
-const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
+const makeDeps = (
+  overrides: Partial<HttpServerDeps> = {},
+  appServicesOverrides: Partial<AppServices> = {},
+): HttpServerDeps => ({
   restartTask: async () => {},
   unblockTask: async () => {},
   purgeTask: async () => {},
@@ -30,22 +35,16 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   selfUpdate: async () => {},
   recipeCatalog: nullRecipeCatalog,
   traceStore: nullTraceStore,
-  viewTasks: async () => ({ tasks: [] }),
-  viewProgress: async () => ({ tasks: [], proposals: [] }),
-  viewActionQueue: async () => [],
-  viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
-  viewTerminalEvents: async () => ({ events: [] }),
-  viewStepSpans: async () => ({ spans: [] }),
-  viewSessions: async () => ({ sessions: [] }),
-  viewAlerts: async () => [],
-  viewAlert: async () => null,
-  viewFrameworkUpdate: async () => ({
-    installed: '0.1.0',
-    latest: '1.0.0',
-    available: true,
-    checkedAt: '2026-06-01T00:00:00.000Z',
-    releaseUrl: null,
-    selfUpdatable: true,
+  appServices: stubAppServices({
+    viewFrameworkUpdate: async () => ({
+      installed: '0.1.0',
+      latest: '1.0.0',
+      available: true,
+      checkedAt: '2026-06-01T00:00:00.000Z',
+      releaseUrl: null,
+      selfUpdatable: true,
+    }),
+    ...appServicesOverrides,
   }),
   ...overrides,
 })
@@ -234,16 +233,19 @@ describe('GET /view/framework-update — selfUpdatable field', () => {
   it('includes selfUpdatable: true when install is prod', async () => {
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(
-      makeDeps({
-        viewFrameworkUpdate: async () => ({
-          installed: '0.1.0',
-          latest: '1.0.0',
-          available: true,
-          checkedAt: null,
-          releaseUrl: null,
-          selfUpdatable: true,
-        }),
-      }),
+      makeDeps(
+        {},
+        {
+          viewFrameworkUpdate: async () => ({
+            installed: '0.1.0',
+            latest: '1.0.0',
+            available: true,
+            checkedAt: null,
+            releaseUrl: null,
+            selfUpdatable: true,
+          }),
+        },
+      ),
     )
     try {
       const res = await fetch(`http://127.0.0.1:${port}/view/framework-update`)
@@ -257,16 +259,19 @@ describe('GET /view/framework-update — selfUpdatable field', () => {
   it('includes selfUpdatable: false when install is dev', async () => {
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(
-      makeDeps({
-        viewFrameworkUpdate: async () => ({
-          installed: '0.1.0',
-          latest: '1.0.0',
-          available: true,
-          checkedAt: null,
-          releaseUrl: null,
-          selfUpdatable: false,
-        }),
-      }),
+      makeDeps(
+        {},
+        {
+          viewFrameworkUpdate: async () => ({
+            installed: '0.1.0',
+            latest: '1.0.0',
+            available: true,
+            checkedAt: null,
+            releaseUrl: null,
+            selfUpdatable: false,
+          }),
+        },
+      ),
     )
     try {
       const res = await fetch(`http://127.0.0.1:${port}/view/framework-update`)

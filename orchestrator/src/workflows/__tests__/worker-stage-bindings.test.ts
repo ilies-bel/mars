@@ -20,16 +20,24 @@ const read = (name: string): string =>
 
 describe('PRD 948691d0 slice 4 — stages route through named Workers', () => {
   it('implement workflow dispatches through Coder/Fixer via the Workers registry', () => {
-    const src = read('implement-workflow.ts')
+    // ADR-0056: the agent dispatch was promoted out of the inline `code` step
+    // body into the exported `runAgent` git step-primitive. The bundled
+    // implement-workflow now COMPOSES it; the Worker-routing binding lives in
+    // the primitive. Assert the binding at its new home (the primitive surface)
+    // and that the bundled workflow composes it.
+    const primitive = read('primitives/index.ts')
     // Fixer for kind='fix', everything else via pickWorkerForTags — intersects
     // the task's tag list against each registered Worker's tag set; falls back
     // to the default headless Worker (Coder) when no Worker claims a tag.
     // Both branches go through the role registry — not a raw `runClaudeCode` call.
-    // Workers are now passed to runWorkerWithSpan (PRD 436f14c7) rather than
-    // calling .run() inline; the binding to named Workers is preserved.
-    expect(src).toMatch(/Workers\.Fixer/)
-    expect(src).toMatch(/pickWorkerForTags/)
-    expect(src).toMatch(/runWorkerWithSpan/)
+    // Workers are passed to runWorkerWithSpan (PRD 436f14c7) rather than calling
+    // .run() inline; the binding to named Workers is preserved.
+    expect(primitive).toMatch(/Workers\.Fixer/)
+    expect(primitive).toMatch(/pickWorkerForTags/)
+    expect(primitive).toMatch(/runWorkerWithSpan/)
+    // The bundled workflow composes the primitive rather than re-implementing it.
+    const workflow = read('implement-workflow.ts')
+    expect(workflow).toMatch(/runAgent/)
   })
 
   it('plan workflow dispatches Workers.Planner through runWorkerWithSpan', () => {
@@ -63,6 +71,7 @@ describe('PRD 948691d0 slice 4 — stages route through named Workers', () => {
     // this slice was built to prevent.
     for (const name of [
       'implement-workflow.ts',
+      'primitives/index.ts',
       'plan-workflow.ts',
       'slice-workflow.ts',
       'triage-workflow.ts',

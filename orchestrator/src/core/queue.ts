@@ -481,13 +481,15 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // read path coerces NULL via {@link deriveTaskKind}.
   if (!names.has('kind')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN kind TEXT`)
+    // arch-guard:migration-write — ADR-0052 exemption. Backfill `kind` on legacy
+    // rows; the marker is on the same physical line as the `UPDATE tasks SET`
+    // token so the line-scoped strip exempts it (the trailing WHERE clause on
+    // the next line carries no `UPDATE tasks SET`, so it is never matched).
     await c.execute(
-      `UPDATE tasks SET kind = 'fix'
-        WHERE kind IS NULL AND fix_for_task_id IS NOT NULL`,
+      `UPDATE tasks SET kind = 'fix' WHERE kind IS NULL AND fix_for_task_id IS NOT NULL`, // arch-guard:migration-write
     )
     await c.execute(
-      `UPDATE tasks SET kind = 'task'
-        WHERE kind IS NULL AND fix_for_task_id IS NULL`,
+      `UPDATE tasks SET kind = 'task' WHERE kind IS NULL AND fix_for_task_id IS NULL`, // arch-guard:migration-write
     )
   }
   // ADR-0049: purge pre-existing orphan fix rows — kind='fix' with a NULL
@@ -543,7 +545,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // the application-level {@link isTaskTag} guards writes.
   if (!names.has('tag')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN tag TEXT`)
-    await c.execute(`UPDATE tasks SET tag = 'coder' WHERE tag IS NULL`)
+    await c.execute(`UPDATE tasks SET tag = 'coder' WHERE tag IS NULL`) // arch-guard:migration-write
   }
   // tags_json: JSON-encoded string[] that supersedes the singular `tag` column.
   // Old rows carry only `tag`; new rows write only `tags_json`. The read path
@@ -553,7 +555,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
     await c.execute(`ALTER TABLE tasks ADD COLUMN tags_json TEXT`)
     // Backfill legacy rows: wrap the existing `tag` value (defaulting to 'coder') in a JSON array.
     await c.execute(
-      `UPDATE tasks SET tags_json = json_array(COALESCE(tag, 'coder')) WHERE tags_json IS NULL`,
+      `UPDATE tasks SET tags_json = json_array(COALESCE(tag, 'coder')) WHERE tags_json IS NULL`, // arch-guard:migration-write
     )
   }
   await c.execute(
@@ -566,7 +568,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // rows in enqueueTask.
   if (!names.has('origin_id')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN origin_id TEXT`)
-    await c.execute(`UPDATE tasks SET origin_id = id WHERE origin_id IS NULL`)
+    await c.execute(`UPDATE tasks SET origin_id = id WHERE origin_id IS NULL`) // arch-guard:migration-write
   }
   // parent_proposal_id: link from a task to the PRD it slices. NULL for
   // direct `mars task add` rows. slice_index records which slice this is
@@ -654,21 +656,12 @@ export const migrateQueueSchema = async (): Promise<void> => {
       `ALTER TABLE tasks ADD COLUMN intent TEXT NOT NULL DEFAULT ''`,
     )
     // Backfill: intent = first sentence of prompt (split on '. ' or newline,
-    // capped at 200 chars).
-    await c.execute(`
-      UPDATE tasks SET intent = SUBSTR(
-        CASE
-          WHEN INSTR(prompt, '. ') > 0
-            AND (INSTR(prompt, CHAR(10)) = 0
-                 OR INSTR(prompt, '. ') < INSTR(prompt, CHAR(10)))
-          THEN SUBSTR(prompt, 1, INSTR(prompt, '. '))
-          WHEN INSTR(prompt, CHAR(10)) > 0
-          THEN SUBSTR(prompt, 1, INSTR(prompt, CHAR(10)) - 1)
-          ELSE prompt
-        END,
-        1, 200
-      ) WHERE intent = ''
-    `)
+    // capped at 200 chars). Single-line so the line-scoped
+    // `arch-guard:migration-write` marker (ADR-0052 exemption) can sit on the
+    // same physical line as the `UPDATE tasks SET` token.
+    await c.execute(
+      `UPDATE tasks SET intent = SUBSTR(CASE WHEN INSTR(prompt, '. ') > 0 AND (INSTR(prompt, CHAR(10)) = 0 OR INSTR(prompt, '. ') < INSTR(prompt, CHAR(10))) THEN SUBSTR(prompt, 1, INSTR(prompt, '. ')) WHEN INSTR(prompt, CHAR(10)) > 0 THEN SUBSTR(prompt, 1, INSTR(prompt, CHAR(10)) - 1) ELSE prompt END, 1, 200) WHERE intent = ''`, // arch-guard:migration-write
+    )
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
@@ -711,7 +704,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             .origin_id ?? originTaskId)
         : originTaskId
     await c.execute({
-      sql: `UPDATE tasks SET origin_id = ?, followup_dedup_key = ? WHERE id = ?`,
+      sql: `UPDATE tasks SET origin_id = ?, followup_dedup_key = ? WHERE id = ?`, // arch-guard:migration-write
       args: [resolvedOriginId, row.origin_id, row.id],
     })
   }
@@ -886,7 +879,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
         })
       }
     }
-    await c.execute(`UPDATE tasks SET blocker_id = NULL`)
+    await c.execute(`UPDATE tasks SET blocker_id = NULL`) // arch-guard:migration-write
     await c.execute(`ALTER TABLE tasks DROP COLUMN blocker_id`)
   }
   // task_acceptance: per-task acceptance criteria (Definition of Done).
@@ -1766,7 +1759,7 @@ const healBlobPrompts = async (c: Client): Promise<void> => {
   const n = Number((r.rows[0] as unknown as { n: number | bigint }).n)
   if (n > 0) {
     await c.execute(
-      `UPDATE tasks SET prompt = CAST(prompt AS TEXT) WHERE typeof(prompt) = 'blob'`,
+      `UPDATE tasks SET prompt = CAST(prompt AS TEXT) WHERE typeof(prompt) = 'blob'`, // arch-guard:migration-write
     )
   }
 }
@@ -2247,37 +2240,18 @@ export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
   return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
 }
 
+/**
+ * Reprioritize a still-queued task. Thin wrapper over the Arc aggregate's
+ * {@link Arc.reprioritize} write funnel (ADR-0052 sole-writer): the priority
+ * `UPDATE tasks SET …` now lives in `core/arc.ts`, the only legitimate
+ * task-table writer. The validation, the `'queued'`-only guard, and the
+ * re-select all live there; this keeps the historic name/signature for the
+ * store + daemon callers.
+ */
 export const setTaskPriority = async (
   id: string,
   priority: number,
-): Promise<Task> => {
-  validatePriority(priority)
-  await migrateQueueSchema()
-  const c = resolveQueueClient()
-  const before = await c.execute({
-    sql: `SELECT status FROM tasks WHERE id = ?`,
-    args: [id],
-  })
-  if (before.rows.length === 0) {
-    throw new Error(`task ${id} not found`)
-  }
-  const status = (before.rows[0] as unknown as { status: string }).status
-  if (status !== 'queued') {
-    throw new Error(
-      `task ${id} is ${status}; only queued tasks can be reprioritized`,
-    )
-  }
-  const now = new Date().toISOString()
-  await c.execute({
-    sql: `UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?`,
-    args: [priority, now, id],
-  })
-  const r = await c.execute({
-    sql: `${TASK_SEL} WHERE t.id = ?`,
-    args: [id],
-  })
-  return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
-}
+): Promise<Task> => Arc.load(id).reprioritize(priority)
 
 export interface DropTaskResult {
   taskId: string

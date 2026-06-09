@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
+import type { AppServices } from '../../app-services'
+import { stubAppServices } from './app-services-stub'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 import type { ReflectCorpus } from '../../lib/reflect-query'
@@ -37,7 +39,9 @@ const ensureCatalogs = async (): Promise<void> => {
   }
 }
 
-const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
+const makeDeps = (
+  appServicesOverrides: Partial<AppServices> = {},
+): HttpServerDeps => ({
   restartTask: async () => {},
   unblockTask: async () => {},
   purgeTask: async () => {},
@@ -52,24 +56,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   selfUpdate: async () => {},
   recipeCatalog: cachedRecipeCatalog!,
   traceStore: nullTraceStore,
-  viewTasks: async () => ({ tasks: [] }),
-  viewProgress: async () => ({ tasks: [], proposals: [] }),
-  viewActionQueue: async () => [],
-  viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
-  viewTerminalEvents: async () => ({ events: [] }),
-  viewStepSpans: async () => ({ spans: [] }),
-  viewSessions: async () => ({ sessions: [] }),
-  viewAlerts: async () => [],
-  viewAlert: async () => null,
-  viewFrameworkUpdate: async () => ({
-    installed: '0.1.0',
-    latest: '0.1.0',
-    available: false,
-    checkedAt: null,
-    releaseUrl: null,
-    selfUpdatable: false,
-  }),
-  ...overrides,
+  appServices: stubAppServices(appServicesOverrides),
 })
 
 const emptyCorpus: ReflectCorpus = {
@@ -156,7 +143,7 @@ describe('GET /view/reflect', () => {
   it('passes limit query param to viewReflect', async () => {
     const { httpServer } = await loadModules(repo)
 
-    let capturedOpts: Parameters<NonNullable<HttpServerDeps['viewReflect']>>[0]
+    let capturedOpts: Parameters<AppServices['viewReflect']>[0]
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
         viewReflect: async (opts) => {
@@ -178,7 +165,7 @@ describe('GET /view/reflect', () => {
   it('passes since query param to viewReflect as sinceIso', async () => {
     const { httpServer } = await loadModules(repo)
 
-    let capturedOpts: Parameters<NonNullable<HttpServerDeps['viewReflect']>>[0]
+    let capturedOpts: Parameters<AppServices['viewReflect']>[0]
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
         viewReflect: async (opts) => {
@@ -289,7 +276,7 @@ describe('GET /view/arcs', () => {
   it('passes limit query param to viewArcs', async () => {
     const { httpServer } = await loadModules(repo)
 
-    let capturedOpts: Parameters<NonNullable<HttpServerDeps['viewArcs']>>[0]
+    let capturedOpts: Parameters<AppServices['viewArcs']>[0]
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
         viewArcs: async (opts) => {
@@ -311,7 +298,7 @@ describe('GET /view/arcs', () => {
   it('passes withTranscriptOnly=false when query param is false', async () => {
     const { httpServer } = await loadModules(repo)
 
-    let capturedOpts: Parameters<NonNullable<HttpServerDeps['viewArcs']>>[0]
+    let capturedOpts: Parameters<AppServices['viewArcs']>[0]
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
         viewArcs: async (opts) => {
@@ -335,7 +322,7 @@ describe('GET /view/arcs', () => {
   it('passes withTranscriptOnly=true when query param is true', async () => {
     const { httpServer } = await loadModules(repo)
 
-    let capturedOpts: Parameters<NonNullable<HttpServerDeps['viewArcs']>>[0]
+    let capturedOpts: Parameters<AppServices['viewArcs']>[0]
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
         viewArcs: async (opts) => {

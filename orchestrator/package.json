@@ -6,6 +6,10 @@
   "bin": {
     "mars": "./bin/mars.mjs"
   },
+  "exports": {
+    ".": "./src/cli.ts",
+    "./workflow-primitives": "./src/workflows/primitives/index.ts"
+  },
   "scripts": {
     "sync-claude-templates": "bash ./scripts/sync-claude-templates.sh",
     "mars:bundle:refresh": "bash ./scripts/sync-claude-templates.sh",

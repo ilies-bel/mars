@@ -15,11 +15,7 @@
  * that never reach those steps (e.g. the standalone `mars sync` path).
  */
 
-import {
-  hasIncompleteBlockers,
-  listTasks,
-  updateTask,
-} from '../queue'
+import { listTasks } from '../queue'
 import { listProposals } from '../proposals'
 import { sweepOrphanRunningSpans } from '../lib/trace-events-store'
 import { Arc } from '../arc'
@@ -154,160 +150,30 @@ const orphanSpanSweep: Reconciler = {
 /**
  * 7. Verifying recovery — if the worktree survives, clear and re-queue (or
  *    restore to blocked when incomplete blockers exist); else mark failed.
+ *    Delegates to the shared `recoverPhase` loop.
  */
 const verifyingRecovery: Reconciler = {
   name: 'verifying-recovery',
   async run({ log, bus }) {
-    const { existsSync: exists } = await import('node:fs')
-    const { execFile } = await import('node:child_process')
-    const { promisify } = await import('node:util')
-    const exec = promisify(execFile)
-    const { removeWorktree } = await import('../lib/git/worktree')
+    const { recoverPhase } = await import('./phase-recovery')
     const { getRepoRoot } = await import('../context')
-
-    let verifyingRequeued = 0
-    let verifyingFailed = 0
-
-    const verifying = await listTasks('verifying')
-    for (const t of verifying) {
-      if (t.branch && t.worktreePath && exists(t.worktreePath)) {
-        // The prior daemon ran this task but the engine run has no checkpoint
-        // rows to resume from — clear the in-flight worktree + branch and
-        // re-queue from a clean setup, mirroring the merging not-landed path.
-        const branch = t.branch
-        if (exists(t.worktreePath)) {
-          await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
-        }
-        await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
-        const verifyingHasBlockers = await hasIncompleteBlockers(t.id).catch(() => false)
-        if (verifyingHasBlockers) {
-          log(
-            `[reconcile] task ${t.id} was verifying; has incomplete blockers, restored to blocked`,
-          )
-          await updateTask(t.id, {
-            status: 'blocked',
-            branch: null,
-            worktreePath: null,
-            claudeSessionId: null,
-            error: null,
-            failedPhase: null,
-          }).catch(() => {})
-        } else {
-          log(
-            `[reconcile] task ${t.id} was verifying; clearing worktree and re-queuing from setup`,
-          )
-          await updateTask(t.id, {
-            status: 'queued',
-            branch: null,
-            worktreePath: null,
-            claudeSessionId: null,
-            error: null,
-            failedPhase: null,
-          }).catch(() => {})
-          bus.emit('task.queued', { taskId: t.id })
-          verifyingRequeued++
-        }
-      } else {
-        log(
-          `[reconcile] task ${t.id} was verifying; worktree missing, marking failed`,
-        )
-        if (t.worktreePath) {
-          const branch = t.branch ?? `task/${t.id}`
-          try {
-            await removeWorktree({ path: t.worktreePath, branch }, true, true)
-            log(`[reconcile] removed stale worktree registration for ${t.id} at ${t.worktreePath}`)
-          } catch {
-            log(`[reconcile] worktree cleanup skipped for ${t.id}: not registered or already removed`)
-          }
-        }
-        await updateTask(t.id, {
-          status: 'failed',
-          error: 'daemon restart while task was verifying; worktree missing',
-          failedPhase: 'verify',
-          failureReason: 'daemon restart while task was verifying; worktree missing',
-          failureReasonCode: 'unknown',
-        }).catch(() => {})
-        verifyingFailed++
-      }
-    }
-
-    return { verifyingRequeued, verifyingFailed }
+    const r = await recoverPhase('verifying', { log, bus, repoRoot: getRepoRoot() })
+    return { verifyingRequeued: r.requeued.length, verifyingFailed: r.failed }
   },
 }
 
 /**
  * 8. Merging recovery — if the FF already landed, finalize to done; else clear
  *    worktree and re-queue (or restore to blocked when incomplete blockers
- *    exist).
+ *    exist). Delegates to the shared `recoverPhase` loop.
  */
 const mergingRecovery: Reconciler = {
   name: 'merging-recovery',
   async run({ log, bus }) {
-    const { existsSync: exists } = await import('node:fs')
-    const { execFile } = await import('node:child_process')
-    const { promisify } = await import('node:util')
-    const exec = promisify(execFile)
-    const { removeWorktree } = await import('../lib/git/worktree')
-    const { isBranchMergedIntoMain } = await import('../lib/git/merge')
+    const { recoverPhase } = await import('./phase-recovery')
     const { getRepoRoot } = await import('../context')
-
-    let mergingFinalized = 0
-    let mergingRequeued = 0
-
-    const merging = await listTasks('merging')
-    for (const t of merging) {
-      const branch = t.branch ?? `task/${t.id}`
-      const landed = await isBranchMergedIntoMain(branch, getRepoRoot()).catch(() => false)
-      if (landed) {
-        log(
-          `[reconcile] task ${t.id} was merging; FF already landed, finalized to done`,
-        )
-        if (t.worktreePath && exists(t.worktreePath)) {
-          await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
-        }
-        await updateTask(t.id, {
-          status: 'done',
-          failedPhase: null,
-          error: null,
-        }).catch(() => {})
-        mergingFinalized++
-      } else {
-        if (t.worktreePath && exists(t.worktreePath)) {
-          await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
-        }
-        await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
-        const mergingHasBlockers = await hasIncompleteBlockers(t.id).catch(() => false)
-        if (mergingHasBlockers) {
-          log(
-            `[reconcile] task ${t.id} was merging; FF not landed, has incomplete blockers, restored to blocked`,
-          )
-          await updateTask(t.id, {
-            status: 'blocked',
-            branch: null,
-            worktreePath: null,
-            claudeSessionId: null,
-            error: null,
-            failedPhase: null,
-          }).catch(() => {})
-        } else {
-          log(
-            `[reconcile] task ${t.id} was merging; FF not landed, requeued from setup`,
-          )
-          await updateTask(t.id, {
-            status: 'queued',
-            branch: null,
-            worktreePath: null,
-            claudeSessionId: null,
-            error: null,
-            failedPhase: null,
-          }).catch(() => {})
-          bus.emit('task.queued', { taskId: t.id })
-          mergingRequeued++
-        }
-      }
-    }
-
-    return { mergingFinalized, mergingRequeued }
+    const r = await recoverPhase('merging', { log, bus, repoRoot: getRepoRoot() })
+    return { mergingFinalized: r.finalized, mergingRequeued: r.requeued.length }
   },
 }
 
