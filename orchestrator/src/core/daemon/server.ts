@@ -44,6 +44,7 @@ import {
 import type { Logger, WorkflowEvent } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
 import { resolveGitBin } from '../lib/git/internal'
+import { initSettings } from '../lib/settings'
 import {
   getDefaultTaskStore,
   getDefaultDomainTaskStore,
@@ -361,6 +362,7 @@ export const startDaemon = async (
   }
 
   await runCompositionRootMigrations()
+  await initSettings()
 
   // Load the persisted Worker registry. When the file is absent, the existing
   // hard-coded WORKER_CONFIGS continue to serve as defaults. Dispatch
