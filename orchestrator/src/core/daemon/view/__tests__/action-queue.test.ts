@@ -104,9 +104,10 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     )
   })
 
-  it('falls back to unknownFailureKind title for an unregistered signature', async () => {
-    // 'verify:test/unclassified' is not in the registry; the fallback maps
-    // verify:* steps to a plain-English verification title (no raw step id).
+  it('no-recipe row: leads with the full failure signature for an unregistered signature', async () => {
+    // 'verify:test/unclassified' is not in the registry and has no recipe.
+    // The title must lead with the signature so the operator sees WHAT failed
+    // rather than a generic group label or a recovery-agent prompt.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([
@@ -116,7 +117,39 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('A verification check did not pass')
+    expect(rows[0]!.title).toBe('no recipe for verify:test/unclassified')
+  })
+
+  it('no-recipe row: merge-step unregistered signature leads with the signature', async () => {
+    // 'merge:unknown/unclassified' is not in the registry — verify that the
+    // unregistered-signature fallback ("no recipe for <sig>") fires for merge-step
+    // failures too, not just verify-step ones.
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([
+        makeTask({ failureSignature: 'merge:unknown/unclassified' }),
+      ]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    expect(rows[0]!.title).toBe('no recipe for merge:unknown/unclassified')
+  })
+
+  it('known-recipe row: still uses the registry warmTitle, not the signature prefix', async () => {
+    // 'setup:install/install-frozen-lockfile' has both a FailureKind and a recipe.
+    // The warmTitle must be used — the signature prefix is for no-recipe rows only.
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([
+        makeTask({ failureSignature: 'setup:install/install-frozen-lockfile' }),
+      ]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    expect(rows[0]!.title).not.toMatch(/^no recipe for/)
+    expect(rows[0]!.title).toBe('The coding environment could not be set up')
   })
 
   it('non-failed-task rows (stale-worktree) still use the persisted title/body', async () => {
