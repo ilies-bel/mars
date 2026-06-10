@@ -5,7 +5,7 @@ import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
 import { OriginTree } from '@/widgets/OriginTree'
 import ArcChainRail from '@/widgets/ArcChainRail'
-import { ArcGraph } from '@/widgets/ArcGraph'
+import { ArcTree } from '@/widgets/ArcTree'
 import {
   fetchEvents,
   fetchProposalDetail,
@@ -735,8 +735,8 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
                   <dd className="text-fg">{item.dag.proposalId}</dd>
                 </div>
               )}
-              {/* Arc graph replaces the old flat DagList text sections */}
-              <ArcGraph
+              {/* Arc tree — DOM-based indented rail */}
+              <ArcTree
                 dag={item.dag}
                 entityId={item.entityId}
                 entityStatus={isRealFailedTask ? 'failed' : 'running'}
