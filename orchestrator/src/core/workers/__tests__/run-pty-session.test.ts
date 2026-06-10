@@ -483,6 +483,104 @@ describe('runPtySession — pty.log and events.jsonl persistence', () => {
 })
 
 // ---------------------------------------------------------------------------
+// provider.prepare hook — Stop-hook installation for the claude/status-file path
+//
+// Verifies that runPtySession calls provider.prepare(cwd, sessionId) before
+// spawning the pty when a sessionId is present, and that PROVIDERS.claude
+// wires prepare to installClaudeStopHook (writes .claude/settings.json).
+// ---------------------------------------------------------------------------
+
+describe('runPtySession — provider.prepare hook', () => {
+  let tmpDir: string
+  let fakeHandle: ReturnType<typeof makeFakeHandle>
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'pty-prepare-test-'))
+    fakeHandle = makeFakeHandle()
+    vi.mocked(spawnPty).mockReturnValue(fakeHandle)
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('calls provider.prepare(cwd, sessionId) before spawning the pty when sessionId is present', async () => {
+    const callOrder: string[] = []
+
+    const prepareSpy = vi.fn(() => {
+      callOrder.push('prepare')
+    })
+
+    vi.mocked(spawnPty).mockImplementationOnce((..._args) => {
+      callOrder.push('spawn')
+      return fakeHandle
+    })
+
+    const provider: Provider = {
+      name: 'claude',
+      spawnArgv: () => ['claude'],
+      feedPrompt: async () => {},
+      prepare: prepareSpy,
+      doneSignal: { kind: 'status-file', wait: () => Promise.resolve() },
+    }
+
+    await runPtySession({
+      provider,
+      prompt: 'ping',
+      cwd: tmpDir,
+      sessionId: 'prep-sess-1',
+      model: 'claude-sonnet-4-6',
+    })
+
+    // prepare must have been called with the right arguments
+    expect(prepareSpy).toHaveBeenCalledOnce()
+    expect(prepareSpy).toHaveBeenCalledWith(tmpDir, 'prep-sess-1')
+
+    // prepare must have been called BEFORE the pty was spawned
+    expect(callOrder.indexOf('prepare')).toBeLessThan(callOrder.indexOf('spawn'))
+  })
+
+  it('does not call provider.prepare when sessionId is absent', async () => {
+    const prepareSpy = vi.fn()
+
+    const provider: Provider = {
+      name: 'claude',
+      spawnArgv: () => ['claude'],
+      feedPrompt: async () => {},
+      prepare: prepareSpy,
+      doneSignal: { kind: 'status-file', wait: () => Promise.resolve() },
+    }
+
+    await runPtySession({
+      provider,
+      prompt: 'ping',
+      cwd: tmpDir,
+      model: 'claude-sonnet-4-6',
+      // no sessionId
+    })
+
+    expect(prepareSpy).not.toHaveBeenCalled()
+  })
+
+  it('PROVIDERS.claude.prepare writes the Stop hook into <cwd>/.claude/settings.json', () => {
+    const sessionId = 'claude-prepare-hook-sess'
+
+    PROVIDERS.claude.prepare?.(tmpDir, sessionId)
+
+    const settingsPath = pathMod.join(tmpDir, '.claude', 'settings.json')
+    expect(fs.existsSync(settingsPath)).toBe(true)
+
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {
+      hooks?: { Stop?: Array<{ hooks: Array<{ command: string }> }> }
+    }
+    expect(settings.hooks?.Stop).toBeDefined()
+    const hookCmd = settings.hooks?.Stop?.[0]?.hooks?.[0]?.command ?? ''
+    expect(hookCmd).toContain(sessionId)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Integration: codex provider with prompt-scan done signal (slice 9)
 //
 // Runs PROVIDERS.codex end-to-end through runPtySession against a stubbed pty

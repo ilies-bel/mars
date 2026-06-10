@@ -2,7 +2,7 @@
 // feeds prompts to an agent CLI. Each Provider bundles the spawn argv
 // builder, the prompt-feed method, and an optional done-signal hook.
 
-import { waitForClaudeDone } from './claude-done-signal'
+import { installClaudeStopHook, waitForClaudeDone } from './claude-done-signal'
 
 export type ProviderName = 'claude' | 'gemini' | 'codex'
 
@@ -50,12 +50,18 @@ export type ProviderDoneSignal = StatusFileDoneSignal | PromptScanDoneSignal
 //   - spawnArgv  : build the argv array used to launch the process;
 //   - feedPrompt : write the task prompt into a running process handle;
 //   - doneSignal : optional descriptor that tells the orchestrator how to
-//                  detect session completion beyond a normal process exit.
+//                  detect session completion beyond a normal process exit;
+//   - prepare    : optional pre-spawn setup — called with (cwd, sessionId)
+//                  before the process is launched. Providers that require
+//                  side-effects before the process starts (e.g. writing a
+//                  Stop hook for the claude status-file done-signal) implement
+//                  this; providers that need no setup omit it.
 export interface Provider {
   readonly name: ProviderName
   spawnArgv(opts: SpawnOpts): readonly string[]
   feedPrompt(handle: ProcessHandle, prompt: string): Promise<void>
   readonly doneSignal?: ProviderDoneSignal
+  prepare?(cwd: string, sessionId: string): void
 }
 
 // Registry of every known Provider keyed by ProviderName.
@@ -89,6 +95,9 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       wait: (sessionId: string, cwd: string, signal: AbortSignal): Promise<void> =>
         waitForClaudeDone(cwd, sessionId, signal),
     },
+    // Pre-spawn setup: install the Stop hook so the done-signal sentinel file
+    // is written when Claude's turn ends. Must run before the process starts.
+    prepare: installClaudeStopHook,
   },
   gemini: {
     name: 'gemini',

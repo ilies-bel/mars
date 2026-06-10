@@ -49,6 +49,13 @@ export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeR
   }
 
   try {
+    // If the provider needs pre-spawn setup (e.g. the claude Stop hook that
+    // enables the status-file done-signal), run it now — before the process
+    // starts so the hook is in place for the very first turn.
+    if (sessionId !== undefined) {
+      provider.prepare?.(cwd, sessionId)
+    }
+
     const argv = provider.spawnArgv({ sessionId, model })
     const [cmd, ...rest] = argv as string[]
     const handle = spawnPty(cmd!, rest, { cwd })
