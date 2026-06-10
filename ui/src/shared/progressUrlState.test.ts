@@ -3,6 +3,7 @@ import {
   decodeProgressState,
   defaultProgressUrlState,
   encodeProgressState,
+  readExplicitViewFromUrl,
   type ProgressUrlState,
 } from './progressUrlState'
 
@@ -166,5 +167,84 @@ describe('encode → decode round-trip', () => {
     expect(restored.view).toBe('board')
     expect(restored.query).toBe('test search')
     expect(restored.proposal).toBe('p-abc')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// readExplicitViewFromUrl — distinguishes "view param present" from "absent"
+// ---------------------------------------------------------------------------
+
+describe('readExplicitViewFromUrl', () => {
+  const setupWindow = (hash: string) => {
+    ;(globalThis as Record<string, unknown>).window = { location: { hash } }
+  }
+  const teardownWindow = () => {
+    delete (globalThis as Record<string, unknown>).window
+  }
+
+  it('returns board when ?view=board is present', () => {
+    setupWindow('#/progress?view=board')
+    try {
+      expect(readExplicitViewFromUrl()).toBe('board')
+    } finally {
+      teardownWindow()
+    }
+  })
+
+  it('returns topology when ?view=topology is present', () => {
+    setupWindow('#/progress?view=topology')
+    try {
+      expect(readExplicitViewFromUrl()).toBe('topology')
+    } finally {
+      teardownWindow()
+    }
+  })
+
+  it('returns null for a bare #/progress (no view param)', () => {
+    setupWindow('#/progress')
+    try {
+      expect(readExplicitViewFromUrl()).toBeNull()
+    } finally {
+      teardownWindow()
+    }
+  })
+
+  it('returns null for an unrecognised view value', () => {
+    setupWindow('#/progress?view=bogus')
+    try {
+      expect(readExplicitViewFromUrl()).toBeNull()
+    } finally {
+      teardownWindow()
+    }
+  })
+
+  it('returns null when on a different hash route', () => {
+    setupWindow('#/other?view=board')
+    try {
+      expect(readExplicitViewFromUrl()).toBeNull()
+    } finally {
+      teardownWindow()
+    }
+  })
+
+  it('returns null when window is unavailable (SSR)', () => {
+    const orig = (globalThis as Record<string, unknown>).window
+    delete (globalThis as Record<string, unknown>).window
+    try {
+      expect(readExplicitViewFromUrl()).toBeNull()
+    } finally {
+      if (orig !== undefined) {
+        ;(globalThis as Record<string, unknown>).window = orig
+      }
+    }
+  })
+
+  it('returns null when the hash has a query string but no view param', () => {
+    setupWindow('#/progress?q=hello&proposal=p1')
+    try {
+      expect(readExplicitViewFromUrl()).toBeNull()
+    } finally {
+      teardownWindow()
+    }
   })
 })

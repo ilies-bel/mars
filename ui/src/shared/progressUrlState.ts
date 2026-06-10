@@ -107,3 +107,37 @@ export const writeProgressStateToUrl = (state: ProgressUrlState): void => {
   const params = encodeProgressState(state)
   history.replaceState(null, '', params ? `#/progress${params}` : '#/progress')
 }
+
+/**
+ * Returns the view param from the URL if it is explicitly present and valid,
+ * or null otherwise.
+ *
+ * Unlike `decodeProgressState` (which falls back to DEFAULT_TAB when the
+ * param is absent), this function distinguishes "no view param in the URL"
+ * from "view=topology", so callers can fall through to a persisted preference
+ * when the hash is bare.
+ *
+ * Returns null when:
+ *  - not in a browser (typeof window === 'undefined')
+ *  - the hash does not start with '#/progress'
+ *  - there is no '?' in the hash (no query string at all)
+ *  - the 'view' param is absent from the query string
+ *  - the 'view' param value is not a recognised Tab
+ */
+export const readExplicitViewFromUrl = (): Tab | null => {
+  if (typeof window === 'undefined') return null
+  const hash = window.location.hash || '#/'
+  if (!hash.startsWith('#/progress')) return null
+  const qIdx = hash.indexOf('?')
+  if (qIdx === -1) return null
+  const queryStr = hash.slice(qIdx + 1)
+  for (const pair of queryStr.split('&')) {
+    const eqIdx = pair.indexOf('=')
+    if (eqIdx === -1) continue
+    if (pair.slice(0, eqIdx) === 'view') {
+      const raw = decodeURIComponent(pair.slice(eqIdx + 1))
+      return raw === 'board' || raw === 'topology' ? (raw as Tab) : null
+    }
+  }
+  return null
+}

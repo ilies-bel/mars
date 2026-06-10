@@ -3,10 +3,13 @@ import { ApiErrorPanel } from '@/components/ApiErrorPanel'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { useProgress } from '@/hooks/useProgress'
 import {
+  readExplicitViewFromUrl,
   readProgressStateFromUrl,
   writeProgressStateToUrl,
 } from '@/shared/progressUrlState'
 import type { Tab } from '@/shared/tabs'
+import { DEFAULT_TAB } from '@/shared/tabs'
+import { readPersistedView, writePersistedView } from '@/shared/viewPreference'
 import { BoardView } from '@/widgets/BoardView'
 import { Footer } from '@/widgets/Footer'
 import { TabStrip } from '@/widgets/TabStrip'
@@ -14,17 +17,33 @@ import { TopologyView } from '@/widgets/TopologyView'
 import { TopStripe } from '@/widgets/TopStripe'
 
 export const ProgressPage = () => {
-  // Initialise every filter dimension from the URL on first render.
+  // Initialise query and proposal filter dimensions from the URL on first render.
   // readProgressStateFromUrl() returns defaults in non-browser environments.
   const [initialUrlState] = useState(() => readProgressStateFromUrl())
 
   const { byCluster, tasks, proposals, error, connected } = useProgress()
   const { proposals: drafts } = useProposals()
-  const [activeTab, setActiveTab] = useState<Tab>(initialUrlState.view)
+
+  // Resolve the initial active tab with the following precedence:
+  //   1. Explicit ?view= param in the URL (shareable links are always honoured)
+  //   2. Last persisted view from localStorage (remembered across sessions)
+  //   3. DEFAULT_TAB ('topology') as the final fallback
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    const explicit = readExplicitViewFromUrl()
+    if (explicit !== null) return explicit
+    return readPersistedView() ?? DEFAULT_TAB
+  })
+
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(
     initialUrlState.proposal,
   )
   const [searchQuery, setSearchQuery] = useState<string>(initialUrlState.query)
+
+  // Persist the active tab to localStorage whenever it changes so the user's
+  // last-selected view is restored on future bare '#/progress' visits.
+  useEffect(() => {
+    writePersistedView(activeTab)
+  }, [activeTab])
 
   // Compute the set of IDs that match the search query (null = no active filter).
   const searchMatchIds = useMemo((): Set<string> | null => {
