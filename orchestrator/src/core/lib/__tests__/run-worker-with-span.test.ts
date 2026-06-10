@@ -1189,3 +1189,112 @@ describe('runWorkerWithSpan — failure-path partial usage capture', () => {
     expect(received[0]!.type).toBe('assistant')
   })
 })
+
+// ── Full implement-arc span attribution (PRD-slice regression) ────────────
+//
+// Root cause that motivated this suite (fixed in run-worker-with-span.ts):
+// before `taskId: string | null` was added to RunWorkerWithSpanOptions and
+// RunNonLlmStepOptions, every `safeRecord` call hardcoded `taskId: originId`,
+// so ALL step spans for a 13-slice PRD were attributed to the origin task id
+// instead of each slice's own id. The DB query showed 16 Coder step_ended
+// events under `task_id = origin_id`; only 1 slice (mars-57816516) got a
+// correctly stamped span.
+//
+// These tests guard the full implement-arc spine (all 4 steps) under the
+// precise scenario where slice.taskId ≠ origin.taskId.
+
+describe('implement-arc span attribution — all 4 steps attribute to the slice task id', () => {
+  it('setup-worktree, run-claude-code, verify, and merge all use the slice task id, not the origin task id', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const worker = makeWorker('Coder', successResult('sess-prd-slice'))
+
+    // PRD sliced into child tasks:
+    //   origin task = 'origin-prd-task-aaa'  (the proposal / origin id)
+    //   slice task  = 'slice-task-bbb'        (the concrete slice being implemented)
+    // Every step in the implement arc must attribute to 'slice-task-bbb'.
+    const sliceTaskId = 'slice-task-bbb'
+    const originTaskId = 'origin-prd-task-aaa'
+    const wfId = 'wf-implement-arc-regression'
+
+    // Step 1: setup-worktree (non-LLM)
+    await runNonLlmStepWithSpan({
+      stepName: 'setup-worktree',
+      workflowInstanceId: wfId,
+      originId: originTaskId,
+      taskId: sliceTaskId,
+      phase: 'setup',
+      traceStore,
+      fn: async () => undefined,
+    })
+
+    // Step 2: run-claude-code (LLM / Coder) — the step where the original
+    // bug was most visible: 16 events stamped with origin id instead of slice id.
+    await runWorkerWithSpan({
+      worker,
+      prompt: 'implement the slice',
+      runOptions: { cwd: '/tmp' },
+      traceStore,
+      stepName: 'run-claude-code',
+      workflowInstanceId: wfId,
+      originId: originTaskId,
+      taskId: sliceTaskId,
+      phase: 'code',
+    })
+
+    // Step 3: verify (non-LLM)
+    await runNonLlmStepWithSpan({
+      stepName: 'verify',
+      workflowInstanceId: wfId,
+      originId: originTaskId,
+      taskId: sliceTaskId,
+      phase: 'verify',
+      traceStore,
+      fn: async () => undefined,
+    })
+
+    // Step 4: merge (non-LLM)
+    await runNonLlmStepWithSpan({
+      stepName: 'merge',
+      workflowInstanceId: wfId,
+      originId: originTaskId,
+      taskId: sliceTaskId,
+      phase: 'merge',
+      traceStore,
+      fn: async () => undefined,
+    })
+
+    // 4 steps × 2 events each = 8 events; ALL must carry the slice task id.
+    const bySlice = await traceStore.query({ taskId: sliceTaskId })
+    expect(bySlice).toHaveLength(8)
+
+    const stepNames = new Set(bySlice.map((e) => e.payload.stepName as string))
+    expect(stepNames).toContain('setup-worktree')
+    expect(stepNames).toContain('run-claude-code')
+    expect(stepNames).toContain('verify')
+    expect(stepNames).toContain('merge')
+
+    // Zero events must be attributed to the origin task id.
+    const byOrigin = await traceStore.query({ taskId: originTaskId })
+    expect(byOrigin).toHaveLength(0)
+  })
+
+  it('slicer-level steps (generate-slices) emit taskId = null — origin id is NOT used as task id', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const worker = makeWorker('Slicer', successResult())
+
+    await runWorkerWithSpan({
+      worker,
+      prompt: 'slice the proposal',
+      runOptions: { cwd: '/tmp' },
+      traceStore,
+      stepName: 'generate-slices',
+      workflowInstanceId: 'wf-slicer-null-taskid',
+      originId: 'origin-prd-task-aaa',
+      taskId: null,
+    })
+
+    // task_id IS NULL — not attributed to the origin task id
+    const byOrigin = await traceStore.query({ taskId: 'origin-prd-task-aaa' })
+    expect(byOrigin).toHaveLength(0)
+  })
+})
