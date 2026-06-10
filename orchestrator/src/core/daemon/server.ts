@@ -1203,6 +1203,17 @@ export const startDaemon = async (
     const t = await getTask(id)
     if (!t) throw new Error(`task ${id} not found`)
     await addBlockers(id, blockerIds)
+    // Re-evaluate status: if the task is still in a pre-dispatch state and now
+    // has at least one unmet blocker, flip it to 'blocked' so the dispatcher
+    // cannot pick it up while a prerequisite is outstanding.  Only pre-dispatch
+    // states (queued / draft) are reclassified; an already-running task gaining
+    // a post-hoc blocker is a separate concern and is left as-is.
+    if (
+      (t.status === 'queued' || t.status === 'draft') &&
+      (await hasIncompleteBlockers(id))
+    ) {
+      await updateTask(id, { status: 'blocked' })
+    }
     return { taskId: id, blockerIds }
   }
 
