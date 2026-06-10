@@ -3,7 +3,15 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: ['src/index.ts'],
   format: ['esm', 'cjs'],
-  dts: false,
+  // Emit declarations as part of the same tsup run so dist/index.d.ts and
+  // dist/index.d.cts are produced atomically. The previous build chain
+  // (`tsup && tsc --emitDeclarationOnly && cp index.d.ts index.d.cts`) had a
+  // failure mode where the `cp` step would error with "dist/index.d.ts: No
+  // such file or directory" — the standalone tsc invocation occasionally
+  // emitted no declaration when the prepare hook ran under pnpm install,
+  // breaking the workspace-dep install on fresh worktrees. tsup's bundled
+  // dts pass writes both .d.ts and .d.cts in a single atomic step.
+  dts: true,
   clean: true,
   outDir: 'dist',
   // Externalize runtime dependencies — don't bundle them
