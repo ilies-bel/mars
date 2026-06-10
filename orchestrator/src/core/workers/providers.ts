@@ -72,8 +72,14 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
     ],
     // Write the prompt into the running pty followed by the submit key
     // sequence (CR) so the interactive harness starts execution.
+    // The delay between writing the prompt text and the Enter keypress is
+    // required: the claude TUI must finish ingesting the pasted text before
+    // the CR arrives or the Enter keypress is silently dropped and the prompt
+    // sits un-submitted in the input box (observed with claude CLI 2.1.159).
+    // See: github.com/Dicklesworthstone/ntm internal/tmux/session.go SendKeysWithDelay
     feedPrompt: async (handle: ProcessHandle, prompt: string): Promise<void> => {
       handle.write(prompt)
+      await new Promise<void>((r) => setTimeout(r, 150))
       handle.write('\r')
     },
     // Status-file done-signal: the Stop hook installed by installClaudeStopHook
