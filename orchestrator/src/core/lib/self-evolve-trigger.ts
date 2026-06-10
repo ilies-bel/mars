@@ -22,37 +22,84 @@ export interface SelfEvolveTriggerResult {
   skipped: Array<{ kpi: string; reason: SkipReason }>
 }
 
-/** Convert a persisted kpi_snapshots row to the KPI drift detector's snapshot format. */
-const toDetectorSnapshot = (row: PersistedSnapshot): DriftSnapshot => {
-  const metrics: Record<string, KpiEntry> = {}
-  if (row.failure_rate !== null) {
-    metrics.failure_rate = { value: row.failure_rate, polarity: 'lower-is-better' }
-  }
-  if (row.cost_per_arc_p50 !== null) {
-    metrics.cost_per_arc_p50 = { value: row.cost_per_arc_p50, polarity: 'lower-is-better' }
-  }
-  if (row.cost_per_arc_p90 !== null) {
-    metrics.cost_per_arc_p90 = { value: row.cost_per_arc_p90, polarity: 'lower-is-better' }
-  }
-  if (row.autonomous_completion_rate !== null) {
-    metrics.autonomous_completion_rate = {
-      value: row.autonomous_completion_rate,
-      polarity: 'higher-is-better',
+interface KpiConfig {
+  key: string
+  valueKey: string
+  confidenceKey: string
+  polarity: 'higher-is-better' | 'lower-is-better'
+}
+
+const KPI_CONFIGS: KpiConfig[] = [
+  {
+    key: 'failure_rate',
+    valueKey: 'failure_rate',
+    confidenceKey: 'failure_rate_low_confidence',
+    polarity: 'lower-is-better',
+  },
+  {
+    key: 'cost_per_arc_p50',
+    valueKey: 'cost_per_arc_p50',
+    confidenceKey: 'cost_per_arc_low_confidence',
+    polarity: 'lower-is-better',
+  },
+  {
+    key: 'cost_per_arc_p90',
+    valueKey: 'cost_per_arc_p90',
+    confidenceKey: 'cost_per_arc_low_confidence',
+    polarity: 'lower-is-better',
+  },
+  {
+    key: 'autonomous_completion_rate',
+    valueKey: 'autonomous_completion_rate',
+    confidenceKey: 'autonomous_completion_rate_low_confidence',
+    polarity: 'higher-is-better',
+  },
+  {
+    key: 'recovery_success_rate',
+    valueKey: 'recovery_success_rate',
+    confidenceKey: 'recovery_success_rate_low_confidence',
+    polarity: 'higher-is-better',
+  },
+]
+
+/**
+ * Convert two persisted kpi_snapshots rows into the KPI drift detector's snapshot
+ * format, filtering per-KPI based on individual confidence flags. A metric is admitted
+ * only when BOTH the current and prior snapshot have the KPI-specific low_confidence
+ * flag set to 0. Returns detector-ready snapshots plus the list of KPI keys excluded
+ * due to low confidence.
+ */
+const toDetectorSnapshots = (
+  current: PersistedSnapshot,
+  prior: PersistedSnapshot,
+): { current: DriftSnapshot; prior: DriftSnapshot; lowConfidenceKpis: string[] } => {
+  const currentMetrics: Record<string, KpiEntry> = {}
+  const priorMetrics: Record<string, KpiEntry> = {}
+  const lowConfidenceKpis: string[] = []
+
+  for (const kpi of KPI_CONFIGS) {
+    const currentConf = (current as unknown as Record<string, number>)[kpi.confidenceKey]
+    const priorConf = (prior as unknown as Record<string, number>)[kpi.confidenceKey]
+
+    if (currentConf !== 0 || priorConf !== 0) {
+      lowConfidenceKpis.push(kpi.key)
+      continue
+    }
+
+    const currentValue = (current as unknown as Record<string, number | null>)[kpi.valueKey]
+    const priorValue = (prior as unknown as Record<string, number | null>)[kpi.valueKey]
+
+    if (currentValue !== null && priorValue !== null) {
+      currentMetrics[kpi.key] = { value: currentValue, polarity: kpi.polarity }
+      priorMetrics[kpi.key] = { value: priorValue, polarity: kpi.polarity }
     }
   }
-  if (row.recovery_success_rate !== null) {
-    metrics.recovery_success_rate = {
-      value: row.recovery_success_rate,
-      polarity: 'higher-is-better',
-    }
+
+  return {
+    current: { isConfident: true, metrics: currentMetrics },
+    prior: { isConfident: true, metrics: priorMetrics },
+    lowConfidenceKpis,
   }
-  // A snapshot is globally confident only when all four per-KPI flags are clear.
-  const isConfident =
-    row.failure_rate_low_confidence === 0 &&
-    row.cost_per_arc_low_confidence === 0 &&
-    row.autonomous_completion_rate_low_confidence === 0 &&
-    row.recovery_success_rate_low_confidence === 0
-  return { isConfident, metrics }
 }
 
 /** Read the two most recently taken kpi_snapshots rows as [current, prior]. */
@@ -102,15 +149,15 @@ export const runSelfEvolveTrigger = async (opts?: {
   }
 
   const [persistedCurrent, persistedPrior] = snapshots
-  const current = toDetectorSnapshot(persistedCurrent)
-  const prior = toDetectorSnapshot(persistedPrior)
+  const { current, prior, lowConfidenceKpis } = toDetectorSnapshots(persistedCurrent, persistedPrior)
 
   const findings = detectKpiDrift(current, prior, {
     thresholdPct: cfg.selfEvolve.driftThresholdPct,
   })
 
   const raised: string[] = []
-  const skipped: Array<{ kpi: string; reason: SkipReason }> = []
+  const skipped: Array<{ kpi: string; reason: SkipReason }> =
+    lowConfidenceKpis.map(kpi => ({ kpi, reason: 'low-confidence' }))
 
   for (const finding of findings) {
     const existing = await findOpenReflectionDraftForKpi(finding.kpi)

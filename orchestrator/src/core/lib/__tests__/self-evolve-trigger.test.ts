@@ -4,7 +4,7 @@
  * Each test gets a fresh git repo + mars.db so module-level singletons are
  * reset between tests (via vi.resetModules inside the loadContext helper).
  *
- * Four PRD-mandated cases:
+ * PRD-mandated cases:
  *  1. autoTrigger=false  → zero proposals, zero queued tasks
  *  2. autoTrigger=true, confident drift above threshold → exactly one draft proposal
  *     with source='reflection', title naming the KPI, body containing the full
@@ -12,7 +12,10 @@
  *  3. Dedup: re-running the trigger while the prior draft is still 'draft'
  *     creates zero additional proposals.
  *  4. Either snapshot below sample floor → zero proposals even if delta exceeds
- *     the threshold.
+ *     the threshold (per-KPI: failure_rate low-confidence suppresses failure_rate only).
+ *  5. Per-KPI confidence: cost_per_arc low-confidence on one side skips cost_per_arc_p50
+ *     and cost_per_arc_p90 (with reason 'low-confidence') but still raises a proposal
+ *     for failure_rate when failure_rate is confident on both sides and regresses.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -25,8 +28,8 @@ import { createTaskStore, type DomainTaskStore as TaskStore } from '../../store/
 import type { ProposalSource } from '../../proposals.js'
 
 // ---------------------------------------------------------------------------
-// Test-DB DDL (minimal — migrateQueueSchema brings the real schema, but we only need
-// kpi_snapshots and a countable tasks table for the "no tasks queued" check).
+// Test-DB DDL — per-KPI schema matching kpi-snapshots.ts (slice 1).
+// Each KPI has its own sample_count and low_confidence column pair.
 // ---------------------------------------------------------------------------
 
 const KPI_SNAPSHOTS_DDL = `
@@ -35,8 +38,14 @@ const KPI_SNAPSHOTS_DDL = `
     taken_at TEXT NOT NULL,
     window_start TEXT NOT NULL,
     window_end TEXT NOT NULL,
-    sample_count INTEGER NOT NULL,
-    low_confidence INTEGER NOT NULL,
+    cost_per_arc_sample_count INTEGER NOT NULL DEFAULT 0,
+    cost_per_arc_low_confidence INTEGER NOT NULL DEFAULT 0,
+    failure_rate_sample_count INTEGER NOT NULL DEFAULT 0,
+    failure_rate_low_confidence INTEGER NOT NULL DEFAULT 0,
+    autonomous_completion_rate_sample_count INTEGER NOT NULL DEFAULT 0,
+    autonomous_completion_rate_low_confidence INTEGER NOT NULL DEFAULT 0,
+    recovery_success_rate_sample_count INTEGER NOT NULL DEFAULT 0,
+    recovery_success_rate_low_confidence INTEGER NOT NULL DEFAULT 0,
     cost_per_arc_p50 REAL,
     cost_per_arc_p90 REAL,
     failure_rate REAL,
@@ -123,30 +132,54 @@ const loadContext = async (repo: string): Promise<TestContext> => {
   return { runSelfEvolveTrigger, store, listProposals, countTasks }
 }
 
-/** Insert a synthetic kpi_snapshot row directly (bypasses takeKpiSnapshot logic). */
+/**
+ * Insert a synthetic kpi_snapshot row directly (bypasses takeKpiSnapshot logic).
+ * All per-KPI low_confidence flags default to 0; pass explicit flags to override.
+ */
 const insertSnapshot = async (
   store: TaskStore,
   opts: {
     id: string
     takenAt: string
     failureRate: number | null
-    lowConfidence: 0 | 1
+    costPerArcP50?: number | null
+    costPerArcP90?: number | null
+    failureRateLowConfidence?: 0 | 1
+    costPerArcLowConfidence?: 0 | 1
+    autonomousCompletionRateLowConfidence?: 0 | 1
+    recoverySuccessRateLowConfidence?: 0 | 1
   },
 ): Promise<void> => {
+  const frConf = opts.failureRateLowConfidence ?? 0
+  const costConf = opts.costPerArcLowConfidence ?? 0
+  const acrConf = opts.autonomousCompletionRateLowConfidence ?? 0
+  const rsrConf = opts.recoverySuccessRateLowConfidence ?? 0
+
   await store.execute({
     sql: `INSERT INTO kpi_snapshots
             (id, taken_at, window_start, window_end,
-             sample_count, low_confidence,
+             cost_per_arc_sample_count, cost_per_arc_low_confidence,
+             failure_rate_sample_count, failure_rate_low_confidence,
+             autonomous_completion_rate_sample_count, autonomous_completion_rate_low_confidence,
+             recovery_success_rate_sample_count, recovery_success_rate_low_confidence,
              cost_per_arc_p50, cost_per_arc_p90,
              failure_rate, autonomous_completion_rate, recovery_success_rate)
-          VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
     args: [
       opts.id,
       opts.takenAt,
       opts.takenAt, // window_start (same for test simplicity)
       opts.takenAt, // window_end
-      opts.lowConfidence === 0 ? 10 : 2, // sample_count > floor when confident
-      opts.lowConfidence,
+      costConf === 0 ? 10 : 2, // cost_per_arc_sample_count
+      costConf,
+      frConf === 0 ? 10 : 2,   // failure_rate_sample_count
+      frConf,
+      acrConf === 0 ? 10 : 2,  // autonomous_completion_rate_sample_count
+      acrConf,
+      rsrConf === 0 ? 10 : 2,  // recovery_success_rate_sample_count
+      rsrConf,
+      opts.costPerArcP50 ?? null,
+      opts.costPerArcP90 ?? null,
       opts.failureRate,
     ],
   })
@@ -180,13 +213,11 @@ describe('runSelfEvolveTrigger', () => {
       id: 'snap-prior',
       takenAt: '2026-01-01T00:00:00Z',
       failureRate: 0.10,
-      lowConfidence: 0,
     })
     await insertSnapshot(ctx.store, {
       id: 'snap-current',
       takenAt: '2026-01-02T00:00:00Z',
       failureRate: 0.25, // +150% — well above any threshold
-      lowConfidence: 0,
     })
 
     const tasksBefore = await ctx.countTasks()
@@ -211,13 +242,11 @@ describe('runSelfEvolveTrigger', () => {
       id: 'snap-prior',
       takenAt: '2026-01-01T00:00:00Z',
       failureRate: 0.10,
-      lowConfidence: 0,
     })
     await insertSnapshot(ctx.store, {
       id: 'snap-current',
       takenAt: '2026-01-02T00:00:00Z',
       failureRate: 0.25,
-      lowConfidence: 0,
     })
 
     const tasksBefore = await ctx.countTasks()
@@ -261,13 +290,11 @@ describe('runSelfEvolveTrigger', () => {
       id: 'snap-prior',
       takenAt: '2026-01-01T00:00:00Z',
       failureRate: 0.10,
-      lowConfidence: 0,
     })
     await insertSnapshot(ctx.store, {
       id: 'snap-current',
       takenAt: '2026-01-02T00:00:00Z',
       failureRate: 0.25,
-      lowConfidence: 0,
     })
 
     // First run — raises one proposal
@@ -285,24 +312,23 @@ describe('runSelfEvolveTrigger', () => {
     expect(proposals).toHaveLength(1)
   })
 
-  // PRD case 4: either snapshot below sample floor → zero proposals even if the
-  // relative delta would exceed the threshold.
-  it('creates zero proposals when either snapshot is below the sample floor', async () => {
+  // PRD case 4: failure_rate low-confidence on the current snapshot suppresses
+  // failure_rate (per-KPI gating), producing zero proposals.
+  it('creates zero proposals when the current snapshot has failure_rate_low_confidence=1', async () => {
     process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
     const ctx = await loadContext(repo)
 
-    // prior confident, current low-confidence (sample floor not met)
     await insertSnapshot(ctx.store, {
       id: 'snap-prior',
       takenAt: '2026-01-01T00:00:00Z',
       failureRate: 0.10,
-      lowConfidence: 0, // confident
+      // failure_rate_low_confidence: 0 (default — confident)
     })
     await insertSnapshot(ctx.store, {
       id: 'snap-current',
       takenAt: '2026-01-02T00:00:00Z',
-      failureRate: 0.25, // large drift
-      lowConfidence: 1, // NOT confident
+      failureRate: 0.25, // large drift — would trigger if confident
+      failureRateLowConfidence: 1, // NOT confident
     })
 
     const tasksBefore = await ctx.countTasks()
@@ -315,27 +341,70 @@ describe('runSelfEvolveTrigger', () => {
     expect(proposals).toHaveLength(0)
   })
 
-  it('creates zero proposals when the prior snapshot is below the sample floor', async () => {
+  it('creates zero proposals when the prior snapshot has failure_rate_low_confidence=1', async () => {
     process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
     const ctx = await loadContext(repo)
 
-    // prior low-confidence, current confident
     await insertSnapshot(ctx.store, {
       id: 'snap-prior',
       takenAt: '2026-01-01T00:00:00Z',
       failureRate: 0.10,
-      lowConfidence: 1, // NOT confident
+      failureRateLowConfidence: 1, // NOT confident
     })
     await insertSnapshot(ctx.store, {
       id: 'snap-current',
       takenAt: '2026-01-02T00:00:00Z',
       failureRate: 0.25,
-      lowConfidence: 0, // confident
+      // failure_rate_low_confidence: 0 (default — confident)
     })
 
     const result = await ctx.runSelfEvolveTrigger({ store: ctx.store })
     expect(result.raised).toHaveLength(0)
     const proposals = await ctx.listProposals({ source: 'reflection' })
     expect(proposals).toHaveLength(0)
+  })
+
+  // PRD case 5 (acceptance criterion): per-KPI confidence gating.
+  // cost_per_arc_low_confidence=1 on one side suppresses cost_per_arc_p50 and
+  // cost_per_arc_p90 (added to skipped with reason 'low-confidence'), while
+  // failure_rate remains confident on both sides and its regression is still raised.
+  it('raises a proposal only for failure_rate and skips cost_per_arc when cost_per_arc is low-confidence on one side', async () => {
+    process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
+    const ctx = await loadContext(repo)
+
+    // Prior: failure_rate=0.10, cost_per_arc confident (both flags 0)
+    await insertSnapshot(ctx.store, {
+      id: 'snap-prior',
+      takenAt: '2026-01-01T00:00:00Z',
+      failureRate: 0.10,
+      costPerArcP50: 1.0,
+      costPerArcP90: 2.0,
+      // failure_rate_low_confidence: 0 (default)
+      // cost_per_arc_low_confidence: 0 (default)
+    })
+    // Current: failure_rate regresses (+150%), cost_per_arc low-confidence
+    await insertSnapshot(ctx.store, {
+      id: 'snap-current',
+      takenAt: '2026-01-02T00:00:00Z',
+      failureRate: 0.25,
+      costPerArcP50: 1.5,
+      costPerArcP90: 2.5,
+      // failure_rate_low_confidence: 0 (default — confident on both sides)
+      costPerArcLowConfidence: 1, // low-confidence on current side
+    })
+
+    const result = await ctx.runSelfEvolveTrigger({ store: ctx.store })
+
+    // Exactly one proposal raised — for failure_rate
+    expect(result.raised).toHaveLength(1)
+
+    // cost_per_arc_p50 and cost_per_arc_p90 are in skipped with reason 'low-confidence'
+    const lowConfSkipped = result.skipped.filter(s => s.reason === 'low-confidence')
+    expect(lowConfSkipped.map(s => s.kpi).sort()).toEqual(['cost_per_arc_p50', 'cost_per_arc_p90'])
+
+    // The raised proposal is for failure_rate
+    const proposals = await ctx.listProposals({ source: 'reflection' })
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0].title).toContain('failure_rate')
   })
 })
