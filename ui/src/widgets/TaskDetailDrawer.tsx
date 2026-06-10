@@ -794,12 +794,15 @@ export const TaskDetailDrawer = ({
         // skip the spans fetch entirely.
         if (stepSpans !== undefined) return
 
-        // Fetch step spans. Use the originId carried on the raw task response
-        // (not on the parsed Task, which drops unknown keys); fall back to the
-        // current task id when the column is absent from older DBs.
+        // Fetch step spans. Scope by taskId when viewing a task so sibling
+        // slices' spans are excluded; scope by originId when viewing a proposal
+        // node (drill-in from the subgraph) to show the full arc timeline.
         const rawTask = raw.task as { originId?: string | null } | null
-        const originId = rawTask?.originId ?? currentId
-        f(`/api/step-spans?originId=${encodeURIComponent(originId)}`)
+        const isProposal = proposals?.some((p) => p.id === currentId) ?? false
+        const spansUrl = isProposal
+          ? `/api/step-spans?originId=${encodeURIComponent(rawTask?.originId ?? currentId)}`
+          : `/api/step-spans?taskId=${encodeURIComponent(currentId)}`
+        f(spansUrl)
           .then(async (spansRes) => {
             if (cancelled || !spansRes.ok) return
             const spansData = (await spansRes.json()) as { spans: StepSpan[] }
