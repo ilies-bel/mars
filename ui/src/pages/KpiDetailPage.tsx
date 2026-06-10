@@ -102,7 +102,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                 <tr className="border-b border-iron/20 text-left text-[10px] uppercase tracking-wide text-muted">
                   <th className="py-1 pr-3 font-normal">Status</th>
                   {kpiKey === 'cost_per_arc' ? (
-                    <th className="py-1 pr-3 font-normal">Cost</th>
+                    <th className="py-1 pr-3 font-normal">Whole-arc cost</th>
                   ) : (
                     <th className="py-1 pr-3 font-normal">Result</th>
                   )}

@@ -442,21 +442,38 @@ export const buildActionQueueView = async ({
     // set by the slicer; skip the failure-registry lookup so the persisted
     // copy (e.g. "HITL: End-to-end smoke against a real cluster") is shown
     // instead of the generic "A pipeline step did not complete" fallback.
+    //
+    // The discriminator is registration in the failure-kind registry
+    // (lookupFailureKind returns non-null), NOT recipe presence. A kind like
+    // daemon-killed is registered with a warmTitle but has recipe: null; it must
+    // still render its warmTitle rather than "no recipe for <sig>".
+    // Rows whose signature is NOT in the registry lead with "no recipe for <sig>"
+    // so the operator immediately sees WHAT failed without digging into transcripts.
     let title = row.title
     let body = row.body
     if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
       const failedTask = taskById.get(entityId)
       const sig = failedTask?.failureSignature ?? null
-      const fk =
-        sig !== null
-          ? (lookupFailureKind(sig) ??
-              unknownFailureKind(
-                failingStepFromSignature(sig),
-                failedTask?.lastErrorOutput ?? '',
-              ))
-          : unknownFailureKind('unknown', failedTask?.lastErrorOutput ?? '')
-      title = fk.warmTitle
-      body = fk.verboseReason
+      if (sig !== null) {
+        const fk = lookupFailureKind(sig)
+        if (fk !== null) {
+          // Registered signature — use the registry's warm title and verbose reason.
+          title = fk.warmTitle
+          body = fk.verboseReason
+        } else {
+          // Unregistered signature: lead with it so the operator immediately knows
+          // what failed without digging into transcripts.
+          title = `no recipe for ${sig}`
+          body = unknownFailureKind(
+            failingStepFromSignature(sig),
+            failedTask?.lastErrorOutput ?? '',
+          ).verboseReason
+        }
+      } else {
+        const ufk = unknownFailureKind('unknown', failedTask?.lastErrorOutput ?? '')
+        title = ufk.warmTitle
+        body = ufk.verboseReason
+      }
     }
 
     // Propagate fixForTaskId so the UI can render an "origin" link on recovery rows.
@@ -777,21 +794,30 @@ export const buildActionQueueHistoryView = async ({
         : null
 
     // Title / body from the failure-kind registry for failed-task rows.
+    // Registered signatures use fk.warmTitle/fk.verboseReason; unregistered ones
+    // lead with "no recipe for <sig>" (same rule as the live view).
     let title = row.title
     let body = row.body
     if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
       const failedTask = taskById.get(entityId)
       const sig = failedTask?.failureSignature ?? null
-      const fk =
-        sig !== null
-          ? (lookupFailureKind(sig) ??
-              unknownFailureKind(
-                failingStepFromSignature(sig),
-                failedTask?.lastErrorOutput ?? '',
-              ))
-          : unknownFailureKind('unknown', failedTask?.lastErrorOutput ?? '')
-      title = fk.warmTitle
-      body = fk.verboseReason
+      if (sig !== null) {
+        const fk = lookupFailureKind(sig)
+        if (fk !== null) {
+          title = fk.warmTitle
+          body = fk.verboseReason
+        } else {
+          title = `no recipe for ${sig}`
+          body = unknownFailureKind(
+            failingStepFromSignature(sig),
+            failedTask?.lastErrorOutput ?? '',
+          ).verboseReason
+        }
+      } else {
+        const ufk = unknownFailureKind('unknown', failedTask?.lastErrorOutput ?? '')
+        title = ufk.warmTitle
+        body = ufk.verboseReason
+      }
     }
 
     const fixForTaskId =
