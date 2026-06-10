@@ -376,6 +376,23 @@ interface AppState {
   actionError: string | null
   /** Set when a 'copy' action is pressed. The hint is surfaced prominently. */
   copiedHint: string | null
+  /** True when an SSE refresh was deferred because a gate (confirm/pendingOps/copiedHint) was active. */
+  refreshDeferred: boolean
+}
+
+/**
+ * Returns true when it is safe to re-fetch the action-queue projection.
+ * Returns false while a confirm dialog, a copy-hint overlay, or any pending
+ * agent op is active — we don't want the rows to reshuffle under the operator.
+ */
+export function shouldRefreshNow(
+  state: Pick<AppState, 'confirm' | 'pendingOps' | 'copiedHint'>,
+): boolean {
+  return !(
+    state.confirm !== null ||
+    Object.keys(state.pendingOps).length > 0 ||
+    state.copiedHint !== null
+  )
 }
 
 const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) => {
@@ -392,6 +409,7 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
     confirm: null,
     actionError: null,
     copiedHint: null,
+    refreshDeferred: false,
   })
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -412,6 +430,7 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
           live: true,
           now: Date.now(),
           pendingOps,
+          refreshDeferred: false,
         }
       })
     } catch (err: unknown) {
@@ -421,6 +440,7 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
         error: message,
         live: false,
         now: Date.now(),
+        refreshDeferred: false,
       }))
     }
   }, [baseUrl])
@@ -469,7 +489,13 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
             if (eventLine) {
               const name = eventLine.slice('event:'.length).trim()
               if (name === 'action-queue' || name === 'tasks') {
-                void refresh()
+                setState((prev) => {
+                  if (shouldRefreshNow(prev)) {
+                    void refresh()
+                    return prev
+                  }
+                  return { ...prev, refreshDeferred: true }
+                })
               }
             }
           }
@@ -488,6 +514,14 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
       if (reconnectTimer !== null) clearTimeout(reconnectTimer)
     }
   }, [baseUrl, refresh])
+
+  // When all refresh gates clear and a deferred refresh is pending, fire exactly one refresh.
+  useEffect(() => {
+    if (shouldRefreshNow(state) && state.refreshDeferred) {
+      setState((prev) => ({ ...prev, refreshDeferred: false }))
+      void refresh()
+    }
+  }, [state.confirm, state.pendingOps, state.copiedHint, state.refreshDeferred, refresh])
 
   /** Fire an action that has already passed the confirm gate. */
   const fireAction = useCallback(
@@ -529,6 +563,7 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
         setState((prev) => ({
           ...prev,
           actionError: message,
+          refreshDeferred: false,
           pendingOps: isAgentOp
             ? (() => {
                 const next = { ...prev.pendingOps }

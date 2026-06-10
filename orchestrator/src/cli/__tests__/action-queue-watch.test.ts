@@ -31,6 +31,7 @@ import {
   resolveActionOutcome,
   deriveActionKeys,
   clearResolvedPendingOps,
+  shouldRefreshNow,
 } from '../action-queue-watch'
 import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
 
@@ -474,5 +475,68 @@ describe('clearResolvedPendingOps', () => {
     expect(pendingOps['row-1']).toBe('diagnose-failure')
     // Output has the resolved op removed
     expect(result['row-1']).toBeUndefined()
+  })
+})
+
+// ─── shouldRefreshNow ─────────────────────────────────────────────────────────
+
+describe('shouldRefreshNow', () => {
+  const noGates = { confirm: null, pendingOps: {}, copiedHint: null }
+
+  it('returns true when no gate is active', () => {
+    expect(shouldRefreshNow(noGates)).toBe(true)
+  })
+
+  it('returns false when a confirm dialog is active', () => {
+    const row = makeRow({ id: 'r1', entityId: 'task-1' })
+    const action = { id: 'restart', op: 'restart' as const, label: 'restart', needsConfirm: true }
+    expect(
+      shouldRefreshNow({ ...noGates, confirm: { row, action } }),
+    ).toBe(false)
+  })
+
+  it('returns false when there is at least one pending op', () => {
+    expect(
+      shouldRefreshNow({ ...noGates, pendingOps: { 'row-1': 'diagnose-failure' } }),
+    ).toBe(false)
+  })
+
+  it('returns false when a copy hint overlay is active', () => {
+    expect(
+      shouldRefreshNow({ ...noGates, copiedHint: 'mars task add ...' }),
+    ).toBe(false)
+  })
+
+  it('returns true once confirm is cleared (all others idle)', () => {
+    expect(shouldRefreshNow({ confirm: null, pendingOps: {}, copiedHint: null })).toBe(true)
+  })
+
+  /**
+   * Deferred-refresh scenario: simulate the transition from blocked → clear.
+   * We verify that shouldRefreshNow goes from false to true, and assert a
+   * refresh() call fires exactly once — modelled via a simple counter because
+   * the refresh logic lives inside React (not testable here without Ink).
+   */
+  it('triggers exactly one refresh when going from blocked to clear with refreshDeferred=true', () => {
+    let refreshCalls = 0
+    const refresh = () => { refreshCalls++ }
+
+    // State while confirm is active + deferred refresh waiting.
+    const row = makeRow({ id: 'r1', entityId: 'task-1' })
+    const action = { id: 'restart', op: 'restart' as const, label: 'restart', needsConfirm: true }
+    const blocked = { confirm: { row, action }, pendingOps: {} as Record<string, string>, copiedHint: null }
+
+    expect(shouldRefreshNow(blocked)).toBe(false)
+
+    // Simulate the confirm being dismissed (gate clears).
+    const cleared = { confirm: null, pendingOps: {} as Record<string, string>, copiedHint: null }
+
+    // The useEffect logic: when shouldRefreshNow && refreshDeferred, fire refresh once.
+    const refreshDeferred = true
+    if (shouldRefreshNow(cleared) && refreshDeferred) {
+      refresh()
+    }
+
+    expect(refreshCalls).toBe(1)
   })
 })
