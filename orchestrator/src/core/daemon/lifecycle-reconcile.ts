@@ -41,10 +41,16 @@ export async function reconcileTerminalTasks(
 
   // (b) Open action-queue rows whose origin_task_id is absent from tasks
   //     entirely — covers purged tasks that never emitted a lifecycle event.
+  //     Excludes 'draft-proposal' rows: their origin_task_id is a proposal id
+  //     (lives in the proposals table, not tasks). Those rows are evicted by
+  //     the per-event path in action-queue-repopulator (proposal.promoted /
+  //     dismissed / deleted). Including them here would incorrectly sweep live
+  //     draft proposals on every daemon restart.
   const purgedTaskRows = await client.execute(`
     SELECT DISTINCT origin_task_id
     FROM action_queue_items
     WHERE state = 'open'
+      AND kind != 'draft-proposal'
       AND origin_task_id IS NOT NULL
       AND origin_task_id NOT IN (SELECT id FROM tasks)
   `)
