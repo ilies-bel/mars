@@ -66,6 +66,7 @@ const insertTask = async (
   store: TaskStore,
   opts: {
     id: string
+    prompt?: string | null
     status: string
     origin_id?: string | null
     fix_for_task_id?: string | null
@@ -73,9 +74,10 @@ const insertTask = async (
   },
 ): Promise<void> => {
   await store.execute({
-    sql: 'INSERT INTO tasks (id, status, origin_id, fix_for_task_id, updated_at) VALUES (?, ?, ?, ?, ?)',
+    sql: 'INSERT INTO tasks (id, prompt, status, origin_id, fix_for_task_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
     args: [
       opts.id,
+      opts.prompt ?? null,
       opts.status,
       opts.origin_id ?? null,
       opts.fix_for_task_id ?? null,
@@ -883,5 +885,94 @@ describe('listCostPerArcArcs', () => {
     await insertTask(store, { id: 'arc', status: 'done' })
     const arcs = await listCostPerArcArcs(store, WINDOW)
     expect(arcs.every((a) => a.passed)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 15. dangling-origin arcs — originTaskId must resolve to a real member task
+// ---------------------------------------------------------------------------
+// A "dangling origin" is an arc whose arc_id (= COALESCE(origin_id, id))
+// has no backing `tasks` row. Member tasks carry origin_id = arc_id, but no
+// task has id = arc_id. All three list* helpers must return:
+//   • originTaskId pointing at an existing tasks row (not the dangling arc_id)
+//   • title non-empty when the member task has a prompt
+// ---------------------------------------------------------------------------
+
+describe('dangling-origin arcs', () => {
+  it('listCostPerArcArcs: originTaskId resolves to real member, title populated', async () => {
+    const store = await makeStore()
+    // 'dangling-slug' is the arc_id, but no task has id = 'dangling-slug'
+    await insertTask(store, {
+      id: 'member-task',
+      prompt: 'do something useful',
+      status: 'done',
+      origin_id: 'dangling-slug',
+    })
+    await insertSignal(store, { taskId: 'member-task', inputTokens: 500 })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+    expect(arcs).toHaveLength(1)
+    const arc = arcs[0]
+    expect(arc.arcId).toBe('dangling-slug')
+    // originTaskId must be a real tasks row, not the dangling arc_id
+    expect(arc.originTaskId).toBe('member-task')
+    expect(arc.title).toBe('do something useful')
+  })
+
+  it('listFailureRateArcs: originTaskId resolves to real member, title populated', async () => {
+    const store = await makeStore()
+    await insertTask(store, {
+      id: 'member-task',
+      prompt: 'do something useful',
+      status: 'done',
+      origin_id: 'dangling-slug',
+    })
+
+    const arcs = await listFailureRateArcs(store, WINDOW)
+    expect(arcs).toHaveLength(1)
+    const arc = arcs[0]
+    expect(arc.arcId).toBe('dangling-slug')
+    expect(arc.originTaskId).toBe('member-task')
+    expect(arc.title).toBe('do something useful')
+  })
+
+  it('listAutonomousArcs: originTaskId resolves to real member, title populated', async () => {
+    const store = await makeStore()
+    await insertTask(store, {
+      id: 'member-task',
+      prompt: 'do something useful',
+      status: 'done',
+      origin_id: 'dangling-slug',
+    })
+
+    const arcs = await listAutonomousArcs(store, WINDOW)
+    expect(arcs).toHaveLength(1)
+    const arc = arcs[0]
+    expect(arc.arcId).toBe('dangling-slug')
+    expect(arc.originTaskId).toBe('member-task')
+    expect(arc.title).toBe('do something useful')
+  })
+
+  it('non-dangling arc: originTaskId stays as the origin task id', async () => {
+    const store = await makeStore()
+    // origin task exists; recovery member task also exists
+    await insertTask(store, {
+      id: 'real-origin',
+      prompt: 'origin prompt',
+      status: 'done',
+      origin_id: null,
+    })
+    await insertTask(store, {
+      id: 'recovery-task',
+      prompt: 'recovery prompt',
+      status: 'done',
+      origin_id: 'real-origin',
+    })
+
+    const failureArcs = await listFailureRateArcs(store, WINDOW)
+    expect(failureArcs).toHaveLength(1)
+    expect(failureArcs[0].arcId).toBe('real-origin')
+    expect(failureArcs[0].originTaskId).toBe('real-origin')
+    expect(failureArcs[0].title).toBe('origin prompt')
   })
 })

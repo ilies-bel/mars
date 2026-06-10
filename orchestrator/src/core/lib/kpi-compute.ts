@@ -374,7 +374,10 @@ export async function listFailureRateArcs(
   const result = await surface.query({
     sql: `SELECT
             COALESCE(t.origin_id, t.id) AS arc_id,
-            COALESCE(t.origin_id, t.id) AS origin_task_id,
+            COALESCE(
+              (SELECT t_rep.id FROM tasks t_rep WHERE t_rep.id = COALESCE(t.origin_id, t.id) LIMIT 1),
+              MIN(t.id)
+            ) AS origin_task_id,
             MAX(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) AS has_done,
             MAX(CASE WHEN t.status = 'failed' THEN t.status ELSE t.status END) AS arc_status,
             COALESCE(
@@ -382,7 +385,12 @@ export async function listFailureRateArcs(
                FROM tasks t2
                WHERE t2.id = COALESCE(t.origin_id, t.id)
                LIMIT 1),
-              ''
+              (SELECT SUBSTR(t3.prompt, 1, 120)
+               FROM tasks t3
+               WHERE COALESCE(t3.origin_id, t3.id) = COALESCE(t.origin_id, t.id)
+                 AND t3.prompt IS NOT NULL
+               ORDER BY t3.id
+               LIMIT 1)
             ) AS title
           FROM tasks t
           WHERE t.status IN ('done', 'failed')
@@ -426,13 +434,21 @@ export async function listAutonomousArcs(
   const doneArcsResult = await surface.query({
     sql: `SELECT
             COALESCE(t.origin_id, t.id) AS arc_id,
-            COALESCE(t.origin_id, t.id) AS origin_task_id,
+            COALESCE(
+              (SELECT t_rep.id FROM tasks t_rep WHERE t_rep.id = COALESCE(t.origin_id, t.id) LIMIT 1),
+              MIN(t.id)
+            ) AS origin_task_id,
             COALESCE(
               (SELECT SUBSTR(t2.prompt, 1, 120)
                FROM tasks t2
                WHERE t2.id = COALESCE(t.origin_id, t.id)
                LIMIT 1),
-              ''
+              (SELECT SUBSTR(t3.prompt, 1, 120)
+               FROM tasks t3
+               WHERE COALESCE(t3.origin_id, t3.id) = COALESCE(t.origin_id, t.id)
+                 AND t3.prompt IS NOT NULL
+               ORDER BY t3.id
+               LIMIT 1)
             ) AS title
           FROM tasks t
           WHERE t.status = 'done'
@@ -570,6 +586,10 @@ export async function listCostPerArcArcs(
           )
           SELECT
             da.arc_id,
+            COALESCE(
+              (SELECT t_rep.id FROM tasks t_rep WHERE t_rep.id = da.arc_id LIMIT 1),
+              (SELECT t_rep.id FROM tasks t_rep WHERE COALESCE(t_rep.origin_id, t_rep.id) = da.arc_id ORDER BY t_rep.id LIMIT 1)
+            ) AS origin_task_id,
             COALESCE(SUM(
               CAST(json_extract(ate.payload, '$.usageSignals.inputTokens')        AS REAL) +
               CAST(json_extract(ate.payload, '$.usageSignals.outputTokens')       AS REAL) +
@@ -581,7 +601,12 @@ export async function listCostPerArcArcs(
                FROM tasks t2
                WHERE t2.id = da.arc_id
                LIMIT 1),
-              ''
+              (SELECT SUBSTR(t3.prompt, 1, 120)
+               FROM tasks t3
+               WHERE COALESCE(t3.origin_id, t3.id) = da.arc_id
+                 AND t3.prompt IS NOT NULL
+               ORDER BY t3.id
+               LIMIT 1)
             ) AS title
           FROM done_arcs da
           LEFT JOIN arc_te ate ON ate.arc_id = da.arc_id
@@ -592,12 +617,13 @@ export async function listCostPerArcArcs(
   return result.rows.map((row) => {
     const r = row as unknown as {
       arc_id: string
+      origin_task_id: string
       weighted_tokens: number
       title: string
     }
     return {
       arcId: r.arc_id,
-      originTaskId: r.arc_id,
+      originTaskId: r.origin_task_id,
       title: r.title ?? '',
       status: 'done',
       passed: true,
