@@ -21,6 +21,7 @@ import {
   removeProposalDependency,
   listProposalDependencies,
 } from '../../core/proposals'
+import { isDaemonReachable } from '../../core/daemon/paths'
 import { getDefaultTaskStore } from '../../core/store/task-store'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -223,6 +224,11 @@ const proposalPromote: Command = {
         { onSpawnNotice: spawnNoticeOut(deps.out) },
       )) as { proposalId: string; status: string }
       deps.out(`proposal ${r.proposalId} marked ${r.status}`)
+      if (!(await isDaemonReachable(deps.ctx.stateDir))) {
+        deps.err(
+          `proposal ${r.proposalId} promoted; the action-queue row will clear when the daemon next runs (daemon not running — run \`mars daemon start\`).`,
+        )
+      }
     } catch (error: unknown) {
       deps.err(errorMessage(error))
       return { code: 1 }
@@ -271,6 +277,11 @@ const proposalReject: Command = {
     try {
       const idea = await rejectProposal(id)
       deps.out(`rejected ${idea.id}`)
+      if (!(await isDaemonReachable(deps.ctx.stateDir))) {
+        deps.err(
+          `proposal ${idea.id} dismissed; the action-queue row will clear when the daemon next runs (daemon not running — run \`mars daemon start\`).`,
+        )
+      }
     } catch (error: unknown) {
       deps.err(errorMessage(error))
       return { code: 1 }
@@ -292,6 +303,11 @@ const proposalDelete: Command = {
     try {
       const deletedId = await deleteProposal(id)
       deps.out(`deleted ${deletedId}`)
+      if (!(await isDaemonReachable(deps.ctx.stateDir))) {
+        deps.err(
+          `proposal ${deletedId} deleted; the action-queue row will clear when the daemon next runs (daemon not running — run \`mars daemon start\`).`,
+        )
+      }
     } catch (error: unknown) {
       deps.err(errorMessage(error))
       return { code: 1 }

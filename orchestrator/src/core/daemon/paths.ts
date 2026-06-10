@@ -143,3 +143,47 @@ export const isDaemonAlive = async (): Promise<DaemonLiveness> => {
   }
   return { alive: false, reason: 'dead-pid' }
 }
+
+/**
+ * Probe whether the daemon's HTTP API is reachable by opening a short-timeout
+ * TCP connection to 127.0.0.1:<port> using the port recorded in the http.port
+ * state file.
+ *
+ * Returns false when:
+ * - the http.port file is absent (daemon was never started or cleaned up)
+ * - the file content is not a valid port number
+ * - the TCP connection is refused or times out (stale port file after crash)
+ *
+ * A stale http.port file — left behind after an unclean daemon exit — is
+ * correctly detected as unreachable because we open an actual TCP connection
+ * rather than checking file existence alone.
+ */
+export const isDaemonReachable = async (stateDir: string): Promise<boolean> => {
+  const httpPortFile = resolve(stateDir, 'http.port')
+  if (!existsSync(httpPortFile)) return false
+  let port: number
+  try {
+    const raw = readFileSync(httpPortFile, 'utf8').trim()
+    port = Number.parseInt(raw, 10)
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) return false
+  } catch {
+    return false
+  }
+  return new Promise((resolveFn) => {
+    const TIMEOUT_MS = 1000
+    const sock = createConnection(port, '127.0.0.1')
+    const timer = setTimeout(() => {
+      sock.destroy()
+      resolveFn(false)
+    }, TIMEOUT_MS)
+    sock.once('connect', () => {
+      clearTimeout(timer)
+      sock.end()
+      resolveFn(true)
+    })
+    sock.once('error', () => {
+      clearTimeout(timer)
+      resolveFn(false)
+    })
+  })
+}
