@@ -2,6 +2,13 @@ import type { Client } from '@libsql/client'
 import { initActionQueue, resolveAllRowsForTask } from '../lib/action-queue'
 
 /**
+ * Kinds whose `origin_task_id` points to a row in `proposals`, not `tasks`.
+ * Extend this list when a new proposal-origin kind is added; the orphan checks
+ * below automatically route to the correct origin table.
+ */
+const PROPOSAL_ORIGIN_KINDS = ['draft-proposal'] as const
+
+/**
  * Boot-time reconciliation: closes Action-queue rows left open while the
  * daemon was down.
  *
@@ -10,10 +17,16 @@ import { initActionQueue, resolveAllRowsForTask } from '../lib/action-queue'
  *     (ADR-0027/0028). Closes the gap when the daemon crashed between the
  *     terminal-status write and the Invalidator draining its cursor.
  *
- * (b) For each open action_queue_items row whose origin_task_id is not present
- *     in tasks at all (task was purged without an event): resolves the row.
- *     Covers historical residue from purges that pre-date the lifecycle-event
- *     plumbing.
+ * (b) Kind-aware orphan sweep. Two scoped queries — one per origin-table:
+ *
+ *   b-task: Open rows for task-origin kinds (every kind except
+ *     PROPOSAL_ORIGIN_KINDS) whose origin_task_id is absent from `tasks`
+ *     entirely. Covers purged tasks that pre-date the lifecycle-event plumbing.
+ *
+ *   b-proposal: Open rows for proposal-origin kinds (currently 'draft-proposal')
+ *     whose origin_task_id is absent from `proposals`. Correctly sweeps rows
+ *     for proposals that were deleted while the daemon was down, while leaving
+ *     rows for still-live draft proposals untouched.
  *
  * Idempotent — safe to call on every daemon start. Returns counts for logging.
  */
@@ -39,25 +52,40 @@ export async function reconcileTerminalTasks(
     rowsResolved++
   }
 
-  // (b) Open action-queue rows whose origin_task_id is absent from tasks
-  //     entirely — covers purged tasks that never emitted a lifecycle event.
-  //     Excludes 'draft-proposal' rows: their origin_task_id is a proposal id
-  //     (lives in the proposals table, not tasks). Those rows are evicted by
-  //     the per-event path in action-queue-repopulator (proposal.promoted /
-  //     dismissed / deleted). Including them here would incorrectly sweep live
-  //     draft proposals on every daemon restart.
-  const purgedTaskRows = await client.execute(`
+  const proposalKindList = PROPOSAL_ORIGIN_KINDS.map(k => `'${k}'`).join(', ')
+
+  // (b-task) Open rows for task-origin kinds whose origin_task_id is absent
+  //          from tasks entirely — purged tasks without a lifecycle event.
+  const taskOriginOrphans = await client.execute(`
     SELECT DISTINCT origin_task_id
     FROM action_queue_items
     WHERE state = 'open'
-      AND kind != 'draft-proposal'
+      AND kind NOT IN (${proposalKindList})
       AND origin_task_id IS NOT NULL
       AND origin_task_id NOT IN (SELECT id FROM tasks)
   `)
 
-  for (const row of purgedTaskRows.rows) {
+  for (const row of taskOriginOrphans.rows) {
     const taskId = (row as unknown as { origin_task_id: string }).origin_task_id
     await resolveAllRowsForTask(taskId)
+    rowsResolved++
+  }
+
+  // (b-proposal) Open rows for proposal-origin kinds whose origin_task_id is
+  //              absent from proposals — proposals deleted while the daemon was
+  //              down. A still-live proposal's row is left open.
+  const proposalOriginOrphans = await client.execute(`
+    SELECT DISTINCT origin_task_id
+    FROM action_queue_items
+    WHERE state = 'open'
+      AND kind IN (${proposalKindList})
+      AND origin_task_id IS NOT NULL
+      AND origin_task_id NOT IN (SELECT id FROM proposals)
+  `)
+
+  for (const row of proposalOriginOrphans.rows) {
+    const originId = (row as unknown as { origin_task_id: string }).origin_task_id
+    await resolveAllRowsForTask(originId)
     rowsResolved++
   }
 
