@@ -384,3 +384,7 @@ _Avoid_: agent backend, vendor, model provider, cli backend
 **Dangling origin**:
 An Arc whose originId has no backing Task row: member tasks carry it as origin_id but no Task has it as its own id, so any lookup keyed on the originId (task detail, arc title) finds nothing.
 _Avoid_: orphan origin, missing origin task, headless arc
+
+**TUI**:
+Terminal-native display surface for Mars, a thin adapter over the application-service layer (ADR-0055) — peer to the web UI and the CLI; its inaugural screen is the action queue.
+_Avoid_: terminal ui, curses app, ncurses, text ui, console ui
