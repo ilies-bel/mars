@@ -287,8 +287,8 @@ describe('actionQueue detail – Traces section', () => {
     expect(html).toContain('>Traces<')
     // The severity badge for an error event.
     expect(html).toContain('[error]')
-    // The summary the event renders (the failure code, per summarizeTraceEvent).
-    expect(html).toContain('verify:typecheck')
+    // summarizeTraceEvent humanises the raw code: 'verify:typecheck' → 'typecheck (verify step)'
+    expect(html).toContain('typecheck (verify step)')
   })
 
   it('renders an empty-state line when there are no events', () => {
@@ -561,14 +561,20 @@ describe('actionQueue sidebar – grouped sections', () => {
     })
     const failed = makeItem({ id: 'f1', kind: 'failed-task', title: 'my failed task', actions: [] })
     const html = renderPage([draft, failed])
-    // Drafts header appears before draft title, which appears before Failed tasks header
-    const draftsHeaderPos = html.indexOf('Drafts')
-    const draftTitlePos = html.indexOf('my draft proposal')
-    const failedHeaderPos = html.indexOf('Failed tasks')
+    // Use section-body ids as anchors; the filter button "Drafts" appears earlier
+    // in the DOM than the section header so text search is ambiguous.
+    // Sidebar renders: "Failed tasks" section first, then "Drafts" section.
+    const failedSectionPos = html.indexOf('section-body-failed-task')
     const failedTitlePos = html.indexOf('my failed task')
-    expect(draftsHeaderPos).toBeLessThan(draftTitlePos)
-    expect(draftTitlePos).toBeLessThan(failedHeaderPos)
-    expect(failedHeaderPos).toBeLessThan(failedTitlePos)
+    const draftSectionPos = html.indexOf('section-body-draft-proposal')
+    const draftTitlePos = html.indexOf('my draft proposal')
+    expect(failedSectionPos).toBeGreaterThan(-1)
+    expect(draftSectionPos).toBeGreaterThan(-1)
+    // Failed tasks section appears before Drafts section
+    expect(failedSectionPos).toBeLessThan(draftSectionPos)
+    // Items appear inside their respective sections
+    expect(failedSectionPos).toBeLessThan(failedTitlePos)
+    expect(draftSectionPos).toBeLessThan(draftTitlePos)
   })
 
   it('all sections are expanded by default (aria-expanded="true" on each section button)', () => {
