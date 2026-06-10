@@ -55,7 +55,7 @@ const makeProvider = (
   spawnArgv: ({ model, sessionId }: { model?: string; sessionId?: string } = {}) => [
     'claude',
     ...(model ? ['--model', model] : []),
-    ...(sessionId ? ['--resume', sessionId] : []),
+    ...(sessionId ? ['--session-id', sessionId] : []),
   ],
   feedPrompt: async () => {},
   doneSignal: {

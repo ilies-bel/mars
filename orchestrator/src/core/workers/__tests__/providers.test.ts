@@ -28,15 +28,26 @@ describe('PROVIDERS registry', () => {
     expect(argv).not.toContain('--model')
   })
 
-  it("'claude' provider spawnArgv includes '--resume' when sessionId is supplied", () => {
-    const argv = PROVIDERS.claude.spawnArgv({ sessionId: 'sess-abc123' })
-    expect(argv).toContain('--resume')
-    expect(argv).toContain('sess-abc123')
+  it("'claude' provider spawnArgv includes '--session-id' with a valid UUID when sessionId is supplied", () => {
+    // Non-UUID task ids (e.g. "mars-abc123") must be converted to a valid UUID
+    // because `claude --session-id` rejects non-UUID values.
+    const argv = PROVIDERS.claude.spawnArgv({ sessionId: 'mars-abc123' })
+    expect(argv).toContain('--session-id')
+    const idx = (argv as readonly string[]).indexOf('--session-id')
+    expect(argv[idx + 1]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
   })
 
-  it("'claude' provider spawnArgv omits '--resume' when sessionId is absent", () => {
+  it("'claude' provider spawnArgv passes a UUID sessionId through unchanged", () => {
+    const uuid = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+    const argv = PROVIDERS.claude.spawnArgv({ sessionId: uuid })
+    expect(argv).toContain('--session-id')
+    const idx = (argv as readonly string[]).indexOf('--session-id')
+    expect(argv[idx + 1]).toBe(uuid)
+  })
+
+  it("'claude' provider spawnArgv omits '--session-id' when sessionId is absent", () => {
     const argv = PROVIDERS.claude.spawnArgv({})
-    expect(argv).not.toContain('--resume')
+    expect(argv).not.toContain('--session-id')
   })
 
   it("'claude' provider feedPrompt writes the prompt body then the CR terminator", async () => {

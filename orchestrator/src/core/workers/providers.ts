@@ -2,6 +2,7 @@
 // feeds prompts to an agent CLI. Each Provider bundles the spawn argv
 // builder, the prompt-feed method, and an optional done-signal hook.
 
+import { createHash } from 'node:crypto'
 import { installClaudeStopHook, waitForClaudeDone } from './claude-done-signal'
 
 export type ProviderName = 'claude' | 'gemini' | 'codex'
@@ -71,11 +72,42 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
     // Argv for interactive (non-headless) claude invocations under the native
     // TTY harness. No `-p` flag — the agent runs in interactive mode and
     // receives the task prompt via feedPrompt below.
-    spawnArgv: ({ sessionId, model }: SpawnOpts): readonly string[] => [
-      'claude',
-      ...(model ? ['--model', model] : []),
-      ...(sessionId ? ['--resume', sessionId] : []),
-    ],
+    //
+    // `--session-id <uuid>` starts a brand-new named session rather than
+    // reopening an existing one. The previous `--resume <id>` flag opened the
+    // interactive resume picker when the id was unknown to claude, causing the
+    // done-signal to never fire and the run to be killed at timeout (exit 137).
+    //
+    // claude requires `--session-id` to be a valid RFC 4122 UUID. Orchestrator
+    // task ids (e.g. "mars-586e6998") are not UUIDs, so we derive a
+    // deterministic UUID v5 (SHA-1 over the DNS namespace + task-id bytes)
+    // rather than storing a separate mapping. A task id that already looks like
+    // a UUID is passed through unchanged.
+    spawnArgv: ({ sessionId, model }: SpawnOpts): readonly string[] => {
+      let sessionUUID: string | undefined
+      if (sessionId) {
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
+          // Already a valid UUID — pass through unchanged.
+          sessionUUID = sessionId
+        } else {
+          // Derive UUID v5: SHA-1(DNS-namespace-bytes || task-id-bytes).
+          const h = createHash('sha1')
+            .update(Buffer.from('6ba7b8109dad11d180b400c04fd430c8', 'hex')) // DNS namespace
+            .update(sessionId)
+            .digest()
+          h[6] = (h[6] & 0x0f) | 0x50 // version 5
+          h[8] = (h[8] & 0x3f) | 0x80 // variant RFC 4122
+          sessionUUID = [h.slice(0, 4), h.slice(4, 6), h.slice(6, 8), h.slice(8, 10), h.slice(10, 16)]
+            .map((b) => b.toString('hex'))
+            .join('-')
+        }
+      }
+      return [
+        'claude',
+        ...(model ? ['--model', model] : []),
+        ...(sessionUUID ? ['--session-id', sessionUUID] : []),
+      ]
+    },
     // Write the prompt into the running pty followed by the submit key
     // sequence (CR) so the interactive harness starts execution.
     // The delay between writing the prompt text and the Enter keypress is
