@@ -46,7 +46,13 @@ const toDetectorSnapshot = (row: PersistedSnapshot): DriftSnapshot => {
       polarity: 'higher-is-better',
     }
   }
-  return { isConfident: row.low_confidence === 0, metrics }
+  // A snapshot is globally confident only when all four per-KPI flags are clear.
+  const isConfident =
+    row.failure_rate_low_confidence === 0 &&
+    row.cost_per_arc_low_confidence === 0 &&
+    row.autonomous_completion_rate_low_confidence === 0 &&
+    row.recovery_success_rate_low_confidence === 0
+  return { isConfident, metrics }
 }
 
 /** Read the two most recently taken kpi_snapshots rows as [current, prior]. */
@@ -55,7 +61,10 @@ const readLatestTwoSnapshots = async (
 ): Promise<[PersistedSnapshot, PersistedSnapshot] | null> => {
   const result = await store.query({
     sql: `SELECT id, taken_at, window_start, window_end,
-                 sample_count, low_confidence,
+                 cost_per_arc_sample_count, cost_per_arc_low_confidence,
+                 failure_rate_sample_count, failure_rate_low_confidence,
+                 autonomous_completion_rate_sample_count, autonomous_completion_rate_low_confidence,
+                 recovery_success_rate_sample_count, recovery_success_rate_low_confidence,
                  cost_per_arc_p50, cost_per_arc_p90,
                  failure_rate, autonomous_completion_rate, recovery_success_rate
           FROM kpi_snapshots

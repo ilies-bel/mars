@@ -1275,19 +1275,24 @@ export const migrateQueueSchema = async (): Promise<void> => {
     `CREATE INDEX IF NOT EXISTS idx_events_id ON events(id)`,
   )
   // ADR-0038: KPI snapshot table. One row per operator-triggered snapshot.
-  // Holds a 7-day rolling window of the four-KPI vector. failure_rate is
-  // populated in slice 1; other KPI columns (cost_per_arc_*, autonomous_
-  // completion_rate, recovery_success_rate) are reserved as NULL until later
-  // slices fill them. No composite health-score column is permitted (ADR-0038
-  // explicitly forbids it).
+  // Holds a 7-day rolling window of the four-KPI vector. Each KPI carries its
+  // own sample_count and low_confidence pair so that trust signals are
+  // measured over the population that KPI was actually computed over.
+  // No composite health-score column is permitted (ADR-0038 explicitly forbids it).
   await c.execute(`
     CREATE TABLE IF NOT EXISTS kpi_snapshots (
       id TEXT PRIMARY KEY,
       taken_at TEXT NOT NULL,
       window_start TEXT NOT NULL,
       window_end TEXT NOT NULL,
-      sample_count INTEGER NOT NULL,
-      low_confidence INTEGER NOT NULL,
+      cost_per_arc_sample_count INTEGER NOT NULL,
+      cost_per_arc_low_confidence INTEGER NOT NULL,
+      failure_rate_sample_count INTEGER NOT NULL,
+      failure_rate_low_confidence INTEGER NOT NULL,
+      autonomous_completion_rate_sample_count INTEGER NOT NULL,
+      autonomous_completion_rate_low_confidence INTEGER NOT NULL,
+      recovery_success_rate_sample_count INTEGER NOT NULL,
+      recovery_success_rate_low_confidence INTEGER NOT NULL,
       cost_per_arc_p50 REAL,
       cost_per_arc_p90 REAL,
       failure_rate REAL,

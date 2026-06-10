@@ -35,8 +35,14 @@ const KPI_SNAPSHOTS_DDL = `
     taken_at TEXT NOT NULL,
     window_start TEXT NOT NULL,
     window_end TEXT NOT NULL,
-    sample_count INTEGER NOT NULL,
-    low_confidence INTEGER NOT NULL,
+    cost_per_arc_sample_count INTEGER NOT NULL,
+    cost_per_arc_low_confidence INTEGER NOT NULL,
+    failure_rate_sample_count INTEGER NOT NULL,
+    failure_rate_low_confidence INTEGER NOT NULL,
+    autonomous_completion_rate_sample_count INTEGER NOT NULL,
+    autonomous_completion_rate_low_confidence INTEGER NOT NULL,
+    recovery_success_rate_sample_count INTEGER NOT NULL,
+    recovery_success_rate_low_confidence INTEGER NOT NULL,
     cost_per_arc_p50 REAL,
     cost_per_arc_p90 REAL,
     failure_rate REAL,
@@ -114,8 +120,14 @@ const insertSnapshot = async (
     taken_at: string
     window_start: string
     window_end: string
-    sample_count: number
-    low_confidence: number
+    failure_rate_sample_count?: number
+    failure_rate_low_confidence?: number
+    cost_per_arc_sample_count?: number
+    cost_per_arc_low_confidence?: number
+    autonomous_completion_rate_sample_count?: number
+    autonomous_completion_rate_low_confidence?: number
+    recovery_success_rate_sample_count?: number
+    recovery_success_rate_low_confidence?: number
     failure_rate?: number | null
     cost_per_arc_p50?: number | null
     cost_per_arc_p90?: number | null
@@ -126,17 +138,26 @@ const insertSnapshot = async (
   await store.execute({
     sql: `INSERT INTO kpi_snapshots (
             id, taken_at, window_start, window_end,
-            sample_count, low_confidence,
+            cost_per_arc_sample_count, cost_per_arc_low_confidence,
+            failure_rate_sample_count, failure_rate_low_confidence,
+            autonomous_completion_rate_sample_count, autonomous_completion_rate_low_confidence,
+            recovery_success_rate_sample_count, recovery_success_rate_low_confidence,
             cost_per_arc_p50, cost_per_arc_p90,
             failure_rate, autonomous_completion_rate, recovery_success_rate
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       s.id,
       s.taken_at,
       s.window_start,
       s.window_end,
-      s.sample_count,
-      s.low_confidence,
+      s.cost_per_arc_sample_count ?? 0,
+      s.cost_per_arc_low_confidence ?? 0,
+      s.failure_rate_sample_count ?? 0,
+      s.failure_rate_low_confidence ?? 0,
+      s.autonomous_completion_rate_sample_count ?? 0,
+      s.autonomous_completion_rate_low_confidence ?? 0,
+      s.recovery_success_rate_sample_count ?? 0,
+      s.recovery_success_rate_low_confidence ?? 0,
       s.cost_per_arc_p50 ?? null,
       s.cost_per_arc_p90 ?? null,
       s.failure_rate ?? null,
@@ -204,7 +225,7 @@ describe('takeKpiSnapshot — failure_rate column', () => {
     // 1 failed / 3 total = 0.333...
     expect(snapshot.failure_rate).not.toBeNull()
     expect(snapshot.failure_rate!).toBeCloseTo(1 / 3, 5)
-    expect(snapshot.sample_count).toBe(3)
+    expect(snapshot.failure_rate_sample_count).toBe(3)
   })
 
   it('sets failure_rate to null when no arcs are in the window', async () => {
@@ -214,7 +235,7 @@ describe('takeKpiSnapshot — failure_rate column', () => {
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
     expect(snapshot.failure_rate).toBeNull()
-    expect(snapshot.sample_count).toBe(0)
+    expect(snapshot.failure_rate_sample_count).toBe(0)
   })
 })
 
@@ -223,7 +244,7 @@ describe('takeKpiSnapshot — failure_rate column', () => {
 // ---------------------------------------------------------------------------
 
 describe('takeKpiSnapshot — low_confidence flag', () => {
-  it('sets low_confidence=1 when sample_count < sampleFloor (default 5)', async () => {
+  it('sets failure_rate_low_confidence=1 when failure_rate_sample_count < sampleFloor (default 5)', async () => {
     const store = await makeStore()
     // 4 tasks — just below the default floor of 5
     await insertTask(store, { id: 't1', status: 'done' })
@@ -233,11 +254,11 @@ describe('takeKpiSnapshot — low_confidence flag', () => {
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
-    expect(snapshot.low_confidence).toBe(1)
-    expect(snapshot.sample_count).toBe(4)
+    expect(snapshot.failure_rate_low_confidence).toBe(1)
+    expect(snapshot.failure_rate_sample_count).toBe(4)
   })
 
-  it('sets low_confidence=0 when sample_count equals sampleFloor', async () => {
+  it('sets failure_rate_low_confidence=0 when failure_rate_sample_count equals sampleFloor', async () => {
     const store = await makeStore()
     // Exactly 5 tasks — exactly at the default floor
     await insertTask(store, { id: 't1', status: 'done' })
@@ -248,11 +269,11 @@ describe('takeKpiSnapshot — low_confidence flag', () => {
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
-    expect(snapshot.low_confidence).toBe(0)
-    expect(snapshot.sample_count).toBe(5)
+    expect(snapshot.failure_rate_low_confidence).toBe(0)
+    expect(snapshot.failure_rate_sample_count).toBe(5)
   })
 
-  it('sets low_confidence=0 when sample_count > sampleFloor', async () => {
+  it('sets failure_rate_low_confidence=0 when failure_rate_sample_count > sampleFloor', async () => {
     const store = await makeStore()
     // 6 tasks — above the default floor
     await insertTask(store, { id: 't1', status: 'done' })
@@ -264,23 +285,23 @@ describe('takeKpiSnapshot — low_confidence flag', () => {
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
-    expect(snapshot.low_confidence).toBe(0)
-    expect(snapshot.sample_count).toBe(6)
+    expect(snapshot.failure_rate_low_confidence).toBe(0)
+    expect(snapshot.failure_rate_sample_count).toBe(6)
   })
 
-  it('honours a custom sampleFloor', async () => {
+  it('honours a custom sampleFloor applied uniformly to all four KPIs', async () => {
     const store = await makeStore()
     await insertTask(store, { id: 't1', status: 'done' })
     await insertTask(store, { id: 't2', status: 'done' })
 
-    // Custom floor of 3 → 2 samples < 3 → low_confidence=1
+    // Custom floor of 3 → 2 samples < 3 → failure_rate_low_confidence=1
     const snapshot = await takeKpiSnapshot({
       surface: store,
       now: NOW,
       sampleFloor: 3,
     })
 
-    expect(snapshot.low_confidence).toBe(1)
+    expect(snapshot.failure_rate_low_confidence).toBe(1)
   })
 })
 
@@ -422,14 +443,20 @@ describe('readKpiWindowComparison', () => {
   it('(a) returns numeric deltas when both windows are full-confidence', async () => {
     const store = await makeStore()
 
-    // Prior window snapshot — full confidence, distinct KPI values
+    // Prior window snapshot — full confidence (all per-KPI flags=0), distinct KPI values
     await insertSnapshot(store, {
       id: randomUUID(),
       taken_at: CMP_PRIOR_END,
       window_start: CMP_PRIOR_START,
       window_end: CMP_PRIOR_END,
-      sample_count: 10,
-      low_confidence: 0,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      cost_per_arc_sample_count: 10,
+      cost_per_arc_low_confidence: 0,
+      autonomous_completion_rate_sample_count: 10,
+      autonomous_completion_rate_low_confidence: 0,
+      recovery_success_rate_sample_count: 10,
+      recovery_success_rate_low_confidence: 0,
       failure_rate: 0.2,
       cost_per_arc_p50: 1000,
       cost_per_arc_p90: 3000,
@@ -441,8 +468,14 @@ describe('readKpiWindowComparison', () => {
       taken_at: CMP_NOW,
       window_start: CMP_CURRENT_START,
       window_end: CMP_NOW,
-      sample_count: 10,
-      low_confidence: 0,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      cost_per_arc_sample_count: 10,
+      cost_per_arc_low_confidence: 0,
+      autonomous_completion_rate_sample_count: 10,
+      autonomous_completion_rate_low_confidence: 0,
+      recovery_success_rate_sample_count: 10,
+      recovery_success_rate_low_confidence: 0,
       failure_rate: 0.1,
       cost_per_arc_p50: 1200,
       cost_per_arc_p90: 3500,
@@ -478,30 +511,42 @@ describe('readKpiWindowComparison', () => {
     })
   })
 
-  it('(b) suppresses all deltas when prior window has low_confidence=1 (sample_count=3)', async () => {
+  it('(b) suppresses all deltas when prior window has all per-KPI low_confidence=1 (sample_count=3)', async () => {
     const store = await makeStore()
 
-    // Prior window snapshot — low confidence (3 samples < default floor 5)
+    // Prior window snapshot — all KPIs low confidence (3 samples < default floor 5)
     await insertSnapshot(store, {
       id: randomUUID(),
       taken_at: CMP_PRIOR_END,
       window_start: CMP_PRIOR_START,
       window_end: CMP_PRIOR_END,
-      sample_count: 3,
-      low_confidence: 1,
+      failure_rate_sample_count: 3,
+      failure_rate_low_confidence: 1,
+      cost_per_arc_sample_count: 3,
+      cost_per_arc_low_confidence: 1,
+      autonomous_completion_rate_sample_count: 3,
+      autonomous_completion_rate_low_confidence: 1,
+      recovery_success_rate_sample_count: 3,
+      recovery_success_rate_low_confidence: 1,
       failure_rate: 0.33,
       cost_per_arc_p50: 800,
       cost_per_arc_p90: 2500,
     })
 
-    // Current window snapshot — full confidence
+    // Current window snapshot — all KPIs full confidence
     await insertSnapshot(store, {
       id: randomUUID(),
       taken_at: CMP_NOW,
       window_start: CMP_CURRENT_START,
       window_end: CMP_NOW,
-      sample_count: 10,
-      low_confidence: 0,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      cost_per_arc_sample_count: 10,
+      cost_per_arc_low_confidence: 0,
+      autonomous_completion_rate_sample_count: 10,
+      autonomous_completion_rate_low_confidence: 0,
+      recovery_success_rate_sample_count: 10,
+      recovery_success_rate_low_confidence: 0,
       failure_rate: 0.1,
       cost_per_arc_p50: 1000,
       cost_per_arc_p90: 3000,
@@ -534,8 +579,14 @@ describe('readKpiWindowComparison', () => {
       taken_at: CMP_NOW,
       window_start: CMP_CURRENT_START,
       window_end: CMP_NOW,
-      sample_count: 10,
-      low_confidence: 0,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      cost_per_arc_sample_count: 10,
+      cost_per_arc_low_confidence: 0,
+      autonomous_completion_rate_sample_count: 10,
+      autonomous_completion_rate_low_confidence: 0,
+      recovery_success_rate_sample_count: 10,
+      recovery_success_rate_low_confidence: 0,
       failure_rate: 0.1,
     })
 
@@ -648,8 +699,6 @@ describe('readKpiSeries', () => {
         taken_at: t,
         window_start: t,
         window_end: t,
-        sample_count: 10,
-        low_confidence: 0,
         failure_rate: 0.1,
       })
     }
@@ -668,8 +717,6 @@ describe('readKpiSeries', () => {
       taken_at: '2026-01-01T00:00:00Z',
       window_start: '2025-12-25T00:00:00Z',
       window_end: '2026-01-01T00:00:00Z',
-      sample_count: 0,
-      low_confidence: 1,
       failure_rate: null,
       autonomous_completion_rate: null,
       recovery_success_rate: null,
@@ -692,13 +739,100 @@ describe('readKpiSeries', () => {
         taken_at: t,
         window_start: t,
         window_end: t,
-        sample_count: 5,
-        low_confidence: 0,
         failure_rate: 0.1,
       })
     }
     const series = await readKpiSeries({ store })
     const takenAts = series.failure_rate.map((p) => p.takenAt)
     expect(takenAts).toEqual([...takenAts].sort())
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 10. Per-KPI sample_count and low_confidence — independent confidence flags
+// ---------------------------------------------------------------------------
+
+describe('takeKpiSnapshot — per-KPI confidence flags are independent', () => {
+  it('thin cost sample flags cost_per_arc_low_confidence=1 while failure_rate_low_confidence=0', async () => {
+    const store = await makeStore()
+    // 8 done/failed arcs → failure_rate population = 8 (≥ default sampleFloor 5)
+    for (let i = 1; i <= 6; i++) {
+      await insertTask(store, { id: `task-done-${i}`, status: 'done' })
+    }
+    await insertTask(store, { id: 'task-failed-1', status: 'failed' })
+    await insertTask(store, { id: 'task-failed-2', status: 'failed' })
+
+    // Only 2 done arcs have cost signals → cost_per_arc population = 2 (< 5)
+    await insertSignal(store, { taskId: 'task-done-1', inputTokens: 1000 })
+    await insertSignal(store, { taskId: 'task-done-2', inputTokens: 2000 })
+
+    const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
+
+    // failure_rate population: 8 done+failed arcs → high confidence
+    expect(snapshot.failure_rate_sample_count).toBe(8)
+    expect(snapshot.failure_rate_low_confidence).toBe(0)
+
+    // cost_per_arc population: 2 done arcs with signals → low confidence
+    expect(snapshot.cost_per_arc_sample_count).toBe(2)
+    expect(snapshot.cost_per_arc_low_confidence).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 11. buildDeltas per-KPI suppression — cost_per_arc and failure_rate are independent
+// ---------------------------------------------------------------------------
+
+describe('readKpiWindowComparison — per-KPI delta suppression', () => {
+  const CMP_NOW = '2026-01-14T12:00:00Z'
+  const CMP_CURRENT_START = '2026-01-07T12:00:00Z'
+  const CMP_PRIOR_END = CMP_CURRENT_START
+  const CMP_PRIOR_START = '2025-12-31T12:00:00Z'
+
+  it('suppresses cost_per_arc deltas based on cost_per_arc confidence while leaving failure_rate unsuppressed', async () => {
+    const store = await makeStore()
+
+    // Prior snapshot: cost_per_arc_low_confidence=1, failure_rate_low_confidence=0
+    await insertSnapshot(store, {
+      id: randomUUID(),
+      taken_at: CMP_PRIOR_END,
+      window_start: CMP_PRIOR_START,
+      window_end: CMP_PRIOR_END,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      cost_per_arc_sample_count: 2,
+      cost_per_arc_low_confidence: 1,
+      failure_rate: 0.2,
+      cost_per_arc_p50: 1000,
+      cost_per_arc_p90: 3000,
+    })
+
+    // Current snapshot: all per-KPI flags = full confidence
+    await insertSnapshot(store, {
+      id: randomUUID(),
+      taken_at: CMP_NOW,
+      window_start: CMP_CURRENT_START,
+      window_end: CMP_NOW,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      cost_per_arc_sample_count: 10,
+      cost_per_arc_low_confidence: 0,
+      failure_rate: 0.1,
+      cost_per_arc_p50: 1200,
+      cost_per_arc_p90: 3500,
+    })
+
+    const result = await readKpiWindowComparison({ now: CMP_NOW, store })
+
+    expect(result.current).not.toBeNull()
+    expect(result.prior).not.toBeNull()
+
+    // failure_rate: both snapshots have failure_rate_low_confidence=0 → delta computed
+    expect(result.deltas.failure_rate.lowConfidenceSuppressed).toBe(false)
+    expect(result.deltas.failure_rate.value).not.toBeNull()
+    expect(result.deltas.failure_rate.value!).toBeCloseTo(-0.1, 5)
+
+    // cost_per_arc: prior has cost_per_arc_low_confidence=1 → deltas suppressed
+    expect(result.deltas.cost_per_arc_p50).toEqual({ value: null, lowConfidenceSuppressed: true })
+    expect(result.deltas.cost_per_arc_p90).toEqual({ value: null, lowConfidenceSuppressed: true })
   })
 })

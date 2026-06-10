@@ -9,10 +9,12 @@ import {
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store.js'
 
 /**
- * One persisted row in the kpi_snapshots table. Columns for KPIs not yet
- * implemented (cost_per_arc_*, autonomous_completion_rate,
- * recovery_success_rate) are NULL in this slice and will be filled by later
- * slices.
+ * One persisted row in the kpi_snapshots table.
+ *
+ * Each KPI carries its own sample_count and low_confidence pair so that the
+ * trust signal reflects the population the KPI was actually measured over
+ * (e.g. cost_per_arc only counts done arcs with trace signals, which can be
+ * a much smaller set than the failure_rate population of done+failed arcs).
  *
  * ADR-0038 explicitly forbids a composite/rollup health-score column —
  * this interface has none.
@@ -22,9 +24,22 @@ export interface KpiSnapshot {
   taken_at: string
   window_start: string
   window_end: string
-  sample_count: number
-  /** 1 when sample_count < sampleFloor; 0 otherwise */
-  low_confidence: number
+  /** Number of done-Arc samples contributing to the cost_per_arc distribution */
+  cost_per_arc_sample_count: number
+  /** 1 when cost_per_arc_sample_count < sampleFloor; 0 otherwise */
+  cost_per_arc_low_confidence: number
+  /** Total arcs (done + failed) in the window */
+  failure_rate_sample_count: number
+  /** 1 when failure_rate_sample_count < sampleFloor; 0 otherwise */
+  failure_rate_low_confidence: number
+  /** Count of Arcs reaching done in the window */
+  autonomous_completion_rate_sample_count: number
+  /** 1 when autonomous_completion_rate_sample_count < sampleFloor; 0 otherwise */
+  autonomous_completion_rate_low_confidence: number
+  /** Count of origin Tasks with a recovery Task that reached terminal status in-window */
+  recovery_success_rate_sample_count: number
+  /** 1 when recovery_success_rate_sample_count < sampleFloor; 0 otherwise */
+  recovery_success_rate_low_confidence: number
   cost_per_arc_p50: number | null
   cost_per_arc_p90: number | null
   failure_rate: number | null
@@ -79,27 +94,30 @@ export async function takeKpiSnapshot(
   const windowStart = new Date(windowStartMs).toISOString()
 
   const window: KpiWindow = { windowStart, windowEnd }
-  const { value: failureRate, sampleCount } = await computeFailureRate(
+  const { value: failureRate, sampleCount: frSampleCount } = await computeFailureRate(
     surface,
     window,
   )
-  const { p50: costP50, p90: costP90 } = await computeCostPerArcDistribution(
-    surface,
-    window,
-  )
-  const { value: autonomousCompletionRate } = await computeAutonomousCompletionRate(
-    surface,
-    window,
-  )
-  const { value: recoverySuccessRate } = await computeRecoverySuccessRate(surface, window)
+  const { p50: costP50, p90: costP90, sampleCount: costSampleCount } =
+    await computeCostPerArcDistribution(surface, window)
+  const { value: autonomousCompletionRate, sampleCount: acrSampleCount } =
+    await computeAutonomousCompletionRate(surface, window)
+  const { value: recoverySuccessRate, sampleCount: rsrSampleCount } =
+    await computeRecoverySuccessRate(surface, window)
 
   const snapshot: KpiSnapshot = {
     id: randomUUID(),
     taken_at: now,
     window_start: windowStart,
     window_end: windowEnd,
-    sample_count: sampleCount,
-    low_confidence: sampleCount < sampleFloor ? 1 : 0,
+    failure_rate_sample_count: frSampleCount,
+    failure_rate_low_confidence: frSampleCount < sampleFloor ? 1 : 0,
+    cost_per_arc_sample_count: costSampleCount,
+    cost_per_arc_low_confidence: costSampleCount < sampleFloor ? 1 : 0,
+    autonomous_completion_rate_sample_count: acrSampleCount,
+    autonomous_completion_rate_low_confidence: acrSampleCount < sampleFloor ? 1 : 0,
+    recovery_success_rate_sample_count: rsrSampleCount,
+    recovery_success_rate_low_confidence: rsrSampleCount < sampleFloor ? 1 : 0,
     cost_per_arc_p50: costP50,
     cost_per_arc_p90: costP90,
     failure_rate: failureRate,
@@ -110,17 +128,26 @@ export async function takeKpiSnapshot(
   await surface.execute({
     sql: `INSERT INTO kpi_snapshots (
             id, taken_at, window_start, window_end,
-            sample_count, low_confidence,
+            cost_per_arc_sample_count, cost_per_arc_low_confidence,
+            failure_rate_sample_count, failure_rate_low_confidence,
+            autonomous_completion_rate_sample_count, autonomous_completion_rate_low_confidence,
+            recovery_success_rate_sample_count, recovery_success_rate_low_confidence,
             cost_per_arc_p50, cost_per_arc_p90,
             failure_rate, autonomous_completion_rate, recovery_success_rate
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       snapshot.id,
       snapshot.taken_at,
       snapshot.window_start,
       snapshot.window_end,
-      snapshot.sample_count,
-      snapshot.low_confidence,
+      snapshot.cost_per_arc_sample_count,
+      snapshot.cost_per_arc_low_confidence,
+      snapshot.failure_rate_sample_count,
+      snapshot.failure_rate_low_confidence,
+      snapshot.autonomous_completion_rate_sample_count,
+      snapshot.autonomous_completion_rate_low_confidence,
+      snapshot.recovery_success_rate_sample_count,
+      snapshot.recovery_success_rate_low_confidence,
       snapshot.cost_per_arc_p50,
       snapshot.cost_per_arc_p90,
       snapshot.failure_rate,
@@ -138,8 +165,14 @@ function rowToSnapshot(raw: unknown): KpiSnapshot {
     taken_at: string
     window_start: string
     window_end: string
-    sample_count: number
-    low_confidence: number
+    cost_per_arc_sample_count: number
+    cost_per_arc_low_confidence: number
+    failure_rate_sample_count: number
+    failure_rate_low_confidence: number
+    autonomous_completion_rate_sample_count: number
+    autonomous_completion_rate_low_confidence: number
+    recovery_success_rate_sample_count: number
+    recovery_success_rate_low_confidence: number
     cost_per_arc_p50: number | null
     cost_per_arc_p90: number | null
     failure_rate: number | null
@@ -151,8 +184,14 @@ function rowToSnapshot(raw: unknown): KpiSnapshot {
     taken_at: r.taken_at,
     window_start: r.window_start,
     window_end: r.window_end,
-    sample_count: r.sample_count,
-    low_confidence: r.low_confidence,
+    cost_per_arc_sample_count: r.cost_per_arc_sample_count,
+    cost_per_arc_low_confidence: r.cost_per_arc_low_confidence,
+    failure_rate_sample_count: r.failure_rate_sample_count,
+    failure_rate_low_confidence: r.failure_rate_low_confidence,
+    autonomous_completion_rate_sample_count: r.autonomous_completion_rate_sample_count,
+    autonomous_completion_rate_low_confidence: r.autonomous_completion_rate_low_confidence,
+    recovery_success_rate_sample_count: r.recovery_success_rate_sample_count,
+    recovery_success_rate_low_confidence: r.recovery_success_rate_low_confidence,
     cost_per_arc_p50: r.cost_per_arc_p50,
     cost_per_arc_p90: r.cost_per_arc_p90,
     failure_rate: r.failure_rate,
@@ -171,10 +210,7 @@ export async function readLatestKpiSnapshot(
 ): Promise<KpiSnapshot | null> {
   const s = store ?? (await getDefaultTaskStore())
   const result = await s.query({
-    sql: `SELECT id, taken_at, window_start, window_end,
-                 sample_count, low_confidence,
-                 cost_per_arc_p50, cost_per_arc_p90,
-                 failure_rate, autonomous_completion_rate, recovery_success_rate
+    sql: `SELECT ${SNAPSHOT_COLS}
           FROM kpi_snapshots
           ORDER BY taken_at DESC
           LIMIT 1`,
@@ -259,6 +295,18 @@ const KPI_KEYS: ReadonlyArray<keyof KpiDeltas> = [
   'cost_per_arc_p90',
 ]
 
+/**
+ * Maps each KPI delta key to the low_confidence column that governs it.
+ * cost_per_arc_p50 and cost_per_arc_p90 share the cost_per_arc confidence pair.
+ */
+const KPI_CONFIDENCE_COL: Record<keyof KpiDeltas, string> = {
+  failure_rate: 'failure_rate_low_confidence',
+  autonomous_completion_rate: 'autonomous_completion_rate_low_confidence',
+  recovery_success_rate: 'recovery_success_rate_low_confidence',
+  cost_per_arc_p50: 'cost_per_arc_low_confidence',
+  cost_per_arc_p90: 'cost_per_arc_low_confidence',
+}
+
 function buildDeltas(
   current: KpiSnapshot | null,
   prior: KpiSnapshot | null,
@@ -267,14 +315,19 @@ function buildDeltas(
   for (const key of KPI_KEYS) {
     if (current === null || prior === null) {
       deltas[key] = { value: null, lowConfidenceSuppressed: false }
-    } else if (current.low_confidence === 1 || prior.low_confidence === 1) {
-      deltas[key] = { value: null, lowConfidenceSuppressed: true }
     } else {
-      const cv = current[key] as number | null
-      const pv = prior[key] as number | null
-      deltas[key] = {
-        value: cv !== null && pv !== null ? cv - pv : null,
-        lowConfidenceSuppressed: false,
+      const col = KPI_CONFIDENCE_COL[key]
+      const currentConf = (current as unknown as Record<string, number>)[col]
+      const priorConf = (prior as unknown as Record<string, number>)[col]
+      if (currentConf === 1 || priorConf === 1) {
+        deltas[key] = { value: null, lowConfidenceSuppressed: true }
+      } else {
+        const cv = current[key] as number | null
+        const pv = prior[key] as number | null
+        deltas[key] = {
+          value: cv !== null && pv !== null ? cv - pv : null,
+          lowConfidenceSuppressed: false,
+        }
       }
     }
   }
@@ -282,7 +335,10 @@ function buildDeltas(
 }
 
 const SNAPSHOT_COLS = `id, taken_at, window_start, window_end,
-               sample_count, low_confidence,
+               cost_per_arc_sample_count, cost_per_arc_low_confidence,
+               failure_rate_sample_count, failure_rate_low_confidence,
+               autonomous_completion_rate_sample_count, autonomous_completion_rate_low_confidence,
+               recovery_success_rate_sample_count, recovery_success_rate_low_confidence,
                cost_per_arc_p50, cost_per_arc_p90,
                failure_rate, autonomous_completion_rate, recovery_success_rate`
 

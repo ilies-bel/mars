@@ -54,7 +54,7 @@ const KPI_KEYS: KpiKey[] = [
   'recovery_success_rate',
 ]
 
-/** Column on KpiSnapshot that corresponds to each KpiKey. */
+/** Column on KpiSnapshot that corresponds to each KpiKey's value. */
 type SnapshotCol = keyof Pick<
   KpiSnapshot,
   | 'cost_per_arc_p50'
@@ -68,6 +68,38 @@ const KPI_SNAPSHOT_COL: Record<KpiKey, SnapshotCol> = {
   failure_rate: 'failure_rate',
   autonomous_completion_rate: 'autonomous_completion_rate',
   recovery_success_rate: 'recovery_success_rate',
+}
+
+/** Column on KpiSnapshot that carries each KpiKey's low_confidence flag. */
+type SnapshotConfidenceCol = keyof Pick<
+  KpiSnapshot,
+  | 'cost_per_arc_low_confidence'
+  | 'failure_rate_low_confidence'
+  | 'autonomous_completion_rate_low_confidence'
+  | 'recovery_success_rate_low_confidence'
+>
+
+const KPI_CONFIDENCE_COL: Record<KpiKey, SnapshotConfidenceCol> = {
+  cost_per_arc: 'cost_per_arc_low_confidence',
+  failure_rate: 'failure_rate_low_confidence',
+  autonomous_completion_rate: 'autonomous_completion_rate_low_confidence',
+  recovery_success_rate: 'recovery_success_rate_low_confidence',
+}
+
+/** Column on KpiSnapshot that carries each KpiKey's sample count. */
+type SnapshotSampleCol = keyof Pick<
+  KpiSnapshot,
+  | 'cost_per_arc_sample_count'
+  | 'failure_rate_sample_count'
+  | 'autonomous_completion_rate_sample_count'
+  | 'recovery_success_rate_sample_count'
+>
+
+const KPI_SAMPLE_COL: Record<KpiKey, SnapshotSampleCol> = {
+  cost_per_arc: 'cost_per_arc_sample_count',
+  failure_rate: 'failure_rate_sample_count',
+  autonomous_completion_rate: 'autonomous_completion_rate_sample_count',
+  recovery_success_rate: 'recovery_success_rate_sample_count',
 }
 
 const ZERO_RECORD = (key: KpiKey): KpiRecord => ({
@@ -99,11 +131,13 @@ export const listKpis = async (store?: TaskStore): Promise<KpiRecord[]> => {
 
   return KPI_KEYS.map((key) => {
     const col = KPI_SNAPSHOT_COL[key]
+    const confCol = KPI_CONFIDENCE_COL[key]
+    const sampleCol = KPI_SAMPLE_COL[key]
     const currentColValue = current[col] as number | null
     const priorColValue = prior !== null ? (prior[col] as number | null) : null
 
-    // lowConfidence when the snapshot itself is low-confidence OR the column is NULL
-    const lowConfidence = current.low_confidence === 1 || currentColValue === null
+    // lowConfidence when the KPI's own low_confidence flag is set OR the column is NULL
+    const lowConfidence = current[confCol] === 1 || currentColValue === null
 
     if (currentColValue === null) {
       return ZERO_RECORD(key)
@@ -111,11 +145,11 @@ export const listKpis = async (store?: TaskStore): Promise<KpiRecord[]> => {
 
     const currentValue = currentColValue
 
-    // Only emit a meaningful prior/delta when both windows are trustworthy
+    // Only emit a meaningful prior/delta when both windows are trustworthy for this KPI
     const canDelta =
       prior !== null &&
-      prior.low_confidence === 0 &&
-      current.low_confidence === 0 &&
+      prior[confCol] === 0 &&
+      current[confCol] === 0 &&
       priorColValue !== null
 
     const priorValue = canDelta ? (priorColValue as number) : currentValue
@@ -126,7 +160,7 @@ export const listKpis = async (store?: TaskStore): Promise<KpiRecord[]> => {
       currentValue,
       priorValue,
       delta,
-      sampleCount: current.sample_count,
+      sampleCount: current[sampleCol],
       lowConfidence,
     }
   })
