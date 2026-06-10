@@ -5,6 +5,7 @@ import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
 import { OriginTree } from '@/widgets/OriginTree'
 import ArcChainRail from '@/widgets/ArcChainRail'
+import { ArcGraph } from '@/widgets/ArcGraph'
 import {
   fetchEvents,
   fetchProposalDetail,
@@ -22,7 +23,6 @@ import type {
   ActionDescriptor,
   ActionQueueItem,
   ActionQueueResolution,
-  DagNode,
   TraceEvent,
 } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
@@ -127,46 +127,6 @@ export const ActionQueueRow = memo(({
     </div>
   )
 })
-
-// ---- DAG sub-panel ----
-
-interface DagListProps {
-  label: string
-  nodes: DagNode[]
-  /** When provided, each node renders as a clickable link opening that task's detail. */
-  onNodeClick?: (id: string) => void
-}
-
-const DagList = ({ label, nodes, onNodeClick }: DagListProps) => {
-  if (nodes.length === 0) return null
-  return (
-    <div>
-      <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-        {label}
-      </dt>
-      <dd>
-        <ul className="flex flex-col gap-1">
-          {nodes.map((n) => (
-            <li key={n.id} className="text-fg">
-              {onNodeClick ? (
-                <button
-                  type="button"
-                  onClick={() => onNodeClick(n.id)}
-                  className="text-iron underline decoration-iron/40 hover:decoration-iron"
-                >
-                  {n.id}
-                </button>
-              ) : (
-                <span className="text-iron">{n.id}</span>
-              )}{' '}
-              <span className="text-iron/60">({n.status})</span> {n.summary}
-            </li>
-          ))}
-        </ul>
-      </dd>
-    </div>
-  )
-}
 
 // ---- Resolution block (read-only; shown for resolved history rows) ----
 
@@ -775,16 +735,11 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
                   <dd className="text-fg">{item.dag.proposalId}</dd>
                 </div>
               )}
-              <DagList label="Waits on (blockers)" nodes={item.dag.blockers} />
-              <DagList
-                label="Waited on by (blocking)"
-                nodes={item.dag.blocking}
-              />
-              {/* Recovery descendants: clickable so operator can drill into the fix task */}
-              <DagList
-                label="Recovery descendants"
-                nodes={item.dag.descendants}
-                onNodeClick={isRealFailedTask ? openTask : undefined}
+              {/* Arc graph replaces the old flat DagList text sections */}
+              <ArcGraph
+                dag={item.dag}
+                entityId={item.entityId}
+                entityStatus={isRealFailedTask ? 'failed' : 'running'}
               />
             </>
           )}

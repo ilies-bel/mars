@@ -173,11 +173,18 @@ export const dagNodeSchema = z.object({
   summary: z.string(),
 })
 
+export const dagEdgeSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  kind: z.enum(['blocks', 'recovers']),
+})
+
 export const dagContextSchema = z.object({
   blockers: z.array(dagNodeSchema),
   blocking: z.array(dagNodeSchema),
   descendants: z.array(dagNodeSchema),
   proposalId: z.string().nullable(),
+  edges: z.array(dagEdgeSchema),
 })
 
 export const actionDescriptorSchema = z.object({
@@ -621,6 +628,7 @@ export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
 export type ActionDescriptor = z.infer<typeof actionDescriptorSchema>
 export type AlertChainNode = z.infer<typeof alertChainNodeSchema>
 export type DagNode = z.infer<typeof dagNodeSchema>
+export type DagEdge = z.infer<typeof dagEdgeSchema>
 export type DagContext = z.infer<typeof dagContextSchema>
 export type TaskStatus = z.infer<typeof taskStatusSchema>
 export type ProposalSource = z.infer<typeof proposalSourceSchema>
