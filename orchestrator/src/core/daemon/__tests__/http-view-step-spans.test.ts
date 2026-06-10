@@ -73,8 +73,8 @@ describe('GET /view/step-spans', () => {
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(
       makeDeps({
-        viewStepSpans: async (originId) => {
-          receivedOriginId = originId
+        viewStepSpans: async ({ originId }) => {
+          receivedOriginId = originId ?? null
           return { spans: [] }
         },
       }),

@@ -525,21 +525,32 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /view/step-spans?originId=<id> — step timeline for a task arc.
+    // GET /view/step-spans?originId=<id>&taskId=<id> — step timeline for a task arc.
     // Pairs step_started / step_ended events from the trace store by
     // (workflowInstanceId, stepName). Steps with no matching step_ended have
     // outcome='running'. Ordered by startedAt ascending (workflow order).
-    // The daemon is the sole reader of the trace store; the UI proxies here
-    // rather than opening the trace store directly. Pure read; no draining gate.
+    // At least one of originId or taskId must be supplied; both may be supplied
+    // together to narrow results further. The daemon is the sole reader of the
+    // trace store; the UI proxies here rather than opening the trace store
+    // directly. Pure read; no draining gate.
     if (req.method === 'GET' && req.url && req.url.startsWith('/view/step-spans')) {
       const parsed = new URL(req.url, 'http://localhost')
-      const originId = parsed.searchParams.get('originId')
-      if (!originId) {
-        sendJson(res, 400, { error: 'originId query parameter is required' })
+      const originId = parsed.searchParams.get('originId') ?? undefined
+      const taskId = parsed.searchParams.get('taskId') ?? undefined
+      if (originId === '') {
+        sendJson(res, 400, { error: 'originId must not be empty when supplied' })
+        return
+      }
+      if (taskId === '') {
+        sendJson(res, 400, { error: 'taskId must not be empty when supplied' })
+        return
+      }
+      if (!originId && !taskId) {
+        sendJson(res, 400, { error: 'at least one of originId or taskId query parameters is required' })
         return
       }
       deps.appServices
-        .viewStepSpans(originId)
+        .viewStepSpans({ originId, taskId })
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return

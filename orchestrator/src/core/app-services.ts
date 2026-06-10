@@ -118,7 +118,7 @@ export interface AppServices {
   viewProposals: () => Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[] }>
   viewProposal: (id: string) => Promise<Proposal | null>
   // ── trace-derived views ─────────────────────────────────────────────────────
-  viewStepSpans: (originId: string) => Promise<{ spans: StepSpan[] }>
+  viewStepSpans: (params: { originId?: string; taskId?: string }) => Promise<{ spans: StepSpan[] }>
   viewSessions: (agentName: string) => Promise<{ sessions: Session[] }>
   viewTerminalEvents: () => Promise<{ events: TerminalEvent[] }>
   viewReleaseNotes: () => Promise<{ entries: ReleaseNoteEntry[] }>
@@ -153,10 +153,10 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     )
   }
 
-  const viewStepSpans: AppServices['viewStepSpans'] = async (originId) => {
+  const viewStepSpans: AppServices['viewStepSpans'] = async ({ originId, taskId }) => {
     const [started, ended] = await Promise.all([
-      traceStore.query({ originId, kind: ['step_started'], limit: 1000 }),
-      traceStore.query({ originId, kind: ['step_ended'], limit: 1000 }),
+      traceStore.query({ originId, taskId, kind: ['step_started'], limit: 1000 }),
+      traceStore.query({ originId, taskId, kind: ['step_ended'], limit: 1000 }),
     ])
 
     // Map (workflowInstanceId, stepName) → ended event for O(n) pairing.
