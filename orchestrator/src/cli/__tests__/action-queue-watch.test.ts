@@ -131,6 +131,16 @@ describe('resolveDaemonBaseUrl', () => {
       else process.env['MARS_UI_URL'] = prev
     }
   })
+
+  it('re-reads the file on each call — picks up a new port after http.port is rewritten', () => {
+    // Simulates a daemon bounce: the new daemon writes a fresh port to http.port.
+    // The reconnect loop must call resolveDaemonBaseUrl() each time, not cache the result.
+    writeFileSync(join(stateDir, 'http.port'), '12345')
+    expect(resolveDaemonBaseUrl(stateDir)).toBe('http://127.0.0.1:12345')
+    // Daemon restarts, rewrites the port file with a new ephemeral port.
+    writeFileSync(join(stateDir, 'http.port'), '54321')
+    expect(resolveDaemonBaseUrl(stateDir)).toBe('http://127.0.0.1:54321')
+  })
 })
 
 // ─── resolveActionUrl ─────────────────────────────────────────────────────────

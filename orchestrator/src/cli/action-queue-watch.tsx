@@ -395,14 +395,13 @@ export function shouldRefreshNow(
   )
 }
 
-const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) => {
+const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
   const { exit } = useApp()
   const [state, setState] = useState<AppState>({
     rows: [],
     cursor: 0,
     detailId: null,
-    error:
-      baseUrl === null ? 'daemon not running — start with `mars daemon start`' : null,
+    error: null,
     live: false,
     now: Date.now(),
     pendingOps: {},
@@ -413,7 +412,11 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
   })
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (!baseUrl) return
+    const baseUrl = resolveDaemonBaseUrl(stateDir)
+    if (!baseUrl) {
+      setState((prev) => ({ ...prev, error: 'daemon not running — start with `mars daemon start`', live: false }))
+      return
+    }
     try {
       const res = await fetch(`${baseUrl}/view/action-queue?filter=open`)
       if (!res.ok) throw new Error(`GET /view/action-queue: HTTP ${res.status}`)
@@ -443,7 +446,7 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
         refreshDeferred: false,
       }))
     }
-  }, [baseUrl])
+  }, [stateDir])
 
   // Initial fetch on mount.
   useEffect(() => {
@@ -453,14 +456,17 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
   // SSE stream: re-fetch the full projection whenever the daemon emits an
   // 'action-queue' or 'tasks' event. Reconnects automatically after drops.
   useEffect(() => {
-    if (!baseUrl) return
-
     let cancelled = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let abortCtrl: AbortController | null = null
 
     const connect = async (): Promise<void> => {
       if (cancelled) return
+      const baseUrl = resolveDaemonBaseUrl(stateDir)
+      if (!baseUrl) {
+        if (!cancelled) reconnectTimer = setTimeout(() => void connect(), 2000)
+        return
+      }
       abortCtrl = new AbortController()
       try {
         const res = await fetch(`${baseUrl}/view/stream`, {
@@ -513,7 +519,7 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
       abortCtrl?.abort()
       if (reconnectTimer !== null) clearTimeout(reconnectTimer)
     }
-  }, [baseUrl, refresh])
+  }, [stateDir, refresh])
 
   // When all refresh gates clear and a deferred refresh is pending, fire exactly one refresh.
   useEffect(() => {
@@ -529,11 +535,12 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
       row: ActionQueueRow,
       action: ActionQueueRow['actions'][number],
     ): Promise<void> => {
-      if (!baseUrl) return
       if (action.op === 'copy') {
         setState((prev) => ({ ...prev, copiedHint: action.hint ?? '', actionError: null }))
         return
       }
+      const baseUrl = resolveDaemonBaseUrl(stateDir)
+      if (!baseUrl) return
       const outcome = resolveActionOutcome(baseUrl, row.entityId, action, true)
       if (outcome.kind !== 'fire') return
       const { url } = outcome
@@ -574,7 +581,7 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
         }))
       }
     },
-    [baseUrl],
+    [stateDir],
   )
 
   const selected = state.rows[state.cursor] ?? null
@@ -822,7 +829,5 @@ const ActionQueueWatchApp: React.FC<{ baseUrl: string | null }> = ({ baseUrl }) 
 }
 
 export const runActionQueueWatch = (): void => {
-  const stateDir = getStateDir()
-  const baseUrl = resolveDaemonBaseUrl(stateDir)
-  render(<ActionQueueWatchApp baseUrl={baseUrl} />)
+  render(<ActionQueueWatchApp stateDir={getStateDir()} />)
 }
