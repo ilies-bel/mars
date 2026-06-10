@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import type { Mock } from 'bun:test'
 import {
   ApiError,
+  ackActionQueueItem,
+  dismissActionQueueItem,
   fetchActionQueue,
   fetchEvents,
   fetchOrigins,
@@ -17,6 +19,7 @@ import {
   fetchTasks,
   fetchProposalsPayload,
   fetchStaleWorktreesPayload,
+  resolveActionQueueItem,
   startProject,
   triggerSelfUpdate,
 } from './api'
@@ -731,5 +734,163 @@ describe('triggerSelfUpdate', () => {
       }),
     )
     await expect(triggerSelfUpdate()).rejects.toThrow('self-update failed')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Mutation wrappers — ApiError classification
+//
+// The server proxy returns structured errorCodes on failure:
+//   503 + { errorCode: 'NO_DAEMON' }     → daemon port file missing
+//   502 + { errorCode: 'PROXY_FAILED' }  → stale port / ECONNREFUSED
+// The mutation wrappers must throw ApiError (not plain Error) so callers
+// can render the right remedy UI.
+// ---------------------------------------------------------------------------
+
+describe('resolveActionQueueItem — ApiError classification', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('throws ApiError kind:unreachable on 503 NO_DAEMON', async () => {
+    fetchSpy.mockResolvedValue(
+      json({ ok: false, errorCode: 'NO_DAEMON' }, 503),
+    )
+    try {
+      await resolveActionQueueItem('aq-1')
+      throw new Error('expected to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('unreachable')
+      expect((err as ApiError).status).toBe(503)
+    }
+  })
+
+  it('throws ApiError kind:stale-daemon on 502 PROXY_FAILED', async () => {
+    fetchSpy.mockResolvedValue(
+      json({ ok: false, errorCode: 'PROXY_FAILED' }, 502),
+    )
+    try {
+      await resolveActionQueueItem('aq-1')
+      throw new Error('expected to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('stale-daemon')
+      expect((err as ApiError).status).toBe(502)
+    }
+  })
+
+  it('throws ApiError kind:other on an unknown errorCode', async () => {
+    fetchSpy.mockResolvedValue(
+      json({ ok: false, errorCode: 'INTERNAL_ERROR' }, 500),
+    )
+    try {
+      await resolveActionQueueItem('aq-1')
+      throw new Error('expected to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('other')
+      expect((err as ApiError).status).toBe(500)
+    }
+  })
+
+  it('falls back to ApiError kind:other when the body is not JSON', async () => {
+    fetchSpy.mockResolvedValue(plainText('Service Unavailable', 503))
+    try {
+      await resolveActionQueueItem('aq-1')
+      throw new Error('expected to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('other')
+      expect((err as ApiError).status).toBe(503)
+    }
+  })
+
+  it('resolves without throwing on a 200 ok response', async () => {
+    fetchSpy.mockResolvedValue(new Response(null, { status: 200 }))
+    await expect(resolveActionQueueItem('aq-1')).resolves.toBeUndefined()
+  })
+})
+
+describe('ackActionQueueItem — ApiError classification', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('throws ApiError kind:unreachable on 503 NO_DAEMON', async () => {
+    fetchSpy.mockResolvedValue(
+      json({ ok: false, errorCode: 'NO_DAEMON' }, 503),
+    )
+    try {
+      await ackActionQueueItem('aq-1')
+      throw new Error('expected to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('unreachable')
+      expect((err as ApiError).status).toBe(503)
+    }
+  })
+
+  it('throws ApiError kind:stale-daemon on 502 PROXY_FAILED', async () => {
+    fetchSpy.mockResolvedValue(
+      json({ ok: false, errorCode: 'PROXY_FAILED' }, 502),
+    )
+    try {
+      await ackActionQueueItem('aq-1')
+      throw new Error('expected to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('stale-daemon')
+      expect((err as ApiError).status).toBe(502)
+    }
+  })
+})
+
+describe('dismissActionQueueItem — ApiError classification', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('throws ApiError kind:unreachable on 503 NO_DAEMON', async () => {
+    fetchSpy.mockResolvedValue(
+      json({ ok: false, errorCode: 'NO_DAEMON' }, 503),
+    )
+    try {
+      await dismissActionQueueItem('aq-1')
+      throw new Error('expected to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('unreachable')
+      expect((err as ApiError).status).toBe(503)
+    }
+  })
+
+  it('throws ApiError kind:stale-daemon on 502 PROXY_FAILED', async () => {
+    fetchSpy.mockResolvedValue(
+      json({ ok: false, errorCode: 'PROXY_FAILED' }, 502),
+    )
+    try {
+      await dismissActionQueueItem('aq-1')
+      throw new Error('expected to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('stale-daemon')
+      expect((err as ApiError).status).toBe(502)
+    }
   })
 })

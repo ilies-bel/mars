@@ -161,46 +161,57 @@ export const fetchActionQueueHistory = async (
   return fetchJson(path, actionQueueHistoryResponseSchema)
 }
 
+/** Map a server-side proxy errorCode to an ApiErrorKind. */
+const errorCodeToKind = (errorCode: unknown): ApiErrorKind => {
+  if (errorCode === 'NO_DAEMON') return 'unreachable'
+  if (errorCode === 'PROXY_FAILED') return 'stale-daemon'
+  return 'other'
+}
+
+/**
+ * Parse the error body from a non-ok mutation response and throw an `ApiError`
+ * with a classified kind. The server proxy sends `{ errorCode }` on daemon
+ * connectivity failures; anything else falls back to kind `'other'`.
+ */
+const throwMutationError = async (path: string, r: Response): Promise<never> => {
+  const body = await r.json().catch(() => null) as { errorCode?: unknown } | null
+  const errorCode = body?.errorCode
+  const kind = errorCodeToKind(errorCode)
+  throw new ApiError(
+    `POST ${path} → ${r.status}${errorCode ? ` (${String(errorCode)})` : ''}`,
+    kind,
+    r.status,
+  )
+}
+
 export const dismissActionQueueItem = async (id: string): Promise<void> => {
-  const r = await fetch(`${BASE}/api/action-queue/dismiss`, {
+  const path = '/api/action-queue/dismiss'
+  const r = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
   })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new Error(
-      `POST /api/action-queue/dismiss → ${r.status}${text ? `: ${text}` : ''}`,
-    )
-  }
+  if (!r.ok) await throwMutationError(path, r)
 }
 
 export const ackActionQueueItem = async (id: string): Promise<void> => {
-  const r = await fetch(`${BASE}/api/action-queue/ack`, {
+  const path = '/api/action-queue/ack'
+  const r = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
   })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new Error(
-      `POST /api/action-queue/ack → ${r.status}${text ? `: ${text}` : ''}`,
-    )
-  }
+  if (!r.ok) await throwMutationError(path, r)
 }
 
 export const resolveActionQueueItem = async (id: string): Promise<void> => {
-  const r = await fetch(`${BASE}/api/action-queue/resolve`, {
+  const path = '/api/action-queue/resolve'
+  const r = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
   })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new Error(
-      `POST /api/action-queue/resolve → ${r.status}${text ? `: ${text}` : ''}`,
-    )
-  }
+  if (!r.ok) await throwMutationError(path, r)
 }
 
 /**
