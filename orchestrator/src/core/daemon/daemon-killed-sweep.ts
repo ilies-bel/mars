@@ -52,6 +52,13 @@ export const detectAndRaiseDaemonKilled = async (): Promise<string[]> => {
   for (const task of failed) {
     if (task.failureSignature !== DAEMON_KILLED_SIGNATURE) continue
 
+    // Defensive guard: listTasks('failed') already filters by status, but an
+    // explicit check here protects against a requeue-then-restart race where
+    // the daemon kill-sweep fires after a task has been requeued (status no
+    // longer 'failed') but before the loop exits. A restarted task must never
+    // get a new daemon-killed action-queue row.
+    if (task.status !== 'failed') continue
+
     const id = await raiseActionQueueItem({
       kind: DAEMON_KILLED_ACTION_QUEUE_KIND,
       category: 'daemon',

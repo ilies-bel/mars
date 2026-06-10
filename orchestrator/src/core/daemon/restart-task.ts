@@ -80,6 +80,11 @@ export const coreRestartTask = async (
   // are themselves not yet done; queuing it would violate the blocker
   // invariant (status='queued' requires ALL blockers to be 'done').
   const hasBlockers = await hasIncompleteBlockers(id)
+  // Clear all failure markers so a requeued task is never mistakenly tagged as
+  // daemon-killed (or any other failure). A non-terminal task (queued/blocked)
+  // must not carry a non-empty failureSignature — the daemon-killed sweep keys
+  // off that field and would re-raise an orphaned action-queue row on the next
+  // daemon start if this stale value were left behind.
   await updateTask(id, {
     status: hasBlockers ? 'blocked' : 'queued',
     branch: null,
@@ -87,5 +92,7 @@ export const coreRestartTask = async (
     claudeSessionId: null,
     error: null,
     failedPhase: null,
+    failureSignature: null,
+    failureReasonCode: null,
   })
 }

@@ -27,6 +27,10 @@ interface RetryBudgetModule {
   DAEMON_KILLED_SIGNATURE: typeof import('../../lib/retry-budget').DAEMON_KILLED_SIGNATURE
 }
 
+interface DaemonKilledSweepModule {
+  detectAndRaiseDaemonKilled: typeof import('../daemon-killed-sweep').detectAndRaiseDaemonKilled
+}
+
 /** Spin up a minimal git repo so the queue initialises cleanly. */
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-killed-sig-test-'))
@@ -97,5 +101,45 @@ describe('daemon-killed failure signature', () => {
     const row = await q.getTask(task.id)
     expect(row).not.toBeNull()
     expect(row!.failureSignature).toBeNull()
+  })
+
+  it('detectAndRaiseDaemonKilled does not raise a row for a task that was requeued (status no longer failed)', async () => {
+    process.env.MARS_REPO = repo
+
+    const { DAEMON_KILLED_SIGNATURE } = (await import(
+      '../../lib/retry-budget'
+    )) as RetryBudgetModule
+
+    const q = (await import('../../queue')) as unknown as QueueModule
+    await q.migrateQueueSchema()
+
+    // Seed a daemon-killed failed task then simulate a successful requeue
+    // (the combined effect of coreRestartTask after Fix 1: status flips to
+    // 'queued' AND failureSignature is cleared to null).
+    const task = await q.enqueueTask('was daemon-killed', undefined, {
+      skipTriage: true,
+    })
+    await q.updateTask(task.id, {
+      status: 'failed',
+      error: 'killed by `mars daemon kill`',
+      failureSignature: DAEMON_KILLED_SIGNATURE,
+    })
+    // Requeue (mirrors what coreRestartTask now does — clears signature too).
+    await q.updateTask(task.id, {
+      status: 'queued',
+      error: null,
+      failureSignature: null,
+      failureReasonCode: null,
+    })
+
+    const { detectAndRaiseDaemonKilled } = (await import(
+      '../daemon-killed-sweep'
+    )) as DaemonKilledSweepModule
+
+    // A requeued task must not produce a new daemon-killed action-queue row —
+    // either because the sweep only queries failed tasks (primary guard) or
+    // because the explicit status check in the loop catches any race.
+    const raised = await detectAndRaiseDaemonKilled()
+    expect(raised).toHaveLength(0)
   })
 })

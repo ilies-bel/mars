@@ -137,6 +137,38 @@ describe('HTTP action endpoint', () => {
     expect(updated?.status).toBe('queued')
   })
 
+  // ── Failure-signature clearing on restart ────────────────────────────────
+
+  it('coreRestartTask clears failureSignature on requeue so no non-terminal task carries daemon-killed signature', async () => {
+    const { queue, restartTask } = await loadModules(repo)
+
+    const task = await queue.enqueueTask('daemon-killed task', undefined, {
+      skipTriage: true,
+    })
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'killed by `mars daemon kill`',
+      failureSignature: 'daemon-killed',
+    })
+
+    // Confirm signature is present before restart.
+    const before = await queue.getTask(task.id)
+    expect(before?.failureSignature).toBe('daemon-killed')
+
+    await restartTask.coreRestartTask(
+      task.id,
+      new Set(['failed']),
+      new InMemoryStore(),
+    )
+
+    const after = await queue.getTask(task.id)
+    expect(after?.status).toBe('queued')
+    // A non-terminal (queued) task must never carry a daemon-killed signature —
+    // the stale signature is what the daemon-killed sweep keys off, so leaving it
+    // causes the sweep to re-raise an orphaned action-queue row on next daemon start.
+    expect(after?.failureSignature).toBeNull()
+  })
+
   // ── Tracer bullet: the happy path ─────────────────────────────────────────
 
   it('transitions a failed task to queued on POST /actions/restart/:id', async () => {
