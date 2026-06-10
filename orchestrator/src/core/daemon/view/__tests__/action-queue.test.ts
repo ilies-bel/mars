@@ -502,6 +502,129 @@ describe('buildActionQueueView — dag.descendants enrichment', () => {
   })
 })
 
+// ── dag.edges inter-node edges ────────────────────────────────────────────────
+
+describe('buildActionQueueView — dag.edges inter-node edges', () => {
+  /**
+   * Arc:
+   *   outer-task ──blocks──> blocker-a ──blocks──> origin (failed, entity)
+   *                 blocker-a ──blocks──> blocker-b ──blocks──> origin
+   *   origin ──blocks──> child
+   *   fix-task ──recovers──> origin
+   *   outer-task is connected to blocker-a but is NOT in the dag node set.
+   */
+  const makeScenario = () => {
+    const stateStore = makeStateStore([
+      makeRow({ payload: { taskId: 'origin' } }),
+    ])
+    const taskStore = makeTaskStore([
+      makeTask({
+        id: 'origin',
+        status: 'failed',
+        blockedBy: ['blocker-a', 'blocker-b'],
+        failureSignature: null,
+        prompt: 'Origin task',
+      }),
+      makeTask({
+        id: 'blocker-a',
+        status: 'queued',
+        blockedBy: ['outer-task'],
+        prompt: 'Blocker A',
+      }),
+      makeTask({
+        id: 'blocker-b',
+        status: 'queued',
+        blockedBy: ['blocker-a'],
+        prompt: 'Blocker B',
+      }),
+      makeTask({
+        id: 'child',
+        status: 'queued',
+        blockedBy: ['origin'],
+        prompt: 'Child task',
+      }),
+      makeTask({
+        id: 'fix-task',
+        status: 'queued',
+        fixForTaskId: 'origin',
+        prompt: 'Fix origin',
+      }),
+      makeTask({
+        id: 'outer-task',
+        status: 'queued',
+        blockedBy: [],
+        prompt: 'Outer task — not in dag node set',
+      }),
+    ])
+    return { stateStore, taskStore }
+  }
+
+  it('emits a blocks edge from blocker-a to blocker-b (cross-blocker inter-node edge)', async () => {
+    const { stateStore, taskStore } = makeScenario()
+    const rows = await buildActionQueueView({ ...BASE_PARAMS, stateStore, taskStore })
+    const originRow = rows.find((r) => r.entityId === 'origin')
+    expect(originRow?.dag?.edges).toContainEqual({
+      from: 'blocker-a',
+      to: 'blocker-b',
+      kind: 'blocks',
+    })
+  })
+
+  it('emits a recovers edge from fix-task to origin', async () => {
+    const { stateStore, taskStore } = makeScenario()
+    const rows = await buildActionQueueView({ ...BASE_PARAMS, stateStore, taskStore })
+    const originRow = rows.find((r) => r.entityId === 'origin')
+    expect(originRow?.dag?.edges).toContainEqual({
+      from: 'fix-task',
+      to: 'origin',
+      kind: 'recovers',
+    })
+  })
+
+  it('does not emit an edge to outer-task which is outside the dag node set', async () => {
+    const { stateStore, taskStore } = makeScenario()
+    const rows = await buildActionQueueView({ ...BASE_PARAMS, stateStore, taskStore })
+    const originRow = rows.find((r) => r.entityId === 'origin')
+    const edgeEndpoints = (originRow?.dag?.edges ?? []).flatMap((e) => [e.from, e.to])
+    expect(edgeEndpoints).not.toContain('outer-task')
+  })
+
+  it('edges are sorted deterministically (from, then to, then kind)', async () => {
+    const { stateStore, taskStore } = makeScenario()
+    const rows = await buildActionQueueView({ ...BASE_PARAMS, stateStore, taskStore })
+    const edges = rows.find((r) => r.entityId === 'origin')?.dag?.edges ?? []
+    const keys = edges.map((e) => `${e.from}|${e.to}|${e.kind}`)
+    expect(keys).toEqual([...keys].sort())
+  })
+
+  it('edges are empty when there are no inter-node connections (star shape)', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeRow({ payload: { taskId: 'origin' } })]),
+      taskStore: makeTaskStore([
+        makeTask({
+          id: 'origin',
+          status: 'failed',
+          blockedBy: [],
+          failureSignature: null,
+          prompt: 'Origin task',
+        }),
+      ]),
+    })
+    const originRow = rows.find((r) => r.entityId === 'origin')
+    expect(originRow?.dag?.edges).toEqual([])
+  })
+
+  it('emits no duplicate edges when a node appears in multiple lists', async () => {
+    const { stateStore, taskStore } = makeScenario()
+    const rows = await buildActionQueueView({ ...BASE_PARAMS, stateStore, taskStore })
+    const edges = rows.find((r) => r.entityId === 'origin')?.dag?.edges ?? []
+    const keys = edges.map((e) => `${e.from}|${e.to}|${e.kind}`)
+    const uniqueKeys = new Set(keys)
+    expect(keys.length).toBe(uniqueKeys.size)
+  })
+})
+
 // ── hitl-slice-needs-operator: persisted title/body, no failure-registry fallback ──
 
 describe('buildActionQueueView — hitl-slice-needs-operator row', () => {

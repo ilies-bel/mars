@@ -53,6 +53,7 @@ export interface ActionQueueRow {
     blocking: { id: string; status: string; summary: string }[]
     descendants: { id: string; status: string; summary: string }[]
     proposalId: string | null
+    edges: { from: string; to: string; kind: 'blocks' | 'recovers' }[]
   } | null
   errorKind: string
   actions: { id: string; label: string; op: string; needsConfirm?: boolean; hint?: string }[]
@@ -291,11 +292,55 @@ export const buildActionQueueView = async ({
         const blocking = (blockingMap.get(entityId) ?? []).map(toNode)
         // Enrich descendants with fix/recovery tasks that point at this origin.
         const descendants = (fixForTaskMap.get(entityId) ?? []).map(toNode)
+
+        // Build the set of node ids present in this dag card.
+        const dagNodeSet = new Set<string>([
+          entityId,
+          ...blockers.map((n) => n.id),
+          ...blocking.map((n) => n.id),
+          ...descendants.map((n) => n.id),
+        ])
+
+        // Collect candidate edges among dag nodes only.
+        const rawEdges: { from: string; to: string; kind: 'blocks' | 'recovers' }[] = []
+
+        // 'blocks' edges: for each node N, for each B in N.blockedBy that is also in the set.
+        for (const nodeId of dagNodeSet) {
+          for (const blockerId of (taskById.get(nodeId)?.blockedBy ?? [])) {
+            if (dagNodeSet.has(blockerId)) {
+              rawEdges.push({ from: blockerId, to: nodeId, kind: 'blocks' })
+            }
+          }
+        }
+
+        // 'recovers' edges: for each descendant D, emit D→entityId.
+        for (const desc of descendants) {
+          rawEdges.push({ from: desc.id, to: entityId, kind: 'recovers' })
+        }
+
+        // Deduplicate and sort deterministically (from, then to, then kind).
+        const edgeKey = (e: { from: string; to: string; kind: string }) =>
+          `${e.from}|${e.to}|${e.kind}`
+        const seenEdges = new Set<string>()
+        const edges = rawEdges
+          .filter((e) => {
+            const k = edgeKey(e)
+            if (seenEdges.has(k)) return false
+            seenEdges.add(k)
+            return true
+          })
+          .sort((a, b) => {
+            const ka = edgeKey(a)
+            const kb = edgeKey(b)
+            return ka < kb ? -1 : ka > kb ? 1 : 0
+          })
+
         dag = {
           blockers,
           blocking,
           descendants,
           proposalId: task.parentProposalId,
+          edges,
         }
       }
     }
@@ -600,7 +645,50 @@ export const buildActionQueueHistoryView = async ({
         const blockers = task.blockedBy.map(toNode)
         const blocking = (blockingMap.get(entityId) ?? []).map(toNode)
         const descendants = (fixForTaskMap.get(entityId) ?? []).map(toNode)
-        dag = { blockers, blocking, descendants, proposalId: task.parentProposalId }
+
+        // Build the set of node ids present in this dag card.
+        const dagNodeSet = new Set<string>([
+          entityId,
+          ...blockers.map((n) => n.id),
+          ...blocking.map((n) => n.id),
+          ...descendants.map((n) => n.id),
+        ])
+
+        // Collect candidate edges among dag nodes only.
+        const rawEdges: { from: string; to: string; kind: 'blocks' | 'recovers' }[] = []
+
+        // 'blocks' edges: for each node N, for each B in N.blockedBy that is also in the set.
+        for (const nodeId of dagNodeSet) {
+          for (const blockerId of (taskById.get(nodeId)?.blockedBy ?? [])) {
+            if (dagNodeSet.has(blockerId)) {
+              rawEdges.push({ from: blockerId, to: nodeId, kind: 'blocks' })
+            }
+          }
+        }
+
+        // 'recovers' edges: for each descendant D, emit D→entityId.
+        for (const desc of descendants) {
+          rawEdges.push({ from: desc.id, to: entityId, kind: 'recovers' })
+        }
+
+        // Deduplicate and sort deterministically (from, then to, then kind).
+        const edgeKey = (e: { from: string; to: string; kind: string }) =>
+          `${e.from}|${e.to}|${e.kind}`
+        const seenEdges = new Set<string>()
+        const edges = rawEdges
+          .filter((e) => {
+            const k = edgeKey(e)
+            if (seenEdges.has(k)) return false
+            seenEdges.add(k)
+            return true
+          })
+          .sort((a, b) => {
+            const ka = edgeKey(a)
+            const kb = edgeKey(b)
+            return ka < kb ? -1 : ka > kb ? 1 : 0
+          })
+
+        dag = { blockers, blocking, descendants, proposalId: task.parentProposalId, edges }
       }
     }
 

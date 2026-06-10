@@ -238,6 +238,7 @@ describe('action-queue show', () => {
       blocking: [{ id: 'mars-xyz', status: 'queued', summary: 'next' }],
       descendants: [],
       proposalId: null,
+      edges: [],
     }
     const rows: ActionQueueRow[] = [
       makeRow({
