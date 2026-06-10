@@ -11,6 +11,7 @@ import {
   projectsResponseSchema,
   proposalDetailSchema,
   proposalsResponseSchema,
+  releaseNotesCursorSchema,
   releaseNotesResponseSchema,
   staleWorktreesResponseSchema,
   tasksResponseSchema,
@@ -29,6 +30,7 @@ import {
   type ProposalDetail,
   type ProposalsPayload,
   type ReleaseNoteEntry,
+  type ReleaseNotesCursor,
   type StaleWorktreesPayload,
   type Task,
   type WorkerSession,
@@ -381,6 +383,46 @@ export const fetchReleaseNotes = async (projectId?: string): Promise<ReleaseNote
   return fetchJson(appendProject('/api/release-notes', projectId), releaseNotesResponseSchema)
 }
 
+/**
+ * Fetch the release-notes view cursor — the timestamp the user last viewed the
+ * release notes for this project. Returns `{ lastViewedAt: null }` when the
+ * cursor has never been set (first-ever view).
+ */
+export const getReleaseNotesCursor = async (projectId?: string): Promise<ReleaseNotesCursor> => {
+  return fetchJson(
+    appendProject('/api/release-notes-cursor', projectId),
+    releaseNotesCursorSchema,
+  )
+}
+
+/**
+ * POST to mark the release notes as viewed right now. Returns the updated cursor.
+ * Callers should invalidate the `['release-notes-cursor', projectId]` query key
+ * after this resolves.
+ */
+export const postReleaseNotesViewed = async (projectId?: string): Promise<ReleaseNotesCursor> => {
+  const path = appendProject('/api/release-notes-cursor', projectId)
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!r.ok) {
+    const text = await r.text().catch(() => '')
+    throw new Error(
+      `POST /api/release-notes-cursor → ${r.status}${text ? `: ${text}` : ''}`,
+    )
+  }
+  const raw = await r.json()
+  const result = releaseNotesCursorSchema.safeParse(raw)
+  if (!result.success) {
+    throw new Error(
+      `POST /api/release-notes-cursor → response failed schema validation: ${result.error.message}`,
+    )
+  }
+  return result.data
+}
+
 export const dismissTodoItem = async (
   id: string,
   kind: 'draft' | 'stale',
@@ -415,6 +457,7 @@ export type {
   ProposalDetail,
   ProposalsPayload,
   ReleaseNoteEntry,
+  ReleaseNotesCursor,
   ReleaseNoteSpec,
   SessionOutcome,
   StaleWorktree,

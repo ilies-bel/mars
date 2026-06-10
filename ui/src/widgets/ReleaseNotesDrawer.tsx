@@ -8,14 +8,21 @@
  * subtle "+N recovery" badge when the arc required at least one recovery task.
  * Clicking a row expands its detail inline: the full prompt and, when present,
  * the structured spec (files, verifyCmd, doneCriteria).
+ *
+ * On open, the drawer:
+ *   1. Captures `lastViewedAt` from the cursor query to determine unseen entries.
+ *   2. POSTs the cursor to mark all current entries as viewed.
+ *   3. Renders a "new since you were away" divider just above the oldest unseen
+ *      entry (in the newest-first list) and scrolls it into view.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { fetchReleaseNotes } from '@/shared/api'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { fetchReleaseNotes, getReleaseNotesCursor, postReleaseNotesViewed } from '@/shared/api'
 import type { ReleaseNoteEntry } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
+import { computeUnseen } from '@/shared/useReleaseNotesAutoOpen'
 
 interface ReleaseNotesDrawerProps {
   /** Clears the `#/release-notes` hash so the drawer closes. */
@@ -109,11 +116,52 @@ export const ReleaseNotesDrawer = ({ onClose }: ReleaseNotesDrawerProps) => {
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const projectId = useFocusedProjectId()
+  const qc = useQueryClient()
 
   const { data, isPending, isError } = useQuery({
     queryKey: ['release-notes', projectId],
     queryFn: () => fetchReleaseNotes(projectId ?? undefined),
   })
+
+  const { data: cursorData } = useQuery({
+    queryKey: ['release-notes-cursor', projectId],
+    queryFn: () => getReleaseNotesCursor(projectId ?? undefined),
+  })
+
+  // Capture firstUnseenIndex the moment both queries are first available.
+  // Frozen in a ref so the divider reflects state AT drawer-open time, not
+  // after the cursor POST updates the query and the view re-renders.
+  const capturedRef = useRef<{ value: number | null } | null>(null)
+  if (capturedRef.current === null && data !== undefined && cursorData !== undefined) {
+    capturedRef.current = {
+      value: computeUnseen(data, cursorData.lastViewedAt).firstUnseenIndex,
+    }
+  }
+  const firstUnseenIndex = capturedRef.current?.value ?? null
+
+  // Mark viewed (once) and scroll to oldest-unseen (once) when data+cursor land.
+  const hasMarkedViewed = useRef(false)
+
+  useEffect(() => {
+    if (hasMarkedViewed.current) return
+    if (data === undefined || cursorData === undefined) return
+
+    hasMarkedViewed.current = true
+
+    // Mark the release notes as viewed (both auto-open and manual open).
+    void postReleaseNotesViewed(projectId ?? undefined).then(() => {
+      void qc.invalidateQueries({ queryKey: ['release-notes-cursor', projectId] })
+    })
+  }, [data, cursorData, projectId, qc])
+
+  // Ref for the oldest-unseen list item — scrolled into view once captured.
+  const oldestUnseenRef = useRef<HTMLLIElement>(null)
+
+  useEffect(() => {
+    if (firstUnseenIndex === null) return
+    oldestUnseenRef.current?.scrollIntoView({ block: 'start', behavior: 'instant' })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firstUnseenIndex])
 
   /**
    * Initiates the exit animation (180 ms) then calls the onClose prop.
@@ -240,43 +288,70 @@ export const ReleaseNotesDrawer = ({ onClose }: ReleaseNotesDrawerProps) => {
             </p>
           ) : (
             <ul data-testid="release-notes-list">
-              {data.map((entry) => {
+              {data.map((entry, i) => {
                 const isExpanded = expandedId === entry.originId
+                const isOldestUnseen = firstUnseenIndex !== null && i === firstUnseenIndex
+                // Show the "new since you were away" divider just above the
+                // oldest unseen entry (between index firstUnseenIndex-1 and
+                // firstUnseenIndex in the newest-first list).
+                const showDividerAbove =
+                  firstUnseenIndex !== null &&
+                  i === firstUnseenIndex &&
+                  firstUnseenIndex > 0
                 return (
-                  <li key={entry.originId} data-testid="release-note-row">
-                    <button
-                      type="button"
-                      onClick={() => toggleExpand(entry.originId)}
-                      aria-expanded={isExpanded}
-                      className="flex w-full items-start gap-2 border-b border-iron/20 px-4 py-3 text-left hover:bg-iron/5"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="break-words text-sm font-medium text-fg">
-                          {entry.title}
-                        </p>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-[11px] text-iron">
-                            {relativeTime(entry.landedAt)}
-                          </span>
-                          {entry.detail.recoveryCount > 0 ? (
-                            <span
-                              data-testid="recovery-badge"
-                              className="rounded border border-iron/30 px-1 font-mono text-[10px] text-muted"
-                            >
-                              +{entry.detail.recoveryCount} recovery
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                      <span
-                        className="mt-1 shrink-0 font-mono text-[10px] text-muted"
-                        aria-hidden="true"
+                  <Fragment key={entry.originId}>
+                    {showDividerAbove ? (
+                      <li
+                        role="separator"
+                        data-testid="unseen-divider"
+                        className="flex items-center gap-2 px-4 py-1.5"
                       >
-                        {isExpanded ? '▾' : '▸'}
-                      </span>
-                    </button>
-                    {isExpanded ? <EntryDetail entry={entry} /> : null}
-                  </li>
+                        <span className="h-px flex-1 bg-accent/40" aria-hidden="true" />
+                        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-accent">
+                          new since you were away
+                        </span>
+                        <span className="h-px flex-1 bg-accent/40" aria-hidden="true" />
+                      </li>
+                    ) : null}
+                    <li
+                      ref={isOldestUnseen ? oldestUnseenRef : null}
+                      data-testid="release-note-row"
+                      data-oldest-unseen={isOldestUnseen ? 'true' : undefined}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(entry.originId)}
+                        aria-expanded={isExpanded}
+                        className="flex w-full items-start gap-2 border-b border-iron/20 px-4 py-3 text-left hover:bg-iron/5"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words text-sm font-medium text-fg">
+                            {entry.title}
+                          </p>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-[11px] text-iron">
+                              {relativeTime(entry.landedAt)}
+                            </span>
+                            {entry.detail.recoveryCount > 0 ? (
+                              <span
+                                data-testid="recovery-badge"
+                                className="rounded border border-iron/30 px-1 font-mono text-[10px] text-muted"
+                              >
+                                +{entry.detail.recoveryCount} recovery
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <span
+                          className="mt-1 shrink-0 font-mono text-[10px] text-muted"
+                          aria-hidden="true"
+                        >
+                          {isExpanded ? '▾' : '▸'}
+                        </span>
+                      </button>
+                      {isExpanded ? <EntryDetail entry={entry} /> : null}
+                    </li>
+                  </Fragment>
                 )
               })}
             </ul>

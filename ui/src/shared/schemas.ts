@@ -661,3 +661,14 @@ export const releaseNotesResponseSchema = z.array(releaseNoteEntrySchema)
 
 export type ReleaseNoteSpec = z.infer<typeof releaseNoteSpecSchema>
 export type ReleaseNoteEntry = z.infer<typeof releaseNoteEntrySchema>
+
+// ----------------------------------------------------------------------------
+// Release notes cursor (GET/POST /api/release-notes-cursor). Tracks when the
+// user last viewed the release notes, per project.
+// ----------------------------------------------------------------------------
+
+export const releaseNotesCursorSchema = z.object({
+  lastViewedAt: z.string().nullable(),
+})
+
+export type ReleaseNotesCursor = z.infer<typeof releaseNotesCursorSchema>
