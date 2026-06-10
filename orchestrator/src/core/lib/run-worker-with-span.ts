@@ -15,11 +15,13 @@
 // lightweight queries remain accurate even when reflection is globally disabled.
 
 import { summarizeUsage, getLatestContextSize } from './claude-usage'
+import { resolveUsage } from './usage-sources'
 import { isReflectDisabled } from './reflect-signals'
 import { evaluateStep } from './step-evaluators'
 import type { TraceEventStore, TraceEventPhase } from './trace-events-store'
 import type { Worker, RunOptions } from '../workers'
 import type { RunClaudeResult } from './git/claude'
+import type { ClaudeEvent } from './claude-stream'
 
 export interface RunWorkerWithSpanOptions {
   worker: Worker
@@ -110,11 +112,26 @@ export const runWorkerWithSpan = async (
     },
   })
 
+  // Accumulate streaming events so partial usage is available if the worker
+  // throws before returning. For PTY workers onEvent is never called — they
+  // emit nothing to this path — so accumulatedEvents will be empty and the
+  // failure payload carries zeros, which is the same as the prior behaviour.
+  const accumulatedEvents: ClaudeEvent[] = []
+  const runOptionsWithAccum: RunOptions = {
+    ...runOptions,
+    onEvent: (event) => {
+      accumulatedEvents.push(event)
+      return runOptions.onEvent?.(event)
+    },
+  }
+
   let result: RunClaudeResult
   try {
-    result = await worker.run(prompt, runOptions)
+    result = await worker.run(prompt, runOptionsWithAccum)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    const partialUsage = summarizeUsage(accumulatedEvents)
+    const partialContextTokens = getLatestContextSize(accumulatedEvents)
     const failurePayload = {
       stepName,
       workflowInstanceId,
@@ -122,6 +139,14 @@ export const runWorkerWithSpan = async (
       outcome: 'failed' as const,
       failureReason: msg.slice(0, 200),
       durationMs: Date.now() - startedAt,
+      usageSignals: {
+        inputTokens: partialUsage.inputTokens,
+        outputTokens: partialUsage.outputTokens,
+        cacheCreateTokens: partialUsage.cacheCreateTokens,
+        cacheReadTokens: partialUsage.cacheReadTokens,
+        messageCount: partialUsage.messageCount,
+        contextTokens: partialContextTokens,
+      },
     }
     const failureEvalResults = evaluateStep(stepName, failurePayload)
     await safeRecord(traceStore, {
@@ -137,7 +162,12 @@ export const runWorkerWithSpan = async (
     throw err
   }
 
-  const usage = summarizeUsage(result.conversation)
+  const usage = await resolveUsage({
+    conversation: result.conversation,
+    sessionId: result.sessionId,
+    cwd: runOptions.cwd,
+    provider: worker.config.provider,
+  })
   const contextTokens = getLatestContextSize(result.conversation)
   // Exit code 138 means the run was terminated by an external abort signal
   // (read/grep span watchdog). This is a distinct outcome from a genuine

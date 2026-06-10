@@ -7,6 +7,7 @@ import { openTraceEventStore } from '../trace-events-store'
 import { runWorkerWithSpan, runNonLlmStepWithSpan } from '../run-worker-with-span'
 import type { Worker, WorkerConfig, RunOptions } from '../../workers'
 import type { RunClaudeResult } from '../git/claude'
+import type { ClaudeEvent } from '../claude-stream'
 
 const tmpDbPath = (): string => {
   const dir = mkdtempSync(join(tmpdir(), 'mars-worker-span-'))
@@ -1072,5 +1073,119 @@ describe('runNonLlmStepWithSpan — recovery dispatch produces distinct span', (
     ).find((e) => e.payload.stepName === 'verify')
     expect(verifyEnded?.payload.outcome).toBe('failed')
     expect(verifyEnded?.severity).toBe('error')
+  })
+})
+
+// ── failure-path partial usage capture ────────────────────────────────────────
+
+describe('runWorkerWithSpan — failure-path partial usage capture', () => {
+  it('records usageSignals when the worker throws after emitting streaming events', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const worker: Worker = {
+      config: makeWorkerConfig('Coder'),
+      runtime: 'headless',
+      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+        // Simulate: model produces output then the process crashes
+        await options.onEvent?.({
+          type: 'assistant',
+          message: {
+            usage: { input_tokens: 100, output_tokens: 25 },
+            content: [],
+          },
+        } as ClaudeEvent)
+        throw new Error('subprocess died after partial work')
+      },
+    }
+
+    await expect(
+      runWorkerWithSpan({
+        worker,
+        prompt: 'do work',
+        runOptions: { cwd: '/tmp' },
+        traceStore,
+        stepName: 'run-claude-code',
+        workflowInstanceId: 'wf-partial-001',
+        originId: 'task-partial-abc',
+        taskId: 'task-partial-abc',
+      }),
+    ).rejects.toThrow('subprocess died after partial work')
+
+    const ended = (await traceStore.query({ taskId: 'task-partial-abc', kind: ['step_ended'] }))[0]
+    expect(ended.payload.outcome).toBe('failed')
+    // Partial usage from the events emitted before the throw
+    expect(ended.payload.usageSignals).toMatchObject({
+      inputTokens: 100,
+      outputTokens: 25,
+      messageCount: 1,
+    })
+  })
+
+  it('records zero usageSignals when the worker throws before emitting any events', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const worker: Worker = {
+      config: makeWorkerConfig('Coder'),
+      runtime: 'headless',
+      run: async (): Promise<RunClaudeResult> => {
+        throw new Error('immediate failure')
+      },
+    }
+
+    await expect(
+      runWorkerWithSpan({
+        worker,
+        prompt: 'do work',
+        runOptions: { cwd: '/tmp' },
+        traceStore,
+        stepName: 'run-claude-code',
+        workflowInstanceId: 'wf-zero-001',
+        originId: 'task-zero-abc',
+        taskId: 'task-zero-abc',
+      }),
+    ).rejects.toThrow('immediate failure')
+
+    const ended = (await traceStore.query({ taskId: 'task-zero-abc', kind: ['step_ended'] }))[0]
+    expect(ended.payload.outcome).toBe('failed')
+    // No events were emitted — all signals are zero but the field is present
+    expect(ended.payload.usageSignals).toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+      messageCount: 0,
+    })
+  })
+
+  it('still calls the caller-supplied onEvent callback on accumulation', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const received: ClaudeEvent[] = []
+    const worker: Worker = {
+      config: makeWorkerConfig('Coder'),
+      runtime: 'headless',
+      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+        await options.onEvent?.({
+          type: 'assistant',
+          message: { usage: { input_tokens: 10, output_tokens: 5 }, content: [] },
+        } as ClaudeEvent)
+        return { exitCode: 0, stdout: '', stderr: '', sessionId: null, conversation: [] }
+      },
+    }
+
+    await runWorkerWithSpan({
+      worker,
+      prompt: 'do work',
+      runOptions: {
+        cwd: '/tmp',
+        onEvent: (e) => {
+          received.push(e)
+        },
+      },
+      traceStore,
+      stepName: 'run-claude-code',
+      workflowInstanceId: 'wf-onevent-pass',
+      originId: 'task-onevent-pass',
+      taskId: 'task-onevent-pass',
+    })
+
+    // The caller's onEvent was still called
+    expect(received).toHaveLength(1)
+    expect(received[0]!.type).toBe('assistant')
   })
 })
