@@ -649,6 +649,147 @@ const StepTimeline = ({
   </section>
 )
 
+/**
+ * Renders the step timeline for a PROPOSAL subject, grouping spans by taskId.
+ *
+ * Layout:
+ *   1. 'Proposal steps' section (data-testid="step-group-proposal") — spans
+ *      where span.taskId === null.  auto-linker-direction spans inside this
+ *      group are wrapped in a <details> (collapsed by default) showing count
+ *      and summed duration; other proposal-level spans render as normal rows.
+ *   2. One section per distinct non-null taskId in insertion order, each with
+ *      data-testid="step-group-<taskId>".  Spine spans are rendered directly
+ *      (expanded by default — no <details> wrapper).
+ *
+ * activeStepName highlighting uses the same data-active / ring-warn mechanism
+ * as StepTimeline so the caller can pass it through without branching.
+ */
+const ProposalStepTimeline = ({
+  spans,
+  activeStepName,
+}: {
+  spans: StepSpan[]
+  activeStepName?: string
+}) => {
+  // Bucket spans by taskId, preserving insertion order for task groups.
+  const proposalSpans: StepSpan[] = []
+  const taskBuckets = new Map<string, StepSpan[]>()
+  for (const s of spans) {
+    if (s.taskId === null) {
+      proposalSpans.push(s)
+    } else {
+      if (!taskBuckets.has(s.taskId)) taskBuckets.set(s.taskId, [])
+      taskBuckets.get(s.taskId)!.push(s)
+    }
+  }
+
+  const autoLinkerSpans = proposalSpans.filter((s) => s.stepName === 'auto-linker-direction')
+  const otherProposalSpans = proposalSpans.filter((s) => s.stepName !== 'auto-linker-direction')
+  const autoLinkerTotalMs = autoLinkerSpans.reduce((sum, s) => sum + (s.durationMs ?? 0), 0)
+
+  // Inline row renderer — mirrors StepTimeline's <li> shape so activeStepName
+  // highlighting and data-outcome/data-active attributes behave identically.
+  const renderSpanRow = (s: StepSpan, i: number, arr: StepSpan[]) => {
+    const isActive = activeStepName != null && s.stepName === activeStepName
+    const isLast = i === arr.length - 1
+    const rowTextClass =
+      s.outcome === 'running'
+        ? 'text-warn'
+        : s.outcome === 'failed'
+          ? 'text-error'
+          : s.outcome === 'killed'
+            ? 'text-ochre'
+            : 'text-fg'
+    const dotClass =
+      s.outcome === 'running'
+        ? 'bg-warn border-warn/60 motion-safe:animate-pulse'
+        : s.outcome === 'failed'
+          ? 'bg-error/80 border-error/60'
+          : s.outcome === 'killed'
+            ? 'bg-ochre/80 border-ochre/60'
+            : 'bg-muted/40 border-muted/30'
+    return (
+      <li
+        key={`${s.workflowInstanceId}-${s.stepName}-${i}`}
+        data-testid="step-timeline-row"
+        data-outcome={s.outcome}
+        data-active={isActive}
+        className={`relative flex items-start gap-2 rounded pl-5 pr-2 py-1 font-mono text-xs ${rowTextClass}${isActive ? ' ring-1 ring-warn bg-warn/5' : ''}`}
+      >
+        <span className="absolute left-0 top-0 flex h-full flex-col items-center" aria-hidden="true">
+          <span
+            data-testid="step-status-dot"
+            className={`mt-1.5 h-2 w-2 shrink-0 rounded-full border ${dotClass}`}
+          />
+          {!isLast && <span className="mt-0.5 w-px flex-1 bg-border/60" />}
+        </span>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+          <span className="min-w-[6rem] font-semibold">{s.stepName}</span>
+          {s.workerName != null ? (
+            <span className="shrink-0 text-muted">{s.workerName}</span>
+          ) : null}
+          <span className="shrink-0 text-muted">{outcomeLabel(s.outcome)}</span>
+          {s.durationMs != null ? (
+            <span className="ml-auto shrink-0 text-muted">{formatDuration(s.durationMs)}</span>
+          ) : null}
+          {s.evalResults && s.evalResults.length > 0 ? (
+            <span className="flex flex-wrap items-center gap-1">
+              {s.evalResults.map((r) => (
+                <EvalChip key={r.label} label={r.label} value={r.value} warn={r.warn} />
+              ))}
+            </span>
+          ) : null}
+        </div>
+      </li>
+    )
+  }
+
+  return (
+    <div className="border-b border-iron/20">
+      {/* ── Proposal steps group ─────────────────────────────────────────── */}
+      <section data-testid="step-group-proposal" className="px-4 py-3">
+        <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+          Proposal steps
+        </h3>
+        {otherProposalSpans.length > 0 ? (
+          <ol className="flex flex-col">
+            {otherProposalSpans.map((s, i, arr) => renderSpanRow(s, i, arr))}
+          </ol>
+        ) : null}
+        {autoLinkerSpans.length > 0 ? (
+          <details className="mt-1">
+            <summary className="cursor-pointer font-mono text-[11px] text-muted">
+              auto-linker-direction &times; {autoLinkerSpans.length} ({formatDuration(autoLinkerTotalMs)})
+            </summary>
+            <ol className="mt-1 flex flex-col">
+              {autoLinkerSpans.map((s, i, arr) => renderSpanRow(s, i, arr))}
+            </ol>
+          </details>
+        ) : null}
+        {proposalSpans.length === 0 ? (
+          <p className="font-mono text-xs text-iron">No proposal-level steps recorded</p>
+        ) : null}
+      </section>
+
+      {/* ── Per-task groups (spine expanded by default) ──────────────────── */}
+      {[...taskBuckets.entries()].map(([taskId, taskSpans]) => (
+        <section
+          key={taskId}
+          data-testid={`step-group-${taskId}`}
+          className="border-t border-iron/20 px-4 py-3"
+        >
+          <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+            {taskId} &middot; {taskSpans.length} steps
+          </h3>
+          <ol className="flex flex-col">
+            {taskSpans.map((s, i) => renderSpanRow(s, i, taskSpans))}
+          </ol>
+        </section>
+      ))}
+    </div>
+  )
+}
+
 export const TaskDetailDrawer = ({
   taskId,
   onClose,
@@ -854,6 +995,10 @@ export const TaskDetailDrawer = ({
   // rendering), otherwise use the spans fetched from the API.
   const resolvedSpans = stepSpans !== undefined ? stepSpans : fetchedSpans
 
+  // True when the drawer is focused on a proposal node rather than a leaf task.
+  // Determines whether to use ProposalStepTimeline (grouped) or StepTimeline (flat).
+  const isProposal = proposals?.some((p) => p.id === currentId) ?? false
+
   return (
     <>
       {/* Scrim — sits at z-40 (below the drawer's z-50) so clicks outside dismiss the panel */}
@@ -1007,9 +1152,13 @@ export const TaskDetailDrawer = ({
 
       {/* Step timeline — renders when spans data is available (prop or fetched).
           Sits between the relationship Context and the per-task detail body as
-          a diagnostic-ish view of the task's run. */}
+          a diagnostic-ish view of the task's run.
+          Proposal subjects use the grouped ProposalStepTimeline; plain task
+          subjects use the flat StepTimeline (task-mode path unchanged). */}
       {resolvedSpans !== null ? (
-        <StepTimeline spans={resolvedSpans} activeStepName={activeStepName} />
+        isProposal
+          ? <ProposalStepTimeline spans={resolvedSpans} activeStepName={activeStepName} />
+          : <StepTimeline spans={resolvedSpans} activeStepName={activeStepName} />
       ) : null}
 
       {state.kind === 'not-found' ? (

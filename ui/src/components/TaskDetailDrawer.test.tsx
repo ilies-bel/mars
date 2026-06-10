@@ -209,7 +209,10 @@ describe('TaskDetailDrawer – proposal mode (slice-3 no-regression)', () => {
     expect(rowCount).toBe(4)
   })
 
-  it('data-testid="task-step-timeline" is present when stepSpans is provided in proposal mode', () => {
+  it('proposal-mode renders the grouped step-group-proposal section (not the flat task-step-timeline)', () => {
+    // Slice 4 changed proposal-mode to use ProposalStepTimeline with grouped
+    // sections (step-group-proposal / step-group-<taskId>). The flat
+    // task-step-timeline testid is only used in task-mode (slice 3 path).
     const html = renderToStaticMarkup(
       <TaskDetailDrawer
         taskId="prop-x"
@@ -219,6 +222,7 @@ describe('TaskDetailDrawer – proposal mode (slice-3 no-regression)', () => {
         stepSpans={[]}
       />,
     )
-    expect(html).toContain('data-testid="task-step-timeline"')
+    expect(html).toContain('data-testid="step-group-proposal"')
+    expect(html).not.toContain('data-testid="task-step-timeline"')
   })
 })
