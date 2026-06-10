@@ -851,7 +851,7 @@ describe('listCostPerArcArcs', () => {
     expect(arcs).toHaveLength(0)
   })
 
-  it('returns one row per done arc with costTokens set', async () => {
+  it('returns one row per done arc with signals, costTokens set', async () => {
     const store = await makeStore()
     await insertTask(store, { id: 'arc1', status: 'done' })
     await insertSignal(store, { taskId: 'arc1', inputTokens: 1000 })
@@ -867,7 +867,7 @@ describe('listCostPerArcArcs', () => {
     }
   })
 
-  it('row count matches computeCostPerArcDistribution sampleCount', async () => {
+  it('when all arcs have signals, list length equals distribution sampleCount', async () => {
     const store = await makeStore()
     await insertTask(store, { id: 'a1', status: 'done' })
     await insertSignal(store, { taskId: 'a1', inputTokens: 100 })
@@ -885,6 +885,115 @@ describe('listCostPerArcArcs', () => {
     await insertTask(store, { id: 'arc', status: 'done' })
     const arcs = await listCostPerArcArcs(store, WINDOW)
     expect(arcs.every((a) => a.passed)).toBe(true)
+  })
+
+  it('arc with no usageSignals events appears in the list with costTokens undefined (unknown)', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'no-signal-arc', status: 'done' })
+    // no insertSignal → no step_ended events with usageSignals
+
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].arcId).toBe('no-signal-arc')
+    expect(arcs[0].costTokens).toBeUndefined()
+  })
+
+  it('arc with all-zero signals appears with costTokens=0 (genuine zero, not unknown)', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'zero-arc', status: 'done' })
+    await insertSignal(store, {
+      taskId: 'zero-arc',
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreateTokens: 0,
+      cacheReadTokens: 0,
+    })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].costTokens).toBe(0)
+  })
+
+  it('list includes all done arcs; distribution sampleCount only counts arcs with signals', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'with-signal', status: 'done' })
+    await insertSignal(store, { taskId: 'with-signal', inputTokens: 500 })
+    await insertTask(store, { id: 'no-signal', status: 'done' })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+    const compute = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(arcs).toHaveLength(2)        // both done arcs appear in the list
+    expect(compute.sampleCount).toBe(1) // only the arc with signals counts in the distribution
+
+    const withSignal = arcs.find((a) => a.arcId === 'with-signal')!
+    const noSignal = arcs.find((a) => a.arcId === 'no-signal')!
+    expect(withSignal.costTokens).toBeCloseTo(500, 10)
+    expect(noSignal.costTokens).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 16. computeCostPerArcDistribution — unknown-cost arcs excluded
+// ---------------------------------------------------------------------------
+
+describe('computeCostPerArcDistribution — unknown-cost arcs excluded', () => {
+  it('excludes a done arc with no usageSignals events from the distribution', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'no-signal-arc', status: 'done' })
+    // no insertSignal → no step_ended events with usageSignals
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.p50).toBeNull()
+    expect(result.p90).toBeNull()
+    expect(result.sampleCount).toBe(0)
+  })
+
+  it('excludes the no-signal arc while keeping the arc with signals', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'with-signal', status: 'done' })
+    await insertSignal(store, { taskId: 'with-signal', inputTokens: 1000 })
+    await insertTask(store, { id: 'no-signal', status: 'done' })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.sampleCount).toBe(1)
+    expect(result.p50).toBeCloseTo(1000, 10)
+  })
+
+  it('includes an arc with all-zero usageSignals as a genuine 0-cost arc', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'zero-cost-arc', status: 'done' })
+    await insertSignal(store, {
+      taskId: 'zero-cost-arc',
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreateTokens: 0,
+      cacheReadTokens: 0,
+    })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.sampleCount).toBe(1)
+    expect(result.p50).toBe(0)
+    expect(result.p90).toBe(0)
+  })
+
+  it('sampleCount reflects only arcs with captured usage, not all done arcs', async () => {
+    const store = await makeStore()
+    // 3 done arcs: 2 with signals, 1 without
+    for (let i = 1; i <= 2; i++) {
+      await insertTask(store, { id: `arc-${i}`, status: 'done' })
+      await insertSignal(store, { taskId: `arc-${i}`, inputTokens: 100 * i })
+    }
+    await insertTask(store, { id: 'arc-unknown', status: 'done' })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.sampleCount).toBe(2) // only the 2 arcs with signals
   })
 })
 

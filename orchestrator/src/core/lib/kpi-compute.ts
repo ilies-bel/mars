@@ -209,7 +209,7 @@ export async function computeCostPerArcDistribution(
               CAST(json_extract(ate.payload, '$.usageSignals.cacheReadTokens')    AS REAL) * 0.1
             ), 0) AS weighted_tokens
           FROM done_arcs da
-          LEFT JOIN arc_te ate ON ate.arc_id = da.arc_id
+          INNER JOIN arc_te ate ON ate.arc_id = da.arc_id
           GROUP BY da.arc_id`,
     args: [window.windowStart, window.windowEnd],
   })
@@ -590,12 +590,12 @@ export async function listCostPerArcArcs(
               (SELECT t_rep.id FROM tasks t_rep WHERE t_rep.id = da.arc_id LIMIT 1),
               (SELECT t_rep.id FROM tasks t_rep WHERE COALESCE(t_rep.origin_id, t_rep.id) = da.arc_id ORDER BY t_rep.id LIMIT 1)
             ) AS origin_task_id,
-            COALESCE(SUM(
+            SUM(
               CAST(json_extract(ate.payload, '$.usageSignals.inputTokens')        AS REAL) +
               CAST(json_extract(ate.payload, '$.usageSignals.outputTokens')       AS REAL) +
               CAST(json_extract(ate.payload, '$.usageSignals.cacheCreateTokens')  AS REAL) +
               CAST(json_extract(ate.payload, '$.usageSignals.cacheReadTokens')    AS REAL) * 0.1
-            ), 0) AS weighted_tokens,
+            ) AS weighted_tokens,
             COALESCE(
               (SELECT SUBSTR(t2.prompt, 1, 120)
                FROM tasks t2
@@ -618,16 +618,19 @@ export async function listCostPerArcArcs(
     const r = row as unknown as {
       arc_id: string
       origin_task_id: string
-      weighted_tokens: number
+      weighted_tokens: number | null
       title: string
     }
-    return {
+    const arcRow: KpiArcRow = {
       arcId: r.arc_id,
       originTaskId: r.origin_task_id,
       title: r.title ?? '',
       status: 'done',
       passed: true,
-      costTokens: r.weighted_tokens,
     }
+    if (r.weighted_tokens !== null) {
+      arcRow.costTokens = r.weighted_tokens
+    }
+    return arcRow
   })
 }
