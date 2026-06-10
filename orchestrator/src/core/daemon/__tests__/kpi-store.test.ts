@@ -17,8 +17,14 @@ const KPI_SNAPSHOTS_DDL = `
     taken_at TEXT NOT NULL,
     window_start TEXT NOT NULL,
     window_end TEXT NOT NULL,
-    sample_count INTEGER NOT NULL,
-    low_confidence INTEGER NOT NULL,
+    cost_per_arc_sample_count INTEGER NOT NULL DEFAULT 0,
+    cost_per_arc_low_confidence INTEGER NOT NULL DEFAULT 1,
+    failure_rate_sample_count INTEGER NOT NULL DEFAULT 0,
+    failure_rate_low_confidence INTEGER NOT NULL DEFAULT 1,
+    autonomous_completion_rate_sample_count INTEGER NOT NULL DEFAULT 0,
+    autonomous_completion_rate_low_confidence INTEGER NOT NULL DEFAULT 1,
+    recovery_success_rate_sample_count INTEGER NOT NULL DEFAULT 0,
+    recovery_success_rate_low_confidence INTEGER NOT NULL DEFAULT 1,
     cost_per_arc_p50 REAL,
     cost_per_arc_p90 REAL,
     failure_rate REAL,
@@ -39,8 +45,14 @@ interface SnapshotRow {
   taken_at: string
   window_start: string
   window_end: string
-  sample_count: number
-  low_confidence: number
+  cost_per_arc_sample_count?: number
+  cost_per_arc_low_confidence?: number
+  failure_rate_sample_count?: number
+  failure_rate_low_confidence?: number
+  autonomous_completion_rate_sample_count?: number
+  autonomous_completion_rate_low_confidence?: number
+  recovery_success_rate_sample_count?: number
+  recovery_success_rate_low_confidence?: number
   failure_rate?: number | null
   cost_per_arc_p50?: number | null
   cost_per_arc_p90?: number | null
@@ -52,17 +64,26 @@ const insertSnapshot = async (store: TaskStore, s: SnapshotRow): Promise<void> =
   await store.execute({
     sql: `INSERT INTO kpi_snapshots (
             id, taken_at, window_start, window_end,
-            sample_count, low_confidence,
+            cost_per_arc_sample_count, cost_per_arc_low_confidence,
+            failure_rate_sample_count, failure_rate_low_confidence,
+            autonomous_completion_rate_sample_count, autonomous_completion_rate_low_confidence,
+            recovery_success_rate_sample_count, recovery_success_rate_low_confidence,
             cost_per_arc_p50, cost_per_arc_p90,
             failure_rate, autonomous_completion_rate, recovery_success_rate
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       s.id ?? randomUUID(),
       s.taken_at,
       s.window_start,
       s.window_end,
-      s.sample_count,
-      s.low_confidence,
+      s.cost_per_arc_sample_count ?? 0,
+      s.cost_per_arc_low_confidence ?? 1,
+      s.failure_rate_sample_count ?? 0,
+      s.failure_rate_low_confidence ?? 1,
+      s.autonomous_completion_rate_sample_count ?? 0,
+      s.autonomous_completion_rate_low_confidence ?? 1,
+      s.recovery_success_rate_sample_count ?? 0,
+      s.recovery_success_rate_low_confidence ?? 1,
       s.cost_per_arc_p50 ?? null,
       s.cost_per_arc_p90 ?? null,
       s.failure_rate ?? null,
@@ -113,8 +134,14 @@ describe('listKpis — populated table, high-confidence snapshot', () => {
       taken_at: '2025-01-07T12:00:00Z',
       window_start: '2024-12-31T12:00:00Z',
       window_end: '2025-01-07T12:00:00Z',
-      sample_count: 10,
-      low_confidence: 0,
+      cost_per_arc_sample_count: 10,
+      cost_per_arc_low_confidence: 0,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      autonomous_completion_rate_sample_count: 10,
+      autonomous_completion_rate_low_confidence: 0,
+      recovery_success_rate_sample_count: 10,
+      recovery_success_rate_low_confidence: 0,
       cost_per_arc_p50: 1234.5,
       cost_per_arc_p90: 5678.9,
       failure_rate: 0.2,
@@ -127,7 +154,7 @@ describe('listKpis — populated table, high-confidence snapshot', () => {
 
     const byKey = Object.fromEntries(kpis.map((k) => [k.key, k]))
 
-    // cost_per_arc maps to cost_per_arc_p50
+    // cost_per_arc maps to cost_per_arc_p50; sampleCount from cost_per_arc_sample_count
     expect(byKey['cost_per_arc'].currentValue).toBeCloseTo(1234.5)
     expect(byKey['cost_per_arc'].lowConfidence).toBe(false)
     expect(byKey['cost_per_arc'].sampleCount).toBe(10)
@@ -149,8 +176,14 @@ describe('listKpis — populated table, high-confidence snapshot', () => {
       taken_at: '2025-01-07T12:00:00Z',
       window_start: '2024-12-31T12:00:00Z',
       window_end: '2025-01-07T12:00:00Z',
-      sample_count: 10,
-      low_confidence: 0,
+      cost_per_arc_sample_count: 10,
+      cost_per_arc_low_confidence: 0,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      autonomous_completion_rate_sample_count: 10,
+      autonomous_completion_rate_low_confidence: 0,
+      recovery_success_rate_sample_count: 10,
+      recovery_success_rate_low_confidence: 0,
       failure_rate: 0.3,
       cost_per_arc_p50: 500,
       autonomous_completion_rate: 0.7,
@@ -172,8 +205,14 @@ describe('listKpis — populated table, high-confidence snapshot', () => {
       taken_at: '2024-12-31T12:00:00Z',
       window_start: '2024-12-24T12:00:00Z',
       window_end: '2024-12-31T12:00:00Z',
-      sample_count: 8,
-      low_confidence: 0,
+      cost_per_arc_sample_count: 8,
+      cost_per_arc_low_confidence: 0,
+      failure_rate_sample_count: 8,
+      failure_rate_low_confidence: 0,
+      autonomous_completion_rate_sample_count: 8,
+      autonomous_completion_rate_low_confidence: 0,
+      recovery_success_rate_sample_count: 8,
+      recovery_success_rate_low_confidence: 0,
       failure_rate: 0.4,
       cost_per_arc_p50: 1000,
       autonomous_completion_rate: 0.6,
@@ -185,8 +224,14 @@ describe('listKpis — populated table, high-confidence snapshot', () => {
       taken_at: '2025-01-07T12:00:00Z',
       window_start: '2024-12-31T12:00:00Z',
       window_end: '2025-01-07T12:00:00Z',
-      sample_count: 10,
-      low_confidence: 0,
+      cost_per_arc_sample_count: 10,
+      cost_per_arc_low_confidence: 0,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      autonomous_completion_rate_sample_count: 10,
+      autonomous_completion_rate_low_confidence: 0,
+      recovery_success_rate_sample_count: 10,
+      recovery_success_rate_low_confidence: 0,
       failure_rate: 0.2,
       cost_per_arc_p50: 800,
       autonomous_completion_rate: 0.75,
@@ -217,8 +262,14 @@ describe('listKpis — low-confidence and NULL column handling', () => {
       taken_at: '2025-01-07T12:00:00Z',
       window_start: '2024-12-31T12:00:00Z',
       window_end: '2025-01-07T12:00:00Z',
-      sample_count: 2,
-      low_confidence: 1,
+      cost_per_arc_sample_count: 2,
+      cost_per_arc_low_confidence: 1,
+      failure_rate_sample_count: 2,
+      failure_rate_low_confidence: 1,
+      autonomous_completion_rate_sample_count: 2,
+      autonomous_completion_rate_low_confidence: 1,
+      recovery_success_rate_sample_count: 2,
+      recovery_success_rate_low_confidence: 1,
       failure_rate: 0.5,
       cost_per_arc_p50: 200,
       autonomous_completion_rate: 0.5,
@@ -234,13 +285,19 @@ describe('listKpis — low-confidence and NULL column handling', () => {
   it('returns lowConfidence:true and zero values when a KPI column is NULL', async () => {
     const store = await makeStore()
 
-    // Insert a snapshot where some columns are null (not yet computable)
+    // Insert a snapshot where all value columns are null (not yet computable)
     await insertSnapshot(store, {
       taken_at: '2025-01-07T12:00:00Z',
       window_start: '2024-12-31T12:00:00Z',
       window_end: '2025-01-07T12:00:00Z',
-      sample_count: 10,
-      low_confidence: 0,
+      cost_per_arc_sample_count: 10,
+      cost_per_arc_low_confidence: 0,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      autonomous_completion_rate_sample_count: 10,
+      autonomous_completion_rate_low_confidence: 0,
+      recovery_success_rate_sample_count: 10,
+      recovery_success_rate_low_confidence: 0,
       failure_rate: null,
       cost_per_arc_p50: null,
       autonomous_completion_rate: null,
@@ -259,26 +316,38 @@ describe('listKpis — low-confidence and NULL column handling', () => {
   it('suppresses delta when prior snapshot is low-confidence', async () => {
     const store = await makeStore()
 
-    // Prior: low-confidence
+    // Prior: low-confidence across all KPIs
     await insertSnapshot(store, {
       taken_at: '2024-12-31T12:00:00Z',
       window_start: '2024-12-24T12:00:00Z',
       window_end: '2024-12-31T12:00:00Z',
-      sample_count: 2,
-      low_confidence: 1,
+      cost_per_arc_sample_count: 2,
+      cost_per_arc_low_confidence: 1,
+      failure_rate_sample_count: 2,
+      failure_rate_low_confidence: 1,
+      autonomous_completion_rate_sample_count: 2,
+      autonomous_completion_rate_low_confidence: 1,
+      recovery_success_rate_sample_count: 2,
+      recovery_success_rate_low_confidence: 1,
       failure_rate: 0.4,
       cost_per_arc_p50: 1000,
       autonomous_completion_rate: 0.6,
       recovery_success_rate: 0.5,
     })
 
-    // Current: high-confidence
+    // Current: high-confidence across all KPIs
     await insertSnapshot(store, {
       taken_at: '2025-01-07T12:00:00Z',
       window_start: '2024-12-31T12:00:00Z',
       window_end: '2025-01-07T12:00:00Z',
-      sample_count: 10,
-      low_confidence: 0,
+      cost_per_arc_sample_count: 10,
+      cost_per_arc_low_confidence: 0,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      autonomous_completion_rate_sample_count: 10,
+      autonomous_completion_rate_low_confidence: 0,
+      recovery_success_rate_sample_count: 10,
+      recovery_success_rate_low_confidence: 0,
       failure_rate: 0.2,
       cost_per_arc_p50: 800,
       autonomous_completion_rate: 0.75,
@@ -290,5 +359,66 @@ describe('listKpis — low-confidence and NULL column handling', () => {
       expect(record.delta).toBe(0)
       expect(record.priorValue).toBe(record.currentValue)
     }
+  })
+})
+
+describe('listKpis — per-KPI independent confidence flags', () => {
+  it('cost_per_arc lowConfidence:true does not bleed into failure_rate; failure_rate delta is still computed', async () => {
+    const store = await makeStore()
+
+    // Prior: all KPIs high-confidence
+    await insertSnapshot(store, {
+      taken_at: '2024-12-31T12:00:00Z',
+      window_start: '2024-12-24T12:00:00Z',
+      window_end: '2024-12-31T12:00:00Z',
+      cost_per_arc_sample_count: 10,
+      cost_per_arc_low_confidence: 0,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      autonomous_completion_rate_sample_count: 10,
+      autonomous_completion_rate_low_confidence: 0,
+      recovery_success_rate_sample_count: 10,
+      recovery_success_rate_low_confidence: 0,
+      failure_rate: 0.4,
+      cost_per_arc_p50: 1000,
+      autonomous_completion_rate: 0.6,
+      recovery_success_rate: 0.5,
+    })
+
+    // Current: cost_per_arc is thinly-sampled (low_confidence=1),
+    // but failure_rate is well-sampled (low_confidence=0)
+    await insertSnapshot(store, {
+      taken_at: '2025-01-07T12:00:00Z',
+      window_start: '2024-12-31T12:00:00Z',
+      window_end: '2025-01-07T12:00:00Z',
+      cost_per_arc_sample_count: 2,
+      cost_per_arc_low_confidence: 1,
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      autonomous_completion_rate_sample_count: 10,
+      autonomous_completion_rate_low_confidence: 0,
+      recovery_success_rate_sample_count: 10,
+      recovery_success_rate_low_confidence: 0,
+      failure_rate: 0.2,
+      cost_per_arc_p50: 800,
+      autonomous_completion_rate: 0.75,
+      recovery_success_rate: 0.9,
+    })
+
+    const kpis = await listKpis(store)
+    const byKey = Object.fromEntries(kpis.map((k) => [k.key, k]))
+
+    // cost_per_arc is low-confidence because its own flag is set
+    expect(byKey['cost_per_arc'].lowConfidence).toBe(true)
+    // delta suppressed for cost_per_arc because current window is low-confidence
+    expect(byKey['cost_per_arc'].delta).toBe(0)
+    expect(byKey['cost_per_arc'].sampleCount).toBe(2)
+
+    // failure_rate is well-sampled — its confidence flag is independent of cost_per_arc
+    expect(byKey['failure_rate'].lowConfidence).toBe(false)
+    // failure_rate delta IS computed because both windows are high-confidence for failure_rate
+    expect(byKey['failure_rate'].currentValue).toBeCloseTo(0.2)
+    expect(byKey['failure_rate'].priorValue).toBeCloseTo(0.4)
+    expect(byKey['failure_rate'].delta).toBeCloseTo(0.2 - 0.4)
   })
 })
