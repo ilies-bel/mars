@@ -254,22 +254,47 @@ export const fetchKpiArcs = async (
 /**
  * Invoke a recovery action against the daemon (via the UI server proxy). `op`
  * is the registry verb; `entityId` is the task/worktree id, omitted for
- * process-level ops (`restart-daemon`). Throws with the daemon's error message
- * on a non-2xx so the caller can surface it.
+ * process-level ops (`restart-daemon`). Throws an `ApiError` so the caller can
+ * map it to a human-readable remedy message:
+ * - `unreachable` — connection refused or daemon not running (NO_DAEMON errorCode)
+ * - `stale-daemon` — proxy reached a stale/outdated daemon (PROXY_FAILED errorCode)
+ * - `other` — any other non-2xx response
  */
 export const invokeAction = async (
   op: string,
   entityId?: string,
 ): Promise<void> => {
-  const r = await fetch(`${BASE}/api/actions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ op, entityId }),
-  })
+  let r: Response
+  try {
+    r = await fetch(`${BASE}/api/actions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op, entityId }),
+    })
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new ApiError(
+        `POST /api/actions → cannot reach the mars-ui API server`,
+        'unreachable',
+      )
+    }
+    throw err
+  }
   if (!r.ok) {
-    const body = (await r.json().catch(() => ({}))) as { error?: string }
-    throw new Error(
-      `${op} failed (${r.status})${body.error ? `: ${body.error}` : ''}`,
+    const body = (await r.json().catch(() => ({}))) as {
+      error?: string
+      errorCode?: string
+    }
+    const kind: ApiErrorKind =
+      body.errorCode === 'NO_DAEMON'
+        ? 'unreachable'
+        : body.errorCode === 'PROXY_FAILED'
+          ? 'stale-daemon'
+          : 'other'
+    throw new ApiError(
+      `POST /api/actions/${op} → ${r.status}${body.error ? `: ${body.error}` : ''}`,
+      kind,
+      r.status,
     )
   }
 }

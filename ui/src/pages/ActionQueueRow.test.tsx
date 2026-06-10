@@ -11,7 +11,8 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ActionQueueDetail, ActionQueueRow, PROCESS_LEVEL_OPS } from './ActionQueuePage'
+import { ActionQueueDetail, ActionQueueRow, PROCESS_LEVEL_OPS, actionErrorMessage } from './ActionQueuePage'
+import { ApiError } from '@/shared/api'
 import type { ActionQueueItem } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
@@ -462,5 +463,55 @@ describe('ActionBar – PROCESS_LEVEL_OPS governs entityId elision', () => {
     for (const op of entityOps) {
       expect(PROCESS_LEVEL_OPS.has(op)).toBe(false)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// actionErrorMessage – daemon-down error message mapping
+//
+// AC: When a mutation rejects with an ApiError whose kind is 'unreachable',
+// the user sees the human-readable "Daemon not running" copy instead of the
+// raw status string. The row reappears after rollback because the onError
+// handler restores the React Query snapshot (unchanged code path, preserved
+// by the existing onError rollback logic).
+// ---------------------------------------------------------------------------
+
+describe('actionErrorMessage – daemon-down error message mapping', () => {
+  it('maps ApiError unreachable to daemon-not-running remedy copy', () => {
+    const err = new ApiError('POST /api/actions/resolve → 503', 'unreachable', 503)
+    expect(actionErrorMessage(err)).toBe(
+      'Daemon not running — action not applied. Start it with: mars daemon start',
+    )
+  })
+
+  it('maps ApiError stale-daemon to daemon-restart remedy copy', () => {
+    const err = new ApiError('POST /api/actions/resolve → 404', 'stale-daemon', 404)
+    expect(actionErrorMessage(err)).toBe(
+      'Daemon unreachable (stale port) — action not applied. Restart it with: mars daemon restart',
+    )
+  })
+
+  it('passes through the error message for ApiError other kind', () => {
+    const err = new ApiError('internal server error', 'other', 500)
+    expect(actionErrorMessage(err)).toBe('internal server error')
+  })
+
+  it('passes through the message for non-ApiError errors', () => {
+    const err = new Error('generic network error')
+    expect(actionErrorMessage(err)).toBe('generic network error')
+  })
+
+  it('unreachable error message renders inline in ActionQueueRow error slot', () => {
+    // Verify that the daemon-not-running copy is a valid string that the
+    // existing ActionQueueRow error UI would render (restartError prop path).
+    const daemonMsg = actionErrorMessage(
+      new ApiError('POST /api/actions → 503', 'unreachable', 503),
+    )
+    const html = renderRow(BASE_ITEM, { onRestart: () => {}, restartError: daemonMsg })
+    expect(html).toContain('Daemon not running')
+    expect(html).toContain('mars daemon start')
+    // Row remains interactive (rollback preserved — button still visible)
+    expect(html).toContain('>Restart<')
+    expect(html).not.toContain('disabled=""')
   })
 })

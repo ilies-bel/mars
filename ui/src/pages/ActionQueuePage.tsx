@@ -7,6 +7,7 @@ import { OriginTree } from '@/widgets/OriginTree'
 import ArcChainRail from '@/widgets/ArcChainRail'
 import { ArcTree } from '@/widgets/ArcTree'
 import {
+  ApiError,
   fetchEvents,
   fetchProposalDetail,
   invokeAction,
@@ -184,6 +185,27 @@ const DIAGNOSE_OP = 'diagnose-failure'
 export const PROCESS_LEVEL_OPS = new Set(['restart-daemon', 'restart-all-daemon-killed'])
 
 /**
+ * Maps a mutation error to a human-readable message. When the error is a typed
+ * `ApiError`, the `kind` field drives a specific remedy message so the user
+ * knows how to recover (start vs. restart the daemon). Falls back to the raw
+ * message for non-ApiError throws.
+ *
+ * Exported for unit-testing the mapping logic in isolation.
+ */
+export function actionErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.kind === 'unreachable') {
+      return 'Daemon not running — action not applied. Start it with: mars daemon start'
+    }
+    if (err.kind === 'stale-daemon') {
+      return 'Daemon unreachable (stale port) — action not applied. Restart it with: mars daemon restart'
+    }
+    return err.message
+  }
+  return (err as Error).message
+}
+
+/**
  * Renders one button per action on the row. Clicking proxies the action's
  * `op` to the daemon (via `/api/actions`). `needsConfirm` actions prompt
  * first; destructive ops are styled accordingly. The `copy` op copies
@@ -229,7 +251,7 @@ const ActionBar = ({ item }: ActionBarProps) => {
       return { snapshot }
     },
     onError: (err, _vars, context) => {
-      setErrorMsg((err as Error).message)
+      setErrorMsg(actionErrorMessage(err))
       // Roll back the optimistic removal so the row reappears.
       if (context?.snapshot !== undefined) {
         qc.setQueryData(['action-queue', projectId], context.snapshot)
