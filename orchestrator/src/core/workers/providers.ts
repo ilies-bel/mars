@@ -4,13 +4,24 @@
 
 import { createHash } from 'node:crypto'
 import { installClaudeStopHook, waitForClaudeDone } from './claude-done-signal'
+import { AGENT_TO_USER_DENIED_TOOLS } from '../lib/git/claude'
+import type { ClaudeEffort, ClaudePermissionMode } from '../lib/git/claude'
 
 export type ProviderName = 'claude' | 'gemini' | 'codex'
 
 // Runtime options forwarded to spawnArgv when the orchestrator launches
-// a Provider process. Typed as a plain record so future slices can widen
-// the shape without breaking existing call sites.
-export type SpawnOpts = Readonly<Record<string, string | undefined>>
+// a Provider process. Named fields instead of a plain record so callers
+// get type-checked values and providers can safely destructure by name.
+// All fields are optional — providers that don't need a field ignore it.
+export type SpawnOpts = Readonly<{
+  model?: string
+  sessionId?: string
+  permissionMode?: ClaudePermissionMode
+  effort?: ClaudeEffort
+  disallowedTools?: readonly string[]
+  agent?: string
+  appendSystemPrompt?: string
+}>
 
 // Minimal handle to a running provider process exposed to feedPrompt and
 // doneSignal. Matches the write-side of PtyHandle so the interactive harness
@@ -90,7 +101,15 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
     // deterministic UUID v5 (SHA-1 over the DNS namespace + task-id bytes)
     // rather than storing a separate mapping. A task id that already looks like
     // a UUID is passed through unchanged.
-    spawnArgv: ({ sessionId, model }: SpawnOpts): readonly string[] => {
+    spawnArgv: ({
+      sessionId,
+      model,
+      permissionMode,
+      effort,
+      disallowedTools,
+      agent,
+      appendSystemPrompt,
+    }: SpawnOpts): readonly string[] => {
       let sessionUUID: string | undefined
       if (sessionId) {
         if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
@@ -109,10 +128,32 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
             .join('-')
         }
       }
+
+      // Union caller-supplied disallowedTools with the agent-to-user denial.
+      // Mirrors mergeDisallowedTools in claude.ts — the agent-to-user ban
+      // (AskUserQuestion, SendUserMessage) cannot be removed by a caller.
+      const mergedDisallowed = new Set<string>(AGENT_TO_USER_DENIED_TOOLS)
+      for (const tool of disallowedTools ?? []) {
+        const trimmed = tool.trim()
+        if (trimmed.length > 0) mergedDisallowed.add(trimmed)
+      }
+
       return [
         'claude',
         ...(model ? ['--model', model] : []),
         ...(sessionUUID ? ['--session-id', sessionUUID] : []),
+        // Permission posture: bypassPermissions → --dangerously-skip-permissions;
+        // any other explicit mode → --permission-mode <mode>; absent → no flag.
+        ...(permissionMode === 'bypassPermissions'
+          ? ['--dangerously-skip-permissions']
+          : permissionMode !== undefined
+            ? ['--permission-mode', permissionMode]
+            : []),
+        ...(effort ? ['--effort', effort] : []),
+        '--disallowedTools',
+        [...mergedDisallowed].join(','),
+        ...(agent ? ['--agent', agent] : []),
+        ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
       ]
     },
     // Write the prompt into the running pty followed by the submit key

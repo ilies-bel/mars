@@ -309,6 +309,11 @@ const buildWorker = (config: WorkerConfig): Worker => {
             model: config.model,
             onEvent: options.onEvent,
             maxContextTokens: config.maxContextTokens,
+            permissionMode: config.permissionMode,
+            effort: config.effort,
+            disallowedTools: config.disallowedTools,
+            agent: config.agent,
+            appendSystemPrompt: config.appendSystemPrompt,
           })
         : runClaudeCode({
             cwd: options.cwd,

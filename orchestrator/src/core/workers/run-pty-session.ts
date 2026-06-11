@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnPty } from '../lib/pty/spawn'
 import type { Provider } from './providers'
-import type { RunClaudeResult } from '../lib/git/claude'
+import type { ClaudeEffort, ClaudePermissionMode, RunClaudeResult } from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import { watchPromptScan } from './prompt-scan-done'
 
@@ -57,6 +57,13 @@ export interface RunPtySessionArgs {
    * (requires either a sidecar token counter or a JSON-mode wrapper).
    */
   readonly maxContextTokens?: number
+  // Security/behaviour posture forwarded to provider.spawnArgv so interactive
+  // sessions honour the same Worker-level constraints as headless runs.
+  readonly permissionMode?: ClaudePermissionMode
+  readonly effort?: ClaudeEffort
+  readonly disallowedTools?: readonly string[]
+  readonly agent?: string
+  readonly appendSystemPrompt?: string
 }
 
 /**
@@ -74,7 +81,21 @@ export interface RunPtySessionArgs {
  *   <sessionId>.events.jsonl — lifecycle events with ISO timestamps
  */
 export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeResult> => {
-  const { provider, prompt, cwd, sessionId, externalAbort, model, onEvent, maxContextTokens } = args
+  const {
+    provider,
+    prompt,
+    cwd,
+    sessionId,
+    externalAbort,
+    model,
+    onEvent,
+    maxContextTokens,
+    permissionMode,
+    effort,
+    disallowedTools,
+    agent,
+    appendSystemPrompt,
+  } = args
 
   // Set up trace logging under <cwd>/.mars/pty/
   const logDir = path.join(cwd, '.mars', 'pty')
@@ -100,7 +121,15 @@ export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeR
       provider.prepare?.(cwd, sessionId)
     }
 
-    const argv = provider.spawnArgv({ sessionId, model })
+    const argv = provider.spawnArgv({
+      sessionId,
+      model,
+      permissionMode,
+      effort,
+      disallowedTools,
+      agent,
+      appendSystemPrompt,
+    })
     const [cmd, ...rest] = argv as string[]
     const handle = spawnPty(cmd!, rest, { cwd })
 

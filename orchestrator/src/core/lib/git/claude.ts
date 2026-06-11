@@ -218,7 +218,7 @@ interface ClaudeStreamArgsOptions {
 // Denying them at the single shared wrapper means every workflow — including
 // any path that bypasses the Worker primitive and calls the wrapper directly
 // — inherits the ban. See idea 948691d0.
-const AGENT_TO_USER_DENIED_TOOLS = ['AskUserQuestion', 'SendUserMessage'] as const
+export const AGENT_TO_USER_DENIED_TOOLS = ['AskUserQuestion', 'SendUserMessage'] as const
 
 // Default search-tool guidance injected into every dispatched worker's system
 // prompt. The host previously enforced this via PreToolUse rewriter hooks on

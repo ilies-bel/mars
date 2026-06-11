@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { PROVIDERS } from '../providers'
-import { WORKER_CONFIGS } from '../index'
+import { WORKER_CONFIGS, READ_ONLY_DENIED_TOOLS, FIXER_BACKLOG_DENIED_TOOLS } from '../index'
 
 describe('PROVIDERS registry', () => {
   it("contains the 'claude' entry", () => {
@@ -190,5 +190,133 @@ describe('WORKER_CONFIGS provider field', () => {
     for (const name of workerNames) {
       expect(WORKER_CONFIGS[name].provider).toBe('claude')
     }
+  })
+})
+
+describe("'claude' provider spawnArgv — security posture flags", () => {
+  it('always includes --disallowedTools with agent-to-user denied tools even when no disallowedTools are passed', () => {
+    const argv = PROVIDERS.claude.spawnArgv({})
+    expect(argv).toContain('--disallowedTools')
+    const idx = (argv as readonly string[]).indexOf('--disallowedTools')
+    const tools = (argv[idx + 1] ?? '').split(',')
+    expect(tools).toContain('AskUserQuestion')
+    expect(tools).toContain('SendUserMessage')
+  })
+
+  it('merges caller disallowedTools with the agent-to-user denial so both survive', () => {
+    const argv = PROVIDERS.claude.spawnArgv({ disallowedTools: ['Edit', 'Write'] })
+    const idx = (argv as readonly string[]).indexOf('--disallowedTools')
+    const tools = (argv[idx + 1] ?? '').split(',')
+    expect(tools).toContain('AskUserQuestion')
+    expect(tools).toContain('SendUserMessage')
+    expect(tools).toContain('Edit')
+    expect(tools).toContain('Write')
+  })
+
+  it("emits '--dangerously-skip-permissions' for permissionMode 'bypassPermissions'", () => {
+    const argv = PROVIDERS.claude.spawnArgv({ permissionMode: 'bypassPermissions' })
+    expect(argv).toContain('--dangerously-skip-permissions')
+    expect(argv).not.toContain('--permission-mode')
+  })
+
+  it("emits '--permission-mode default' for permissionMode 'default'", () => {
+    const argv = PROVIDERS.claude.spawnArgv({ permissionMode: 'default' })
+    expect(argv).toContain('--permission-mode')
+    const idx = (argv as readonly string[]).indexOf('--permission-mode')
+    expect(argv[idx + 1]).toBe('default')
+    expect(argv).not.toContain('--dangerously-skip-permissions')
+  })
+
+  it('omits permission-mode flags entirely when permissionMode is absent', () => {
+    const argv = PROVIDERS.claude.spawnArgv({})
+    expect(argv).not.toContain('--permission-mode')
+    expect(argv).not.toContain('--dangerously-skip-permissions')
+  })
+
+  it("emits '--effort high' when effort is 'high'", () => {
+    const argv = PROVIDERS.claude.spawnArgv({ effort: 'high' })
+    expect(argv).toContain('--effort')
+    const idx = (argv as readonly string[]).indexOf('--effort')
+    expect(argv[idx + 1]).toBe('high')
+  })
+
+  it("omits '--effort' when effort is absent", () => {
+    const argv = PROVIDERS.claude.spawnArgv({})
+    expect(argv).not.toContain('--effort')
+  })
+
+  it("emits '--agent <name>' when agent is set", () => {
+    const argv = PROVIDERS.claude.spawnArgv({ agent: 'my-agent' })
+    expect(argv).toContain('--agent')
+    const idx = (argv as readonly string[]).indexOf('--agent')
+    expect(argv[idx + 1]).toBe('my-agent')
+  })
+
+  it("omits '--agent' when agent is absent", () => {
+    const argv = PROVIDERS.claude.spawnArgv({})
+    expect(argv).not.toContain('--agent')
+  })
+
+  it("emits '--append-system-prompt <text>' when appendSystemPrompt is set", () => {
+    const argv = PROVIDERS.claude.spawnArgv({ appendSystemPrompt: 'Use rg not grep.' })
+    expect(argv).toContain('--append-system-prompt')
+    const idx = (argv as readonly string[]).indexOf('--append-system-prompt')
+    expect(argv[idx + 1]).toBe('Use rg not grep.')
+  })
+
+  it("omits '--append-system-prompt' when appendSystemPrompt is absent", () => {
+    const argv = PROVIDERS.claude.spawnArgv({})
+    expect(argv).not.toContain('--append-system-prompt')
+  })
+})
+
+describe('pty Worker spawnArgv — security posture (integration with WORKER_CONFIGS)', () => {
+  it('Planner-like pty Worker produces --permission-mode default and denied tools including READ_ONLY_DENIED_TOOLS and agent-to-user denial', () => {
+    // Simulate what buildWorker forwards from a Planner-like pty config
+    const cfg = WORKER_CONFIGS.Planner
+    const argv = PROVIDERS.claude.spawnArgv({
+      model: cfg.model,
+      permissionMode: cfg.permissionMode,
+      effort: cfg.effort,
+      disallowedTools: cfg.disallowedTools,
+      agent: cfg.agent,
+      appendSystemPrompt: cfg.appendSystemPrompt,
+    })
+
+    // Permission posture: default (not bypassPermissions)
+    expect(argv).toContain('--permission-mode')
+    const pmIdx = (argv as readonly string[]).indexOf('--permission-mode')
+    expect(argv[pmIdx + 1]).toBe('default')
+    expect(argv).not.toContain('--dangerously-skip-permissions')
+
+    // Denied tools: READ_ONLY_DENIED_TOOLS union agent-to-user denial
+    expect(argv).toContain('--disallowedTools')
+    const dtIdx = (argv as readonly string[]).indexOf('--disallowedTools')
+    const tools = (argv[dtIdx + 1] ?? '').split(',')
+    for (const t of READ_ONLY_DENIED_TOOLS) expect(tools).toContain(t)
+    expect(tools).toContain('AskUserQuestion')
+    expect(tools).toContain('SendUserMessage')
+  })
+
+  it('Fixer-like pty Worker produces --dangerously-skip-permissions and FIXER_BACKLOG_DENIED_TOOLS union agent-to-user denial', () => {
+    const cfg = WORKER_CONFIGS.Fixer
+    const argv = PROVIDERS.claude.spawnArgv({
+      model: cfg.model,
+      permissionMode: cfg.permissionMode,
+      effort: cfg.effort,
+      disallowedTools: cfg.disallowedTools,
+    })
+
+    // Permission posture: bypassPermissions → --dangerously-skip-permissions
+    expect(argv).toContain('--dangerously-skip-permissions')
+    expect(argv).not.toContain('--permission-mode')
+
+    // Denied tools: FIXER_BACKLOG_DENIED_TOOLS union agent-to-user denial
+    expect(argv).toContain('--disallowedTools')
+    const dtIdx = (argv as readonly string[]).indexOf('--disallowedTools')
+    const tools = (argv[dtIdx + 1] ?? '').split(',')
+    for (const t of FIXER_BACKLOG_DENIED_TOOLS) expect(tools).toContain(t)
+    expect(tools).toContain('AskUserQuestion')
+    expect(tools).toContain('SendUserMessage')
   })
 })
