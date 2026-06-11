@@ -10,6 +10,7 @@ import path from 'node:path'
 import { spawnPty } from '../lib/pty/spawn'
 import type { Provider } from './providers'
 import type { RunClaudeResult } from '../lib/git/claude'
+import type { ClaudeEvent } from '../lib/claude-stream'
 import { watchPromptScan } from './prompt-scan-done'
 
 export interface RunPtySessionArgs {
@@ -19,6 +20,43 @@ export interface RunPtySessionArgs {
   readonly sessionId?: string
   readonly externalAbort?: AbortSignal
   readonly model: string
+  /**
+   * Optional event callback forwarded from the worker's RunOptions.
+   *
+   * The pty runtime reads a raw TTY byte stream and cannot produce the
+   * fine-grained per-assistant-turn events that the headless stream-json path
+   * emits. Instead, onEvent is called at the four coarse lifecycle points
+   * that runPtySession already records to events.jsonl:
+   *   { type: 'pty:started' }
+   *   { type: 'pty:prompt-fed' }
+   *   { type: 'pty:done-detected' }   — only when a done-signal fires cleanly
+   *   { type: 'pty:killed' }
+   *
+   * These events give the UI/trace stream a coarse progress signal (far better
+   * than silence) but do not carry token counts, tool calls, or assistant text.
+   */
+  readonly onEvent?: (event: ClaudeEvent) => void | Promise<void>
+  /**
+   * Soft context-token budget forwarded from the worker config.
+   *
+   * LIMITATION: The pty runtime reads a raw TTY byte stream and has no access
+   * to the per-turn token counts that the stream-json path surfaces. Faithful
+   * enforcement matching the headless path (which reads assistant-event token
+   * fields and aborts at exit code 138) is NOT possible here.
+   *
+   * As a coarse placeholder, cumulative raw pty-output bytes are tracked and
+   * the session is aborted when bytesReceived exceeds maxContextTokens × 4
+   * (a rough 4 chars-per-token approximation). This guard fires late (the
+   * model has already produced the tokens), will not catch cache-read tokens
+   * that inflate context on the headless path, and returns exitCode 137
+   * (not 138) so the coarse nature is visible to callers.
+   *
+   * When 0 or undefined the guard is disabled.
+   *
+   * TODO: implement a faithful per-turn token-budget guard for the pty path
+   * (requires either a sidecar token counter or a JSON-mode wrapper).
+   */
+  readonly maxContextTokens?: number
 }
 
 /**
@@ -36,7 +74,7 @@ export interface RunPtySessionArgs {
  *   <sessionId>.events.jsonl — lifecycle events with ISO timestamps
  */
 export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeResult> => {
-  const { provider, prompt, cwd, sessionId, externalAbort, model } = args
+  const { provider, prompt, cwd, sessionId, externalAbort, model, onEvent, maxContextTokens } = args
 
   // Set up trace logging under <cwd>/.mars/pty/
   const logDir = path.join(cwd, '.mars', 'pty')
@@ -44,8 +82,14 @@ export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeR
   const fileId = sessionId ?? 'anon'
   const rawLog = fs.createWriteStream(path.join(logDir, `${fileId}.log`), { flags: 'a' })
   const eventLog = fs.createWriteStream(path.join(logDir, `${fileId}.events.jsonl`), { flags: 'a' })
+
+  // Write a lifecycle event to events.jsonl and forward it to the caller's
+  // onEvent callback so the UI/trace stream receives coarse progress signals.
+  // NOTE: the pty runtime cannot emit fine-grained assistant-turn events; these
+  // four lifecycle events are the faithful maximum for this runtime.
   const writeEvent = (event: string): void => {
     eventLog.write(JSON.stringify({ ts: new Date().toISOString(), event }) + '\n')
+    void onEvent?.({ type: `pty:${event}` })
   }
 
   try {
@@ -60,9 +104,28 @@ export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeR
     const [cmd, ...rest] = argv as string[]
     const handle = spawnPty(cmd!, rest, { cwd })
 
-    // Stream raw pty output to the log file
+    // AbortController that lets us cancel the done-signal watcher when an
+    // abort source fires first, so the watcher's internal resources are freed.
+    const innerAbort = new AbortController()
+
+    // Coarse byte-budget guard for maxContextTokens.
+    // See RunPtySessionArgs.maxContextTokens for the documented limitation —
+    // this is intentionally a placeholder, NOT faithful token-budget enforcement.
+    const budgetAbort = maxContextTokens ? new AbortController() : null
+    let bytesReceived = 0
+    const byteLimit = maxContextTokens ? maxContextTokens * 4 : 0
+
+    // Stream raw pty output to the log file; track bytes for the budget guard.
     handle.onData((chunk: string) => {
       rawLog.write(chunk)
+      if (budgetAbort && !budgetAbort.signal.aborted) {
+        bytesReceived += chunk.length
+        if (bytesReceived >= byteLimit) {
+          // Coarse byte-size budget exceeded — abort the session.
+          // NOT faithful token-budget enforcement; see RunPtySessionArgs.maxContextTokens.
+          budgetAbort.abort()
+        }
+      }
     })
 
     writeEvent('started')
@@ -109,10 +172,6 @@ export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeR
     let exitCode = 0
     let doneDetected = false
 
-    // AbortController that lets us cancel the done-signal watcher when the
-    // external abort fires first, so the watcher's internal resources are freed.
-    const innerAbort = new AbortController()
-
     // Settle on the Provider's done-signal if one is registered, otherwise fall
     // back to waiting for the pty process to exit naturally.
     //   status-file  — wait() watches for a sentinel file written by the Stop hook.
@@ -128,34 +187,35 @@ export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeR
               handle.onExit(() => resolve())
             })
 
+    // Helper: turn an AbortSignal into a rejecting racer that also cancels the
+    // inner done-signal watcher so its resources are freed promptly.
+    const abortRacer = (signal: AbortSignal): Promise<never> =>
+      new Promise<never>((_, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            innerAbort.abort()
+            reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+          },
+          { once: true },
+        )
+      })
+
     try {
-      // Handle an already-fired abort up front so we don't enter the race.
-      if (externalAbort?.aborted) {
+      // Check all abort sources up front so we don't enter the race in an
+      // already-aborted state.
+      if (externalAbort?.aborted || budgetAbort?.signal.aborted) {
         innerAbort.abort()
         throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
       }
 
-      if (externalAbort) {
-        // Race the done-signal against the external abort. The abort listener
-        // cancels the inner watcher so it releases its resources promptly.
-        await Promise.race([
-          waitDone,
-          new Promise<never>((_, reject) => {
-            externalAbort.addEventListener(
-              'abort',
-              () => {
-                innerAbort.abort()
-                reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }))
-              },
-              { once: true },
-            )
-          }),
-        ])
-        doneDetected = true
-      } else {
-        await waitDone
-        doneDetected = true
-      }
+      // Race the done-signal against any active abort sources.
+      const racers: Array<Promise<void | never>> = [waitDone]
+      if (externalAbort) racers.push(abortRacer(externalAbort))
+      if (budgetAbort) racers.push(abortRacer(budgetAbort.signal))
+
+      await Promise.race(racers)
+      doneDetected = true
     } catch (err: unknown) {
       if ((err as { name?: string }).name === 'AbortError') {
         exitCode = 137

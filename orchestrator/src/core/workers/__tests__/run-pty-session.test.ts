@@ -610,6 +610,90 @@ describe('runPtySession — provider.prepare hook', () => {
 })
 
 // ---------------------------------------------------------------------------
+// onEvent lifecycle events (slice — pty parity)
+//
+// Verifies that runPtySession calls onEvent at each coarse lifecycle point.
+// The pty runtime cannot emit fine-grained assistant-turn events (no
+// stream-json), so these four coarse events are the faithful maximum.
+// ---------------------------------------------------------------------------
+
+describe('runPtySession — onEvent lifecycle events', () => {
+  let tmpDir: string
+  let fakeHandle: ReturnType<typeof makeFakeHandle>
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'pty-onevent-test-'))
+    fakeHandle = makeFakeHandle()
+    vi.mocked(spawnPty).mockReturnValue(fakeHandle)
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('calls onEvent with pty:started, pty:prompt-fed, pty:done-detected, pty:killed on a clean run', async () => {
+    const provider = makeProvider(() => Promise.resolve())
+    const events: string[] = []
+    const onEvent = vi.fn((ev: { type: string }) => {
+      events.push(ev.type)
+    })
+
+    await runPtySession({
+      provider,
+      prompt: 'hello',
+      cwd: tmpDir,
+      sessionId: 'onevent-sess-1',
+      model: 'claude-sonnet-4-6',
+      onEvent,
+    })
+
+    expect(events).toContain('pty:started')
+    expect(events).toContain('pty:prompt-fed')
+    expect(events).toContain('pty:done-detected')
+    expect(events).toContain('pty:killed')
+  })
+
+  it('emits pty:killed but not pty:done-detected when the session is aborted', async () => {
+    const provider = makeProvider(() => new Promise<void>(() => {}))
+    const events: string[] = []
+    const onEvent = vi.fn((ev: { type: string }) => {
+      events.push(ev.type)
+    })
+
+    const controller = new AbortController()
+    controller.abort()
+
+    await runPtySession({
+      provider,
+      prompt: 'hello',
+      cwd: tmpDir,
+      sessionId: 'onevent-sess-2',
+      externalAbort: controller.signal,
+      model: 'claude-sonnet-4-6',
+      onEvent,
+    })
+
+    expect(events).toContain('pty:killed')
+    expect(events).not.toContain('pty:done-detected')
+  })
+
+  it('does not throw when onEvent is not provided (backwards-compatible)', async () => {
+    const provider = makeProvider(() => Promise.resolve())
+
+    await expect(
+      runPtySession({
+        provider,
+        prompt: 'ping',
+        cwd: tmpDir,
+        model: 'claude-sonnet-4-6',
+        // no onEvent
+      }),
+    ).resolves.toMatchObject({ exitCode: 0 })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Integration: codex provider with prompt-scan done signal (slice 9)
 //
 // Runs PROVIDERS.codex end-to-end through runPtySession against a stubbed pty

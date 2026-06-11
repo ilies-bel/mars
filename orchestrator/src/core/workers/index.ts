@@ -307,6 +307,8 @@ const buildWorker = (config: WorkerConfig): Worker => {
             sessionId: options.sessionId,
             externalAbort: options.externalAbort,
             model: config.model,
+            onEvent: options.onEvent,
+            maxContextTokens: config.maxContextTokens,
           })
         : runClaudeCode({
             cwd: options.cwd,
