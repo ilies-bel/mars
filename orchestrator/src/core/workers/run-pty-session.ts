@@ -66,6 +66,43 @@ export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeR
     })
 
     writeEvent('started')
+
+    // Readiness gate: if the provider declares an isReady predicate, poll the
+    // ANSI-stripped pty buffer on a ~250 ms interval before sending keystrokes.
+    // This prevents the prompt from landing before the interactive TUI has
+    // rendered its input box (observed with claude CLI 2.1.159: typed chars
+    // were visible in the buffer but the spinner never started).
+    //
+    // Times out after 30 s and proceeds so a detection miss degrades to the
+    // previous behaviour rather than hanging forever.
+    if (provider.isReady) {
+      const { isReady } = provider
+      // Strips ANSI escape sequences (CSI / Fe) so the predicate matches
+      // visible text regardless of terminal colouring.
+      const ANSI_RE = /\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g
+      const POLL_MS = 250
+      const TIMEOUT_MS = 30_000
+
+      await new Promise<void>((resolve) => {
+        if (isReady(handle.buffer().replace(ANSI_RE, ''))) {
+          resolve()
+          return
+        }
+        let elapsed = 0
+        const interval = setInterval(() => {
+          elapsed += POLL_MS
+          if (isReady(handle.buffer().replace(ANSI_RE, ''))) {
+            clearInterval(interval)
+            resolve()
+          } else if (elapsed >= TIMEOUT_MS) {
+            clearInterval(interval)
+            writeEvent('ready-timeout')
+            resolve()
+          }
+        }, POLL_MS)
+      })
+    }
+
     await provider.feedPrompt(handle, prompt)
     writeEvent('prompt-fed')
 

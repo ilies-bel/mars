@@ -617,6 +617,122 @@ describe('runPtySession — provider.prepare hook', () => {
 // prefix. Asserts the run resolves cleanly with exitCode 0.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Readiness gate: feedPrompt must not be called until the provider's isReady
+// predicate passes (or the 30 s timeout elapses).
+//
+// Uses fake timers so the ~250 ms polling interval and 30 s timeout are
+// exercised without real wall-clock delay.
+// ---------------------------------------------------------------------------
+
+describe('runPtySession — readiness gate', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.clearAllMocks()
+  })
+
+  it('does not call feedPrompt until the buffer emits the readiness signal', async () => {
+    vi.useFakeTimers()
+
+    let bufferContent = ''
+    const feedPromptCalls: string[] = []
+
+    const handle = {
+      write: vi.fn(),
+      kill: vi.fn(),
+      buffer: vi.fn<() => string>().mockImplementation(() => bufferContent),
+      onData: vi.fn(),
+      onExit: vi.fn(),
+    }
+    vi.mocked(spawnPty).mockReturnValue(handle as unknown as ReturnType<typeof makeFakeHandle>)
+
+    const provider: Provider = {
+      name: 'claude',
+      spawnArgv: () => ['claude'],
+      feedPrompt: async () => {
+        feedPromptCalls.push('fed')
+      },
+      isReady: (buf: string) => buf.includes('READY'),
+      doneSignal: { kind: 'status-file', wait: () => Promise.resolve() },
+    }
+
+    const runPromise = runPtySession({
+      provider,
+      prompt: 'do work',
+      cwd: '/tmp/ready-gate-cwd',
+      sessionId: 'ready-gate-test',
+      model: 'claude-sonnet-4-6',
+    })
+
+    // Flush the synchronous executor path (immediate isReady check fails —
+    // buffer is empty) and any pending microtasks.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(feedPromptCalls).toHaveLength(0) // still waiting for readiness
+
+    // Advance one full poll tick — buffer still empty, not ready.
+    await vi.advanceTimersByTimeAsync(250)
+    expect(feedPromptCalls).toHaveLength(0)
+
+    // Signal readiness; the next poll tick must unblock feedPrompt.
+    bufferContent = 'READY'
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(feedPromptCalls).toHaveLength(1)
+
+    // Wind down the session.
+    await vi.runAllTimersAsync()
+    vi.useRealTimers()
+    await runPromise
+  })
+
+  it('proceeds and calls feedPrompt after the 30 s timeout even when the buffer never becomes ready', async () => {
+    vi.useFakeTimers()
+
+    const feedPromptCalls: string[] = []
+
+    const handle = {
+      write: vi.fn(),
+      kill: vi.fn(),
+      buffer: vi.fn<() => string>().mockReturnValue(''), // never ready
+      onData: vi.fn(),
+      onExit: vi.fn(),
+    }
+    vi.mocked(spawnPty).mockReturnValue(handle as unknown as ReturnType<typeof makeFakeHandle>)
+
+    const provider: Provider = {
+      name: 'claude',
+      spawnArgv: () => ['claude'],
+      feedPrompt: async () => {
+        feedPromptCalls.push('fed')
+      },
+      isReady: () => false, // never signals readiness
+      doneSignal: { kind: 'status-file', wait: () => Promise.resolve() },
+    }
+
+    const runPromise = runPtySession({
+      provider,
+      prompt: 'do work',
+      cwd: '/tmp/ready-timeout-cwd',
+      sessionId: 'ready-timeout-test',
+      model: 'claude-sonnet-4-6',
+    })
+
+    // Still waiting — 30 s has not elapsed.
+    await vi.advanceTimersByTimeAsync(29_750)
+    expect(feedPromptCalls).toHaveLength(0)
+
+    // Cross the 30 s threshold; the gate must give up and call feedPrompt.
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(feedPromptCalls).toHaveLength(1)
+
+    await vi.runAllTimersAsync()
+    vi.useRealTimers()
+    const result = await runPromise
+    expect(result.exitCode).toBe(0)
+  })
+})
+
 describe('runPtySession — codex provider (prompt-scan done signal)', () => {
   let tmpDir: string
 

@@ -57,12 +57,19 @@ export type ProviderDoneSignal = StatusFileDoneSignal | PromptScanDoneSignal
 //                  side-effects before the process starts (e.g. writing a
 //                  Stop hook for the claude status-file done-signal) implement
 //                  this; providers that need no setup omit it.
+//   - isReady    : optional readiness predicate. When present, runPtySession
+//                  polls the ANSI-stripped pty buffer on a ~250 ms interval
+//                  before calling feedPrompt, proceeding only once this returns
+//                  true or a 30 s timeout elapses (with a logged warning). This
+//                  prevents keystrokes from landing before the TUI input box has
+//                  rendered.
 export interface Provider {
   readonly name: ProviderName
   spawnArgv(opts: SpawnOpts): readonly string[]
   feedPrompt(handle: ProcessHandle, prompt: string): Promise<void>
   readonly doneSignal?: ProviderDoneSignal
   prepare?(cwd: string, sessionId: string): void
+  readonly isReady?: (strippedBuffer: string) => boolean
 }
 
 // Registry of every known Provider keyed by ProviderName.
@@ -130,6 +137,13 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
     // Pre-spawn setup: install the Stop hook so the done-signal sentinel file
     // is written when Claude's turn ends. Must run before the process starts.
     prepare: installClaudeStopHook,
+    // Readiness gate for the claude TUI: the input chevron (❯) appears in the
+    // buffer once the input box has rendered, and the persistent status footer
+    // always contains the model name or a keyboard-shortcut hint. Waiting for
+    // both prevents typed keystrokes from landing before the TUI is ready.
+    isReady: (buf: string): boolean =>
+      buf.includes('❯') &&
+      /bypass permissions|shift\+tab to cycle|Haiku|Sonnet|Opus/i.test(buf),
   },
   gemini: {
     name: 'gemini',
