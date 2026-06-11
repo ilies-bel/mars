@@ -541,6 +541,35 @@ describe('runPtySession — provider.prepare hook', () => {
     expect(callOrder.indexOf('prepare')).toBeLessThan(callOrder.indexOf('spawn'))
   })
 
+  it('prepare is called when sessionId is a task-id-format string (the dispatch-path identity)', async () => {
+    // Regression guard for the primitives/index.ts dispatch path: runOptions
+    // must carry sessionId so it reaches runPtySession and prepare() fires.
+    // Task IDs are not UUIDs; providers.ts normalises them downstream, so any
+    // non-undefined string is valid here.
+    const prepareSpy = vi.fn()
+
+    const provider: Provider = {
+      name: 'claude',
+      spawnArgv: () => ['claude'],
+      feedPrompt: async () => {},
+      prepare: prepareSpy,
+      doneSignal: { kind: 'status-file', wait: () => Promise.resolve() },
+    }
+
+    const taskId = 'mars-77bd313c' // typical task-id format from the dispatch path
+
+    await runPtySession({
+      provider,
+      prompt: 'noop',
+      cwd: tmpDir,
+      sessionId: taskId,
+      model: 'claude-sonnet-4-6',
+    })
+
+    expect(prepareSpy).toHaveBeenCalledOnce()
+    expect(prepareSpy).toHaveBeenCalledWith(tmpDir, taskId)
+  })
+
   it('does not call provider.prepare when sessionId is absent', async () => {
     const prepareSpy = vi.fn()
 

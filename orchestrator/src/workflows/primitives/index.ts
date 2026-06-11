@@ -576,6 +576,11 @@ export const runAgent = async (args: RunAgentArgs): Promise<RunAgentResult> => {
     prompt: fullPrompt,
     runOptions: {
       cwd: worktreePath,
+      // Use taskId as the session key so pty traces and the Stop-hook
+      // installer are keyed to this task rather than falling back to 'anon'.
+      // providers.ts normalises any string to a UUIDv5 before passing it to
+      // claude, so a non-UUID task id is acceptable here.
+      sessionId: taskId,
       systemPrompt: resolveWorkerSystemPrompt(primaryTag),
       onEvent: async (event) => {
         emit?.(event)
