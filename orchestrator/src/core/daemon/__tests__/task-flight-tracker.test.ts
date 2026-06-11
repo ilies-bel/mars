@@ -130,12 +130,33 @@ describe('TaskFlightTracker — dispatch-storm invariant', () => {
 
     const snap = tracker.inFlightSnapshot()
     expect(snap).toHaveLength(2)
-    expect(snap).toContainEqual({ taskId: 't1', kind: 'implement' })
-    expect(snap).toContainEqual({ taskId: 't2', kind: 'triage' })
+    expect(snap).toContainEqual(expect.objectContaining({ taskId: 't1', kind: 'implement' }))
+    expect(snap).toContainEqual(expect.objectContaining({ taskId: 't2', kind: 'triage' }))
+    // Each entry carries a startedAt timestamp.
+    for (const entry of snap) {
+      expect(typeof entry.startedAt).toBe('number')
+    }
 
     // Mutating the snapshot does not affect the tracker (it is a copy).
     snap.pop()
     expect(tracker.inFlightCount()).toBe(2)
+  })
+
+  it('recordPid stores the PID on an existing in-flight entry', () => {
+    const tracker = createTaskFlightTracker()
+    tracker.commitInFlight('t1', 'implement')
+
+    tracker.recordPid('t1', 42)
+
+    const snap = tracker.inFlightSnapshot()
+    const entry = snap.find((e) => e.taskId === 't1')
+    expect(entry?.pid).toBe(42)
+  })
+
+  it('recordPid is a no-op for a task not in flight', () => {
+    const tracker = createTaskFlightTracker()
+    // Should not throw even if the task isn't in flight.
+    expect(() => tracker.recordPid('nobody', 99)).not.toThrow()
   })
 
   it('pending sets are per-kind, drainable in insertion order, and clearable', () => {

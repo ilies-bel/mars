@@ -59,6 +59,15 @@ export type ClaimableKind = Extract<DispatchKind, 'triage' | 'implement'>
 export interface InFlightEntry {
   taskId: string
   kind: DispatchKind
+  /** Millisecond timestamp when this entry was committed to the in-flight map. */
+  startedAt: number
+  /**
+   * OS process ID of the child subprocess (claude -p or verify runner).
+   * Optional: set after the child is spawned via `tracker.recordPid()`.
+   * When present, the phantom-task watchdog uses `isProcessAlive(pid)` to
+   * detect dead workers before the wall-clock ceiling fires.
+   */
+  pid?: number
 }
 
 /**
@@ -129,6 +138,15 @@ export interface TaskFlightTracker {
    * end. Returns true if an entry was actually cleared.
    */
   forceRelease(taskId: string): boolean
+
+  // ── PID recording ─────────────────────────────────────────────────────────
+  /**
+   * Record the OS PID of the child subprocess for an already-committed
+   * in-flight entry. Call this after the child process is spawned so the
+   * phantom-task watchdog can use `isProcessAlive(pid)` to detect dead workers
+   * before the wall-clock ceiling fires. No-op if `taskId` is not in flight.
+   */
+  recordPid(taskId: string, pid: number): void
 }
 
 export const createTaskFlightTracker = (): TaskFlightTracker => {
@@ -162,7 +180,7 @@ export const createTaskFlightTracker = (): TaskFlightTracker => {
       claimedSet(kind).delete(taskId)
     },
     commitInFlight: (taskId, kind) => {
-      const entry: InFlightEntry = { taskId, kind }
+      const entry: InFlightEntry = { taskId, kind, startedAt: Date.now() }
       inFlight.set(taskId, entry)
       // Claim clears only AFTER the inFlight entry is recorded, so the gap is
       // covered the whole time. Only triage/implement are ever claimed; the
@@ -193,5 +211,10 @@ export const createTaskFlightTracker = (): TaskFlightTracker => {
     },
 
     forceRelease: (taskId) => inFlight.delete(taskId),
+
+    recordPid: (taskId, pid) => {
+      const entry = inFlight.get(taskId)
+      if (entry) entry.pid = pid
+    },
   }
 }

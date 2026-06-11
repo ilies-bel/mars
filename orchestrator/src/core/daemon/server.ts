@@ -2557,6 +2557,53 @@ export const startDaemon = async (
   }, OBSERVABILITY_WATCHDOG_MS)
   observabilityWatchdog.unref()
 
+  // ── Phantom-task watchdog ─────────────────────────────────────────────────
+  // Periodically sweeps for tasks stuck in 'running' or 'verifying' with no
+  // live subprocess, preventing a dead worker from holding an in-flight slot
+  // indefinitely (the root cause of the mars-f35b1c7f 12-hour freeze).
+  //
+  // Two detection mechanisms (belt and suspenders):
+  //  1. PID liveness: if an in-flight entry carries a recorded PID and
+  //     isProcessAlive(pid) returns false, the task is auto-failed immediately
+  //     without waiting for the wall-clock ceiling.
+  //  2. Wall-clock ceiling: if updatedAt exceeds MARS_PHANTOM_WATCHDOG_CEILING_MS
+  //     (default 30 min) — or the PID is alive but updatedAt still exceeds the
+  //     ceiling (hung subprocess case) — the task is auto-failed as a backstop.
+  //
+  // For each phantom: marks the task failed with failedPhase set, calls
+  // forceRelease + release(sem) to free the slot, triggers drain() so queued
+  // work resumes, and raises exactly one action-queue item (dedup by taskId
+  // prevents a retry storm). .unref() so the timer never prevents shutdown.
+  const PHANTOM_WATCHDOG_MS = Number(
+    process.env.MARS_PHANTOM_WATCHDOG_MS ?? 5 * 60_000,
+  )
+  const { sweepPhantomTasks } = await import('./phantom-task-watchdog')
+  const phantomWatchdog = setInterval(() => {
+    void (async () => {
+      try {
+        const { failed } = await sweepPhantomTasks(
+          tracker.inFlightSnapshot(),
+          (id, kind) => {
+            tracker.forceRelease(id)
+            release(sems[kind])
+            void drain()
+          },
+        )
+        if (failed.length > 0) {
+          log(
+            `[phantom-watchdog] auto-failed ${failed.length} phantom in-flight task(s): ${failed.join(', ')}`,
+          )
+          viewStreamHub.broadcast('action-queue')
+          viewStreamHub.broadcast('tasks')
+          void drain()
+        }
+      } catch (err) {
+        log(`[phantom-watchdog] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, PHANTOM_WATCHDOG_MS)
+  phantomWatchdog.unref()
+
   // ── Observability telemetry sweeper ───────────────────────────────────────
   // Periodically deletes trace_events rows older than three days so the
   // SQLite state DB stays bounded across multi-day sessions. The sweep reuses
@@ -2704,6 +2751,7 @@ export const startDaemon = async (
     clearInterval(githubUpdatePoll)
     clearInterval(staleSweep)
     clearInterval(observabilityWatchdog)
+    clearInterval(phantomWatchdog)
     clearInterval(observabilitySweep)
     clearInterval(walCheckpointSweep)
     clearInterval(kpiSnapshotSweep)

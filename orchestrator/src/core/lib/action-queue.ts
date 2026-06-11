@@ -55,6 +55,10 @@ export const ACTION_QUEUE_KINDS = [
   // in the tasks table (deleted/purged). The dependent is failed rather than
   // re-dispatched against a vanished target.
   'orphaned-origin',
+  // A task was stuck in 'running' or 'verifying' with no live subprocess:
+  // its recorded PID was dead, or its updatedAt exceeded the wall-clock ceiling.
+  // The daemon auto-failed the task and freed its in-flight slot.
+  'phantom-task',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
