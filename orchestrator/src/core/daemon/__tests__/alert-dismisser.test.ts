@@ -329,6 +329,48 @@ describe('alert-dismisser outbox subscriber', () => {
     expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
   })
 
+  // ── Regression: origin_task_id holds proposal id, task id in payload ────────
+  // Live bug (row 40827d0c, task mars-de3e00ad): resolveAllRowsForTask used
+  // WHERE origin_task_id = :taskId, but origin_task_id held the arc-resolved
+  // proposal id while the actual task id lived in payload.taskId.  The UPDATE
+  // matched zero rows, leaving a stale "failed task" alert for finished work.
+  // Fixed by widening the predicate to also match json_extract(payload,'$.taskId').
+
+  it('resolves a kind=failed row whose origin_task_id is a proposal id but payload.taskId is the task id (regression: leaked alert after task.completed)', async () => {
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    const taskId = 'task-T-payload-mismatch'
+    // Simulate the arc-resolution path: originTaskId is a bare proposal id
+    // (not a real task row), so resolveOriginIdForTask passes it through
+    // unchanged, giving origin_task_id = proposalId on the persisted row.
+    const proposalId = 'proposal-0f54837a-origin'
+
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Task ${taskId} needs a human`,
+      body: 'stuck',
+      payload: { taskId },
+      context: { task_id: taskId },
+      raisedBy: 'orchestrator:test',
+      signature: `sig-${taskId}`,
+      originTaskId: proposalId,
+    })
+
+    await ad.ensureAlertDismisser(client)
+    await publish(pub, client, 'task.completed', {
+      taskId,
+      result: { status: 'done' },
+    })
+
+    const { processed } = await ad.drainAlertDismissals(client)
+
+    expect(processed).toBe(1)
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+  })
+
   describe('ADR-0054: task.under_investigation does NOT close the alert (level-triggered)', () => {
     it('updateTask under_investigation inserts a task.under_investigation event in the outbox', async () => {
       // The event is still emitted — it just no longer drives alert dismissal.

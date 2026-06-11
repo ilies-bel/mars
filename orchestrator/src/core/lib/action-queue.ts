@@ -1122,10 +1122,16 @@ export const listResolvedActionQueueItems = async ({
 }
 
 /**
- * Resolve every open Action-queue row whose `origin_task_id` matches
- * `taskId`, regardless of kind. Used by the Invalidator on `task.completed`
- * and `task.dropped` to ensure no orphaned row survives after a task ends
+ * Resolve every open Action-queue row whose task id matches `taskId`,
+ * regardless of kind. Used by the Invalidator on `task.completed` and
+ * `task.dropped` to ensure no orphaned row survives after a task ends
  * cleanly (ADR-0028/0030).
+ *
+ * Two columns are checked so that rows raised through the arc-resolution path
+ * (where `origin_task_id` holds the proposal/origin id while the actual task
+ * id is stored in `payload.taskId`) are also caught:
+ *   - `origin_task_id = :taskId` — the normal path (task is its own arc root)
+ *   - `json_extract(payload, '$.taskId') = :taskId` — the arc-resolved path
  *
  * Idempotent — rows that are already resolved/dismissed are untouched.
  */
@@ -1138,8 +1144,9 @@ export const resolveAllRowsForTask = async (
     sql: `UPDATE action_queue_items
              SET state = 'resolved',
                  resolved_at = ?
-           WHERE origin_task_id = ?
+           WHERE (origin_task_id = ?
+                  OR json_extract(payload, '$.taskId') = ?)
              AND state = 'open'`,
-    args: [new Date().toISOString(), taskId],
+    args: [new Date().toISOString(), taskId, taskId],
   })
 }
