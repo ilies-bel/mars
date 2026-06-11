@@ -32,6 +32,7 @@ import {
   deriveActionKeys,
   clearResolvedPendingOps,
   shouldRefreshNow,
+  resolveCursor,
 } from '../action-queue-watch'
 import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
 
@@ -548,5 +549,40 @@ describe('shouldRefreshNow', () => {
     }
 
     expect(refreshCalls).toBe(1)
+  })
+})
+
+// ─── resolveCursor ────────────────────────────────────────────────────────────
+
+describe('resolveCursor', () => {
+  const rowA = makeRow({ id: 'row-a', entityId: 'task-a' })
+  const rowB = makeRow({ id: 'row-b', entityId: 'task-b' })
+  const rowC = makeRow({ id: 'row-c', entityId: 'task-c' })
+
+  it('anchor hit: returns the new index of the previously selected row when it is still present', () => {
+    // Rows had [A, B, C]; a new row was inserted above — now [X, A, B, C].
+    // The cursor was on B (index 1). After refresh it should stay on B (now index 2).
+    const rowX = makeRow({ id: 'row-x', entityId: 'task-x' })
+    const rows = [rowX, rowA, rowB, rowC]
+    expect(resolveCursor(rows, 'row-b', 1)).toBe(2)
+  })
+
+  it('anchor miss + same-index fallback: stays at prevIndex when the row is gone but index is still valid', () => {
+    // Rows had [A, B, C]; B was deleted — now [A, C].
+    // The cursor was on B (index 1). prevIndex 1 is still valid in [A, C].
+    const rows = [rowA, rowC]
+    expect(resolveCursor(rows, 'row-b', 1)).toBe(1)
+  })
+
+  it('anchor miss + clamped fallback: clamps to last row when prevIndex >= rows.length', () => {
+    // Rows had [A, B, C]; last two rows were removed — now [A].
+    // The cursor was on C (index 2). Clamp to index 0 (the only row left).
+    const rows = [rowA]
+    expect(resolveCursor(rows, 'row-c', 2)).toBe(0)
+  })
+
+  it('empty rows: returns 0 regardless of prevRowId and prevIndex', () => {
+    expect(resolveCursor([], 'row-a', 5)).toBe(0)
+    expect(resolveCursor([], null, 0)).toBe(0)
   })
 })

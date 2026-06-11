@@ -363,7 +363,10 @@ const Detail: React.FC<DetailProps> = ({ row, now, pending }) => {
 
 interface AppState {
   rows: ActionQueueRow[]
-  cursor: number
+  /** The id of the currently selected row, used to re-anchor the cursor on refresh. */
+  cursorRowId: string | null
+  /** The last resolved cursor index, used as a fallback when the anchored row disappears. */
+  lastCursorIndex: number
   detailId: string | null
   error: string | null
   live: boolean
@@ -395,11 +398,34 @@ export function shouldRefreshNow(
   )
 }
 
+/**
+ * Resolve the cursor index after a refresh that may have inserted or deleted rows.
+ *
+ * - Anchor hit: if prevRowId is still in rows, return its new index.
+ * - Anchor miss + rows non-empty: clamp prevIndex to the last valid index.
+ * - Empty rows: return 0.
+ *
+ * Exported for testing.
+ */
+export const resolveCursor = (
+  rows: ActionQueueRow[],
+  prevRowId: string | null,
+  prevIndex: number,
+): number => {
+  if (rows.length === 0) return 0
+  if (prevRowId !== null) {
+    const idx = rows.findIndex((r) => r.id === prevRowId)
+    if (idx !== -1) return idx
+  }
+  return Math.min(prevIndex, rows.length - 1)
+}
+
 const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
   const { exit } = useApp()
   const [state, setState] = useState<AppState>({
     rows: [],
-    cursor: 0,
+    cursorRowId: null,
+    lastCursorIndex: 0,
     detailId: null,
     error: null,
     live: false,
@@ -422,13 +448,13 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
       if (!res.ok) throw new Error(`GET /view/action-queue: HTTP ${res.status}`)
       const rows = (await res.json()) as ActionQueueRow[]
       setState((prev) => {
-        const cursor =
-          rows.length === 0 ? 0 : Math.min(prev.cursor, rows.length - 1)
+        const newIndex = resolveCursor(rows, prev.cursorRowId, prev.lastCursorIndex)
         const pendingOps = clearResolvedPendingOps(prev.pendingOps, rows)
         return {
           ...prev,
           rows,
-          cursor,
+          cursorRowId: rows[newIndex]?.id ?? null,
+          lastCursorIndex: newIndex,
           error: null,
           live: true,
           now: Date.now(),
@@ -584,7 +610,7 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
     [stateDir],
   )
 
-  const selected = state.rows[state.cursor] ?? null
+  const selected = state.rows[state.lastCursorIndex] ?? null
 
   useInput((input, key) => {
     // A copy hint overlay is up — any key dismisses it.
@@ -639,20 +665,28 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
       return
     }
     if (input === 'j' || key.downArrow) {
-      setState((prev) => ({
-        ...prev,
-        cursor:
+      setState((prev) => {
+        const newIndex =
           prev.rows.length === 0
             ? 0
-            : Math.min(prev.cursor + 1, prev.rows.length - 1),
-      }))
+            : Math.min(prev.lastCursorIndex + 1, prev.rows.length - 1)
+        return {
+          ...prev,
+          cursorRowId: prev.rows[newIndex]?.id ?? null,
+          lastCursorIndex: newIndex,
+        }
+      })
       return
     }
     if (input === 'k' || key.upArrow) {
-      setState((prev) => ({
-        ...prev,
-        cursor: Math.max(prev.cursor - 1, 0),
-      }))
+      setState((prev) => {
+        const newIndex = Math.max(prev.lastCursorIndex - 1, 0)
+        return {
+          ...prev,
+          cursorRowId: prev.rows[newIndex]?.id ?? null,
+          lastCursorIndex: newIndex,
+        }
+      })
       return
     }
     if (key.return) {
@@ -799,7 +833,7 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
             <Row
               key={row.id}
               row={row}
-              selected={i === state.cursor}
+              selected={i === state.lastCursorIndex}
               now={state.now}
               pending={!!state.pendingOps[row.id]}
             />
