@@ -231,4 +231,73 @@ describe('restart → done auto-dismisses the failed action-queue row', () => {
     const after = await actionQueue.getActionQueueItem(itemId)
     expect(after!.state).toBe('resolved')
   })
+
+  it('reconcileTerminalTasks resolves a stranded row for a sliced task whose origin_task_id is a still-running PRD task (payload.taskId leg)', async () => {
+    // Regression: when a task is sliced from a PRD that itself exists as a task
+    // (still queued/running — other slices are pending), raiseActionQueueItem stores
+    // origin_task_id = prdTaskId (the arc root). The existing reconcile legs miss
+    // this row because:
+    //   leg (a): JOIN on origin_task_id = t.id WHERE t.status IN ('done','dropped')
+    //            — the PRD task is still 'queued', not done/dropped → no match.
+    //   leg (b-task): WHERE origin_task_id NOT IN (SELECT id FROM tasks)
+    //            — the PRD task IS in the tasks table → no match.
+    // The new leg (c) joins via json_extract(payload, '$.taskId') against the
+    // actual failed task id (which is done), regardless of the PRD's status.
+    const { q, actionQueue } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const reconcile = (await import('../lifecycle-reconcile')) as unknown as ReconcileModule
+
+    const now = new Date().toISOString()
+    // PRD task: still queued (other slices running) — NOT a terminal state.
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, created_at, updated_at)
+            VALUES (?, ?, 'queued', ?, 0, 'task', ?, ?)`,
+      args: ['prd-task-still-running', '(prd prompt)', null, now, now],
+    })
+    // Sliced task: failed, then done (recovered), origin_id → PRD task id.
+    await client.execute({
+      sql: `INSERT INTO tasks (
+              id, prompt, status, origin_id, retry_count,
+              failure_reason, failure_reason_code,
+              kind, recovery_payload,
+              failure_signature, error,
+              created_at, updated_at
+            ) VALUES (?, ?, 'done', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        'T-sliced-done-001', '(test prompt)', 'prd-task-still-running',
+        null, null, 'task', null, null, null, now, now,
+      ],
+    })
+
+    // Raise a failed row as the repopulator does.
+    // raiseActionQueueItem resolves 'T-sliced-done-001' → 'prd-task-still-running'
+    // and stores origin_task_id = 'prd-task-still-running',
+    //            fingerprint = sha1('origin:prd-task-still-running').
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'high',
+      title: 'Sliced task failed',
+      body: 'could not install',
+      payload: { taskId: 'T-sliced-done-001' },
+      context: {},
+      raisedBy: 'orchestrator:test',
+      signature: 'T-sliced-done-001',
+      originTaskId: 'T-sliced-done-001',
+    })
+
+    // Confirm the row is open and stored with the PRD's id as origin_task_id.
+    const before = await actionQueue.getActionQueueItem(itemId)
+    expect(before!.state).toBe('open')
+    expect(before!.originTaskId).toBe('prd-task-still-running')
+
+    // leg (a) won't find it (PRD task is 'queued', not done/dropped).
+    // leg (b-task) won't find it (PRD task IS in tasks table).
+    // leg (c) MUST find it via payload.taskId = 'T-sliced-done-001' (status 'done').
+    const { rowsResolved } = await reconcile.reconcileTerminalTasks(client)
+    expect(rowsResolved).toBeGreaterThanOrEqual(1)
+
+    const after = await actionQueue.getActionQueueItem(itemId)
+    expect(after!.state).toBe('resolved')
+  })
 })

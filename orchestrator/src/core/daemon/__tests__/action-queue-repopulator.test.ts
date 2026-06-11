@@ -864,4 +864,96 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openAfter = await actionQueue.listActionQueueItems('open')
     expect(openAfter.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
   })
+
+  it('supersedes the open row via task.completed for a sliced task whose origin_id differs from its own id (fingerprint asymmetry fix)', async () => {
+    // Regression: when a task has origin_id = prdId (arc root differs from task id),
+    // raiseActionQueueItem stores fingerprint = sha1('origin:prdId') and
+    // origin_task_id = prdId. But supersedeActionQueueItemsForOrigin was called with
+    // the raw task id and computed sha1('origin:taskId') — a different hash — so the
+    // open row was never found and stayed open forever.
+    // This test MUST FAIL against the unfixed code and PASS after the fix.
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    const prdId = 'prd-arc-root-001'
+    const taskId = 'T-sliced-from-prd-001'
+
+    await rep.ensureActionQueueRepopulator(client)
+
+    // Insert a task with origin_id pointing to a PRD (arc root ≠ task id).
+    const now = new Date().toISOString()
+    await client.execute({
+      sql: `INSERT INTO tasks (
+              id, prompt, status, origin_id, retry_count,
+              failure_reason, failure_reason_code,
+              kind, recovery_payload,
+              failure_signature, error,
+              created_at, updated_at
+            ) VALUES (?, ?, 'failed', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [taskId, '(test prompt)', prdId, null, null, 'task', null, null, null, now, now],
+    })
+
+    // task.failed → raiseActionQueueItem resolves taskId → prdId and stores
+    // fingerprint = sha1('origin:prdId'), origin_task_id = prdId.
+    await publish(pub, client, 'task.failed', { taskId, error: 'lockfile mismatch' })
+    const { processed: p1 } = await rep.drainActionQueueRepopulations(client)
+    expect(p1).toBe(1)
+
+    const openAfterFailed = await actionQueue.listActionQueueItems('open')
+    expect(openAfterFailed.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(1)
+
+    // task.completed → repopulator calls supersedeActionQueueItemsForOrigin(taskId).
+    // BEFORE FIX: computes sha1('origin:taskId') ≠ stored sha1('origin:prdId') → no match → row stays open.
+    // AFTER FIX:  resolves taskId → prdId, computes sha1('origin:prdId') → finds row → closes it.
+    await publish(pub, client, 'task.completed', { taskId, result: { status: 'done' } })
+    const { processed: p2 } = await rep.drainActionQueueRepopulations(client)
+    expect(p2).toBe(1)
+
+    const openAfterCompleted = await actionQueue.listActionQueueItems('open')
+    expect(openAfterCompleted.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
+  })
+
+  it('supersedes the open row via task.blocked for a sliced task (fingerprint asymmetry fix)', async () => {
+    // Same fingerprint asymmetry scenario but triggered by task.blocked (fix-task spawned).
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    const prdId = 'prd-arc-root-002'
+    const taskId = 'T-sliced-from-prd-002'
+
+    await rep.ensureActionQueueRepopulator(client)
+
+    const now = new Date().toISOString()
+    await client.execute({
+      sql: `INSERT INTO tasks (
+              id, prompt, status, origin_id, retry_count,
+              failure_reason, failure_reason_code,
+              kind, recovery_payload,
+              failure_signature, error,
+              created_at, updated_at
+            ) VALUES (?, ?, 'failed', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [taskId, '(test prompt)', prdId, null, null, 'task', null, null, null, now, now],
+    })
+
+    // Phase 1: task.failed → one open row (fingerprint keyed to prdId arc root)
+    await publish(pub, client, 'task.failed', { taskId, error: 'install failed' })
+    const { processed: p1 } = await rep.drainActionQueueRepopulations(client)
+    expect(p1).toBe(1)
+    expect(
+      (await actionQueue.listActionQueueItems('open')).filter((i) => i.payload['taskId'] === taskId),
+    ).toHaveLength(1)
+
+    // Phase 2: task.blocked → stale row must be superseded.
+    await publish(pub, client, 'task.blocked', {
+      taskId,
+      fixTaskId: 'fix-task-prd-002',
+      failureSignature: 'setup:install/install-frozen-lockfile',
+      failingStep: 'setup',
+    })
+    const { processed: p2 } = await rep.drainActionQueueRepopulations(client)
+    expect(p2).toBe(1)
+
+    const openAfterBlocked = await actionQueue.listActionQueueItems('open')
+    expect(openAfterBlocked.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
+  })
 })

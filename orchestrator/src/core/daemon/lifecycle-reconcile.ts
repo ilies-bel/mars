@@ -1,5 +1,10 @@
 import type { Client } from '@libsql/client'
-import { initActionQueue, resolveAllRowsForTask } from '../lib/action-queue'
+import {
+  initActionQueue,
+  resolveAllRowsForTask,
+  supersedeActionQueueItemsForOrigin,
+} from '../lib/action-queue'
+import type { SupersedeReason } from '../lib/action-queue'
 
 /**
  * Kinds whose `origin_task_id` points to a row in `proposals`, not `tasks`.
@@ -87,6 +92,36 @@ export async function reconcileTerminalTasks(
     const originId = (row as unknown as { origin_task_id: string }).origin_task_id
     await resolveAllRowsForTask(originId)
     rowsResolved++
+  }
+
+  // (c) Stranded 'failed' rows for sliced tasks whose arc-root (origin_task_id)
+  //     is a PRD task that is still live — so leg (a)'s JOIN misses them — but
+  //     whose actual failing task (stored in payload.taskId) is now terminal.
+  //
+  //     Typical scenario:
+  //       • PRD task is still 'queued' (other slices pending)           → not in leg (a)
+  //       • PRD task IS in the tasks table                              → not in leg (b-task)
+  //       • but payload.taskId task is 'done' / 'dropped'              → caught here
+  //
+  //     supersedeActionQueueItemsForOrigin arc-resolves the payload task id so
+  //     it computes the same fingerprint that raiseActionQueueItem stored.
+  //     Rows already closed by legs (a) / (b) are excluded by the `state='open'`
+  //     filter; the call is idempotent if a row was already closed.
+  const strandedByPayload = await client.execute(`
+    SELECT DISTINCT json_extract(i.payload, '$.taskId') AS task_id, t.status
+    FROM action_queue_items i
+    JOIN tasks t ON t.id = json_extract(i.payload, '$.taskId')
+    WHERE i.state = 'open'
+      AND i.kind = 'failed'
+      AND t.status IN ('done', 'dropped')
+  `)
+
+  for (const row of strandedByPayload.rows) {
+    const taskId = (row as unknown as { task_id: string; status: string }).task_id
+    const status = (row as unknown as { task_id: string; status: string }).status
+    const reason: SupersedeReason = status === 'done' ? 'origin-done' : 'origin-dropped'
+    const closed = await supersedeActionQueueItemsForOrigin(taskId, reason, 'reconcile:payload-taskid')
+    rowsResolved += closed.length
   }
 
   return { rowsResolved }

@@ -379,6 +379,21 @@ const rowToActionQueueItem = (
 const computeOriginFingerprint = (originTaskId: string): string =>
   sha1Hex(`origin:${originTaskId}`)
 
+/**
+ * Arc-resolved origin fingerprint. Resolves `originId` to its arc root via
+ * `resolveOriginIdForTask` before hashing, so sliced tasks (whose `origin_id`
+ * differs from their own id) produce the SAME fingerprint as a direct lookup
+ * on the arc root. Falls back to the raw id on any DB error.
+ *
+ * Use this everywhere an `originId` that may belong to a sliced task is
+ * turned into a fingerprint for lookup or eviction. This is the single source
+ * of truth for raise–lookup agreement.
+ */
+const resolvedOriginFingerprint = async (originId: string): Promise<string> =>
+  computeOriginFingerprint(
+    await resolveOriginIdForTask(originId).catch(() => originId),
+  )
+
 export const raiseActionQueueItem = async (
   item: RaiseActionQueueItem,
 ): Promise<string> => {
@@ -486,7 +501,7 @@ export const setRecoveryFindings = async (
 ): Promise<string | null> => {
   await initActionQueue()
   const c = stateClient()
-  const fingerprint = computeOriginFingerprint(originTaskId)
+  const fingerprint = await resolvedOriginFingerprint(originTaskId)
   const existing = await c.execute({
     sql: `SELECT id FROM action_queue_items
            WHERE fingerprint = ? AND state = 'open'
@@ -516,7 +531,7 @@ export const patchOpenActionQueuePayload = async (
 ): Promise<string | null> => {
   await initActionQueue()
   const c = stateClient()
-  const fingerprint = computeOriginFingerprint(originTaskId)
+  const fingerprint = await resolvedOriginFingerprint(originTaskId)
   const existing = await c.execute({
     sql: `SELECT id, payload FROM action_queue_items
            WHERE fingerprint = ? AND state = 'open'
@@ -767,10 +782,18 @@ export const supersedeActionQueueItemsForOrigin = async (
 ): Promise<string[]> => {
   await initActionQueue()
   const c = stateClient()
-  const fingerprint = computeOriginFingerprint(originTaskId)
+  // Arc-resolve so sliced tasks (origin_id ≠ own id) produce the same
+  // fingerprint as the row that was stored at raise time.
+  const resolvedOriginId = await resolveOriginIdForTask(originTaskId).catch(() => originTaskId)
+  const fingerprint = computeOriginFingerprint(resolvedOriginId)
+  // Belt-and-suspenders: also match by origin_task_id (both the resolved arc
+  // root and the raw task id) so rows are closeable even if a fingerprint
+  // mismatch was baked in by a prior version of the raise path.
   const rows = await c.execute({
-    sql: `SELECT id FROM action_queue_items WHERE fingerprint = ? AND state = 'open'`,
-    args: [fingerprint],
+    sql: `SELECT id FROM action_queue_items
+           WHERE state = 'open'
+             AND (fingerprint = ? OR origin_task_id = ? OR origin_task_id = ?)`,
+    args: [fingerprint, resolvedOriginId, originTaskId],
   })
   const ids: string[] = []
   for (const row of rows.rows) {
@@ -979,7 +1002,7 @@ export const dismissAlertsOnStatusChange = async (
 ): Promise<string[]> => {
   await initActionQueue()
   const c = stateClient()
-  const fingerprint = computeOriginFingerprint(taskId)
+  const fingerprint = await resolvedOriginFingerprint(taskId)
   const rows = await c.execute({
     sql: `SELECT id FROM action_queue_items WHERE fingerprint = ? AND state = 'open'`,
     args: [fingerprint],
