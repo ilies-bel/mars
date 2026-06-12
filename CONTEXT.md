@@ -388,3 +388,7 @@ _Avoid_: orphan origin, missing origin task, headless arc
 **TUI**:
 Terminal-native display surface for Mars, a thin adapter over the application-service layer (ADR-0055) — peer to the web UI and the CLI; its inaugural screen is the action queue.
 _Avoid_: terminal ui, curses app, ncurses, text ui, console ui
+
+**Context graph**:
+The task detail drawer's vertical mini-graph of a focused task's lineage — its originating Proposal, blocker chain, and one downstream hop — laid out top-to-bottom; distinct from the main Progress Topology canvas.
+_Avoid_: subgraph, mini-graph, focus subgraph, context subgraph
