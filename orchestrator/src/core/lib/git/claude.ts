@@ -288,12 +288,22 @@ export const claudeStreamArgs = (
   // failures.
 ]
 
-// Strip the host claude session's identity vars so a daemon launched from
-// inside an interactive `claude` shell cannot contaminate dispatched workers.
+// Strip the host agent session's identity vars so a daemon launched from
+// inside an interactive `claude` shell (or a cmux pane) cannot contaminate
+// dispatched workers. Claude Code's recursion guard keys off several of
+// these: if any survive into a nested `claude` invocation it suppresses the
+// child, which exits writing nothing — verify then no-ops and an empty diff
+// merges as a false "success" (the contamination class this strip exists to
+// prevent). We therefore remove:
+//   - CLAUDE* / CLAUDECODE*  — session id, entrypoint, execpath, effort, …
+//   - AI_AGENT               — generic "running inside an agent" marker
+//   - CMUX_*                 — the cmux terminal harness (CMUX_CLAUDE_PID, …)
+// ANTHROPIC_API_KEY, PATH, and everything unrelated are preserved.
+const HOST_AGENT_ENV_RE = /^(?:CLAUDE(?:CODE)?(?:$|_)|CMUX_|AI_AGENT$)/i
 export const buildWorkerEnv = (): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const key of Object.keys(env)) {
-    if (/^CLAUDE(CODE)?($|_)/i.test(key)) delete env[key]
+    if (HOST_AGENT_ENV_RE.test(key)) delete env[key]
   }
   return env
 }

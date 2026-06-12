@@ -1,11 +1,23 @@
 /**
- * Lint-style test: every spawn/exec/execFile call site in the git library
- * must either omit the `env` option (inheriting process.env by default) or
- * demonstrably include PATH in the supplied env.
+ * Lint-style test: every subprocess-spawning call site in the git library AND
+ * the worker runtimes must either omit the `env` option (inheriting
+ * process.env by default — safe for PATH) or demonstrably include PATH AND
+ * use buildWorkerEnv() in the supplied env.
  *
- * A future regression that passes an explicit env object without spreading
- * process.env will cause git/claude/verify binaries to fail with ENOENT on
- * systems where those binaries are only reachable via PATH.
+ * Two regression classes this guards:
+ *
+ *  1. PATH drop — passing an explicit env object without spreading process.env
+ *     causes git/claude/verify binaries to fail with ENOENT on systems where
+ *     those binaries are only reachable via PATH.
+ *
+ *  2. Host-agent contamination — the pty path (run-pty-session.ts) spawns a
+ *     nested `claude` and originally inherited the daemon's full process.env,
+ *     including CLAUDE_*, AI_AGENT, and CMUX_* identity vars. Claude Code's
+ *     recursion guard then suppressed the child, which wrote nothing → an
+ *     empty diff merged as a false "success". Worker-spawning call sites that
+ *     pass an explicit env must route it through buildWorkerEnv() (which
+ *     strips those vars). This is why the scan covers `spawnPty` and the
+ *     workers/ directory, not just `spawn`/`exec` in lib/git/.
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -15,6 +27,10 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // lib/ is the parent of __tests__/
 const libDir = resolve(__dirname, '..')
+// workers/ is a sibling of lib/ under core/. The pty worker runtime
+// (run-pty-session.ts) spawns a nested `claude` via spawnPty and must be
+// covered by the host-agent-contamination lint, not just lib/git/.
+const workersDir = resolve(libDir, '..', 'workers')
 
 // ---------------------------------------------------------------------------
 // Source-file collection
@@ -22,10 +38,12 @@ const libDir = resolve(__dirname, '..')
 
 /**
  * Non-test TypeScript source files directly inside lib/, PLUS the modules of
- * the `git/` subdirectory. The git library was split out of a single `git.ts`
- * into `git/` (internal/worktree/claude/verify/merge/lock) — the lone spawn()
- * now lives in `git/claude.ts`, so the subdir must be scanned to keep the
- * PATH-preservation lint covering the git library.
+ * the `git/` subdirectory, PLUS the `workers/` runtimes. The git library was
+ * split out of a single `git.ts` into `git/` (internal/worktree/claude/verify/
+ * merge/lock) — the lone spawn() now lives in `git/claude.ts`. The pty worker
+ * runtime (`workers/run-pty-session.ts`) spawns a nested `claude` via
+ * spawnPty, so workers/ must be scanned too to keep both the
+ * PATH-preservation and the host-agent-contamination lints honest.
  */
 function collectSourceFiles(): string[] {
   const tsFilesIn = (dir: string): string[] =>
@@ -39,7 +57,11 @@ function collectSourceFiles(): string[] {
       .map((name) => join(dir, name))
       .filter((p) => statSync(p).isFile())
 
-  return [...tsFilesIn(libDir), ...tsFilesIn(join(libDir, 'git'))]
+  return [
+    ...tsFilesIn(libDir),
+    ...tsFilesIn(join(libDir, 'git')),
+    ...tsFilesIn(workersDir),
+  ]
 }
 
 // ---------------------------------------------------------------------------
@@ -129,10 +151,12 @@ interface CallSite {
  * `re.exec(...)` or `obj.spawn(...)` are excluded.
  */
 function scanCallSites(filePath: string, source: string): CallSite[] {
-  // Matches standalone (not method) spawn/execFile/exec calls.
+  // Matches standalone (not method) spawn/spawnPty/execFile/exec calls.
+  // spawnPty is the node-pty wrapper used by the worker pty runtime; it takes
+  // an options object with the same `env` shape, so the same lint applies.
   // The opening `(` is the last character captured so match.index +
   // match[0].length - 1 is the index of `(`.
-  const callRe = /(?<![.\w])(spawn|execFile|exec)\s*\(/g
+  const callRe = /(?<![.\w])(spawnPty|spawn|execFile|exec)\s*\(/g
 
   const sites: CallSite[] = []
   let match: RegExpExecArray | null
@@ -178,11 +202,16 @@ describe('subprocess PATH preservation — lint', () => {
     const sourceFiles = collectSourceFiles()
 
     // Sanity guard: the scan must cover the git library's subprocess module,
-    // where the lone spawn() lives after the git.ts → git/ split.
+    // where the lone spawn() lives after the git.ts → git/ split, AND the pty
+    // worker runtime, where the nested-`claude` spawnPty lives.
     const fileNames = sourceFiles.map((p) => p.split('/').at(-1))
     expect(fileNames, 'git/claude.ts must be in the scanned source set').toContain(
       'claude.ts',
     )
+    expect(
+      fileNames,
+      'workers/run-pty-session.ts must be in the scanned source set',
+    ).toContain('run-pty-session.ts')
 
     const allSites: CallSite[] = []
     for (const filePath of sourceFiles) {
@@ -216,6 +245,51 @@ describe('subprocess PATH preservation — lint', () => {
         ? ''
         : `Call sites that drop PATH from the subprocess environment:\n${report}\n` +
             `Fix: spread process.env or use buildWorkerEnv() so PATH-resolved binaries remain reachable.`,
+    ).toHaveLength(0)
+  })
+
+  it('spawnPty call sites must route env through buildWorkerEnv() (no bare process.env, no env-less default)', () => {
+    // Host-agent contamination guard. A spawnPty that spawns a nested `claude`
+    // must NOT inherit the daemon's process.env (which carries CLAUDE*/AI_AGENT/
+    // CMUX_* identity vars that trip Claude Code's recursion guard). Unlike the
+    // PATH lint, an absent env is a VIOLATION here: the spawnPty wrapper's
+    // default is `opts.env ?? process.env`, so omitting env leaks the host
+    // session's identity vars verbatim. The env must be present AND use
+    // buildWorkerEnv().
+    const sourceFiles = collectSourceFiles()
+    const ptySites: CallSite[] = []
+    for (const filePath of sourceFiles) {
+      const source = readFileSync(filePath, 'utf-8')
+      ptySites.push(
+        ...scanCallSites(filePath, source).filter((s) => s.functionName === 'spawnPty'),
+      )
+    }
+
+    // The pty worker's spawnPty must be discovered, else this lint is vacuous.
+    expect(
+      ptySites.length,
+      'Expected at least one spawnPty() call site (workers/run-pty-session.ts)',
+    ).toBeGreaterThan(0)
+
+    const usesBuildWorkerEnv = (envValue: string | null): boolean =>
+      envValue !== null && /\bbuildWorkerEnv\s*\(/.test(envValue)
+
+    const leaks = ptySites.filter((s) => !usesBuildWorkerEnv(s.envValue))
+    const report = leaks
+      .map(
+        (v) =>
+          `  ${v.file}:${v.line} — spawnPty() env is ${
+            v.envValue === null ? 'absent (defaults to process.env)' : `\`${v.envValue.slice(0, 80)}\``
+          }`,
+      )
+      .join('\n')
+
+    expect(
+      leaks,
+      leaks.length === 0
+        ? ''
+        : `spawnPty call sites that leak the host-agent env into a nested agent:\n${report}\n` +
+            `Fix: pass { ..., env: buildWorkerEnv() } so CLAUDE*/AI_AGENT/CMUX_* are stripped before the nested claude spawns.`,
     ).toHaveLength(0)
   })
 })

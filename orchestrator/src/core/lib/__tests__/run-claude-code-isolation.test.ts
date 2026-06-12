@@ -65,6 +65,9 @@ describe('buildWorkerEnv', () => {
     'CLAUDE_CODE_EXECPATH',
     'CLAUDE_EFFORT',
     'CLAUDE_PROJECT_DIR',
+    'AI_AGENT',
+    'CMUX_CLAUDE_PID',
+    'CMUX_SOCKET_PATH',
     'ANTHROPIC_API_KEY',
   ]
 
@@ -78,6 +81,9 @@ describe('buildWorkerEnv', () => {
     process.env.CLAUDE_CODE_EXECPATH = '/usr/local/bin/claude'
     process.env.CLAUDE_EFFORT = 'high'
     process.env.CLAUDE_PROJECT_DIR = '/tmp/x'
+    process.env.AI_AGENT = 'claude'
+    process.env.CMUX_CLAUDE_PID = '90743'
+    process.env.CMUX_SOCKET_PATH = '/tmp/cmux.sock'
     process.env.ANTHROPIC_API_KEY = 'sk-keep'
   })
 
@@ -97,6 +103,13 @@ describe('buildWorkerEnv', () => {
     expect(env.CLAUDE_CODE_EXECPATH).toBeUndefined()
     expect(env.CLAUDE_EFFORT).toBeUndefined()
     expect(env.CLAUDE_PROJECT_DIR).toBeUndefined()
+  })
+
+  it('strips AI_AGENT and the CMUX_* harness vars that also trip the recursion guard', () => {
+    const env = buildWorkerEnv()
+    expect(env.AI_AGENT).toBeUndefined()
+    expect(env.CMUX_CLAUDE_PID).toBeUndefined()
+    expect(env.CMUX_SOCKET_PATH).toBeUndefined()
   })
 
   it('preserves ANTHROPIC_API_KEY and PATH', () => {

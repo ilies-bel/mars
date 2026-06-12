@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnPty } from '../lib/pty/spawn'
 import type { Provider } from './providers'
+import { buildWorkerEnv } from '../lib/git/claude'
 import type { ClaudeEffort, ClaudePermissionMode, RunClaudeResult } from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import { watchPromptScan } from './prompt-scan-done'
@@ -131,7 +132,13 @@ export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeR
       appendSystemPrompt,
     })
     const [cmd, ...rest] = argv as string[]
-    const handle = spawnPty(cmd!, rest, { cwd })
+    // Pass the sanitized worker env, NOT the inherited process.env. A daemon
+    // launched from inside an interactive `claude` shell (or cmux pane) carries
+    // CLAUDE*/AI_AGENT/CMUX_* identity vars; if they reach this nested `claude`
+    // its recursion guard suppresses the child, which exits writing nothing —
+    // verify no-ops and an empty diff merges as a false success. buildWorkerEnv()
+    // strips exactly those vars while preserving PATH and ANTHROPIC_API_KEY.
+    const handle = spawnPty(cmd!, rest, { cwd, env: buildWorkerEnv() })
 
     // AbortController that lets us cancel the done-signal watcher when an
     // abort source fires first, so the watcher's internal resources are freed.
