@@ -13,7 +13,7 @@ import {
 import { createProjectContextCache, type ProjectContextEntry } from './projectContext.ts'
 import { probeDaemonHealth } from './projectHealth.ts'
 import { resolveRepo, UnknownProjectError } from './repo.ts'
-import { handleProjectStart } from './spawnDaemon.ts'
+import { handleProjectStart, handleProjectRestart } from './spawnDaemon.ts'
 
 interface CliArgs {
   repo?: string
@@ -452,6 +452,23 @@ export const startServer = async (
             path.slice('/api/projects/'.length, -'/start'.length),
           )
           const { status, body } = await handleProjectStart(projectId)
+          return jsonResponse(status, body)
+        }
+
+        // POST /api/projects/:id/restart — restart the daemon for a registered project.
+        // Works even when the daemon is dead: backs onto `mars daemon restart` (a fresh
+        // OS process spawn), not an HTTP POST into the possibly-dead running daemon.
+        // The projectId is looked up in the registry; only its registered repoRoot is
+        // ever passed to the spawner (no arbitrary path from the request body).
+        if (
+          path.startsWith('/api/projects/') &&
+          path.endsWith('/restart') &&
+          req.method === 'POST'
+        ) {
+          const projectId = decodeURIComponent(
+            path.slice('/api/projects/'.length, -'/restart'.length),
+          )
+          const { status, body } = await handleProjectRestart(projectId)
           return jsonResponse(status, body)
         }
 

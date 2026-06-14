@@ -424,6 +424,29 @@ export const startProject = async (projectId: string): Promise<void> => {
 }
 
 /**
+ * Restart the daemon for a project, whether or not it is currently running.
+ * Backs onto `mars daemon restart --repo <repoRoot>` — idempotent w.r.t.
+ * liveness; starts a fresh daemon even if the existing one is dead or stale.
+ * Unlike the `restart-daemon` action verb (which POSTs into the running daemon),
+ * this spawns a fresh OS process, so it works even when the daemon is down.
+ */
+export const restartProject = async (projectId: string): Promise<void> => {
+  const r = await fetch(
+    `${BASE}/api/projects/${encodeURIComponent(projectId)}/restart`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    },
+  )
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { error?: string }
+    throw new Error(
+      `restartProject(${projectId}) failed (${r.status})${body.error ? `: ${body.error}` : ''}`,
+    )
+  }
+}
+
+/**
  * Fetch the arc-grouped release-notes feed. Entries are returned newest-first.
  * Each entry covers one landed arc (origin task + any recovery tasks folded in).
  */

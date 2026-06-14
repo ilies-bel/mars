@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useFocusedProject, useRefreshProjects } from '@/shared/useFocusedProject'
 import { projectIdentity } from '@/shared/projectIdentity'
-import { startProject } from '@/shared/api'
+import { startProject, restartProject } from '@/shared/api'
 import type { DaemonHealth, Project } from '@/shared/schemas'
 
 const healthColorClass = (health: DaemonHealth): string => {
@@ -41,9 +41,12 @@ interface ProjectSelectorInnerProps {
   focusedProjectId: string | null
   open: boolean
   starting: string | null
+  /** Which project id is currently being restarted, or null if none. */
+  restarting: string | null
   onToggle: () => void
   onSelect: (projectId: string) => void
   onStart: (projectId: string, e: React.MouseEvent) => void
+  onRestart: (projectId: string, e: React.MouseEvent) => void
 }
 
 /**
@@ -55,9 +58,11 @@ export const ProjectSelectorInner = ({
   focusedProjectId,
   open,
   starting,
+  restarting,
   onToggle,
   onSelect,
   onStart,
+  onRestart,
 }: ProjectSelectorInnerProps) => {
   const focusedProject =
     projects.find((p) => p.projectId === focusedProjectId) ?? projects[0]
@@ -98,6 +103,7 @@ export const ProjectSelectorInner = ({
             const { name, icon } = projectIdentity(p)
             const isFocused = p.projectId === focusedProjectId
             const isStarting = starting === p.projectId
+            const isRestarting = restarting === p.projectId
             return (
               <li
                 key={p.projectId}
@@ -123,16 +129,31 @@ export const ProjectSelectorInner = ({
                 </span>
                 <span aria-hidden="true">{icon}</span>
                 {name}
-                {p.health === 'down' ? (
-                  <button
-                    type="button"
-                    disabled={isStarting}
-                    onClick={(e) => onStart(p.projectId, e)}
-                    data-testid={`start-btn-${p.projectId}`}
-                    className="ml-auto rounded border border-iron/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-fg hover:bg-iron/20 disabled:opacity-50"
-                  >
-                    {isStarting ? '…' : 'Start'}
-                  </button>
+                {(p.health === 'down' || isFocused) ? (
+                  <span className="ml-auto flex items-center gap-1">
+                    {p.health === 'down' ? (
+                      <button
+                        type="button"
+                        disabled={isStarting}
+                        onClick={(e) => onStart(p.projectId, e)}
+                        data-testid={`start-btn-${p.projectId}`}
+                        className="rounded border border-iron/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-fg hover:bg-iron/20 disabled:opacity-50"
+                      >
+                        {isStarting ? '…' : 'Start'}
+                      </button>
+                    ) : null}
+                    {isFocused ? (
+                      <button
+                        type="button"
+                        disabled={isRestarting}
+                        onClick={(e) => onRestart(p.projectId, e)}
+                        data-testid={`restart-btn-${p.projectId}`}
+                        className="rounded border border-iron/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-fg hover:bg-iron/20 disabled:opacity-50"
+                      >
+                        {isRestarting ? '…' : 'Restart'}
+                      </button>
+                    ) : null}
+                  </span>
                 ) : null}
               </li>
             )
@@ -151,6 +172,7 @@ export const ProjectSelector = () => {
   const { projects, focusedProjectId, setFocusedProjectId } = useFocusedProject()
   const refreshProjects = useRefreshProjects()
   const [starting, setStarting] = useState<string | null>(null)
+  const [restarting, setRestarting] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -195,6 +217,20 @@ export const ProjectSelector = () => {
     }
   }
 
+  const handleRestart = async (
+    projectId: string,
+    e: React.MouseEvent,
+  ): Promise<void> => {
+    e.stopPropagation()
+    setRestarting(projectId)
+    try {
+      await restartProject(projectId)
+      await refreshProjects()
+    } finally {
+      setRestarting(null)
+    }
+  }
+
   return (
     <div
       ref={containerRef}
@@ -206,12 +242,14 @@ export const ProjectSelector = () => {
         focusedProjectId={focusedProjectId}
         open={open}
         starting={starting}
+        restarting={restarting}
         onToggle={() => setOpen((o) => !o)}
         onSelect={(id) => {
           setFocusedProjectId(id)
           setOpen(false)
         }}
         onStart={handleStart}
+        onRestart={handleRestart}
       />
     </div>
   )

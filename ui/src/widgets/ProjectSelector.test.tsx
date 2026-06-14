@@ -64,8 +64,11 @@ mock.module('@/shared/useFocusedProject', () => ({
   useRefreshProjects: () => async () => {},
 }))
 
+const restartProjectMock = mock(async (_id: string) => {})
+
 mock.module('@/shared/api', () => ({
   startProject: mock(async (_id: string) => {}),
+  restartProject: restartProjectMock,
 }))
 
 const { ProjectSelector, ProjectSelectorInner } = await import('./ProjectSelector')
@@ -80,25 +83,33 @@ const renderClosed = (focusedProjectId = 'proj-live') =>
       focusedProjectId={focusedProjectId}
       open={false}
       starting={null}
+      restarting={null}
       onToggle={noop}
       onSelect={noop}
       onStart={noop}
+      onRestart={noop}
     />,
   )
 
 // ---------------------------------------------------------------------------
 // Helper: render Inner in open state (trigger + list both visible)
 // ---------------------------------------------------------------------------
-const renderOpen = (focusedProjectId = 'proj-live', starting: string | null = null) =>
+const renderOpen = (
+  focusedProjectId = 'proj-live',
+  starting: string | null = null,
+  restarting: string | null = null,
+) =>
   renderToStaticMarkup(
     <ProjectSelectorInner
       projects={allProjects}
       focusedProjectId={focusedProjectId}
       open={true}
       starting={starting}
+      restarting={restarting}
       onToggle={noop}
       onSelect={noop}
       onStart={noop}
+      onRestart={noop}
     />,
   )
 
@@ -306,6 +317,48 @@ describe('ProjectSelector – Start control in dropdown', () => {
     const html = renderOpen('proj-live', 'proj-down')
     // The disabled attribute should appear near the start-btn
     expect(html).toContain('disabled')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Restart button — only for the focused project
+// ---------------------------------------------------------------------------
+
+describe('ProjectSelector – Restart control in dropdown', () => {
+  it('renders a Restart button only for the focused project', () => {
+    // Default focused = proj-live; Restart appears only on that row.
+    const html = renderOpen('proj-live')
+    expect(html).toContain('data-testid="restart-btn-proj-live"')
+    expect(html).not.toContain('data-testid="restart-btn-proj-degraded"')
+    expect(html).not.toContain('data-testid="restart-btn-proj-down"')
+  })
+
+  it('Restart button follows the focused project when focus changes', () => {
+    const html = renderOpen('proj-degraded')
+    expect(html).toContain('data-testid="restart-btn-proj-degraded"')
+    expect(html).not.toContain('data-testid="restart-btn-proj-live"')
+  })
+
+  it('Restart button text is "Restart" when not restarting', () => {
+    const html = renderOpen('proj-live')
+    expect(html).toMatch(/data-testid="restart-btn-proj-live"[^>]*>Restart</)
+  })
+
+  it('Restart button shows spinner text when that project is restarting', () => {
+    const html = renderOpen('proj-live', null, 'proj-live')
+    expect(html).toMatch(/data-testid="restart-btn-proj-live"[^>]*>…</)
+  })
+
+  it('Restart button is disabled while restarting', () => {
+    const html = renderOpen('proj-live', null, 'proj-live')
+    expect(html).toContain('disabled')
+  })
+
+  it('a down focused project shows both Start and Restart buttons', () => {
+    // proj-down is both health=down (shows Start) and focused (shows Restart).
+    const html = renderOpen('proj-down')
+    expect(html).toContain('data-testid="start-btn-proj-down"')
+    expect(html).toContain('data-testid="restart-btn-proj-down"')
   })
 })
 

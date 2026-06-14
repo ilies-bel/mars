@@ -21,7 +21,7 @@ vi.mock('../../orchestrator/src/registry/projects.ts', () => ({
 }))
 
 import * as registry from '../../orchestrator/src/registry/projects.ts'
-import { handleProjectStart } from './spawnDaemon.ts'
+import { handleProjectStart, handleProjectRestart } from './spawnDaemon.ts'
 import type { Spawner } from './spawnDaemon.ts'
 
 const FAKE_ENTRY = {
@@ -88,5 +88,73 @@ describe('handleProjectStart', () => {
 
     expect(first.body).toEqual({ started: true })
     expect(second.body).toEqual({ started: true })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// handleProjectRestart — POST /api/projects/:id/restart
+//
+// Mirrors the handleProjectStart tests; the only difference is that the
+// spawner runs `mars daemon restart` instead of `mars daemon start`, so it
+// works even when the daemon is dead.
+// ---------------------------------------------------------------------------
+
+describe('handleProjectRestart', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('returns 404 and never calls the spawner for an unknown projectId', async () => {
+    vi.mocked(registry.findProject).mockReturnValue(null)
+    const spawner = vi.fn() as unknown as Spawner
+
+    const result = await handleProjectRestart('p_unknown', spawner)
+
+    expect(result.status).toBe(404)
+    expect(result.body).toEqual({
+      started: false,
+      reason: 'unknown project: p_unknown',
+    })
+    expect(spawner).not.toHaveBeenCalled()
+  })
+
+  it('returns 200 {started:true} when the spawner exits 0', async () => {
+    vi.mocked(registry.findProject).mockReturnValue(FAKE_ENTRY)
+    const spawner = vi.fn().mockResolvedValue({ started: true }) as unknown as Spawner
+
+    const result = await handleProjectRestart(FAKE_ENTRY.projectId, spawner)
+
+    expect(result.status).toBe(200)
+    expect(result.body).toEqual({ started: true })
+    // Spawner receives the registered repoRoot — not anything from the request.
+    expect(spawner).toHaveBeenCalledOnce()
+    expect(spawner).toHaveBeenCalledWith(FAKE_ENTRY.repoRoot)
+  })
+
+  it('returns 200 {started:false, reason} when the spawner surfaces stderr', async () => {
+    vi.mocked(registry.findProject).mockReturnValue(FAKE_ENTRY)
+    const spawner = vi
+      .fn()
+      .mockResolvedValue({ started: false, reason: 'daemon restart failed: permission denied' }) as unknown as Spawner
+
+    const result = await handleProjectRestart(FAKE_ENTRY.projectId, spawner)
+
+    expect(result.status).toBe(200)
+    expect(result.body).toEqual({
+      started: false,
+      reason: 'daemon restart failed: permission denied',
+    })
+  })
+
+  it('returns 200 {started:true} when the daemon was dead (restart is idempotent w.r.t. liveness)', async () => {
+    // mars daemon restart starts a fresh daemon even when none is running —
+    // the client sees {started:true} regardless of prior daemon state.
+    vi.mocked(registry.findProject).mockReturnValue(FAKE_ENTRY)
+    const spawner = vi.fn().mockResolvedValue({ started: true }) as unknown as Spawner
+
+    const result = await handleProjectRestart(FAKE_ENTRY.projectId, spawner)
+
+    expect(result.status).toBe(200)
+    expect(result.body).toEqual({ started: true })
   })
 })
