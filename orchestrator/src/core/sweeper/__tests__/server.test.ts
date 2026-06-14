@@ -333,4 +333,61 @@ describe('sweeper/server', () => {
 
     cleanup()
   })
+
+  it('log fn can tee into trace_events as log_line (daemon integration pattern)', async () => {
+    // Demonstrates the pattern a daemon call site uses: pass a log fn to
+    // sweepOne that records a log_line event in addition to any text output.
+    // sweepOne itself needs no changes — the log param already supports this.
+    const { q, rc, sw } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'sweep-trace-sig')
+    const parentA = await q.enqueueTask('task a', undefined, { skipTriage: true })
+    const parentB = await q.enqueueTask('task b', undefined, { skipTriage: true })
+
+    // Seed an in-flight fix task so the second sweep hits the skip path and
+    // emits a log line.
+    await sw.sweepOne({
+      taskId: parentA.id,
+      failureSignature: 'sweep-trace-sig',
+      failingStep: 'verify:typecheck',
+      truncatedError: 'err',
+      branch: null,
+      recipeContext: defaultCtx,
+    })
+
+    // Capture what a trace-store mock would receive.
+    const traceEvents: Array<{
+      kind: string
+      payload: Record<string, unknown>
+    }> = []
+
+    const outcome = await sw.sweepOne(
+      {
+        taskId: parentB.id,
+        failureSignature: 'sweep-trace-sig',
+        failingStep: 'verify:typecheck',
+        truncatedError: 'err',
+        branch: null,
+        recipeContext: defaultCtx,
+      },
+      (msg) => {
+        // This is the pattern the daemon uses at call sites that have a
+        // traceStore in scope: tee the text log into trace_events.
+        traceEvents.push({
+          kind: 'log_line',
+          payload: { level: 'info', msg, source: 'sweeper' },
+        })
+      },
+    )
+
+    expect(outcome.kind).toBe('skipped-in-flight')
+
+    // At least one log_line event was forwarded to the trace store mock.
+    const logLineEvents = traceEvents.filter((e) => e.kind === 'log_line')
+    expect(logLineEvents.length).toBeGreaterThan(0)
+    expect(logLineEvents[0].payload.source).toBe('sweeper')
+    expect(logLineEvents[0].payload.level).toBe('info')
+    expect(typeof logLineEvents[0].payload.msg).toBe('string')
+
+    cleanup()
+  })
 })

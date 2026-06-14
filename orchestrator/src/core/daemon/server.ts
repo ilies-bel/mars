@@ -69,6 +69,7 @@ import {
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { computeFailureSignature } from '../lib/failure-signature'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
+import { setBusLogSink } from '../../bus/log'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
 import { loadDaemonConfig } from './config'
 import { probeDuckDBLock } from './duckdb-lock'
@@ -366,6 +367,24 @@ export const startDaemon = async (
   // Wire the trace store into the log() closure so every daemon line from
   // this point forward is also recorded as a log_line trace event (tee).
   _traceStore = traceStore
+
+  // Tee bus-level log output into the trace-event store so bus log lines are
+  // visible alongside workflow and daemon events. Fire-and-forget: a
+  // trace-store hiccup must never propagate into bus logging. The catch
+  // handler is intentionally empty (no log call inside to prevent recursion).
+  setBusLogSink(({ level, msg, fields }) => {
+    traceStore
+      .record({
+        kind: 'log_line',
+        payload: {
+          level,
+          msg,
+          source: 'bus',
+          ...(fields !== undefined && { fields }),
+        },
+      })
+      .catch(() => {})
+  })
 
   // Resolve git binary once at startup. If git is not on PATH the daemon
   // exits immediately with a clear message instead of letting the first
