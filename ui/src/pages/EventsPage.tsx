@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState } from 'react'
+import { memo, useMemo, useRef, useState, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
@@ -55,6 +55,7 @@ const KIND_OPTIONS = [
   'task_blocked',
   'recovery_spawned',
   'task_failed',
+  'log_line',
 ] as const
 type Kind = (typeof KIND_OPTIONS)[number]
 
@@ -221,6 +222,9 @@ interface EventRowProps {
 }
 
 const EventRow = memo(({ event }: EventRowProps) => {
+  const [fieldsExpanded, setFieldsExpanded] = useState(false)
+  const toggleFields = useCallback(() => setFieldsExpanded((v) => !v), [])
+
   const stepName =
     (event.kind === 'step_started' || event.kind === 'step_ended') &&
     typeof event.payload.stepName === 'string'
@@ -229,6 +233,20 @@ const EventRow = memo(({ event }: EventRowProps) => {
   const href = event.taskId
     ? taskHash(event.taskId, 'events', stepName)
     : undefined
+
+  const logLineSource =
+    event.kind === 'log_line' && typeof event.payload.source === 'string'
+      ? event.payload.source
+      : null
+  const logLineFields =
+    event.kind === 'log_line' &&
+    event.payload.fields !== null &&
+    event.payload.fields !== undefined &&
+    typeof event.payload.fields === 'object'
+      ? (event.payload.fields as Record<string, unknown>)
+      : null
+  const hasFields = logLineFields !== null && Object.keys(logLineFields).length > 0
+
   const body = (
     <>
       <span className="text-iron/60">{relativeTime(event.timestamp)}</span>{' '}
@@ -238,6 +256,14 @@ const EventRow = memo(({ event }: EventRowProps) => {
         [{event.severity}]
       </span>{' '}
       <span className="font-mono text-[10px] text-iron">{event.kind}</span>
+      {logLineSource ? (
+        <span
+          className="ml-1 rounded bg-iron/20 px-1 font-mono text-[9px] text-iron/80"
+          data-testid={`event-row-source-${event.id}`}
+        >
+          {logLineSource}
+        </span>
+      ) : null}
       {event.phase ? (
         <span className="font-mono text-[10px] text-iron/60">
           {' '}
@@ -250,6 +276,24 @@ const EventRow = memo(({ event }: EventRowProps) => {
         </span>
       ) : null}{' '}
       <span className={marsToolTextClass(event)}>{summarizeTraceEvent(event)}</span>
+      {hasFields ? (
+        <button
+          type="button"
+          onClick={toggleFields}
+          className="ml-2 font-mono text-[9px] text-iron/60 underline hover:text-iron"
+          data-testid={`event-row-fields-toggle-${event.id}`}
+        >
+          {fieldsExpanded ? 'hide fields' : 'fields'}
+        </button>
+      ) : null}
+      {fieldsExpanded && logLineFields ? (
+        <pre
+          className="mt-1 overflow-x-auto font-mono text-[10px] text-iron/70"
+          data-testid={`event-row-fields-${event.id}`}
+        >
+          {JSON.stringify(logLineFields, null, 2)}
+        </pre>
+      ) : null}
     </>
   )
   if (href === undefined) {

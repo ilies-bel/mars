@@ -180,4 +180,44 @@ describe('GET /events', () => {
       await close()
     }
   })
+
+  it('?kind=log_line returns log_line events with full payload intact', async () => {
+    // Record a log_line event and a non-log_line event side by side.
+    await store.record({
+      kind: 'log_line',
+      taskId: 'task-E',
+      phase: null,
+      payload: {
+        level: 'warn',
+        msg: 'connection retry',
+        source: 'daemon',
+        fields: { attempt: 3, host: 'localhost' },
+      },
+    })
+    await store.record({
+      kind: 'step_started',
+      taskId: 'task-E',
+      phase: 'code',
+      payload: { stepName: 'code' },
+    })
+
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(makeDeps(store))
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/events?kind=log_line`)
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { events: TraceEvent[]; nextCursor: string | null }
+      // Only the log_line event is returned.
+      expect(body.events).toHaveLength(1)
+      const ev = body.events[0]!
+      expect(ev.kind).toBe('log_line')
+      // Payload fields round-trip intact through the JSON response.
+      expect(ev.payload.level).toBe('warn')
+      expect(ev.payload.msg).toBe('connection retry')
+      expect(ev.payload.source).toBe('daemon')
+      expect(ev.payload.fields).toEqual({ attempt: 3, host: 'localhost' })
+    } finally {
+      await close()
+    }
+  })
 })

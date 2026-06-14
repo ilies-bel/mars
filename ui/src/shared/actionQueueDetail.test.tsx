@@ -131,6 +131,32 @@ describe('summarizeTraceEvent', () => {
       'origin (cli)',
     )
   })
+
+  // log_line
+  it('log_line: returns the msg field as the summary', () => {
+    expect(
+      summarizeTraceEvent(make('log_line', { level: 'info', msg: 'daemon started', source: 'daemon' })),
+    ).toBe('daemon started')
+  })
+
+  it('log_line: falls back to (no message) when msg is absent', () => {
+    expect(
+      summarizeTraceEvent(make('log_line', { level: 'warn', source: 'workflow' })),
+    ).toBe('(no message)')
+  })
+
+  it('log_line: returns msg regardless of whether fields are present', () => {
+    expect(
+      summarizeTraceEvent(
+        make('log_line', {
+          level: 'error',
+          msg: 'something failed',
+          source: 'bus',
+          fields: { taskId: 'mars-abc123', retries: 3 },
+        }),
+      ),
+    ).toBe('something failed')
+  })
 })
 
 describe('isMarsToolEvent / marsToolTextClass', () => {

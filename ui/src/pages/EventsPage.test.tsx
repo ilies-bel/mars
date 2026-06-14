@@ -210,7 +210,7 @@ describe('applyLocalPhaseFilter', () => {
 })
 
 describe('KIND_OPTIONS vocabulary', () => {
-  it('matches the daemon TRACE_EVENT_KINDS list', () => {
+  it('matches the daemon TRACE_EVENT_KINDS list (including log_line)', () => {
     expect(KIND_OPTIONS).toEqual([
       'origin_created',
       'step_started',
@@ -219,6 +219,7 @@ describe('KIND_OPTIONS vocabulary', () => {
       'task_blocked',
       'recovery_spawned',
       'task_failed',
+      'log_line',
     ])
   })
 
@@ -342,6 +343,122 @@ describe('EventsPage render', () => {
     const qc = makeClient(makeResponse([makeEvent()], null))
     const html = renderPage(qc)
     expect(html).not.toContain('data-testid="events-load-more"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2a. log_line event rendering
+// ---------------------------------------------------------------------------
+
+describe('EventRow log_line rendering', () => {
+  it('renders payload.msg as the row body', () => {
+    const qc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-log',
+          kind: 'log_line',
+          severity: 'info',
+          taskId: null,
+          phase: null,
+          payload: { level: 'info', msg: 'daemon started', source: 'daemon' },
+        }),
+      ]),
+    )
+    const html = renderPage(qc)
+    expect(html).toContain('daemon started')
+  })
+
+  it('renders payload.source as a tag', () => {
+    const qc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-log-src',
+          kind: 'log_line',
+          severity: 'warn',
+          taskId: null,
+          phase: null,
+          payload: { level: 'warn', msg: 'slow query', source: 'workflow' },
+        }),
+      ]),
+    )
+    const html = renderPage(qc)
+    // The source tag carries a data-testid so it can be identified distinctly.
+    expect(html).toContain('data-testid="event-row-source-ev-log-src"')
+    expect(html).toContain('workflow')
+  })
+
+  it('severity color is driven by the stored severity (derived from payload.level)', () => {
+    const qc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-log-err',
+          kind: 'log_line',
+          severity: 'error',
+          taskId: null,
+          phase: null,
+          payload: { level: 'error', msg: 'fatal error', source: 'daemon' },
+        }),
+      ]),
+    )
+    const html = renderPage(qc)
+    // Error severity → row tinting and badge styling from severityRowClass / severityColor.
+    expect(html).toContain('border-error/40')
+    expect(html).toContain('bg-error/5')
+  })
+
+  it('shows a fields toggle button when payload.fields is non-empty', () => {
+    const qc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-log-fields',
+          kind: 'log_line',
+          severity: 'info',
+          taskId: null,
+          phase: null,
+          payload: {
+            level: 'info',
+            msg: 'task queued',
+            source: 'bus',
+            fields: { taskId: 'mars-abc', retries: 2 },
+          },
+        }),
+      ]),
+    )
+    const html = renderPage(qc)
+    expect(html).toContain('data-testid="event-row-fields-toggle-ev-log-fields"')
+    expect(html).toContain('fields')
+  })
+
+  it('omits the fields toggle when payload.fields is absent', () => {
+    const qc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-log-nofields',
+          kind: 'log_line',
+          severity: 'info',
+          taskId: null,
+          phase: null,
+          payload: { level: 'info', msg: 'heartbeat', source: 'daemon' },
+        }),
+      ]),
+    )
+    const html = renderPage(qc)
+    expect(html).not.toContain('data-testid="event-row-fields-toggle-ev-log-nofields"')
+  })
+
+  it('toWireFilter passes log_line through when only log_line is selected', () => {
+    const state = {
+      ...initialFilterState(),
+      kinds: new Set(['log_line' as const]),
+    }
+    const wire = toWireFilter(state, null, 100)
+    expect(wire.kind).toEqual(['log_line'])
+  })
+
+  it('toWireFilter omits kind filter when all kinds including log_line are selected', () => {
+    // Default state now includes log_line — all selected means no filter.
+    const wire = toWireFilter(initialFilterState(), null, 100)
+    expect(wire.kind).toBeUndefined()
   })
 })
 

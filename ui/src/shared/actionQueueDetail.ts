@@ -97,6 +97,10 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
     return typeof p.source === 'string' ? `origin (${p.source})` : 'origin'
   }
 
+  if (event.kind === 'log_line') {
+    return typeof p.msg === 'string' ? p.msg : '(no message)'
+  }
+
   // Unknown kind — fall back to the kind name itself.
   return event.kind
 }
