@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { createClient } from '@libsql/client'
 import { startServer } from './index.ts'
+import { makeDaemonStub } from './testDaemonStub.ts'
 
 interface TodoBody {
   drafts: unknown[]
@@ -124,11 +125,14 @@ describe('GET /api/stale-worktrees — stale-worktree actionQueue items', () => 
     stateDbPath = resolve(repo, '.mars/mars.db')
     await seedActionQueueItems(stateDbPath)
 
-    server = await startServer({
-      repo,
-      port: 0,
-      host: '127.0.0.1',
-    })
+    server = await startServer(
+      {
+        repo,
+        port: 0,
+        host: '127.0.0.1',
+      },
+      { proxyGet: makeDaemonStub(repo) },
+    )
     baseUrl = `http://${server.hostname}:${server.port}`
   })
 

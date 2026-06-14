@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { openTraceEventStore } from '../../orchestrator/src/core/lib/trace-events-store.ts'
 import { startServer } from './index.ts'
+import { makeDaemonStub } from './testDaemonStub.ts'
 
 interface WorkerSession {
   id: string
@@ -51,7 +52,10 @@ describe('GET /api/sessions', () => {
     const store = await openTraceEventStore(dbPath)
     await store.close()
 
-    server = await startServer({ repo, port: 0, host: '127.0.0.1' })
+    server = await startServer(
+      { repo, port: 0, host: '127.0.0.1' },
+      { proxyGet: makeDaemonStub(repo) },
+    )
     baseUrl = `http://${server.hostname}:${server.port}`
   })
 

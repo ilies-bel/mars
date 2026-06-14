@@ -757,7 +757,9 @@ describe('triggerSelfUpdate', () => {
         headers: { 'Content-Type': 'application/json' },
       }),
     )
-    await expect(triggerSelfUpdate()).rejects.toThrow('self-update failed')
+    // invokeAction surfaces the status and the server's `error` field.
+    await expect(triggerSelfUpdate()).rejects.toThrow('not a prod install')
+    await expect(triggerSelfUpdate()).rejects.toThrow('400')
   })
 })
 

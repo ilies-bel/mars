@@ -1,26 +1,26 @@
 /**
  * Unit tests for the FallbackSurface render seam.
  *
- * RUNNER NOTE: this suite runs under `bun test`, NOT vitest. Under bun,
- * `import.meta.env.DEV` is `undefined` (a fixed build-time value) and
- * `vi.stubEnv` is a no-op — DEV cannot be toggled at runtime. So the seam
- * always renders its PROD branch here: the calm headline + remedy show, the
- * raw `detail` is suppressed. We assert that deterministic prod output and
- * `it.skip` the dev-only "raw detail is shown" assertions, mirroring the
- * documented split in EventsPage.test.tsx.
+ * The dev/prod copy split keys off `import.meta.env.DEV`; we pin each branch
+ * with `vi.stubEnv('DEV', …)` (runs under vitest — `npm run test:src`).
  *
- * Also: `renderToStaticMarkup` does NOT run `useEffect`, so the dev-only
- * `logFallbackError` side effect is out of scope and we never assert on
- * `console.error` here.
+ * `renderToStaticMarkup` does NOT run `useEffect`, so the dev-only
+ * `logFallbackError` side effect is out of scope here; it is covered directly
+ * in uiFallback.test.ts.
  */
-import { describe, expect, it, vi } from 'bun:test'
+import { afterEach, describe, expect, it, vi } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { FallbackSurface } from './FallbackSurface'
 import type { Fallback } from '@/shared/uiFallback'
 import { ApiError } from '@/shared/api'
 
 describe('FallbackSurface — pane variant', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it('renders the panel testid and headline but hides raw detail in prod', () => {
+    vi.stubEnv('DEV', false)
     const html = renderToStaticMarkup(
       <FallbackSurface
         error={new ApiError('GET /api/tasks → 500', 'other')}
@@ -45,10 +45,7 @@ describe('FallbackSurface — pane variant', () => {
     expect(html).toContain('npm run dev:server')
   })
 
-  // DEV-mode assertion: in dev the raw detail (error message) is shown. Skipped
-  // because `import.meta.env.DEV` is undefined under bun test and
-  // `vi.stubEnv('DEV', true)` is a no-op, so the dev branch is unreachable.
-  it.skip('shows the raw detail in dev (requires vi.stubEnv — not available in bun)', () => {
+  it('shows the raw detail in dev', () => {
     vi.stubEnv('DEV', true)
     const html = renderToStaticMarkup(
       <FallbackSurface
@@ -58,11 +55,14 @@ describe('FallbackSurface — pane variant', () => {
       />,
     )
     expect(html).toContain('GET /api/tasks → 500')
-    vi.unstubAllEnvs()
   })
 })
 
 describe('FallbackSurface — inline variant', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it('renders the headline', () => {
     const html = renderToStaticMarkup(
       <FallbackSurface error={new Error('boom')} of="origin tasks" variant="inline" />,
@@ -71,15 +71,12 @@ describe('FallbackSurface — inline variant', () => {
     expect(html).toContain('Couldn&#x27;t load the origin tasks.')
   })
 
-  // DEV-mode assertion: in dev the detail (error message) is appended. Skipped
-  // for the same env-stubbing reason above.
-  it.skip('shows the detail in dev (requires vi.stubEnv — not available in bun)', () => {
+  it('shows the detail in dev', () => {
     vi.stubEnv('DEV', true)
     const html = renderToStaticMarkup(
       <FallbackSurface error={new Error('kaboom-detail')} of="origin tasks" variant="inline" />,
     )
     expect(html).toContain('kaboom-detail')
-    vi.unstubAllEnvs()
   })
 })
 

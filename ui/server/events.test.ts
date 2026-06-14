@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 
 import { startServer } from './index.ts'
+import { makeDaemonStub } from './testDaemonStub.ts'
 
 interface EventEntry {
   taskId: string
@@ -107,11 +108,14 @@ describe('GET /api/events', () => {
     qc.close()
     sc.close()
 
-    server = await startServer({
-      repo,
-      port: 0,
-      host: '127.0.0.1',
-    })
+    server = await startServer(
+      {
+        repo,
+        port: 0,
+        host: '127.0.0.1',
+      },
+      { proxyGet: makeDaemonStub(repo) },
+    )
     baseUrl = `http://${server.hostname}:${server.port}`
   })
 

@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 
 import { startServer } from './index.ts'
+import { makeDaemonStub } from './testDaemonStub.ts'
 
 /**
  * Slice 4 of PRD 10150b71: the Progress tab's column view must surface
@@ -132,11 +133,14 @@ describe('GET /api/progress — column-view cluster contract', () => {
     qc.close()
     sc.close()
 
-    server = await startServer({
-      repo,
-      port: 0,
-      host: '127.0.0.1',
-    })
+    server = await startServer(
+      {
+        repo,
+        port: 0,
+        host: '127.0.0.1',
+      },
+      { proxyGet: makeDaemonStub(repo) },
+    )
     baseUrl = `http://${server.hostname}:${server.port}`
   })
 
@@ -302,7 +306,10 @@ describe('GET /api/progress — proposal nodes for DAG view', () => {
     const sc = await createStateSchema(stateDbPath)
     sc.close()
 
-    server = await startServer({ repo, port: 0, host: '127.0.0.1' })
+    server = await startServer(
+      { repo, port: 0, host: '127.0.0.1' },
+      { proxyGet: makeDaemonStub(repo) },
+    )
     baseUrl = `http://${server.hostname}:${server.port}`
   })
 
@@ -389,7 +396,10 @@ describe('GET /api/progress — all failed tasks are always in scope', () => {
     const sc = await createStateSchema(resolve(repo, '.mars/mars.db'))
     sc.close()
 
-    server = await startServer({ repo, port: 0, host: '127.0.0.1' })
+    server = await startServer(
+      { repo, port: 0, host: '127.0.0.1' },
+      { proxyGet: makeDaemonStub(repo) },
+    )
     baseUrl = `http://${server.hostname}:${server.port}`
   })
 

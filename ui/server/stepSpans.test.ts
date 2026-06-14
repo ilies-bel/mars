@@ -12,6 +12,7 @@ import { resolve } from 'node:path'
 import { createClient } from '@libsql/client'
 import { openTraceEventStore } from '../../orchestrator/src/core/lib/trace-events-store.ts'
 import { startServer } from './index.ts'
+import { makeDaemonStub } from './testDaemonStub.ts'
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-step-spans-test-'))
@@ -79,7 +80,10 @@ describe('GET /api/step-spans', () => {
     dbPath = resolve(repo, '.mars/mars.db')
     await bootstrapDb(dbPath)
 
-    server = await startServer({ repo, port: 0, host: '127.0.0.1' })
+    server = await startServer(
+      { repo, port: 0, host: '127.0.0.1' },
+      { proxyGet: makeDaemonStub(repo) },
+    )
     baseUrl = `http://${server.hostname}:${server.port}`
   })
 

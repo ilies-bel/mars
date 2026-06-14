@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 
 import { startServer } from './index.ts'
+import { makeDaemonStub } from './testDaemonStub.ts'
 
 /**
  * PRD 82df662a slice 1: every task returned by /api/tasks carries the
@@ -139,7 +140,10 @@ describe('GET /api/tasks — blockedBy field (no task_blockers table)', () => {
     const sc = await createStateSchema(stateDbPath)
     sc.close()
 
-    server = await startServer({ repo, port: 0, host: '127.0.0.1' })
+    server = await startServer(
+      { repo, port: 0, host: '127.0.0.1' },
+      { proxyGet: makeDaemonStub(repo) },
+    )
     baseUrl = `http://${server.hostname}:${server.port}`
   })
 
@@ -182,11 +186,14 @@ describe('GET /api/tasks — blockedBy field', () => {
     qc.close()
     sc.close()
 
-    server = await startServer({
-      repo,
-      port: 0,
-      host: '127.0.0.1',
-    })
+    server = await startServer(
+      {
+        repo,
+        port: 0,
+        host: '127.0.0.1',
+      },
+      { proxyGet: makeDaemonStub(repo) },
+    )
     baseUrl = `http://${server.hostname}:${server.port}`
   })
 

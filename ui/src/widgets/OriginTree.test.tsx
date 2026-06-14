@@ -15,7 +15,7 @@
  * and is exercised by the drawer's later integration/manual coverage, mirroring
  * the documented split in TaskDetailDrawer.test.tsx.
  */
-import { mock, describe, expect, it } from 'bun:test'
+import { mock, describe, expect, it, afterEach, vi } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { OriginsResponse } from '@/shared/schemas'
 
@@ -74,7 +74,12 @@ const loaded = (data: OriginsResponse): QueryResult => ({
 // rendering, so renders are deterministic and synchronous.
 let nextResult: QueryResult = LOADING
 
+// Mock only `fetchOrigins`; preserve the real `ApiError` class so the error
+// branch (FallbackSurface → resolveFallback → `error instanceof ApiError`)
+// resolves against the genuine constructor rather than `undefined`.
+const actualApi = await import('@/shared/api')
 mock.module('@/shared/api', () => ({
+  ...actualApi,
   fetchOrigins: async (taskId: string): Promise<OriginsResponse> => SINGLE_NODE(taskId),
 }))
 
@@ -193,13 +198,19 @@ describe('OriginTree – loading and error states', () => {
   })
 
   it('renders the error line when the query fails', () => {
+    // Pin prod mode: FallbackSurface shows sanitized copy (not the raw error
+    // message) in prod, so 'boom' must not appear in the HTML.
+    vi.stubEnv('DEV', false)
     const html = render(errored('boom'), { taskId: 't-err' })
     expect(html).toContain('>Origins<')
     // renderToStaticMarkup HTML-encodes apostrophes; match the encoded form.
-    // The component uses getFallbackCopy which shows sanitized copy (not the raw
-    // error message) in prod mode — 'boom' no longer appears in the HTML.
     expect(html).toContain("Couldn&#x27;t load the origin tasks.")
+    expect(html).not.toContain('boom')
     expect(html).not.toContain('data-testid="origin-tree"')
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 })
 
