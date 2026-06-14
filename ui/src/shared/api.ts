@@ -1,3 +1,4 @@
+// mars-canary: orchestrator coding path verified
 import type { ZodType } from 'zod'
 import {
   actionQueueHistoryResponseSchema,
