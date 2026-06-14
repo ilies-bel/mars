@@ -25,6 +25,7 @@ export const TRACE_EVENT_KINDS = [
   'recovery_spawned',
   'task_failed',
   'tool_invoked',
+  'log_line',
 ] as const
 
 export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]
@@ -100,7 +101,14 @@ export interface TraceEventStore {
  * - `tool_invoked` with `payload.exitCode === 0` → `info`
  * - `tool_invoked` with non-zero exit AND `payload.expectsFailure === true` → `warn`
  * - `tool_invoked` with non-zero exit AND falsy `expectsFailure` → `error`
+ * - `log_line` → reads `payload.level` ('info'|'warn'|'error'); falls back to 'info'
  * - everything else → `info`
+ *
+ * `log_line` payload shape:
+ *   { level: 'info'|'warn'|'error', msg: string, source: string
+ *     (e.g. 'workflow'|'daemon'|'bus'|'sweeper'), fields?: Record<string,unknown> }
+ * taskId/originId/phase stay on the TraceEventInput envelope (may be null for
+ * daemon-global lines).
  */
 export const deriveSeverity = (
   kind: TraceEventKind,
@@ -115,6 +123,11 @@ export const deriveSeverity = (
     if (typeof exitCode === 'number' && exitCode === 0) return 'info'
     if (payload.expectsFailure === true) return 'warn'
     return 'error'
+  }
+  if (kind === 'log_line') {
+    const level = payload.level
+    if (level === 'warn' || level === 'error') return level
+    return 'info'
   }
   return 'info'
 }

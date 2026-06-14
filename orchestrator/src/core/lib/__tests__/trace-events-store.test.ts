@@ -108,6 +108,18 @@ describe('deriveSeverity', () => {
       expect(['info', 'warn', 'error']).toContain(sev)
     }
   })
+
+  it('log_line: reads severity from payload.level', () => {
+    expect(deriveSeverity('log_line', { level: 'warn', msg: 'disk near full', source: 'daemon' })).toBe('warn')
+    expect(deriveSeverity('log_line', { level: 'error', msg: 'crash', source: 'workflow' })).toBe('error')
+    expect(deriveSeverity('log_line', { level: 'info', msg: 'started', source: 'bus' })).toBe('info')
+  })
+
+  it('log_line: unknown or missing level falls back to info', () => {
+    expect(deriveSeverity('log_line', { level: 'bogus', msg: 'x', source: 'daemon' })).toBe('info')
+    expect(deriveSeverity('log_line', { msg: 'no level', source: 'sweeper' })).toBe('info')
+    expect(deriveSeverity('log_line', {})).toBe('info')
+  })
 })
 
 describe('openTraceEventStore — record + query roundtrip', () => {
@@ -215,6 +227,43 @@ describe('openTraceEventStore — record + query roundtrip', () => {
       await store.record({ kind: 'task_failed', taskId: 'a' })
       const events = await store.query({ taskId: 'a' })
       expect(events[0].payload).toEqual({})
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('log_line round-trips through record+query with correct kind, severity, and payload', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      await store.record({
+        kind: 'log_line',
+        taskId: 'task-log-1',
+        payload: { level: 'warn', msg: 'disk near full', source: 'sweeper', fields: { pct: 91 } },
+      })
+      const events = await store.query({ taskId: 'task-log-1' })
+      expect(events).toHaveLength(1)
+      const e = events[0]
+      expect(e.kind).toBe('log_line')
+      expect(e.severity).toBe('warn')
+      expect(e.taskId).toBe('task-log-1')
+      expect(e.payload).toEqual({ level: 'warn', msg: 'disk near full', source: 'sweeper', fields: { pct: 91 } })
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('log_line with null taskId/originId round-trips for daemon-global lines', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      await store.record({
+        kind: 'log_line',
+        payload: { level: 'error', msg: 'daemon crashed', source: 'daemon' },
+      })
+      const events = await store.query({ kind: ['log_line'] })
+      expect(events).toHaveLength(1)
+      expect(events[0].taskId).toBeNull()
+      expect(events[0].originId).toBeNull()
+      expect(events[0].severity).toBe('error')
     } finally {
       await store.close()
     }
