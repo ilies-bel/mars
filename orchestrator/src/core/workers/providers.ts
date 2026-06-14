@@ -2,9 +2,8 @@
 // feeds prompts to an agent CLI. Each Provider bundles the spawn argv
 // builder, the prompt-feed method, and an optional done-signal hook.
 
-import { createHash } from 'node:crypto'
 import { installClaudeStopHook, waitForClaudeDone } from './claude-done-signal'
-import { AGENT_TO_USER_DENIED_TOOLS } from '../lib/git/claude'
+import { AGENT_TO_USER_DENIED_TOOLS, toClaudeSessionId } from '../lib/git/claude'
 import type { ClaudeEffort, ClaudePermissionMode } from '../lib/git/claude'
 
 export type ProviderName = 'claude' | 'gemini' | 'codex'
@@ -110,24 +109,11 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       agent,
       appendSystemPrompt,
     }: SpawnOpts): readonly string[] => {
-      let sessionUUID: string | undefined
-      if (sessionId) {
-        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
-          // Already a valid UUID — pass through unchanged.
-          sessionUUID = sessionId
-        } else {
-          // Derive UUID v5: SHA-1(DNS-namespace-bytes || task-id-bytes).
-          const h = createHash('sha1')
-            .update(Buffer.from('6ba7b8109dad11d180b400c04fd430c8', 'hex')) // DNS namespace
-            .update(sessionId)
-            .digest()
-          h[6] = (h[6] & 0x0f) | 0x50 // version 5
-          h[8] = (h[8] & 0x3f) | 0x80 // variant RFC 4122
-          sessionUUID = [h.slice(0, 4), h.slice(4, 6), h.slice(6, 8), h.slice(8, 10), h.slice(10, 16)]
-            .map((b) => b.toString('hex'))
-            .join('-')
-        }
-      }
+      // claude requires --session-id to be a valid RFC 4122 UUID; task ids are
+      // not, so normalize via the shared helper (deterministic UUID v5). This
+      // is the SAME helper the headless/stream path uses, so a given task id
+      // maps to the same session UUID on either path.
+      const sessionUUID = sessionId ? toClaudeSessionId(sessionId) : undefined
 
       // Union caller-supplied disallowedTools with the agent-to-user denial.
       // Mirrors mergeDisallowedTools in claude.ts — the agent-to-user ban

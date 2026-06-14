@@ -9,10 +9,12 @@ import {
   BLOCKERS_ABORT_MESSAGE,
   DEVIATION_RULES,
   CONTEXT_EXHAUSTED_ABORT_MESSAGE,
+  CODER_EXIT_NONZERO_ABORT_MESSAGE,
   composePrompt,
   detectPostCoderState,
   failureExcerpt,
   isBlockersAbortError,
+  isCoderExitNonzeroAbortError,
   isContextExhaustedAbortError,
   isOriginWorktreeMissingAbortError,
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
@@ -636,6 +638,35 @@ describe('isContextExhaustedAbortError — context-budget ceiling sentinel', () 
     const wrapped = new Error('Step run-claude-code failed: something')
     Object.assign(wrapped, { cause })
     expect(isContextExhaustedAbortError(wrapped)).toBe(true)
+  })
+})
+
+describe('isCoderExitNonzeroAbortError — coder non-zero exit sentinel', () => {
+  it('recognises the sentinel the code step throws on a non-zero coder exit', () => {
+    const err = new Error(CODER_EXIT_NONZERO_ABORT_MESSAGE('mars-9afa7df6', 1))
+    expect(isCoderExitNonzeroAbortError(err)).toBe(true)
+  })
+
+  it('matches regardless of the exit code', () => {
+    expect(
+      isCoderExitNonzeroAbortError(
+        new Error(CODER_EXIT_NONZERO_ABORT_MESSAGE('mars-abc12345', 137)),
+      ),
+    ).toBe(true)
+  })
+
+  it('does not false-positive on unrelated errors', () => {
+    expect(isCoderExitNonzeroAbortError(new Error('some other failure'))).toBe(false)
+    expect(isCoderExitNonzeroAbortError(new Error('verify command exited 1'))).toBe(false)
+    expect(isCoderExitNonzeroAbortError(null)).toBe(false)
+    expect(isCoderExitNonzeroAbortError(undefined)).toBe(false)
+  })
+
+  it('recognises the sentinel through a wrapped cause chain', () => {
+    const cause = new Error(CODER_EXIT_NONZERO_ABORT_MESSAGE('mars-9afa7df6', 1))
+    const wrapped = new Error('Step run-claude-code failed: something')
+    Object.assign(wrapped, { cause })
+    expect(isCoderExitNonzeroAbortError(wrapped)).toBe(true)
   })
 })
 

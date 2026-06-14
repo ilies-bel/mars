@@ -105,6 +105,17 @@ export const ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE = (taskId: string): string =>
 export const isOriginWorktreeMissingAbortError = (err: unknown): boolean =>
   errorHaystack(err).includes('origin worktree is missing and cannot be attached')
 
+// Thrown by the code step when the coder process exits non-zero before doing
+// any work (e.g. claude rejecting a bad --session-id). Without this the empty
+// worktree would pass verify and merge as a false "done".
+export const CODER_EXIT_NONZERO_ABORT_MESSAGE = (
+  taskId: string,
+  exitCode: number,
+): string => `coder for task ${taskId} exited ${exitCode} before completing`
+
+export const isCoderExitNonzeroAbortError = (err: unknown): boolean =>
+  /coder for task .+ exited -?\d+ before completing/.test(errorHaystack(err))
+
 // ---------------------------------------------------------------------------
 // Prompt briefs + system-prompt assembly
 // ---------------------------------------------------------------------------

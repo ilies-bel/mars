@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { isAbsolute, join } from 'node:path'
 import { constants as fsConstants } from 'node:fs'
 import { parseClaudeStreamLine, type ClaudeEvent } from '../claude-stream'
@@ -220,6 +221,36 @@ interface ClaudeStreamArgsOptions {
 // — inherits the ban. See idea 948691d0.
 export const AGENT_TO_USER_DENIED_TOOLS = ['AskUserQuestion', 'SendUserMessage'] as const
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Normalize an orchestrator session id into a value `claude --session-id`
+ * accepts. Modern Claude Code requires a valid RFC 4122 UUID; task ids (e.g.
+ * "mars-9afa7df6") are not UUIDs, so we derive a deterministic UUID v5
+ * (SHA-1 over the DNS namespace + task-id bytes) rather than storing a
+ * separate mapping. An id that already looks like a UUID is returned
+ * unchanged, so a given task id maps to the same session UUID on every path.
+ *
+ * Both spawn paths MUST funnel through this: the PTY provider (providers.ts)
+ * and the headless/stream path (claudeStreamArgs below). Passing a raw
+ * non-UUID id makes claude reject the run with "Invalid session ID. Must be a
+ * valid UUID.", exiting non-zero before doing any work — which previously
+ * merged as a false empty-diff success.
+ */
+export const toClaudeSessionId = (sessionId: string): string => {
+  if (UUID_RE.test(sessionId)) return sessionId
+  const h = createHash('sha1')
+    .update(Buffer.from('6ba7b8109dad11d180b400c04fd430c8', 'hex')) // DNS namespace
+    .update(sessionId)
+    .digest()
+  h[6] = (h[6] & 0x0f) | 0x50 // version 5
+  h[8] = (h[8] & 0x3f) | 0x80 // variant RFC 4122
+  return [h.slice(0, 4), h.slice(4, 6), h.slice(6, 8), h.slice(8, 10), h.slice(10, 16)]
+    .map((b) => b.toString('hex'))
+    .join('-')
+}
+
 // Default search-tool guidance injected into every dispatched worker's system
 // prompt. The host previously enforced this via PreToolUse rewriter hooks on
 // the user's Claude settings; centralising it here keeps the constraint with
@@ -281,7 +312,7 @@ export const claudeStreamArgs = (
   ...(options.model ? ['--model', options.model] : []),
   '--system-prompt',
   composeSystemPrompt(options.systemPrompt),
-  ...(options.sessionId ? ['--session-id', options.sessionId] : []),
+  ...(options.sessionId ? ['--session-id', toClaudeSessionId(options.sessionId)] : []),
   // No --max-turns: the Claude Code CLI runs unbounded turns. The 60-turn cap
   // was cutting Coders off mid-implementation (they spend 30+ turns exploring
   // before they edit/commit), producing spurious verify:has-diff/no-commits

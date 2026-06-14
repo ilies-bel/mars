@@ -43,6 +43,8 @@ export {
   isContextExhaustedAbortError,
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
   isOriginWorktreeMissingAbortError,
+  CODER_EXIT_NONZERO_ABORT_MESSAGE,
+  isCoderExitNonzeroAbortError,
   // Prompt briefs + system-prompt assembly
   COMMIT_FOOTER,
   DEVIATION_RULES,

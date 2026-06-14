@@ -86,6 +86,7 @@ import {
   recoveryAttachesToOrigin,
   resolveWorkerSystemPrompt,
   BLOCKERS_ABORT_MESSAGE,
+  CODER_EXIT_NONZERO_ABORT_MESSAGE,
   CONTEXT_EXHAUSTED_ABORT_MESSAGE,
   MAIN_DIRTY_VERIFY_MESSAGE,
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
@@ -578,8 +579,9 @@ export const runAgent = async (args: RunAgentArgs): Promise<RunAgentResult> => {
       cwd: worktreePath,
       // Use taskId as the session key so pty traces and the Stop-hook
       // installer are keyed to this task rather than falling back to 'anon'.
-      // providers.ts normalises any string to a UUIDv5 before passing it to
-      // claude, so a non-UUID task id is acceptable here.
+      // Both spawn paths normalise this to a valid UUID via toClaudeSessionId
+      // (PTY in providers.ts, headless/stream in claudeStreamArgs) before it
+      // reaches `claude --session-id`, so a non-UUID task id is acceptable here.
       sessionId: taskId,
       systemPrompt: resolveWorkerSystemPrompt(primaryTag),
       onEvent: async (event) => {
@@ -624,6 +626,45 @@ export const runAgent = async (args: RunAgentArgs): Promise<RunAgentResult> => {
       `[ctx] task ${taskId}: context-exhausted; recovery fix-task spawned to resume the existing worktree`,
     )
     throw new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE(taskId))
+  }
+
+  // Catch-all for any OTHER non-zero coder exit (138/context-exhausted is the
+  // only sentinel handled above). Previously such an exit fell straight through
+  // to the normal return: verify then no-ops on the untouched worktree and an
+  // empty diff merges as a false "done". A real example is claude rejecting a
+  // bad --session-id ("Invalid session ID. Must be a valid UUID.") and exiting
+  // before doing any work. Treat it as a code-phase failure: stamp the task,
+  // spawn exactly one recovery fix-task, and throw to stop before verify/merge.
+  if (r.exitCode !== 0) {
+    const stderrTail = r.stderr.trim().slice(-1000)
+    await updateTask(
+      taskId,
+      {
+        status: 'failed',
+        error: `coder exited ${r.exitCode} before completing; stderr tail:\n${stderrTail}`,
+        failedPhase: 'code',
+        failureReason: 'coder-exit-nonzero',
+        failureReasonCode: 'coder-exit-nonzero',
+      },
+      store,
+    )
+    await handleTaskFailureWithFixTask({
+      taskId,
+      failingStep: 'code:coder-exit-nonzero',
+      errorOutput: `coder process exited ${r.exitCode} without producing work. stderr tail:\n${stderrTail}`,
+      branch,
+      store,
+      recipeContext: {
+        targetPath: worktreePath,
+        statusOutput: `The coder exited ${r.exitCode} before doing any work (the worktree may be empty). Investigate the exit cause from the stderr tail before retrying.`,
+        targetBranch: branch,
+        originalPrompt: '',
+      },
+    })
+    console.log(
+      `[code] task ${taskId}: coder exited ${r.exitCode}; recovery fix-task spawned`,
+    )
+    throw new Error(CODER_EXIT_NONZERO_ABORT_MESSAGE(taskId, r.exitCode))
   }
 
   // Classify the worktree end-state for the run log (best-effort).

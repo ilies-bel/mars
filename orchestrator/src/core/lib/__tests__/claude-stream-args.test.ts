@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { claudeStreamArgs, SEARCH_TOOL_SYSTEM_PROMPT } from '../git/claude'
+import {
+  claudeStreamArgs,
+  SEARCH_TOOL_SYSTEM_PROMPT,
+  toClaudeSessionId,
+} from '../git/claude'
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 describe('claudeStreamArgs', () => {
   it('always denies AskUserQuestion and SendUserMessage', () => {
@@ -67,7 +74,7 @@ describe('claudeStreamArgs', () => {
     expect(askCount).toBe(1)
   })
 
-  it('passes through the prompt, model, systemPrompt, and sessionId', () => {
+  it('passes through the prompt, model, and systemPrompt', () => {
     const args = claudeStreamArgs('hello', {
       model: 'm',
       systemPrompt: 'sp',
@@ -82,7 +89,42 @@ describe('claudeStreamArgs', () => {
     expect(sysVal).toContain(SEARCH_TOOL_SYSTEM_PROMPT)
     expect(sysVal).toContain('sp')
     expect(args).toContain('--session-id')
-    expect(args).toContain('sid')
+  })
+
+  it('normalises a non-UUID sessionId to a valid UUID for --session-id', () => {
+    // claude rejects a non-UUID --session-id with "Invalid session ID. Must be
+    // a valid UUID.", exiting before doing any work. The stream path must emit
+    // a UUID, never the raw task id.
+    const args = claudeStreamArgs('hello', { sessionId: 'mars-9afa7df6' })
+    const i = args.indexOf('--session-id')
+    expect(i).toBeGreaterThanOrEqual(0)
+    const sid = args[i + 1] ?? ''
+    expect(sid).not.toBe('mars-9afa7df6')
+    expect(sid).toMatch(UUID_RE)
+  })
+
+  it('passes an already-valid UUID sessionId through unchanged', () => {
+    const uuid = '11111111-2222-4333-8444-555555555555'
+    const args = claudeStreamArgs('hello', { sessionId: uuid })
+    const i = args.indexOf('--session-id')
+    expect(args[i + 1]).toBe(uuid)
+  })
+})
+
+describe('toClaudeSessionId', () => {
+  it('returns a valid UUID for a non-UUID task id', () => {
+    expect(toClaudeSessionId('mars-9afa7df6')).toMatch(UUID_RE)
+  })
+
+  it('is deterministic — same task id maps to the same UUID', () => {
+    expect(toClaudeSessionId('mars-9afa7df6')).toBe(
+      toClaudeSessionId('mars-9afa7df6'),
+    )
+  })
+
+  it('passes an already-valid UUID through unchanged', () => {
+    const uuid = '11111111-2222-4333-8444-555555555555'
+    expect(toClaudeSessionId(uuid)).toBe(uuid)
   })
 
   it('always injects the default search-tool guidance, even with no caller systemPrompt', () => {
