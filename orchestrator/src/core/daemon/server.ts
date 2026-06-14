@@ -68,7 +68,7 @@ import {
 } from './main-dirty-action-queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { computeFailureSignature } from '../lib/failure-signature'
-import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore } from '../lib/trace-events-store'
+import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
 import { loadDaemonConfig } from './config'
 import { probeDuckDBLock } from './duckdb-lock'
@@ -167,6 +167,7 @@ export interface DaemonOptions {
  */
 const makeWorkflowLogger = (
   log: (line: string) => void,
+  traceStore: TraceEventStore | null,
   bindings: Record<string, unknown> = {},
 ): Logger => {
   const fmt = (
@@ -182,15 +183,41 @@ const makeWorkflowLogger = (
       .join(' ')
     return `[workflow] ${level}${ctx ? ` ${ctx}` : ''}${msg ? ` ${msg}` : ''}`
   }
+  // Tee each structured log call to the trace store as a log_line event.
+  // Preserves real bindings/fields in payload.fields rather than pre-flattening
+  // them. Fire-and-forget with a swallowed catch so a trace-store hiccup NEVER
+  // throws into engine logging. Called from info/warn/error (3 callers).
+  const teeTrace = (
+    level: 'info' | 'warn' | 'error',
+    arg1: Record<string, unknown> | string,
+    arg2?: string,
+  ): void => {
+    if (traceStore === null) return
+    const callFields = typeof arg1 === 'string' ? {} : arg1
+    const msg = (typeof arg1 === 'string' ? arg1 : arg2) ?? ''
+    void traceStore.record({
+      kind: 'log_line',
+      taskId: (bindings.taskId as string | undefined) ?? null,
+      originId: (bindings.originId as string | undefined) ?? null,
+      phase: (bindings.phase as TraceEventPhase | undefined) ?? null,
+      payload: { level, msg, source: 'workflow', fields: { ...bindings, ...callFields } },
+    }).catch(() => {})
+  }
   return {
-    info: (arg1: Record<string, unknown> | string, arg2?: string) =>
-      log(fmt('info', arg1, arg2)),
-    warn: (arg1: Record<string, unknown> | string, arg2?: string) =>
-      log(fmt('warn', arg1, arg2)),
-    error: (arg1: Record<string, unknown> | string, arg2?: string) =>
-      log(fmt('error', arg1, arg2)),
+    info: (arg1: Record<string, unknown> | string, arg2?: string) => {
+      log(fmt('info', arg1, arg2))
+      teeTrace('info', arg1, arg2)
+    },
+    warn: (arg1: Record<string, unknown> | string, arg2?: string) => {
+      log(fmt('warn', arg1, arg2))
+      teeTrace('warn', arg1, arg2)
+    },
+    error: (arg1: Record<string, unknown> | string, arg2?: string) => {
+      log(fmt('error', arg1, arg2))
+      teeTrace('error', arg1, arg2)
+    },
     child: (extra: Record<string, unknown>) =>
-      makeWorkflowLogger(log, { ...bindings, ...extra }),
+      makeWorkflowLogger(log, traceStore, { ...bindings, ...extra }),
   }
 }
 
@@ -266,9 +293,26 @@ export const startDaemon = async (
   const integrationBranch =
     opts.integrationBranch ?? process.env.INTEGRATION_BRANCH ?? 'main'
   const { socket: socketPath, pidFile, logFile, httpPortFile } = daemonPaths()
+  // Mutable ref captured by log() below so daemon lines can be teed to the
+  // trace store once it's open (assigned after openTraceEventStore resolves).
+  // Lines emitted before the store is open are silently dropped — those are
+  // early-startup messages that cannot be captured because the store itself
+  // hasn't been opened yet. NEVER call log() inside a catch here; that would
+  // recurse back into log() and re-enter the record call.
+  let _traceStore: TraceEventStore | null = null
   const log = (line: string): void => {
     writeLog(logFile, line)
     opts.log?.(line)
+    if (_traceStore !== null) {
+      const level = /^\[?error/i.test(line) ? 'error' : /^\[?warn/i.test(line) ? 'warn' : 'info'
+      void _traceStore.record({
+        kind: 'log_line',
+        taskId: null,
+        originId: null,
+        phase: null,
+        payload: { level, msg: line, source: 'daemon' },
+      }).catch(() => {})
+    }
   }
 
   // Refuse to clobber a live daemon. Probe the socket before unlinking —
@@ -319,6 +363,9 @@ export const startDaemon = async (
   const traceStore: TraceEventStore = await openTraceEventStore(
     resolveContext().stateDbPath,
   )
+  // Wire the trace store into the log() closure so every daemon line from
+  // this point forward is also recorded as a log_line trace event (tee).
+  _traceStore = traceStore
 
   // Resolve git binary once at startup. If git is not on PATH the daemon
   // exits immediately with a clear message instead of letting the first
@@ -632,7 +679,9 @@ export const startDaemon = async (
       // Pino-shaped logger adapter over the daemon's `log`. The engine emits
       // structured run/step lifecycle lines (`step.started`, `step.completed`,
       // `run.failed`, …); fold them into one greppable daemon log line each.
-      const workflowLogger = makeWorkflowLogger(log)
+      // traceStore is passed so each engine call is also teed as a log_line
+      // trace event with structured payload.fields (not pre-flattened).
+      const workflowLogger = makeWorkflowLogger(log, traceStore)
       // Forward fine-grained progress events. The high-volume per-tool-call
       // streams (`claude-event`, `vcs-supervisor-event`) used to flow through
       // Mastra's workflow writer purely for live UI tailing and were not
